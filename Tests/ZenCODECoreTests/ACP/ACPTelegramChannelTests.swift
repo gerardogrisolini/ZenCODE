@@ -11,9 +11,11 @@
 //  they run in the environment of the editor's own prompts (the client's text
 //  file system, the agent's skills) and are refused once the session closed
 //  or while its close drains, a busy session names the turn from Telegram,
-//  and the notices of the attach follow the activation text in the reply of
-//  `/telegram on`. Nothing reaches the network; every test runs in a UUID
-//  support directory.
+//  the notices of the attach follow the activation text in the reply of
+//  `/telegram on`, and the controller's task-graph observer runs while
+//  Telegram drives the slot, quiesces at the end of every turn from the
+//  chat, and stops with `/telegram off` and the bridge's shutdown. Nothing
+//  reaches the network; every test runs in a UUID support directory.
 //
 
 import Foundation
@@ -533,7 +535,291 @@ struct ACPTelegramChannelTests {
         }
     }
 
+    /// While Telegram drives an ACP session's slot, the channel runs the
+    /// controller's task-graph observer: a change of the graph during a turn
+    /// from the chat reaches the chat as the progress card, and nothing of it
+    /// the editor; a change outside a turn sends nothing. `/telegram off`
+    /// stops the observer: none is left, and a later change sends nothing.
+    ///
+    /// Every negative check waits on a barrier, never on a fixed delay: the
+    /// observer's debounce is a gate the test opens, and the publication it
+    /// schedules is awaited; once the observer is stopped, nothing is left
+    /// that could publish.
+    @Test
+    func theTaskGraphOfAnACPSessionReachesTheChatOnlyWhileTelegramDrivesIt() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let (fixture, sessionID) = try await Self.linkedFixture(root: root)
+            let channel = try #require(await fixture.telegramChannel(sessionID: sessionID))
+            let controller = try #require(await fixture.bridge.telegramTestController(sessionID: sessionID))
+            await Self.awaitTaskGraphObservationWork(of: channel)
+            #expect(await Self.observesTheTaskGraph(channel, controller))
+            let gate = DebounceGate()
+            await Self.setTaskGraphDebounce(of: controller, to: gate)
+            let wireCount = fixture.wire.count
+
+            // Outside a turn there is no audience.
+            let sentBefore = await fixture.transport.sentMessages.count
+            try await Self.createTaskGraph(on: controller)
+            await Self.publishTheNextTaskGraphChange(of: controller, gate: gate, entries: 1)
+            #expect(await fixture.transport.sentMessages.count == sentBefore)
+
+            await fixture.backend.enqueue([.pause, .reply("planned")])
+            try await fixture.transport.deliver("Plan the work")
+            #expect(await ACPTelegramTestSupport.waitUntil { await fixture.backend.isPaused })
+            try await Self.claimTask("first", on: controller)
+            await Self.publishTheNextTaskGraphChange(of: controller, gate: gate, entries: 2)
+            let card = await fixture.transport.waitForSentMessage { $0.text.hasPrefix("📋 Task graph") }
+            #expect(card?.text.contains("Task first") == true)
+            await fixture.backend.release()
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await fixture.transport.sentTexts.dropFirst(sentBefore).contains { $0.contains("ZenCODE completed") }
+            })
+            #expect(fixture.wire.count == wireCount)
+
+            await fixture.prompt("/telegram off", id: 3, sessionID: sessionID)
+            #expect(fixture.wire.stopReason(id: 3) == "end_turn")
+            #expect(await Self.observesNoTaskGraph(channel, controller))
+            let sentAfterOff = await fixture.transport.sentMessages.count
+            try await Self.claimTask("second", on: controller)
+            // No observer is subscribed and no publication is pending: the
+            // change has nothing left to publish it.
+            #expect(await Self.observesNoTaskGraph(channel, controller))
+            #expect(await Self.hasNoPendingTaskGraphPublication(controller))
+            #expect(await fixture.transport.sentMessages.count == sentAfterOff)
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// On an ACP session's slot the channel quiesces the observer at the end
+    /// of every turn it presents, as the terminal does: a change of the graph
+    /// whose debounced publication still waits when the turn ends is
+    /// published in that turn, before its outcome, with the graph's final
+    /// state; the prompt queued meanwhile starts at once, and its turn
+    /// receives nothing born of the previous turn's change, even once the
+    /// debounce would have elapsed, until its own boundary publishes the
+    /// latest graph once more. The observer runs again afterwards.
+    @Test
+    func theTaskGraphOfAnACPSessionIsPublishedInTheTurnThatChangedIt() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let (fixture, sessionID) = try await Self.linkedFixture(root: root)
+            let channel = try #require(await fixture.telegramChannel(sessionID: sessionID))
+            let controller = try #require(await fixture.bridge.telegramTestController(sessionID: sessionID))
+            await Self.awaitTaskGraphObservationWork(of: channel)
+            #expect(await Self.observesTheTaskGraph(channel, controller))
+            let gate = DebounceGate()
+            await Self.setTaskGraphDebounce(of: controller, to: gate)
+            try await Self.createTaskGraph(on: controller)
+            await Self.publishTheNextTaskGraphChange(of: controller, gate: gate, entries: 1)
+            let sentBefore = await fixture.transport.sentMessages.count
+
+            await fixture.backend.enqueue([.pause, .reply("first turn")])
+            await fixture.backend.enqueue([.pause, .reply("second turn")])
+            try await fixture.transport.deliver("Plan the work")
+            #expect(await ACPTelegramTestSupport.waitUntil { await fixture.backend.isPaused })
+            // A prompt the chat queued, which starts as soon as the session
+            // is free.
+            #expect(try await Self.queuePrompt("Then go on", on: channel))
+            #expect(await Self.queuedPromptCount(channel) == 1)
+
+            // A change whose debounced publication still waits as the turn
+            // ends.
+            try await Self.claimTask("first", on: controller)
+            await gate.waitForEntries(2)
+            await fixture.backend.release()
+            // The queued prompt starts at once, and its turn pauses.
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                let prompts = await fixture.backend.prompts.count
+                let paused = await fixture.backend.isPaused
+                return prompts == 2 && paused
+            })
+            let expectedCard = try await Self.taskGraphCardText(of: controller)
+
+            // The debounce elapses during the second turn.
+            await gate.open()
+            await Self.drainPendingTaskGraphPublication(of: controller)
+            await Self.flushTurnReporter(of: channel)
+            let sentDuringSecondTurn = await fixture.transport.sentMessages.count
+            await fixture.backend.release()
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await fixture.transport.sentTexts.dropFirst(sentBefore)
+                    .filter { $0.contains("ZenCODE completed") }.count == 2
+            })
+
+            let texts = Array(await fixture.transport.sentTexts.dropFirst(sentBefore))
+            let secondTurnSoFar = sentDuringSecondTurn - sentBefore
+            let firstOutcome = try #require(texts.firstIndex { $0.contains("ZenCODE completed") && $0.contains("first turn") })
+            let secondOutcome = try #require(texts.firstIndex { $0.contains("ZenCODE completed") && $0.contains("second turn") })
+            let cards = texts.indices.filter { texts[$0].hasPrefix("📋 Task graph") }
+            #expect(firstOutcome < secondTurnSoFar && secondTurnSoFar <= secondOutcome)
+            // The first turn's card, with the graph's final state, before
+            // its outcome.
+            let firstTurnCards = cards.filter { $0 < firstOutcome }
+            #expect(firstTurnCards.count == 1, "\(texts)")
+            #expect(firstTurnCards.first.map { texts[$0] } == expectedCard)
+            // Nothing of it in the second turn, even once its debounce
+            // elapsed; the second turn's own boundary publishes the graph
+            // once more, before its outcome, as every turn boundary does.
+            #expect(!cards.contains { firstOutcome < $0 && $0 < secondTurnSoFar }, "\(texts)")
+            #expect(cards.filter { $0 > firstOutcome }.allSatisfy { $0 >= secondTurnSoFar && $0 < secondOutcome })
+            // The second turn's boundary restarts the observer before its
+            // task ends.
+            await Self.awaitTurnTasks(of: channel)
+            await Self.awaitTaskGraphObservationWork(of: channel)
+            #expect(await Self.observesTheTaskGraph(channel, controller))
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// Shutting the bridge down while Telegram drives a slot and runs its
+    /// task-graph observer leaves no observer behind.
+    @Test
+    func theBridgeShutdownLeavesNoTaskGraphObserver() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let (fixture, sessionID) = try await Self.linkedFixture(root: root)
+            let channel = try #require(await fixture.telegramChannel(sessionID: sessionID))
+            let controller = try #require(await fixture.bridge.telegramTestController(sessionID: sessionID))
+            await Self.awaitTaskGraphObservationWork(of: channel)
+            #expect(await Self.observesTheTaskGraph(channel, controller))
+
+            await fixture.bridge.shutdown()
+            #expect(await Self.observesNoTaskGraph(channel, controller))
+            #expect(await !channel.observesTaskGraph)
+            #expect(await Self.hasNoPendingTaskGraphPublication(controller))
+        }
+    }
+
     // MARK: - Support
+
+    /// Whether `channel` runs `controller`'s task-graph observer.
+    @ChatSessionActor
+    private static func observesTheTaskGraph(
+        _ channel: TelegramChannel, _ controller: ChatSessionController
+    ) -> Bool {
+        channel.runsTaskGraphObserver
+            && channel.taskGraphObservedController === controller
+            && controller.taskGraphObserverTask != nil
+    }
+
+    /// Waits for the work `channel` queued on its task-graph observer (the
+    /// binding `/telegram on` queued synchronously, a quiescence, a
+    /// restart): its latest task awaits every earlier one.
+    @ChatSessionActor
+    private static func awaitTaskGraphObservationWork(of channel: TelegramChannel) async {
+        await channel.taskGraphObservationTask?.value
+    }
+
+    /// Waits until no task of `channel` runs: the turns from the chat, with
+    /// their boundaries, and the queued prompts they start.
+    @ChatSessionActor
+    private static func awaitTurnTasks(of channel: TelegramChannel) async {
+        while let task = channel.activeTurnTask {
+            await task.value
+        }
+    }
+
+    /// Whether neither `channel` nor `controller` keeps a task-graph observer.
+    @ChatSessionActor
+    private static func observesNoTaskGraph(
+        _ channel: TelegramChannel, _ controller: ChatSessionController
+    ) -> Bool {
+        channel.taskGraphObservationTask == nil
+            && channel.taskGraphObservedController == nil
+            && controller.taskGraphObserverTask == nil
+    }
+
+    /// Whether `controller`'s observer has no debounced publication waiting.
+    @ChatSessionActor
+    private static func hasNoPendingTaskGraphPublication(_ controller: ChatSessionController) -> Bool {
+        controller.taskGraphObserver.pendingPublication == nil
+    }
+
+    /// Makes `gate` the debounce of `controller`'s task-graph observer, which
+    /// reads it at every graph event.
+    @ChatSessionActor
+    private static func setTaskGraphDebounce(of controller: ChatSessionController, to gate: DebounceGate) {
+        controller.taskGraphObserver.sleep = { try await gate.sleep($0) }
+    }
+
+    /// Lets the publication of the graph change the observer received as
+    /// its `entries`-th event through the debounce, and waits until it
+    /// published.
+    @ChatSessionActor
+    private static func publishTheNextTaskGraphChange(
+        of controller: ChatSessionController, gate: DebounceGate, entries: Int
+    ) async {
+        await gate.waitForEntries(entries)
+        await gate.open()
+        await drainPendingTaskGraphPublication(of: controller)
+    }
+
+    /// Waits for the debounced publication of `controller`'s observer, if
+    /// one is pending.
+    @ChatSessionActor
+    private static func drainPendingTaskGraphPublication(of controller: ChatSessionController) async {
+        await controller.taskGraphObserver.pendingPublication?.value
+    }
+
+    /// Waits until the reporter of the turn `channel` presents now, if any,
+    /// sent what it queued.
+    @ChatSessionActor
+    private static func flushTurnReporter(of channel: TelegramChannel) async {
+        await channel.activeProgressReporter?.flush()
+    }
+
+    /// The prompts from the chat that wait for the session.
+    @ChatSessionActor
+    private static func queuedPromptCount(_ channel: TelegramChannel) -> Int {
+        channel.promptQueue.count
+    }
+
+    /// Admits `text` on the link's route of `channel`, as the chat's
+    /// ingress does; while a turn runs, it waits in the channel's queue.
+    @ChatSessionActor
+    private static func queuePrompt(_ text: String, on channel: TelegramChannel) async throws -> Bool {
+        let lease = try #require(channel.activeRouteLease)
+        return await channel.admitPrompt(text, lease: lease)
+    }
+
+    /// The text of the progress card the channel sends for the graph of
+    /// `controller` as it is now.
+    @ChatSessionActor
+    private static func taskGraphCardText(of controller: ChatSessionController) async throws -> String {
+        let graph = try #require(try await controller.runtime.taskGraphSnapshot(
+            sessionID: controller.sessionID, graphID: nil
+        ))
+        let tasks = try await controller.runtime.taskOrchestrator.listTasks(
+            sessionID: controller.sessionID, graphID: graph.id
+        )
+        let plainText = TerminalANSIText.stripANSI(
+            TerminalChat.taskGraphMarkdown(graph: graph, tasks: tasks, ansiEnabled: false)
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        return "📋 Task graph\n\n\(plainText)"
+    }
+
+    /// Creates an active graph of two tasks, `first` and `second`, in
+    /// `controller`'s session.
+    @ChatSessionActor
+    private static func createTaskGraph(on controller: ChatSessionController) async throws {
+        _ = try await controller.runtime.taskOrchestrator.createGraph(
+            sessionID: controller.sessionID,
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [
+                TaskDefinition(id: "first", title: "Task first"),
+                TaskDefinition(id: "second", title: "Task second"),
+            ]
+        )
+    }
+
+    /// Claims the task `taskID` of `controller`'s graph, a change of the graph.
+    @ChatSessionActor
+    private static func claimTask(_ taskID: String, on controller: ChatSessionController) async throws {
+        _ = try await controller.runtime.taskOrchestrator.claimTasks(
+            sessionID: controller.sessionID,
+            claims: [TaskClaim(taskID: taskID, agentID: "worker")]
+        )
+    }
 
     /// A bridge with one session, linked to the scripted Bot API by a
     /// `/telegram on` prompt (request 2, after the editor's prompt request 1

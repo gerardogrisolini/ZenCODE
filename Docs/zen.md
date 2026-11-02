@@ -489,7 +489,15 @@ handle (derived from each instance's display name) to message it directly.
 Autocomplete in the terminal lists every active agent by its readable handle;
 routing always resolves back to the stable agent id behind the alias. Telegram
 uses the same live-room routing for its linked session, including its native
-replies to forwarded chat cards. The LLM side uses the `agent.message` tool with
+replies to forwarded chat cards. The room's messages for the operator are
+forwarded to the chat from the moment Telegram drives the session, whether the
+link has a topic of its own or uses the route every session shares. Only new
+messages are forwarded: the ones already in the room when the chat starts
+receiving it are skipped, at the first `/telegram on`, at `/telegram on` after
+`/telegram off` (what arrived while it was off does not come), after
+`/sessions new` or the loading of a session, and when the chat gets its route
+back; a reply to a card already forwarded still reaches its sender. The LLM
+side uses the `agent.message` tool with
 the same destinations (`direct`, `operator`, `coordinator`, `peers`, `all`);
 `operator` addresses only the human terminal operator. Every message is
 available in the terminal's transient `Chat` reader; it is not rendered as a
@@ -586,6 +594,27 @@ goes on in the terminal (Esc stops it); `Telegram remote control stopped.`
 follows the catch-up. An *Always* given in the chat covers the session in the
 terminal too.
 
+During a turn driven from Telegram the chat receives, in order and with no
+setting to turn on: each completed reasoning block, as a message with an
+expandable `💭 Thinking` section (cut at 3,900 characters), after the response
+written before it; each response the agent wrote before a reasoning block or a
+tool call, as a message of its own; the agent's tool calls, as lines of one
+activity message edited in place, `⏳ <tool and target>`, which becomes `✅`, or
+`❌` where the terminal shows ⚠️; the
+task-graph card, edited in place and removed when the turn ends; and, while
+sub-agents work, a `🤖 Sub-agent` message with their summary and one line per
+agent, edited in place, followed by their partial (💬) and completed (✅)
+responses as messages of their own, each sent once (not again in a later turn).
+What the sub-agents already showed when Telegram began to drive the session, in
+the terminal or in the editor, is not sent: the chat receives only the
+responses and changes that come later. The turn ends with its outcome (the
+final response, `Stopped.`, or the failure) and the file-change
+summary. A tool line carries no arguments or result, and the calls the
+terminal does not show, such as `agent.message`, are left out. A new message in
+the chat closes the activity message, so the next call opens a new one below
+it; editing the task-graph card or the sub-agent message in place does not,
+and a call's outcome is always written in the line where it started.
+
 In ACP clients such as Xcode the same commands exist (`/telegram`, `/telegram
 on`, `/telegram off`), answered at once. While Telegram drives the session the
 editor's prompts are refused with `ZenCODE: this session is driven from
@@ -593,7 +622,10 @@ Telegram. Use /telegram off to take it back.`, and the reply to `/telegram
 off` carries the catch-up as text. Unlike the terminal, the editor cannot take
 the session back in the middle of a turn from Telegram: cancel it from the
 editor first (the chat sees `Stopped.`), or wait for it to end, then send
-`/telegram off`, which catches up with it. The link is not saved: after the
+`/telegram off`, which catches up with it. The chat receives the same output
+there as from the terminal, the task-graph card included (its last state
+reaches the turn that ends, never the next one); the editor receives none of it
+meanwhile. The link is not saved: after the
 client loads the session again, send `/telegram on` again.
 
 Telegram pairs exactly one global owner through a private chat. That owner may route

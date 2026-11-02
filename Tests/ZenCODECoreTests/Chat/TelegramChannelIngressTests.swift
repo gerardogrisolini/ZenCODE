@@ -490,6 +490,210 @@ struct TelegramChannelIngressTests {
         }
     }
 
+    // MARK: - Shared route
+
+    /// On the route every session shares (`default`), the relay is bound to
+    /// the room of the session as soon as the channel drives the slot, so a
+    /// message of the room reaches the chat without the operator having
+    /// written first (`/telegram on` and nothing else). Only what the room
+    /// says from then on is forwarded: the message it already held is not.
+    @Test
+    func sharedRouteRelaysTheRoomOnceTheChannelDrivesTheSlot() async throws {
+        try await Support.withSupport {
+            let room = "channel-shared-drive-\(UUID().uuidString)"
+            let (runner, backend) = try await Self.sharedChatRunner(room: room)
+            await backend.enqueueCoordinatorMessage(text: "need a decision", roomID: room)
+            let pair = try await Self.handLinked(
+                room: room, runner: runner, routeRoomID: TerminalTelegramRouteKey.sharedRoomID
+            )
+            let channel = pair.channel
+            let cards = TelegramRelayCardLog()
+            channel.sharedChatRelayStorage = Self.recordingRelay(cards)
+            // The coordinator turn the message asks for is not under test: it
+            // is recorded only as the barrier proving the observation reads.
+            let prompts = TelegramTestRecorder<String>()
+            channel.onRunTurnForTesting = { prompt, _, _ in prompts.append(prompt) }
+            let slot = try #require(pair.terminal.sessionHost.slots[pair.terminal.terminalSlotID])
+            slot.setActiveChannel(.telegram)
+            #expect(channel.activeRouteLease?.key.roomID == TerminalTelegramRouteKey.sharedRoomID)
+
+            channel.startDriving()
+            try await Self.expectOnlyNewMessagesAreRelayed(
+                channel: channel, backend: backend, room: room, cards: cards, prompts: prompts
+            )
+            await channel.stopDriving()
+            await pair.terminal.sessionHost.shutdown()
+        }
+    }
+
+    /// On the session's own topic route the rule is the same: the relay is
+    /// bound as soon as the channel drives the slot, the message the room
+    /// already held is not forwarded, and the next one is.
+    @Test
+    func topicRouteRelaysOnlyWhatTheRoomSaysOnceTheChannelDrivesTheSlot() async throws {
+        try await Support.withSupport {
+            let room = "channel-topic-drive-\(UUID().uuidString)"
+            let (runner, backend) = try await Self.sharedChatRunner(room: room)
+            await backend.enqueueCoordinatorMessage(text: "need a decision", roomID: room)
+            let pair = try await Self.handLinked(room: room, runner: runner, topicID: 501)
+            let channel = pair.channel
+            let cards = TelegramRelayCardLog()
+            channel.sharedChatRelayStorage = Self.recordingRelay(cards)
+            let prompts = TelegramTestRecorder<String>()
+            channel.onRunTurnForTesting = { prompt, _, _ in prompts.append(prompt) }
+            let slot = try #require(pair.terminal.sessionHost.slots[pair.terminal.terminalSlotID])
+            slot.setActiveChannel(.telegram)
+            #expect(channel.activeRouteLease?.key.topicID == 501)
+            #expect(channel.activeRouteLease?.key.roomID == room)
+
+            channel.startDriving()
+            try await Self.expectOnlyNewMessagesAreRelayed(
+                channel: channel, backend: backend, room: room, cards: cards, prompts: prompts
+            )
+            await channel.stopDriving()
+            await pair.terminal.sessionHost.shutdown()
+        }
+    }
+
+    /// A message from Telegram on the shared route binds the relay to the
+    /// room of the session, not to the route's own room: what the room says
+    /// afterwards is forwarded (the relay used to be bound to `default` and
+    /// dropped every batch of the session).
+    @Test
+    func sharedRouteKeepsRelayingAfterAnIncomingMessage() async throws {
+        try await Support.withSupport {
+            let room = "channel-shared-ingress-\(UUID().uuidString)"
+            let pair = try await Self.handLinked(
+                room: room, routeRoomID: TerminalTelegramRouteKey.sharedRoomID
+            )
+            let channel = pair.channel
+            let cards = TelegramRelayCardLog()
+            channel.sharedChatRelayStorage = Self.recordingRelay(cards)
+
+            await channel.handleIncomingMessage(Self.ownerMessage("/start"))
+            #expect(pair.texts.values == [channel.alreadyLinkedText])
+            await channel.forwardSharedChatMessages(
+                [Self.agentMessage(room: room, senderID: "agent-1", name: "planner", text: "ship it?")],
+                roomID: room
+            )
+            await channel.sharedChatRelay.waitForPendingCards()
+
+            let texts = await cards.texts
+            #expect(texts.count == 1)
+            #expect(texts.first?.contains("ship it?") == true)
+            await pair.terminal.sessionHost.shutdown()
+        }
+    }
+
+    /// A reply to a forwarded card on the shared route is delivered to the
+    /// agent that wrote it, and is not taken for a prompt of the session.
+    @Test
+    func sharedRouteDeliversTheReplyToAForwardedCardToItsSender() async throws {
+        try await Support.withSupport {
+            let room = "channel-shared-reply-\(UUID().uuidString)"
+            let (runner, backend) = try await Self.sharedChatRunner(room: room)
+            // Registers `agent-1` ("planner") in the room.
+            await backend.enqueueCoordinatorMessage(text: "ready", roomID: room)
+            let pair = try await Self.handLinked(
+                room: room, runner: runner, routeRoomID: TerminalTelegramRouteKey.sharedRoomID
+            )
+            let channel = pair.channel
+            let cards = TelegramRelayCardLog()
+            channel.sharedChatRelayStorage = Self.recordingRelay(cards)
+            let prompts = TelegramTestRecorder<String>()
+            channel.onRunTurnForTesting = { prompt, _, _ in prompts.append(prompt) }
+
+            await channel.handleIncomingMessage(Self.ownerMessage("/start"))
+            await channel.forwardSharedChatMessages(
+                [Self.agentMessage(room: room, senderID: "agent-1", name: "planner", text: "ship it?")],
+                roomID: room
+            )
+            await channel.sharedChatRelay.waitForPendingCards()
+            // The log answers each card with its position as the receipt.
+            #expect(await cards.texts.count == 1)
+            let receipt = 1
+            #expect(await backend.recordedSharedChatMessageID() == nil)
+
+            let admitted = await channel.handleIncomingMessage(
+                Self.ownerMessage("yes, ship it", replyTo: receipt)
+            )
+
+            #expect(!admitted)
+            #expect(await backend.recordedSharedChatMessageID() != nil)
+            while let task = channel.activeTurnTask {
+                await task.value
+            }
+            #expect(prompts.values.isEmpty)
+            #expect(pair.texts.values == [channel.alreadyLinkedText])
+            await pair.terminal.sessionHost.shutdown()
+        }
+    }
+
+    /// A room swap (`/sessions new`, `/sessions load`) rebinds the relay of
+    /// the shared route to the new room of the session: the batches of the
+    /// retired room are no longer forwarded, those of the new one are.
+    @Test
+    func sharedRouteFollowsTheSessionToItsNewRoom() async throws {
+        try await Support.withSupport {
+            let room = "channel-shared-swap-\(UUID().uuidString)"
+            let nextRoom = "channel-shared-next-\(UUID().uuidString)"
+            let pair = try await Self.handLinked(
+                room: room, routeRoomID: TerminalTelegramRouteKey.sharedRoomID
+            )
+            let channel = pair.channel
+            let cards = TelegramRelayCardLog()
+            channel.sharedChatRelayStorage = Self.recordingRelay(cards)
+
+            await channel.rebindSharedChatRelay(roomID: room)
+            await channel.forwardSharedChatMessages(
+                [Self.agentMessage(room: room, senderID: "agent-1", name: "planner", text: "first")],
+                roomID: room
+            )
+            // Delivered before the swap: a rebind drops what is still queued.
+            await channel.sharedChatRelay.waitForPendingCards()
+            await channel.rebindSharedChatRelay(roomID: nextRoom)
+            await channel.forwardSharedChatMessages(
+                [Self.agentMessage(room: room, senderID: "agent-1", name: "planner", text: "retired")],
+                roomID: room
+            )
+            await channel.forwardSharedChatMessages(
+                [Self.agentMessage(room: nextRoom, senderID: "agent-2", name: "writer", text: "second")],
+                roomID: nextRoom
+            )
+            await channel.sharedChatRelay.waitForPendingCards()
+
+            let texts = await cards.texts
+            #expect(texts.count == 2)
+            #expect(texts.first?.contains("first") == true)
+            #expect(texts.last?.contains("second") == true)
+            await pair.terminal.sessionHost.shutdown()
+        }
+    }
+
+    /// A route bound to another room of its own never serves the session: the
+    /// relay stays unbound instead of forwarding the room to it.
+    @Test
+    func aRouteOfAnotherRoomIsNotRelayed() async throws {
+        try await Support.withSupport {
+            let room = "channel-foreign-\(UUID().uuidString)"
+            let pair = try await Self.handLinked(
+                room: room, routeRoomID: "another-\(UUID().uuidString)"
+            )
+            let channel = pair.channel
+            let cards = TelegramRelayCardLog()
+            channel.sharedChatRelayStorage = Self.recordingRelay(cards)
+
+            await channel.rebindSharedChatRelay(roomID: room)
+            await channel.forwardSharedChatMessages(
+                [Self.agentMessage(room: room, senderID: "agent-1", name: "planner", text: "unbound")],
+                roomID: room
+            )
+            await channel.sharedChatRelay.waitForPendingCards()
+            #expect(await cards.texts.isEmpty)
+            await pair.terminal.sessionHost.shutdown()
+        }
+    }
+
     /// While the channel drives the slot it tells the shared chat it is busy
     /// for as long as a task of its own or its queue keeps it, and free when
     /// they end, as the terminal does. A batch the room offers while a task
@@ -657,6 +861,191 @@ struct TelegramChannelIngressTests {
         }
     }
 
+    // MARK: - Only new messages
+
+    /// `/telegram off` → a message → `/telegram on`: what the room said while
+    /// the link was off is not forwarded, what it says afterwards is, and a
+    /// reply to a card forwarded before the off still reaches its sender (the
+    /// ledger and its receipts survive the round trip on the same route).
+    @Test
+    func offThenOnSkipsWhatTheRoomSaidWhileOffAndKeepsEarlierReplies() async throws {
+        try await Support.withSupport {
+            let room = "channel-off-on-\(UUID().uuidString)"
+            let (runner, backend) = try await Self.sharedChatRunner(room: room)
+            // Registers `agent-1` ("planner") in the room before the link.
+            await backend.enqueueCoordinatorMessage(text: "ready", roomID: room)
+            let terminal = try Support.makeTerminal(
+                transport: TelegramChannelTestTransport(botID: Support.uniqueBotID()),
+                sessionRunner: runner
+            )
+            terminal.sessionID = room
+            let host = terminal.sessionHost
+            let slot = terminal.terminalSlotID
+            let channel = terminal.telegramChannel
+            let cards = TelegramRelayCardLog()
+            channel.sharedChatRelayStorage = Self.recordingRelay(cards)
+            let prompts = TelegramTestRecorder<String>()
+            channel.onRunTurnForTesting = { prompt, _, _ in prompts.append(prompt) }
+
+            try await host.activateTelegram(in: slot)
+            #expect(host.activeChannel(in: slot) == .telegram)
+            try await Self.waitForCoordinatorTurn(about: "ready", prompts)
+            await backend.enqueueCoordinatorMessage(text: "first", roomID: room)
+            try await Support.waitUntil { await cards.texts.count == 1 }
+
+            _ = await host.deactivateTelegram(in: slot)
+            #expect(!channel.isActive)
+            await backend.enqueueCoordinatorMessage(text: "while off", roomID: room)
+
+            try await host.activateTelegram(in: slot)
+            #expect(channel.isActive)
+            try await Self.waitForCoordinatorTurn(about: "while off", prompts)
+            await channel.sharedChatRelay.waitForPendingCards()
+            #expect(Self.bodies(of: await cards.texts) == ["first"])
+            await backend.enqueueCoordinatorMessage(text: "after on", roomID: room)
+            try await Support.waitUntil { await cards.texts.count == 2 }
+            await channel.sharedChatRelay.waitForPendingCards()
+            #expect(Self.bodies(of: await cards.texts) == ["first", "after on"])
+
+            // The log answers each card with its position as the receipt: the
+            // card forwarded before the off is still answerable.
+            #expect(await backend.recordedSharedChatMessageID() == nil)
+            let admitted = await channel.handleIncomingMessage(
+                Self.ownerMessage("yes, ship it", replyTo: 1)
+            )
+            #expect(!admitted)
+            #expect(await backend.recordedSharedChatMessageID() != nil)
+            _ = await host.deactivateTelegram(in: slot)
+            await host.shutdown()
+        }
+    }
+
+    /// A room swap (`/sessions new`, `/sessions load`; here the session takes
+    /// a new id in place) moves the observation and the relay to the new
+    /// room: what the new room already held is not forwarded, what it says
+    /// afterwards is.
+    @Test
+    func aSessionSwapSkipsWhatTheNewRoomAlreadyHolds() async throws {
+        try await Support.withSupport {
+            let room = "channel-swap-old-\(UUID().uuidString)"
+            let nextRoom = "channel-swap-new-\(UUID().uuidString)"
+            let (runner, backend) = try await Self.sharedChatRunner(room: room)
+            await backend.enqueueCoordinatorMessage(text: "need a decision", roomID: room)
+            let pair = try await Self.handLinked(
+                room: room, runner: runner, routeRoomID: TerminalTelegramRouteKey.sharedRoomID
+            )
+            let channel = pair.channel
+            let cards = TelegramRelayCardLog()
+            channel.sharedChatRelayStorage = Self.recordingRelay(cards)
+            let prompts = TelegramTestRecorder<String>()
+            channel.onRunTurnForTesting = { prompt, _, _ in prompts.append(prompt) }
+            let slot = try #require(pair.terminal.sessionHost.slots[pair.terminal.terminalSlotID])
+            slot.setActiveChannel(.telegram)
+            channel.startDriving()
+            try await Self.waitForCoordinatorTurn(about: "need a decision", prompts)
+
+            await backend.enqueueCoordinatorMessage(text: "already there", roomID: nextRoom)
+            pair.terminal.sessionID = nextRoom
+            #expect(channel.sessionID == nextRoom)
+            try await Self.waitForCoordinatorTurn(about: "already there", prompts)
+            #expect(channel.observedSharedChatRoomID == nextRoom)
+            await channel.sharedChatRelay.waitForPendingCards()
+            #expect(await cards.texts.isEmpty)
+
+            await backend.enqueueCoordinatorMessage(text: "fresh", roomID: nextRoom)
+            try await Support.waitUntil { await cards.texts.count == 1 }
+            await channel.sharedChatRelay.waitForPendingCards()
+            #expect(Self.bodies(of: await cards.texts) == ["fresh"])
+            await channel.stopDriving()
+            await pair.terminal.sessionHost.shutdown()
+        }
+    }
+
+    /// After the route was invalidated, a message from Telegram binds the
+    /// relay again: what the room said in the meantime, which the observation
+    /// may still have to offer, is not forwarded; what it says afterwards is.
+    @Test
+    func aRouteBackFromTheIngressSkipsWhatTheRoomAlreadyHolds() async throws {
+        try await Support.withSupport {
+            let room = "channel-route-back-\(UUID().uuidString)"
+            let (runner, backend) = try await Self.sharedChatRunner(room: room)
+            await backend.enqueueCoordinatorMessage(text: "ready", roomID: room)
+            let pair = try await Self.handLinked(
+                room: room, runner: runner, routeRoomID: TerminalTelegramRouteKey.sharedRoomID
+            )
+            let channel = pair.channel
+            let cards = TelegramRelayCardLog()
+            channel.sharedChatRelayStorage = Self.recordingRelay(cards)
+            await channel.handleIncomingMessage(Self.ownerMessage("/start"))
+            await channel.forwardSharedChatMessages(
+                [Self.agentMessage(room: room, senderID: "agent-1", name: "planner", text: "first")],
+                roomID: room
+            )
+            await channel.sharedChatRelay.waitForPendingCards()
+            #expect(Self.bodies(of: await cards.texts) == ["first"])
+
+            // The route moves to its next generation and the channel drops the
+            // retired lease, as its route validation does.
+            await channel.router.refresh(linkedChatID: 42, ownerUserID: 7, routes: [
+                AgentTelegramRouteManifest(roomID: TerminalTelegramRouteKey.sharedRoomID, generation: 2),
+            ])
+            await channel.routeWasInvalidated(pair.lease)
+            #expect(channel.activeRouteLease == nil)
+            await backend.enqueueCoordinatorMessage(text: "while unbound", roomID: room)
+
+            await channel.handleIncomingMessage(Self.ownerMessage("/start"))
+            #expect(channel.activeRouteLease?.generation == 2)
+            // What the observation may still offer: the whole transcript, then
+            // a message the room says afterwards.
+            let held = await runner.sharedChatTranscriptMessages(rootSessionID: room)
+            #expect(held.map(\.text) == ["ready", "while unbound"])
+            await channel.forwardSharedChatMessages(
+                held + [Self.agentMessage(room: room, senderID: "agent-1", name: "planner", text: "after")],
+                roomID: room
+            )
+            await channel.sharedChatRelay.waitForPendingCards()
+            #expect(Self.bodies(of: await cards.texts) == ["first", "after"])
+            await pair.terminal.sessionHost.shutdown()
+        }
+    }
+
+    /// A new lease of the route the relay already forwards (the route's
+    /// generation advanced; here it reaches the relay through a message from
+    /// Telegram) is a refresh, not a start: a new message of the room that
+    /// the observation has not offered yet still arrives.
+    @Test
+    func aRouteRefreshOnTheForwardedRoomStillRelaysANewMessage() async throws {
+        try await Support.withSupport {
+            let room = "channel-route-refresh-\(UUID().uuidString)"
+            let (runner, backend) = try await Self.sharedChatRunner(room: room)
+            await backend.enqueueCoordinatorMessage(text: "ready", roomID: room)
+            let pair = try await Self.handLinked(
+                room: room, runner: runner, routeRoomID: TerminalTelegramRouteKey.sharedRoomID
+            )
+            let channel = pair.channel
+            let cards = TelegramRelayCardLog()
+            channel.sharedChatRelayStorage = Self.recordingRelay(cards)
+            await channel.rebindSharedChatRelay(roomID: room)
+            #expect(await channel.sharedChatRelay.forwards(roomID: room, chatID: 42))
+
+            await backend.enqueueCoordinatorMessage(text: "fresh", roomID: room)
+            await channel.router.refresh(linkedChatID: 42, ownerUserID: 7, routes: [
+                AgentTelegramRouteManifest(roomID: TerminalTelegramRouteKey.sharedRoomID, generation: 2),
+            ])
+            await channel.handleIncomingMessage(Self.ownerMessage("/start"))
+            #expect(channel.activeRouteLease?.generation == 2)
+
+            let fresh = try #require(
+                await runner.sharedChatTranscriptMessages(rootSessionID: room).last
+            )
+            #expect(fresh.text == "fresh")
+            await channel.forwardSharedChatMessages([fresh], roomID: room)
+            await channel.sharedChatRelay.waitForPendingCards()
+            #expect(Self.bodies(of: await cards.texts) == ["fresh"])
+            await pair.terminal.sessionHost.shutdown()
+        }
+    }
+
     // MARK: - Handover context
 
     /// The context of the handover is the last six prompts and responses: the
@@ -721,20 +1110,28 @@ struct TelegramChannelIngressTests {
     }
 
     /// The Telegram channel of a terminal of session `room`, linked by hand
-    /// to chat 42 on the route of `room`: no control service is started, and
-    /// the system messages and picker cards are recorded through the seams.
+    /// to chat 42 on the route of `routeRoomID` (the route of `room` by
+    /// default; ``TerminalTelegramRouteKey/sharedRoomID`` for the route every
+    /// session shares), in the topic `topicID` when given: no control service
+    /// is started, and the system messages and picker cards are recorded
+    /// through the seams.
     private static func handLinked(
         room: String,
-        runner: AgentCoreSessionRunner? = nil
+        runner: AgentCoreSessionRunner? = nil,
+        routeRoomID: String? = nil,
+        topicID: Int? = nil
     ) async throws -> HandLinked {
+        let routeRoomID = routeRoomID ?? room
         let terminal = try Support.makeTerminal(
             transport: TelegramChannelTestTransport(botID: 1), sessionRunner: runner
         )
         terminal.sessionID = room
         let channel = terminal.telegramChannel
-        let route = AgentTelegramRouteManifest(roomID: room, generation: 1)
+        let route = AgentTelegramRouteManifest(topicID: topicID, roomID: routeRoomID, generation: 1)
         let lease = TerminalTelegramRouteLease(
-            key: .init(chatID: 42, userID: 7, roomID: room), generation: 1
+            key: .init(chatID: 42, userID: 7, topicID: topicID, roomID: routeRoomID),
+            generation: 1,
+            effectiveMessageThreadID: topicID
         )
         await channel.router.refresh(linkedChatID: 42, ownerUserID: 7, routes: [route])
         channel.linkedChatID = 42
@@ -874,6 +1271,49 @@ struct TelegramChannelIngressTests {
             validateLease: { _ in true },
             send: { text, _, _ in await log.record(text) }
         )
+    }
+
+    /// The message bodies of the relay cards `texts`, in order (a card is
+    /// route, body and footer, separated by blank lines).
+    private static func bodies(of texts: [String]) -> [String] {
+        texts.map { $0.components(separatedBy: "\n\n").dropFirst().first ?? "" }
+    }
+
+    /// Waits until the coordinator turn a shared-chat message about `text`
+    /// asks for has run. The observation offers a message before the turn
+    /// its batch triggers, so from here on that message was handled by the
+    /// relay: a negative expectation about its card is deterministic.
+    private static func waitForCoordinatorTurn(
+        about text: String,
+        _ prompts: TelegramTestRecorder<String>
+    ) async throws {
+        try await Support.waitUntil { prompts.values.contains { $0.contains(text) } }
+        try #require(prompts.values.contains { $0.contains(text) })
+    }
+
+    /// With the channel driving the slot of `room`, which held "need a
+    /// decision" before: that message is offered but never becomes a card,
+    /// and the next message of the room ("ship it?") is the only card, inviting
+    /// a reply to its sender.
+    private static func expectOnlyNewMessagesAreRelayed(
+        channel: TelegramChannel,
+        backend: SharedChatRuntimeBackend,
+        room: String,
+        cards: TelegramRelayCardLog,
+        prompts: TelegramTestRecorder<String>
+    ) async throws {
+        try await waitForCoordinatorTurn(about: "need a decision", prompts)
+        await channel.sharedChatRelay.waitForPendingCards()
+        #expect(await cards.texts.isEmpty)
+
+        await backend.enqueueCoordinatorMessage(text: "ship it?", roomID: room)
+        try await Support.waitUntil { await cards.texts.count == 1 }
+        await channel.sharedChatRelay.waitForPendingCards()
+
+        let texts = await cards.texts
+        #expect(texts.count == 1)
+        #expect(texts.first?.contains("ship it?") == true)
+        #expect(texts.first?.hasSuffix("Reply to this message to answer planner.") == true)
     }
 
     /// A message of an agent of `room` to the operator.

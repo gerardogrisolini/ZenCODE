@@ -269,34 +269,68 @@ extension TerminalChat {
         }
     }
 
-    /// The ending of a turn the terminal ran, which the channel that drives
-    /// the slot now presents: the terminal itself through
-    /// ``finishPromptResult(_:)``, or Telegram when the slot was handed over
-    /// while the turn ran. Returns whether the terminal presented it.
-    @discardableResult
-    func presentOwnTurnEnding(_ result: TerminalChatGenerationResult) async -> Bool {
-        guard sessionHost.activeChannel(in: terminalSlotID) == .telegram else {
+    /// The ending of a turn the terminal ran, which Telegram presents: the
+    /// loop found Telegram driving the slot when the turn ended (`/telegram
+    /// on` ran while the turn ran). The ending reaches the chat while the
+    /// turn's `reservation` still holds, and the reservation is released
+    /// only after it, so the session stays busy for the chat meanwhile (a
+    /// voice note transcribed meanwhile queues, a shared-chat message waits,
+    /// a message gets what ``TelegramChannel/refusesMessagesAsBusy``
+    /// decides): no turn starts before the chat received this turn's outcome
+    /// and summary, and closing this turn cannot retire the Telegram side of
+    /// the next one. Nothing the presentation awaits waits for the session
+    /// to be free.
+    ///
+    /// The loop decided once that Telegram presents it, and told the channel
+    /// (``TelegramChannel/primaryTurnEndingWillPresent()``). Whatever happens
+    /// meanwhile, the ending is presented once and `reservation` is released
+    /// once, after it. Telegram presents it if it still drives the slot when
+    /// the ending is handed over: nothing suspends from that check to the
+    /// start of ``TelegramChannel/finishTurn(ending:)``, which closes the
+    /// turn's Telegram side. Otherwise the slot came back to the terminal
+    /// while the terminal's output finished (or the host shut down), and the
+    /// terminal presents it itself through ``finishPromptResult(_:)``, not
+    /// through the host, which would hand it back to the loop as a second
+    /// generation completion. Then the channel resumes what waited for the
+    /// session (``TelegramChannel/sessionReservationDidEnd()``).
+    ///
+    /// Returns whether the terminal presented the ending.
+    func presentOwnTurnEndingInTelegram(
+        _ result: TerminalChatGenerationResult,
+        releasing reservation: ChatPromptReservation?
+    ) async -> Bool {
+        let channel = sessionHost.telegramChannel(in: terminalSlotID)
+        await finishStreamingOutput()
+        await quiesceTaskGraphObserverForTurnBoundary()
+        let presentsInTelegram = sessionHost.activeChannel(in: terminalSlotID) == .telegram
+        if presentsInTelegram {
+            await sessionHost.presentTurnEnding(Self.turnEnding(for: result), in: terminalSlotID)
+            await startTaskGraphObserver()
+        } else {
             await finishPromptResult(result)
-            return true
         }
-        let ending: ChatTurnEnding
+        if let reservation {
+            sessionHost.releasePrompt(reservation)
+        }
+        await channel?.sessionReservationDidEnd()
+        return !presentsInTelegram
+    }
+
+    /// `result`, the end of a turn the terminal ran, as the ending another
+    /// channel presents.
+    static func turnEnding(for result: TerminalChatGenerationResult) -> ChatTurnEnding {
         switch result {
         case let .success(success):
-            ending = ChatTurnEnding(
+            ChatTurnEnding(
                 outcome: .completed(success.response),
                 fileChangeSummary: success.fileChangeSummary,
                 automaticallyCompletedPlan: success.automaticallyCompletedPlan
             )
         case let .failure(failure):
-            ending = ChatTurnEnding(
+            ChatTurnEnding(
                 outcome: failure.isCancellation ? .cancelled : .failed(failure.message),
                 fileChangeSummary: failure.fileChangeSummary
             )
         }
-        await finishStreamingOutput()
-        await quiesceTaskGraphObserverForTurnBoundary()
-        await sessionHost.presentTurnEnding(ending, in: terminalSlotID)
-        await startTaskGraphObserver()
-        return false
     }
 }

@@ -262,6 +262,12 @@ final class ChatSlotPresenter: ChatSessionPresenter {
         await releasedActivePresenter().presentTaskGraphOverview(overview, origin: origin, publication: publication)
     }
 
+    // The reservation and the presentation of an overview are forwarded to
+    // the channel that drives the slot at each moment, so a channel switch
+    // between them hands one channel's reservation to the other. Each
+    // channel tells its own reservations apart (the terminal's revisions are
+    // positive, Telegram's negative) and presents a foreign one as one
+    // without a reservation.
     func reserveSubAgentOverviewPublication() async -> ChatOverviewPublication? {
         await releasedActivePresenter().reserveSubAgentOverviewPublication()
     }

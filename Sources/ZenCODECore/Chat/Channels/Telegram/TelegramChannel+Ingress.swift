@@ -35,6 +35,16 @@ extension TelegramChannel {
     static let busyMessageText =
         "ZenCODE is busy generating a response in this session. This Telegram request was not queued; wait for the current response to finish and send it again."
 
+    /// Whether a message from the chat is answered with ``busyMessageText``
+    /// instead of being handled (the busy gate of
+    /// ``handleIncomingMessage(_:)``): while the session generates a turn,
+    /// and while the primary channel presents the ending of its turn here as
+    /// ``refusesMessagesWhilePrimaryTurnEndingPresents`` says.
+    var refusesMessagesAsBusy: Bool {
+        guard isSessionGenerating else { return false }
+        return refusesMessagesWhilePrimaryTurnEndingPresents || !isPresentingPrimaryTurnEnding
+    }
+
     /// The answer to a permission reply without a request ID on the route
     /// several sessions share (see ``permissionReplyNeedsRequestID(_:lease:)``).
     static let sharedRoutePermissionReplyText =
@@ -56,11 +66,18 @@ extension TelegramChannel {
     /// Starts reading the chat: the control service's ingress, until
     /// ``stopDriving(shuttingDown:)``, and the session's shared-chat room,
     /// whose messages for the operator are forwarded to the chat (see
-    /// `TelegramChannel+SharedChatRelay.swift`). Starting it again while it
-    /// reads does nothing. ``readsIngress`` is `true` while it reads.
+    /// `TelegramChannel+SharedChatRelay.swift`). On an ACP session's slot the
+    /// controller's task-graph observer starts too (see
+    /// `TelegramChannel+TaskGraph.swift`), and the presenter applies its
+    /// policy for the sub-agent responses already complete
+    /// (``TelegramChannelPresenter/channelDidStartDriving()``). Starting it
+    /// again while it reads does nothing. ``readsIngress`` is `true` while it
+    /// reads.
     func startDriving() {
         startSharedChatObservation()
+        startTaskGraphObservationIfNeeded()
         guard ingressConsumerTask == nil else { return }
+        presenter.channelDidStartDriving()
         readsIngress = true
         let messages = controlService.incomingMessages
         ingressConsumerTask = Task(name: "ZenCODE.Telegram.channel-ingress") { [weak self] in
@@ -74,7 +91,10 @@ extension TelegramChannel {
     /// Stops what ``startDriving()`` started and waits for the message in
     /// hand, if any: the questions waiting for the next message are refused,
     /// the queued prompts dropped (what the message in hand queued too), and
-    /// the shared-chat observation ended. A task of the channel that holds no
+    /// the shared-chat observation ended. The sub-agent refresh the presenter
+    /// started and the task-graph observer of an ACP slot stop as well, so
+    /// nothing keeps publishing on the channel's presenter once another
+    /// channel drives the slot. A task of the channel that holds no
     /// reservation yet, such as a line still answered, is stopped and awaited
     /// (``stopTurnTaskWithoutReservation()``), so nothing read from the chat
     /// starts a turn afterwards; a turn already reserved goes on.
@@ -82,6 +102,8 @@ extension TelegramChannel {
     /// lets a later attach transcribe again.
     func stopDriving(shuttingDown: Bool = false) async {
         await stopSharedChatObservation()
+        await presenter.channelDidStopDriving()
+        await stopTaskGraphObservation()
         cancelPendingReaders()
         promptQueue = ChatPromptQueue()
         if let task = ingressConsumerTask {
@@ -162,16 +184,15 @@ extension TelegramChannel {
         if sessionTopic.map({ $0.lease.key.topicID == routeLease.key.topicID }) ?? true {
             let hadRouteLease = activeRouteLease != nil
             activeRouteLease = routeLease
-            await sharedChatRelay.activate(
-                roomID: routeLease.key.roomID,
-                chatID: routeLease.key.chatID,
-                lease: routeLease,
-                repliesEnabled: readsIngress
-            )
+            // The relay follows the session's room whatever route admitted the
+            // message: the shared route (`default`) serves every room, and a
+            // relay bound to its own room would drop every batch of the session.
+            await activateSharedChatRelay(roomID: sessionID, lease: routeLease)
             await activeRouteLeaseDidChange(hadLease: hadRouteLease)
         }
         guard let ingressFence = wireFence(for: routeLease) else { return false }
         let isSessionGenerating = isSessionGenerating
+        let refusesAsBusy = refusesMessagesAsBusy
 
         if let callbackQueryID = message.callbackQueryID,
            let callbackData = message.callbackData {
@@ -240,7 +261,7 @@ extension TelegramChannel {
                 break
             }
         }
-        guard !isSessionGenerating else {
+        guard !refusesAsBusy else {
             await sendBusyMessage(lease: routeLease)
             return false
         }
@@ -325,7 +346,7 @@ extension TelegramChannel {
                   chatID: message.chatID, userID: message.userID,
                   topicID: message.topicID
               ),
-              lease.key.roomID == sessionID || lease.key.roomID == "default" else {
+              lease.key.admits(roomID: sessionID) else {
             return nil
         }
         return lease

@@ -164,7 +164,7 @@ extension TelegramChannel {
         let candidates = settings.routes.filter {
             $0.topicID == nil
                 && $0.lifecycle == .active
-                && ($0.roomID == sessionID || $0.roomID == "default")
+                && TerminalTelegramRouteKey.route(roomID: $0.roomID, admits: sessionID)
         }
         guard candidates.count == 1,
               let lease = try? await router.resolve(
@@ -253,13 +253,18 @@ extension TelegramChannel {
     /// In topic mode the topic's route is rebound to `sessionID`
     /// (`rebind(_:toRoomID:)`): it keeps its topic, its generation advances,
     /// and the new lease becomes the link's route, so the next turn and the
-    /// shared-chat relay use it. The topic is then renamed; its name in
-    /// `/telegram` changes only when Telegram accepts the rename. A
-    /// failure is recorded and presented on the primary channel like a
-    /// failed creation, and a failed rebind leaves the topic as it was. In
-    /// legacy mode, and while detached, nothing happens, as before topics.
-    /// The slot's primary channel calls it when the slot switched session;
-    /// the relay is rebound right after.
+    /// shared-chat relay use it. The relay is rebound to the new room on it
+    /// right away (``rebindSharedChatRelay(roomID:)``), before the rename,
+    /// which it does not depend on: what the new room says while Telegram
+    /// answers the rename, or after a rename that failed, reaches the chat.
+    /// The topic is then renamed; its name in `/telegram` changes only when
+    /// Telegram accepts the rename. A detach, an attach, or another rebind
+    /// that took the link while the relay was rebound owns the topic's name,
+    /// so this rebind renames nothing. A failure is recorded and presented on
+    /// the primary channel like a failed creation, and a failed rebind
+    /// leaves the topic as it was. In legacy mode, and while detached,
+    /// nothing happens, as before topics. The slot's primary channel calls
+    /// it when the slot switched session.
     ///
     /// The previous lease fails validation from the rebind on, so nothing
     /// still holding it can write: every send of a turn in progress on it
@@ -267,9 +272,7 @@ extension TelegramChannel {
     /// calls ``routeWasInvalidated(_:)``, which stops that turn, ends its
     /// reporting and tears down the previous route's state but keeps the
     /// link's new route, which is no longer the invalidated one. ForceReply
-    /// receipts of the previous lease are no longer answered. The channel
-    /// rebinds the shared-chat relay to the new room afterwards
-    /// (``rebindSharedChatRelay(roomID:)``).
+    /// receipts of the previous lease are no longer answered.
     public func rebind(sessionID: String, displayName: String) async {
         guard let topic = sessionTopic else { return }
         let rebound: TerminalTelegramRouteLease
@@ -288,6 +291,13 @@ extension TelegramChannel {
         let hadRouteLease = activeRouteLease != nil
         activeRouteLease = rebound
         await activeRouteLeaseDidChange(hadLease: hadRouteLease)
+        // The relay follows the new route before the rename, which it does
+        // not depend on: what the new room says while Telegram answers the
+        // rename, or after a rename that failed, reaches the chat.
+        await rebindSharedChatRelay(roomID: sessionID)
+        // A detach, an attach, or another rebind that ran while the relay was
+        // rebound owns the link now, and its topic's name.
+        guard sessionTopic?.lease == rebound else { return }
         let name = TerminalTelegramAPIClient.boundedTopicName(displayName)
         do {
             guard let topicID = rebound.key.topicID,
@@ -306,7 +316,6 @@ extension TelegramChannel {
         if sessionTopic?.lease == rebound {
             sessionTopic?.name = name
         }
-        await rebindSharedChatRelay(roomID: sessionID)
     }
 
     // MARK: - Detach

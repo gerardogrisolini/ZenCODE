@@ -866,6 +866,48 @@ struct TerminalChatRenderingTests {
         #expect(completedSnapshot.activeToolRenderedRowCount == 0)
     }
 
+    /// A reservation the terminal did not take is presented as one without a
+    /// reservation: the slot's presenter forwards the reservation and the
+    /// presentation to the channel that drives the slot at each moment, so a
+    /// switch in between can hand the terminal one that Telegram took
+    /// (Telegram's revisions are never positive). The overview is rendered as
+    /// it comes and moves no revision: an older reservation of the
+    /// terminal's own is still dropped, a later one is still rendered.
+    @Test
+    func subAgentOverviewWithAForeignReservationRendersAsItComes() async throws {
+        let terminal = try makeTerminalForToolInterleavingTest(
+            sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil)
+        )
+        func overview(_ count: Int) -> ChatSubAgentOverview {
+            ChatSubAgentOverview(snapshots: (1 ... count).map {
+                TelegramTurnActivityFixtures.subAgent(id: "agent-\($0)", status: .running)
+            })
+        }
+        func renderedSignature() async -> String? {
+            await terminal.renderCoordinator.snapshot().lastRenderedSubAgentOverviewSignature
+        }
+        let older = await terminal.reserveSubAgentOverviewPublication()
+        let newer = await terminal.reserveSubAgentOverviewPublication()
+        await terminal.renderSubAgentOverview(overview(1), origin: .automatic, publication: newer)
+        let ownSignature = try #require(await renderedSignature())
+
+        await terminal.renderSubAgentOverview(
+            overview(2), origin: .automatic, publication: ChatOverviewPublication(revision: Int.min + 1)
+        )
+        let foreignSignature = try #require(await renderedSignature())
+        #expect(foreignSignature != ownSignature)
+
+        await terminal.renderSubAgentOverview(overview(3), origin: .automatic, publication: older)
+        #expect(await renderedSignature() == foreignSignature)
+
+        let latest = await terminal.reserveSubAgentOverviewPublication()
+        #expect(latest.revision > newer.revision)
+        await terminal.renderSubAgentOverview(overview(4), origin: .automatic, publication: latest)
+        let latestSignature = await renderedSignature()
+        #expect(latestSignature != foreignSignature)
+        #expect(latestSignature != nil)
+    }
+
     @Test
     func subAgentOverviewRendersDuringAgentToolBlockCompact() async throws {
         let terminal = try makeTerminalForToolInterleavingTest(

@@ -129,6 +129,21 @@ Release tags follow the strict `vX.Y.Z` contract described in
   to stop it, or wait for it to end, then send /telegram off.` `session/load`
   replays the turns run from Telegram with the others. The link is not saved:
   after the client loads the session again, send `/telegram on` again.
+- Telegram: while the linked chat drives a session, a turn reaches it with more
+  than its responses, with no setting to turn on. The tool calls of the main
+  agent are the lines of one activity message, edited in place: `⏳ <tool and
+  target>`, which becomes `✅`, or `❌` where the terminal shows ⚠️. A line
+  carries no arguments or result, and the calls the terminal does not show,
+  such as `agent.message`, get no line. The outcome is written in the line
+  where the call started. Any new message in the chat closes the activity
+  message and the next call opens a new one below it; editing the task-graph
+  card or the sub-agent message in place does not. Updates in quick
+  succession are merged into fewer edits, and the message stays in the chat.
+  Each completed reasoning block arrives as a message with an expandable
+  `💭 Thinking` section, cut at 3,900 characters, after the response written
+  before it. While sub-agents work, a `🤖 Sub-agent` message, one per turn and
+  edited in place, shows their summary and one line per agent; it is created
+  only when the overview changed since Telegram began to drive the session.
 - With several sessions linked to the same bot in one process (for example the
   sessions of one ACP client), `/allow`, `/always`, and `/deny` without a
   request ID where those sessions share the chat (General, or the whole chat
@@ -303,6 +318,41 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Telegram: an *Always* approval given in the linked chat now also covers
   later turns of the session after `/telegram off` or a topic change; for
   `local.exec` it is saved like an *Always* given in the terminal.
+- Telegram: with the route without a topic (the one every session shares, as in
+  a chat without Threaded mode), the messages of the session's live chat for
+  the operator never reached Telegram. They are now forwarded as soon as
+  Telegram drives the session, without waiting for a message from the chat.
+  Only new messages are forwarded: the ones already in the room when the chat
+  starts receiving it are skipped, at the first `/telegram on`, at `/telegram
+  on` after `/telegram off` (what arrived while it was off does not come),
+  after `/sessions new` and after loading a session, and when the chat gets its
+  route back, with a topic of its own or without. Renewing the route while the
+  room is being forwarded skips nothing, and a reply to a message already
+  forwarded still reaches its sender. A route bound to another session's room
+  is still refused.
+- Telegram: in a turn driven from Telegram the sub-agent overview was never
+  published, so the chat received nothing about the sub-agents. It now is, as
+  in the terminal: when an `agent.*` call starts and settles, every 2 seconds
+  while a blocking one runs, and when the model work ends. The chat gets the
+  `🤖 Sub-agent` message, and each partial (💬) and completed (✅) response
+  once, as a message of its own, and not again in a later turn that shows it
+  still. What the sub-agents already showed when Telegram began to drive the
+  session, in the terminal or in the editor, is not sent: the responses of
+  that moment stay out of the chat, and an overview unchanged since then
+  creates no `🤖 Sub-agent` message. Only the responses and changes that come
+  later reach the chat.
+- Telegram: when Telegram drives the session of an ACP client such as Xcode,
+  the task-graph card now reaches the chat during the turns run from Telegram.
+  It used to be missing. As in the terminal, its final state is published in
+  the turn that closes, and a later turn receives nothing born in the previous
+  one. The editor receives nothing more than before.
+- Telegram: a turn that started in the terminal and ended while Telegram drove
+  the session could release the session before its outcome reached the chat,
+  so a prompt sent from the chat in that moment started a turn whose messages
+  were then cut off by the closing of the previous one. The outcome and the
+  summary now reach the chat first; a message sent from the chat meanwhile is
+  queued and runs right after them, and a turn from the chat waits for the
+  previous turn to finish closing.
 
 ## [3.2.0] - 2026-10-30
 

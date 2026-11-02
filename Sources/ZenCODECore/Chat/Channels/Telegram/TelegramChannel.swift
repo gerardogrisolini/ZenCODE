@@ -35,7 +35,9 @@ import ToolCore
 /// `/diff`, the artifact consent buttons and inbound attachments
 /// (`+Artifacts`), voice notes (`+Voice`), the shared-chat relay and its
 /// replies (`+SharedChatRelay`), and the `/chat` mention picker
-/// (`+MentionPicker`). The ingress is in `TelegramChannel+Ingress.swift`.
+/// (`+MentionPicker`). The ingress is in `TelegramChannel+Ingress.swift`; the
+/// task-graph observer the channel runs on an ACP session's slot is in
+/// `TelegramChannel+TaskGraph.swift`.
 ///
 /// ``attach()`` links the session, ``detach()`` unlinks it and keeps what a
 /// later attach reuses, and ``shutdown()`` is the teardown when the slot
@@ -145,6 +147,17 @@ public final class TelegramChannel: ChatInteractionHost {
     /// current turn, so republished identical content does not repeat in
     /// the chat. Reset when a new turn begins.
     var publishedTaskGraphOverviewSignature: String?
+    /// The reasoning of the block streaming now, aggregated until the event
+    /// that closes it (assistant content, a tool call, an automatic `/goal`
+    /// continuation, the end of the turn) and then sent as one thinking
+    /// message (see `TelegramChannel+Turn.swift`). Bounded just above the
+    /// message limit, so the cut is still seen.
+    var pendingThought = ""
+    /// `true` while the reasoning streaming now must not be sent: the turn
+    /// moved onto the channel while its assistant text streamed, so a
+    /// reasoning block may have begun before the move. Cleared by the next
+    /// event that closes a reasoning block.
+    var thoughtBlockIsSuppressed = false
     /// The task running the turn the channel started through the host, while
     /// one runs (see `TelegramChannel+Turn.swift`).
     var activeTurnTask: Task<Void, Never>?
@@ -188,6 +201,24 @@ public final class TelegramChannel: ChatInteractionHost {
     var sharedChatObservation: AgentSharedChatCoordinator.Observation?
     /// The room ``sharedChatObservationTask`` observes.
     var observedSharedChatRoomID: String?
+
+    // MARK: - Task graph (ACP slots)
+
+    /// `true` while the channel observes the graph of an ACP session's slot:
+    /// set by ``startDriving()`` on such a slot, even when the slot runs no
+    /// session yet, and cleared by ``stopTaskGraphObservation()``. The
+    /// observer follows the slot's incarnations while it is `true` (see
+    /// `TelegramChannel+TaskGraph.swift`).
+    var observesTaskGraph = false
+    /// The last work on the controller's task-graph observer the channel
+    /// queued (a binding, the quiescence at a turn boundary, the restart
+    /// after it), which awaits the work queued before it; ``stopTaskGraphObservation()``
+    /// awaits it. It stays set once done, until the observation stops;
+    /// always `nil` on every other slot.
+    var taskGraphObservationTask: Task<Void, Never>?
+    /// The controller whose task-graph observer the channel binds, from the
+    /// moment it queues the binding until the observation stops.
+    weak var taskGraphObservedController: ChatSessionController?
 
     // MARK: - Ingress
 
@@ -233,6 +264,36 @@ public final class TelegramChannel: ChatInteractionHost {
     /// Stands in for the turn the channel would run through the host, with
     /// the prompt, its route, and its purpose; `nil` in production.
     var onRunTurnForTesting: (@Sendable (String, TerminalTelegramRouteLease, ChatTurnPurpose) async -> Void)?
+    /// Called each time ``beginTurn(adoptingStreamingBlock:liveThought:)``
+    /// waits for the turn that is finishing, before it suspends; `nil` in
+    /// production.
+    var onBeginTurnWaitsForFinishingTurnForTesting: (@ChatSessionActor () -> Void)?
+
+    // MARK: - Turn boundaries
+
+    /// How many ``finishTurn(ending:)`` calls are running: while one is, the
+    /// turn it closes still owns the turn's Telegram side, and a turn that
+    /// begins waits (see ``beginTurn(adoptingStreamingBlock:liveThought:)``).
+    var finishingTurnCount = 0
+    /// The turns waiting in ``beginTurn(adoptingStreamingBlock:liveThought:)``
+    /// for ``finishingTurnCount`` to drop to zero, oldest first.
+    var finishingTurnWaiters: [CheckedContinuation<Void, Never>] = []
+    /// `true` while the primary channel presents in the chat the ending of a
+    /// turn it ran, with the session still reserved for that turn: from
+    /// ``primaryTurnEndingWillPresent()`` to ``sessionReservationDidEnd()``
+    /// (see `TerminalChat+Telegram.swift`). What a message from the chat gets
+    /// meanwhile is ``refusesMessagesWhilePrimaryTurnEndingPresents``.
+    var isPresentingPrimaryTurnEnding = false
+    /// The one policy for a message from the chat that arrives while the
+    /// primary channel presents here the ending of a turn it ran, with the
+    /// session still reserved for that turn
+    /// (``isPresentingPrimaryTurnEnding``). `false`, the default, lets it
+    /// through the busy gate, so a prompt queues and runs once the session is
+    /// released (``sessionReservationDidEnd()``), after the turn's outcome and
+    /// summary; `true` answers it with ``busyMessageText``, as during the rest
+    /// of the turn. The callback of a button is answered busy either way. Read
+    /// by ``refusesMessagesAsBusy``; a test sets it.
+    var refusesMessagesWhilePrimaryTurnEndingPresents = false
 
     // MARK: - Lifecycle bookkeeping
 
@@ -306,6 +367,7 @@ public final class TelegramChannel: ChatInteractionHost {
         guard let incarnation else { return }
         lastKnownSessionID = incarnation.sessionID
         guard drivesSlot else { return }
+        rebindTaskGraphObservationIfNeeded()
         Task { @ChatSessionActor [weak self] in
             await self?.rebindSharedChatObservationIfNeeded()
         }

@@ -6,11 +6,18 @@
 //  the queue that waits, whole, while Telegram drives and runs after
 //  `/telegram off` (a `/telegram off` typed meanwhile included); a turn of
 //  the terminal that moves to Telegram and back with its final answer; a
-//  turn of the terminal whose ending went to Telegram, never read aloud; a
-//  turn adopted from Telegram (generating state, status bar, final content
-//  without the text the catch-up showed, Esc that stops it); the catch-up
-//  rendered before anything more of the adopted turn, with what the turn
-//  presented meanwhile shown after it; the dormant terminal that refuses
+//  turn of the terminal whose ending went to Telegram, never read aloud; the
+//  ending of a turn of the terminal presented in the chat while its
+//  reservation still holds (a prompt or a voice note from the chat queued
+//  meanwhile runs after it, with its own reporter, and so does a text, which
+//  is answered busy only under the channel's other policy, while a button
+//  press is answered busy; a `/telegram off` before or during that
+//  presentation leaves one presentation and one release), and released first
+//  while the terminal drives; a turn adopted from Telegram (generating state,
+//  status bar, final
+//  content without the text the catch-up showed, Esc that stops it); the
+//  catch-up rendered before anything more of the adopted turn, with what the
+//  turn presented meanwhile shown after it; the dormant terminal that refuses
 //  dictation, mentions by voice, and the access-mode shortcut; and, without
 //  the loop, `/telegram on` refused, `/telegram off` that tells the link
 //  stopped, and the catch-up title above a response in progress. The model
@@ -38,6 +45,8 @@ struct TerminalTelegramHandoverTests {
         let voice = TerminalHandoverVoiceController()
         let generationStates = TelegramTestRecorder<Bool>()
         let publications = TelegramTestRecorder<Int>()
+        let panelGate = TerminalHandoverPanelGate()
+        private var isPanelGateInstalled = false
 
         init(root: URL, voiceMode: Bool = false) throws {
             let workspace = root.appendingPathComponent("workspace-\(UUID().uuidString)", isDirectory: true)
@@ -91,6 +100,47 @@ struct TerminalTelegramHandoverTests {
 
         var activeChannel: ChatSlotChannel {
             terminal.sessionHost.activeChannel(in: slot)
+        }
+
+        /// The slot's Telegram channel, once `/telegram on` created it.
+        var telegramChannel: TelegramChannel? {
+            terminal.sessionHost.telegramChannel(in: slot)
+        }
+
+        /// The prompt reserved on the slot's session now, if any.
+        var reservedPromptID: UUID? {
+            terminal.sessionHost.activePromptID(in: slot)
+        }
+
+        /// Holds the first panel render that runs from now on while the panel
+        /// no longer shows processing (``panelGate``): the one that
+        /// `setPanelProcessing(false)` awaits when a turn ends, so the loop
+        /// stops between the end of the turn and the presentation of its
+        /// ending, after deciding who presents it.
+        func armPanelGate() async {
+            if !isPanelGateInstalled {
+                isPanelGateInstalled = true
+                let reader = terminal.interactiveReader
+                let gate = panelGate
+                reader.withPanelLock { state in
+                    state.panelRenderBeforeUpdateForTesting = {
+                        guard !reader.withPanelLock({ $0.panelIsProcessing }) else { return }
+                        await gate.holdIfArmed()
+                    }
+                }
+            }
+            await panelGate.arm()
+        }
+
+        /// A turn of the terminal that runs in the chat: `prompt`, typed, until
+        /// the model pauses in it, then `/telegram on`, until the terminal
+        /// wrote its status line.
+        func startTerminalTurnMovedToTelegram(_ prompt: String) async -> Bool {
+            submit(prompt)
+            guard await waitUntil({ await self.backend.isPaused }), await turnTelegramOn() else {
+                return false
+            }
+            return await waitUntil { await self.output().contains("Session driven from Telegram.") }
         }
 
         /// Creates the session and starts the loop, once it reads its queue.
@@ -328,6 +378,285 @@ struct TerminalTelegramHandoverTests {
         }
     }
 
+    // MARK: - The ending of a turn of the terminal, before the release
+
+    /// The race of the terminal's path. A turn of the terminal ends while
+    /// Telegram drives the slot, and a prompt from the chat arrives while the
+    /// loop is between the end of the turn and the presentation of its
+    /// ending. The session is still the terminal turn's, so the prompt
+    /// queues instead of starting. Once the chat received the turn's outcome
+    /// and summary, the reservation is released and the prompt runs as a
+    /// turn of its own, whose reporter and output reach the chat after them.
+    @Test
+    nonisolated func aPromptFromTheChatWaitsForTheEndingOfATerminalTurnAndThenRunsWhole() async throws {
+        try await withEnvironment { root in
+            let harness = try Harness(root: root)
+            await harness.backend.enqueue([
+                .writeFile(path: "notes.txt", contents: "uno\n"), .reply("first answer"), .pause,
+            ])
+            await harness.backend.enqueue([.reply("second answer"), .pause])
+            let loop = try await harness.run()
+            #expect(await harness.startTerminalTurnMovedToTelegram("primo"))
+            let channel = try #require(harness.telegramChannel)
+            let lease = try #require(channel.activeRouteLease)
+
+            await harness.armPanelGate()
+            await harness.backend.release()
+            await harness.panelGate.waitUntilHeld()
+            // The turn ended and its ending is not presented yet: the session
+            // is still reserved, so the chat's prompt queues.
+            #expect(harness.reservedPromptID != nil)
+            #expect(await channel.admitPrompt("secondo", lease: lease, mode: .directPrompt))
+            #expect(channel.activeTurnTask == nil)
+            #expect(channel.promptQueue.count == 1)
+            #expect(await harness.backend.prompts == ["primo"])
+            #expect(await !harness.transport.sentTexts.contains { $0.contains("ZenCODE completed") })
+
+            await harness.panelGate.release()
+            // The queued prompt starts once the session is released.
+            #expect(await harness.waitUntil {
+                guard await harness.backend.prompts == ["primo", "secondo"] else { return false }
+                return await harness.backend.isPaused
+            })
+            let sentWhileSecondRuns = await harness.transport.sentTexts
+            let firstOutcome = try #require(sentWhileSecondRuns.firstIndex { $0.contains("ZenCODE completed") })
+            #expect(sentWhileSecondRuns[firstOutcome].contains("first answer"))
+            let summary = try #require(sentWhileSecondRuns.firstIndex { $0.contains("Summary: 1 file") })
+            #expect(firstOutcome < summary)
+
+            // The new turn kept its reporter: its outcome reaches the chat.
+            await harness.backend.release()
+            #expect(await harness.waitUntil {
+                await harness.transport.sentTexts.contains {
+                    $0.contains("ZenCODE completed") && $0.contains("second answer")
+                }
+            })
+            let sent = await harness.transport.sentTexts
+            let secondOutcome = try #require(sent.firstIndex {
+                $0.contains("ZenCODE completed") && $0.contains("second answer")
+            })
+            #expect(summary < secondOutcome)
+            #expect(!sent[firstOutcome].contains("second answer"))
+            #expect(Self.occurrences(of: "ZenCODE completed", in: sent.joined(separator: "\n")) == 2)
+            try await harness.finish(loop)
+        }
+    }
+
+    /// A voice note from the chat, transcribed while a turn of the terminal
+    /// runs in the chat, waits in the channel's queue: closing the turn
+    /// finds the session still reserved and starts nothing. The note runs
+    /// once the terminal released the session, after the turn's outcome.
+    @Test
+    nonisolated func aVoiceNoteQueuedDuringATerminalTurnRunsOnceTheSessionIsReleased() async throws {
+        try await withEnvironment { root in
+            let harness = try Harness(root: root)
+            await harness.backend.enqueue([.reply("first answer"), .pause])
+            let loop = try await harness.run()
+            #expect(await harness.startTerminalTurnMovedToTelegram("primo"))
+            let channel = try #require(harness.telegramChannel)
+            let lease = try #require(channel.activeRouteLease)
+
+            await channel.voiceTranscriptionDidFinish(.success("vocale"), lease: lease)
+            #expect(channel.promptQueue.count == 1)
+            #expect(channel.activeTurnTask == nil)
+
+            await harness.backend.release()
+            #expect(await harness.waitUntil { await harness.backend.prompts == ["primo", "vocale"] })
+            #expect(await harness.waitUntil {
+                await harness.transport.sentTexts.contains { $0.contains("Answer to: vocale") }
+            })
+            let sent = await harness.transport.sentTexts
+            let firstOutcome = try #require(sent.firstIndex {
+                $0.contains("ZenCODE completed") && $0.contains("first answer")
+            })
+            let voiceOutcome = try #require(sent.firstIndex { $0.contains("Answer to: vocale") })
+            #expect(firstOutcome < voiceOutcome)
+            #expect(channel.promptQueue.isEmpty)
+            try await harness.finish(loop)
+        }
+    }
+
+    /// The other policy for the window in which the ending of a turn of the
+    /// terminal is presented in the chat
+    /// (``TelegramChannel/refusesMessagesWhilePrimaryTurnEndingPresents`` set
+    /// to `true`): a text from the chat that arrives then, the session still
+    /// reserved, is answered with the busy text, as during the rest of the
+    /// turn, and never runs.
+    @Test
+    nonisolated func aTextFromTheChatWhileTheEndingOfATerminalTurnIsPresentedIsAnsweredBusyUnderTheBusyPolicy() async throws {
+        try await withEnvironment { root in
+            let harness = try Harness(root: root)
+            await harness.backend.enqueue([.reply("first answer"), .pause])
+            let loop = try await harness.run()
+            #expect(await harness.startTerminalTurnMovedToTelegram("primo"))
+            let channel = try #require(harness.telegramChannel)
+            channel.refusesMessagesWhilePrimaryTurnEndingPresents = true
+
+            await harness.armPanelGate()
+            await harness.backend.release()
+            await harness.panelGate.waitUntilHeld()
+            #expect(channel.isPresentingPrimaryTurnEnding)
+            try await harness.transport.deliver("terzo")
+            #expect(await harness.waitUntil {
+                await harness.transport.sentTexts.contains { $0.contains("ZenCODE is busy") }
+            })
+            await harness.panelGate.release()
+
+            // Once the session is released nothing of the text waits to run.
+            #expect(await harness.waitUntil { harness.reservedPromptID == nil })
+            #expect(!channel.isPresentingPrimaryTurnEnding)
+            #expect(channel.promptQueue.isEmpty)
+            #expect(channel.activeTurnTask == nil)
+            #expect(await harness.backend.prompts == ["primo"])
+            #expect(await harness.transport.sentTexts.contains { $0.contains("ZenCODE completed") })
+            try await harness.finish(loop)
+        }
+    }
+
+    /// A text from the chat that arrives while the ending of a turn of the
+    /// terminal is presented there passes the busy gate and queues, and runs
+    /// once the session is released, after the turn's outcome; the press of a
+    /// button is still answered busy: the default of the channel's one policy
+    /// for that window
+    /// (``TelegramChannel/refusesMessagesWhilePrimaryTurnEndingPresents``).
+    @Test
+    nonisolated func aTextFromTheChatWhileTheEndingOfATerminalTurnIsPresentedQueues() async throws {
+        try await withEnvironment { root in
+            let harness = try Harness(root: root)
+            await harness.backend.enqueue([.reply("first answer"), .pause])
+            let loop = try await harness.run()
+            #expect(await harness.startTerminalTurnMovedToTelegram("primo"))
+            let channel = try #require(harness.telegramChannel)
+            #expect(!channel.refusesMessagesWhilePrimaryTurnEndingPresents)
+
+            await harness.armPanelGate()
+            await harness.backend.release()
+            await harness.panelGate.waitUntilHeld()
+            #expect(channel.isPresentingPrimaryTurnEnding)
+            try await harness.transport.deliver("terzo")
+            #expect(await harness.waitUntil { channel.promptQueue.count == 1 })
+            #expect(channel.activeTurnTask == nil)
+            try await harness.transport.deliverCallbackQuery("zencode:test:press")
+            #expect(await harness.waitUntil {
+                await harness.transport.sentTexts.contains { $0.contains("ZenCODE is busy") }
+            })
+            #expect(await harness.backend.prompts == ["primo"])
+            await harness.panelGate.release()
+
+            // The queued text runs once the session is released.
+            #expect(await harness.waitUntil { await harness.backend.prompts == ["primo", "terzo"] })
+            #expect(await harness.waitUntil {
+                await harness.transport.sentTexts.contains { $0.contains("Answer to: terzo") }
+            })
+            let sent = await harness.transport.sentTexts
+            let firstOutcome = try #require(sent.firstIndex {
+                $0.contains("ZenCODE completed") && $0.contains("first answer")
+            })
+            let textOutcome = try #require(sent.firstIndex { $0.contains("Answer to: terzo") })
+            #expect(firstOutcome < textOutcome)
+            #expect(sent.filter { $0.contains("ZenCODE is busy") }.count == 1)
+            #expect(!channel.isPresentingPrimaryTurnEnding)
+            try await harness.finish(loop)
+        }
+    }
+
+    /// While the terminal drives the slot, a turn ends as it always did: its
+    /// reservation is released before anything of its ending is presented,
+    /// then the terminal writes the answer and reads it aloud.
+    @Test
+    nonisolated func aTerminalTurnReleasesItsReservationBeforeItsEndingWhileTheTerminalDrives() async throws {
+        try await withEnvironment { root in
+            let harness = try Harness(root: root, voiceMode: true)
+            await harness.backend.enqueue([.reply("local answer"), .pause])
+            let loop = try await harness.run()
+            harness.submit("primo")
+            #expect(await harness.waitUntil { await harness.backend.isPaused })
+
+            await harness.armPanelGate()
+            await harness.backend.release()
+            await harness.panelGate.waitUntilHeld()
+            #expect(harness.reservedPromptID == nil)
+            #expect(await !harness.output().contains("local answer"))
+
+            await harness.panelGate.release()
+            #expect(await harness.turnEnded(after: 2, writing: "local answer"))
+            #expect(await harness.waitUntil { await harness.voice.spoken == ["local answer"] })
+            #expect(Self.occurrences(of: "local answer", in: await harness.output()) == 1)
+            #expect(harness.telegramChannel == nil)
+            try await harness.finish(loop)
+        }
+    }
+
+    /// `/telegram off` (through the host, as only one run outside the loop
+    /// could) while the loop is between the end of a turn of the terminal
+    /// in the chat and the hand-over of its ending: the loop keeps the
+    /// branch it chose, the terminal presents the ending once, the chat
+    /// receives no outcome, and the reservation is released once, so the
+    /// next prompt runs.
+    @Test
+    nonisolated func telegramOffBeforeTheEndingIsHandedOverLeavesItToTheTerminalOnce() async throws {
+        try await withEnvironment { root in
+            let harness = try Harness(root: root)
+            await harness.backend.enqueue([.reply("first answer"), .pause])
+            let loop = try await harness.run()
+            #expect(await harness.startTerminalTurnMovedToTelegram("primo"))
+
+            await harness.armPanelGate()
+            await harness.backend.release()
+            await harness.panelGate.waitUntilHeld()
+            #expect(harness.reservedPromptID != nil)
+            _ = await harness.terminal.sessionHost.deactivateTelegram(in: harness.slot)
+            #expect(harness.activeChannel == .primary)
+            await harness.panelGate.release()
+
+            #expect(await harness.turnEnded(after: 2, writing: "first answer"))
+            #expect(await harness.waitUntil { harness.reservedPromptID == nil })
+            harness.submit("terzo")
+            #expect(await harness.turnEnded(after: 4, writing: "Answer to: terzo"))
+            #expect(harness.generationStates.values == [true, false, true, false])
+            #expect(Self.occurrences(of: "first answer", in: await harness.output()) == 1)
+            #expect(await !harness.transport.sentTexts.contains { $0.contains("ZenCODE completed") })
+            try await harness.finish(loop)
+        }
+    }
+
+    /// `/telegram off` (through the host) while the chat receives the ending
+    /// of a turn of the terminal, its outcome held on the wire: Telegram,
+    /// which took the ending, delivers it, the terminal does not present it
+    /// again, and the reservation, held until then, is released once.
+    @Test
+    nonisolated func telegramOffWhileTheChatReceivesTheEndingDoesNotPresentItTwice() async throws {
+        try await withEnvironment { root in
+            let harness = try Harness(root: root)
+            await harness.backend.enqueue([.reply("first answer"), .pause])
+            let loop = try await harness.run()
+            #expect(await harness.startTerminalTurnMovedToTelegram("primo"))
+
+            await harness.transport.holdSends(containing: "ZenCODE completed")
+            await harness.backend.release()
+            await harness.transport.waitUntilASendIsHeld()
+            #expect(harness.reservedPromptID != nil)
+            let host = harness.terminal.sessionHost
+            let slot = harness.slot
+            let deactivation = Task { @ChatSessionActor in
+                _ = await host.deactivateTelegram(in: slot)
+            }
+            #expect(await harness.waitUntil { harness.activeChannel == .primary })
+            await harness.transport.releaseSends()
+            await deactivation.value
+
+            #expect(await harness.waitUntil { harness.reservedPromptID == nil })
+            harness.submit("terzo")
+            #expect(await harness.turnEnded(after: 4, writing: "Answer to: terzo"))
+            #expect(harness.generationStates.values == [true, false, true, false])
+            #expect(await !harness.output().contains("first answer"))
+            #expect(await harness.transport.sentTexts.contains {
+                $0.contains("ZenCODE completed") && $0.contains("first answer")
+            })
+            try await harness.finish(loop)
+        }
+    }
+
     // MARK: - A turn adopted from Telegram
 
     /// `/telegram off` while a turn from Telegram runs: the terminal adopts
@@ -541,6 +870,9 @@ private actor TerminalHandoverBackend: AgentRuntimeBackend {
         case reply(String)
         case pause
         case readFile(path: String)
+        /// Writes `contents` to `path`, relative to the session's directory,
+        /// through a reported `local.writeFile` tool call.
+        case writeFile(path: String, contents: String)
     }
 
     private var scripts: [[Step]] = []
@@ -671,6 +1003,22 @@ private actor TerminalHandoverBackend: AgentRuntimeBackend {
                 await onEvent(.toolCallCompleted(call, DirectAgentToolResult(
                     output: "contents", summary: "Read \(path)"
                 )))
+            case let .writeFile(path, contents):
+                let directory = URL(fileURLWithPath: sessions[sessionID]?.workingDirectoryPath
+                    ?? FileManager.default.currentDirectoryPath)
+                let write = DirectAgentToolCall(
+                    id: "write-\(index)",
+                    name: "local.writeFile",
+                    argumentsObject: ["path": path, "content": contents],
+                    argumentsJSON: "{}"
+                )
+                await onEvent(.toolCallStarted(write))
+                try Data(contents.utf8).write(to: directory.appendingPathComponent(path))
+                await onEvent(.toolCallCompleted(write, DirectAgentToolResult(
+                    output: "Wrote \(path)",
+                    summary: "Wrote \(path)",
+                    fileChanges: [OperationFileChange(path: path, oldText: nil, newText: contents)]
+                )))
             }
         }
         if let snapshot = sessions[sessionID] {
@@ -727,4 +1075,44 @@ private actor TerminalHandoverVoiceController: TerminalVoiceController {
     func setAwaitingShortAnswer(_ awaiting: Bool) async {}
 
     func discardDictation(through id: UInt64) async {}
+}
+
+/// Holds, once armed, the first panel render whose hook asks it, until
+/// released; the caller that awaits that render waits with it.
+private actor TerminalHandoverPanelGate {
+    private var isArmed = false
+    private var held: CheckedContinuation<Void, Never>?
+    private var heldWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// The next ``holdIfArmed()`` holds.
+    func arm() {
+        isArmed = true
+    }
+
+    /// Holds until ``release()`` when armed, and disarms; returns at once
+    /// otherwise.
+    func holdIfArmed() async {
+        guard isArmed else { return }
+        isArmed = false
+        await withCheckedContinuation { continuation in
+            held = continuation
+            let waiters = heldWaiters
+            heldWaiters = []
+            for waiter in waiters {
+                waiter.resume()
+            }
+        }
+    }
+
+    /// Returns once a render is held.
+    func waitUntilHeld() async {
+        guard held == nil else { return }
+        await withCheckedContinuation { heldWaiters.append($0) }
+    }
+
+    /// Lets the held render go on.
+    func release() {
+        held?.resume()
+        held = nil
+    }
 }

@@ -8,16 +8,24 @@
 import Foundation
 import ToolCore
 
-/// The only turn-scoped payloads that may be sent to Telegram.
+/// The only turn-scoped payloads that may be sent to Telegram, besides the
+/// tool activity the reporter keeps itself
+/// (``TerminalTelegramTurnProgressReporter/toolCallDidStart(id:title:)``).
 ///
-/// Keeping this surface closed prevents reasoning, streaming deltas, and tool
-/// lifecycle details from reaching the remote chat.
+/// The surface stays closed: streaming deltas never reach the remote chat,
+/// reasoning reaches it only as a completed block (``thought(_:)``), and of a
+/// tool call only its title and outcome do, never its arguments or result.
 enum TerminalTelegramTurnPayload: Sendable {
     case agentResponse(String)
     case subAgentResponse(String)
     case tasks(String)
     case authorization(String)
     case summary(String)
+    /// One completed reasoning block, sent as an expandable details block
+    /// (see ``TerminalTelegramTurnActivity/thoughtDocument(_:)``).
+    case thought(String)
+    /// The turn's sub-agent status, one message edited in place.
+    case subAgentStatus(String)
 
     var text: String {
         switch self {
@@ -25,31 +33,106 @@ enum TerminalTelegramTurnPayload: Sendable {
              let .subAgentResponse(text),
              let .tasks(text),
              let .authorization(text),
-             let .summary(text):
+             let .summary(text),
+             let .thought(text),
+             let .subAgentStatus(text):
             text
         }
     }
 }
 
+/// The wire of the turn messages a reporter sends besides its text messages:
+/// the activity and sub-agent status messages, created as plain text with a
+/// receipt and edited in place as plain text, and the thinking messages.
+/// Production builds it in ``TelegramChannel/makeTurnProgressReporter(for:)``
+/// on the reporter's wire fence, each send validated against the route lease.
+struct TerminalTelegramTurnActivityWire: Sendable {
+    /// Creates a plain-text message and returns its Telegram message id.
+    let sendPlainMessage: @Sendable (String, Int64) async throws -> Int
+    /// Replaces the text of a message the reporter owns, as plain text.
+    let editPlainMessage: @Sendable (String, Int64, Int) async throws -> Void
+    /// Sends one reasoning block, reporting whether it was delivered.
+    let sendThought: @Sendable (String, Int64) async -> Bool
+}
+
 /// Single FIFO outbound channel for one turn presented in Telegram.
 ///
-/// All remote turn output travels through this actor so root responses, task
-/// updates, delegated responses, authorization requests, the final response,
-/// and its change summary retain their production order. Bot control messages
+/// All remote turn output travels through this actor so root responses,
+/// reasoning blocks, tool activity, task updates, the sub-agent status,
+/// delegated responses, authorization requests, the final response, and its
+/// change summary retain their production order. Bot control messages
 /// intentionally bypass it.
 ///
-/// Root responses are the only payload this actor buffers. Their deltas are
-/// aggregated as they stream and published as a single message at the boundary
-/// that proves the block complete (the next tool call). The buffer is text
-/// only: reasoning, tool identity, arguments, and results never reach it.
+/// Root responses are the only payload this actor buffers as deltas. They are
+/// aggregated as they stream and published as a single message at the
+/// boundary that proves the block complete (the next tool call). The buffer
+/// is text only: reasoning, tool identity, arguments, and results never reach
+/// it. A reasoning block arrives already complete (``TerminalTelegramTurnPayload/thought(_:)``).
+///
+/// Tool calls are shown in activity messages edited in place, one row per
+/// call: its title, then only its outcome (``toolCallDidStart(id:title:)``,
+/// ``toolCallDidComplete(id:failed:)``). An activity message is closed by
+/// every queued payload that creates a new message in the chat (a response,
+/// a reasoning block, the first task-graph card, the creation of the
+/// sub-agent status, a delegated response, an authorization, the outcome, the
+/// summary): the next call opens a new one below it. Editing a message in
+/// place (a later task-graph card, a later sub-agent status) closes nothing.
+/// A call's outcome is written in the row of the message it started in, even
+/// when that message is closed. An activity message whose creation had an
+/// unknown outcome is fenced for good (see
+/// ``TerminalTelegramEditableMessageLedger``): once the drain learns it, the
+/// message is closed too, so the next call opens a new one instead of adding
+/// rows nobody sees; the fenced message is never edited nor adopted. The
+/// sub-agent status is one message per reporter, edited in place.
+///
+/// Edits are coalesced in the queue: an edit of a message whose previous edit
+/// is still the last queued item replaces it, so a burst of calls produces a
+/// few edits paced by the wire's rate governor, and an edit never overtakes
+/// an item queued before it. Activity and status messages stay in the chat
+/// when the reporter retires; only the progress card is deleted. No timer or
+/// task besides the drain exists, so ``retire()`` stops everything.
 actor TerminalTelegramTurnProgressReporter {
     /// Telegram rejects messages beyond ~4096 characters; stay below it.
     static let maximumMessageLength = 3_900
 
-    private struct QueuedMessage {
-        let text: String
-        let deliveryContinuation: CheckedContinuation<Bool, Never>?
-        let isProgressCard: Bool
+    /// One queued wire effect.
+    private enum QueuedItem {
+        /// A text message, with the continuation awaiting its delivery.
+        case message(text: String, deliveryContinuation: CheckedContinuation<Bool, Never>?)
+        /// An update of the task-graph progress card.
+        case progressCard(text: String)
+        /// A reasoning block.
+        case thought(text: String)
+        /// The text an editable message shows from now on.
+        case editable(TerminalTelegramEditableMessageLedger, text: String)
+
+        /// Resumes the delivery continuation, if any, as undelivered.
+        func abandon() {
+            if case let .message(_, continuation) = self {
+                continuation?.resume(returning: false)
+            }
+        }
+    }
+
+    /// One activity message: its ledger and its rows, in call order.
+    private struct ActivityBlock {
+        let ledger: TerminalTelegramEditableMessageLedger
+        var rows: [ActivityRow]
+
+        var text: String {
+            TerminalTelegramTurnProgressReporter.activityText(rows)
+        }
+    }
+
+    private struct ActivityRow {
+        let title: String
+        var outcome: TerminalTelegramTurnActivity.ToolOutcome?
+    }
+
+    /// Where the row of a running call is: its block and its index there.
+    private struct ActivityRowLocation {
+        let block: Int
+        let row: Int
     }
 
     let chatID: Int64
@@ -59,10 +142,26 @@ actor TerminalTelegramTurnProgressReporter {
     private let sendDraft: (@Sendable (String, Int64, Int) async throws -> Void)?
     private var draftStreamer: TerminalTelegramDraftStreamer?
     private let progressCards: TerminalTelegramProgressCardLedger?
+    /// The wire of the activity, status, and thinking messages; without it
+    /// they are dropped.
+    private let activityWire: TerminalTelegramTurnActivityWire?
     private let wireFence: TerminalTelegramWireFence
     private let waitForWireQuiescence: (@Sendable (TerminalTelegramWireFence) async -> Void)?
 
-    private var queue: [QueuedMessage] = []
+    private var queue: [QueuedItem] = []
+    /// The activity messages of the reporter, oldest first.
+    private var activityBlocks: [ActivityBlock] = []
+    /// The activity message the next call joins; `nil` once a new message
+    /// closed it.
+    private var openActivityBlock: Int?
+    /// The rows of the calls still running, by call id.
+    private var runningToolCallRows: [String: ActivityRowLocation] = [:]
+    /// The sub-agent status message, once created.
+    private var subAgentStatus: TerminalTelegramEditableMessageLedger?
+    private var lastSubAgentStatusText: String?
+    /// `true` once a task-graph card was queued: the card exists from then
+    /// on and is edited in place.
+    private var hasQueuedProgressCard = false
     /// Root response text aggregated since the last boundary.
     private var pendingAgentResponse = ""
     private var isDraining = false
@@ -75,6 +174,7 @@ actor TerminalTelegramTurnProgressReporter {
         sendMessage: @escaping @Sendable (String, Int64) async -> Bool,
         sendDraft: (@Sendable (String, Int64, Int) async throws -> Void)? = nil,
         progressCards: TerminalTelegramProgressCardLedger? = nil,
+        activityWire: TerminalTelegramTurnActivityWire? = nil,
         wireFence: TerminalTelegramWireFence,
         waitForWireQuiescence: (@Sendable (TerminalTelegramWireFence) async -> Void)? = nil
     ) {
@@ -82,6 +182,7 @@ actor TerminalTelegramTurnProgressReporter {
         self.sendMessage = sendMessage
         self.sendDraft = sendDraft
         self.progressCards = progressCards
+        self.activityWire = activityWire
         self.wireFence = wireFence
         self.waitForWireQuiescence = waitForWireQuiescence
         if let sendDraft {
@@ -90,13 +191,145 @@ actor TerminalTelegramTurnProgressReporter {
     }
 
     /// Queues a permitted turn payload without waiting for delivery.
+    ///
+    /// A task graph updates the progress card when the reporter has one; a
+    /// reasoning block and the sub-agent status need the activity wire and
+    /// are dropped without it.
     func enqueue(_ payload: TerminalTelegramTurnPayload) {
-        if case let .tasks(text) = payload, let progressCards {
-            _ = progressCards
-            enqueue(text, deliveryContinuation: nil, isProgressCard: true)
+        switch payload {
+        case let .tasks(text) where progressCards != nil:
+            enqueueProgressCard(text)
+        case let .thought(text):
+            enqueueThought(text)
+        case let .subAgentStatus(text):
+            enqueueSubAgentStatus(text)
+        default:
+            enqueue(payload.text, deliveryContinuation: nil)
+        }
+    }
+
+    // MARK: - Tool activity
+
+    /// Shows a root tool call that started: a row with `title` and a neutral
+    /// marker, in the open activity message, or in a new one when no message
+    /// is open or the row would not fit. Without the activity wire, or once
+    /// retired, nothing happens.
+    func toolCallDidStart(id: String, title: String) {
+        guard !isRetired, activityWire != nil else { return }
+        let row = ActivityRow(title: TerminalTelegramTurnActivity.toolTitle(title), outcome: nil)
+        let blockIndex: Int
+        if let open = openActivityBlock,
+           Self.fits(activityBlocks[open].rows + [row]) {
+            blockIndex = open
+            activityBlocks[open].rows.append(row)
+        } else if let ledger = makeEditableMessageLedger() {
+            blockIndex = activityBlocks.count
+            activityBlocks.append(ActivityBlock(ledger: ledger, rows: [row]))
+            openActivityBlock = blockIndex
+        } else {
             return
         }
-        enqueue(payload.text, deliveryContinuation: nil)
+        runningToolCallRows[id] = ActivityRowLocation(
+            block: blockIndex, row: activityBlocks[blockIndex].rows.count - 1
+        )
+        let block = activityBlocks[blockIndex]
+        enqueueEdit(of: block.ledger, text: block.text)
+    }
+
+    /// Writes the outcome of a call that ``toolCallDidStart(id:title:)``
+    /// showed in its row, in the message it started in. A call the reporter
+    /// did not show, or one that already ended, changes nothing.
+    func toolCallDidComplete(id: String, failed: Bool) {
+        guard !isRetired, let location = runningToolCallRows.removeValue(forKey: id) else { return }
+        activityBlocks[location.block].rows[location.row].outcome = failed ? .failed : .succeeded
+        let block = activityBlocks[location.block]
+        enqueueEdit(of: block.ledger, text: block.text)
+    }
+
+    /// Whether an activity message with `rows` stays within the message
+    /// limit, counted in UTF-16 code units as Telegram counts it.
+    private static func fits(_ rows: [ActivityRow]) -> Bool {
+        activityText(rows).utf16.count <= maximumMessageLength
+    }
+
+    /// The text of an activity message: one row per call, in call order.
+    private static func activityText(_ rows: [ActivityRow]) -> String {
+        rows.map { TerminalTelegramTurnActivity.toolRow(title: $0.title, outcome: $0.outcome) }
+            .joined(separator: "\n")
+    }
+
+    private func makeEditableMessageLedger() -> TerminalTelegramEditableMessageLedger? {
+        guard let activityWire else { return nil }
+        return TerminalTelegramEditableMessageLedger(
+            chatID: chatID,
+            send: activityWire.sendPlainMessage,
+            edit: activityWire.editPlainMessage
+        )
+    }
+
+    /// The next call opens a new activity message.
+    private func closeActivityMessage() {
+        openActivityBlock = nil
+    }
+
+    /// `ledger` is fenced for good: when it is the open activity message,
+    /// the next call opens a new one. Rows that joined it before the drain
+    /// learned it stay where they are, unseen: the fenced message may exist
+    /// in the chat, so nothing of it is moved or sent again.
+    private func editableMessageWasFenced(_ ledger: TerminalTelegramEditableMessageLedger) {
+        guard let open = openActivityBlock, activityBlocks[open].ledger === ledger else { return }
+        closeActivityMessage()
+    }
+
+    // MARK: - Status, reasoning, and card
+
+    /// Shows `text` as the turn's sub-agent status: the first status creates
+    /// the message (closing the activity message), every later one edits it.
+    /// A status equal to the last one changes nothing.
+    private func enqueueSubAgentStatus(_ text: String) {
+        guard !isRetired, let text = text.nilIfBlank else { return }
+        let bounded = String(text.prefix(Self.maximumMessageLength))
+        guard bounded != lastSubAgentStatusText else { return }
+        let ledger: TerminalTelegramEditableMessageLedger
+        if let subAgentStatus {
+            ledger = subAgentStatus
+        } else {
+            guard let created = makeEditableMessageLedger() else { return }
+            closeActivityMessage()
+            subAgentStatus = created
+            ledger = created
+        }
+        lastSubAgentStatusText = bounded
+        enqueueEdit(of: ledger, text: bounded)
+    }
+
+    /// Queues one completed reasoning block, bounded to the message limit.
+    private func enqueueThought(_ text: String) {
+        guard !isRetired, activityWire != nil,
+              let thought = TerminalTelegramTurnActivity.boundedThought(text) else { return }
+        closeActivityMessage()
+        append(.thought(text: thought))
+    }
+
+    /// Queues an update of the progress card; the first one creates the card
+    /// and closes the activity message.
+    private func enqueueProgressCard(_ text: String) {
+        guard !isRetired, let text = text.nilIfBlank else { return }
+        if !hasQueuedProgressCard {
+            hasQueuedProgressCard = true
+            closeActivityMessage()
+        }
+        append(.progressCard(text: String(text.prefix(Self.maximumMessageLength))))
+    }
+
+    /// Queues the text an editable message shows, replacing the previous one
+    /// when it is still the last queued item.
+    private func enqueueEdit(of ledger: TerminalTelegramEditableMessageLedger, text: String) {
+        if case let .editable(queuedLedger, _)? = queue.last, queuedLedger === ledger {
+            queue[queue.count - 1] = .editable(ledger, text: text)
+            return
+        }
+        append(.editable(ledger, text: text))
     }
 
     // MARK: - Root response buffer
@@ -170,7 +403,9 @@ actor TerminalTelegramTurnProgressReporter {
     }
 
     /// Fences draft/card activity for finish, error, cancellation, rebind and
-    /// teardown. Progress cards are deleted; persistent turn messages remain.
+    /// teardown. Progress cards are deleted; persistent turn messages remain,
+    /// the activity and sub-agent status messages included, which receive no
+    /// further edit: a call still running keeps its neutral marker.
     func retire() async {
         guard !isRetired else { return }
         isRetired = true
@@ -180,11 +415,17 @@ actor TerminalTelegramTurnProgressReporter {
         pendingAgentResponse.removeAll()
         let abandoned = queue
         queue.removeAll()
-        for message in abandoned {
-            message.deliveryContinuation?.resume(returning: false)
+        for item in abandoned {
+            item.abandon()
         }
         let task = drainTask
         task?.cancel()
+        let editableMessages = activityBlocks.map(\.ledger) + (subAgentStatus.map { [$0] } ?? [])
+        openActivityBlock = nil
+        runningToolCallRows.removeAll()
+        for ledger in editableMessages {
+            await ledger.retire()
+        }
         await draftStreamer?.finish()
         draftStreamer = nil
         await progressCards?.retire(deleteMessage: true)
@@ -238,10 +479,11 @@ actor TerminalTelegramTurnProgressReporter {
         }
     }
 
+    /// Queues a text message, closing the activity message: it is a new
+    /// message in the chat.
     private func enqueue(
         _ message: String,
-        deliveryContinuation: CheckedContinuation<Bool, Never>?,
-        isProgressCard: Bool = false
+        deliveryContinuation: CheckedContinuation<Bool, Never>?
     ) {
         guard !isRetired else {
             deliveryContinuation?.resume(returning: false)
@@ -251,13 +493,15 @@ actor TerminalTelegramTurnProgressReporter {
             deliveryContinuation?.resume(returning: false)
             return
         }
-        queue.append(
-            QueuedMessage(
-                text: String(text.prefix(Self.maximumMessageLength)),
-                deliveryContinuation: deliveryContinuation,
-                isProgressCard: isProgressCard
-            )
-        )
+        closeActivityMessage()
+        append(.message(
+            text: String(text.prefix(Self.maximumMessageLength)),
+            deliveryContinuation: deliveryContinuation
+        ))
+    }
+
+    private func append(_ item: QueuedItem) {
+        queue.append(item)
         startDrainingIfNeeded()
     }
 
@@ -272,23 +516,30 @@ actor TerminalTelegramTurnProgressReporter {
     }
 
     private func drain() async {
-        while let message = nextMessage() {
+        while let item = nextItem() {
             guard !Task.isCancelled, !isRetired else {
-                message.deliveryContinuation?.resume(returning: false)
+                item.abandon()
                 continue
             }
-            let delivered: Bool
-            if message.isProgressCard, let progressCards {
-                await progressCards.update(text: message.text)
-                delivered = true
-            } else {
-                delivered = await sendMessage(message.text, chatID)
+            switch item {
+            case let .message(text, deliveryContinuation):
+                let delivered = await sendMessage(text, chatID)
+                deliveryContinuation?.resume(returning: delivered)
+            case let .progressCard(text):
+                if let progressCards {
+                    await progressCards.update(text: text)
+                }
+            case let .thought(text):
+                _ = await activityWire?.sendThought(text, chatID)
+            case let .editable(ledger, text):
+                if await !ledger.update(text: text) {
+                    editableMessageWasFenced(ledger)
+                }
             }
-            message.deliveryContinuation?.resume(returning: delivered)
         }
     }
 
-    private func nextMessage() -> QueuedMessage? {
+    private func nextItem() -> QueuedItem? {
         guard !queue.isEmpty else {
             isDraining = false
             drainTask = nil

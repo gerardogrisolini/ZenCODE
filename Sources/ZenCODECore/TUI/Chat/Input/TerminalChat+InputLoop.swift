@@ -811,8 +811,19 @@ extension TerminalChat {
                 generationTask = nil
                 isGenerating = false
                 onInteractiveGenerationStateForTesting?(false)
-                if let reservation = promptReservation {
-                    promptReservation = nil
+                // The channel that drives the slot now presents the ending,
+                // decided once here. The terminal releases the turn's
+                // reservation first. Telegram, when `/telegram on` ran
+                // meanwhile, presents it while the reservation still holds
+                // and releases it after (`presentOwnTurnEndingInTelegram`),
+                // so no turn starts from the chat before it received this
+                // turn's outcome and summary.
+                let reservation = promptReservation
+                promptReservation = nil
+                let telegramPresentsEnding = sessionHost.activeChannel(in: terminalSlotID) == .telegram
+                if telegramPresentsEnding {
+                    sessionHost.telegramChannel(in: terminalSlotID)?.primaryTurnEndingWillPresent()
+                } else if let reservation {
                     sessionHost.releasePrompt(reservation)
                 }
                 await statusBar.setProcessing(false)
@@ -820,9 +831,15 @@ extension TerminalChat {
                 // The prompt consumed whatever was staged, so the indicator must
                 // not keep advertising attachments that already left.
                 await synchronizePanelPendingAttachmentCount()
-                // The channel that drives the slot presents the ending: the
-                // terminal, or Telegram when `/telegram on` ran meanwhile.
-                let didPresentEnding = await presentOwnTurnEnding(result)
+                let didPresentEnding: Bool
+                if telegramPresentsEnding {
+                    didPresentEnding = await presentOwnTurnEndingInTelegram(
+                        result, releasing: reservation
+                    )
+                } else {
+                    await finishPromptResult(result)
+                    didPresentEnding = true
+                }
                 var isReadingAnswer = false
                 // An answer Telegram presented is not read aloud here.
                 if didPresentEnding, case let .success(success) = result {

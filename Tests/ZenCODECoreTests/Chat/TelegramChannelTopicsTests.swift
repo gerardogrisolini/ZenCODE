@@ -4,7 +4,8 @@
 //
 //  Topic mode and legacy mode of a ``TelegramChannel``'s link
 //  (`TelegramChannel+Topics.swift`): the route the session uses, the notice
-//  in General, the fallback to the shared route, the rebind and its rename,
+//  in General, the fallback to the shared route, the rebind (the shared-chat
+//  relay it moves to the new room before the rename) and its rename,
 //  and the close and prune at detach and shutdown. Every router persists to
 //  the test's settings, as the host's does, so an attach reads back what an
 //  earlier one wrote. Telegram is a Bot API double; every test runs in a
@@ -299,6 +300,134 @@ struct TelegramChannelTopicsTests {
         }
     }
 
+    // MARK: - Rebind and the shared-chat relay
+
+    /// The rebind moves the shared-chat relay to the new room before the
+    /// rename, which it does not wait for: a message the new room says while
+    /// Telegram has not answered the rename yet reaches the chat, and the
+    /// rename then completes as usual.
+    @Test
+    func theRelayFollowsTheReboundTopicBeforeTheRenameAnswers() async throws {
+        try await Support.withSupport {
+            let transport = RenameGatedTransport(base: TelegramChannelTestTransport(
+                botID: Support.uniqueBotID(), hasTopicsEnabled: true, createdTopicIDs: [501]
+            ))
+            let member = try Self.topicMember(transport: transport)
+            let channel = member.channel
+            try await channel.attach()
+            let cards = TelegramRelayCardLog()
+            channel.sharedChatRelayStorage = Self.recordingRelay(cards)
+            await channel.rebindSharedChatRelay(roomID: Self.topicSessionID)
+            #expect(await channel.sharedChatRelay.forwards(roomID: Self.topicSessionID, chatID: 42))
+            let loadedSessionID = "loaded-session-fedcba9876543210"
+            member.terminal.sessionID = loadedSessionID
+
+            let rebinding = Task { @ChatSessionActor in
+                await channel.rebind(sessionID: loadedSessionID, displayName: "Parser refactor")
+            }
+            // Telegram has the rename and has not answered it.
+            await transport.gate.waitForEntries(1)
+            #expect(await channel.sharedChatRelay.forwards(roomID: loadedSessionID, chatID: 42))
+            await channel.forwardSharedChatMessages(
+                [Self.agentMessage(room: loadedSessionID, text: "while renaming")], roomID: loadedSessionID
+            )
+            await channel.sharedChatRelay.waitForPendingCards()
+            #expect(Self.bodies(of: await cards.texts) == ["while renaming"])
+
+            await transport.gate.open()
+            await rebinding.value
+            let rebound = Self.topicLease(501, roomID: loadedSessionID, generation: 2)
+            #expect(channel.sessionTopic == .init(lease: rebound, name: "Parser refactor"))
+            #expect(await transport.base.renamedTopics == [TelegramRoutedText(text: "Parser refactor", topicID: 501)])
+            #expect(member.notices.notices == [Self.activationNotice])
+            #expect(Self.bodies(of: await cards.texts) == ["while renaming"])
+
+            await channel.shutdown()
+            await member.terminal.sessionHost.shutdown()
+        }
+    }
+
+    /// A rename Telegram refuses leaves the relay on the new room: what the
+    /// new room says afterwards reaches the chat, without a message from
+    /// Telegram binding the relay again.
+    @Test
+    func aFailedRenameLeavesTheRelayOnTheNewRoom() async throws {
+        try await Support.withSupport {
+            let transport = TelegramChannelTestTransport(
+                botID: Support.uniqueBotID(), hasTopicsEnabled: true, createdTopicIDs: [501], renameTopicFails: true
+            )
+            let member = try Self.topicMember(transport: transport)
+            let channel = member.channel
+            try await channel.attach()
+            let cards = TelegramRelayCardLog()
+            channel.sharedChatRelayStorage = Self.recordingRelay(cards)
+            await channel.rebindSharedChatRelay(roomID: Self.topicSessionID)
+            let loadedSessionID = "loaded-session-fedcba9876543210"
+            member.terminal.sessionID = loadedSessionID
+
+            await channel.rebind(sessionID: loadedSessionID, displayName: "Parser refactor")
+
+            let description = "Telegram API error 400: \(TelegramChannelTestTransport.renameTopicFailure)"
+            #expect(member.notices.notices == [
+                Self.activationNotice,
+                .init(text: "ZenCODE: \(description)\n", channel: .failure),
+            ])
+            #expect(await channel.sharedChatRelay.forwards(roomID: loadedSessionID, chatID: 42))
+            await channel.forwardSharedChatMessages(
+                [Self.agentMessage(room: loadedSessionID, text: "after the failed rename")], roomID: loadedSessionID
+            )
+            await channel.sharedChatRelay.waitForPendingCards()
+            #expect(Self.bodies(of: await cards.texts) == ["after the failed rename"])
+
+            await channel.shutdown()
+            await member.terminal.sessionHost.shutdown()
+        }
+    }
+
+    /// A detach that runs while the rebind binds the relay owns the link
+    /// from then on: the rebind renames nothing and presents no failure.
+    @Test
+    func aDetachWhileTheRelayIsReboundLeavesTheRenameToIt() async throws {
+        try await Support.withSupport {
+            let transport = TelegramChannelTestTransport(
+                botID: Support.uniqueBotID(), hasTopicsEnabled: true, createdTopicIDs: [501]
+            )
+            let member = try Self.topicMember(transport: transport)
+            let channel = member.channel
+            try await channel.attach()
+            // The relay's validation of the new lease waits at the gate.
+            let gate = TopicTestGate()
+            let cards = TelegramRelayCardLog()
+            channel.sharedChatRelayStorage = TerminalTelegramSharedChatRelay(
+                validateLease: { _ in
+                    await gate.pass()
+                    return true
+                },
+                send: { text, _, _ in await cards.record(text) }
+            )
+            let loadedSessionID = "loaded-session-fedcba9876543210"
+            member.terminal.sessionID = loadedSessionID
+
+            let rebinding = Task { @ChatSessionActor in
+                await channel.rebind(sessionID: loadedSessionID, displayName: "Parser refactor")
+            }
+            await gate.waitForEntries(1)
+            await channel.detach()
+            await gate.open()
+            await rebinding.value
+
+            #expect(await transport.renamedTopics.isEmpty)
+            #expect(member.notices.notices == [
+                Self.activationNotice,
+                .init(text: TelegramChannel.stoppedNoticeText, channel: .system),
+            ])
+            #expect(channel.sessionTopic == nil)
+
+            await channel.shutdown()
+            await member.terminal.sessionHost.shutdown()
+        }
+    }
+
     /// The detach closes the topic's route and prunes the inactive routes
     /// beyond 32, the lowest topics first. Only active topics are reused, so
     /// a rebind while detached does nothing and the next attach creates and
@@ -424,7 +553,7 @@ struct TelegramChannelTopicsTests {
     /// The Telegram channel of a terminal session ``topicSessionID`` on
     /// `transport`, whose router is read from the settings and persists every
     /// commit to them, as the host's does, recording it in `commits`.
-    private static func topicMember(transport: TelegramChannelTestTransport) throws -> TopicMember {
+    private static func topicMember(transport: any TelegramHTTPTransport) throws -> TopicMember {
         let terminal = try Support.makeTerminal(transport: transport)
         terminal.sessionID = topicSessionID
         let commits = TelegramTestRecorder<[AgentTelegramRouteManifest]>()
@@ -459,5 +588,85 @@ struct TelegramChannelTopicsTests {
             replyToMessageID: nil, callbackQueryID: nil, callbackData: nil,
             stoppedMessageGenerationDraftID: nil, attachment: nil
         )
+    }
+
+    /// A relay whose cards `log` records instead of sending.
+    private static func recordingRelay(_ log: TelegramRelayCardLog) -> TerminalTelegramSharedChatRelay {
+        TerminalTelegramSharedChatRelay(
+            validateLease: { _ in true },
+            send: { text, _, _ in await log.record(text) }
+        )
+    }
+
+    /// A message of the agent `planner` of `room` to the operator.
+    private static func agentMessage(room: String, text: String) -> AgentSharedChat.Message {
+        AgentSharedChat.Message(
+            roomID: room,
+            sender: AgentSharedChat.Participant(id: "agent-1", name: "planner", kind: .agent),
+            recipientIDs: [AgentSharedChat.operatorID(for: room)],
+            text: text
+        )
+    }
+
+    /// The message bodies of the relay cards `texts`, in order (a card is
+    /// route, body and footer, separated by blank lines).
+    private static func bodies(of texts: [String]) -> [String] {
+        texts.map { $0.components(separatedBy: "\n\n").dropFirst().first ?? "" }
+    }
+}
+
+/// A gate the test opens: ``pass()`` waits until ``open()`` and goes on at
+/// once afterwards; ``waitForEntries(_:)`` returns once that many calls
+/// reached it.
+private actor TopicTestGate {
+    private var isOpen = false
+    private var entries = 0
+    private var held: [CheckedContinuation<Void, Never>] = []
+    private var entryWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+
+    func pass() async {
+        entries += 1
+        let ready = entryWaiters.filter { $0.count <= entries }
+        entryWaiters.removeAll { $0.count <= entries }
+        for waiter in ready {
+            waiter.continuation.resume()
+        }
+        guard !isOpen else { return }
+        await withCheckedContinuation { held.append($0) }
+    }
+
+    func waitForEntries(_ count: Int) async {
+        guard entries < count else { return }
+        await withCheckedContinuation { entryWaiters.append((count, $0)) }
+    }
+
+    func open() {
+        isOpen = true
+        let continuations = held
+        held = []
+        for continuation in continuations {
+            continuation.resume()
+        }
+    }
+}
+
+/// The Bot API double of the topic tests (``base``) behind a gate on
+/// `editForumTopic`: a rename waits at ``gate`` until the test opens it, so
+/// it stays in flight meanwhile.
+private actor RenameGatedTransport: TelegramHTTPTransport {
+    let base: TelegramChannelTestTransport
+    let gate = TopicTestGate()
+
+    init(base: TelegramChannelTestTransport) {
+        self.base = base
+    }
+
+    func send(
+        url: URL, method: String, headers: [RemoteHTTPHeader], body: Data?, timeout: Duration?
+    ) async throws -> (status: Int, body: Data) {
+        if url.lastPathComponent == "editForumTopic" {
+            await gate.pass()
+        }
+        return try await base.send(url: url, method: method, headers: headers, body: body, timeout: timeout)
     }
 }

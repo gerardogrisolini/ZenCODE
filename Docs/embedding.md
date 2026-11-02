@@ -752,6 +752,23 @@ What happens at the handover:
   the turn, and its ending is presented by whoever drives the slot when it
   ends; a turn still running from Telegram at `/telegram off` goes on
   presented to the app.
+- During a turn the chat drives, the slot's presenter hands the channel what
+  the controller presents, and the channel sends the chat, with no setting:
+  each response, each completed reasoning block as a `💭 Thinking` message,
+  the root tool calls as the lines of one activity message edited in place
+  (the call's title and its outcome, never its arguments or result), the
+  task-graph card, and the sub-agent overview as one `🤖 Sub-agent` message
+  per turn. The channel asks the controller for the sub-agent overview itself.
+  What the sub-agents already showed when the chat takes the slot, in the app,
+  is not sent: their responses present then stay out of the chat, and an
+  overview unchanged since then creates no message; each response that comes
+  later is sent once, for the life of the channel, not once per turn.
+  The task-graph card comes from the controller's task-graph observer (see
+  [Overviews](#overviews)): the channel starts it only for the slot of an ACP
+  session, so an app starts it for its window as it does for itself. On that
+  slot the channel stops it at the end of every turn it presents, publishes the
+  latest graph to the turn that ends, and runs it again once the turn is
+  closed, as the terminal does.
 - While Telegram drives the slot the app is dormant: `admitLine(_:in:)`
   admits only `/telegram`, `/telegram off`, and `/exit`
   (see [Running a Line](#running-a-line)), and a `reservePrompt(in:)` of the

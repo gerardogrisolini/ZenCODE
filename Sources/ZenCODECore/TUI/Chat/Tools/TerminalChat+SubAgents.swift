@@ -120,13 +120,21 @@ extension TerminalChat {
     /// scrolling region has for an in-place rewrite, and the status-bar git
     /// summary refresh for sub-agents that completed. No snapshot clears the
     /// section unless `force` writes the empty section anyway.
+    ///
+    /// Only a reservation of the terminal's own orders the section: its
+    /// revisions start from 1. The slot's presenter forwards the reservation
+    /// and the presentation to the channel that drives the slot at each
+    /// moment, so a switch in between can hand the terminal one that Telegram
+    /// took (Telegram's revisions are never positive); that one is presented
+    /// as a publication without a reservation is, as it comes, and moves no
+    /// revision.
     func renderSubAgentOverview(
         _ overview: ChatSubAgentOverview,
         origin: ChatOverviewOrigin,
         publication: ChatOverviewPublication?,
         force: Bool = false
     ) async {
-        let publicationRevision = publication?.revision
+        let publicationRevision = publication.flatMap { $0.revision > 0 ? $0.revision : nil }
         let snapshots = overview.snapshots
         let toolPresentations = await renderCoordinator.subAgentToolPresentationSnapshot()
         await refreshStatusBarGitStatusSummaryForCompletedSubAgents(snapshots)
@@ -181,6 +189,19 @@ extension TerminalChat {
             includesFinalResponses: true,
             toolPresentationsByAgentID: [:]
         )
+    }
+
+    /// The overview as compact rows for a remote chat, without the section's
+    /// geometry: the summary row, then one row per agent at the inline
+    /// density (status marker, name, status badge, and the current activity:
+    /// the latest error, the reasoning placeholder, the latest assistant
+    /// block, or the tool it runs). Rows may still carry the terminal's
+    /// styling; the caller strips it. No row for an empty overview.
+    nonisolated static func subAgentStatusRows(
+        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
+    ) -> [String] {
+        guard !snapshots.isEmpty else { return [] }
+        return [renderSubAgentSummary(snapshots)] + snapshots.map(renderSubAgentInlineEntry)
     }
 
     /// Presentation density of the sub-agent section. The live section is replaced

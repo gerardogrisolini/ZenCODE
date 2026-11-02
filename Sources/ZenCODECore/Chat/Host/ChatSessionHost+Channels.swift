@@ -43,6 +43,12 @@ extension ChatSessionHost {
         slots[slotID]?.workingDirectory
     }
 
+    /// What `slotID` is to the channel that opened it; `nil` for an unknown
+    /// slot.
+    func slotIdentity(_ slotID: ChatSlotID) -> ChatSlotIdentity? {
+        slots[slotID]?.identity
+    }
+
     /// The Telegram channel of `slotID`, created now when the slot has none,
     /// without attaching it: for a channel that binds the channel before the
     /// first `/telegram on` attaches it (ACP collects the notices of the

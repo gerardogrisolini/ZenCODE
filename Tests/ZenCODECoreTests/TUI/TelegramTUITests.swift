@@ -1275,16 +1275,20 @@ struct TelegramTUITests {
         #expect(terminal.telegramChannel.activeProgressReporter == nil)
     }
 
+    /// Reasoning reaches the chat only through the channel's presenter, as a
+    /// completed block, and a tool call only as its title and outcome (see
+    /// `TelegramChannelTurnActivityTests`). What the terminal renders on its
+    /// own, its reasoning with the tool identity it mentions, has no path to
+    /// the chat, and the responses travel without any tool detail.
     @Test
-    func telegramSendsOnlyResponsesAndNeverThinkingOrToolDetails() async throws {
+    func telegramSendsTheResponsesButNotTheThinkingTheTerminalRendersOrToolDetails() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let collector = TelegramTestMessageCollector()
         terminal.telegramChannel.activeTurnLease = terminal.telegramChannel.activeRouteLease!
         let reporter = Self.attachTestReporter(to: terminal, collector: collector)
 
-        // A turn that reasons, answers, calls a tool, and answers again: only
-        // the visible responses have a path to the chat, so reasoning and tool
-        // identity never reach it.
+        // A turn that reasons on the terminal, answers, calls a tool, and
+        // answers again: only the visible responses reach the chat.
         await terminal.writeThought("Secret reasoning about local.delete.\n")
         await terminal.telegramChannel.appendRootResponseDelta("Reading the manifest.")
         await terminal.telegramChannel.publishRootResponseAtToolBoundary()

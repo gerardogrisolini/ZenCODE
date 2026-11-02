@@ -173,3 +173,81 @@ actor TerminalTelegramProgressCardLedger {
 
     func currentOwnership() -> Ownership? { ownership }
 }
+
+/// One turn message that stays in the chat and is edited in place: a
+/// tool-activity message or the turn's sub-agent status. It keeps the
+/// guarantees of ``TerminalTelegramProgressCardLedger`` except the deletion:
+/// a message that stays is never deleted, and retiring it only stops every
+/// later wire effect.
+///
+/// The first update creates the message and adopts its receipt; every later
+/// one edits it, unless its text did not change. A create whose outcome is
+/// unknown (it threw, so it may still have reached Telegram) fences the
+/// ledger for good: nothing is adopted and nothing is created again, so the
+/// chat never receives a duplicate, and every update says so, so the owner
+/// can show what comes next in another message. A failed edit keeps the
+/// ownership and is not retried on its own: the next update edits again. A
+/// receipt that returns after ``retire()`` is not adopted.
+///
+/// The caller serializes the updates (the reporter's drain), so two updates
+/// never run at once.
+actor TerminalTelegramEditableMessageLedger {
+    private let chatID: Int64
+    private let send: @Sendable (String, Int64) async throws -> Int
+    private let edit: @Sendable (String, Int64, Int) async throws -> Void
+    private var messageID: Int?
+    /// The text Telegram is known to show, as the wire bounded it.
+    private var deliveredText: String?
+    private var isRetired = false
+    private var deliveryUnknown = false
+
+    init(
+        chatID: Int64,
+        send: @escaping @Sendable (String, Int64) async throws -> Int,
+        edit: @escaping @Sendable (String, Int64, Int) async throws -> Void
+    ) {
+        self.chatID = chatID
+        self.send = send
+        self.edit = edit
+    }
+
+    /// Shows `text`: creates the message the first time, edits it afterwards.
+    ///
+    /// - Returns: `false` once a create with an unknown outcome fenced the
+    ///   ledger for good: no later update reaches Telegram.
+    @discardableResult
+    func update(text: String) async -> Bool {
+        guard !deliveryUnknown else { return false }
+        guard !isRetired, let text = text.nilIfBlank else { return true }
+        let bounded = TerminalTelegramAPIClient.boundedMessageText(text)
+        guard bounded != deliveredText else { return true }
+        if let messageID {
+            do {
+                try await edit(bounded, chatID, messageID)
+                if !isRetired { deliveredText = bounded }
+            } catch {
+                // The ownership stays fenced; never replace the message after
+                // an ambiguous edit outcome.
+            }
+            return true
+        }
+        do {
+            let receipt = try await send(bounded, chatID)
+            guard !isRetired else { return true }
+            messageID = receipt
+            deliveredText = bounded
+            return true
+        } catch {
+            deliveryUnknown = true
+            return false
+        }
+    }
+
+    /// Stops every later update. The message, if any, stays in the chat.
+    func retire() {
+        isRetired = true
+    }
+
+    /// The adopted Telegram message id, for tests.
+    func currentMessageID() -> Int? { messageID }
+}

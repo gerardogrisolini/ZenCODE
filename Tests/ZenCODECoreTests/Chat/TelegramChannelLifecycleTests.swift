@@ -698,10 +698,11 @@ struct TelegramChannelLifecycleTests {
     /// The presenter sends the overviews as plain text: a task graph once per
     /// signature within a turn, the sub-agent response blocks once each
     /// without their metadata, a completed sub-agent response as its
-    /// Markdown; the dedup starts over at every turn; an overview with no
-    /// reporter sending the turn is dropped.
+    /// Markdown; the task-graph dedup starts over at every turn, the
+    /// sub-agent responses are never sent again in a later turn; an overview
+    /// with no reporter sending the turn is dropped.
     @Test
-    func overviewsAreSentOnceAsPlainTextAndTheDedupResetsAtEveryTurn() async throws {
+    func overviewsAreSentOnceAsPlainTextAndTheResponseDedupOutlivesTheTurn() async throws {
         try await Support.withSupport {
             let terminal = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: Support.uniqueBotID()))
             let channel = terminal.telegramChannel
@@ -754,14 +755,15 @@ struct TelegramChannelLifecycleTests {
             )?.text == "✅ Response from worker:\n\n**First** answer")
             #expect(TelegramChannelPresenter.subAgentResponsePayload(heading: "💬 worker:", markdown: "  ") == nil)
 
-            // The next turn starts a new dedup.
+            // The next turn starts a new task-graph dedup, and does not send
+            // the same sub-agent responses again.
             await presenter.turnWillStart(request)
             let next = TelegramTurnMessageLog()
             let nextReporter = await Self.installLog(next, on: channel)
             await channel.enqueueOverview(.tasks("📋 Task graph\n\n1 running"), taskGraphSignature: "graph-1")
             await presenter.presentSubAgentOverview(overview, origin: .automatic, publication: nil)
             await nextReporter.flush()
-            #expect(await next.messages.count == 3)
+            #expect(await next.messages.count == 1)
             #expect(await next.messages.first == "📋 Task graph\n\n1 running")
 
             await channel.endTurnReporting()

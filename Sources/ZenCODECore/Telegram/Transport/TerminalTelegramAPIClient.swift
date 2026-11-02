@@ -108,6 +108,11 @@ struct TerminalTelegramAPIClient: Sendable {
     /// `retry_after`. Every other failure is thrown to the caller untouched,
     /// because an ambiguous outcome must never be retried into a possible
     /// duplicate.
+    ///
+    /// `entities` style the text by position (see
+    /// ``TerminalTelegramMessageEntity``); they must address `text` as
+    /// ``boundedMessageText(_:)`` sends it, and are never combined with a
+    /// `parseMode`.
     @discardableResult
     func sendMessage(
         _ text: String,
@@ -115,14 +120,16 @@ struct TerminalTelegramAPIClient: Sendable {
         messageThreadID: Int? = nil,
         parseMode: String? = nil,
         replyMarkup: TerminalTelegramReplyMarkup? = nil,
+        entities: [TerminalTelegramMessageEntity]? = nil,
         governor: TerminalTelegramRateGovernor? = nil
     ) async throws -> Int {
         let request = TerminalTelegramSendMessageRequest(
             chatID: chatID,
             text: Self.boundedMessageText(text),
-            parseMode: parseMode,
+            parseMode: entities == nil ? parseMode : nil,
             replyMarkup: replyMarkup,
-            messageThreadID: messageThreadID
+            messageThreadID: messageThreadID,
+            entities: entities
         )
         let send: () async throws -> Int = {
             let message: TerminalTelegramMessage = try await self.request(

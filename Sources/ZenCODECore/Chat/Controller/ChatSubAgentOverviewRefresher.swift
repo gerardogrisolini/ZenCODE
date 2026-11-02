@@ -14,13 +14,17 @@ import Foundation
 /// The controller owns one refresher (``ChatSessionController/subAgentOverviewRefresher``)
 /// and the publication it runs, and the channel decides when, through
 /// ``ChatSessionController/publishSubAgentOverviewIfChanged(relatedToolName:presenter:)``,
-/// ``ChatSessionController/startSubAgentOverviewRefreshIfNeeded(presenter:)``, and
-/// ``ChatSessionController/stopSubAgentOverviewRefresh(presenter:)``: the
+/// ``ChatSessionController/startSubAgentOverviewRefreshIfNeeded(presenter:)``,
+/// ``ChatSessionController/stopSubAgentOverviewRefresh(presenter:)``, and
+/// ``ChatSessionController/cancelSubAgentOverviewRefresh()``: the
 /// terminal publishes after a sub-agent tool call starts and after it
 /// settles, starts the refresh when a sub-agent tool call starts, and stops it
-/// when the call settles and when the turn finishes. The shared turn calls
-/// none of them, so a channel that does not present the overview (the ACP
-/// bridge, the headless runner) neither reads the snapshots nor runs the
+/// when the call settles and when the turn finishes. The Telegram channel
+/// does the same for the turns it presents, on its own presenter, and also
+/// stops the refresh it started, without publishing, when the turn's
+/// reporting ends or the channel stops driving the slot. The shared turn
+/// calls none of them, so a channel that does not present the overview (the
+/// ACP bridge, the headless runner) neither reads the snapshots nor runs the
 /// refresh.
 ///
 /// Every tick waits ``interval``, runs ``onTick`` when set, and publishes. The
@@ -153,6 +157,22 @@ extension ChatSessionController {
     ) async {
         await subAgentOverviewRefresher.stop()
         await publishSubAgentOverview(presenter: presenter ?? effectivePresenter(for: nil))
+    }
+
+    /// Stops the refresh and waits for a tick in flight, without publishing:
+    /// for a channel that stops presenting the turn (its reporting ended, or
+    /// another channel took the slot), whose presenter must receive nothing
+    /// more. Idempotent.
+    func cancelSubAgentOverviewRefresh() async {
+        await subAgentOverviewRefresher.stop()
+    }
+
+    /// The sub-agent overview as the runtime reports it now, presented to
+    /// no one: what a channel that starts presenting the session reads to
+    /// know what the sub-agents already showed (see
+    /// ``TelegramChannelPresenter/channelDidStartDriving()``).
+    func currentSubAgentOverview() async -> ChatSubAgentOverview {
+        ChatSubAgentOverview(snapshots: await runtime.subAgentSnapshots())
     }
 
     /// Reserves a publication, reads the sub-agent snapshots, and presents

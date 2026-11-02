@@ -24,6 +24,27 @@ public struct TerminalTelegramRouteKey: Codable, Hashable, Sendable {
     }
 }
 
+extension TerminalTelegramRouteKey {
+    /// The room of the route every session of the linked chat shares, the one
+    /// without a topic that setup creates. A session-specific route (a topic)
+    /// is bound to the id of its session instead.
+    static let sharedRoomID = "default"
+
+    /// Whether a route bound to `routeRoomID` serves the session room
+    /// `roomID`: its own room, or any room when the route is the shared one.
+    /// The one rule behind every authorization and binding of a session to a
+    /// route.
+    static func route(roomID routeRoomID: String, admits roomID: String) -> Bool {
+        routeRoomID == roomID || routeRoomID == sharedRoomID
+    }
+
+    /// Whether this route serves the session room `roomID`; see
+    /// ``route(roomID:admits:)``.
+    func admits(roomID: String) -> Bool {
+        Self.route(roomID: self.roomID, admits: roomID)
+    }
+}
+
 /// Telegram wire chat classification. Routing accepts only `privateChat`; every
 /// other wire value is collapsed to `unsupported` and rejected before any work.
 public enum TerminalTelegramChatKind: Codable, Equatable, Sendable {

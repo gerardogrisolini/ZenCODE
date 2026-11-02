@@ -356,6 +356,72 @@ struct TerminalTelegramSharedChatRelayTests {
         #expect(await recorder.cards.isEmpty)
     }
 
+    /// The route every session shares serves the room of any session: the
+    /// relay bound through it forwards the room's batches, which carry the
+    /// room of the session and never the route's own.
+    @Test
+    func theSharedRouteServesTheRoomOfTheSession() async {
+        let recorder = TelegramCardRecorder()
+        let relay = Self.makeRelay(recorder)
+        let shared = TerminalTelegramRouteLease(
+            key: .init(chatID: Self.chatID, userID: 7, roomID: TerminalTelegramRouteKey.sharedRoomID),
+            generation: 1
+        )
+        await relay.activate(roomID: Self.roomID, chatID: Self.chatID, lease: shared)
+
+        await relay.forward([Self.message()], roomID: Self.roomID)
+        await relay.forward(
+            [Self.message(roomID: TerminalTelegramRouteKey.sharedRoomID)],
+            roomID: TerminalTelegramRouteKey.sharedRoomID
+        )
+        await relay.waitForPendingCards()
+
+        #expect(await recorder.cards.count == 1)
+    }
+
+    /// A route bound to another room of its own cannot bind the relay to the
+    /// session's room: the lease is refused, the relay stays unbound, and one
+    /// that was bound is released.
+    @Test
+    func aLeaseOfAnotherSpecificRoomIsRefused() async {
+        let recorder = TelegramCardRecorder()
+        let relay = Self.makeRelay(recorder)
+        let foreign = TerminalTelegramRouteLease(
+            key: .init(chatID: Self.chatID, userID: 7, roomID: "other-room"), generation: 1
+        )
+
+        await relay.activate(roomID: Self.roomID, chatID: Self.chatID, lease: foreign)
+        await relay.forward([Self.message()], roomID: Self.roomID)
+        await relay.waitForPendingCards()
+        #expect(await recorder.cards.isEmpty)
+
+        await relay.activate(roomID: Self.roomID, chatID: Self.chatID)
+        await relay.forward([Self.message(text: "bound")], roomID: Self.roomID)
+        await relay.waitForPendingCards()
+        #expect(await recorder.cards.count == 1)
+
+        await relay.activate(roomID: Self.roomID, chatID: Self.chatID, lease: foreign)
+        await relay.forward([Self.message(text: "released")], roomID: Self.roomID)
+        await relay.waitForPendingCards()
+        #expect(await recorder.cards.count == 1)
+    }
+
+    /// The rule behind the binding: a route serves its own room, and the
+    /// shared one serves every room.
+    @Test
+    func aRouteAdmitsItsOwnRoomAndTheSharedRouteAdmitsEveryRoom() {
+        func key(_ roomID: String) -> TerminalTelegramRouteKey {
+            TerminalTelegramRouteKey(chatID: Self.chatID, userID: 7, roomID: roomID)
+        }
+
+        #expect(TerminalTelegramRouteKey.sharedRoomID == "default")
+        #expect(key(Self.roomID).admits(roomID: Self.roomID))
+        #expect(!key(Self.roomID).admits(roomID: "other-room"))
+        #expect(key(TerminalTelegramRouteKey.sharedRoomID).admits(roomID: Self.roomID))
+        #expect(key(TerminalTelegramRouteKey.sharedRoomID).admits(roomID: TerminalTelegramRouteKey.sharedRoomID))
+        #expect(!key(Self.roomID).admits(roomID: TerminalTelegramRouteKey.sharedRoomID))
+    }
+
     /// An agent sender is answered directly by its stable identifier; the
     /// coordinator is answered on its reserved destination.
     @Test(arguments: [
@@ -1078,13 +1144,13 @@ struct TerminalTelegramSharedChatRelayTests {
         // nothing can free a slot, so the admitted prefix is now stable.
         await recorder.waitUntilSendStarted()
         await relay.waitUntilProducerIsBlocked()
-        let admittedPrefix = await relay.admittedCardCount
+        let admittedPrefix = await relay.ledgerEntryCount
         #expect(admittedPrefix > 0)
 
         let producerB = Task { await relay.forward(batchB, roomID: Self.roomID) }
         await relay.waitUntilProducersAreBlocked(count: 2)
         // B asked second and must stay behind A: nothing of B was admitted.
-        #expect(await relay.admittedCardCount == admittedPrefix)
+        #expect(await relay.ledgerEntryCount == admittedPrefix)
 
         await recorder.open()
         await producerA.value
@@ -1124,7 +1190,7 @@ struct TerminalTelegramSharedChatRelayTests {
         await relay.waitUntilProducerIsBlocked()
         // The gate is shut, so no grant can happen: the producer is cancelled
         // while it demonstrably holds no reservation.
-        let admitted = await relay.admittedCardCount
+        let admitted = await relay.ledgerEntryCount
         #expect(admitted < batch.count)
 
         producer.cancel()
@@ -1193,6 +1259,283 @@ struct TerminalTelegramSharedChatRelayTests {
         // order: no card of the second producer overtook the first.
         let payloads = Self.labelledPayloads(of: await recorder.cards)
         #expect(payloads == Array(batchA.map(\.text).prefix(payloads.count)))
+    }
+
+    // MARK: - Only new messages
+
+    private static func lease(
+        roomID: String = roomID,
+        chatID: Int64 = chatID,
+        generation: UInt64 = 1
+    ) -> TerminalTelegramRouteLease {
+        TerminalTelegramRouteLease(
+            key: .init(chatID: chatID, userID: 7, roomID: roomID), generation: generation
+        )
+    }
+
+    /// The message bodies of `texts`, in order (a card is route, body and
+    /// footer, separated by blank lines).
+    private static func bodies(of texts: [String]) -> [String] {
+        texts.map { $0.components(separatedBy: "\n\n").dropFirst().first ?? "" }
+    }
+
+    /// The messages a room holds when the relay starts forwarding it are
+    /// marked with the binding itself, so the observer's replay never turns
+    /// them into cards: offered before the binding it is dropped (unbound),
+    /// offered after it, once or twice, it is skipped. A newer message is
+    /// relayed.
+    @Test
+    func messagesPresentWhenForwardingStartsNeverBecomeCards() async throws {
+        let recorder = TelegramCardRecorder()
+        let relay = Self.makeRelay(recorder)
+        let present = [Self.message(text: "present-1"), Self.message(text: "present-2")]
+
+        await relay.forward(present, roomID: Self.roomID)
+        let activation = try #require(await relay.activate(
+            roomID: Self.roomID, chatID: Self.chatID, lease: Self.lease(),
+            presentMessageIDs: present.map(\.id)
+        ))
+        #expect(activation.startedForwarding)
+        #expect(await relay.forwards(roomID: Self.roomID, chatID: Self.chatID))
+        await relay.waitForPendingCards()
+        #expect(await recorder.cards.isEmpty)
+
+        await relay.forward(present + [Self.message(text: "fresh")], roomID: Self.roomID)
+        await relay.forward(present, roomID: Self.roomID)
+        await relay.waitForPendingCards()
+
+        #expect(Self.bodies(of: await recorder.cards.map(\.text)) == ["fresh"])
+    }
+
+    /// `markPresent(_:roomID:generation:)` marks for the live binding without
+    /// queuing a card: a message marked, then offered by the replay, is not a
+    /// card, and a message offered with it is.
+    @Test
+    func aMarkedMessageOfferedByTheReplayIsNotACard() async throws {
+        let recorder = TelegramCardRecorder()
+        let relay = Self.makeRelay(recorder)
+        let activation = try #require(await relay.activate(
+            roomID: Self.roomID, chatID: Self.chatID, lease: Self.lease()
+        ))
+        let present = Self.message(text: "present")
+
+        #expect(await relay.markPresent(
+            [present.id], roomID: Self.roomID, generation: activation.generation
+        ))
+        await relay.waitForPendingCards()
+        #expect(await recorder.cards.isEmpty)
+
+        await relay.forward([present, Self.message(text: "fresh")], roomID: Self.roomID)
+        await relay.waitForPendingCards()
+
+        #expect(Self.bodies(of: await recorder.cards.map(\.text)) == ["fresh"])
+    }
+
+    /// Marks are written only for the live binding: unbound, for a retired
+    /// generation (even of the same room and chat, after `/telegram off` →
+    /// `/telegram on`), for another room, or after teardown, the call is
+    /// refused and marks nothing, so those messages are still relayed.
+    @Test
+    func markPresentIsRefusedOutsideTheLiveBinding() async throws {
+        let recorder = TelegramCardRecorder()
+        let relay = Self.makeRelay(recorder)
+        let stale = Self.message(text: "stale generation")
+        let foreign = Self.message(text: "another room")
+
+        #expect(await relay.markPresent([stale.id], roomID: Self.roomID, generation: 0) == false)
+        let first = try #require(await relay.activate(
+            roomID: Self.roomID, chatID: Self.chatID, lease: Self.lease()
+        ))
+        await relay.deactivate()
+        #expect(await relay.markPresent(
+            [stale.id], roomID: Self.roomID, generation: first.generation
+        ) == false)
+
+        // Bound again to the same pair: the ledger is kept, the generation is new.
+        let second = try #require(await relay.activate(
+            roomID: Self.roomID, chatID: Self.chatID, lease: Self.lease()
+        ))
+        #expect(second.generation != first.generation)
+        #expect(await relay.markPresent(
+            [stale.id], roomID: Self.roomID, generation: first.generation
+        ) == false)
+        #expect(await relay.markPresent(
+            [foreign.id], roomID: "terminal-room-2", generation: second.generation
+        ) == false)
+
+        await relay.forward([stale, foreign], roomID: Self.roomID)
+        await relay.waitForPendingCards()
+        #expect(Self.bodies(of: await recorder.cards.map(\.text)) == [
+            "stale generation", "another room",
+        ])
+
+        await relay.shutdown()
+        #expect(await relay.markPresent(
+            [UUID()], roomID: Self.roomID, generation: second.generation
+        ) == false)
+    }
+
+    /// Marks share the ledger's bound. Of a list longer than the ledger only
+    /// the newest `maximumLedgerEntries` are kept; an identity already in the
+    /// ledger moves to the tail with the other marks, so the trim evicts only
+    /// entries the room no longer holds; and a card already queued is still
+    /// delivered, once, even when the marks evict its own entry.
+    @Test
+    func presentMarksRespectTheLedgerBound() async throws {
+        let bound = TerminalTelegramSharedChatRelay.maximumLedgerEntries
+        #expect(bound >= AgentSharedChat.maximumRetainedMessagesPerRoom)
+
+        // A list longer than the bound keeps its newest `bound` marks.
+        do {
+            let recorder = TelegramCardRecorder()
+            let relay = Self.makeRelay(recorder)
+            let marked = Self.labelledBatch(prefix: "present", count: bound + 2)
+            let activation = try #require(await relay.activate(
+                roomID: Self.roomID, chatID: Self.chatID, lease: Self.lease(),
+                presentMessageIDs: marked.map(\.id)
+            ))
+            #expect(activation.startedForwarding)
+            #expect(await relay.ledgerEntryCount == bound)
+
+            await relay.forward([marked[marked.count - 1]], roomID: Self.roomID)
+            await relay.forward([marked[0]], roomID: Self.roomID)
+            await relay.waitForPendingCards()
+            #expect(Self.bodies(of: await recorder.cards.map(\.text)) == [marked[0].text])
+        }
+
+        // A delivered identity the room still holds survives the trim.
+        do {
+            let recorder = TelegramCardRecorder()
+            let relay = Self.makeRelay(recorder)
+            let activation = try #require(await relay.activate(
+                roomID: Self.roomID, chatID: Self.chatID, lease: Self.lease()
+            ))
+            let delivered = Self.labelledBatch(prefix: "delivered", count: 3)
+            await relay.forward(delivered, roomID: Self.roomID)
+            await relay.waitForPendingCards()
+            // The oldest delivered message is still in the room's transcript.
+            let transcript = [delivered[0]]
+                + Self.labelledBatch(prefix: "present", count: bound - 1)
+
+            #expect(await relay.markPresent(
+                transcript.map(\.id), roomID: Self.roomID, generation: activation.generation
+            ))
+            #expect(await relay.ledgerEntryCount == bound)
+            await relay.forward(transcript, roomID: Self.roomID)
+            await relay.waitForPendingCards()
+            #expect(await recorder.cards.count == delivered.count)
+        }
+
+        // Queued cards outside the transcript keep their place in the queue.
+        do {
+            let recorder = GatedCardRecorder()
+            let relay = Self.makeGatedRelay(recorder)
+            let activation = try #require(await relay.activate(
+                roomID: Self.roomID, chatID: Self.chatID, lease: Self.lease()
+            ))
+            let queued = Self.labelledBatch(prefix: "queued", count: 3)
+            await relay.forward(queued, roomID: Self.roomID)
+            await recorder.waitUntilSendStarted()
+            let transcript = Self.labelledBatch(
+                prefix: "present", count: AgentSharedChat.maximumRetainedMessagesPerRoom
+            )
+
+            #expect(await relay.markPresent(
+                transcript.map(\.id), roomID: Self.roomID, generation: activation.generation
+            ))
+            #expect(await relay.ledgerEntryCount == bound)
+            await recorder.open()
+            await relay.waitForPendingCards()
+            #expect(Self.bodies(of: await recorder.cards.map(\.text)) == queued.map(\.text))
+            // Offered once the gate is open, so a regression fails here
+            // instead of parking the producer on a queue that never drains.
+            await relay.forward(transcript, roomID: Self.roomID)
+            await relay.waitForPendingCards()
+            #expect(Self.bodies(of: await recorder.cards.map(\.text)) == queued.map(\.text))
+        }
+    }
+
+    /// Only an activation that starts forwarding the room to the chat marks:
+    /// a repeated activation and a new lease of the pair already forwarded (a
+    /// route refresh) start nothing, so a new message the observation has not
+    /// offered yet still arrives. After `/telegram off`, or on another chat,
+    /// the next activation starts again and marks.
+    @Test
+    func aRouteRefreshOfTheForwardedPairMarksNothing() async throws {
+        let recorder = TelegramCardRecorder()
+        let relay = Self.makeRelay(recorder)
+        let started = try #require(await relay.activate(
+            roomID: Self.roomID, chatID: Self.chatID, lease: Self.lease()
+        ))
+        #expect(started.startedForwarding)
+
+        let buffered = Self.message(text: "buffered during the refresh")
+        let repeated = try #require(await relay.activate(
+            roomID: Self.roomID, chatID: Self.chatID, lease: Self.lease(),
+            presentMessageIDs: [buffered.id]
+        ))
+        #expect(!repeated.startedForwarding)
+        let refreshed = try #require(await relay.activate(
+            roomID: Self.roomID, chatID: Self.chatID, lease: Self.lease(generation: 2),
+            presentMessageIDs: [buffered.id]
+        ))
+        #expect(!refreshed.startedForwarding)
+        #expect(refreshed.generation != started.generation)
+        await relay.forward([buffered], roomID: Self.roomID)
+        await relay.waitForPendingCards()
+        #expect(Self.bodies(of: await recorder.cards.map(\.text)) == [buffered.text])
+
+        await relay.deactivate()
+        #expect(await relay.forwards(roomID: Self.roomID, chatID: Self.chatID) == false)
+        let whileOff = Self.message(text: "while off")
+        let restarted = try #require(await relay.activate(
+            roomID: Self.roomID, chatID: Self.chatID, lease: Self.lease(generation: 2),
+            presentMessageIDs: [whileOff.id]
+        ))
+        #expect(restarted.startedForwarding)
+        await relay.forward([whileOff], roomID: Self.roomID)
+
+        let otherChat: Int64 = 4_343
+        let onOtherChat = Self.message(text: "held when the other chat starts")
+        let moved = try #require(await relay.activate(
+            roomID: Self.roomID, chatID: otherChat, lease: Self.lease(chatID: otherChat),
+            presentMessageIDs: [onOtherChat.id]
+        ))
+        #expect(moved.startedForwarding)
+        await relay.forward([onOtherChat], roomID: Self.roomID)
+        await relay.waitForPendingCards()
+        #expect(Self.bodies(of: await recorder.cards.map(\.text)) == [buffered.text])
+    }
+
+    /// `/telegram off` → `/telegram on` on the same room and chat: what
+    /// arrived while off is not relayed, what arrives afterwards is, and the
+    /// card delivered before the off still resolves its reply.
+    @Test
+    func offThenOnSkipsWhatArrivedWhileOffAndKeepsEarlierReceipts() async throws {
+        let recorder = TelegramCardRecorder()
+        let relay = Self.makeRelay(recorder)
+        let delivered = Self.message(text: "delivered")
+        await relay.activate(roomID: Self.roomID, chatID: Self.chatID, lease: Self.lease())
+        await relay.forward([delivered], roomID: Self.roomID)
+        await relay.waitForPendingCards()
+        let receipt = try #require(await recorder.cards.first?.receipt)
+
+        await relay.deactivate()
+        let whileOff = Self.message(text: "while off")
+        let activation = try #require(await relay.activate(
+            roomID: Self.roomID, chatID: Self.chatID, lease: Self.lease(),
+            presentMessageIDs: [delivered.id, whileOff.id]
+        ))
+        #expect(activation.startedForwarding)
+        await relay.forward(
+            [delivered, whileOff, Self.message(text: "after on")], roomID: Self.roomID
+        )
+        await relay.waitForPendingCards()
+
+        #expect(Self.bodies(of: await recorder.cards.map(\.text)) == ["delivered", "after on"])
+        let target = await relay.replyTarget(forTelegramMessageID: receipt, chatID: Self.chatID)
+        #expect(target?.sharedChatMessageID == delivered.id)
+        #expect(target?.replyDestination == .direct(["agent-1"]))
     }
 
     // MARK: - Ledger sizing

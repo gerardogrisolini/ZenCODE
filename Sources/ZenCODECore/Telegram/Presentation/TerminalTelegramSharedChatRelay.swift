@@ -62,6 +62,15 @@ public struct TerminalTelegramSharedChatReplyTarget: Sendable, Equatable {
 /// `sendMessage`, so a message id is marked as attempted *before* the HTTP call:
 /// an ambiguous outcome loses a card rather than risking a duplicate, and
 /// nothing is retried automatically.
+///
+/// Only **new** messages reach the chat. When the relay starts forwarding a
+/// room — the first `/telegram on`, `/telegram on` after `/telegram off`, a
+/// room swap, a link that gets its route back — the messages the room already
+/// holds are marked as handled without a card (see
+/// ``activate(roomID:chatID:lease:repliesEnabled:presentMessageIDs:)`` and
+/// ``markPresent(_:roomID:generation:)``), so the observer's replay of the
+/// retained transcript forwards nothing: only what the room says afterwards
+/// is relayed.
 actor TerminalTelegramSharedChatRelay {
     /// Sends one card and returns the Telegram receipt, or `nil` when delivery
     /// failed. Injected so the actor never depends on the TUI or on a concrete
@@ -91,6 +100,11 @@ actor TerminalTelegramSharedChatRelay {
     ///   the relay has not even delivered yet, and each eviction would readmit it
     ///   and evict another — a self-sustaining cascade of duplicates.
     ///
+    /// The marks of the messages already present when the relay starts
+    /// forwarding a room come from the same transcript, so they are bounded by
+    /// the first term; how they share the ledger with queued cards is explained
+    /// in ``recordPresent(_:)``.
+    ///
     /// Taking the maximum of the two satisfies both at once and keeps the
     /// invariant checkable from tests instead of being a hand-tuned constant.
     static let maximumLedgerEntries = max(
@@ -105,6 +119,26 @@ actor TerminalTelegramSharedChatRelay {
         let roomID: String
         let chatID: Int64
         let lease: TerminalTelegramRouteLease
+    }
+
+    /// The room and chat a binding forwards, whatever its lease.
+    private struct Route: Equatable {
+        let roomID: String
+        let chatID: Int64
+    }
+
+    /// The binding an
+    /// ``activate(roomID:chatID:lease:repliesEnabled:presentMessageIDs:)``
+    /// call left live.
+    struct Activation: Sendable, Equatable {
+        /// Generation of the live binding, the token
+        /// ``markPresent(_:roomID:generation:)`` checks.
+        let generation: Int
+        /// `true` when the call started forwarding the room to the chat: the
+        /// relay was unbound, or forwarded another room or chat. A repeated
+        /// activation and a new lease of the pair already forwarded (a route
+        /// refresh) start nothing.
+        let startedForwarding: Bool
     }
 
     /// A receipt observed while the relay was unbound, kept until the same
@@ -149,6 +183,12 @@ actor TerminalTelegramSharedChatRelay {
     /// → `/telegram on` for the same room and chat so re-enabling cannot resend
     /// cards the chat already received.
     private var ledgerContext: Context?
+    /// Room and chat of the binding last made live, cleared only by an explicit
+    /// unbind (``deactivate()``, ``shutdown()``). Unlike ``activeContext`` it
+    /// survives the transient fence of a rebind, so "this activation starts
+    /// forwarding the room" is decided against what the chat was really
+    /// receiving, not against a concurrent rebind caught halfway.
+    private var forwardingRoute: Route?
     /// Bumped by every binding change so a card queued for a retired binding
     /// cannot be sent for the current one.
     private var generation = 0
@@ -208,14 +248,6 @@ actor TerminalTelegramSharedChatRelay {
 
     // MARK: - Lifecycle
 
-    /// Binds the relay to a room and linked chat.
-    ///
-    /// Re-binding to the *same* pair is a no-op: it must not fence, drop queued
-    /// cards or invalidate receipts, because `/new` on an unchanged room and a
-    /// repeated activation are indistinguishable from here and would otherwise
-    /// lose in-flight work. Any other change fences the previous binding first
-    /// (see ``fence()``) and then clears the ledger, because message identifiers
-    /// of a retired room say nothing about what the new binding delivered.
     /// Registers a bot-authored composition card as a safe reply target. Unlike
     /// forwarded cards, the target is selected from the current live catalogue;
     /// quoted Telegram text is never consulted for routing.
@@ -231,21 +263,46 @@ actor TerminalTelegramSharedChatRelay {
         recordReplyTarget(target, receipt: receipt)
     }
 
+    /// Binds the relay to a room and linked chat, and returns the binding now
+    /// live, or `nil` when the lease cannot serve the room (the relay is then
+    /// unbound).
+    ///
+    /// Re-binding to the *same* pair is a no-op: it must not fence, drop queued
+    /// cards or invalidate receipts, because `/new` on an unchanged room and a
+    /// repeated activation are indistinguishable from here and would otherwise
+    /// lose in-flight work. Any other change fences the previous binding first
+    /// (see ``fence()``) and then clears the ledger, because message identifiers
+    /// of a retired room say nothing about what the new binding delivered.
+    ///
+    /// When the call starts forwarding the room to the chat (see
+    /// ``Activation/startedForwarding``), `presentMessageIDs` — the room's
+    /// messages, read by the caller just before the call — are marked as
+    /// handled without a card, in the same actor step that makes the binding
+    /// live: a producer running concurrently either finds the relay unbound
+    /// or finds the marks already written, so a message already present never
+    /// becomes a card whichever order the observer's replay takes. The decision
+    /// is taken after the fence, against the binding last made live: a new
+    /// lease of the pair already forwarded marks nothing, because the messages
+    /// a running observation has still to offer are new and must arrive.
+    @discardableResult
     func activate(
         roomID: String, chatID: Int64,
         lease: TerminalTelegramRouteLease,
-        repliesEnabled: Bool = true
-    ) async {
-        guard lease.key.roomID == roomID, lease.key.chatID == chatID,
+        repliesEnabled: Bool = true,
+        presentMessageIDs: [UUID] = []
+    ) async -> Activation? {
+        // The lease must serve the room: its own, or any when it is the shared
+        // route; a route bound to another room never binds the relay.
+        guard lease.key.admits(roomID: roomID), lease.key.chatID == chatID,
               await validateLease(lease) else {
             await deactivate()
-            return
+            return nil
         }
         let context = Context(roomID: roomID, chatID: chatID, lease: lease)
         guard activeContext != context else {
             // Idempotent: only the (purely cosmetic) reply affordance is refreshed.
             self.repliesEnabled = repliesEnabled
-            return
+            return Activation(generation: generation, startedForwarding: false)
         }
         await fence()
         self.repliesEnabled = repliesEnabled
@@ -253,11 +310,54 @@ actor TerminalTelegramSharedChatRelay {
             resetLedger()
             ledgerContext = context
         }
+        // No suspension from here to the return: the binding, the decision and
+        // the marks commit together.
+        let route = Route(roomID: roomID, chatID: chatID)
+        let startedForwarding = forwardingRoute != route
         activeContext = context
+        forwardingRoute = route
+        if startedForwarding {
+            recordPresent(presentMessageIDs)
+        }
         // A send that started before `/telegram off` may have answered while the
         // relay was unbound. Its card really is in this chat, so its receipt is
         // installed now that the very same binding is live again.
         promotePendingReceipts()
+        return Activation(generation: generation, startedForwarding: startedForwarding)
+    }
+
+    /// Marks the messages already present in `roomID` as handled for the
+    /// binding `generation`, without queuing a card for any of them, and
+    /// returns whether it did.
+    ///
+    /// For a caller that knows nothing is being forwarded for the room yet,
+    /// such as an observation that is bound but has not offered its first
+    /// event: there the marks are needed even when the activation itself was a
+    /// no-op (the binding was already made, by a Telegram message for
+    /// instance), and no producer can slip in before them. The marks share the
+    /// ledger's bound (see ``recordPresent(_:)``). Refused, touching nothing,
+    /// after teardown, once the binding `generation` was retired, or while the
+    /// live binding serves another room.
+    @discardableResult
+    func markPresent(
+        _ messageIDs: [UUID],
+        roomID: String,
+        generation expectedGeneration: Int
+    ) -> Bool {
+        guard !isShutDown,
+              generation == expectedGeneration,
+              activeContext?.roomID == roomID else {
+            return false
+        }
+        recordPresent(messageIDs)
+        return true
+    }
+
+    /// Whether the relay forwards `roomID` to `chatID` now, whatever the lease.
+    /// An activation for that pair starts nothing and marks nothing, so its
+    /// caller need not read the room's present messages.
+    func forwards(roomID: String, chatID: Int64) -> Bool {
+        forwardingRoute == Route(roomID: roomID, chatID: chatID)
     }
 
     /// Unbinds without discarding the ledger, so `/telegram off` → `/telegram on`
@@ -269,6 +369,9 @@ actor TerminalTelegramSharedChatRelay {
     /// and installed only if the very same room and chat are activated again;
     /// any binding change clears the ledger and the parked receipts with it.
     func deactivate() async {
+        // Explicitly unbound: the next activation starts forwarding again, so
+        // the messages the room holds by then are not relayed.
+        forwardingRoute = nil
         guard activeContext != nil else {
             // Already unbound, but a concurrent fence may still be waiting out an
             // in-flight send: the caller is about to release the transport, so it
@@ -346,6 +449,7 @@ actor TerminalTelegramSharedChatRelay {
         // Set before the fence so a producer that wakes during teardown is
         // refused rather than re-admitted into a queue nothing will drain.
         isShutDown = true
+        forwardingRoute = nil
         await fence()
         resetLedger()
         ledgerContext = nil
@@ -359,7 +463,10 @@ actor TerminalTelegramSharedChatRelay {
 
     /// Offers one observer batch. Every message in the active room is relayed:
     /// operator-originated traffic, coordinator ↔ agent traffic, peer traffic,
-    /// direct multi-recipient traffic and broadcasts are all visible.
+    /// direct multi-recipient traffic and broadcasts are all visible. The
+    /// messages the room already held when the relay started forwarding it are
+    /// in the ledger already (``markPresent(_:roomID:generation:)``), so they
+    /// are skipped like any identity already delivered.
     ///
     /// Nothing is dropped. When the bounded queue is full the call suspends until
     /// the drain worker frees a slot, so a batch or a replay larger than the queue
@@ -654,11 +761,14 @@ actor TerminalTelegramSharedChatRelay {
         await waitUntilProducersAreBlocked(count: 1)
     }
 
-    /// Number of identities the ledger has admitted so far.
+    /// Number of identities the ledger holds: the cards admitted so far plus
+    /// the messages marked present (``markPresent(_:roomID:generation:)``),
+    /// within ``maximumLedgerEntries``.
     ///
     /// Read by tests only while the relay is provably quiescent (transport gated,
-    /// producers parked), where it is exactly the number of cards admitted.
-    var admittedCardCount: Int {
+    /// producers parked), where, with nothing marked, it is exactly the number of
+    /// cards admitted.
+    var ledgerEntryCount: Int {
         forwardedOrder.count
     }
 
@@ -807,6 +917,32 @@ actor TerminalTelegramSharedChatRelay {
             let oldest = replyTargetOrder.removeFirst()
             replyTargets.removeValue(forKey: oldest)
         }
+    }
+
+    /// Writes "already handled" marks for the messages present in the room, in
+    /// transcript order, at the tail of the ledger, without queuing a card.
+    ///
+    /// The marks fit the bound: they come from the room's transcript, so there
+    /// are at most `AgentSharedChat.maximumRetainedMessagesPerRoom` of them,
+    /// which ``maximumLedgerEntries`` covers (of a longer list only the newest
+    /// `maximumLedgerEntries` are kept). An identity already in the ledger moves
+    /// to the tail with the others, so afterwards every message the room still
+    /// retains sits behind every entry the room no longer holds. The trim that
+    /// follows therefore evicts only identities the transcript has dropped
+    /// already, which neither the observer's replay nor a poll can offer again,
+    /// and never the mark of a message still present. Queued cards keep their
+    /// place in the queue: a card already admitted is still delivered, once.
+    private func recordPresent(_ messageIDs: [UUID]) {
+        var marked = Set<UUID>()
+        var ordered: [UUID] = []
+        for id in messageIDs.suffix(Self.maximumLedgerEntries) where marked.insert(id).inserted {
+            ordered.append(id)
+        }
+        guard !ordered.isEmpty else { return }
+        forwardedOrder.removeAll { marked.contains($0) }
+        forwardedOrder.append(contentsOf: ordered)
+        forwardedIDs.formUnion(ordered)
+        trimLedgerIfNeeded()
     }
 
     private func trimLedgerIfNeeded() {

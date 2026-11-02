@@ -94,10 +94,13 @@ struct ACPTelegramSentMessage: Equatable, Sendable {
 
 /// A Bot API double routed by method, for one bot. getMe reports `botID`
 /// (in Threaded mode when `hasTopicsEnabled`), or fails while `getMeFails`;
-/// getUpdates returns the messages ``deliver(_:topicID:)`` queued and
+/// getUpdates returns the messages and button presses
+/// ``deliver(_:topicID:)`` and ``deliverCallbackQuery(_:)`` queued and
 /// otherwise waits until it is cancelled, counting how many polls run at
-/// once; sendMessage and sendRichMessage are recorded; createForumTopic
-/// answers the next of `createdTopicIDs`; every other method succeeds.
+/// once; sendMessage and sendRichMessage are recorded, and while
+/// ``holdSends(containing:)`` is on one whose text contains its marker waits
+/// for ``releaseSends()`` before it is recorded; createForumTopic answers
+/// the next of `createdTopicIDs`; every other method succeeds.
 actor ACPTelegramScriptedTransport: TelegramHTTPTransport {
     let botID: Int64
     private let hasTopicsEnabled: Bool
@@ -112,6 +115,9 @@ actor ACPTelegramScriptedTransport: TelegramHTTPTransport {
     /// to a second concurrent long poll on one bot.
     private(set) var maximumConcurrentPolls = 0
     private(set) var pollCount = 0
+    private var heldSendMarker: String?
+    private var heldSends: [CheckedContinuation<Void, Never>] = []
+    private var heldSendWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(botID: Int64, hasTopicsEnabled: Bool = false, createdTopicIDs: [Int] = []) {
         self.botID = botID
@@ -121,6 +127,29 @@ actor ACPTelegramScriptedTransport: TelegramHTTPTransport {
 
     func setGetMeFails(_ fails: Bool) {
         getMeFails = fails
+    }
+
+    /// From now on a sendMessage or sendRichMessage whose text contains
+    /// `marker` waits for ``releaseSends()`` before it is recorded and
+    /// answered, so a test can keep a reporter's flush in flight.
+    func holdSends(containing marker: String) {
+        heldSendMarker = marker
+    }
+
+    /// Lets every held send go on, in order; later ones no longer wait.
+    func releaseSends() {
+        heldSendMarker = nil
+        let held = heldSends
+        heldSends = []
+        for continuation in held {
+            continuation.resume()
+        }
+    }
+
+    /// Returns once a send waits at the gate of ``holdSends(containing:)``.
+    func waitUntilASendIsHeld() async {
+        guard heldSends.isEmpty else { return }
+        await withCheckedContinuation { heldSendWaiters.append($0) }
     }
 
     var runningPollCount: Int {
@@ -150,6 +179,25 @@ actor ACPTelegramScriptedTransport: TelegramHTTPTransport {
         nextUpdateID += 1
         let data = try JSONSerialization.data(withJSONObject: update)
         pendingUpdates.append(String(decoding: data, as: UTF8.self))
+    }
+
+    /// Queues a press of the owner on a button carrying `data`, on a message
+    /// of the linked chat, for the next poll.
+    func deliverCallbackQuery(_ data: String) throws {
+        let callback: [String: Any] = [
+            "id": "callback-\(nextUpdateID)",
+            "from": ["id": ACPTelegramTestSupport.ownerUserID, "is_bot": false, "first_name": "Owner"],
+            "data": data,
+            "message": [
+                "message_id": nextMessageID,
+                "chat": ["id": ACPTelegramTestSupport.linkedChatID, "type": "private"],
+            ] as [String: Any],
+        ]
+        nextMessageID += 1
+        let update: [String: Any] = ["update_id": nextUpdateID, "callback_query": callback]
+        nextUpdateID += 1
+        let encoded = try JSONSerialization.data(withJSONObject: update)
+        pendingUpdates.append(String(decoding: encoded, as: UTF8.self))
     }
 
     func send(
@@ -182,6 +230,16 @@ actor ACPTelegramScriptedTransport: TelegramHTTPTransport {
             let text = url.lastPathComponent == "sendMessage"
                 ? object?["text"] as? String ?? ""
                 : richText.isEmpty ? rawBody : richText
+            if let marker = heldSendMarker, text.contains(marker) {
+                await withCheckedContinuation { continuation in
+                    heldSends.append(continuation)
+                    let waiters = heldSendWaiters
+                    heldSendWaiters = []
+                    for waiter in waiters {
+                        waiter.resume()
+                    }
+                }
+            }
             sentMessages.append(ACPTelegramSentMessage(
                 method: url.lastPathComponent,
                 text: text,

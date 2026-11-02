@@ -15,9 +15,10 @@ import ToolCore
 /// task that stops it when its route is revoked).
 ///
 /// The slot's presenter drives the turn's boundaries through the channel's
-/// ``TelegramChannelPresenter``: ``beginTurn(adoptingStreamingBlock:)`` when
-/// a turn starts or moves onto the channel, the root response and the tool
-/// boundaries while it runs, and ``finishTurn(ending:)`` with its ending.
+/// ``TelegramChannelPresenter``: ``beginTurn(adoptingStreamingBlock:liveThought:)`` when
+/// a turn starts or moves onto the channel, the reasoning blocks, the root
+/// response, and the tool calls while it runs, and ``finishTurn(ending:)``
+/// with its ending.
 extension TelegramChannel {
     // MARK: - Running turns
 
@@ -85,6 +86,30 @@ extension TelegramChannel {
     /// again once nothing of the channel waits.
     func turnTaskDidEnd() async {
         activeTurnTask = nil
+        startNextQueuedPromptIfNeeded()
+        await synchronizeSharedChatConsumerBusyState()
+    }
+
+    /// The primary channel is about to present in the chat the ending of a
+    /// turn it ran, and keeps the session reserved for that turn until it
+    /// released it (``sessionReservationDidEnd()``): see
+    /// ``isPresentingPrimaryTurnEnding``.
+    func primaryTurnEndingWillPresent() {
+        isPresentingPrimaryTurnEnding = true
+    }
+
+    /// Resumes what waited for the session once the primary channel released
+    /// the reservation of a turn whose ending the channel presented while the
+    /// reservation still held (see `TerminalChat+Telegram.swift`): closing
+    /// that turn (``finishTurn(ending:)``) found the session still reserved
+    /// and started nothing. As at the end of a task of the channel
+    /// (``turnTaskDidEnd()``), the next queued prompt starts (a voice note
+    /// transcribed meanwhile included), and the shared chat is told whether
+    /// the channel is still busy, so a batch it declined meanwhile is offered
+    /// again. A queued prompt still waits while another prompt holds the
+    /// session or a task of the channel runs.
+    func sessionReservationDidEnd() async {
+        isPresentingPrimaryTurnEnding = false
         startNextQueuedPromptIfNeeded()
         await synchronizeSharedChatConsumerBusyState()
     }
@@ -194,14 +219,31 @@ extension TelegramChannel {
     /// now, on the route of the message that started it
     /// (``nextTurnLease``) or the link's route.
     ///
-    /// The reporter of the previous turn is revoked, the root-response state
-    /// and the task-graph dedup are reset, the turn gets a reporter and the
-    /// typing presence, and a turn on a route lease is stopped when that
-    /// route is revoked, rebound, or closed. A turn that moved onto the
-    /// channel with a block already streaming (`adoptingStreamingBlock`)
-    /// suppresses the rest of that block: the handover sent what streamed so
-    /// far as context, and the chat must not receive the suffix alone.
-    func beginTurn(adoptingStreamingBlock: Bool) async {
+    /// While the previous turn is still finishing (``finishTurn(ending:)``
+    /// is running: its outcome and summary being sent, the task-graph
+    /// observer of an ACP slot quiesced or restarting), the turn waits for it
+    /// before it touches anything: the turn's Telegram side is still the
+    /// previous turn's, its closing touches only its own, and the chat
+    /// receives its outcome and summary before anything of this turn. A turn
+    /// moved onto the channel, which the channel runs no task for, is closed
+    /// by the channel that ran it: the terminal keeps the session reserved
+    /// until the closing ended (see `TerminalChat+Telegram.swift`), and the
+    /// wait keeps the closing whole for a channel that releases it earlier.
+    ///
+    /// The reporter of the previous turn is revoked, the root-response and
+    /// reasoning state and the task-graph dedup are reset, the turn gets a
+    /// reporter and the typing presence, and a turn on a route lease is
+    /// stopped when that route is revoked, rebound, or closed. A turn that
+    /// moved onto the channel with a block already streaming
+    /// (`adoptingStreamingBlock`) suppresses the rest of that block: the
+    /// handover sent what streamed so far as context, and the chat must not
+    /// receive the suffix alone; the reasoning streaming meanwhile, which may
+    /// have begun before the move, is suppressed until the next event that
+    /// closes it. Otherwise `liveThought`, the reasoning the moved turn
+    /// streamed so far, which the handover does not send, starts the
+    /// reasoning block, so the chat receives it whole once it closes.
+    func beginTurn(adoptingStreamingBlock: Bool, liveThought: String = "") async {
+        await waitForFinishingTurn()
         let lease = nextTurnLease ?? activeRouteLease
         let previousValidationTask = routeValidationTask
         routeValidationTask = nil
@@ -212,15 +254,29 @@ extension TelegramChannel {
         activeTurnLease = lease
         activeTurnPromptID = host?.activePromptID(in: slotID)
         resetRootResponseBlock()
+        resetThoughtBlock()
         if adoptingStreamingBlock {
             rootResponseBlockHasContent = true
             rootResponseBlockIsSuppressed = true
+            thoughtBlockIsSuppressed = true
+        } else {
+            appendThoughtDelta(liveThought)
         }
         publishedTaskGraphOverviewSignature = nil
         await synchronizeTurnReporting()
         await beginTurnPresenceIfNeeded()
         if let lease, host != nil {
             routeValidationTask = makeRouteValidationTask(lease: lease)
+        }
+    }
+
+    /// Waits until no turn is finishing (``finishingTurnCount``).
+    private func waitForFinishingTurn() async {
+        while finishingTurnCount > 0 {
+            onBeginTurnWaitsForFinishingTurnForTesting?()
+            await withCheckedContinuation { continuation in
+                finishingTurnWaiters.append(continuation)
+            }
         }
     }
 
@@ -266,7 +322,21 @@ extension TelegramChannel {
     /// The session is free again: the next queued prompt starts, so a prompt
     /// queued during a turn the channel did not start (a turn that moved onto
     /// it, a turn of the app) does not wait for another turn of the channel.
+    /// When the primary channel still holds the turn's reservation (the
+    /// terminal releases it only after this), the prompt starts once it is
+    /// released (``sessionReservationDidEnd()``).
+    ///
+    /// On an ACP session's slot the task-graph observer the channel runs is
+    /// quiesced first, as the terminal does at its turn boundaries: the
+    /// latest graph reaches this turn before its outcome, and the observer
+    /// runs again only once the turn's reporting ended, before the next
+    /// queued prompt starts, so nothing it debounced reaches the next turn
+    /// (see `TelegramChannel+TaskGraph.swift`).
+    ///
+    /// From its first line to its last a turn that begins waits for it
+    /// (``finishingTurnCount``), so it closes only the turn that ends.
     func finishTurn(ending: ChatTurnEnding) async {
+        finishingTurnCount += 1
         let outcomePayload: TerminalTelegramTurnPayload
         switch ending.outcome {
         case let .completed(response):
@@ -281,17 +351,31 @@ extension TelegramChannel {
         case .cancelled:
             outcomePayload = .agentResponse("Stopped.")
         }
+        let quiescedController = await quiesceTaskGraphObservationForTurnBoundary()
         await retireTurn(outcomePayload: outcomePayload, fileChangeSummary: ending.fileChangeSummary)
+        if let quiescedController {
+            await restartTaskGraphObservationAfterTurnBoundary(quiescedController)
+        }
+        finishingTurnCount -= 1
+        if finishingTurnCount == 0 {
+            let waiters = finishingTurnWaiters
+            finishingTurnWaiters = []
+            for waiter in waiters {
+                waiter.resume()
+            }
+        }
         startNextQueuedPromptIfNeeded()
     }
 
     /// Retires the turn's Telegram side after its final response, sending
     /// `outcomePayload` as the turn's outcome and the file-change summary;
-    /// without a payload only the summary, if any, is sent.
+    /// without a payload only the summary, if any, is sent. A reasoning block
+    /// still open is closed by the end of the turn and queued before them.
     func retireTurn(
         outcomePayload: TerminalTelegramTurnPayload?,
         fileChangeSummary: TurnFileChangeSummary?
     ) async {
+        await closeThoughtBlock()
         let summaryPayload: TerminalTelegramTurnPayload?
         if let fileChangeSummary, !fileChangeSummary.entries.isEmpty {
             let summary = TurnFileChangeSummaryPresentation
@@ -327,9 +411,11 @@ extension TelegramChannel {
     }
 
     /// Ends the turn's reporting without sending anything more: stops the
-    /// route validation, revokes the reporter, releases the typing presence,
-    /// and forgets the turn's route and root-response state.
+    /// sub-agent refresh the presenter started and the route validation,
+    /// revokes the reporter, releases the typing presence, and forgets the
+    /// turn's route, root-response, and reasoning state.
     func endTurnReporting() async {
+        await presenter.stopOwnedSubAgentOverviewRefresh()
         let validationTask = routeValidationTask
         routeValidationTask = nil
         validationTask?.cancel()
@@ -344,6 +430,7 @@ extension TelegramChannel {
         activeTurnLease = nil
         activeTurnPromptID = nil
         resetRootResponseBlock()
+        resetThoughtBlock()
     }
 
     // MARK: - Route invalidation
@@ -419,10 +506,13 @@ extension TelegramChannel {
         await reporter.appendAgentResponseDelta(delta)
     }
 
-    /// Publishes the aggregated root response at a tool-call boundary.
+    /// Publishes the aggregated root response at a tool-call boundary, or
+    /// at a reasoning block that assistant content closes
+    /// (``closeThoughtBlockBeforeAssistantContent()``).
     ///
     /// The boundary proves the response complete: the model stopped writing
-    /// and started a tool.
+    /// and started a tool, or reasoned before it wrote again. A suppressed
+    /// block ends here unsent; the next one is sent again.
     func publishRootResponseAtToolBoundary() async {
         let wasSuppressed = rootResponseBlockIsSuppressed
         rootResponseBlockHasContent = false
@@ -473,11 +563,91 @@ extension TelegramChannel {
         didPublishIntermediateRootResponse = false
     }
 
+    // MARK: - Reasoning
+
+    /// Aggregates one reasoning delta of the block streaming now, unless the
+    /// block is suppressed. Nothing is queued here: the block is sent whole
+    /// once the event that closes it arrives (``closeThoughtBlock()``). The
+    /// buffer is bounded just above the message limit, so a long block cannot
+    /// grow unbounded and its cut is still seen.
+    func appendThoughtDelta(_ delta: String) {
+        guard !delta.isEmpty, !thoughtBlockIsSuppressed else { return }
+        let remainingCount = TerminalTelegramTurnProgressReporter.maximumMessageLength + 1
+            - pendingThought.count
+        guard remainingCount > 0 else { return }
+        pendingThought.append(contentsOf: delta.prefix(remainingCount))
+    }
+
+    /// Closes the reasoning block streaming now: assistant content, a tool
+    /// call, an automatic `/goal` continuation, or the end of the turn
+    /// followed it. The block is queued as one thinking message, before what
+    /// closed it, when a reporter sends the turn and the block is not blank;
+    /// a suppressed block ends here and the next one is sent again.
+    func closeThoughtBlock() async {
+        let thought = pendingThought
+        resetThoughtBlock()
+        guard thought.nilIfBlank != nil, let reporter = activeProgressReporter else { return }
+        await reporter.enqueue(.thought(thought))
+    }
+
+    /// Closes the reasoning block that assistant content follows. A block
+    /// that is sent (not blank, with a reporter) is a boundary of the root
+    /// response written before it: that response is published first, as an
+    /// intermediate one (``publishRootResponseAtToolBoundary()``), so the
+    /// chat receives it, then the thought, then the content that follows,
+    /// in the order they were written. A tool call and an automatic `/goal`
+    /// continuation already publish the response before they close the
+    /// block; the end of the turn closes it without a boundary, and the
+    /// response before it stays the final response.
+    func closeThoughtBlockBeforeAssistantContent() async {
+        if pendingThought.nilIfBlank != nil, activeProgressReporter != nil {
+            await publishRootResponseAtToolBoundary()
+        }
+        await closeThoughtBlock()
+    }
+
+    /// Forgets the reasoning block at a turn boundary.
+    func resetThoughtBlock() {
+        pendingThought = ""
+        thoughtBlockIsSuppressed = false
+    }
+
+    // MARK: - Tool activity
+
+    /// Shows a root tool call that started in the turn's activity message:
+    /// its title (``ToolCallPresentation/toolTitle(for:)``), never its
+    /// arguments. A call the terminal does not show in its tool blocks
+    /// (``TerminalChat/shouldSuppressToolRendering(for:)``) is not shown
+    /// either; nothing is shown without a reporter.
+    func presentToolCallActivityStarted(_ toolCall: DirectAgentToolCall) async {
+        guard !TerminalChat.shouldSuppressToolRendering(for: toolCall.name),
+              let reporter = activeProgressReporter else { return }
+        await reporter.toolCallDidStart(
+            id: toolCall.id, title: ToolCallPresentation.toolTitle(for: toolCall)
+        )
+    }
+
+    /// Writes the outcome of a root tool call in its activity row: ✅, or ❌
+    /// when it failed as the terminal judges it
+    /// (``TerminalChat/toolResultIsFailure(for:result:)``). Its result is
+    /// never sent.
+    func presentToolCallActivityCompleted(
+        _ toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult
+    ) async {
+        guard !TerminalChat.shouldSuppressToolRendering(for: toolCall.name),
+              let reporter = activeProgressReporter else { return }
+        await reporter.toolCallDidComplete(
+            id: toolCall.id,
+            failed: TerminalChat.toolResultIsFailure(for: toolCall, result: result)
+        )
+    }
+
     // MARK: - Overviews
 
     /// Queues an overview section the controller published for the turn in
-    /// progress: a task graph (`.tasks`) or a sub-agent response
-    /// (`.subAgentResponse`).
+    /// progress: a task graph (`.tasks`), a sub-agent response
+    /// (`.subAgentResponse`), or the sub-agent status (`.subAgentStatus`).
     ///
     /// The section is dropped when no reporter sends the turn: outside a
     /// turn there is no remote audience. A task graph whose
@@ -505,8 +675,9 @@ extension TelegramChannel {
 
     /// The ordered reporter of a turn on `lease`, or `nil` when the turn does
     /// not reach the linked chat or the link has no wire lifecycle. Every
-    /// send is fenced by the route lease and the lifecycle epoch, and
-    /// validated again before it leaves.
+    /// send and every edit, the progress card's, the activity and status
+    /// messages', and the thinking messages' included, is fenced by the route
+    /// lease and the lifecycle epoch, and validated again before it leaves.
     func makeTurnProgressReporter(
         for lease: TerminalTelegramRouteLease
     ) -> TerminalTelegramTurnProgressReporter? {
@@ -559,6 +730,30 @@ extension TelegramChannel {
                 )
             }
         )
+        let activity = TerminalTelegramTurnActivityWire(
+            sendPlainMessage: { [weak self] text, chatID in
+                guard let self, await self.validateLease(lease) else {
+                    throw CancellationError()
+                }
+                return try await service.sendPlainMessageWithReceipt(
+                    text, to: chatID, topicID: topicID, fence: wireFence
+                )
+            },
+            editPlainMessage: { [weak self] text, chatID, messageID in
+                guard let self, await self.validateLease(lease) else {
+                    throw CancellationError()
+                }
+                try await service.editMessageText(
+                    text, chatID: chatID, messageID: messageID, fence: wireFence
+                )
+            },
+            sendThought: { [weak self] thought, chatID in
+                guard let self, await self.validateLease(lease) else { return false }
+                return await self.sendThoughtMessage(
+                    thought, to: chatID, topicID: topicID, fence: wireFence
+                )
+            }
+        )
         return TerminalTelegramTurnProgressReporter(
             chatID: chatID,
             sendMessage: { [weak self] message, chatID in
@@ -576,6 +771,7 @@ extension TelegramChannel {
                 )
             },
             progressCards: cards,
+            activityWire: activity,
             wireFence: wireFence,
             waitForWireQuiescence: { fence in
                 await service.waitForWireQuiescence(fence: fence)
@@ -596,6 +792,26 @@ extension TelegramChannel {
         do {
             _ = try await controlService.sendRichMessageWithFallback(
                 message, to: chatID, topicID: topicID, fence: fence
+            )
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Sends one reasoning block as a thinking message, reporting whether it
+    /// was delivered. Failures are silent, as for the other reporter
+    /// messages.
+    private func sendThoughtMessage(
+        _ thought: String, to chatID: Int64, topicID: Int?,
+        fence: TerminalTelegramWireFence
+    ) async -> Bool {
+        guard controlState.isActive else {
+            return false
+        }
+        do {
+            _ = try await controlService.sendThoughtMessageWithFallback(
+                thought, to: chatID, topicID: topicID, fence: fence
             )
             return true
         } catch {

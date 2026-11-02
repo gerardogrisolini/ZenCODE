@@ -9,8 +9,9 @@ import Foundation
 import Markdown
 
 /// Backend-neutral presentation tree. It is deliberately transient and contains
-/// only user-visible content: transport metadata, reasoning and tool payloads have
-/// no representation here.
+/// only user-visible content: transport metadata and tool payloads have no
+/// representation here, and reasoning enters only as the plain text runs of a
+/// thinking message's details block (see ``TerminalTelegramTurnActivity``).
 struct PresentationDocument: Sendable, Equatable {
     var blocks: [PresentationBlock]
 

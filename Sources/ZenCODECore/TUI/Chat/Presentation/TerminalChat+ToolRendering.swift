@@ -14,6 +14,19 @@ extension TerminalChat {
     nonisolated static func shouldSuppressToolRendering(for toolName: String) -> Bool {
         toolName == "agent.message"
     }
+
+    /// Whether a completed call failed, as its status marker shows it: the
+    /// result failed, or `local.exec` ended with a non-zero exit code. The
+    /// terminal marks it ⚠️, Telegram's activity rows ❌.
+    nonisolated static func toolResultIsFailure(
+        for toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult
+    ) -> Bool {
+        let hasFailedProcessExit = compactLocalExecExitCode(for: toolCall, result: result)
+            .map { $0 != 0 } ?? false
+        return result.isFailure || hasFailedProcessExit
+    }
+
     /// Builds the canonical compact and detailed rows for a tool lifecycle.
     /// Callers provide only their available geometry and placement; coordinator
     /// calls and delegated calls therefore cannot drift in status or diff output.
@@ -27,9 +40,7 @@ extension TerminalChat {
     ) -> ToolPresentationRows {
         let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
         let statusIcon = result.map { result in
-            let hasFailedProcessExit = compactLocalExecExitCode(for: toolCall, result: result)
-                .map { $0 != 0 } ?? false
-            return result.isFailure || hasFailedProcessExit ? "⚠️" : "✅"
+            toolResultIsFailure(for: toolCall, result: result) ? "⚠️" : "✅"
         } ?? "⏳"
 
         return ToolPresentationRows(

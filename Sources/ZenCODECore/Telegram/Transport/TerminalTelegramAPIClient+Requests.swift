@@ -20,22 +20,43 @@ struct TerminalTelegramGetUpdatesRequest: Encodable {
     let allowedUpdates: [String]
 }
 
+/// `entities` is omitted when `nil`, so a message without entities encodes
+/// the same fields with the same values as before entities existed.
 struct TerminalTelegramSendMessageRequest: Encodable {
     let chatID: Int64
     let text: String
     let parseMode: String?
     let replyMarkup: TerminalTelegramReplyMarkup?
     let messageThreadID: Int?
+    let entities: [TerminalTelegramMessageEntity]?
 
     init(
         chatID: Int64, text: String, parseMode: String?,
-        replyMarkup: TerminalTelegramReplyMarkup?, messageThreadID: Int? = nil
+        replyMarkup: TerminalTelegramReplyMarkup?, messageThreadID: Int? = nil,
+        entities: [TerminalTelegramMessageEntity]? = nil
     ) {
         self.chatID = chatID
         self.text = text
         self.parseMode = parseMode
         self.replyMarkup = replyMarkup
         self.messageThreadID = messageThreadID
+        self.entities = entities
+    }
+}
+
+/// A `MessageEntity` of an outbound plain-text message: a style applied to
+/// `length` UTF-16 code units from `offset`, as the Bot API counts them. A
+/// message that carries entities is sent without a parse mode, so untrusted
+/// text can never smuggle markup in: the style is applied by position, never
+/// by parsing the text.
+struct TerminalTelegramMessageEntity: Encodable, Sendable, Equatable {
+    let type: String
+    let offset: Int
+    let length: Int
+
+    /// Italic over `length` UTF-16 code units from `offset`.
+    static func italic(offset: Int, length: Int) -> TerminalTelegramMessageEntity {
+        TerminalTelegramMessageEntity(type: "italic", offset: offset, length: length)
     }
 }
 
