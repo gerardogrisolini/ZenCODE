@@ -367,11 +367,11 @@ extension ZenCODEACPBridge {
         defer { finishLifecycleOperation(operation) }
 
         guard let sessionID = Self.sessionID(from: params),
-              let session = sessions[sessionID] else {
+              let knownSession = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
-        let reservation = try await reserveReconfiguration(
-            of: session,
+        let (reservation, session) = try await reserveReconfiguration(
+            of: knownSession,
             busyMessage: "Cannot change session options while a prompt is running."
         )
 
@@ -461,11 +461,11 @@ extension ZenCODEACPBridge {
         defer { finishLifecycleOperation(operation) }
 
         guard let sessionID = Self.sessionID(from: params),
-              let session = sessions[sessionID] else {
+              let knownSession = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
-        let reservation = try await reserveReconfiguration(
-            of: session,
+        let (reservation, session) = try await reserveReconfiguration(
+            of: knownSession,
             busyMessage: "Cannot change session model while a prompt is running."
         )
         guard let modelID = Self.modelID(from: params) else {
@@ -529,22 +529,27 @@ extension ZenCODEACPBridge {
     /// always did: `busyMessage` while a prompt (or another reconfiguration)
     /// holds the session, the unknown-session error when the entry is not this
     /// incarnation anymore after the hop, and silence after a shutdown.
+    ///
+    /// Returns with the reservation the entry as it is after the hop, which
+    /// the reconfiguration starts from: a prompt that ended while the host
+    /// was asked (an agent mention routes the session to another agent) may
+    /// have written it since `session` was read.
     private func reserveReconfiguration(
         of session: SessionState,
         busyMessage: String
-    ) async throws -> ChatReconfigurationReservation {
+    ) async throws -> (reservation: ChatReconfigurationReservation, session: SessionState) {
         let reservation: ChatReconfigurationReservation
         do {
             reservation = try await host.reserveReconfiguration(in: session.slotID)
         } catch {
             throw acpError(for: error, busyMessage: busyMessage)
         }
-        guard liveSession(id: session.id, epoch: session.epoch) != nil else {
+        guard let current = liveSession(id: session.id, epoch: session.epoch) else {
             await host.releaseReconfiguration(reservation)
             try ensureNotShutDown()
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
-        return reservation
+        return (reservation, current)
     }
 
     /// Releases a reservation whose operation stops at a parameter check, and

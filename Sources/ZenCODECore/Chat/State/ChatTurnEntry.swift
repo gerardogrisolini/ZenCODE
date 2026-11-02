@@ -71,8 +71,13 @@ public struct ChatTurnEntry: Sendable, Equatable, Identifiable {
     /// reused.
     public let sequence: Int
     /// The turn the entry belongs to, numbered by the reducer from 1 in the
-    /// order turns start; `nil` for an entry presented while no turn was open
-    /// (a command's notice between turns).
+    /// order turns start. A turn stays open from its start to its
+    /// file-change summary (``ChatSessionPresenter/presentFileChangeSummary(_:)``)
+    /// or, when it reports none, until the next turn starts, so a command's
+    /// notice between turns then belongs to the turn before it. `nil` for an
+    /// entry presented while no turn is open: before the first turn, after a
+    /// turn's file-change summary, and after a session change or a restored
+    /// log until the next turn starts.
     public let turnID: Int?
     public let kind: Kind
 

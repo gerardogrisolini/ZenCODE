@@ -48,8 +48,9 @@ Compose a session in this order.
    low-level construction point of the runtime), or let it build the runner
    (`ChatSessionHost(configuration:toolAuthorizationHandler:...)`). One host
    per process: it owns the runner, the Telegram router and poller the
-   Telegram channel of every slot shares, the sleep assertion, and the epochs
-   of every session.
+   Telegram channel of every slot shares (two hosts on one bot would run two
+   long polls, which Telegram refuses with HTTP 409), the sleep assertion, and
+   the epochs of every session.
 5. Open a *slot* for each place the app runs sessions in (a window) with a
    `ChatSlotDescriptor`: the host, the consent authorizer, the presenter, the
    hooks, and the commands of the window, which the slot keeps across its
@@ -339,7 +340,7 @@ A line goes through the controller in this order:
 
 1. `admitLine(_:in:)` on the host, which tells whether the app may run the
    line now: while Telegram drives the slot the app is dormant and runs only
-   `/telegram`, `/telegram status`, `/telegram off`, and `/exit`
+   `/telegram`, `/telegram off`, and `/exit`
    (`ChatSlotAdmission.admitted`); every other line gets
    `.refused(ChatSlotAdmission.dormantRefusalText)`, which the app shows
    instead of running it;
@@ -576,7 +577,8 @@ and leaves the request open, and cancelling the task that waits refuses it too.
 `cancelPendingRequests()` refuses every open request, for a view that goes
 away; the host does it when the incarnation ends. A view follows the slot with
 `sessionHost.incarnations(in:)` and observes the reducer of each incarnation
-(`sessionHost.reducer(in:)` reads the current one).
+(`sessionHost.reducer(in:)` reads the current one); the stream of a reducer
+the host created ends, after its last snapshot, when its incarnation ends.
 
 ```swift
 @MainActor
@@ -626,7 +628,10 @@ Notes:
   `newSession(in:sessionID:)`); `adoptSessionID(_:in:)` keeps it. A reducer
   composed by hand advances its own epoch when its controller switches
   session in place. The log of a loaded session is rebuilt from its
-  transcript, with `ChatTurnOrigin.unknown` prompts. Sequences are never reused.
+  transcript, with `ChatTurnOrigin.unknown` prompts; a tool result completes
+  its call by id, and a result without an id the oldest call without an id
+  still open in its turn, so no restored call stays running. Sequences are
+  never reused.
 - The log has the byte budget of the session transcript and drops its oldest
   entries whole; `firstRetainedSequence` tells which entries it still holds.
   `notices` keeps the latest `ChatSessionStateReducer.maximumNoticeCount` (64).
@@ -641,13 +646,15 @@ A shell of the app (its sidebar, its window list) renders the
 `ChatShellSnapshot` of the host instead of keeping a list of its own:
 `sessions`, the `ChatSessionSummary` of the session each open slot runs, by
 `ChatSlotID`; `savedSessions`, the `ChatSavedSessionSummary` values of each
-workspace an open slot runs sessions in, most recently saved first; and
-`telegram`, a `ChatShellTelegramState` with `isConfigured` (setup configured
+workspace an open slot runs sessions in, most recently saved first, by the
+standardized URL of the workspace (`summary.workspace.standardizedFileURL`);
+and `telegram`, a `ChatShellTelegramState` with `isConfigured` (setup configured
 Telegram, by the rule the terminal offers `/telegram` with), `isPolling` (the
 host's poller runs a long poll), and `drivenSlots` (the slots the linked chat
 drives). `shellSnapshot` is the current value; each call of
 `shellSnapshots()` returns a stream that starts with it, keeps only the
-newest snapshot not yet delivered, and ends at `shutdown()`:
+newest snapshot not yet delivered, and ends at `shutdown()` or when the host
+is released:
 
 ```swift
 @MainActor
@@ -671,15 +678,20 @@ Notes:
   incarnation with the same rules: its workspace, the saved session's name or
   one derived from the first prompt, `isGenerating` while a prompt is
   reserved, the origin of the turn generating, and a `pendingRequestCount` of
-  0, since only a reducer publishes pending requests.
+  0, since only a reducer publishes pending requests. A new or loaded session
+  is one snapshot, with the new session: the slot is never shown without
+  session in between.
 - The saved sessions and the Telegram settings are on disk, so they are read
-  only once a shell observes the host, from the first `shellSnapshots()` or
-  `refreshShellSnapshot()` on, and off the chat actor: the saved sessions of a
-  workspace again when a slot of it starts another session and when a session
-  of the host is saved or deleted, the poller when a slot hands itself to
-  Telegram, takes itself back, or closes. Nothing is read on a timer;
-  `refreshShellSnapshot()` reads everything again, for example for a session
-  another process saved.
+  only while a shell observes the host, from the first `shellSnapshots()` or
+  `refreshShellSnapshot()` until the last stream ends, and off the chat
+  actor; the store is only listed, never migrated, so a save in progress is
+  never moved. The saved sessions of a workspace are read again when a slot
+  of it starts another session and when a session of the host is saved or
+  deleted, the settings and the poller together when a slot hands itself to
+  Telegram, takes itself back, or closes; the poller tells nobody when a
+  poll ends on its own, which shows at the next read. Nothing is read on a
+  timer; `refreshShellSnapshot()` reads everything again, for example for a
+  session another process saved.
 - The shell snapshot is transient, like the session snapshot.
 
 ## Telegram Channel
@@ -689,7 +701,9 @@ the slot to the Telegram chat that setup linked, which drives the session from
 then on, and `/telegram off` takes it back. The host owns the slot's
 `TelegramChannel`, created on the first activation on the router and poller
 every slot shares and kept, attached or not, for the life of the slot; the app
-never builds it.
+never builds it. The router and the poller are one per `ChatSessionHost`, so an
+app runs one host per process: two hosts on the same bot would run two long
+polls, and Telegram would answer the second with HTTP 409.
 
 ```swift
 extension AppSession {
@@ -701,10 +715,12 @@ extension AppSession {
         presenter.show("Session driven from Telegram.")
     }
 
-    /// `/telegram off`: takes the slot back and shows what the app missed.
+    /// `/telegram off`: takes the slot back and shows what the app missed,
+    /// before anything more of the turn in progress.
     func stopTelegram() async {
-        guard let catchUp = await sessionHost.deactivateTelegram(in: slotID) else { return }
-        presenter.showCatchUp(catchUp)
+        _ = await sessionHost.deactivateTelegram(in: slotID) { [presenter] catchUp in
+            presenter.showCatchUp(catchUp)
+        }
     }
 
     var isDrivenFromTelegram: Bool {
@@ -725,7 +741,8 @@ What happens at the handover:
   slot's hooks give (`ChatSessionChannelHooks.turnSessionConfiguration(for:controller:)`,
   by default the controller's own) and inside the environment they give the
   turn (`ChatSessionChannelHooks.runTurnFromAnotherChannel(controller:_:)`,
-  by default none: the turn runs as it is), answers `/start`, `/help`, `/status`,
+  by default none: the turn runs as it is; a hook that throws refuses the
+  turn, which is released without starting), answers `/start`, `/help`, `/status`,
   `/changes`, `/diff`, and `/chat`, and decides the gated tools with
   `/allow`, `/always`, and `/deny`; `/undo` is refused and names the app. A
   question the session had open on the app (a tool consent, a line of text,
@@ -736,20 +753,26 @@ What happens at the handover:
   ends; a turn still running from Telegram at `/telegram off` goes on
   presented to the app.
 - While Telegram drives the slot the app is dormant: `admitLine(_:in:)`
-  admits only `/telegram`, `/telegram status`, `/telegram off`, and `/exit`
+  admits only `/telegram`, `/telegram off`, and `/exit`
   (see [Running a Line](#running-a-line)), and a `reservePrompt(in:)` of the
   app meets `.sessionBusy` while a turn from Telegram runs.
-- `deactivateTelegram(in:)` returns the catch-up, a `ChatTelegramCatchUp`:
+- `deactivateTelegram(in:presentingCatchUp:)` returns the catch-up, a `ChatTelegramCatchUp`:
   the `entries` of the session's log with a sequence greater than the last
   one the app saw (`ChatTurnEntry`, oldest first; render them as a restored
   transcript, `ChatTurnEntry.transcriptMessages(from:)` turns them into
   runtime messages), the `liveAssistantText` of a response still streaming,
-  `incarnationChanged` when `/sessions new` or a load ran from the chat (the
+  `incarnationChanged` when the app started another session in the slot
+  (`newSession(in:sessionID:)` or a load) while Telegram drove it (the
   entries are then the whole log of the new session), and
   `omittedOlderEntries` when the log's bound dropped entries. It is `nil`
   when Telegram did not drive the slot; the link, if any, is stopped all
-  the same. A slot that publishes no state gets a reducer for the handover,
-  detached once the catch-up is read; the log is transient either way.
+  the same. Given `presentingCatchUp`, the host calls it with the catch-up
+  right after the switch and before the link stops, and holds what the turn
+  in progress presents until it returns, so the rest of the turn reaches
+  the app after the catch-up, in order and whole; without it the app shows
+  the returned catch-up itself, after what the turn presented meanwhile. A
+  slot that publishes no state gets a reducer for the handover, detached once
+  the catch-up is read; the log is transient either way.
 - The texts the channel has for the app (the activation text, a poll-health
   notice, a failure) arrive through `telegramChannel(in:)?.noticeSink`, with
   their `ChatSessionNoticeChannel`; without a sink they are dropped. Install
@@ -824,9 +847,10 @@ it comprises:
 - the Telegram channel: `TelegramChannel` (with `SessionTopic`),
   `TelegramChannelAttachError`, `ChatSlotChannel`, `ChatSlotAdmission`, and
   `ChatTelegramCatchUp`, with the host's
-  `activateTelegram(in:primaryChannelDescription:)`, `deactivateTelegram(in:)`,
-  `telegramStatusText(in:)`, `activeChannel(in:)`, `telegramChannel(in:)`, and
-  `admitLine(_:in:)`.
+  `activateTelegram(in:primaryChannelDescription:)`,
+  `deactivateTelegram(in:presentingCatchUp:)`, `telegramStatusText(in:)`,
+  `activeChannel(in:)`, `telegramChannel(in:)`, and `admitLine(_:in:)`; the
+  channel's `stoppedNoticeText`.
 
 The rules:
 

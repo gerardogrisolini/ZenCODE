@@ -224,6 +224,111 @@ struct ChatSessionStateTests {
         }
     }
 
+    /// A restored session whose tool calls have no ID (a history an editor
+    /// sends, a model that names none): each result without an ID completes
+    /// the oldest call without an ID still open in its turn, with its tool
+    /// name when it has one, and a result whose call is in an earlier turn
+    /// completes that call by its ID. The activity of the restored log then
+    /// has one start and one completion per call, the completion after the
+    /// start, and no call left running.
+    @Test
+    @ChatSessionActor
+    func aRestoredSessionClosesTheToolCallsWithoutAnID() async throws {
+        let transcript: [AgentRuntimeMessage] = [
+            AgentRuntimeMessage(role: .user, content: "Look around"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "Looking.",
+                toolCalls: [
+                    AgentRuntimeToolCall(id: nil, name: "local.ls", argumentsJSON: "{}"),
+                    AgentRuntimeToolCall(id: nil, name: "local.readFile", argumentsJSON: #"{"path":"a"}"#),
+                    AgentRuntimeToolCall(id: "late", name: "local.exec", argumentsJSON: #"{"command":"make"}"#),
+                ]
+            ),
+            // By name first, then in order.
+            AgentRuntimeMessage(role: .tool, content: "body of a", toolName: "local.readFile"),
+            AgentRuntimeMessage(role: .tool, content: "a\nb"),
+            AgentRuntimeMessage(role: .user, content: "Go on"),
+            AgentRuntimeMessage(role: .tool, content: "built", toolCallID: "late", toolName: "local.exec"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "",
+                toolCalls: [AgentRuntimeToolCall(id: nil, name: "local.ls", argumentsJSON: "{}")]
+            ),
+            AgentRuntimeMessage(role: .tool, content: "c", toolName: "local.ls"),
+        ]
+
+        let reducer = await Self.reducerRestoring(transcript)
+        let snapshot = reducer.snapshot
+
+        #expect(Self.representable(snapshot.log) == [
+            .init(turn: 1, entry: .prompt(text: "Look around", attachments: [])),
+            .init(turn: 1, entry: .assistantText("Looking.")),
+            .init(turn: 1, entry: .toolCallStarted(id: "restored-tool-1-0", name: "local.ls", argumentsJSON: "{}")),
+            .init(turn: 1, entry: .toolCallStarted(
+                id: "restored-tool-1-1", name: "local.readFile", argumentsJSON: #"{"path":"a"}"#
+            )),
+            .init(turn: 1, entry: .toolCallStarted(id: "late", name: "local.exec", argumentsJSON: #"{"command":"make"}"#)),
+            .init(turn: 1, entry: .toolCallCompleted(
+                id: "restored-tool-1-1", name: "local.readFile", output: "body of a", attachments: []
+            )),
+            .init(turn: 1, entry: .toolCallCompleted(id: "restored-tool-1-0", name: "local.ls", output: "a\nb", attachments: [])),
+            .init(turn: 2, entry: .prompt(text: "Go on", attachments: [])),
+            .init(turn: 2, entry: .toolCallCompleted(id: "late", name: "local.exec", output: "built", attachments: [])),
+            .init(turn: 2, entry: .toolCallStarted(id: "restored-tool-6-0", name: "local.ls", argumentsJSON: "{}")),
+            .init(turn: 2, entry: .toolCallCompleted(id: "restored-tool-6-0", name: "local.ls", output: "c", attachments: [])),
+        ])
+        Self.expectCoherentProjections(snapshot)
+        // One start and one completion per call, in that order.
+        var running = Set<String>()
+        var completed = Set<String>()
+        for entry in snapshot.activity {
+            switch entry.kind {
+            case let .toolCallStarted(call):
+                #expect(running.insert(call.id).inserted)
+            case let .toolCallCompleted(call, result):
+                #expect(running.remove(call.id) != nil)
+                #expect(completed.insert(call.id).inserted)
+                #expect(result.status == .completed)
+            default:
+                Issue.record("Not an activity entry: \(entry.kind)")
+            }
+        }
+        #expect(running.isEmpty)
+        #expect(completed.count == 4)
+        // The summary of a restored result is its first line.
+        let summaries = snapshot.activity.compactMap { entry -> String? in
+            guard case let .toolCallCompleted(_, result) = entry.kind else { return nil }
+            return result.summary
+        }
+        #expect(summaries == ["body of a", "a", "built", "c"])
+    }
+
+    /// A result without an ID whose tool name no open call without an ID has
+    /// is not given to another call: it starts a call of its own, and the
+    /// call it does not match stays open, as the transcript leaves it.
+    @Test
+    func aResultWithoutAnIDCompletesOnlyACallWithItsName() {
+        let kinds = ChatTurnEntry.kinds(fromTranscript: [
+            AgentRuntimeMessage(role: .user, content: "List"),
+            AgentRuntimeMessage(
+                role: .assistant,
+                content: "",
+                toolCalls: [AgentRuntimeToolCall(id: nil, name: "local.ls", argumentsJSON: "{}")]
+            ),
+            AgentRuntimeMessage(role: .tool, content: "exit 0", toolName: "local.exec"),
+        ])
+        let activity = kinds.compactMap { kind -> RepresentableEntry? in
+            kind.isActivity ? RepresentableEntry(kind) : nil
+        }
+
+        #expect(activity == [
+            .toolCallStarted(id: "restored-tool-1-0", name: "local.ls", argumentsJSON: "{}"),
+            .toolCallStarted(id: "restored-tool-2-0", name: "local.exec", argumentsJSON: "{}"),
+            .toolCallCompleted(id: "restored-tool-2-0", name: "local.exec", output: "exit 0", attachments: []),
+        ])
+    }
+
     // MARK: - Projections
 
     @Test

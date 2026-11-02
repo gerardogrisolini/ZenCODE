@@ -17,9 +17,10 @@ extension TerminalChat {
 
     /// Detects incomplete task graphs persisted by previous sessions and, in an
     /// interactive terminal, offers to resume one. When the user confirms a
-    /// choice, the orchestrator restores the checkpoint and makes that exact
-    /// graph current before the session takes the graph's id, in place through
-    /// the host (``ChatSessionHost/adoptSessionID(_:in:)``): the selection the
+    /// choice, the session takes the graph's id, in place through the host
+    /// (``ChatSessionHost/adoptSessionID(_:in:)``), and the orchestrator
+    /// restores the checkpoint and makes that exact graph current; a graph
+    /// that cannot be resumed gives the previous id back. The selection the
     /// startup steps applied so far stays, as the runtime session does not
     /// exist yet. The later session creation therefore cannot silently fall
     /// back to another graph from the same checkpoint. Returns the resumed
@@ -53,12 +54,21 @@ extension TerminalChat {
                 guard let chosen = resumable.first(where: { $0.id == id }) else {
                     return nil
                 }
+                // The id first: a refusal leaves the graph where it was, and
+                // a graph that cannot be resumed gives the id back, so the
+                // session never runs under one without the other.
+                let previousSessionID = sessionID
                 do {
-                    _ = try await sessionRunner.resumeTaskGraph(
-                        chosen,
-                        workingDirectory: workingDirectory
-                    )
                     try sessionHost.adoptSessionID(chosen.sessionID, in: terminalSlotID)
+                    do {
+                        _ = try await sessionRunner.resumeTaskGraph(
+                            chosen,
+                            workingDirectory: workingDirectory
+                        )
+                    } catch {
+                        sessionID = previousSessionID
+                        throw error
+                    }
                     return chosen
                 } catch {
                     await writeSystemMessage(

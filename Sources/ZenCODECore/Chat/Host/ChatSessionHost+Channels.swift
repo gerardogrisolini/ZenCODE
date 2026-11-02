@@ -79,14 +79,26 @@ extension ChatSessionHost {
     /// Throws what the attach throws (``TelegramChannelAttachError``), and
     /// `.unknownSlot` or `.shutDown` as ``ChatSessionHostError``, leaving the
     /// slot with the primary channel.
+    ///
+    /// One activation of a slot runs at a time: a `/telegram on` that arrives
+    /// while another one runs on the slot waits for it to end, then runs as a
+    /// repeated `/telegram on` (the link restarts, the handover stands), so
+    /// two concurrent activations hand the slot over once, with one reducer
+    /// and one context sent to the chat, as two activations in a row do.
     public func activateTelegram(
         in slotID: ChatSlotID,
         primaryChannelDescription: String = "TUI"
     ) async throws {
         guard !isShutDown else { throw ChatSessionHostError.shutDown }
         guard let slot = slots[slotID] else { throw ChatSessionHostError.unknownSlot }
-        // The poller starts or restarts with the link, whether it holds or not.
-        defer { scheduleShellTelegramPollingRead() }
+        await slot.waitForTelegramActivation()
+        guard !isShutDown else { throw ChatSessionHostError.shutDown }
+        guard slots[slotID] === slot else { throw ChatSessionHostError.unknownSlot }
+        slot.isActivatingTelegram = true
+        defer { slot.endTelegramActivation() }
+        // The poller starts or restarts with the link, whether it holds or not;
+        // the settings are read with it.
+        defer { scheduleShellTelegramRead() }
         let channel = slot.telegramChannel ?? makeTelegramChannel(
             for: slot, primaryChannelDescription: primaryChannelDescription
         )
@@ -121,24 +133,43 @@ extension ChatSessionHost {
     /// The catch-up is read before the switch: the entries with a sequence
     /// greater than the last one the primary channel saw, or the whole log
     /// when the slot runs another incarnation than the one handed over, with
-    /// the block streaming now. Then the channel stops reading the chat, the
-    /// slot switches back (its open requests are asked again on the primary
-    /// channel, a turn in progress moves back), the link is stopped, and the
-    /// reducer created for the handover is detached.
-    public func deactivateTelegram(in slotID: ChatSlotID) async -> ChatTelegramCatchUp? {
+    /// the block streaming now. Then the slot switches back (its open
+    /// requests are asked again on the primary channel, a turn in progress
+    /// moves back), the channel stops reading the chat, the link is stopped,
+    /// and the reducer created for the handover is detached.
+    ///
+    /// `presentCatchUp`, when given, renders the catch-up on the primary
+    /// channel right after the switch and before the link stops: meanwhile
+    /// the slot's presenter holds what the turn in progress presents, so the
+    /// rest of the turn follows the catch-up, in order and whole. Without it
+    /// the caller renders the returned catch-up itself (an ACP reply).
+    public func deactivateTelegram(
+        in slotID: ChatSlotID,
+        presentingCatchUp presentCatchUp: (@ChatSessionActor (ChatTelegramCatchUp) async -> Void)? = nil
+    ) async -> ChatTelegramCatchUp? {
         guard let slot = slots[slotID], let channel = slot.telegramChannel else { return nil }
-        // The link stops either way, and the poller with its last subscriber.
-        defer { scheduleShellTelegramPollingRead() }
+        // The link stops either way, and the poller with its last subscriber;
+        // the settings are read with it.
+        defer { scheduleShellTelegramRead() }
         guard slot.activeChannel == .telegram else {
             await channel.detach()
             return nil
         }
         let catchUp = telegramCatchUp(of: slot)
+        if presentCatchUp != nil, catchUp != nil {
+            slot.slotPresenter.holdOutput()
+        }
         // The switch first: the requests open in the chat are cancelled there
         // and asked again on the primary channel before the channel stops
         // reading the chat and refuses what still waits.
         slot.setActiveChannel(.primary)
         await slot.slotPresenter.presentTurnMoveIfNeeded()
+        if let presentCatchUp, let catchUp {
+            await presentCatchUp(catchUp)
+            // Released before the link stops: stopping it waits for the
+            // chat's reader, which may be presenting through the slot.
+            slot.slotPresenter.releaseOutput()
+        }
         await channel.stopDriving()
         await channel.detach()
         detachOnDemandReducer(of: slot)
@@ -206,7 +237,14 @@ extension ChatSessionHost {
     /// as the terminal locks it on the first prompt it runs.
     ///
     /// Throws ``ChatSessionHostError`` when the prompt cannot be reserved and
-    /// ``ChatTurnFailure`` when the turn fails or is cancelled.
+    /// ``ChatTurnFailure`` when the turn fails or is cancelled. A turn asked
+    /// while the slot's Telegram channel does not drive the slot (a line from
+    /// the chat still answered when `/telegram off` took the slot back) is
+    /// refused before anything is reserved or presented, with
+    /// ``ChatTelegramTurnRefusal``, which the channel does not report. A turn
+    /// the primary channel refuses to compose or to run (its hooks throw
+    /// before the turn starts: an ACP session that closed meanwhile) is
+    /// released and rethrows what the hooks threw, with nothing presented.
     @discardableResult
     func runTelegramTurn(
         in slotID: ChatSlotID,
@@ -215,11 +253,10 @@ extension ChatSessionHost {
         purpose: ChatTurnPurpose = .normal,
         isUserVisible: Bool = true
     ) async throws -> ChatTurnResult {
-        let reservation = try reservePrompt(in: slotID)
-        guard let slot = slots[slotID], let incarnation = reservedIncarnation(reservation) else {
-            releasePrompt(reservation)
-            throw ChatSessionHostError.noSession
+        if let slot = slots[slotID], slot.activeChannel != .telegram || slot.telegramChannel == nil {
+            throw ChatTelegramTurnRefusal.channelDoesNotDriveSlot
         }
+        let (slot, incarnation, reservation) = try reserveIncarnation(in: slotID)
         slot.telegramTurnPromptID = reservation.promptID
         defer {
             if slot.telegramTurnPromptID == reservation.promptID {
@@ -233,7 +270,12 @@ extension ChatSessionHost {
         }
         let sessionConfiguration: AgentCoreSessionConfiguration
         if let hooks {
-            sessionConfiguration = await hooks.turnSessionConfiguration(for: purpose, controller: controller)
+            do {
+                sessionConfiguration = try await hooks.turnSessionConfiguration(for: purpose, controller: controller)
+            } catch {
+                releasePrompt(reservation)
+                throw error
+            }
         } else {
             sessionConfiguration = await controller.turnSessionConfiguration(
                 for: purpose, responseLanguageSection: nil
@@ -251,6 +293,7 @@ extension ChatSessionHost {
             authorizeTool: { request in await authorizer.authorize(request) },
             origin: .telegram
         )
+        var hooksRanBody = false
         do {
             // The channel that owns the slot's session wraps the turn in its
             // own environment (ACP: the client's file system and the agent's
@@ -258,6 +301,7 @@ extension ChatSessionHost {
             let result: ChatTurnResult
             if let hooks {
                 result = try await hooks.runTurnFromAnotherChannel(controller: controller) {
+                    hooksRanBody = true
                     // The environment may have suspended: a prompt cancelled
                     // meanwhile has lost its reservation and does not start.
                     guard holdsPrompt(reservation) else {
@@ -266,6 +310,7 @@ extension ChatSessionHost {
                     return try await controller.runTurn(request)
                 }
             } else {
+                hooksRanBody = true
                 result = try await controller.runTurn(request)
             }
             releasePrompt(reservation)
@@ -273,6 +318,9 @@ extension ChatSessionHost {
             return result
         } catch {
             releasePrompt(reservation)
+            // Refused by the hooks without running the turn: there is no
+            // ending to present.
+            guard hooksRanBody else { throw error }
             await presentTurnEnding(ChatTurnEnding(error: error), in: slotID)
             throw error
         }
@@ -289,16 +337,27 @@ extension ChatSessionHost {
         return slot.incarnation?.activePromptID == promptID
     }
 
+    /// Whether a turn of the Telegram channel of `slotID` reserved the slot's
+    /// session and has not ended yet, whichever channel drives the slot now:
+    /// such a turn goes on, and the channel that takes the slot adopts it.
+    /// `false` for an unknown slot.
+    func telegramTurnHoldsReservation(in slotID: ChatSlotID) -> Bool {
+        slots[slotID]?.telegramTurnPromptID != nil
+    }
+
     /// Stops the turn of the Telegram channel of `slotID` that reserved
     /// `promptID`, once ``cancelPrompt(in:armingWorkflowRecovery:)`` dropped
-    /// that reservation: the channel cancels its task and the runner's prompt
-    /// (``TelegramChannel/stopActiveTurn()``), so the turn ends as a cancelled
-    /// one and the chat is told it stopped. Nothing happens when the prompt
+    /// that reservation: the channel cancels its task, and the runner's
+    /// prompt while no other prompt is reserved on the slot
+    /// (``TelegramChannel/stopActiveTurn(promptID:)``), so the turn ends as a
+    /// cancelled one and the chat is told it stopped. A prompt reserved
+    /// after the cancel (an editor's `session/prompt` served in between)
+    /// keeps its reservation and its turn. Nothing happens when `promptID`
     /// was not the channel's.
     func stopTelegramTurnIfReserved(_ promptID: UUID, in slotID: ChatSlotID) async {
         guard let slot = slots[slotID], slot.telegramTurnPromptID == promptID,
               let channel = slot.telegramChannel else { return }
-        await channel.stopActiveTurn()
+        await channel.stopActiveTurn(promptID: promptID)
     }
 
     // MARK: - Reducer on demand
@@ -360,22 +419,43 @@ extension ChatSessionHost {
     /// What the primary channel catches up with when it takes `slot` back.
     private func telegramCatchUp(of slot: ChatSlot) -> ChatTelegramCatchUp? {
         guard let incarnation = slot.incarnation, let reducer = incarnation.reducer else { return nil }
-        let snapshot = reducer.snapshot
         let incarnationChanged = slot.telegramHandoverEpoch != incarnation.epoch
-        let lastSeen = incarnationChanged ? nil : slot.telegramHandoverLastSeenSequence
+        return Self.telegramCatchUp(
+            sessionID: incarnation.sessionID,
+            reducer: reducer,
+            lastSeenSequence: incarnationChanged ? nil : slot.telegramHandoverLastSeenSequence,
+            incarnationChanged: incarnationChanged
+        )
+    }
+
+    /// The catch-up of the log of `reducer`: the entries after
+    /// `lastSeenSequence`, or the whole log when the channel saw none of it
+    /// (`lastSeenSequence` is `nil`: the incarnation changed meanwhile).
+    ///
+    /// The rule of ``ChatTelegramCatchUp/omittedOlderEntries``: the log's
+    /// bound dropped entries the channel did not see. After `lastSeenSequence`
+    /// that is a first retained sequence past the next one; for the whole log
+    /// it is a first retained sequence past the first one the log emitted
+    /// (``ChatSessionStateReducer/logStartSequence``: 1 for the log of a new
+    /// incarnation, the next sequence when the log started over in place).
+    static func telegramCatchUp(
+        sessionID: String,
+        reducer: ChatSessionStateReducer,
+        lastSeenSequence: Int?,
+        incarnationChanged: Bool
+    ) -> ChatTelegramCatchUp {
+        let snapshot = reducer.snapshot
         let entries: [ChatTurnEntry]
         let omittedOlderEntries: Bool
-        if let lastSeen {
-            entries = snapshot.log.filter { $0.sequence > lastSeen }
-            omittedOlderEntries = snapshot.firstRetainedSequence > lastSeen + 1
+        if let lastSeenSequence {
+            entries = snapshot.log.filter { $0.sequence > lastSeenSequence }
+            omittedOlderEntries = snapshot.firstRetainedSequence > lastSeenSequence + 1
         } else {
             entries = snapshot.log
-            omittedOlderEntries = incarnationChanged
-                ? snapshot.firstRetainedSequence > (snapshot.log.first?.sequence ?? snapshot.firstRetainedSequence)
-                : false
+            omittedOlderEntries = snapshot.firstRetainedSequence > reducer.logStartSequence
         }
         return ChatTelegramCatchUp(
-            sessionID: incarnation.sessionID,
+            sessionID: sessionID,
             entries: entries,
             liveAssistantText: snapshot.turn.liveAssistantText,
             incarnationChanged: incarnationChanged,
@@ -431,6 +511,15 @@ extension ChatSessionHost {
     func unregisterConsentHost(of slot: ChatSlot, sessionID: String) {
         consentHostRoutes.remove(slot.slotInteractionHost, for: sessionID)
     }
+}
+
+/// Why ``ChatSessionHost/runTelegramTurn(in:prompt:attachments:purpose:isUserVisible:)``
+/// refused a turn before reserving it. Nothing was reserved or presented,
+/// and the channel tells the chat nothing about it.
+enum ChatTelegramTurnRefusal: Error, Equatable {
+    /// The slot's Telegram channel does not drive the slot: `/telegram off`
+    /// took it back while the line that asked for the turn was answered.
+    case channelDoesNotDriveSlot
 }
 
 /// The slot host that answers the consent requests of each session a host

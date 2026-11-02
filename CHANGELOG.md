@@ -72,10 +72,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   a `ChatSessionHost`: the summary of the session each slot runs, the saved
   sessions of the slots' workspaces, and the Telegram state of the process
   (configured, polling, and the slots the linked chat drives).
-  `shellSnapshots()` streams it and `shellSnapshot` is the current one; the
-  saved sessions and the settings are read only while an app observes the
-  host, when a session changes or is saved or deleted, and on
-  `refreshShellSnapshot()`, never on a timer. See
+  `shellSnapshots()` streams it and `shellSnapshot` is the current one. The
+  saved sessions are listed without migrating the store, and they and the
+  Telegram settings and poller are read only while an app observes the host
+  (from the first `shellSnapshots()` or `refreshShellSnapshot()` to the end of
+  its last stream): the saved sessions of a workspace again when a slot of it
+  starts another session or a session is saved or deleted, the settings and
+  the poller together when a slot hands itself to Telegram, takes itself back,
+  or closes, and everything on `refreshShellSnapshot()`, never on a timer. See
   [Docs/embedding.md](Docs/embedding.md#observing-the-host).
 - Telegram is a channel of the slot (`TelegramChannel`), in the terminal UI,
   in ACP clients such as Xcode, and in host apps: `/telegram on` hands the
@@ -83,23 +87,31 @@ Release tags follow the strict `vX.Y.Z` contract described in
   takes it back. In the terminal UI, Telegram works as before, apart from the
   changes listed below. Host apps call
   `ChatSessionHost.activateTelegram(in:primaryChannelDescription:)` and
-  `deactivateTelegram(in:)`, which returns the catch-up (`ChatTelegramCatchUp`:
-  the log entries the app did not see, by sequence, and the response still
-  streaming); `activeChannel(in:)` (`ChatSlotChannel`) says which channel
-  drives a slot, and `admitLine(_:in:)` (`ChatSlotAdmission`) which lines a
-  dormant channel may still run. The consent authorizer resolves the host that
-  asks each session's consent (`ChatToolConsentAuthorizer.setConsentHostResolver(_:)`),
-  so an *Always* given in the chat covers the session on every channel.
+  `deactivateTelegram(in:presentingCatchUp:)`, which returns the catch-up
+  (`ChatTelegramCatchUp`: the log entries the app did not see, by sequence, and
+  the response still streaming) and, given `presentingCatchUp`, hands it to the
+  app right after the switch, before the rest of the turn in progress;
+  `activeChannel(in:)` (`ChatSlotChannel`) says which channel drives a slot,
+  and `admitLine(_:in:)` (`ChatSlotAdmission`) which lines a dormant channel
+  may still run (`/telegram`, `/telegram off`, and `/exit`). The turns of the
+  chat take their composition from
+  `ChatSessionChannelHooks.turnSessionConfiguration(for:controller:)`, which is
+  `async throws` (a hook that throws refuses the turn), and run inside
+  `runTurnFromAnotherChannel(controller:_:)`. `TelegramChannel.stoppedNoticeText`
+  is the notice that tells the link stopped. A new or loaded session of a slot
+  that Telegram drives keeps the link, and
+  `TelegramChannel.rebind(sessionID:displayName:)` moves its topic to the new
+  session. The consent authorizer resolves the host that asks each session's
+  consent (`ChatToolConsentAuthorizer.setConsentHostResolver(_:)`), so an
+  *Always* given in the chat covers the session on every channel.
 - Telegram topics: when the bot has Threaded mode (enabled in @BotFather, your
   bot › Bot Settings), each session linked with `/telegram on` gets a topic of
   its own in the private chat with the bot, named after the working directory
-  and the end of the session ID. The topic follows the session through
-  `/sessions new` and `/sessions load` and is renamed after it. A message in
-  the session's topic reaches that session only, and a message in General
-  reaches every linked session. A new `/telegram on` after `/telegram off`, or
-  a new launch of ZenCODE, opens a new topic; the previous one stays in
-  Telegram and receives nothing more. Without Threaded mode every session
-  shares the chat, as before.
+  and the end of the session ID. A message in the session's topic reaches that
+  session only, and a message in General reaches every linked session. A new
+  `/telegram on` after `/telegram off`, or a new launch of ZenCODE, opens a new
+  topic; the previous one stays in Telegram and receives nothing more. Without
+  Threaded mode every session shares the chat, as before.
 - ACP: `/telegram on` hands the session to Telegram, `/telegram off` takes it
   back, and `/telegram` shows its status. While Telegram drives the session
   the linked chat runs prompts, voice notes, `/plan`, `/goal`, `/review`, and
@@ -131,15 +143,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
   them up; in ACP, prompts from Telegram are now accepted. The terminal shows
   `Session driven from Telegram. Type /telegram off to take it back.` and
   accepts only `/telegram`, `/telegram off`, and `/exit` meanwhile (every
-  other line answers `ZenCODE: this session is driven from Telegram. Use
-  /telegram off to take it back.`); `/telegram off` renders what the terminal
-  did not see under `Catch-up from Telegram:`, with the response still in
-  progress, and a turn still running from Telegram goes on in the terminal.
-  At `/telegram on` the chat receives the last 6 prompts and responses of the
-  session as context. A question the session asked (a tool consent, a line of
-  text, an attachment) is asked again on the channel that takes the slot. The
-  link belongs to the session's place: the topic and the link stay through
-  `/sessions new` and `/sessions load`.
+  other line, a dictated prompt, a mention by voice, and the access-mode
+  shortcut answer `ZenCODE: this session is driven from Telegram. Use
+  /telegram off to take it back.`); the prompts already queued in the terminal
+  wait and run after `/telegram off`, which renders what the terminal did not
+  see under `Catch-up from Telegram:`, with the response still in progress,
+  before anything more of a turn still running from Telegram; that turn goes
+  on in the terminal, where Esc stops it. At `/telegram on` the chat receives
+  the last 6 prompts and responses of the session as context. A question the
+  session asked (a tool consent, a line of text, an attachment) is asked again
+  on the channel that takes the slot. `/telegram on` needs the interactive
+  input loop of the terminal UI: where the chat falls back to reading lines
+  (standard error is not a terminal, or the window is too small when the chat
+  starts) it answers `ZenCODE: /telegram requires the interactive TUI.`
 - ACP: a turn that changes files now ends with its file-change summary
   (`🪬 Summary: …` and one line per file) as a final message, before the turn
   completes.
@@ -182,9 +198,24 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Terminal: the notices that Telegram polling stopped receiving messages and
   that it recovered now also appear when the chat runs without its status bar
   (standard error is not a terminal, or the window is too small when the chat
-  starts). There they were visible only through `/telegram status`.
+  starts). There they were visible only through `/telegram`.
 - `TerminalChatActor` is deprecated; use `ChatSessionActor`. It is removed in
   the next major release.
+- For code that integrates `ZenCODECore` directly: the ACP bridge keeps its
+  sessions in a `ChatSessionHost`, so `ZenCODEACPBridge.SessionState.activePromptID`
+  and `operationState`, and `ZenCODEACPBridge.holdSessionSleepAssertionIfNeeded()`
+  and `updateSessionSleepAssertion()` are removed, and
+  `ZenCODEACPBridge.sessionState(configuration:selectedAgent:epoch:activePromptID:activePromptTask:operationState:)`
+  is no longer public; the prompt and operation state are those of the
+  host's incarnation (`ChatSessionHost.incarnation(in:)`), and the host holds
+  the sleep assertion. `TerminalChat.telegramControlService`,
+  `telegramControlState`, `telegramLinkedChatID`, `telegramLinkedChatTitle`,
+  and `telegramLinkedUserID` are removed: Telegram is the `TelegramChannel` of
+  the terminal's slot (`ChatSessionHost.telegramChannel(in:)`, with
+  `isActive`, `linkedChatID`, and `linkedChatTitle`). A
+  `TerminalTelegramControlService` created with `init()` now has a dispatcher
+  of its own, so two of them on the same bot poll it twice and the Bot API
+  answers HTTP 409; the channels of one `ChatSessionHost` share its dispatcher.
 - Terminal: `/sessions new` starts a new session with the launch profile's
   selection; the model, thinking level, agent, tools, and skills chosen before
   are not kept. `/sessions load` restores the selection saved with the
@@ -229,6 +260,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Telegram: `/review` written in another case, such as `/REVIEW focus on
   parsing`, now keeps its argument as the review focus instead of reviewing
   without it.
+- Telegram: the notice shown when the Bot API polling stops now points to
+  `/telegram`, which shows the latest error, instead of the nonexistent
+  `/telegram status`.
 - ACP: the reply to `/telegram on` now includes, after the activation text,
   the notices presented while the session was being linked, for example that
   the Bot API did not create the session's topic. They used to be dropped.

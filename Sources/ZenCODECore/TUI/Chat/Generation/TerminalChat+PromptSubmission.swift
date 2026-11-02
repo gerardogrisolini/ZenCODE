@@ -53,12 +53,6 @@ extension TerminalChat {
             return .continueChat
         }
 
-        // While Telegram drives the slot the terminal runs only what takes
-        // it back (see `ChatSessionHost.admitLine`).
-        guard await admitTerminalLine(prompt) else {
-            return .continueChat
-        }
-
         switch Self.parseSharedChatMention(
             from: prompt,
             readableHandles: await sessionRunner.sharedChatMentionHandles(rootSessionID: sessionID)

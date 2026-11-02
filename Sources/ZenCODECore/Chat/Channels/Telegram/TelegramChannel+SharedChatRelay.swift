@@ -45,7 +45,8 @@ extension TelegramChannel {
     /// as hidden turns of the channel when the session is free. The
     /// observation follows the slot's incarnation: a new session rebinds it
     /// to the new room (see ``rebindSharedChatObservationIfNeeded()``).
-    /// Starting it again while it runs does nothing.
+    /// Starting it again while it runs does nothing. The channel's busy state
+    /// is declared on the observation before its first event is handled.
     func startSharedChatObservation() {
         guard sharedChatObservationTask == nil else { return }
         let roomID = sessionID
@@ -54,6 +55,7 @@ extension TelegramChannel {
             guard let self else { return }
             let observation = await sessionRunner.attachSharedChatObservation(rootSessionID: roomID)
             self.sharedChatObservation = observation
+            await self.synchronizeSharedChatConsumerBusyState()
             for await event in observation.events {
                 guard !Task.isCancelled else { break }
                 await self.handleSharedChatEvent(event, roomID: roomID, observation: observation)
@@ -108,10 +110,19 @@ extension TelegramChannel {
                 )
                 return
             }
-            guard !isSessionGenerating, activeTurnTask == nil, promptQueue.isEmpty else {
-                // Busy: the Core requeues the batch and offers it again once
-                // the room is idle.
-                await sessionRunner.setSharedChatConsumerBusy(true, observation: observation)
+            // The route is resolved first: without one the turn has nowhere
+            // to answer, and the channel counts as busy until a route is back
+            // (``synchronizeSharedChatConsumerBusyState()``).
+            let hasLease = sharedChatLease(for: trigger.messages) != nil || activeRouteLease != nil
+            guard !isSessionGenerating, activeTurnTask == nil, promptQueue.isEmpty, hasLease else {
+                // Busy: the channel's own activity is declared before the
+                // decline, so the requeued batch is not offered straight back
+                // while a task or a queued prompt of the channel waits, or
+                // while the channel has no route. The Core offers it again
+                // once the channel declares itself idle at the end of its task
+                // (``turnTaskDidEnd()``) or once a route is back, or once the
+                // session's turn ends.
+                await synchronizeSharedChatConsumerBusyState()
                 await sessionRunner.declineSharedChatAutoTrigger(
                     id: trigger.id, rootSessionID: trigger.roomID
                 )
@@ -121,17 +132,54 @@ extension TelegramChannel {
                 id: trigger.id, observation: observation, resolution: .started
             )
             guard claim == .acquired else { return }
-            let lease = takeSharedChatLease(for: trigger.messages) ?? activeRouteLease
-            guard let lease else { return }
+            guard let lease = takeSharedChatLease(for: trigger.messages) ?? activeRouteLease else {
+                // The route went away while the claim was resolved: the
+                // channel declares itself busy, then gives its claim back,
+                // which requeues the batch without offering it again until a
+                // route is back.
+                await synchronizeSharedChatConsumerBusyState()
+                _ = await sessionRunner.resolveSharedChatAutoTrigger(
+                    id: trigger.id, observation: observation, resolution: .declined
+                )
+                return
+            }
             activeTurnTask = Task(name: "ZenCODE.Telegram.shared-chat-turn") { [weak self] in
                 guard let self else { return }
-                await sessionRunner.setSharedChatConsumerBusy(true, observation: observation)
+                await self.synchronizeSharedChatConsumerBusyState()
                 await self.runTurn(prompt: trigger.prompt, lease: lease, isUserVisible: false)
-                await sessionRunner.setSharedChatConsumerBusy(false, observation: observation)
-                self.activeTurnTask = nil
-                self.startNextQueuedPromptIfNeeded()
+                await self.turnTaskDidEnd()
             }
         }
+    }
+
+    /// Declares the channel's own activity to the Core's auto-trigger, as the
+    /// terminal does: a task of the channel (a line being answered, a turn, a
+    /// coordinator turn) or a prompt in its queue keeps the channel's
+    /// observation busy, so a shared-chat message waits for the channel to be
+    /// free instead of racing its work; so does a link without a route
+    /// (``activeRouteLease``, `nil` after the route was revoked, rebound, or
+    /// closed), on which a coordinator turn could not answer, until a route is
+    /// back (``activeRouteLeaseDidChange(hadLease:)``). Otherwise the
+    /// observation is idle, and the Core offers again what waits. The
+    /// declaration is scoped to the channel's observation: another consumer
+    /// of the room can never clear it, and it ends with the observation
+    /// (`/telegram off`). Called at every start and end of a task of the
+    /// channel and of its queue, and when the route comes or goes; nothing
+    /// happens while the channel observes no room.
+    func synchronizeSharedChatConsumerBusyState() async {
+        guard let observation = sharedChatObservation else { return }
+        await sessionRunner.setSharedChatConsumerBusy(
+            activeTurnTask != nil || !promptQueue.isEmpty || activeRouteLease == nil,
+            observation: observation
+        )
+    }
+
+    /// Tells the shared chat whether the channel is busy once the link's
+    /// route came (`hadLease` is `false`) or went (`true`): a channel without
+    /// a route counts as busy. Nothing happens when it did not change.
+    func activeRouteLeaseDidChange(hadLease: Bool) async {
+        guard hadLease != (activeRouteLease != nil) else { return }
+        await synchronizeSharedChatConsumerBusyState()
     }
 
     // MARK: - Live-message relay
@@ -425,14 +473,22 @@ extension TelegramChannel {
     /// association is consumed, so a replay cannot route an unrelated later
     /// coordinator response.
     func takeSharedChatLease(for messages: [AgentSharedChat.Message]) -> TerminalTelegramRouteLease? {
-        var lease: TerminalTelegramRouteLease?
+        let lease = sharedChatLease(for: messages)
         for message in messages {
-            if lease == nil {
-                lease = sharedChatMessageLeases[message.id]
-            }
             sharedChatMessageLeases.removeValue(forKey: message.id)
             sharedChatMessageLeaseOrder.removeAll { $0 == message.id }
         }
         return lease
+    }
+
+    /// The route of the first of `messages` the channel recorded one for,
+    /// without forgetting it (``takeSharedChatLease(for:)`` does).
+    func sharedChatLease(for messages: [AgentSharedChat.Message]) -> TerminalTelegramRouteLease? {
+        for message in messages {
+            if let lease = sharedChatMessageLeases[message.id] {
+                return lease
+            }
+        }
+        return nil
     }
 }

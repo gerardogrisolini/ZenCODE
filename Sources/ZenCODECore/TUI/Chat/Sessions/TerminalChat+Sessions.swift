@@ -267,7 +267,9 @@ extension TerminalChat {
         )
     }
 
-    private nonisolated static func savedSessionHistoryHasVisibleContent(
+    /// Whether ``renderSavedSessionHistory(_:title:)`` writes anything for
+    /// `history`, its title included.
+    nonisolated static func savedSessionHistoryHasVisibleContent(
         _ history: [AgentRuntimeMessage]
     ) -> Bool {
         history.contains { message in

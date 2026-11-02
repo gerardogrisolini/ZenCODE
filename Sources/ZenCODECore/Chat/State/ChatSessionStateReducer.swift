@@ -28,7 +28,8 @@ import ToolCore
 /// receives them out of order, and always ends on the latest one.
 ///
 /// A session change (``ChatSessionPresenter/sessionDidChange(sessionID:)``)
-/// replaces the log and increases ``ChatSessionSnapshot/epoch``; a restored
+/// replaces the log and, for a reducer composed by hand, increases
+/// ``ChatSessionSnapshot/epoch``; a restored
 /// session's transcript arrives as log entries
 /// (``ChatSessionPresenter/presentRestoredLog(_:)``).
 ///
@@ -58,6 +59,11 @@ public final class ChatSessionStateReducer: ChatSessionObserver {
     /// incarnation, not the log.
     nonisolated let keepsEpochOnSessionChange: Bool
     private var nextSequence: Int
+    /// The sequence the current log started from: 1, or the next sequence
+    /// when the log started over for another session in place
+    /// (``resetForSession(_:)``). A ``ChatSessionSnapshot/firstRetainedSequence``
+    /// past it means the log's bound dropped entries of this log.
+    private(set) var logStartSequence = 1
     private var nextTurnID = 1
     /// The estimated bytes of each log entry, in log order.
     private var logByteCounts: [Int] = []
@@ -73,6 +79,9 @@ public final class ChatSessionStateReducer: ChatSessionObserver {
     private var hasFirstPrompt = false
     private var firstPromptTitle: String?
     private var subscribers: [UUID: AsyncStream<ChatSessionSnapshot>.Continuation] = [:]
+    /// `true` once ``finishSnapshots()`` ended the streams: a later
+    /// ``snapshots()`` ends after its first snapshot.
+    private var snapshotsAreFinished = false
     /// Called after a commit that changed ``ChatSessionSnapshot/summary``:
     /// the ``ChatSessionHost`` that created the reducer sets it, to show the
     /// summary in its ``ChatShellSnapshot``.
@@ -154,12 +163,19 @@ public final class ChatSessionStateReducer: ChatSessionObserver {
 
     /// A stream of the session's snapshots: the current one at once, then
     /// one after every change. Each call returns a new stream; it ends when
-    /// the consumer stops iterating or the reducer is released.
+    /// the consumer stops iterating or the reducer is released, and, for a
+    /// reducer a ``ChatSessionHost`` created, when its incarnation ends,
+    /// after the last snapshot (at once for a stream asked for later).
     public func snapshots() -> AsyncStream<ChatSessionSnapshot> {
         let (stream, continuation) = AsyncStream.makeStream(
             of: ChatSessionSnapshot.self,
             bufferingPolicy: .bufferingNewest(1)
         )
+        guard !snapshotsAreFinished else {
+            continuation.yield(snapshot)
+            continuation.finish()
+            return stream
+        }
         let id = UUID()
         subscribers[id] = continuation
         continuation.onTermination = { [weak self] _ in
@@ -170,6 +186,19 @@ public final class ChatSessionStateReducer: ChatSessionObserver {
         }
         continuation.yield(snapshot)
         return stream
+    }
+
+    /// Ends every stream of ``snapshots()`` after the snapshot it holds, and
+    /// every later one after its first: the ``ChatSessionHost`` that created
+    /// the reducer calls it when the incarnation ends, so that a view that
+    /// follows the slot does not keep the log of a replaced session alive.
+    func finishSnapshots() {
+        snapshotsAreFinished = true
+        let streams = subscribers
+        subscribers.removeAll()
+        for continuation in streams.values {
+            continuation.finish()
+        }
     }
 
     // MARK: - Turn
@@ -346,6 +375,7 @@ public final class ChatSessionStateReducer: ChatSessionObserver {
         }
         snapshot.log = []
         snapshot.firstRetainedSequence = nextSequence
+        logStartSequence = nextSequence
         snapshot.transcript = []
         snapshot.activity = []
         snapshot.notices = []
@@ -494,7 +524,7 @@ public final class ChatSessionStateReducer: ChatSessionObserver {
         let firstRetainedSequence = snapshot.log[dropCount - 1].sequence + 1
         snapshot.log.removeFirst(dropCount)
         logByteCounts.removeFirst(dropCount)
-        logRetainedBytes = logByteCounts.reduce(0, ChatSessionController.saturatingSum)
+        logRetainedBytes = retainedBytes
         snapshot.firstRetainedSequence = firstRetainedSequence
         Self.dropEntries(below: firstRetainedSequence, from: &snapshot.transcript)
         Self.dropEntries(below: firstRetainedSequence, from: &snapshot.activity)

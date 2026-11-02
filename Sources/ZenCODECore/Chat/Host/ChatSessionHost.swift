@@ -67,23 +67,31 @@ public final class ChatSessionHost {
     /// host runs, read by the consent authorizers of the slots (see
     /// ``ChatToolConsentAuthorizer/setConsentHostResolver(_:)``).
     nonisolated let consentHostRoutes = ChatConsentHostRoutes()
+    /// The slots a channel retired before it closes them, and the shutdown
+    /// a channel announced before it shuts the host down: read by every new
+    /// reservation, written without suspending from any isolation domain
+    /// (see ``retireIncarnation(in:controller:)`` and ``beginShutdown()``).
+    nonisolated let retirement = ChatSlotRetirement()
     /// What a shell shows about every session of the host, as of now; see
     /// ``shellSnapshots()`` and `ChatSessionHost+Shell.swift`.
     public internal(set) var shellSnapshot = ChatShellSnapshot()
     /// The streams of ``shellSnapshots()`` still open, by token.
     var shellStreams: [UUID: AsyncStream<ChatShellSnapshot>.Continuation] = [:]
-    /// `true` once a shell observes the host (``shellSnapshots()``,
-    /// ``refreshShellSnapshot()``): from then on the shell reads the saved
-    /// sessions and the Telegram state, which nobody reads before.
+    /// `true` while a shell observes the host: from the first
+    /// ``shellSnapshots()`` or ``refreshShellSnapshot()`` until the last open
+    /// stream ends. Meanwhile the shell reads the saved sessions and the
+    /// Telegram state, which nobody reads otherwise.
     var isShellObserved = false
     /// The latest read of each workspace's saved sessions, so that an older
     /// read finishing later is dropped.
     var shellSavedSessionsReads: [URL: UInt64] = [:]
     /// The latest read of the Telegram settings and of the poller.
-    var shellTelegramConfigurationRead: UInt64 = 0
-    var shellTelegramPollingRead: UInt64 = 0
+    var shellTelegramRead: UInt64 = 0
     /// The counter of the reads above.
     var nextShellReadValue: UInt64 = 1
+    /// Reads the saved sessions of a workspace for the shell; `nil` reads the
+    /// session store. A test installs a reader here to order the reads.
+    var shellSavedSessionsReader: (@Sendable (URL) async -> [ChatSavedSessionSummary]?)?
 
     /// A host over `runner`, which it shuts down with itself.
     ///
@@ -99,6 +107,14 @@ public final class ChatSessionHost {
         self.runner = runner
         self.environment = environment
         self.sleepAssertionReason = sleepAssertionReason
+    }
+
+    /// A host released without ``shutdown(keepingExternalTools:)`` ends the
+    /// streams of its shell snapshots, which would otherwise never end.
+    deinit {
+        for continuation in shellStreams.values {
+            continuation.finish()
+        }
     }
 
     /// A host with a runner built by
@@ -177,6 +193,7 @@ public final class ChatSessionHost {
         runtimeSession: RuntimeSessionDisposition = .close
     ) async {
         guard let slot = slots.removeValue(forKey: slotID) else { return }
+        retirement.forget(slotID)
         let previous = endIncarnation(of: slot)
         slot.endObservation()
         updateSleepAssertion()
@@ -185,7 +202,7 @@ public final class ChatSessionHost {
             await disposeRuntimeSession(of: previous, runtimeSession)
         }
         await slot.telegramChannel?.shutdown()
-        scheduleShellTelegramPollingRead()
+        scheduleShellTelegramRead()
     }
 
     /// The open slots, in no particular order.
@@ -272,9 +289,12 @@ public final class ChatSessionHost {
         sessionID: String
     ) async throws(ChatSessionHostError) -> ChatSessionIncarnation {
         let slot = try replaceableSlot(slotID)
-        let previous = endIncarnation(of: slot)
-        let incarnation = makeIncarnation(in: slot, sessionID: sessionID)
-        slot.setIncarnation(incarnation)
+        let (previous, incarnation) = holdingShellFacts(of: slot) {
+            let previous = endIncarnation(of: slot)
+            let incarnation = makeIncarnation(in: slot, sessionID: sessionID)
+            slot.setIncarnation(incarnation)
+            return (previous, incarnation)
+        }
         registerConsentHost(of: slot)
         updateSleepAssertion()
         if let previous {
@@ -337,9 +357,12 @@ public final class ChatSessionHost {
                 throw ChatSessionHostError.noSession
             }
         }
-        let previous = endIncarnation(of: slot)
-        let incarnation = makeIncarnation(in: slot, sessionID: savedSession.sessionID)
-        slot.setIncarnation(incarnation)
+        let (previous, incarnation) = holdingShellFacts(of: slot) {
+            let previous = endIncarnation(of: slot)
+            let incarnation = makeIncarnation(in: slot, sessionID: savedSession.sessionID)
+            slot.setIncarnation(incarnation)
+            return (previous, incarnation)
+        }
         registerConsentHost(of: slot)
         updateSleepAssertion()
         if let previous {
@@ -418,8 +441,15 @@ public final class ChatSessionHost {
         in slotID: ChatSlotID,
         runtimeSession: RuntimeSessionDisposition = .close
     ) async {
-        guard let slot = slots[slotID], let previous = endIncarnation(of: slot) else { return }
-        slot.setIncarnation(nil)
+        guard let slot = slots[slotID] else { return }
+        let previous = holdingShellFacts(of: slot) {
+            let previous = endIncarnation(of: slot)
+            if previous != nil {
+                slot.setIncarnation(nil)
+            }
+            return previous
+        }
+        guard let previous else { return }
         updateSleepAssertion()
         await disposeRuntimeSession(of: previous, runtimeSession)
     }
@@ -463,8 +493,9 @@ public final class ChatSessionHost {
 
     /// The slot whose session may be replaced now.
     private func replaceableSlot(_ slotID: ChatSlotID) throws(ChatSessionHostError) -> ChatSlot {
-        guard !isShutDown else { throw .shutDown }
+        guard !isShutDown, !retirement.isShuttingDown else { throw .shutDown }
         guard let slot = slots[slotID] else { throw .unknownSlot }
+        guard !retirement.isRetired(slotID) else { throw .noSession }
         if let current = slot.incarnation,
            current.activePromptID != nil || current.operationState != .idle {
             throw .sessionBusy
@@ -551,8 +582,9 @@ public final class ChatSessionHost {
     /// Ends the incarnation of `slot` without suspending: the controller is
     /// fenced, so a turn still running cannot write session state back, the
     /// reservation is dropped, the pending requests are refused, and the
-    /// reducer stops observing the controller. Returns it for the runner
-    /// disposal; the caller installs what follows it.
+    /// reducer stops observing the controller and ends its streams after the
+    /// last snapshot. Returns it for the runner disposal; the caller installs
+    /// what follows it.
     private func endIncarnation(of slot: ChatSlot) -> ChatSessionIncarnation? {
         guard var incarnation = slot.incarnation else { return nil }
         incarnation.controller.cancelActiveTurn()
@@ -560,6 +592,7 @@ public final class ChatSessionHost {
         if let reducer = incarnation.reducer {
             incarnation.controller.removeObserver(reducer)
             reducer.summaryDidChange = nil
+            reducer.finishSnapshots()
         }
         incarnation.activePromptID = nil
         incarnation.operationState = .idle
@@ -571,12 +604,16 @@ public final class ChatSessionHost {
 
     /// Applies `disposition` to the runner session of an ended incarnation,
     /// unless another slot still runs a session with the same id, which then
-    /// owns the runner session.
+    /// owns the runner session. The incarnation's own slot does not count: a
+    /// new or loaded session with the same id in that slot (`/sessions
+    /// restore`, the reload of the active saved session) replaces the runner
+    /// session as the in-place operations do.
     private func disposeRuntimeSession(
         of incarnation: ChatSessionIncarnation,
         _ disposition: RuntimeSessionDisposition
     ) async {
-        guard !isShutDown, !isSessionRunning(incarnation.sessionID) else { return }
+        guard !isShutDown,
+              !isSessionRunning(incarnation.sessionID, outside: incarnation.slotID) else { return }
         switch disposition {
         case .close:
             await runner.closeSession(id: incarnation.sessionID)
@@ -587,9 +624,10 @@ public final class ChatSessionHost {
         }
     }
 
-    /// Whether a slot runs a session with the id `sessionID` now.
-    func isSessionRunning(_ sessionID: String) -> Bool {
-        slots.values.contains { $0.incarnation?.sessionID == sessionID }
+    /// Whether a slot other than `excludedSlotID` runs a session with the id
+    /// `sessionID` now.
+    func isSessionRunning(_ sessionID: String, outside excludedSlotID: ChatSlotID) -> Bool {
+        slots.values.contains { $0.id != excludedSlotID && $0.incarnation?.sessionID == sessionID }
     }
 
     // MARK: - Sleep assertion

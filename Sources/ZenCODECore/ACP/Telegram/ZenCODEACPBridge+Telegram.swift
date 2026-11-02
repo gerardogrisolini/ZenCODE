@@ -23,8 +23,12 @@ import ToolCore
 /// One object serves every slot of the bridge: it finds the session by the
 /// controller it is asked for, which is the live incarnation's. The bridge
 /// owns it and binds itself once it exists (``bind(to:)``); it holds the
-/// bridge weakly. A controller the bridge no longer runs (closed meanwhile)
-/// gets the controller's own composition, as a slot without hooks would.
+/// bridge weakly. A controller the bridge no longer runs (its session closed,
+/// or the bridge shut down, while the turn was reserved or composed) is
+/// refused with ``ACPTelegramTurnRefusal/sessionNotRunning``: without the
+/// session's configuration and environment the turn would run without the
+/// editor's grant, the client's file system, and the agent's skills, so it
+/// does not run at all.
 ///
 /// ACP's editor turns never move to Telegram: `/telegram on` is itself a
 /// `session/prompt`, which holds the slot's reservation, and the editor's
@@ -54,11 +58,11 @@ final class ACPSessionChannelHooks: ChatSessionChannelHooks {
     func turnSessionConfiguration(
         for purpose: ChatTurnPurpose,
         controller: ChatSessionController
-    ) async -> AgentCoreSessionConfiguration {
-        if let bridge, let configuration = await bridge.sessionConfiguration(of: controller) {
-            return configuration.addingAllowedToolNames(controller.additionalToolNames(for: purpose))
+    ) async throws -> AgentCoreSessionConfiguration {
+        guard let bridge, let configuration = await bridge.sessionConfiguration(of: controller) else {
+            throw ACPTelegramTurnRefusal.sessionNotRunning
         }
-        return await controller.turnSessionConfiguration(for: purpose, responseLanguageSection: nil)
+        return configuration.addingAllowedToolNames(controller.additionalToolNames(for: purpose))
     }
 
     func runTurnFromAnotherChannel(
@@ -66,9 +70,9 @@ final class ACPSessionChannelHooks: ChatSessionChannelHooks {
         _ body: () async throws -> ChatTurnResult
     ) async throws -> ChatTurnResult {
         // A controller the bridge no longer runs has no environment: the turn
-        // runs as a slot without hooks would run it.
+        // is refused before it runs.
         guard let bridge, let environment = await bridge.turnEnvironment(of: controller) else {
-            return try await body()
+            throw ACPTelegramTurnRefusal.sessionNotRunning
         }
         // The editor's order: inside the client's file system, the agent's
         // skills are selected, then the turn starts.
@@ -80,6 +84,15 @@ final class ACPSessionChannelHooks: ChatSessionChannelHooks {
             return try await body()
         }
     }
+}
+
+/// Why ``ACPSessionChannelHooks`` refused a turn of the slot's Telegram
+/// channel before running it: nothing of the turn started, its reservation
+/// is released, and the channel tells the chat nothing about it.
+enum ACPTelegramTurnRefusal: Error, Equatable {
+    /// The bridge no longer runs the session of the turn's controller: the
+    /// editor closed it (`session/close`) or the bridge shut down.
+    case sessionNotRunning
 }
 
 /// What a turn from Telegram needs around it on an ACP session beyond its

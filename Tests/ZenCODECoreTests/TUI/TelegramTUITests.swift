@@ -763,7 +763,7 @@ struct TelegramTUITests {
         #expect(messages.withLock { $0.contains { $0.contains(unavailable) } })
     }
 
-    /// `/telegram status` shows poll, command-menu and send errors separately.
+    /// `/telegram` shows poll, command-menu and send errors separately.
     @Test
     func telegramStatusRendersSeparateDiagnostics() async throws {
         let terminal = try await Self.activeTelegramTerminal()
@@ -854,6 +854,7 @@ struct TelegramTUITests {
                 )
 
                 terminal.capturedCommandOutputForTesting = []
+                TelegramChannelTestSupport.standInForInteractiveLoop(of: terminal)
                 await terminal.startTelegramControl()
                 return (
                     !terminal.telegramChannel.controlState.isActive,

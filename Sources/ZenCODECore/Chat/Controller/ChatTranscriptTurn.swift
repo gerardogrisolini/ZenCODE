@@ -96,14 +96,6 @@ actor ChatTranscriptTurn {
         return transcriptMessages
     }
 
-    func shouldPromoteReasoningToContent(_ finalResponseText: String) -> Bool {
-        ChatTurnBlockRules.shouldPromoteReasoningToContent(
-            finalResponseText: finalResponseText,
-            assistantContent: assistantContent,
-            reasoningContent: reasoningContent
-        )
-    }
-
     func flushAssistantMessage() {
         guard ChatTurnBlockRules.hasBlock(
             assistantContent: assistantContent,

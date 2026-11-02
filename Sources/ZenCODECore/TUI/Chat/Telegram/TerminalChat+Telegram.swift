@@ -47,9 +47,12 @@ extension TerminalChat {
     /// terminal the link is active through its notice sink, installed before
     /// the first attach so the activation text is not lost, then the
     /// terminal writes its status line. A repeated `/telegram on` restarts
-    /// the link and writes the activation text again, as before.
+    /// the link and writes the activation text again, as before. Only the
+    /// interactive input loop hands its slot over (its event queue is
+    /// ``loopEventQueue``): the line-by-line fallback, which neither reserves
+    /// its prompts in the host nor takes a turn over, refuses it.
     func startTelegramControl() async {
-        guard stdinIsTerminal else {
+        guard loopEventQueue != nil else {
             await writeFailureMessage("ZenCODE: /telegram requires the interactive TUI.\n")
             return
         }
@@ -73,19 +76,26 @@ extension TerminalChat {
         }
     }
 
-    /// `/telegram off`: takes the slot back and renders the catch-up. A turn
+    /// `/telegram off`: takes the slot back and renders the catch-up before
+    /// anything more of the turn in progress (see
+    /// ``ChatSessionHost/deactivateTelegram(in:presentingCatchUp:)``). A turn
     /// still running from Telegram is adopted: the loop treats it as its own
     /// from now on (``takeAdoptedTurnIfNeeded()``) and its ending reaches
-    /// the loop as a generation completion.
+    /// the loop as a generation completion. Without a Telegram channel (no
+    /// `/telegram on` ever ran) it tells the link stopped, as the channel
+    /// tells it when it detaches.
     func stopTelegramControl() async {
+        guard sessionHost.telegramChannel(in: terminalSlotID) != nil else {
+            await writeSystemMessage(TelegramChannel.stoppedNoticeText)
+            return
+        }
         let wasGenerating = sessionHost.incarnation(in: terminalSlotID)?.activePromptID != nil
         let wasDriving = sessionHost.activeChannel(in: terminalSlotID) == .telegram
         if wasDriving, wasGenerating {
             hasAdoptedTelegramTurn = true
         }
-        let catchUp = await sessionHost.deactivateTelegram(in: terminalSlotID)
-        if let catchUp {
-            await renderTelegramCatchUp(catchUp)
+        _ = await sessionHost.deactivateTelegram(in: terminalSlotID) { [weak self] catchUp in
+            await self?.renderTelegramCatchUp(catchUp)
         }
     }
 
@@ -126,6 +136,28 @@ extension TerminalChat {
         }
     }
 
+    /// Whether the terminal may act on input that is never a line that takes
+    /// the slot back (a dictation, a live mention by voice, a shortcut, a
+    /// turn about to start): only while the terminal drives its slot. A
+    /// refused input is answered with the dormant text and runs nothing.
+    func admitTerminalInput() async -> Bool {
+        guard sessionHost.activeChannel(in: terminalSlotID) == .primary else {
+            await writeFailureMessage(ChatSlotAdmission.dormantRefusalText)
+            return false
+        }
+        return true
+    }
+
+    /// Stops the turn the terminal adopted from Telegram (Esc), which runs
+    /// without a task of the loop: the slot's channel cancels it while its
+    /// reservation is still the session's
+    /// (``ChatSessionHost/stopTelegramTurnIfReserved(_:in:)``), and the
+    /// cancelled ending reaches the loop as a generation completion.
+    func stopAdoptedTurn() async {
+        guard let promptID = sessionHost.activePromptID(in: terminalSlotID) else { return }
+        await sessionHost.stopTelegramTurnIfReserved(promptID, in: terminalSlotID)
+    }
+
     /// Whether a turn started from Telegram is running when the terminal
     /// takes the slot back: the loop marks itself generating and the turn's
     /// ending reaches it as a completion (``presentAdoptedTurnEnding(_:)``).
@@ -152,12 +184,14 @@ extension TerminalChat {
         }
         title += ":"
         let messages = ChatTurnEntry.transcriptMessages(from: catchUp.entries)
-        if catchUp.incarnationChanged, messages.isEmpty {
-            await writeSystemMessage("\n\(title)\n")
-        } else {
-            await renderSavedSessionHistory(messages, title: title)
-        }
         let live = catchUp.liveAssistantText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if Self.savedSessionHistoryHasVisibleContent(messages) {
+            await renderSavedSessionHistory(messages, title: title)
+        } else if catchUp.incarnationChanged || !live.isEmpty {
+            // Nothing to replay, but a new session or a response in progress
+            // still goes under the title.
+            await writeSystemMessage("\n\(title)\n")
+        }
         if !live.isEmpty {
             await writeSystemMessage("Response in progress so far:\n")
             await writeAssistantContent(live)
@@ -216,12 +250,20 @@ extension TerminalChat {
 
     /// The ending of a turn another channel ran, presented by the terminal
     /// because it drives the slot now: handed to the running loop as a
-    /// generation completion, or, without a loop (the blocking fallback,
-    /// which never hands its slot over), presented at once.
+    /// generation completion, or, without a loop (the line-by-line fallback,
+    /// which refuses `/telegram on` and so never hands its slot over, or a
+    /// loop that already ended), presented at once.
     func presentAdoptedTurnEnding(_ ending: ChatTurnEnding) async {
         let result = await generationResult(for: ending)
         if let loopEventQueue {
-            _ = await loopEventQueue.sendWithBackpressure(.generationCompleted(result))
+            // Delivered from a task of its own, as the loop delivers the end
+            // of its own turns: the turn's task is cancelled when the turn is
+            // stopped (Esc), and a cancelled send would lose the completion
+            // and leave the loop generating.
+            let delivery = Task.detached(name: "ZenCODE.TUI.adopted-turn-ending-delivery") {
+                await loopEventQueue.sendWithBackpressure(.generationCompleted(result))
+            }
+            _ = await delivery.value
         } else {
             await finishPromptResult(result)
         }
@@ -230,11 +272,12 @@ extension TerminalChat {
     /// The ending of a turn the terminal ran, which the channel that drives
     /// the slot now presents: the terminal itself through
     /// ``finishPromptResult(_:)``, or Telegram when the slot was handed over
-    /// while the turn ran.
-    func presentOwnTurnEnding(_ result: TerminalChatGenerationResult) async {
+    /// while the turn ran. Returns whether the terminal presented it.
+    @discardableResult
+    func presentOwnTurnEnding(_ result: TerminalChatGenerationResult) async -> Bool {
         guard sessionHost.activeChannel(in: terminalSlotID) == .telegram else {
             await finishPromptResult(result)
-            return
+            return true
         }
         let ending: ChatTurnEnding
         switch result {
@@ -254,5 +297,6 @@ extension TerminalChat {
         await quiesceTaskGraphObserverForTurnBoundary()
         await sessionHost.presentTurnEnding(ending, in: terminalSlotID)
         await startTaskGraphObserver()
+        return false
     }
 }

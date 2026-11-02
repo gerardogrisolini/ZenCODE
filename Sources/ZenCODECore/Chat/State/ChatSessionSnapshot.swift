@@ -96,9 +96,15 @@ public struct ChatSessionSummary: Sendable, Equatable {
 public struct ChatSessionSnapshot: Sendable, Equatable {
     /// The session the controller runs.
     public internal(set) var sessionID: String
-    /// Increases by one each time the log is replaced because the controller
-    /// switched session (a new session, a saved session loaded or restored
-    /// from a checkpoint).
+    /// Identifies the log: it changes each time the log is replaced because
+    /// the controller switched session (a new session, a saved session
+    /// loaded or restored from a checkpoint); compare it for equality only.
+    /// A reducer composed by hand increases it by one at each switch. A
+    /// reducer a ``ChatSessionHost`` created has the epoch of its
+    /// incarnation, from a counter the host shares among all its slots, so
+    /// it may grow by more; it stays the same when the session takes another
+    /// id in place (``ChatSessionHost/adoptSessionID(_:in:)``), though the
+    /// log starts over under the new ``sessionID``.
     public internal(set) var epoch: UInt64
     /// The log of the epoch, oldest first. It has the byte budget of the
     /// session transcript (128 MiB), estimated the way the transcript is: the

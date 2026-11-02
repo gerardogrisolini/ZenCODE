@@ -33,11 +33,11 @@ struct TelegramChannelTopicsTests {
         text: "Telegram remote control is active.\nLinked chat: Test\n", channel: .system
     )
 
-    /// `/telegram status` of an active link without a topic of its own.
+    /// `/telegram` of an active link without a topic of its own.
     private static let legacyStatusText =
         "Telegram: Active as @zencode_bot\nBot: @zencode_bot\nLinked chat: Test"
 
-    /// `/telegram status` of an active link in topic mode.
+    /// `/telegram` of an active link in topic mode.
     private static func topicStatusText(topic: String) -> String {
         legacyStatusText + "\nTopic: \(topic)"
     }
@@ -63,7 +63,7 @@ struct TelegramChannelTopicsTests {
 
     /// With Threaded mode and no topic of its own, the session creates one,
     /// binds it to a route of its own, and announces it once in General after
-    /// the activation text; `/telegram status` names it. A repeated attach
+    /// the activation text; `/telegram` names it. A repeated attach
     /// reuses the topic without a request or a notice.
     @Test
     func attachCreatesTheSessionTopicAndAnnouncesItOnceInGeneral() async throws {

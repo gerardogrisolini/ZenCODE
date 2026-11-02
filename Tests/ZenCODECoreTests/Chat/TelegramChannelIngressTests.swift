@@ -8,10 +8,12 @@
 //  the remote commands and of `/plan` `/goal` `/review` through the
 //  controller, the permission replies on a route several sessions share, the
 //  consumer of the ingress while the channel drives the slot, the direct
-//  destinations checked on the roster, and the shared-chat relay cards. The
-//  channel is linked by hand to chat 42, the way the round-trip tests link a
-//  terminal: no control service is started, and the system messages and
-//  picker cards are recorded through the seams instead of being sent.
+//  destinations checked on the roster, the shared-chat relay cards, the
+//  channel's busy state for the shared chat, and the context of the
+//  handover. The channel is linked by hand to chat 42, the way the
+//  round-trip tests link a terminal: no control service is started, and the
+//  system messages and picker cards are recorded through the seams instead
+//  of being sent.
 //
 
 import Foundation
@@ -228,7 +230,7 @@ struct TelegramChannelIngressTests {
             #expect(texts.contains(
                 "ZenCODE: unknown command '/foo'. Available commands: \(TelegramChannel.remoteCommandList())"
             ))
-            #expect(texts.contains("Use /undo in the TUI to revert file changes."))
+            #expect(texts.contains("Use /undo in the TUI after /telegram off to revert file changes."))
             #expect(texts.contains(channel.alreadyLinkedText))
             #expect(texts.contains("ZenCODE message: add a message after the live mention."))
             #expect(texts.filter { $0 == "ZenCODE message: no diff is available for this session yet." }.count == 2)
@@ -488,6 +490,213 @@ struct TelegramChannelIngressTests {
         }
     }
 
+    /// While the channel drives the slot it tells the shared chat it is busy
+    /// for as long as a task of its own or its queue keeps it, and free when
+    /// they end, as the terminal does. A batch the room offers while a task
+    /// of the channel runs is declined, with the channel declared busy first,
+    /// so it waits instead of coming straight back; once the task ends the
+    /// channel says it is free and the room offers the batch again, which the
+    /// channel runs. A batch that arrives while a turn of the channel and a
+    /// prompt in its queue wait is not offered until both ran.
+    @Test
+    func aSharedChatBatchDeclinedWhileTheChannelIsBusyRunsOnceTheChannelIsFree() async throws {
+        try await Support.withSupport {
+            let room = "channel-trigger-\(UUID().uuidString)"
+            let (runner, backend) = try await Self.sharedChatRunner(room: room)
+            let pair = try await Self.handLinked(room: room, runner: runner)
+            let channel = pair.channel
+            let slot = try #require(pair.terminal.sessionHost.slots[pair.terminal.terminalSlotID])
+            #expect(slot.telegramChannel === channel)
+            slot.setActiveChannel(.telegram)
+            #expect(channel.drivesSlot)
+            #expect(channel.sessionID == room)
+            let coordinator = await runner.sharedChatCoordinator()
+            @ChatSessionActor
+            func isIdle() async -> Bool {
+                let busyObservers = await coordinator.busyObserverCount(roomID: room)
+                let claimOwner = await coordinator.claimedAutoTriggerOwnerID(roomID: room)
+                let channelIsFree = channel.activeTurnTask == nil
+                return busyObservers == 0 && claimOwner == nil && channelIsFree
+            }
+            let prompts = TelegramTestRecorder<String>()
+            let gate = TelegramTurnGate()
+            channel.onRunTurnForTesting = { prompt, _, _ in
+                prompts.append(prompt)
+                if prompt == "held prompt" {
+                    await gate.wait()
+                }
+            }
+
+            // Free: the room's first batch runs at once, and the channel is
+            // free again when its turn ends.
+            await backend.enqueueCoordinatorMessage(text: "first batch", roomID: room)
+            channel.startSharedChatObservation()
+            try await Support.waitUntil { prompts.values.count == 1 }
+            #expect(prompts.values.first?.contains("first batch") == true)
+            try await Support.waitUntil { await isIdle() }
+            #expect(await isIdle())
+
+            // Busy: a task of the channel runs that has not declared itself
+            // yet (the moment between its start and its first step). The
+            // batch offered meanwhile is declined: the channel declares itself
+            // busy first, so the batch waits in the room.
+            let hold = Self.holdQueue(of: channel)
+            await backend.enqueueCoordinatorMessage(text: "second batch", roomID: room)
+            try await Support.waitUntil {
+                let busyObservers = await coordinator.busyObserverCount(roomID: room)
+                let pending = await coordinator.pendingMessageCount(roomID: room)
+                return busyObservers == 1 && pending == 1
+            }
+            #expect(await coordinator.busyObserverCount(roomID: room) == 1)
+            #expect(await coordinator.pendingMessageCount(roomID: room) == 1)
+            #expect(await coordinator.activeAutoTriggerID(roomID: room) == nil)
+            #expect(prompts.values.count == 1)
+
+            // Free: the task ends, the channel says so, and the room offers
+            // the batch again, which the channel now accepts and runs.
+            hold.cancel()
+            await channel.turnTaskDidEnd()
+            try await Support.waitUntil { prompts.values.count == 2 }
+            #expect(prompts.values.last?.contains("second batch") == true)
+            try await Support.waitUntil { await isIdle() }
+            #expect(await isIdle())
+
+            // Busy with a queue: a turn of the channel waits, a prompt waits
+            // behind it, and the batch that arrives meanwhile is not offered
+            // until both ran.
+            #expect(await channel.admitPrompt("held prompt", lease: pair.lease))
+            try await Support.waitUntil { prompts.values.last == "held prompt" }
+            #expect(await channel.admitPrompt("queued prompt", lease: pair.lease))
+            #expect(channel.promptQueue.count == 1)
+            #expect(await coordinator.busyObserverCount(roomID: room) == 1)
+            await backend.enqueueCoordinatorMessage(text: "third batch", roomID: room)
+            try await Support.waitUntil { await coordinator.pendingMessageCount(roomID: room) == 1 }
+            #expect(await coordinator.activeAutoTriggerID(roomID: room) == nil)
+            #expect(prompts.values.count == 3)
+            await gate.open()
+            try await Support.waitUntil { prompts.values.count == 5 }
+            let values = prompts.values
+            #expect(values.count == 5)
+            #expect(Array(values.dropFirst(2).prefix(2)) == ["held prompt", "queued prompt"])
+            #expect(values.last?.contains("third batch") == true)
+            try await Support.waitUntil { await isIdle() }
+            #expect(await isIdle())
+
+            await channel.stopSharedChatObservation()
+            await pair.terminal.sessionHost.shutdown()
+        }
+    }
+
+    /// A channel without a route (revoked, rebound, or closed, until the chat
+    /// writes again) has nowhere to answer a coordinator turn: the batch the
+    /// room offers is declined with the channel declared busy first, so no
+    /// claim holds the room and the batch waits there instead of coming
+    /// straight back. A route that comes back makes the channel free, and the
+    /// room offers the batch again, which the channel runs. A route that goes
+    /// away while the channel is idle makes it busy at once, so the next
+    /// batch waits until a route is back.
+    @Test
+    func aSharedChatBatchWaitsWhileTheChannelHasNoRouteAndRunsOnceARouteIsBack() async throws {
+        try await Support.withSupport {
+            let room = "channel-trigger-route-\(UUID().uuidString)"
+            let (runner, backend) = try await Self.sharedChatRunner(room: room)
+            let pair = try await Self.handLinked(room: room, runner: runner)
+            let channel = pair.channel
+            let slot = try #require(pair.terminal.sessionHost.slots[pair.terminal.terminalSlotID])
+            slot.setActiveChannel(.telegram)
+            #expect(channel.drivesSlot)
+            let coordinator = await runner.sharedChatCoordinator()
+            @ChatSessionActor
+            func isIdle() async -> Bool {
+                let busyObservers = await coordinator.busyObserverCount(roomID: room)
+                let claimOwner = await coordinator.claimedAutoTriggerOwnerID(roomID: room)
+                return busyObservers == 0 && claimOwner == nil && channel.activeTurnTask == nil
+            }
+            @ChatSessionActor
+            func waitsBusy() async -> Bool {
+                let busyObservers = await coordinator.busyObserverCount(roomID: room)
+                let pending = await coordinator.pendingMessageCount(roomID: room)
+                return busyObservers == 1 && pending == 1
+            }
+            let prompts = TelegramTestRecorder<String>()
+            channel.onRunTurnForTesting = { prompt, _, _ in prompts.append(prompt) }
+
+            // No route: the batch offered is declined and waits, unclaimed.
+            channel.activeRouteLease = nil
+            await backend.enqueueCoordinatorMessage(text: "first batch", roomID: room)
+            channel.startSharedChatObservation()
+            try await Support.waitUntil { await waitsBusy() }
+            #expect(await coordinator.claimedAutoTriggerOwnerID(roomID: room) == nil)
+            #expect(await coordinator.activeAutoTriggerID(roomID: room) == nil)
+            #expect(prompts.values.isEmpty)
+
+            // The route is back: the room offers the batch again.
+            channel.activeRouteLease = pair.lease
+            await channel.activeRouteLeaseDidChange(hadLease: false)
+            try await Support.waitUntil { prompts.values.count == 1 }
+            #expect(prompts.values.first?.contains("first batch") == true)
+            try await Support.waitUntil { await isIdle() }
+
+            // The route goes away while the channel is idle: it is busy at
+            // once, and the next batch is not even offered.
+            await channel.routeWasInvalidated(pair.lease)
+            #expect(channel.activeRouteLease == nil)
+            #expect(await coordinator.busyObserverCount(roomID: room) == 1)
+            await backend.enqueueCoordinatorMessage(text: "second batch", roomID: room)
+            try await Support.waitUntil { await waitsBusy() }
+            #expect(await coordinator.activeAutoTriggerID(roomID: room) == nil)
+            #expect(prompts.values.count == 1)
+            channel.activeRouteLease = pair.lease
+            await channel.activeRouteLeaseDidChange(hadLease: false)
+            try await Support.waitUntil { prompts.values.count == 2 }
+            #expect(prompts.values.last?.contains("second batch") == true)
+            try await Support.waitUntil { await isIdle() }
+
+            await channel.stopSharedChatObservation()
+            await pair.terminal.sessionHost.shutdown()
+        }
+    }
+
+    // MARK: - Handover context
+
+    /// The context of the handover is the last six prompts and responses: the
+    /// thoughts between them are left out before counting, so they never take
+    /// the place of a prompt or a response; the response still streaming
+    /// follows them, marked as in progress.
+    @Test
+    func handoverContextIsTheLastSixPromptsAndResponsesWhateverThoughtsLieBetween() async throws {
+        try await Support.withSupport {
+            let pair = try await Self.handLinked(room: "channel-context-\(UUID().uuidString)")
+            var transcript: [ChatTurnEntry] = []
+            for turn in 1...4 {
+                let kinds: [ChatTurnEntry.Kind] = [
+                    .userPrompt(text: "question \(turn)", attachments: [], origin: .local),
+                    .thought("thinking \(turn)"),
+                    .assistantText("answer \(turn)"),
+                    .thought("more thinking \(turn)"),
+                ]
+                for kind in kinds {
+                    transcript.append(ChatTurnEntry(sequence: transcript.count + 1, turnID: turn, kind: kind))
+                }
+            }
+            let lastSix = [
+                "👤 question 2", "🤖 answer 2", "👤 question 3", "🤖 answer 3", "👤 question 4", "🤖 answer 4",
+            ]
+
+            await pair.channel.sendHandoverContext(transcript: transcript, liveAssistantText: "")
+            await pair.channel.sendHandoverContext(transcript: transcript, liveAssistantText: "  still streaming \n")
+            await pair.channel.sendHandoverContext(transcript: Array(transcript.prefix(3)), liveAssistantText: "")
+            await pair.channel.sendHandoverContext(transcript: [], liveAssistantText: " ")
+            #expect(pair.texts.values == [
+                (["Last 6 messages of the session:"] + lastSix).joined(separator: "\n\n"),
+                (["Last 7 messages of the session:"] + lastSix + ["🤖 (in progress) still streaming"])
+                    .joined(separator: "\n\n"),
+                ["Last 2 messages of the session:", "👤 question 1", "🤖 answer 1"].joined(separator: "\n\n"),
+            ])
+            await pair.terminal.sessionHost.shutdown()
+        }
+    }
+
     // MARK: - Support
 
     private struct HandLinked {
@@ -635,6 +844,18 @@ struct TelegramChannelIngressTests {
     /// with its coordinator and one active agent, `agent-1`, named
     /// "planner".
     private static func plannerRunner(room: String) async throws -> AgentCoreSessionRunner {
+        let (runner, backend) = try await sharedChatRunner(room: room)
+        await backend.enqueueCoordinatorMessage(text: "ready", roomID: room)
+        return runner
+    }
+
+    /// A session runner of the session `room` whose backend holds a live
+    /// shared chat, still empty: each
+    /// ``SharedChatRuntimeBackend/enqueueCoordinatorMessage(text:roomID:)``
+    /// sends the coordinator a message of `agent-1` ("planner").
+    private static func sharedChatRunner(
+        room: String
+    ) async throws -> (AgentCoreSessionRunner, SharedChatRuntimeBackend) {
         let backend = SharedChatRuntimeBackend()
         let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
         let configuration = AgentCoreSessionConfiguration(
@@ -644,8 +865,7 @@ struct TelegramChannelIngressTests {
         )
         try await runner.createSession(configuration: configuration)
         _ = try await runner.preloadModel(configuration: configuration, onEvent: { _ in })
-        await backend.enqueueCoordinatorMessage(text: "ready", roomID: room)
-        return runner
+        return (runner, backend)
     }
 
     /// A relay whose cards `log` records instead of sending.
@@ -698,5 +918,26 @@ actor TelegramRelayCardLog {
     func record(_ text: String) -> Int {
         texts.append(text)
         return texts.count
+    }
+}
+
+/// A gate the test opens: ``wait()`` suspends until ``open()``, and returns
+/// at once afterwards.
+private actor TelegramTurnGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        let opened = waiters
+        waiters = []
+        for waiter in opened {
+            waiter.resume()
+        }
     }
 }

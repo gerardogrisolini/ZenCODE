@@ -130,6 +130,7 @@ extension TelegramChannel {
                     return
                 }
                 startNextQueuedPromptIfNeeded()
+                await synchronizeSharedChatConsumerBusyState()
             } else {
                 await admitPrompt(transcript, lease: lease, mode: .directPrompt, kind: "voice prompt")
             }

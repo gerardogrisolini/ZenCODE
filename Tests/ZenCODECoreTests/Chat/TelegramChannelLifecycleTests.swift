@@ -71,6 +71,7 @@ struct TelegramChannelLifecycleTests {
 
             // The terminal's command: the channel's text, then the status line.
             channel.noticeSink = nil
+            Support.standInForInteractiveLoop(of: terminal)
             let terminalWrites = await Support.capturing(terminal) {
                 await terminal.startTelegramControl()
             }
@@ -107,6 +108,7 @@ struct TelegramChannelLifecycleTests {
             #expect(TelegramChannelRegistry.shared.attachedCount(botID: botID) == 0)
 
             channel.noticeSink = nil
+            Support.standInForInteractiveLoop(of: terminal)
             let terminalWrites = await Support.capturing(terminal) {
                 await terminal.startTelegramControl()
             }
@@ -251,6 +253,7 @@ struct TelegramChannelLifecycleTests {
 
             // The terminal's `/telegram off` writes the same text.
             channel.noticeSink = nil
+            Support.standInForInteractiveLoop(of: terminal)
             await terminal.startTelegramControl()
             let terminalWrites = await Support.capturing(terminal) {
                 await terminal.stopTelegramControl()
@@ -374,6 +377,7 @@ struct TelegramChannelLifecycleTests {
     func statusTextIsTheTerminals() async throws {
         try await Support.withSupport {
             let terminal = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: Support.uniqueBotID()))
+            Support.standInForInteractiveLoop(of: terminal)
             await terminal.startTelegramControl()
             let channel = terminal.telegramChannel
             let terminalWrites = await Support.capturing(terminal) {
@@ -458,7 +462,7 @@ struct TelegramChannelLifecycleTests {
             #expect(recorder.notices == [
                 .init(
                     text: "ZenCODE: Telegram is not receiving messages. Telegram polling failed: Unauthorized\n"
-                        + "ZenCODE keeps retrying every minute. Check the bot token with /setup, or stop the other process polling this bot. /telegram status shows the latest error.\n",
+                        + "ZenCODE keeps retrying every minute. Check the bot token with /setup, or stop the other process polling this bot. /telegram shows the latest error.\n",
                     channel: .failure
                 ),
                 .init(text: "Telegram polling recovered; messages are being received again.\n", channel: .system),
@@ -500,7 +504,7 @@ struct TelegramChannelLifecycleTests {
             #expect(recorder.notices[1].text.hasPrefix(
                 "ZenCODE: Telegram is not receiving messages. Telegram polling failed: "
             ))
-            #expect(recorder.notices[1].text.hasSuffix("/telegram status shows the latest error.\n"))
+            #expect(recorder.notices[1].text.hasSuffix("/telegram shows the latest error.\n"))
             #expect(await channel.statusText().contains("Polling error: Telegram polling failed: "))
             await terminal.sessionHost.shutdown()
         }

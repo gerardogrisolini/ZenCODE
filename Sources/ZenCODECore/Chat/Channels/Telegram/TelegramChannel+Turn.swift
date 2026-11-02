@@ -30,7 +30,8 @@ extension TelegramChannel {
     /// The answer is what happened to the prompt by the time the call
     /// returns: started or queued, or dropped because the queue is full, in
     /// which case the chat is told with the terminal's text, where `kind`
-    /// names what was not queued.
+    /// names what was not queued. A queued prompt keeps the channel busy for
+    /// the shared chat (``synchronizeSharedChatConsumerBusyState()``).
     @discardableResult
     func admitPrompt(
         _ text: String,
@@ -50,11 +51,13 @@ extension TelegramChannel {
             )
             return false
         }
+        await synchronizeSharedChatConsumerBusyState()
         return true
     }
 
     /// Starts the next queued prompt once the session is free and no turn of
-    /// the channel runs.
+    /// the channel runs. The task that runs it declares the channel busy for
+    /// the shared chat as it starts.
     func startNextQueuedPromptIfNeeded() {
         guard activeTurnTask == nil, !isSessionGenerating,
               let next = promptQueue.dequeue() else { return }
@@ -64,14 +67,39 @@ extension TelegramChannel {
     /// Runs `prompt` in a task of the channel: a submitted line is answered
     /// first (a remote command, a reply to a pending question, `/plan`
     /// `/goal` `/review`), and what remains runs as a turn through the host.
-    /// The next queued prompt starts when it ends.
+    /// The channel is busy for the shared chat from the start of the task,
+    /// before the line runs, and the next queued prompt starts when it ends
+    /// (``turnTaskDidEnd()``).
     private func startTurnTask(for prompt: ChatQueuedPrompt<TerminalTelegramRouteLease>) {
         activeTurnTask = Task(name: "ZenCODE.Telegram.channel-turn") { [weak self] in
             guard let self else { return }
+            await self.synchronizeSharedChatConsumerBusyState()
             await self.runQueuedPrompt(prompt)
-            self.activeTurnTask = nil
-            self.startNextQueuedPromptIfNeeded()
+            await self.turnTaskDidEnd()
         }
+    }
+
+    /// Ends the task of the channel that just finished (``activeTurnTask``):
+    /// the next queued prompt starts, and the shared chat is told whether the
+    /// channel is still busy, so a batch it declined meanwhile is offered
+    /// again once nothing of the channel waits.
+    func turnTaskDidEnd() async {
+        activeTurnTask = nil
+        startNextQueuedPromptIfNeeded()
+        await synchronizeSharedChatConsumerBusyState()
+    }
+
+    /// Stops the task of the channel whose turn holds no reservation of the
+    /// session yet (a line still answered by ``lineAction(for:lease:)``, a
+    /// coordinator turn not started yet) and waits for it: once the channel
+    /// no longer drives the slot, what it read must not start a turn. A turn
+    /// that holds the reservation goes on, and the channel that took the slot
+    /// adopts it.
+    func stopTurnTaskWithoutReservation() async {
+        guard let task = activeTurnTask,
+              host?.telegramTurnHoldsReservation(in: slotID) != true else { return }
+        task.cancel()
+        await task.value
     }
 
     private func runQueuedPrompt(_ prompt: ChatQueuedPrompt<TerminalTelegramRouteLease>) async {
@@ -100,7 +128,9 @@ extension TelegramChannel {
     /// ending on the channel that drives the slot when it ends (this one,
     /// unless `/telegram off` took the slot back meanwhile), and reports a
     /// prompt that cannot be reserved: the session is busy (the chat is told
-    /// the busy text) or gone (nothing is said).
+    /// the busy text) or gone (nothing is said). A channel that no longer
+    /// drives the slot (`/telegram off` took it back while the line was
+    /// answered) starts nothing and says nothing.
     func runTurn(
         prompt: String,
         lease: TerminalTelegramRouteLease,
@@ -111,7 +141,7 @@ extension TelegramChannel {
             await onRunTurnForTesting(prompt, lease, purpose)
             return
         }
-        guard let host else { return }
+        guard let host, drivesSlot else { return }
         nextTurnLease = lease
         defer { nextTurnLease = nil }
         do {
@@ -126,18 +156,35 @@ extension TelegramChannel {
                 await sendSystemMessageIfLinked(Self.busyMessageText, lease: lease)
             }
         } catch {
-            // A failed or cancelled turn was presented as its ending.
+            // A failed or cancelled turn was presented as its ending; a turn
+            // refused because the channel stopped driving the slot was not
+            // reserved, and one the primary channel refused (an ACP session
+            // closed meanwhile) was released before it ran: neither has
+            // anything to present.
         }
     }
 
-    /// Stops the turn in progress, as the stop button of a streamed draft
-    /// asks: the host fences the controller's turn, the runner cancels the
-    /// prompt, and the channel's task, if the turn is its own, is cancelled.
-    func stopActiveTurn() async {
-        guard let host else { return }
+    /// Stops the turn the channel follows, as the stop button of a streamed
+    /// draft asks, or the turn of the channel that reserved `promptID` (an
+    /// editor's `session/cancel` already dropped that reservation): the
+    /// channel's task, if any, is cancelled; the host fences the controller's
+    /// turn and drops the reservation only while the prompt reserved on the
+    /// session is still that turn's (`promptID`, else the one recorded when
+    /// the turn began on the channel, ``activeTurnPromptID``); and the runner
+    /// cancels the session's prompt only while no other prompt is reserved,
+    /// so a prompt reserved after the turn's own was released keeps its
+    /// reservation and its turn.
+    func stopActiveTurn(promptID: UUID? = nil) async {
+        guard let host else {
+            activeTurnTask?.cancel()
+            return
+        }
         let sessionID = sessionID
-        host.cancelPrompt(in: slotID)
+        if let turnPromptID = promptID ?? activeTurnPromptID {
+            host.cancelPrompt(turnPromptID, in: slotID)
+        }
         activeTurnTask?.cancel()
+        guard host.activePromptID(in: slotID) == nil else { return }
         await sessionRunner.cancelPrompt(sessionID: sessionID)
     }
 
@@ -163,6 +210,7 @@ extension TelegramChannel {
         await activeProgressReporter?.revokeAndWait()
         activeProgressReporter = nil
         activeTurnLease = lease
+        activeTurnPromptID = host?.activePromptID(in: slotID)
         resetRootResponseBlock()
         if adoptingStreamingBlock {
             rootResponseBlockHasContent = true
@@ -214,6 +262,10 @@ extension TelegramChannel {
     /// boundary once an intermediate response was published; `Done.` for an
     /// empty response), `Stopped.`, `ZenCODE failed: <message>`, and the
     /// summary of ``TurnFileChangeSummaryPresentation/text(_:includesCommandHint:)``.
+    ///
+    /// The session is free again: the next queued prompt starts, so a prompt
+    /// queued during a turn the channel did not start (a turn that moved onto
+    /// it, a turn of the app) does not wait for another turn of the channel.
     func finishTurn(ending: ChatTurnEnding) async {
         let outcomePayload: TerminalTelegramTurnPayload
         switch ending.outcome {
@@ -230,6 +282,7 @@ extension TelegramChannel {
             outcomePayload = .agentResponse("Stopped.")
         }
         await retireTurn(outcomePayload: outcomePayload, fileChangeSummary: ending.fileChangeSummary)
+        startNextQueuedPromptIfNeeded()
     }
 
     /// Retires the turn's Telegram side after its final response, sending
@@ -289,6 +342,7 @@ extension TelegramChannel {
         activePresenceLease = nil
         activeProgressReporter = nil
         activeTurnLease = nil
+        activeTurnPromptID = nil
         resetRootResponseBlock()
     }
 
@@ -311,6 +365,7 @@ extension TelegramChannel {
         if activeRouteLease == lease {
             activeRouteLease = nil
             await sharedChatRelayStorage?.deactivate()
+            await activeRouteLeaseDidChange(hadLease: true)
         }
     }
 

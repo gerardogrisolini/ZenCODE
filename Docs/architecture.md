@@ -163,17 +163,22 @@ a write in the same step as the check, so a channel in another isolation
 domain never splits them across a suspension and a replaced or closed
 incarnation is never written into by its own late work. The host is isolated
 to `ChatSessionActor`; `incarnations(in:)` streams the incarnations of a slot
-to an observer, newest first when it is slow, and `shellSnapshots()` streams
+to an observer, newest first when it is slow, the snapshots of a reducer the
+host created end with its incarnation, and `shellSnapshots()` streams
 the `ChatShellSnapshot` of the whole host (`shellSnapshot` is the current
 one): the `ChatSessionSummary` of the session each slot runs, which is its
 reducer's when it has one and otherwise built from the incarnation with the
-reducer's rules by one function of the host, which creates no reducer for it;
-the `ChatSavedSessionSummary` values of the open workspaces; and a
-`ChatShellTelegramState` (Telegram configured by the settings, the poller
-running, the slots Telegram drives). The saved sessions and the settings are
-read off the chat actor, and only once a shell observes the host: then again
-when a slot starts another session, when a session of the host is saved or
-deleted, and on `refreshShellSnapshot()`, never on a timer.
+reducer's rules by one function of the host, which creates no reducer for it,
+and which a new or loaded session shows once, with no slot without session in
+between; the `ChatSavedSessionSummary` values of the open workspaces, by
+standardized URL; and a `ChatShellTelegramState` (Telegram configured by the
+settings, the poller running, the slots Telegram drives). The saved sessions
+and the settings are read off the chat actor, the store listed without
+migrating its files, and only while a shell observes the host, until its last
+stream ends: then again when a slot starts another session, when a session of
+the host is saved or deleted, the settings with the poller when a slot hands
+itself to Telegram, takes itself back, or closes, and on
+`refreshShellSnapshot()`, never on a timer.
 `closeSession(in:runtimeSession:)`
 ends a slot's session and keeps the slot, `closeSlot(_:runtimeSession:)`
 forgets it, and `shutdown(keepingExternalTools:)` ends every slot before its
@@ -245,7 +250,7 @@ the terminal chat and never a mirror: a slot is driven by the channel that
 opened it (`ChatSlotChannel.primary`: the terminal, an ACP session, a window of
 a host app) until `/telegram on` hands it to the linked chat
 (`ChatSessionHost.activateTelegram(in:primaryChannelDescription:)`), and
-`/telegram off` takes it back (`deactivateTelegram(in:)`). The slot's
+`/telegram off` takes it back (`deactivateTelegram(in:presentingCatchUp:)`). The slot's
 `TelegramChannel` is created on the first `/telegram on` and kept, attached or
 not, for the life of the slot: it owns the control service, the validated
 route lease, the linked chat, the session's topic, and the Telegram side of the
@@ -277,13 +282,17 @@ chat receives the last `TelegramChannel.handoverContextEntryCount` (6) prompts
 and responses as context at the handover. The catch-up of `/telegram off` is a
 `ChatTelegramCatchUp`: the entries of the incarnation's log with a sequence
 greater than the last one the primary channel saw, or the whole log when the
-slot runs another incarnation, with the response still streaming; a slot that
+slot runs another incarnation, with the response still streaming; a channel
+that renders it itself (the terminal, through `presentingCatchUp`) renders it
+right after the switch and before the link stops, while the slot's presenter
+holds what the turn in progress presents (`ChatSlotPresenter.holdOutput()`),
+so the rest of the turn follows the catch-up, in order and whole. A slot that
 publishes no state gets a reducer for the handover, seeded with the transcript
 (or the runtime history when the controller keeps none) and detached once the
 catch-up is read. The log and that reducer are transient: nothing of the link
 is persisted. While Telegram drives the slot the primary channel is dormant:
-`admitLine(_:in:)` admits only `/telegram`, `/telegram status`, `/telegram
-off`, and `/exit`, and answers `ChatSlotAdmission.dormantRefusalText` to every
+`admitLine(_:in:)` admits only `/telegram`, `/telegram off`, and `/exit`, and
+answers `ChatSlotAdmission.dormantRefusalText` to every
 other line. The consent authorizer resolves the host that asks each session's
 consent by session id (`ChatToolConsentAuthorizer.setConsentHostResolver(_:)`,
 installed by the host), so an *Always* given in the chat is recorded in the
@@ -300,7 +309,13 @@ holds the `/telegram` command, the notice sink that writes the channel's texts
 (the activation text, a poll-health notice, a failure) as system or failure
 messages, the status line, the dormant admission, the rendering of the
 catch-up as a restored transcript, and the adoption of a turn still running
-from Telegram, whose ending reaches the input loop as a generation completion.
+from Telegram, whose ending reaches the input loop as a generation completion
+and which Esc stops through the channel (`stopTelegramTurnIfReserved`). Only
+the interactive input loop hands its slot over: the line-by-line fallback,
+which neither reserves its prompts nor adopts a turn, refuses `/telegram on`.
+While Telegram drives the slot the loop's queue waits, whole, and no turn of
+the terminal starts (a dictation and the access-mode shortcut are refused as
+well); `/telegram off` restarts the queue once the terminal is free.
 ACP routes `/telegram` in `Routing/ZenCODEACPBridge+Commands.swift`: the reply
 to `/telegram on` carries the notices of the attach after the activation text
 (`activateTelegramCollectingNotices`, `ACP/Telegram`), the editor's prompts are
@@ -344,7 +359,7 @@ initializers are `nonisolated`; the session host (`Chat/Host`):
 and the Telegram channel: `TelegramChannel` (with `SessionTopic`),
 `TelegramChannelAttachError`, `ChatSlotChannel`, `ChatSlotAdmission`, and
 `ChatTelegramCatchUp`, with the host's `activateTelegram(in:primaryChannelDescription:)`,
-`deactivateTelegram(in:)`, `telegramStatusText(in:)`, `activeChannel(in:)`,
+`deactivateTelegram(in:presentingCatchUp:)`, `telegramStatusText(in:)`, `activeChannel(in:)`,
 `telegramChannel(in:)`, and `admitLine(_:in:)`. Of the controller, the session facts and state
 (`sessionID`, `environment`, `modelCatalog`, `workingDirectory`, `host`,
 `authorizer`, `transcript`, `selection`, `savedSessionState`, and
@@ -671,10 +686,14 @@ log is rebuilt from its transcript when it is loaded, by the controller in one
 place, and a session change starts a new epoch of the log. That rebuild
 (`ChatTurnEntry.kinds(fromTranscript:)`) is also what ACP replays at
 `session/load` and `session/resume`: the prompts and blocks of the entries
-rebuilt from the runtime history, on the same wire as before. The terminal
-replays a restored transcript itself, because the rebuilt log does not keep
-what it renders of a tool call without an id, of a tool call id repeated in a
-turn, or of a result whose call is in an earlier turn. The shell snapshot of a
+rebuilt from the runtime history, on the same wire as before. The rebuild
+pairs a tool result with its call by id, in its turn or still open from an
+earlier one, and a result without an id with the oldest call without an id
+still open in its turn (with its tool name when it has one), so no restored
+call stays running. The terminal replays a restored transcript itself,
+because it renders a tool call without an id as started, pairing results by
+id only, while the rebuilt log completes it, and because the rebuilt log
+keeps one start of a tool call id repeated in a turn. The shell snapshot of a
 host (`ChatShellSnapshot`) is transient too.
 
 Local operation evidence may also contain a complete compact unified patch and
@@ -793,8 +812,11 @@ The per-turn instruction is the generic channel `AgentTurnInstructionContext.cur
 
 Telegram voice-message transcription (`AgentVoiceTranscriptionService`) is enabled by Telegram setup on every platform. macOS transcribes the downloaded file on the Mac with `SpeechAnalyzer` and the same model choice and first-use asset installation as voice mode, in the resolved voice language. Linux reuses the Voice mode installation through `SherpaOnnxFileTranscriber` (`Voice/SherpaOnnx`); `SherpaOnnxVoiceInstallation.transcriptionPaths()` requires the programs, the recognizer and the voice activity detector, but no Piper voice. The decoders are resolved from the fixed directories `/usr/bin`, `/bin` and `/usr/local/bin`, independently of `PATH`: for Ogg Opus `opusdec`, with `ffmpeg` as the fallback when both are installed; for any other format `ffmpeg` alone. When `opusdec` fails (non-zero exit, launch error or no output file) its partial output is removed and `ffmpeg` decodes the same input; a cancelled decoder is never retried, and when both fail a single `decodingFailed` error names `opusdec` and carries both reasons. It writes a 16 kHz mono 16-bit WAV into a private `0700` temporary directory that is removed on every exit path. `sherpa-onnx-vad-with-offline-asr` (Silero VAD, Parakeet TDT 0.6B v3, `--model-type=nemo_transducer`) prints one `<start> -- <end>: <text>` line per segment on stdout, and the segments are joined. Both programs run off the cooperative pool with bounded stdout and a stderr tail for diagnostics; cancelling the transcription task sends SIGTERM, then SIGKILL after a short grace, because children can inherit the terminal's ignored SIGTERM. Missing files, a missing decoder and program failures surface as operator-facing errors on the terminal and in the linked chat. Nothing is linked into ZenCODE and the SwiftPM graph is unchanged.
 
-Telegram uses one process-wide `TerminalTelegramBotDispatcher` per bot as the
-exclusive owner of long polling and offset persistence. It broadcasts raw
+Telegram uses one `TerminalTelegramBotDispatcher` per `ChatSessionHost`,
+shared by the control services of its slots' channels, as the exclusive owner
+of long polling and offset persistence, with one long poll per bot (an app
+runs one host per process: a second host on the same bot would poll it twice,
+and the Bot API would answer HTTP 409). It broadcasts raw
 updates to active control services before those services apply their room ACL,
 so no session can acknowledge and discard another session's traffic. Ingress is
 resolved only by `TerminalTelegramSessionRouter`; the resulting lease includes
@@ -1429,9 +1451,11 @@ attached session shares. On attach a channel reuses an active route of its
 session (`activeRoute(forRoomID:)`); otherwise, when the bot has Threaded mode,
 it creates a topic, and General is told once, only when the topic is created;
 otherwise, and also when the creation fails, it falls back to legacy mode.
-`/sessions new` and `/sessions load` rebind the same topic to the session they
-switch to (`rebind(_:toRoomID:)`: the generation advances by one, so the
-previous lease no longer validates) and rename it with `editForumTopic`.
+A new or loaded session in a slot Telegram drives, which only a host app can
+start (the terminal and ACP refuse `/sessions` meanwhile), rebinds the same
+topic to the session it switches to (`rebind(_:toRoomID:)`: the generation
+advances by one, so the previous lease no longer validates) and renames it with
+`editForumTopic`.
 Detach and shutdown close the topic's route in the router and prune the
 inactive routes down to 32 (`prune(keepingInactive:)`, which never removes the
 route without a topic or an active route), without `deleteForumTopic`. As a

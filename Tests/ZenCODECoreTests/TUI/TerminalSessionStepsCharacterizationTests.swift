@@ -10,7 +10,9 @@
 //  `incarnationDidChange(reason:)` hook, so they prove the output did not
 //  move. The id a `/sessions new` mints keeps the terminal's format, and the
 //  log rebuilt from a transcript is shown not to render as the transcript
-//  does, which is why the terminal keeps replaying the transcript itself.
+//  does for a tool call without an id and an id repeated in one turn, which
+//  is why the terminal keeps replaying the transcript itself; a result of an
+//  earlier turn renders the same either way.
 //  Every test runs in directories named by UUIDs.
 //
 
@@ -185,37 +187,61 @@ struct TerminalSessionStepsCharacterizationTests {
     // MARK: - The rebuilt log
 
     /// What the log rebuilt from a transcript does not keep of it: a tool
-    /// call without an id (its result without an id gets a start of its own,
-    /// so a blank result renders where the transcript renders none), a tool
-    /// call id repeated in one turn (the log keeps one start), and a result
-    /// whose call is in an earlier turn (the log pairs within a turn). The
-    /// terminal renders each of these transcripts otherwise once it passes
-    /// through the log, so the restored session replays the transcript.
+    /// call without an id (the log completes it with the result without an
+    /// id that follows it in its turn, so it renders completed, while the
+    /// terminal pairs a result with its call by id only and renders the call
+    /// as started), and a tool call id repeated in one turn (the log keeps
+    /// one start). The terminal renders each of these transcripts otherwise
+    /// once it passes through the log, so the restored session replays the
+    /// transcript. A result whose call is in an earlier turn is no longer
+    /// one of them: the log completes that call by its id, as the terminal
+    /// pairs it (``theRebuiltLogRendersAResultOfAnEarlierTurnAsTheTranscript()``).
     @Test(arguments: [
         RebuiltLogCase.toolCallWithoutID,
         .repeatedToolCallID,
-        .resultOfAnEarlierTurn,
     ])
     nonisolated func theRebuiltLogDoesNotRenderAsTheTranscript(_ testCase: RebuiltLogCase) async throws {
         try await withEnvironment { environment in
-            let transcript = testCase.transcript
-            let rebuilt = ChatTurnEntry.transcriptMessages(
-                from: ChatTurnEntry.kinds(fromTranscript: transcript).enumerated().map { index, kind in
-                    ChatTurnEntry(sequence: index + 1, turnID: nil, kind: kind)
-                }
-            )
-
-            let direct = try environment.makeTerminal()
-            await direct.renderSavedSessionHistory(transcript)
-            let throughLog = try environment.makeTerminal()
-            await throughLog.renderSavedSessionHistory(rebuilt)
-
-            let directText = await direct.renderCoordinator.capturedWriteEvents().map(\.text).joined()
-            let throughLogText = await throughLog.renderCoordinator.capturedWriteEvents().map(\.text).joined()
+            let (directText, throughLogText) = try await Self.renderings(of: testCase.transcript, in: environment)
             #expect(directText != throughLogText)
-            await direct.sessionHost.shutdown()
-            await throughLog.sessionHost.shutdown()
         }
+    }
+
+    @Test
+    nonisolated func theRebuiltLogRendersAResultOfAnEarlierTurnAsTheTranscript() async throws {
+        try await withEnvironment { environment in
+            let transcript = RebuiltLogCase.resultOfAnEarlierTurn.transcript
+            let (directText, throughLogText) = try await Self.renderings(of: transcript, in: environment)
+            #expect(directText == throughLogText)
+            // The call renders once, completed by the late result.
+            #expect(directText.components(separatedBy: "local.readFile").count == 2)
+        }
+    }
+
+    /// What the terminal writes for `transcript`, rendered directly and
+    /// after it passed through the log (``ChatTurnEntry/kinds(fromTranscript:)``,
+    /// then ``ChatTurnEntry/transcriptMessages(from:)``).
+    @ChatSessionActor
+    private static func renderings(
+        of transcript: [AgentRuntimeMessage],
+        in environment: Environment
+    ) async throws -> (direct: String, throughLog: String) {
+        let rebuilt = ChatTurnEntry.transcriptMessages(
+            from: ChatTurnEntry.kinds(fromTranscript: transcript).enumerated().map { index, kind in
+                ChatTurnEntry(sequence: index + 1, turnID: nil, kind: kind)
+            }
+        )
+
+        let direct = try environment.makeTerminal()
+        await direct.renderSavedSessionHistory(transcript)
+        let throughLog = try environment.makeTerminal()
+        await throughLog.renderSavedSessionHistory(rebuilt)
+
+        let directText = await direct.renderCoordinator.capturedWriteEvents().map(\.text).joined()
+        let throughLogText = await throughLog.renderCoordinator.capturedWriteEvents().map(\.text).joined()
+        await direct.sessionHost.shutdown()
+        await throughLog.sessionHost.shutdown()
+        return (directText, throughLogText)
     }
 
     enum RebuiltLogCase: String, Sendable, CustomTestStringConvertible {

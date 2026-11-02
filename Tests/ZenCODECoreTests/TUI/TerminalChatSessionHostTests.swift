@@ -366,6 +366,7 @@ struct TerminalChatSessionHostTests {
             let host = terminal.sessionHost
             let slot = terminal.terminalSlotID
 
+            TelegramChannelTestSupport.standInForInteractiveLoop(of: terminal)
             await terminal.startTelegramControl()
             let channel = try #require(host.telegramChannel(in: slot))
             #expect(channel.isActive)
@@ -444,6 +445,7 @@ struct TerminalChatSessionHostTests {
             #expect(host.shellSnapshot.sessions[slot]?.activeChannel == .local)
             #expect(host.shellSnapshot.savedSessions[environment.workspace] == [])
 
+            TelegramChannelTestSupport.standInForInteractiveLoop(of: terminal)
             await terminal.startTelegramControl()
             #expect(host.shellSnapshot.telegram.drivenSlots == [slot])
             let reducer = try #require(host.reducer(in: slot))

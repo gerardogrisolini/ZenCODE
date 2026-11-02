@@ -21,6 +21,13 @@ extension ZenCODEACPBridge {
               let knownSession = sessions[sessionID] else {
             throw ACPError.invalidParams("Unknown or missing sessionId.")
         }
+        // Track the ACP wrapper handler itself, not only the backend turn, and
+        // from before its first suspension: `close`/`shutdown` must be able to
+        // wait for this handler's unwind (update flush, snapshot refresh,
+        // final reply) before answering, a close landing during the hop to
+        // the host below included.
+        let promptHandlerToken = enterPromptHandler(sessionID: sessionID)
+        defer { leavePromptHandler(sessionID: sessionID, token: promptHandlerToken) }
 
         // Reserve the session in the host, which checks and reserves in one
         // step: a second `session/prompt` dispatched concurrently finds the
@@ -41,20 +48,17 @@ extension ZenCODEACPBridge {
         let promptID = reservation.promptID
         let epoch = reservation.epoch
         // The hop to the host is the first suspension: a close or a shutdown
-        // that landed meanwhile removed the entry, and the reservation it left
-        // in the host is released again.
+        // that landed after the host reserved removed the entry. The
+        // reservation it left in the host is released again, and the prompt
+        // ends as the close ends a prompt already running, `cancelled`
+        // (silently after a shutdown).
         guard let session = liveSession(id: sessionID, epoch: epoch) else {
             await host.releasePrompt(reservation)
             try ensureNotShutDown()
-            throw ACPError.invalidParams("Unknown or missing sessionId.")
+            await sendStopReason(id: id, "cancelled")
+            return
         }
         var didReleaseReservation = false
-        // Track the ACP wrapper handler itself, not only the backend turn:
-        // `close`/`shutdown` must be able to wait for this handler's unwind
-        // (update flush, snapshot refresh, final reply) before answering.
-        let promptHandlerToken = enterPromptHandler(sessionID: sessionID)
-        defer { leavePromptHandler(sessionID: sessionID, token: promptHandlerToken) }
-
         /// Releases the reservation only when it is still ours and the session
         /// is still the same incarnation: the bridge's own prompt state first,
         /// so no reconfiguration finds the host idle while the prompt task is
@@ -547,8 +551,14 @@ extension ZenCODEACPBridge {
         }
         // Drop the session before any suspension so a prompt finishing
         // concurrently cannot restore it through refreshSessionStateIfAvailable.
+        // In the same step the host retires the incarnation: its controller is
+        // fenced and nothing more is reserved on its slot (no `session/prompt`
+        // served late, no turn the slot's Telegram channel reads meanwhile),
+        // while the slot itself lives until the drains below are done.
         let closedSession = sessions.removeValue(forKey: sessionID)
-        closedSession?.controller.cancelActiveTurn()
+        if let closedSession {
+            host.retireIncarnation(in: closedSession.slotID, controller: closedSession.controller)
+        }
         closedSession?.tasklessObserver?.cancel()
         // Snapshot before the first suspension. Teardown below awaits several
         // collaborators; a session recreated with this id during that window

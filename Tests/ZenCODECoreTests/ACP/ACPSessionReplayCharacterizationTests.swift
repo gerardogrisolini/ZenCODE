@@ -40,7 +40,7 @@ struct ACPSessionReplayCharacterizationTests {
             preserveThinking: false
         ))
 
-        #expect(wire.canonicalMessages() == Self.golden(sessionID: sessionID))
+        #expect(try wire.messages() == Self.golden(sessionID: sessionID))
     }
 
     // MARK: - Fixture
@@ -95,33 +95,38 @@ struct ACPSessionReplayCharacterizationTests {
     ]
 
     /// The wire the replay wrote for ``history`` before it rendered the log,
-    /// one canonical (sorted-key) JSON-RPC message per line.
-    static func golden(sessionID: String) -> [String] {
-        func update(_ kind: String, _ text: String) -> String {
-            let escaped = text
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "\"", with: "\\\"")
-                .replacingOccurrences(of: "\n", with: "\\n")
-            return #"{"jsonrpc":"2.0","method":"session\/update","params":{"sessionId":""#
-                + sessionID
-                + #"","update":{"content":{"text":""#
-                + escaped
-                + #"","type":"text"},"sessionUpdate":""#
-                + kind
-                + #""}}}"#
+    /// one JSON-RPC message per line, compared with the wire by JSON value:
+    /// each line is parsed, so that neither key order nor escaping (`\/`, a
+    /// tab) tells two equal messages apart. A text is escaped by the JSON
+    /// encoder.
+    static func golden(sessionID: String) throws -> [JSONValue] {
+        func literal(_ text: String) throws -> String {
+            String(decoding: try JSONEncoder().encode(text), as: UTF8.self)
         }
-        return [
-            update("user_message_chunk", "Read the parser"),
-            update("agent_thought_chunk", "The parser is in Sources."),
-            update("agent_message_chunk", "I will read it."),
-            update("agent_thought_chunk", "Only a thought."),
-            update("agent_message_chunk", "The parser is fine."),
-            update("user_message_chunk", "Analyze the attached media."),
-            update("agent_message_chunk", "I see a screenshot."),
-            update("user_message_chunk", "Compare with this"),
-            update("agent_thought_chunk", "Compared."),
-            update("agent_message_chunk", "They match."),
+        func update(_ kind: String, _ text: String) throws -> String {
+            #"{"jsonrpc":"2.0","method":"session\/update","params":{"sessionId":"#
+                + (try literal(sessionID))
+                + #","update":{"content":{"text":"#
+                + (try literal(text))
+                + #","type":"text"},"sessionUpdate":"#
+                + (try literal(kind))
+                + #"}}}"#
+        }
+        let lines = [
+            try update("user_message_chunk", "Read the parser"),
+            try update("agent_thought_chunk", "The parser is in Sources."),
+            try update("agent_message_chunk", "I will read it."),
+            try update("agent_thought_chunk", "Only a thought."),
+            try update("agent_message_chunk", "The parser is fine."),
+            try update("user_message_chunk", "Analyze the attached media."),
+            try update("agent_message_chunk", "I see a screenshot."),
+            try update("user_message_chunk", "Compare with this"),
+            try update("agent_thought_chunk", "Compared."),
+            try update("agent_message_chunk", "They match."),
         ]
+        return try lines.map { line in
+            try #require(ReplayWire.jsonValue(Data(line.utf8)), "Not JSON: \(line)")
+        }
     }
 
     private static func makeBridge(wire: ReplayWire) throws -> ZenCODEACPBridge {
@@ -141,9 +146,9 @@ struct ACPSessionReplayCharacterizationTests {
     }
 }
 
-/// The messages the bridge writes, each re-encoded with sorted keys: the
-/// writer encodes dictionaries in no fixed key order, so the canonical form is
-/// the byte-exact comparison that holds across processes.
+/// The messages the bridge writes, each parsed as a JSON value: the writer
+/// encodes dictionaries in no fixed key order, so the comparison by value is
+/// the exact one that holds across processes.
 private final class ReplayWire: Sendable {
     private let storage = Mutex<[Data]>([])
 
@@ -153,16 +158,13 @@ private final class ReplayWire: Sendable {
         }
     }
 
-    func canonicalMessages() -> [String] {
-        storage.withLock { $0 }.compactMap { data in
-            guard let object = try? JSONSerialization.jsonObject(with: data),
-                  let canonical = try? JSONSerialization.data(
-                      withJSONObject: object,
-                      options: [.sortedKeys]
-                  ) else {
-                return nil
-            }
-            return String(decoding: canonical, as: UTF8.self)
+    func messages() throws -> [JSONValue] {
+        try storage.withLock { $0 }.map { data in
+            try #require(Self.jsonValue(data), "Not JSON: \(String(decoding: data, as: UTF8.self))")
         }
+    }
+
+    static func jsonValue(_ data: Data) -> JSONValue? {
+        try? JSONDecoder().decode(JSONValue.self, from: data)
     }
 }

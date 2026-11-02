@@ -33,25 +33,40 @@ extension ChatTurnEntry {
     ///   with an ``ChatTurnOrigin/unknown`` origin, which the transcript does
     ///   not record.
     /// - An assistant message is a block (``blockKinds(assistantContent:reasoningContent:)``)
-    ///   followed by a ``Kind/toolCallStarted(_:)`` for each of its tool calls.
-    /// - A tool message is the ``Kind/toolCallCompleted(_:result:)`` of the
-    ///   call with its ID, preceded by a ``Kind/toolCallStarted(_:)`` when
-    ///   the call did not start earlier in the same turn. The result keeps
-    ///   what the transcript stores: the output, the attachments, and the
-    ///   error flag.
+    ///   followed by a ``Kind/toolCallStarted(_:)`` for each of its tool calls
+    ///   not started earlier in the same turn.
+    /// - A tool message is the ``Kind/toolCallCompleted(_:result:)`` of its
+    ///   call: with an ID, the call with that ID started in the same turn, or
+    ///   else the latest one still open from an earlier turn, as the
+    ///   transcript's results name their call wherever they are; without an
+    ///   ID, the oldest call without an ID still open in the same turn, with
+    ///   the result's tool name when it has one. A result whose call is not
+    ///   found is preceded by a ``Kind/toolCallStarted(_:)`` of its own. The
+    ///   result keeps what the transcript stores: the output, the
+    ///   attachments, and the error flag of a runtime history that has one
+    ///   (the controller's transcript does not save it, so a failed call of
+    ///   a restored session reads as completed).
     /// - System messages (the truncation marker) are skipped.
     ///
     /// A tool call without an ID gets `restored-tool-<message>-<call>`, from
     /// its position, so a rebuild of the same transcript is always equal.
     static func kinds(fromTranscript messages: [AgentRuntimeMessage]) -> [Kind] {
         var kinds: [Kind] = []
+        // The calls started in the current turn, by ID, as the live log
+        // dedupes them.
         var startedCalls: [String: DirectAgentToolCall] = [:]
+        // The calls with an ID started and not completed yet, in any turn.
+        var openCalls: [String: DirectAgentToolCall] = [:]
+        // The calls without an ID started in the current turn and not
+        // completed yet, oldest first.
+        var openCallsWithoutID: [DirectAgentToolCall] = []
         for (messageIndex, message) in messages.enumerated() {
             switch message.role {
             case .system:
                 continue
             case .user:
                 startedCalls = [:]
+                openCallsWithoutID = []
                 kinds.append(.userPrompt(
                     text: message.content,
                     attachments: message.attachments,
@@ -70,22 +85,33 @@ extension ChatTurnEntry {
                     )
                     guard startedCalls[call.id] == nil else { continue }
                     startedCalls[call.id] = call
+                    if toolCall.id == nil {
+                        openCallsWithoutID.append(call)
+                    } else {
+                        openCalls[call.id] = call
+                    }
                     kinds.append(.toolCallStarted(call))
                 }
             case .tool:
-                let callID = message.toolCallID ?? "restored-tool-\(messageIndex)-0"
                 let call: DirectAgentToolCall
-                if let started = startedCalls[callID] {
+                if let callID = message.toolCallID,
+                   let started = startedCalls[callID] ?? openCalls[callID] {
                     call = started
+                } else if message.toolCallID == nil,
+                          let index = openCallsWithoutID.firstIndex(where: { open in
+                              message.toolName.map { $0 == open.name } ?? true
+                          }) {
+                    call = openCallsWithoutID.remove(at: index)
                 } else {
                     call = restoredToolCall(
-                        id: callID,
+                        id: message.toolCallID ?? "restored-tool-\(messageIndex)-0",
                         name: message.toolName ?? "tool.result",
                         argumentsJSON: "{}"
                     )
-                    startedCalls[callID] = call
+                    startedCalls[call.id] = call
                     kinds.append(.toolCallStarted(call))
                 }
+                openCalls[call.id] = nil
                 kinds.append(.toolCallCompleted(call, result: DirectAgentToolResult(
                     output: message.content,
                     summary: restoredToolResultSummary(message.content),
@@ -188,7 +214,7 @@ extension ChatTurnEntry {
     /// summary the transcript does not store.
     private static func restoredToolResultSummary(_ output: String) -> String {
         output
-            .split(separator: "\n", omittingEmptySubsequences: false)
+            .split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
             .first
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
     }

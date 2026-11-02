@@ -20,6 +20,9 @@ import ToolCore
 /// the new channel the turn moved onto it
 /// (``ChatSlotChannelPresenter/turnDidMoveToChannel(_:)``) with the block
 /// already streaming, and the overview reservations follow the channel too.
+/// While the channel that took the slot back renders what it catches up with
+/// (``holdOutput()``), every call waits and then goes on, in order, so the
+/// rest of the turn follows the catch-up and nothing of it is lost.
 /// The slot holds it; it holds the slot weakly.
 @ChatSessionActor
 final class ChatSlotPresenter: ChatSessionPresenter {
@@ -33,6 +36,9 @@ final class ChatSlotPresenter: ChatSessionPresenter {
     /// turn moves onto did not see begin.
     private(set) var liveAssistantText = ""
     private(set) var liveThought = ""
+    /// The calls waiting for ``releaseOutput()``, oldest first; `nil` while
+    /// the output is not held.
+    private var heldOutputWaiters: [CheckedContinuation<Void, Never>]?
 
     init(slot: ChatSlot, primary: any ChatSessionPresenter) {
         self.slot = slot
@@ -48,6 +54,41 @@ final class ChatSlotPresenter: ChatSessionPresenter {
         case .telegram:
             return slot.telegramChannel?.presenter ?? primary
         }
+    }
+
+    /// Holds every call from now until ``releaseOutput()``, except the move of
+    /// the turn (``presentTurnMoveIfNeeded()``): the channel that takes the
+    /// slot back renders its catch-up meanwhile, and the turn it adopts goes
+    /// on after it. The holder releases it before anything it awaits can wait
+    /// for a held call.
+    func holdOutput() {
+        if heldOutputWaiters == nil {
+            heldOutputWaiters = []
+        }
+    }
+
+    /// Lets the held calls go on, in the order they were made.
+    func releaseOutput() {
+        let waiters = heldOutputWaiters ?? []
+        heldOutputWaiters = nil
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    /// The presenter of the channel that drives the slot once the output is
+    /// no longer held (``holdOutput()``).
+    private func releasedActivePresenter() async -> any ChatSessionPresenter {
+        while heldOutputWaiters != nil {
+            await withCheckedContinuation { continuation in
+                if heldOutputWaiters != nil {
+                    heldOutputWaiters?.append(continuation)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+        return activePresenter
     }
 
     /// `true` between the start and the finish of a turn.
@@ -80,7 +121,7 @@ final class ChatSlotPresenter: ChatSessionPresenter {
     /// presents endings; returns whether it did.
     @discardableResult
     func presentTurnEnding(_ ending: ChatTurnEnding) async -> Bool {
-        guard let channelPresenter = activePresenter as? any ChatSlotChannelPresenter else {
+        guard let channelPresenter = await releasedActivePresenter() as? any ChatSlotChannelPresenter else {
             return false
         }
         await channelPresenter.presentTurnEnding(ending)
@@ -93,41 +134,41 @@ final class ChatSlotPresenter: ChatSessionPresenter {
         openTurnRequest = request
         liveAssistantText = ""
         liveThought = ""
-        await activePresenter.turnWillStart(request)
+        await releasedActivePresenter().turnWillStart(request)
     }
 
     func presentStatus(_ status: String) async {
-        await activePresenter.presentStatus(status)
+        await releasedActivePresenter().presentStatus(status)
     }
 
     func presentDiagnostic(_ diagnostic: String) async {
-        await activePresenter.presentDiagnostic(diagnostic)
+        await releasedActivePresenter().presentDiagnostic(diagnostic)
     }
 
     func presentThought(_ thought: String) async {
         liveThought.append(thought)
-        await activePresenter.presentThought(thought)
+        await releasedActivePresenter().presentThought(thought)
     }
 
     func presentAssistantContent(_ content: String) async {
         liveAssistantText.append(content)
-        await activePresenter.presentAssistantContent(content)
+        await releasedActivePresenter().presentAssistantContent(content)
     }
 
     func presentModelLoaded(_ modelID: String) async {
-        await activePresenter.presentModelLoaded(modelID)
+        await releasedActivePresenter().presentModelLoaded(modelID)
     }
 
     func presentMetrics(_ metrics: DirectAgentGenerationMetrics) async {
-        await activePresenter.presentMetrics(metrics)
+        await releasedActivePresenter().presentMetrics(metrics)
     }
 
     func presentContextWindow(_ status: DirectAgentContextWindowStatus) async {
-        await activePresenter.presentContextWindow(status)
+        await releasedActivePresenter().presentContextWindow(status)
     }
 
     func presentSubscriptionUsage(_ status: DirectAgentSubscriptionUsageStatus) async {
-        await activePresenter.presentSubscriptionUsage(status)
+        await releasedActivePresenter().presentSubscriptionUsage(status)
     }
 
     func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {
@@ -135,82 +176,82 @@ final class ChatSlotPresenter: ChatSessionPresenter {
         // and the reducer close it.
         liveAssistantText = ""
         liveThought = ""
-        await activePresenter.presentToolCallStarted(toolCall)
+        await releasedActivePresenter().presentToolCallStarted(toolCall)
     }
 
     func presentToolCallCompleted(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {
-        await activePresenter.presentToolCallCompleted(toolCall, result: result)
+        await releasedActivePresenter().presentToolCallCompleted(toolCall, result: result)
     }
 
     func presentToolCallSettled(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {
-        await activePresenter.presentToolCallSettled(toolCall, result: result)
+        await releasedActivePresenter().presentToolCallSettled(toolCall, result: result)
     }
 
     func presentLiveFileArtifacts(_ turns: [SessionFileArtifactHistory.Turn], agentID: String?) async {
-        await activePresenter.presentLiveFileArtifacts(turns, agentID: agentID)
+        await releasedActivePresenter().presentLiveFileArtifacts(turns, agentID: agentID)
     }
 
     func presentSealedFileArtifacts(_ turn: SessionFileArtifactHistory.Turn) async {
-        await activePresenter.presentSealedFileArtifacts(turn)
+        await releasedActivePresenter().presentSealedFileArtifacts(turn)
     }
 
     func presentFileChangeSummary(_ summary: TurnFileChangeSummary) async {
-        await activePresenter.presentFileChangeSummary(summary)
+        await releasedActivePresenter().presentFileChangeSummary(summary)
     }
 
     func modelTurnDidReturn() async {
-        await activePresenter.modelTurnDidReturn()
+        await releasedActivePresenter().modelTurnDidReturn()
     }
 
     func presentFinalResponse(_ response: DirectAgentResponse) async {
-        await activePresenter.presentFinalResponse(response)
+        await releasedActivePresenter().presentFinalResponse(response)
     }
 
     func turnWillContinueAutomatically() async {
         liveAssistantText = ""
         liveThought = ""
-        await activePresenter.turnWillContinueAutomatically()
+        await releasedActivePresenter().turnWillContinueAutomatically()
     }
 
     func turnWillFinish() async {
         openTurnRequest = nil
         liveAssistantText = ""
         liveThought = ""
-        await activePresenter.turnWillFinish()
+        await releasedActivePresenter().turnWillFinish()
     }
 
     func presentWorkflowNotice(_ notice: ChatWorkflowNotice) async {
-        await activePresenter.presentWorkflowNotice(notice)
+        await releasedActivePresenter().presentWorkflowNotice(notice)
     }
 
     func presentTurnEnded(_ outcome: DirectAgentTurnOutcome) async {
-        await activePresenter.presentTurnEnded(outcome)
+        await releasedActivePresenter().presentTurnEnded(outcome)
     }
 
     func presentSessionNotice(_ notice: ChatSessionNotice) async {
-        await activePresenter.presentSessionNotice(notice)
+        await releasedActivePresenter().presentSessionNotice(notice)
     }
 
     func presentSessionStateChanged(_ state: ChatSessionState) async {
         // The saved-session name is the title the shell shows.
         slot?.shellFactsDidChange?()
-        await activePresenter.presentSessionStateChanged(state)
+        await releasedActivePresenter().presentSessionStateChanged(state)
     }
 
     func sessionDidChange(sessionID: String) async {
-        await activePresenter.sessionDidChange(sessionID: sessionID)
+        await releasedActivePresenter().sessionDidChange(sessionID: sessionID)
     }
 
     func presentRestoredLog(_ entries: [ChatTurnEntry.Kind]) async {
-        await activePresenter.presentRestoredLog(entries)
+        await releasedActivePresenter().presentRestoredLog(entries)
     }
 
     func presentSubmittedCommand(_ line: String) async {
-        await activePresenter.presentSubmittedCommand(line)
+        await releasedActivePresenter().presentSubmittedCommand(line)
     }
 
     func reserveTaskGraphOverviewPublication() async -> ChatOverviewPublication? {
-        await activePresenter.reserveTaskGraphOverviewPublication()
+        await releasedActivePresenter().reserveTaskGraphOverviewPublication()
     }
 
     func presentTaskGraphOverview(
@@ -218,11 +259,11 @@ final class ChatSlotPresenter: ChatSessionPresenter {
         origin: ChatOverviewOrigin,
         publication: ChatOverviewPublication?
     ) async {
-        await activePresenter.presentTaskGraphOverview(overview, origin: origin, publication: publication)
+        await releasedActivePresenter().presentTaskGraphOverview(overview, origin: origin, publication: publication)
     }
 
     func reserveSubAgentOverviewPublication() async -> ChatOverviewPublication? {
-        await activePresenter.reserveSubAgentOverviewPublication()
+        await releasedActivePresenter().reserveSubAgentOverviewPublication()
     }
 
     func presentSubAgentOverview(
@@ -230,6 +271,6 @@ final class ChatSlotPresenter: ChatSessionPresenter {
         origin: ChatOverviewOrigin,
         publication: ChatOverviewPublication?
     ) async {
-        await activePresenter.presentSubAgentOverview(overview, origin: origin, publication: publication)
+        await releasedActivePresenter().presentSubAgentOverview(overview, origin: origin, publication: publication)
     }
 }

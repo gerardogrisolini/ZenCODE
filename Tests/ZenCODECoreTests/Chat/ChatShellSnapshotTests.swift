@@ -4,12 +4,15 @@
 //
 //  The shell snapshot of a session host: the summary of every slot, the
 //  reducer's when the session has one and otherwise built from the
-//  incarnation without creating a reducer; the saved sessions of the open
-//  workspaces, read only once a shell observes the host and again after a
-//  save, a deletion, or a new incarnation; the Telegram settings read with
-//  the terminal's rule; the slots Telegram drives; and the stream that ends
-//  with the host. Every test runs in directories named by UUIDs with a
-//  private support directory; nothing touches the real application state.
+//  incarnation without creating a reducer, shown once per replacement; the
+//  saved sessions of the open workspaces, keyed by their standardized URL,
+//  listed without migrating the store, read only while a shell observes the
+//  host and again after a save, a deletion, or a new incarnation, with the
+//  reads a later one overtook dropped; the Telegram settings read with the
+//  terminal's rule, together with the poller; the slots Telegram drives; and
+//  the stream that ends with the host, released or shut down. Every test
+//  runs in directories named by UUIDs with a private support directory;
+//  nothing touches the real application state.
 //
 
 import Foundation
@@ -126,6 +129,56 @@ private actor ShellTestBackend: AgentRuntimeBackend {
     }
 }
 
+/// Holds each read of the saved sessions the shell makes until the test
+/// answers it, so that the test orders the reads.
+@ChatSessionActor
+private final class SavedSessionsReadGate {
+    private var waiting: [Int: CheckedContinuation<[ChatSavedSessionSummary]?, Never>] = [:]
+    private(set) var readCount = 0
+
+    /// The reader the host calls (``ChatSessionHost/shellSavedSessionsReader``).
+    nonisolated var reader: @Sendable (URL) async -> [ChatSavedSessionSummary]? {
+        { [self] _ in await read() }
+    }
+
+    private func read() async -> [ChatSavedSessionSummary]? {
+        let index = readCount
+        readCount += 1
+        return await withCheckedContinuation { waiting[index] = $0 }
+    }
+
+    /// Answers the read `index`, counted from 0 in the order the reads
+    /// started, with saved sessions named `names`.
+    func answer(_ index: Int, with names: [String]) {
+        waiting.removeValue(forKey: index)?.resume(returning: names.map { name in
+            ChatSavedSessionSummary(
+                name: name, modelID: nil, messageCount: 0, contextUsedTokens: nil,
+                savedAt: Date(timeIntervalSince1970: 1_000)
+            )
+        })
+    }
+}
+
+/// Every shell snapshot one stream delivered, in order.
+@ChatSessionActor
+private final class ShellRecorder {
+    private(set) var snapshots: [ChatShellSnapshot] = []
+    private var consumer: Task<Void, Never>?
+
+    init(_ host: ChatSessionHost) {
+        let stream = host.shellSnapshots()
+        consumer = Task { @ChatSessionActor [weak self] in
+            for await snapshot in stream {
+                self?.snapshots.append(snapshot)
+            }
+        }
+    }
+
+    func stop() {
+        consumer?.cancel()
+    }
+}
+
 @ChatSessionActor
 @Suite("Chat shell snapshot", .serialized, .timeLimit(.minutes(2)))
 struct ChatShellSnapshotTests {
@@ -170,14 +223,19 @@ struct ChatShellSnapshotTests {
             )
         }
 
-        /// A slot of the workspace that publishes state and asks with
-        /// pending requests, or one with its own host that publishes none.
+        /// A slot of `workingDirectory` (the workspace by default) that
+        /// publishes state and asks with pending requests, or one with its
+        /// own host that publishes none.
         @ChatSessionActor
-        func descriptor(_ identity: String, publishesState: Bool) -> ChatSlotDescriptor {
+        func descriptor(
+            _ identity: String,
+            publishesState: Bool,
+            workingDirectory: URL? = nil
+        ) -> ChatSlotDescriptor {
             let scriptedHost = ScriptedChatInteractionHost(capabilities: [], decisions: [])
             return ChatSlotDescriptor(
                 identity: .window(identity),
-                workingDirectory: workspace,
+                workingDirectory: workingDirectory ?? workspace,
                 presenter: RecordingChatPresenter(),
                 interaction: publishesState ? .pendingRequests(capabilities: [.textInput]) : .host(scriptedHost),
                 authorizer: ChatToolConsentAuthorizer(host: scriptedHost),
@@ -186,19 +244,25 @@ struct ChatShellSnapshotTests {
             )
         }
 
-        /// A saved session of the workspace written to the store directly, as
-        /// another process would.
-        func saveExternalSession(named name: String) throws {
+        /// A saved session of the workspace, as another process would write
+        /// it.
+        func externalSession(named name: String) -> TerminalSavedSession {
             let date = Date(timeIntervalSince1970: 1_000)
             let history = [AgentRuntimeMessage(role: .user, content: "From elsewhere")]
-            _ = try TerminalSessionStore.save(TerminalSavedSession(
+            return TerminalSavedSession(
                 name: name, sessionID: "external-\(name)", cacheKey: nil,
                 workingDirectoryPath: workspace.path, createdAt: date, savedAt: date,
                 modelID: "test-model", agentID: nil, agentName: nil, selectedTools: [],
                 selectedSkillIDs: [], thinkingSelection: nil, systemPrompt: "Test",
                 history: history,
                 checkpointTree: SessionCheckpointTree.fromLinearHistory(history, sessionID: "external-\(name)")
-            ))
+            )
+        }
+
+        /// A saved session of the workspace written to the store directly, as
+        /// another process would.
+        func saveExternalSession(named name: String) throws {
+            _ = try TerminalSessionStore.save(externalSession(named: name))
         }
     }
 
@@ -241,7 +305,13 @@ struct ChatShellSnapshotTests {
 
     /// The names of the saved sessions the shell shows for `workspace`.
     private static func savedNames(_ host: ChatSessionHost, _ workspace: URL) -> Set<String>? {
-        host.shellSnapshot.savedSessions[workspace].map { Set($0.map(\.name)) }
+        host.shellSnapshot.savedSessions[workspace.standardizedFileURL].map { Set($0.map(\.name)) }
+    }
+
+    /// Lets the chat actor run what the test just released, for a check that
+    /// nothing changed.
+    private static func settle() async {
+        try? await Task.sleep(for: .milliseconds(100))
     }
 
     // MARK: - Sessions
@@ -303,6 +373,45 @@ struct ChatShellSnapshotTests {
         }
     }
 
+    @Test(arguments: [true, false])
+    nonisolated func aReplacementShowsTheNewSessionWithNothingInBetween(_ publishesState: Bool) async throws {
+        try await withEnvironment { environment in
+            let host = try environment.makeHost()
+            let slot = try host.openSlot(environment.descriptor("main", publishesState: publishesState))
+            let first = try await host.newSession(in: slot, sessionID: "first")
+            try await first.controller.createSessionWithSelectedSkills(discoverExternalTools: false)
+            // Reserved, as a channel runs it: a slot without a reducer shows
+            // its title once the reservation ends.
+            let reservation = try host.reservePrompt(in: slot)
+            try await Self.runTurn("Name the first session", on: first)
+            #expect(host.releasePrompt(reservation))
+            let recorder = ShellRecorder(host)
+            await Self.waitUntil { Self.savedNames(host, environment.workspace) != nil }
+            await Self.waitUntil { recorder.snapshots.last == host.shellSnapshot }
+            #expect(host.shellSnapshot.sessions[slot]?.title == "Name the first session")
+            let before = recorder.snapshots.count
+
+            // The new session has no title yet: one snapshot shows it.
+            let second = try await host.newSession(in: slot, sessionID: "second")
+            await Self.waitUntil { recorder.snapshots.count > before }
+            await Self.settle()
+            let replacement = recorder.snapshots.dropFirst(before)
+            #expect(replacement.count == 1)
+            #expect(replacement.allSatisfy { $0.sessions[slot] != nil && $0.sessions[slot]?.title == nil })
+            #expect(host.shellSnapshot.sessions[slot] == host.shellSummary(of: try #require(host.slots[slot])))
+            #expect(second.epoch != first.epoch)
+
+            // A closed session leaves the slot without one, once.
+            let beforeClose = recorder.snapshots.count
+            await host.closeSession(in: slot)
+            await Self.waitUntil { recorder.snapshots.count > beforeClose }
+            await Self.settle()
+            #expect(recorder.snapshots.dropFirst(beforeClose).map { $0.sessions[slot] == nil } == [true])
+            recorder.stop()
+            await host.shutdown()
+        }
+    }
+
     // MARK: - Saved sessions
 
     @Test
@@ -342,13 +451,13 @@ struct ChatShellSnapshotTests {
             await host.refreshShellSnapshot()
             #expect(Self.savedNames(host, environment.workspace) == ["after-observation", "external-one", "external-two"])
             // Most recently saved first.
-            let saved = try #require(host.shellSnapshot.savedSessions[environment.workspace])
+            let saved = try #require(host.shellSnapshot.savedSessions[environment.workspace.standardizedFileURL])
             #expect(saved.map(\.savedAt) == saved.map(\.savedAt).sorted(by: >))
 
             // The workspace leaves the shell with its last slot, and the
             // stream ends with the host.
             await host.closeSlot(slot)
-            #expect(host.shellSnapshot.savedSessions[environment.workspace] == nil)
+            #expect(Self.savedNames(host, environment.workspace) == nil)
             await host.shutdown()
             var delivered: [ChatShellSnapshot] = []
             for await snapshot in stream {
@@ -362,6 +471,191 @@ struct ChatShellSnapshotTests {
                 late.append(snapshot)
             }
             #expect(late == [host.shellSnapshot])
+        }
+    }
+
+    @Test
+    nonisolated func theShellListsTheSavedSessionsWithoutMovingAFile() async throws {
+        try await withEnvironment { environment in
+            let host = try environment.makeHost()
+            _ = try host.openSlot(environment.descriptor("main", publishesState: false))
+            // A session file with a name of an older scheme, and a save in
+            // progress: a migration would move both.
+            let directory = TerminalSessionStore.sessionsDirectoryURL(for: environment.workspace)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let data = try PropertyListEncoder().encode(environment.externalSession(named: "legacy"))
+            let legacyURL = directory.appendingPathComponent("stored-record")
+            let inProgressURL = directory.appendingPathComponent(
+                ".\(TerminalSessionStore.filename(for: "saving")).\(UUID().uuidString).tmp"
+            )
+            try data.write(to: legacyURL)
+            try data.write(to: inProgressURL)
+
+            let stream = host.shellSnapshots()
+            await Self.waitUntil { Self.savedNames(host, environment.workspace) != nil }
+
+            #expect(Self.savedNames(host, environment.workspace) == [])
+            #expect(FileManager.default.fileExists(atPath: legacyURL.path))
+            #expect(FileManager.default.fileExists(atPath: inProgressURL.path))
+            #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).count == 2)
+            _ = stream
+            await host.shutdown()
+        }
+    }
+
+    @Test
+    nonisolated func twoSpellingsOfOneFolderAreOneWorkspace() async throws {
+        try await withEnvironment { environment in
+            let host = try environment.makeHost()
+            let alias = environment.root.appendingPathComponent("elsewhere/../workspace", isDirectory: true)
+            #expect(alias != environment.workspace)
+            #expect(alias.standardizedFileURL == environment.workspace.standardizedFileURL)
+            let first = try host.openSlot(environment.descriptor("first", publishesState: false))
+            let second = try host.openSlot(
+                environment.descriptor("second", publishesState: false, workingDirectory: alias)
+            )
+            try environment.saveExternalSession(named: "kept")
+
+            await host.refreshShellSnapshot()
+            #expect(Array(host.shellSnapshot.savedSessions.keys) == [environment.workspace.standardizedFileURL])
+            #expect(Self.savedNames(host, alias) == ["kept"])
+
+            // The workspace stays while a slot of it is open, by either name.
+            await host.closeSlot(first)
+            #expect(Self.savedNames(host, alias) == ["kept"])
+            await host.closeSlot(second)
+            #expect(host.shellSnapshot.savedSessions.isEmpty)
+            await host.shutdown()
+        }
+    }
+
+    @Test
+    nonisolated func aReadOvertakenByALaterOneIsDroppedWhenItEnds() async throws {
+        try await withEnvironment { environment in
+            let host = try environment.makeHost()
+            let gate = SavedSessionsReadGate()
+            host.shellSavedSessionsReader = gate.reader
+            _ = try host.openSlot(environment.descriptor("main", publishesState: false))
+            let stream = host.shellSnapshots()
+            await Self.waitUntil { gate.readCount == 1 }
+            host.savedSessionsDidChange(in: environment.workspace)
+            await Self.waitUntil { gate.readCount == 2 }
+
+            // The later read ends first and shows; the earlier one ends
+            // after it and is dropped.
+            gate.answer(1, with: ["newer"])
+            await Self.waitUntil { Self.savedNames(host, environment.workspace) != nil }
+            #expect(Self.savedNames(host, environment.workspace) == ["newer"])
+            gate.answer(0, with: ["older"])
+            await Self.settle()
+            #expect(Self.savedNames(host, environment.workspace) == ["newer"])
+            _ = stream
+            await host.shutdown()
+        }
+    }
+
+    @Test
+    nonisolated func aReadOfAClosedSlotsWorkspaceIsDropped() async throws {
+        try await withEnvironment { environment in
+            let host = try environment.makeHost()
+            let gate = SavedSessionsReadGate()
+            host.shellSavedSessionsReader = gate.reader
+            let slot = try host.openSlot(environment.descriptor("main", publishesState: false))
+            let stream = host.shellSnapshots()
+            await Self.waitUntil { gate.readCount == 1 }
+
+            await host.closeSlot(slot)
+            gate.answer(0, with: ["late"])
+            await Self.settle()
+            #expect(host.shellSnapshot.savedSessions.isEmpty)
+            #expect(host.shellSavedSessionsReads.isEmpty)
+            _ = stream
+            await host.shutdown()
+        }
+    }
+
+    @Test
+    nonisolated func aReopenedWorkspaceReadsItsSavedSessionsAgain() async throws {
+        try await withEnvironment { environment in
+            let host = try environment.makeHost()
+            let gate = SavedSessionsReadGate()
+            host.shellSavedSessionsReader = gate.reader
+            let first = try host.openSlot(environment.descriptor("first", publishesState: false))
+            let stream = host.shellSnapshots()
+            await Self.waitUntil { gate.readCount == 1 }
+
+            // Closed with its read in flight, then opened again: a new read
+            // starts, and the old one, ending last, is dropped.
+            await host.closeSlot(first)
+            _ = try host.openSlot(environment.descriptor("second", publishesState: false))
+            await Self.waitUntil { gate.readCount == 2 }
+            #expect(gate.readCount == 2)
+            gate.answer(1, with: ["reopened"])
+            await Self.waitUntil { Self.savedNames(host, environment.workspace) != nil }
+            #expect(Self.savedNames(host, environment.workspace) == ["reopened"])
+            gate.answer(0, with: ["stale"])
+            await Self.settle()
+            #expect(Self.savedNames(host, environment.workspace) == ["reopened"])
+            _ = stream
+            await host.shutdown()
+        }
+    }
+
+    // MARK: - Observation
+
+    @Test
+    nonisolated func theObservationEndsWithTheLastStream() async throws {
+        try await withEnvironment { environment in
+            let host = try environment.makeHost()
+            let slot = try host.openSlot(environment.descriptor("main", publishesState: false))
+            let first = try await host.newSession(in: slot, sessionID: "first")
+            try await first.controller.createSessionWithSelectedSkills(discoverExternalTools: false)
+            try await Self.runTurn("Remember this", on: first)
+            let one = ShellRecorder(host)
+            let two = ShellRecorder(host)
+            await Self.waitUntil { Self.savedNames(host, environment.workspace) != nil }
+            #expect(host.isShellObserved)
+
+            one.stop()
+            await Self.waitUntil { host.shellStreams.count == 1 }
+            #expect(host.isShellObserved)
+            two.stop()
+            await Self.waitUntil { host.shellStreams.isEmpty }
+            #expect(host.isShellObserved == false)
+
+            // Nobody observes the host: a save and a new session read nothing.
+            let reads = host.nextShellReadValue
+            _ = await first.controller.saveSession(named: "unobserved", contextWindow: nil)
+            _ = try await host.newSession(in: slot, sessionID: "second")
+            await Self.settle()
+            #expect(host.nextShellReadValue == reads)
+            #expect(Self.savedNames(host, environment.workspace) == [])
+
+            // A new stream observes it again and reads.
+            let three = ShellRecorder(host)
+            await Self.waitUntil { Self.savedNames(host, environment.workspace) == ["unobserved"] }
+            #expect(Self.savedNames(host, environment.workspace) == ["unobserved"])
+            #expect(host.isShellObserved)
+            three.stop()
+            await host.shutdown()
+        }
+    }
+
+    @Test
+    nonisolated func aReleasedHostEndsItsShellStreams() async throws {
+        try await withEnvironment { environment in
+            var host: ChatSessionHost? = try environment.makeHost()
+            let stream = try #require(host).shellSnapshots()
+            weak let releasedHost = host
+            host = nil
+            await Self.waitUntil { releasedHost == nil }
+            try #require(releasedHost == nil)
+
+            var delivered: [ChatShellSnapshot] = []
+            for await snapshot in stream {
+                delivered.append(snapshot)
+            }
+            #expect(!delivered.isEmpty)
         }
     }
 
@@ -405,6 +699,32 @@ struct ChatShellSnapshotTests {
             _ = try host.openSlot(environment.descriptor("main", publishesState: false))
             await host.refreshShellSnapshot()
             #expect(host.shellSnapshot.telegram == ChatShellTelegramState())
+            await host.shutdown()
+        }
+    }
+
+    /// The settings are read with the poller, so the two never come from
+    /// reads made at different times: a slot that closes reads both.
+    @Test
+    nonisolated func theTelegramSettingsAreReadWithThePoller() async throws {
+        try await withEnvironment { environment in
+            let host = try environment.makeHost()
+            _ = try host.openSlot(environment.descriptor("main", publishesState: false))
+            let other = try host.openSlot(environment.descriptor("other", publishesState: false))
+            await host.refreshShellSnapshot()
+            #expect(host.shellSnapshot.telegram.isConfigured == false)
+
+            // Setup configures Telegram meanwhile.
+            let settings = ACPTelegramTestSupport.pairedSettings()
+            try AgentSettingsManifestStore.save(
+                AgentSettingsManifest(models: [], telegram: settings),
+                to: environment.support.appendingPathComponent(AgentSettingsManifestStore.settingsFilename)
+            )
+            await host.closeSlot(other)
+            await Self.waitUntil { host.shellSnapshot.telegram.isConfigured }
+            #expect(host.shellSnapshot.telegram.isConfigured)
+            #expect(host.shellSnapshot.telegram.isPolling == false)
+            #expect(host.telegramDispatcherStorage == nil)
             await host.shutdown()
         }
     }

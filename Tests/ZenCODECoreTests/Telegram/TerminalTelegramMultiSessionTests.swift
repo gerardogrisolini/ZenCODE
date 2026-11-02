@@ -376,14 +376,15 @@ struct TerminalTelegramMultiSessionTests {
 
     @Test
     func botDispatcherBroadcastsOnePolledUpdateToBothSessions() async throws {
+        let dispatcher = TerminalTelegramBotDispatcher()
         let transport = DispatcherGateTelegramTransport()
         let client = TerminalTelegramAPIClient(token: "token", transport: transport)
         let botID = Int64.random(in: 8_000_000...9_000_000)
-        let first = try await TerminalTelegramBotDispatcher.shared.subscribe(
+        let first = try await dispatcher.subscribe(
             botID: botID, client: client
         )
         await transport.waitUntilPolling()
-        let second = try await TerminalTelegramBotDispatcher.shared.subscribe(
+        let second = try await dispatcher.subscribe(
             botID: botID, client: client
         )
         let firstRead = Task { await first.updates.first(where: { _ in true }) }
@@ -394,33 +395,35 @@ struct TerminalTelegramMultiSessionTests {
         let secondUpdate = await secondRead.value
         #expect(firstUpdate?.updateID == 123)
         #expect(secondUpdate?.updateID == 123)
-        await TerminalTelegramBotDispatcher.shared.unsubscribe(first)
-        await TerminalTelegramBotDispatcher.shared.unsubscribe(second)
+        await dispatcher.unsubscribe(first)
+        await dispatcher.unsubscribe(second)
     }
 
     @Test
     func botDispatcherDoesNotLoseBacklogAboveLegacyBufferForTwoSubscribers() async throws {
+        let dispatcher = TerminalTelegramBotDispatcher()
         let transport = DispatcherBacklogTelegramTransport(count: 100)
         let client = TerminalTelegramAPIClient(token: "token", transport: transport)
         let botID = Int64.random(in: 9_000_001...9_900_000)
-        let first = try await TerminalTelegramBotDispatcher.shared.subscribe(botID: botID, client: client)
+        let first = try await dispatcher.subscribe(botID: botID, client: client)
         await transport.waitUntilPolling()
-        let second = try await TerminalTelegramBotDispatcher.shared.subscribe(botID: botID, client: client)
+        let second = try await dispatcher.subscribe(botID: botID, client: client)
         let firstRead = Task { await Self.collect(first.updates, count: 100) }
         let secondRead = Task { await Self.collect(second.updates, count: 100) }
         await transport.release()
         #expect(await firstRead.value == Array(1...100))
         #expect(await secondRead.value == Array(1...100))
-        await TerminalTelegramBotDispatcher.shared.unsubscribe(first)
-        await TerminalTelegramBotDispatcher.shared.unsubscribe(second)
+        await dispatcher.unsubscribe(first)
+        await dispatcher.unsubscribe(second)
     }
 
     @Test(.timeLimit(.minutes(1)))
     func botDispatcherAdmitsSubscriberThatJoinsDuringBackpressure() async throws {
+        let dispatcher = TerminalTelegramBotDispatcher()
         let transport = DispatcherBacklogTelegramTransport(count: 66)
         let client = TerminalTelegramAPIClient(token: "token", transport: transport)
         let botID = Int64.random(in: 10_000_001...10_900_000)
-        let first = try await TerminalTelegramBotDispatcher.shared.subscribe(botID: botID, client: client)
+        let first = try await dispatcher.subscribe(botID: botID, client: client)
         await transport.waitUntilPolling()
         await transport.release()
         try await Self.waitForOffset(64, botID: botID)
@@ -428,43 +431,45 @@ struct TerminalTelegramMultiSessionTests {
         // `publish(65)` is suspended because the first stream's 64 slots are
         // full. This subscribe linearizes inside that publish and therefore
         // must be admitted before offset 65 can be persisted.
-        let late = try await TerminalTelegramBotDispatcher.shared.subscribe(botID: botID, client: client)
+        let late = try await dispatcher.subscribe(botID: botID, client: client)
         let lateRead = Task { await Self.collect(late.updates, count: 2) }
         let firstRead = Task { await Self.collect(first.updates, count: 66) }
         #expect(await firstRead.value == Array(1...66))
         #expect(await lateRead.value == [65, 66])
-        await TerminalTelegramBotDispatcher.shared.unsubscribe(first)
-        await TerminalTelegramBotDispatcher.shared.unsubscribe(late)
+        await dispatcher.unsubscribe(first)
+        await dispatcher.unsubscribe(late)
     }
 
     @Test(.timeLimit(.minutes(1)))
     func botDispatcherUnsubscribeDuringRetryDoesNotStopOtherSubscriber() async throws {
+        let dispatcher = TerminalTelegramBotDispatcher()
         let transport = DispatcherBacklogTelegramTransport(count: 66)
         let client = TerminalTelegramAPIClient(token: "token", transport: transport)
         let botID = Int64.random(in: 11_000_001...11_900_000)
-        let stalled = try await TerminalTelegramBotDispatcher.shared.subscribe(botID: botID, client: client)
-        let live = try await TerminalTelegramBotDispatcher.shared.subscribe(botID: botID, client: client)
+        let stalled = try await dispatcher.subscribe(botID: botID, client: client)
+        let live = try await dispatcher.subscribe(botID: botID, client: client)
         let liveRead = Task { await Self.collect(live.updates, count: 66) }
         await transport.waitUntilPolling()
         await transport.release()
         try await Self.waitForOffset(64, botID: botID)
 
-        await TerminalTelegramBotDispatcher.shared.unsubscribe(stalled)
+        await dispatcher.unsubscribe(stalled)
         #expect(await liveRead.value == Array(1...66))
-        await TerminalTelegramBotDispatcher.shared.unsubscribe(live)
+        await dispatcher.unsubscribe(live)
     }
 
     @Test(.timeLimit(.minutes(1)))
     func botDispatcherReplacesCompletedOwnerTask() async throws {
+        let dispatcher = TerminalTelegramBotDispatcher()
         let transport = DispatcherOneShotCancellationTelegramTransport()
         let client = TerminalTelegramAPIClient(token: "token", transport: transport)
         let botID = Int64.random(in: 12_000_001...12_900_000)
-        let subscription = try await TerminalTelegramBotDispatcher.shared.subscribe(
+        let subscription = try await dispatcher.subscribe(
             botID: botID, client: client
         )
         await transport.waitUntilFirstCancellation()
         try await Self.waitUntil { await transport.pollCount >= 2 }
-        await TerminalTelegramBotDispatcher.shared.unsubscribe(subscription)
+        await dispatcher.unsubscribe(subscription)
     }
 
     private static func collect(

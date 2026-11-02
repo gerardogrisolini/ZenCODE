@@ -148,6 +148,11 @@ public final class TelegramChannel: ChatInteractionHost {
     /// The task running the turn the channel started through the host, while
     /// one runs (see `TelegramChannel+Turn.swift`).
     var activeTurnTask: Task<Void, Never>?
+    /// The prompt the host had reserved when the turn the channel follows
+    /// began on the channel (``beginTurn(adoptingStreamingBlock:)``): the
+    /// channel's own turn, or the primary channel's turn that moved onto it.
+    /// ``stopActiveTurn(promptID:)`` cancels that reservation and no other.
+    var activeTurnPromptID: UUID?
     /// The route of the message whose turn is about to start, set around the
     /// host call so that ``beginTurn(adoptingStreamingBlock:)`` reports the
     /// turn on it; `nil` otherwise.
@@ -386,8 +391,11 @@ public final class TelegramChannel: ChatInteractionHost {
         self.linkedChatID = linkedChatID
         linkedChatTitle = settings.linkedChatTitle
         linkedUserID = route.lease.key.userID
+        let hadRouteLease = activeRouteLease != nil
         activeRouteLease = route.lease
         sessionTopic = recordedSessionTopic(for: route)
+        // A repeated `/telegram on` gives a channel that lost its route one.
+        await activeRouteLeaseDidChange(hadLease: hadRouteLease)
         await installPollHealthHandlerIfNeeded()
         let startedState: TerminalTelegramControlState
         do {
@@ -435,6 +443,11 @@ public final class TelegramChannel: ChatInteractionHost {
 
     // MARK: - Detach and shutdown
 
+    /// What ``detach()`` tells the primary channel once the link stopped, and
+    /// what a primary channel without a Telegram channel answers to
+    /// `/telegram off`.
+    public nonisolated static let stoppedNoticeText = "Telegram remote control stopped.\n"
+
     /// Unlinks the session (`/telegram off`).
     ///
     /// Stops the turn's Telegram side first, so nothing emitted while the
@@ -474,10 +487,7 @@ public final class TelegramChannel: ChatInteractionHost {
         // Deterministic inbound-attachment teardown: every received temporary
         // is deleted and every pending upload consent is dropped.
         _ = await controlService.cleanupInboundAttachments()
-        await presentNotice(
-            "Telegram remote control stopped.\n",
-            channel: .system
-        )
+        await presentNotice(Self.stoppedNoticeText, channel: .system)
     }
 
     /// Tears the link down when the slot closes: the turn's Telegram side,
@@ -540,7 +550,7 @@ public final class TelegramChannel: ChatInteractionHost {
     /// is dead because of a persistent polling failure, and when it comes
     /// back. Without it the channel would keep saying the link is active
     /// while no message can arrive, and the error would be visible only
-    /// through `/telegram status`.
+    /// through `/telegram`.
     func presentPollHealthNotice(_ notice: TerminalTelegramPollHealthNotice) async {
         guard controlState.isActive else { return }
         let generation = lifecycleGeneration
@@ -553,7 +563,7 @@ public final class TelegramChannel: ChatInteractionHost {
             await presentNotice(
                 """
                 ZenCODE: Telegram is not receiving messages. \(text)
-                ZenCODE keeps retrying every minute. Check the bot token with /setup, or stop the other process polling this bot. /telegram status shows the latest error.
+                ZenCODE keeps retrying every minute. Check the bot token with /setup, or stop the other process polling this bot. /telegram shows the latest error.
 
                 """,
                 channel: .failure

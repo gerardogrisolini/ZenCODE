@@ -25,10 +25,22 @@ final class TerminalChatSessionPresenter: ChatSlotChannelPresenter {
     func turnDidMoveToChannel(_ turn: ChatMovedTurn) async {
         guard let chat else { return }
         // The terminal renders the rest of the turn as if it had started it:
-        // the response buffer and the transcript turn open now; the text that
-        // streamed before the move was rendered by the catch-up.
+        // the transcript turn opens now and the response buffer goes on. The
+        // buffer stays the one the turn writes to (the terminal's own turn
+        // reads its final answer from it), without the block the catch-up
+        // rendered with what streamed before the move.
         await chat.renderCoordinator.beginTranscriptTurn()
-        chat.activeAssistantOutput = TerminalAssistantResponseBuffer()
+        if let buffer = chat.activeAssistantOutput {
+            await buffer.discardPresentedContent()
+        } else {
+            let buffer = TerminalAssistantResponseBuffer()
+            await buffer.discardPresentedContent()
+            chat.activeAssistantOutput = buffer
+        }
+        // Not redundant with the input loop's adoption: a turn of the
+        // terminal that comes back keeps its request open here, and the loop
+        // adopts a turn of Telegram whose prompt is reserved before it opens
+        // or after it finished, which never moves.
         await chat.statusBar.beginRequest()
         await chat.statusBar.setProcessing(true)
     }

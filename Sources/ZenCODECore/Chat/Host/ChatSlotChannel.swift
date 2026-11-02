@@ -29,7 +29,7 @@ public enum ChatSlotChannel: Sendable, Equatable {
 /// ``ChatSessionHost/admitLine(_:in:)``).
 public enum ChatSlotAdmission: Sendable, Equatable {
     /// The channel drives the slot, or the line is one a dormant channel may
-    /// run (`/telegram`, `/telegram status`, `/telegram off`, `/exit`).
+    /// run (`/telegram`, `/telegram off`, `/exit`).
     case admitted
     /// Another channel drives the slot: the channel answers `text` instead of
     /// running the line, and runs nothing.
@@ -40,12 +40,12 @@ public enum ChatSlotAdmission: Sendable, Equatable {
     public static let dormantRefusalText =
         "ZenCODE: this session is driven from Telegram. Use /telegram off to take it back.\n"
 
-    /// The lines a dormant channel may run: the Telegram status and the
-    /// command that takes the slot back, and the terminal's exit.
+    /// The lines a dormant channel may run: the Telegram status, the command
+    /// that takes the slot back, and the terminal's exit.
     nonisolated static func isAllowedWhileDormant(_ line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         switch trimmed {
-        case "/telegram", "/telegram status", "/telegram off", "/exit":
+        case "/telegram", "/telegram off", "/exit":
             return true
         default:
             return false
@@ -120,7 +120,7 @@ struct ChatMovedTurn: Sendable {
 
 /// What the channel that takes a slot back catches up with: the log entries
 /// it did not see while the other channel drove the slot (see
-/// ``ChatSessionHost/deactivateTelegram(in:)``).
+/// ``ChatSessionHost/deactivateTelegram(in:presentingCatchUp:)``).
 public struct ChatTelegramCatchUp: Sendable, Equatable {
     /// The id of the session the entries belong to.
     public let sessionID: String
@@ -136,7 +136,9 @@ public struct ChatTelegramCatchUp: Sendable, Equatable {
     /// entries are the whole log of the new session.
     public let incarnationChanged: Bool
     /// `true` when entries older than the first retained one were dropped by
-    /// the log's bound, so the catch-up does not start where the channel left.
+    /// the log's bound, so the catch-up does not start where the channel left:
+    /// entries after the last one the channel saw or, when the incarnation
+    /// changed, entries of the new incarnation's log since its first one.
     public let omittedOlderEntries: Bool
 
     public init(

@@ -113,7 +113,10 @@ public actor ChatToolConsentAuthorizer {
             return cached
         }
 
-        let capabilities = consentHost(for: request).capabilities
+        // The host is resolved once, so the host whose capabilities are
+        // checked here is the one that asks below.
+        let askingHost = consentHost(for: request)
+        let capabilities = askingHost.capabilities
         guard capabilities.contains(.toolConsent) else {
             // A host that cannot ask the operator never receives a request:
             // the gated call is refused with an actionable diagnostic.
@@ -158,7 +161,7 @@ public actor ChatToolConsentAuthorizer {
             }
         }
 
-        guard let decision = await consentHost(for: request).requestToolConsent(request) else {
+        guard let decision = await askingHost.requestToolConsent(request) else {
             return Task.isCancelled ? .cancelled : .unavailable
         }
 

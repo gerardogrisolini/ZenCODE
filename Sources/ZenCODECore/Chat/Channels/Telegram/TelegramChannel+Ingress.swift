@@ -45,9 +45,10 @@ extension TelegramChannel {
         "Telegram is already linked to this ZenCODE session. Send a prompt or /help."
     }
 
-    /// The answer to the remote `/undo`, naming the primary channel.
+    /// The answer to the remote `/undo`, naming the primary channel, which
+    /// runs `/undo` only once it drives the slot again.
     var undoText: String {
-        "Use /undo in the \(primaryChannelDescription) to revert file changes."
+        "Use /undo in the \(primaryChannelDescription) after /telegram off to revert file changes."
     }
 
     // MARK: - Driving
@@ -72,7 +73,11 @@ extension TelegramChannel {
 
     /// Stops what ``startDriving()`` started and waits for the message in
     /// hand, if any: the questions waiting for the next message are refused,
-    /// the queued prompts dropped, and the shared-chat observation ended.
+    /// the queued prompts dropped (what the message in hand queued too), and
+    /// the shared-chat observation ended. A task of the channel that holds no
+    /// reservation yet, such as a line still answered, is stopped and awaited
+    /// (``stopTurnTaskWithoutReservation()``), so nothing read from the chat
+    /// starts a turn afterwards; a turn already reserved goes on.
     /// `shuttingDown` also ends every voice transcription for good; a detach
     /// lets a later attach transcribe again.
     func stopDriving(shuttingDown: Bool = false) async {
@@ -85,6 +90,8 @@ extension TelegramChannel {
             await task.value
         }
         readsIngress = false
+        promptQueue = ChatPromptQueue()
+        await stopTurnTaskWithoutReservation()
         if shuttingDown {
             await cancelVoiceTranscriptions()
         }
@@ -153,6 +160,7 @@ extension TelegramChannel {
         // another route (General, or a topic no route knows) is answered where
         // it came from without moving the relay or the next turn off the topic.
         if sessionTopic.map({ $0.lease.key.topicID == routeLease.key.topicID }) ?? true {
+            let hadRouteLease = activeRouteLease != nil
             activeRouteLease = routeLease
             await sharedChatRelay.activate(
                 roomID: routeLease.key.roomID,
@@ -160,6 +168,7 @@ extension TelegramChannel {
                 lease: routeLease,
                 repliesEnabled: readsIngress
             )
+            await activeRouteLeaseDidChange(hadLease: hadRouteLease)
         }
         guard let ingressFence = wireFence(for: routeLease) else { return false }
         let isSessionGenerating = isSessionGenerating

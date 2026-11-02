@@ -549,7 +549,7 @@ no structured items, ZenCODE creates one stable implementation task rather than
 guessing a task breakdown from prose.
 
 **Optional integrations:**
-- `/telegram` / `/telegram on` / `/telegram off` — remote control (requires setup). Available even while a prompt is running.
+- `/telegram` / `/telegram on` / `/telegram off` — remote control (requires setup and the interactive terminal: the line-by-line fallback, for example with standard error redirected, refuses `/telegram on`). Available even while a prompt is running.
 
 `/telegram on` moves the chat to the linked Telegram chat, which drives the
 session from then on: prompts, voice notes, `/plan`, `/goal`, `/review`,
@@ -559,13 +559,15 @@ and `/deny` come from the chat, which also answers `/start`, `/help`,
 chat first receives the last six prompts and responses of the session as
 context. Meanwhile the terminal shows `Session driven from Telegram. Type
 /telegram off to take it back.` and accepts only `/telegram`, `/telegram off`,
-and `/exit`; a question the session had open in the terminal is asked again in
-the chat. `/telegram off` takes the session back: the terminal renders what it
-did not see under `Catch-up from Telegram:`, with the response still in
-progress, and a turn still running from Telegram goes on in the terminal. The
-link belongs to the session's place in the terminal: it stays, with its topic,
-through `/sessions new` and `/sessions load`. An *Always* given in the chat
-covers the session in the terminal too.
+and `/exit` (a dictation, a mention by voice, and the access-mode shortcut are
+refused too); a question the session had open in the terminal is asked again in
+the chat, and the prompts already queued in the terminal wait, to run after
+`/telegram off`. `/telegram off` takes the session back: the terminal renders
+what it did not see under `Catch-up from Telegram:`, with the response still in
+progress, before anything more of a turn still running from Telegram, which
+goes on in the terminal (Esc stops it); `Telegram remote control stopped.`
+follows the catch-up. An *Always* given in the chat covers the session in the
+terminal too.
 
 In ACP clients such as Xcode the same commands exist (`/telegram`, `/telegram
 on`, `/telegram off`), answered at once. While Telegram drives the session the

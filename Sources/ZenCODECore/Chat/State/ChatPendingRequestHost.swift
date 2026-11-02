@@ -77,8 +77,8 @@ public final class ChatPendingRequestHost: ChatInteractionHost {
         for request in reducer.snapshot.pendingRequests {
             resolve(request.id, answer: nil)
         }
-        // Requests the snapshot no longer lists (none, unless the reducer
-        // was reset meanwhile) are refused too.
+        // The snapshot lists every open request of this host, as both change
+        // together; this pass refuses one it would miss all the same.
         for id in Array(pending.keys) {
             resolve(id, answer: nil)
         }

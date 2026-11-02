@@ -346,9 +346,7 @@ extension ZenCODEACPBridge {
                 // Snapshots have no per-message provider provenance. The current
                 // snapshot.modelID may follow a provider switch, so replay must
                 // not apply the live ChatGPT formatter to possibly foreign text.
-                guard let thought = thought.nilIfBlank else {
-                    continue
-                }
+                // A thought entry is trimmed and never blank.
                 await writer.sendSessionUpdate(
                     sessionID: snapshot.sessionID,
                     update: Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: thought)

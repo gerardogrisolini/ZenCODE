@@ -143,13 +143,24 @@ public actor TerminalTelegramControlService {
     /// 0600 temporaries and their deterministic cleanup.
     let inboundAttachments = TerminalTelegramInboundAttachmentStore()
 
+    /// A service on the production transport with a dispatcher of its own.
+    /// Two services created this way for the same bot poll it twice, which
+    /// the Bot API refuses (HTTP 409): services that share a bot must share
+    /// one dispatcher, as the Telegram channels of a ``ChatSessionHost`` do.
     public init() {
         self.init(
             transportFactory: { NIOTelegramHTTPTransport() },
-            dispatcher: .shared
+            dispatcher: TerminalTelegramBotDispatcher()
         )
     }
 
+    /// A service on `transportFactory`, subscribed through `dispatcher`.
+    ///
+    /// The default dispatcher is a new one, for the tests that drive one
+    /// service on its own: a second service created with the default for the
+    /// same bot would run a second long poll (HTTP 409 from the Bot API).
+    /// Production passes the dispatcher of its ``ChatSessionHost``
+    /// (`ChatSessionHost+Channels.swift`).
     init(
         transportFactory: @escaping @Sendable () -> any TelegramHTTPTransport,
         dispatcher: TerminalTelegramBotDispatcher = TerminalTelegramBotDispatcher()

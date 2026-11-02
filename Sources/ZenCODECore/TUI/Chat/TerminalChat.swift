@@ -74,10 +74,19 @@ public final class TerminalChat {
     /// The id of the session the terminal runs. Set through the host, in
     /// place (``ChatSessionHost/adoptSessionID(_:in:)``), only before the
     /// runtime session exists; a refusal (shut down, no session, busy) leaves
-    /// the id as it is.
+    /// the id as it is, and is logged.
     public var sessionID: String {
         get { chatSession.sessionID }
-        set { try? sessionHost.adoptSessionID(newValue, in: terminalSlotID) }
+        set {
+            do {
+                try sessionHost.adoptSessionID(newValue, in: terminalSlotID)
+            } catch {
+                ZenLogger.warning(
+                    .sessionService,
+                    "terminal kept session id \(chatSession.sessionID) instead of \(newValue): \(error)"
+                )
+            }
+        }
     }
     public var activeSessionCacheKey: String? {
         get { chatSession.cacheKey }
@@ -415,7 +424,10 @@ public final class TerminalChat {
         // `/setup` the session is the one the setup interrupted. The slot's
         // bindings (presenter, host, hooks, commands) outlive the session, and
         // so does its Telegram channel, created by the first `/telegram on`.
-        var descriptor = ChatSlotDescriptor(
+        // The terminal's presenter presents the endings of the turns it does
+        // not run (``TerminalChatSessionPresenter/presentTurnEnding(_:)``),
+        // so the descriptor needs no handler of its own.
+        let descriptor = ChatSlotDescriptor(
             identity: .terminal,
             workingDirectory: configuration.workingDirectory,
             presenter: chatSessionPresenter,
@@ -429,9 +441,6 @@ public final class TerminalChat {
             // `/sessions new` mints `terminal-<uuid>`, as `newTerminalSessionID()`.
             sessionIDPrefix: Self.sessionIDPrefix
         )
-        descriptor.presentTurnEnding = { [weak self] ending in
-            await self?.presentAdoptedTurnEnding(ending)
-        }
         do {
             currentIncarnation = try host.openSlot(
                 descriptor,

@@ -6,12 +6,14 @@
 //  through a scripted Bot API: the turns the linked chat starts run with the
 //  editor's composition and end up in the history `session/load` replays,
 //  their consent is decided in the chat, `/status` is answered there, the
-//  editor's `session/cancel` stops them and the next `/telegram off` catches
-//  up with them, they run in the environment of the editor's own prompts (the
-//  client's text file system, the agent's skills), a busy session names the
-//  turn from Telegram, and the notices of the attach follow the activation
-//  text in the reply of `/telegram on`. Nothing reaches the network; every
-//  test runs in a UUID support directory.
+//  editor's `session/cancel` stops them (a prompt the editor sends meanwhile
+//  keeps its reservation) and the next `/telegram off` catches up with them,
+//  they run in the environment of the editor's own prompts (the client's text
+//  file system, the agent's skills) and are refused once the session closed
+//  or while its close drains, a busy session names the turn from Telegram,
+//  and the notices of the attach follow the activation text in the reply of
+//  `/telegram on`. Nothing reaches the network; every test runs in a UUID
+//  support directory.
 //
 
 import Foundation
@@ -323,10 +325,14 @@ struct ACPTelegramChannelTests {
 
     /// A turn the slot's hooks wrap runs inside the client's file system while
     /// the session lives; once the session closed, the controller it was
-    /// started on is no longer one the bridge runs, and the body runs exactly
-    /// once without any environment, as for a slot without hooks.
+    /// started on is no longer one the bridge runs, and the hooks refuse the
+    /// turn: its composition and its environment throw `sessionNotRunning`,
+    /// and its body never runs. Without the session's configuration and
+    /// environment the turn would run without the editor's grant, the
+    /// client's file system, and the agent's skills, so it does not run at
+    /// all.
     @Test
-    func aTurnOnAClosedSessionRunsItsBodyWithoutTheEnvironment() async throws {
+    func aTurnOnAClosedSessionIsRefusedWithoutRunningItsBody() async throws {
         try await ACPTelegramTestSupport.withSupportDirectory { root in
             let notes = root.appendingPathComponent("workspace/Notes.txt")
             let editor = ACPTelegramClientFiles(buffers: [notes: "unsaved editor text"])
@@ -341,6 +347,8 @@ struct ACPTelegramChannelTests {
             )
             let bodies = ACPTelegramBodyRecorder()
 
+            let liveConfiguration = try await hooks.turnSessionConfiguration(for: .normal, controller: controller)
+            #expect(liveConfiguration.systemPrompt == "ACP Telegram test")
             let live = try await hooks.runTurnFromAnotherChannel(controller: controller) {
                 bodies.record(hadClientFileSystem: ClientTextFileSystem.current != nil)
                 return result
@@ -355,12 +363,114 @@ struct ACPTelegramChannelTests {
             #expect(fixture.wire.response(id: 9)?["result"] == .object([:]))
             #expect(await fixture.bridge.telegramTestController(sessionID: sessionID) == nil)
 
-            let closed = try await hooks.runTurnFromAnotherChannel(controller: controller) {
-                bodies.record(hadClientFileSystem: ClientTextFileSystem.current != nil)
-                return result
+            await #expect(throws: ACPTelegramTurnRefusal.sessionNotRunning) {
+                try await hooks.turnSessionConfiguration(for: .normal, controller: controller)
             }
-            #expect(closed.response.text == "ran")
-            #expect(bodies.recorded == [true, false])
+            await #expect(throws: ACPTelegramTurnRefusal.sessionNotRunning) {
+                try await hooks.runTurnFromAnotherChannel(controller: controller) {
+                    bodies.record(hadClientFileSystem: ClientTextFileSystem.current != nil)
+                    return result
+                }
+            }
+            #expect(bodies.recorded == [true])
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// A message the linked chat sends while the editor's `session/close`
+    /// waits for the session's prompt handlers to drain starts no turn: the
+    /// close retired the incarnation in the host before its first
+    /// suspension, so the turn from Telegram is refused before anything is
+    /// reserved, and nothing reaches the backend or the wire. The close then
+    /// answers as before.
+    @Test
+    func aTelegramMessageWhileTheCloseDrainsStartsNoTurn() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let (fixture, sessionID) = try await Self.linkedFixture(root: root)
+            let channel = try #require(await fixture.telegramChannel(sessionID: sessionID))
+            let slotID = try #require(await fixture.bridge.telegramTestSlotID(sessionID: sessionID))
+            let host = await fixture.bridge.host
+            let wireCount = fixture.wire.count
+            // A prompt handler of the session still unwinding keeps the close
+            // in its drain.
+            let handler = await fixture.bridge.enterPromptHandler(sessionID: sessionID)
+            let close = Task {
+                await fixture.bridge.handleMessage([
+                    "jsonrpc": "2.0", "id": 9, "method": "session/close",
+                    "params": ["sessionId": sessionID],
+                ])
+            }
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await fixture.bridge.telegramTestController(sessionID: sessionID) == nil
+            })
+            // Retired: the slot, still open, takes no reservation.
+            #expect(await host.incarnation(in: slotID) != nil)
+            await #expect(throws: ChatSessionHostError.noSession) {
+                try await host.reservePrompt(in: slotID)
+            }
+
+            let sentBefore = await fixture.transport.sentMessages.count
+            try await fixture.transport.deliver("Hello while closing")
+            try await fixture.transport.deliver("/status")
+            // The chat's lines are read in order: `/status` is answered after
+            // the first line was admitted, and the task of that line ends.
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await fixture.transport.sentTexts.dropFirst(sentBefore).contains { $0.hasPrefix("Session") }
+            })
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await channel.telegramTestIsIdle
+            })
+            #expect(await fixture.backend.prompts.isEmpty)
+            #expect(await !fixture.transport.sentTexts.contains { $0.contains("ZenCODE completed") })
+            #expect(fixture.wire.response(id: 9) == nil)
+
+            await fixture.bridge.leavePromptHandler(sessionID: sessionID, token: handler)
+            await close.value
+            #expect(fixture.wire.response(id: 9)?["result"] == .object([:]))
+            #expect(fixture.wire.count == wireCount + 1)
+            #expect(await fixture.backend.prompts.isEmpty)
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// An editor's `session/cancel` of a turn from Telegram and its next
+    /// `session/prompt` (`/telegram off`), started together: the prompt is
+    /// reserved after the cancel dropped the turn's reservation and before the
+    /// cancel stops the turn in the channel. The stop leaves the prompt's
+    /// reservation and the runner alone, so the prompt answers as usual, not
+    /// `cancelled`, and the turn from Telegram, paused in the backend, stops.
+    @Test
+    func aPromptReservedWhileTheCancelStopsATelegramTurnAnswersAsUsual() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let (fixture, sessionID) = try await Self.linkedFixture(root: root)
+            await fixture.backend.enqueue([.reply("Working "), .pause, .reply("done")])
+            try await fixture.transport.deliver("Clean the build")
+            #expect(await ACPTelegramTestSupport.waitUntil { await fixture.backend.isPaused })
+            #expect(await fixture.bridge.telegramTestTurnHoldsReservation(sessionID: sessionID))
+
+            let start = fixture.wire.count
+            let handlers = await fixture.bridge.telegramTestCancelThenPrompt(
+                sessionID: sessionID, cancelID: 5, promptID: 6, text: "/telegram off"
+            )
+            for handler in handlers {
+                await handler.value
+            }
+            #expect(fixture.wire.response(id: 5)?["result"] == .object([:]))
+            #expect(fixture.wire.errorMessage(id: 6) == nil)
+            #expect(fixture.wire.stopReason(id: 6) == "end_turn")
+            #expect(fixture.lastAgentText(from: start)?.hasPrefix("Telegram remote control stopped.") == true)
+            #expect(await fixture.bridge.telegramTestPromptIsReserved(sessionID: sessionID) == false)
+            // The turn from Telegram stopped: its task was cancelled, so once
+            // the backend lets it go on it ends there, cancelled, without
+            // completing (a completed turn would be in the backend's history).
+            #expect(await fixture.bridge.telegramTestTurnHoldsReservation(sessionID: sessionID))
+            await fixture.backend.release()
+            #expect(await ACPTelegramTestSupport.waitUntil {
+                await !fixture.bridge.telegramTestTurnHoldsReservation(sessionID: sessionID)
+            })
+            #expect(await fixture.backend.prompts == ["Clean the build"])
+            let history = await fixture.backend.snapshotSession(id: sessionID)?.history ?? []
+            #expect(!history.contains { $0.content.contains("done") })
             await fixture.bridge.shutdown()
         }
     }
@@ -469,10 +579,54 @@ extension ZenCODEACPBridge {
         sessions[sessionID]?.controller
     }
 
+    /// The host slot of the live session `sessionID`.
+    fileprivate func telegramTestSlotID(sessionID: String) -> ChatSlotID? {
+        sessions[sessionID]?.slotID
+    }
+
     /// Whether a prompt is reserved on the live incarnation of `sessionID`.
     fileprivate func telegramTestPromptIsReserved(sessionID: String) async -> Bool {
         guard let session = sessions[sessionID] else { return false }
         return await host.activePromptID(in: session.slotID, epoch: session.epoch) != nil
+    }
+
+    /// Whether a turn of the Telegram channel of `sessionID`'s slot reserved
+    /// the session and has not ended yet.
+    fileprivate func telegramTestTurnHoldsReservation(sessionID: String) async -> Bool {
+        guard let session = sessions[sessionID] else { return false }
+        return await host.telegramTurnHoldsReservation(in: session.slotID)
+    }
+
+    /// Starts `session/cancel` (request `cancelID`) and then `session/prompt`
+    /// with `text` (request `promptID`) for `sessionID`, from one step of the
+    /// bridge and in this order: the cancel runs up to its hop to the host,
+    /// which drops the reservation of the turn in progress, before the prompt
+    /// runs up to its own, which the host serves next and reserves; the
+    /// cancel then resumes first and stops the turn it cancelled, with the
+    /// prompt already reserved.
+    fileprivate func telegramTestCancelThenPrompt(
+        sessionID: String,
+        cancelID: Int,
+        promptID: Int,
+        text: String
+    ) -> [Task<Void, Never>] {
+        [
+            Task {
+                await self.handleMessage([
+                    "jsonrpc": "2.0", "id": cancelID, "method": "session/cancel",
+                    "params": ["sessionId": sessionID] as [String: Any],
+                ])
+            },
+            Task {
+                await self.handleMessage([
+                    "jsonrpc": "2.0", "id": promptID, "method": "session/prompt",
+                    "params": [
+                        "sessionId": sessionID,
+                        "prompt": [["type": "text", "text": text]] as [[String: Any]],
+                    ] as [String: Any],
+                ])
+            },
+        ]
     }
 
     /// What the slot of `sessionID` knows of its turn in progress and of the
@@ -502,6 +656,13 @@ extension ChatSessionHost {
             }
         } ?? []
         return (slot.slotPresenter.isTurnOpen, slot.slotPresenter.movedTurn, transcript)
+    }
+}
+
+extension TelegramChannel {
+    /// Whether the channel runs no task and queues no prompt.
+    fileprivate var telegramTestIsIdle: Bool {
+        activeTurnTask == nil && promptQueue.isEmpty
     }
 }
 

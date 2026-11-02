@@ -154,31 +154,33 @@ extension TelegramChannel {
     public static let handoverContextEntryCount = 6
 
     /// Sends the context of the handover to the linked chat: the last
-    /// ``handoverContextEntryCount`` entries of `transcript` (prompts and
-    /// assistant text only), each as a compact message, then the assistant
-    /// text still streaming, if any, marked as in progress. Nothing is sent
-    /// for an empty transcript.
+    /// ``handoverContextEntryCount`` prompts and assistant texts of
+    /// `transcript` (thoughts are left out before counting, so they never
+    /// take the place of a prompt or a response), each as a compact message,
+    /// then the assistant text still streaming, if any, marked as in
+    /// progress. Nothing is sent for an empty transcript.
     func sendHandoverContext(transcript: [ChatTurnEntry], liveAssistantText: String) async {
         guard let lease = activeRouteLease else { return }
-        let entries = transcript.suffix(Self.handoverContextEntryCount)
-        var lines: [String] = []
-        for entry in entries {
+        let lines = transcript.compactMap { entry -> String? in
             switch entry.kind {
             case let .userPrompt(text, _, _):
-                lines.append("👤 \(Self.contextText(text))")
+                "👤 \(Self.contextText(text))"
             case let .assistantText(text):
-                lines.append("🤖 \(Self.contextText(text))")
+                "🤖 \(Self.contextText(text))"
             default:
-                continue
+                nil
             }
         }
+        var contextLines = Array(lines.suffix(Self.handoverContextEntryCount))
         let live = liveAssistantText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !live.isEmpty {
-            lines.append("🤖 (in progress) \(Self.contextText(live))")
+            contextLines.append("🤖 (in progress) \(Self.contextText(live))")
         }
-        guard !lines.isEmpty else { return }
-        let header = lines.count == 1 ? "Last message of the session:" : "Last \(lines.count) messages of the session:"
-        await sendSystemMessageIfLinked(([header] + lines).joined(separator: "\n\n"), lease: lease)
+        guard !contextLines.isEmpty else { return }
+        let header = contextLines.count == 1
+            ? "Last message of the session:"
+            : "Last \(contextLines.count) messages of the session:"
+        await sendSystemMessageIfLinked(([header] + contextLines).joined(separator: "\n\n"), lease: lease)
     }
 
     /// One entry of the handover context: trimmed, bounded so the context

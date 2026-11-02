@@ -27,12 +27,16 @@ public struct ChatShellSnapshot: Sendable, Equatable {
     /// pending requests, which only a reducer publishes.
     public internal(set) var sessions: [ChatSlotID: ChatSessionSummary] = [:]
     /// The saved sessions of each workspace an open slot runs sessions in, by
-    /// working directory (``ChatSessionSummary/workspace``), most recently
-    /// saved first. Empty until a shell observes the host
-    /// (``ChatSessionHost/shellSnapshots()``) or asks
+    /// standardized working directory (the `standardizedFileURL` of
+    /// ``ChatSessionSummary/workspace``, so that two spellings of one folder
+    /// are one workspace), most recently saved first. Empty until a shell
+    /// observes the host (``ChatSessionHost/shellSnapshots()``) or asks
     /// (``ChatSessionHost/refreshShellSnapshot()``); then read again, off the
-    /// chat actor, when a slot starts another session and when a session of
-    /// the host is saved or deleted, never on a timer.
+    /// chat actor, while the host is observed, when a slot starts another
+    /// session and when a session of the host is saved or deleted, never on
+    /// a timer. The store is only listed: a session file with a name of an
+    /// older scheme shows once a load or a listing of the controller renames
+    /// it.
     public internal(set) var savedSessions: [URL: [ChatSavedSessionSummary]] = [:]
     /// The Telegram link of the process.
     public internal(set) var telegram = ChatShellTelegramState()
@@ -44,14 +48,17 @@ public struct ChatShellSnapshot: Sendable, Equatable {
 public struct ChatShellTelegramState: Sendable, Equatable {
     /// Whether setup configured Telegram: enabled, with a bot token, a paired
     /// chat and owner, and its routes (``AgentTelegramSettingsManifest/isEnabled``,
-    /// what the terminal offers `/telegram` on). Read from the settings when
-    /// a shell first observes the host and on
-    /// ``ChatSessionHost/refreshShellSnapshot()``; `false` before.
+    /// what the terminal offers `/telegram` on). Read from the settings with
+    /// ``isPolling``; `false` before the first read.
     public internal(set) var isConfigured = false
-    /// Whether the host's Bot API poller runs a long poll now. Read when a
-    /// slot hands itself to Telegram or takes itself back, when a slot
-    /// closes, and on ``ChatSessionHost/refreshShellSnapshot()``, while a
-    /// shell observes the host; `false` before the first `/telegram on`.
+    /// Whether the host's Bot API poller runs a long poll now. Read with
+    /// ``isConfigured``, in one snapshot, while a shell observes the host:
+    /// when the observation starts, when a slot hands itself to Telegram or
+    /// takes itself back, when a slot closes, and on
+    /// ``ChatSessionHost/refreshShellSnapshot()``; `false` before the first
+    /// `/telegram on`. The poller tells nobody when a poll ends, so a poll
+    /// that ends on its own (its last subscription ends, an update offset
+    /// cannot be saved) shows at the next of these reads.
     public internal(set) var isPolling = false
     /// The slots the linked chat drives now (``ChatSlotChannel/telegram``).
     public internal(set) var drivenSlots: Set<ChatSlotID> = []

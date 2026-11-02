@@ -254,7 +254,7 @@ extension TelegramChannel {
     /// (`rebind(_:toRoomID:)`): it keeps its topic, its generation advances,
     /// and the new lease becomes the link's route, so the next turn and the
     /// shared-chat relay use it. The topic is then renamed; its name in
-    /// `/telegram status` changes only when Telegram accepts the rename. A
+    /// `/telegram` changes only when Telegram accepts the rename. A
     /// failure is recorded and presented on the primary channel like a
     /// failed creation, and a failed rebind leaves the topic as it was. In
     /// legacy mode, and while detached, nothing happens, as before topics.
@@ -285,7 +285,9 @@ extension TelegramChannel {
         // link now.
         guard sessionTopic?.lease == topic.lease else { return }
         sessionTopic = SessionTopic(lease: rebound, name: topic.name)
+        let hadRouteLease = activeRouteLease != nil
         activeRouteLease = rebound
+        await activeRouteLeaseDidChange(hadLease: hadRouteLease)
         let name = TerminalTelegramAPIClient.boundedTopicName(displayName)
         do {
             guard let topicID = rebound.key.topicID,

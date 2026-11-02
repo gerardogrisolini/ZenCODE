@@ -7,10 +7,11 @@
 //  older incarnation, the Telegram router and dispatcher shared by every slot,
 //  the pending requests refused with their incarnation, the reducer that
 //  sees its session from the start, the bindings a slot keeps across its
-//  sessions, the session operations a hosted controller delegates, the id
-//  adopted in place, and the shutdown that keeps the external tools. Every
-//  test runs in directories named by UUIDs; nothing touches the real
-//  application state.
+//  sessions, the reload of the session a slot runs, which discards its runner
+//  session, the session operations a hosted controller delegates, a retired
+//  slot and an announced shutdown, the id adopted in place, and the shutdown
+//  that keeps the external tools. Every test runs in directories named by
+//  UUIDs; nothing touches the real application state.
 //
 
 import Foundation
@@ -25,6 +26,9 @@ private actor HostTestBackend: AgentRuntimeBackend {
     private var sessions: [String: AgentRuntimeSessionSnapshot] = [:]
     private var preloadFails = false
     private(set) var prompts: [String] = []
+    /// The ids of the sessions the runner closed in the backend, in order: a
+    /// runner session discarded (`resetSession`) or closed ends here.
+    private(set) var closedSessionIDs: [String] = []
 
     func setPreloadFails(_ fails: Bool) {
         preloadFails = fails
@@ -85,6 +89,7 @@ private actor HostTestBackend: AgentRuntimeBackend {
     ) {}
 
     func closeSession(id: String) {
+        closedSessionIDs.append(id)
         sessions.removeValue(forKey: id)
     }
 
@@ -585,6 +590,44 @@ struct ChatSessionHostTests {
         }
     }
 
+    /// A view that follows the slot observes the reducer of each incarnation:
+    /// the stream of a replaced or closed incarnation's reducer ends after
+    /// its last snapshot, and one asked for later ends at once, so the view
+    /// keeps no log of a session the slot no longer runs.
+    @Test
+    nonisolated func theSnapshotsOfAnEndedIncarnationEnd() async throws {
+        try await withEnvironment { environment in
+            let host = try environment.makeHost()
+            let slot = try host.openSlot(environment.descriptor())
+            let first = try await host.newSession(in: slot, sessionID: "first")
+            let firstReducer = try #require(first.reducer)
+            let firstStream = firstReducer.snapshots()
+
+            let second = try await host.newSession(in: slot, sessionID: "second")
+            let secondReducer = try #require(second.reducer)
+            let secondStream = secondReducer.snapshots()
+            var delivered: [ChatSessionSnapshot] = []
+            for await snapshot in firstStream {
+                delivered.append(snapshot)
+            }
+            #expect(delivered.last == firstReducer.snapshot)
+            var late: [ChatSessionSnapshot] = []
+            for await snapshot in firstReducer.snapshots() {
+                late.append(snapshot)
+            }
+            #expect(late == [firstReducer.snapshot])
+
+            // The reducer of the session the slot runs goes on until it ends.
+            await host.closeSession(in: slot)
+            var secondDelivered: [ChatSessionSnapshot] = []
+            for await snapshot in secondStream {
+                secondDelivered.append(snapshot)
+            }
+            #expect(secondDelivered.last?.sessionID == "second")
+            await host.shutdown()
+        }
+    }
+
     // MARK: - Saved sessions
 
     @Test
@@ -647,6 +690,100 @@ struct ChatSessionHostTests {
             }
             #expect(host.incarnation(in: slot)?.epoch == afterFailure.epoch)
             #expect(host.releasePrompt(reservation))
+            await host.shutdown()
+        }
+    }
+
+    /// Loading the saved session the slot runs (the same id) discards the
+    /// runner session before the saved one is installed, as the in-place load
+    /// does: the slot's own new incarnation is not another slot that still
+    /// runs the id. So does `/sessions restore` of the active saved session
+    /// from an entry of its checkpoint tree, which loads it again. A slot
+    /// that runs the id elsewhere still keeps the runner session.
+    @Test
+    nonisolated func reloadingTheSessionOfTheSlotDiscardsItsRunnerSession() async throws {
+        try await withEnvironment { environment in
+            let host = try environment.makeHost()
+            let slot = try host.openSlot(environment.descriptor())
+            let original = try await host.newSession(in: slot, sessionID: "reloaded")
+            try await original.controller.createSessionWithSelectedSkills(discoverExternalTools: false)
+            try await Self.runTurn("Remember me", on: original)
+            _ = await original.controller.saveSession(named: "kept", contextWindow: nil)
+            #expect(await environment.backend.closedSessionIDs.isEmpty)
+
+            // The reload of the session the slot runs.
+            _ = try await host.loadSavedSession(in: slot, name: "kept")
+            let loaded = try #require(host.incarnation(in: slot))
+            #expect(loaded.epoch > original.epoch)
+            #expect(loaded.sessionID == "reloaded")
+            #expect(await environment.backend.closedSessionIDs == ["reloaded"])
+            #expect(await host.runner.snapshotSession(id: "reloaded")?.history.isEmpty == false)
+
+            // `/sessions restore` from an entry of the active saved session.
+            let saved = try #require(TerminalSessionStore.savedSessions(for: environment.workspace).first)
+            let entryID = try #require(saved.checkpointTree.activePath.last?.id)
+            let restore = try await loaded.controller.restoreFromCheckpoint(entryID: entryID)
+            #expect(restore.notices.contains { notice in
+                if case .checkpointRestored(entryID: entryID, messageCount: _) = notice { return true }
+                return false
+            })
+            let restored = try #require(host.incarnation(in: slot))
+            #expect(restored.epoch > loaded.epoch)
+            #expect(await environment.backend.closedSessionIDs == ["reloaded", "reloaded"])
+
+            // Another slot running the id owns the runner session: the load
+            // in this slot leaves it alone.
+            let other = try host.openSlot(environment.descriptor(identity: .window("other")))
+            _ = try await host.newSession(in: other, sessionID: "reloaded")
+            _ = try await host.loadSavedSession(in: slot, name: "kept")
+            #expect(await environment.backend.closedSessionIDs == ["reloaded", "reloaded"])
+            await host.shutdown()
+        }
+    }
+
+    // MARK: - Retirement
+
+    /// A slot retired for its close refuses every new reservation, a turn of
+    /// its Telegram channel included, and keeps what was reserved before, its
+    /// incarnation, and its controller fenced; closing it forgets the
+    /// retirement. An announced shutdown refuses every reservation on every
+    /// slot before the shutdown itself.
+    @Test
+    nonisolated func aRetiredSlotAndAnAnnouncedShutdownRefuseEveryNewReservation() async throws {
+        try await withEnvironment { environment in
+            let host = try environment.makeHost()
+            let retired = try host.openSlot(environment.descriptor(identity: .window("retired")))
+            let other = try host.openSlot(environment.descriptor(identity: .window("other")))
+            let incarnation = try await host.newSession(in: retired, sessionID: "retired-session")
+            _ = try await host.newSession(in: other, sessionID: "other-session")
+            let held = try host.reservePrompt(in: retired)
+            let turnToken = incarnation.controller.beginTurnToken()
+
+            host.retireIncarnation(in: retired, controller: incarnation.controller)
+            #expect(incarnation.controller.isCurrentTurn(turnToken, sessionID: "retired-session") == false)
+            #expect(host.holdsPrompt(held))
+            #expect(host.releasePrompt(held))
+            #expect(throws: ChatSessionHostError.noSession) { try host.reservePrompt(in: retired) }
+            #expect(throws: ChatSessionHostError.noSession) { try host.reserveReconfiguration(in: retired) }
+            await #expect(throws: ChatSessionHostError.noSession) {
+                try await host.newSession(in: retired, sessionID: "replacement")
+            }
+            #expect(host.incarnation(in: retired)?.epoch == incarnation.epoch)
+            _ = try #require(host.telegramChannelCreatingIfNeeded(in: retired))
+            host.slots[retired]?.setActiveChannel(.telegram)
+            await #expect(throws: ChatSessionHostError.noSession) {
+                try await host.runTelegramTurn(in: retired, prompt: "after the close began")
+            }
+            // The other slot is untouched.
+            let otherReservation = try host.reservePrompt(in: other)
+            #expect(host.releasePrompt(otherReservation))
+            await host.closeSlot(retired)
+            #expect(host.retirement.isRetired(retired) == false)
+
+            host.beginShutdown()
+            #expect(throws: ChatSessionHostError.shutDown) { try host.reservePrompt(in: other) }
+            #expect(throws: ChatSessionHostError.shutDown) { try host.reserveReconfiguration(in: other) }
+            #expect(host.incarnation(in: other) != nil)
             await host.shutdown()
         }
     }

@@ -8,9 +8,12 @@
 //  Telegram drove the slot, the dormant primary channel and the lines it may
 //  still run, the pending requests asked again on the channel that drives
 //  the slot, a turn that moves between the channels while it runs with its
-//  streaming block, the turns the chat starts through the host, and the
-//  link that survives a new session. Telegram is a scripted Bot API; every
-//  test runs in a UUID-named support directory.
+//  streaming block, the turns the chat starts through the host, the line
+//  still answered at `/telegram off` that starts nothing, the channel's
+//  queue resumed when a turn it did not start ends, two concurrent
+//  activations, the reducer of a slot that publishes state, and the link
+//  that survives a new session. Telegram is a scripted Bot API; every test
+//  runs in a UUID-named support directory.
 //
 
 import Foundation
@@ -193,6 +196,31 @@ private final class PrimaryChannelPresenter: ChatSlotChannelPresenter {
 
     func presentTurnEnding(_ ending: ChatTurnEnding) async {
         endings.append(ending)
+    }
+}
+
+/// An observer of the session that holds the echo of a submitted command
+/// line (``ChatSessionPresenter/presentSubmittedCommand(_:)``) until the test
+/// releases it, so a line from the chat stays in the middle of its answer.
+@ChatSessionActor
+private final class SubmittedCommandHold: ChatSessionObserver {
+    private(set) var heldLines: [String] = []
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init() {}
+
+    func presentSubmittedCommand(_ line: String) async {
+        heldLines.append(line)
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    /// Lets every held line go on.
+    func release() {
+        let held = waiters
+        waiters = []
+        for waiter in held {
+            waiter.resume()
+        }
     }
 }
 
@@ -433,7 +461,7 @@ struct TelegramChannelTests {
     /// and gets a reducer of its own; `/telegram off` then catches up with
     /// the whole log of the new incarnation and says the session changed.
     @Test
-    nonisolated func catchUpAfterANewSessionFromTelegramIsTheWholeLogOfTheNewIncarnation() async throws {
+    nonisolated func catchUpAfterANewSessionWhileTelegramDrivesIsTheWholeLogOfTheNewIncarnation() async throws {
         try await withEnvironment { environment in
             let slot = try Self.openSlot(in: environment)
             try await Self.runPrimaryTurn("before", on: slot)
@@ -441,8 +469,9 @@ struct TelegramChannelTests {
             let channel = try #require(slot.host.telegramChannel(in: slot.id))
             let firstEpoch = slot.incarnation.epoch
 
-            // `/sessions new` from the chat: the controller delegates it to the
-            // host, which runs a new incarnation in the slot.
+            // `/sessions new` run on the slot's controller while Telegram drives
+            // the slot (the chat itself has no `/sessions`): the controller
+            // delegates it to the host, which runs a new incarnation in the slot.
             let outcome = await slot.controller.handleCommandLine("/sessions new", context: [])
             #expect(outcome.action == .none)
             #expect(slot.incarnation.epoch != firstEpoch)
@@ -465,6 +494,106 @@ struct TelegramChannelTests {
             #expect(Self.lines(of: catchUp.entries)
                 == ["telegram: in the new session", "assistant: Answer to: in the new session"])
             #expect(slot.incarnation.reducer == nil)
+            await slot.host.shutdown()
+        }
+    }
+
+    /// `omittedOlderEntries` of a catch-up of the whole log (the incarnation
+    /// changed) says whether the log's bound dropped entries of that log: the
+    /// first retained sequence is compared with the first one the log
+    /// emitted (1 for a new reducer, the next sequence when the log started
+    /// over in place), not with the first entry the log still holds. After
+    /// the last sequence seen the rule is the next one.
+    @Test
+    func theCatchUpOfTheWholeLogSaysWhenTheBoundDroppedEntriesOfThatLog() async {
+        // Each entry costs at least 256 bytes: the log holds about four.
+        let reducer = ChatSessionStateReducer(
+            sessionID: "bounded", workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
+            defaultOrigin: .app, state: ChatSessionState(), epoch: 1,
+            maximumLogBytes: 1_200, keepsEpochOnSessionChange: true
+        )
+        func wholeLog() -> ChatTelegramCatchUp {
+            ChatSessionHost.telegramCatchUp(
+                sessionID: "bounded", reducer: reducer, lastSeenSequence: nil, incarnationChanged: true
+            )
+        }
+        func entries(_ range: ClosedRange<Int>) -> [ChatTurnEntry.Kind] {
+            range.map { .assistantText("entry \($0)") }
+        }
+
+        await reducer.presentRestoredLog(
+            [ChatTurnEntry.Kind.userPrompt(text: "one", attachments: [], origin: .app)] + entries(2...2)
+        )
+        #expect(reducer.snapshot.firstRetainedSequence == 1)
+        #expect(wholeLog().entries.count == 2)
+        #expect(wholeLog().incarnationChanged)
+        #expect(!wholeLog().omittedOlderEntries)
+        await reducer.presentRestoredLog(entries(3...8))
+        #expect(reducer.snapshot.firstRetainedSequence > 1)
+        #expect(wholeLog().entries.first?.sequence == reducer.snapshot.firstRetainedSequence)
+        #expect(wholeLog().omittedOlderEntries)
+
+        // The log starts over in place: its first sequence is past 1, and
+        // nothing of it is dropped until it outgrows the bound.
+        reducer.resetForSession("bounded-next")
+        let logStart = reducer.snapshot.firstRetainedSequence
+        #expect(logStart == 9)
+        await reducer.presentRestoredLog(
+            [ChatTurnEntry.Kind.userPrompt(text: "two", attachments: [], origin: .telegram)] + entries(10...10)
+        )
+        #expect(reducer.snapshot.firstRetainedSequence == logStart)
+        #expect(!wholeLog().omittedOlderEntries)
+        await reducer.presentRestoredLog(entries(11...16))
+        #expect(reducer.snapshot.firstRetainedSequence > logStart)
+        #expect(wholeLog().omittedOlderEntries)
+
+        // After the last sequence the channel saw: dropped entries it did not
+        // see are omitted, the ones it saw are not.
+        let firstRetained = reducer.snapshot.firstRetainedSequence
+        for (lastSeen, omitted) in [(firstRetained - 1, false), (firstRetained - 2, true)] {
+            let catchUp = ChatSessionHost.telegramCatchUp(
+                sessionID: "bounded-next", reducer: reducer, lastSeenSequence: lastSeen, incarnationChanged: false
+            )
+            #expect(catchUp.omittedOlderEntries == omitted, "\(lastSeen)")
+            #expect(catchUp.entries.allSatisfy { $0.sequence > lastSeen })
+        }
+    }
+
+    /// Two `/telegram on` at once hand the slot over once: the second waits
+    /// for the first and runs as a repeated `/telegram on` (the link
+    /// restarts, the handover stands), so the chat receives the context once
+    /// and the slot gets one reducer, as with two activations in a row.
+    @Test
+    nonisolated func twoConcurrentActivationsHandTheSlotOverOnce() async throws {
+        try await withEnvironment { environment in
+            let slot = try Self.openSlot(in: environment)
+            try await Self.runPrimaryTurn("before", on: slot)
+            let notices = TelegramChannelNoticeRecorder()
+            let channel = try #require(slot.host.telegramChannelCreatingIfNeeded(in: slot.id))
+            notices.install(on: channel)
+
+            let first = Task { @ChatSessionActor in try await slot.host.activateTelegram(in: slot.id) }
+            let second = Task { @ChatSessionActor in try await slot.host.activateTelegram(in: slot.id) }
+            try await first.value
+            try await second.value
+
+            #expect(slot.host.telegramChannel(in: slot.id) === channel)
+            #expect(channel.isActive)
+            #expect(slot.host.activeChannel(in: slot.id) == .telegram)
+            // Both attached, one after the other: the link started twice.
+            #expect(notices.texts.filter { $0.hasPrefix("Telegram remote control is active.") }.count == 2)
+            // The handover ran once.
+            let contexts = await environment.transport.sentTexts.filter { $0.contains("of the session:") }
+            #expect(contexts.count == 1)
+            #expect(slot.controller.observers.count == 1)
+            let reducer = try #require(slot.incarnation.reducer)
+            #expect(Self.lines(of: reducer.snapshot.transcript)
+                == ["unknown: before", "assistant: Answer to: before"])
+
+            let catchUp = try #require(await slot.host.deactivateTelegram(in: slot.id))
+            #expect(catchUp.entries.isEmpty)
+            #expect(slot.incarnation.reducer == nil)
+            #expect(slot.controller.observers.isEmpty)
             await slot.host.shutdown()
         }
     }
@@ -510,10 +639,10 @@ struct TelegramChannelTests {
                 #expect(slot.host.admitLine(line, in: slot.id) == .admitted)
             }
             try await slot.host.activateTelegram(in: slot.id)
-            for line in ["/telegram", "/telegram status", "/telegram off", "/exit", " /TELEGRAM OFF "] {
+            for line in ["/telegram", "/telegram off", "/exit", " /TELEGRAM OFF "] {
                 #expect(slot.host.admitLine(line, in: slot.id) == .admitted, "\(line)")
             }
-            for line in ["hello", "/help", "/sessions new", "@coordinator hi", "/telegram on", "/telegram foo"] {
+            for line in ["hello", "/help", "/sessions new", "@coordinator hi", "/telegram on", "/telegram status", "/telegram foo"] {
                 #expect(slot.host.admitLine(line, in: slot.id)
                     == .refused("ZenCODE: this session is driven from Telegram. Use /telegram off to take it back.\n"), "\(line)")
             }
@@ -662,6 +791,146 @@ struct TelegramChannelTests {
         }
     }
 
+    /// The stop button of the chat stops the turn the channel follows, a turn
+    /// of the primary channel that moved onto it with `/telegram on`
+    /// included: the channel recorded the reservation that turn holds when
+    /// it moved, and the stop drops it and fences the turn, as it does for a
+    /// turn the chat started (the primary channel owns the turn's task, so
+    /// the turn ends once the runtime gives it back).
+    @Test
+    nonisolated func theStopButtonStopsAPrimaryTurnThatMovedOntoTheChannel() async throws {
+        try await withEnvironment { environment in
+            let slot = try Self.openSlot(in: environment)
+            await environment.backend.enqueue([
+                .content("Half "),
+                .pause,
+                .content("done"),
+            ])
+            let turn = Task { @ChatSessionActor in
+                try await Self.runPrimaryTurn("long one", on: slot)
+            }
+            #expect(await Self.waitUntil { await environment.backend.isPaused })
+            let primaryPromptID = try #require(slot.incarnation.activePromptID)
+            try await slot.host.activateTelegram(in: slot.id)
+            let channel = try #require(slot.host.telegramChannel(in: slot.id))
+            #expect(channel.activeTurnPromptID == primaryPromptID)
+            #expect(!slot.host.telegramTurnHoldsReservation(in: slot.id))
+            #expect(slot.controller.stateStore.withLock { $0.activeTurnToken } != nil)
+
+            await channel.stopActiveTurn()
+            #expect(slot.incarnation.activePromptID == nil)
+            #expect(slot.controller.stateStore.withLock { $0.activeTurnToken } == nil)
+            await environment.backend.release()
+            try await turn.value
+            #expect(await Self.waitUntil { channel.activeTurnPromptID == nil })
+            await slot.host.shutdown()
+        }
+    }
+
+    // MARK: - After `/telegram off`, and the channel's queue
+
+    /// A line from the chat still answered when `/telegram off` takes the
+    /// slot back starts no turn: `/telegram off` switches the slot back at
+    /// once and stops and awaits the channel's task, and the line (`/plan`,
+    /// held in the middle of its answer) finds the slot back on the primary
+    /// channel, so nothing is reserved, run, or presented, and the session is
+    /// free for the primary channel.
+    @Test
+    nonisolated func aLineStillAnsweredAtTelegramOffStartsNoTurn() async throws {
+        try await withEnvironment { environment in
+            let slot = try Self.openSlot(in: environment)
+            slot.controller.selection.toolKeys.insert("sub-agents")
+            let hold = SubmittedCommandHold()
+            slot.controller.addObserver(hold)
+            try await slot.host.activateTelegram(in: slot.id)
+            let channel = try #require(slot.host.telegramChannel(in: slot.id))
+
+            try await environment.transport.deliver("/plan route all frontends")
+            #expect(await Self.waitUntil { hold.heldLines == ["/plan route all frontends"] })
+            #expect(channel.activeTurnTask != nil)
+            #expect(slot.incarnation.activePromptID == nil)
+
+            let deactivation = Task { @ChatSessionActor in
+                await slot.host.deactivateTelegram(in: slot.id)
+            }
+            #expect(await Self.waitUntil { slot.host.activeChannel(in: slot.id) == .primary })
+            // The line goes on only now, with the slot back on the primary
+            // channel; `/telegram off` waits for it.
+            hold.release()
+            let catchUp = await deactivation.value
+            #expect(catchUp != nil)
+            #expect(channel.activeTurnTask == nil)
+            #expect(!channel.isActive)
+            #expect(await environment.backend.prompts.isEmpty)
+            #expect(slot.incarnation.activePromptID == nil)
+            #expect(!slot.host.telegramTurnHoldsReservation(in: slot.id))
+            #expect(slot.presenter.turnStarts == 0)
+            #expect(slot.presenter.endings.isEmpty)
+            #expect(await !environment.transport.sentTexts.contains { $0.contains("ZenCODE completed") })
+
+            // The session is free for the primary channel.
+            try await Self.runPrimaryTurn("after off", on: slot)
+            #expect(await environment.backend.prompts == ["after off"])
+            #expect(slot.presenter.endings.count == 1)
+            await slot.host.shutdown()
+        }
+    }
+
+    /// The host refuses a turn of the channel while the channel does not
+    /// drive the slot, before anything is reserved or presented.
+    @Test
+    nonisolated func theHostRefusesATelegramTurnWhileTheChannelDoesNotDriveTheSlot() async throws {
+        try await withEnvironment { environment in
+            let slot = try Self.openSlot(in: environment)
+            _ = try #require(slot.host.telegramChannelCreatingIfNeeded(in: slot.id))
+            do {
+                try await slot.host.runTelegramTurn(in: slot.id, prompt: "not now")
+                Issue.record("The host ran a turn of a channel that does not drive the slot")
+            } catch let refusal as ChatTelegramTurnRefusal {
+                #expect(refusal == .channelDoesNotDriveSlot)
+            } catch {
+                Issue.record("Expected the refusal, got \(error)")
+            }
+            #expect(slot.incarnation.activePromptID == nil)
+            #expect(slot.presenter.endings.isEmpty)
+            #expect(await environment.backend.prompts.isEmpty)
+            await slot.host.shutdown()
+        }
+    }
+
+    /// A voice note transcribed while a turn the channel did not start runs
+    /// (a turn of the primary channel that moved onto it) waits in the
+    /// channel's queue and runs as soon as that turn ends, without waiting
+    /// for another turn of the channel.
+    @Test
+    nonisolated func aTranscriptQueuedDuringATurnThatMovedOntoTheChannelRunsWhenThatTurnEnds() async throws {
+        try await withEnvironment { environment in
+            let slot = try Self.openSlot(in: environment)
+            await environment.backend.enqueue([.content("Half "), .pause, .content("done")])
+            let turn = Task { @ChatSessionActor in
+                try await Self.runPrimaryTurn("long one", on: slot)
+            }
+            #expect(await Self.waitUntil { await environment.backend.isPaused })
+            try await slot.host.activateTelegram(in: slot.id)
+            let channel = try #require(slot.host.telegramChannel(in: slot.id))
+            let lease = try #require(channel.activeRouteLease)
+
+            await channel.voiceTranscriptionDidFinish(.success("from a voice note"), lease: lease)
+            #expect(channel.promptQueue.count == 1)
+            #expect(channel.activeTurnTask == nil)
+
+            await environment.backend.release()
+            try await turn.value
+            #expect(await Self.waitUntil {
+                await environment.transport.sentTexts.contains { $0.contains("Answer to: from a voice note") }
+            })
+            #expect(await environment.backend.prompts == ["long one", "from a voice note"])
+            #expect(channel.promptQueue.isEmpty)
+            #expect(await Self.waitUntil { slot.incarnation.activePromptID == nil })
+            await slot.host.shutdown()
+        }
+    }
+
     // MARK: - Consent remembered
 
     /// An *Always* given in the chat is recorded in the consent authorizer
@@ -702,6 +971,73 @@ struct TelegramChannelTests {
             try await Self.runPrimaryTurn("run it again", on: slot)
             #expect(await environment.backend.permissionDecisions == [true, true])
             #expect(await slot.interactionHost.requests.isEmpty)
+            await slot.host.shutdown()
+        }
+    }
+
+    // MARK: - A slot that publishes state
+
+    /// A slot that publishes state (an app) keeps its own reducer through the
+    /// handover: the turns Telegram runs are recorded there (the prompt with
+    /// the origin `.telegram`, the blocks, the phases, all in one turn), the
+    /// catch-up is read from it, and after `/telegram off` it is neither
+    /// detached nor replaced, so the turns of the app follow in the same log.
+    @Test
+    nonisolated func aSlotThatPublishesStateRecordsTheTelegramTurnsAndKeepsItsReducer() async throws {
+        try await withEnvironment { environment in
+            let slot = try Self.openSlot(in: environment, pendingRequests: true)
+            let reducer = try #require(slot.incarnation.reducer)
+            try await Self.runPrimaryTurn("from the app", on: slot)
+            let lastSeen = try #require(reducer.snapshot.log.last?.sequence)
+
+            try await slot.host.activateTelegram(in: slot.id)
+            #expect(slot.incarnation.reducer === reducer)
+            #expect(slot.controller.observers.count == 1)
+            await environment.backend.enqueue([.content("Telegram "), .content("answer")])
+            try await environment.transport.deliver("from the chat")
+            #expect(await Self.waitUntil {
+                await environment.transport.sentTexts.contains { $0.contains("ZenCODE completed") }
+            })
+            #expect(await Self.waitUntil {
+                slot.incarnation.activePromptID == nil && reducer.snapshot.turn.phase == .finishing
+            })
+
+            let fromTelegram = reducer.snapshot.log.filter { $0.sequence > lastSeen }
+            #expect(Self.lines(of: fromTelegram) == ["telegram: from the chat", "assistant: Telegram answer"])
+            let phases = fromTelegram.compactMap { entry -> ChatTurnPhase? in
+                guard case let .turnPhase(phase) = entry.kind else { return nil }
+                return phase
+            }
+            #expect(phases.first == .started)
+            #expect(phases.last == .finishing)
+            #expect(phases.contains(.modelReturned))
+            #expect(Set(fromTelegram.map(\.turnID)).count == 1)
+            #expect(fromTelegram.first?.turnID != nil)
+            #expect(!reducer.snapshot.turn.isGenerating)
+
+            let catchUp = try #require(await slot.host.deactivateTelegram(in: slot.id))
+            #expect(!catchUp.incarnationChanged)
+            #expect(!catchUp.omittedOlderEntries)
+            #expect(catchUp.entries == fromTelegram)
+            // Neither detached nor replaced.
+            #expect(slot.incarnation.reducer === reducer)
+            #expect(slot.controller.observers.count == 1)
+            #expect(slot.controller.observers.first === reducer)
+
+            // The turns of the app follow in the same, coherent log.
+            try await Self.runPrimaryTurn("back on the app", on: slot)
+            let lastFromTelegram = try #require(fromTelegram.last?.sequence)
+            #expect(Self.lines(of: reducer.snapshot.log.filter { $0.sequence > lastFromTelegram })
+                == ["app: back on the app", "assistant: Answer to: back on the app"])
+            #expect(Self.lines(of: reducer.snapshot.transcript) == [
+                "app: from the app", "assistant: Answer to: from the app",
+                "telegram: from the chat", "assistant: Telegram answer",
+                "app: back on the app", "assistant: Answer to: back on the app",
+            ])
+            let sequences = reducer.snapshot.log.map(\.sequence)
+            #expect(zip(sequences, sequences.dropFirst()).allSatisfy { $0 < $1 })
+            #expect(reducer.snapshot.firstRetainedSequence == 1)
+            #expect(reducer.snapshot.summary.activeChannel == .app)
             await slot.host.shutdown()
         }
     }

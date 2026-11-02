@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Synchronization
 
 /// One prompt per incarnation. The reservation is taken, checked, and
 /// released in single calls of the host, each atomic on ``ChatSessionActor``:
@@ -19,12 +20,24 @@ extension ChatSessionHost {
 
     /// Reserves the right to run one prompt on the session `slotID` runs now.
     /// Throws `.sessionBusy` while a prompt or a reconfiguration is reserved,
-    /// `.noSession` or `.unknownSlot` when there is nothing to prompt, and
-    /// `.shutDown` after ``shutdown()``.
+    /// `.noSession` or `.unknownSlot` when there is nothing to prompt (a slot
+    /// retired for its close included, see
+    /// ``retireIncarnation(in:controller:)``), and `.shutDown` after
+    /// ``shutdown()`` or once ``beginShutdown()`` announced it.
     public func reservePrompt(in slotID: ChatSlotID) throws(ChatSessionHostError) -> ChatPromptReservation {
-        guard !isShutDown else { throw .shutDown }
+        try reserveIncarnation(in: slotID).reservation
+    }
+
+    /// ``reservePrompt(in:)``, returning with the reservation the slot and
+    /// the incarnation it reserved, read in the same step.
+    func reserveIncarnation(
+        in slotID: ChatSlotID
+    ) throws(ChatSessionHostError) -> (
+        slot: ChatSlot, incarnation: ChatSessionIncarnation, reservation: ChatPromptReservation
+    ) {
+        guard !isShutDown, !retirement.isShuttingDown else { throw .shutDown }
         guard let slot = slots[slotID] else { throw .unknownSlot }
-        guard var incarnation = slot.incarnation else { throw .noSession }
+        guard !retirement.isRetired(slotID), var incarnation = slot.incarnation else { throw .noSession }
         guard incarnation.activePromptID == nil, incarnation.operationState == .idle else {
             throw .sessionBusy
         }
@@ -32,12 +45,13 @@ extension ChatSessionHost {
         incarnation.activePromptID = promptID
         incarnation.operationState = .prompting(promptID)
         slot.incarnation = incarnation
-        return ChatPromptReservation(
+        let reservation = ChatPromptReservation(
             slotID: slotID,
             sessionID: incarnation.sessionID,
             epoch: incarnation.epoch,
             promptID: promptID
         )
+        return (slot, incarnation, reservation)
     }
 
     /// Releases `reservation` when it is still the live one of its
@@ -112,6 +126,12 @@ extension ChatSessionHost {
         liveIncarnation(in: slotID, epoch: epoch)?.activePromptID
     }
 
+    /// The prompt reserved on the session `slotID` runs now, if any.
+    func activePromptID(in slotID: ChatSlotID) -> UUID? {
+        guard !isShutDown else { return nil }
+        return slots[slotID]?.incarnation?.activePromptID
+    }
+
     /// The prompts reserved on the incarnations `bindings` names (slot to
     /// epoch), by slot, read in one step for a caller that must capture them
     /// before it suspends. Incarnations that are not live have no entry.
@@ -158,6 +178,18 @@ extension ChatSessionHost {
         return cancelledPromptID
     }
 
+    /// ``cancelPrompt(in:armingWorkflowRecovery:)`` for the prompt `promptID`
+    /// only: the controller is fenced and the reservation dropped while
+    /// `promptID` is the prompt reserved on the session `slotID` runs now;
+    /// otherwise nothing happens, so a prompt reserved after `promptID` was
+    /// released (by a cancel of its own) keeps its turn and its reservation.
+    /// Returns whether it cancelled.
+    @discardableResult
+    func cancelPrompt(_ promptID: UUID, in slotID: ChatSlotID) -> Bool {
+        guard activePromptID(in: slotID) == promptID else { return false }
+        return cancelPrompt(in: slotID) == promptID
+    }
+
     // MARK: - Reconfiguration
 
     /// Reserves the right to reconfigure the session `slotID` runs now, which
@@ -166,9 +198,9 @@ extension ChatSessionHost {
     func reserveReconfiguration(
         in slotID: ChatSlotID
     ) throws(ChatSessionHostError) -> ChatReconfigurationReservation {
-        guard !isShutDown else { throw .shutDown }
+        guard !isShutDown, !retirement.isShuttingDown else { throw .shutDown }
         guard let slot = slots[slotID] else { throw .unknownSlot }
-        guard var incarnation = slot.incarnation else { throw .noSession }
+        guard !retirement.isRetired(slotID), var incarnation = slot.incarnation else { throw .noSession }
         guard incarnation.activePromptID == nil, incarnation.operationState == .idle else {
             throw .sessionBusy
         }
@@ -204,5 +236,74 @@ extension ChatSessionHost {
         incarnation.operationState = .idle
         slot.incarnation = incarnation
         return true
+    }
+
+    // MARK: - Retirement
+
+    /// Retires the session `slotID` runs, for a channel that closes the slot
+    /// only after it suspended (ACP's `session/close` drains the prompts of
+    /// the session first): `controller`, the incarnation's, is fenced, so a
+    /// turn still running cannot write session state back, and from this call
+    /// on no prompt, reconfiguration, or replacement is reserved on the slot
+    /// (``reservePrompt(in:)``, a turn of the slot's Telegram channel
+    /// included, answers `.noSession`). What is reserved already stays, for
+    /// its owner to release; the slot, its incarnation, and its Telegram
+    /// channel live until ``closeSlot(_:runtimeSession:)``.
+    ///
+    /// It does not suspend and runs in any isolation domain, so a channel
+    /// actor calls it in the same step in which it stops knowing the session,
+    /// before its first suspension.
+    nonisolated func retireIncarnation(in slotID: ChatSlotID, controller: ChatSessionController) {
+        controller.cancelActiveTurn()
+        retirement.retire(slotID)
+    }
+
+    /// Announces ``shutdown()`` to a channel that shuts the host down only
+    /// after it suspended (ACP's `shutdown` closes its transport first): from
+    /// this call on no prompt, reconfiguration, or replacement is reserved on
+    /// any slot (they answer `.shutDown`). Like
+    /// ``retireIncarnation(in:controller:)``, it does not suspend and runs in
+    /// any isolation domain; fencing the controllers is the caller's.
+    nonisolated func beginShutdown() {
+        retirement.beginShutdown()
+    }
+}
+
+/// What ``ChatSessionHost/retireIncarnation(in:controller:)`` and
+/// ``ChatSessionHost/beginShutdown()`` latch, under a lock: they are called
+/// from another isolation domain without suspending, and every reservation
+/// reads it on ``ChatSessionActor``.
+final class ChatSlotRetirement: Sendable {
+    private struct State {
+        var isShuttingDown = false
+        var retiredSlotIDs: Set<ChatSlotID> = []
+    }
+
+    private let state = Mutex(State())
+
+    init() {}
+
+    /// `true` once ``beginShutdown()`` ran.
+    var isShuttingDown: Bool {
+        state.withLock { $0.isShuttingDown }
+    }
+
+    /// Whether `slotID` was retired and not closed yet.
+    func isRetired(_ slotID: ChatSlotID) -> Bool {
+        state.withLock { $0.retiredSlotIDs.contains(slotID) }
+    }
+
+    func retire(_ slotID: ChatSlotID) {
+        state.withLock { _ = $0.retiredSlotIDs.insert(slotID) }
+    }
+
+    func beginShutdown() {
+        state.withLock { $0.isShuttingDown = true }
+    }
+
+    /// Forgets a retired slot once it is closed: its id is unknown from now
+    /// on, so nothing reads the entry again.
+    func forget(_ slotID: ChatSlotID) {
+        state.withLock { _ = $0.retiredSlotIDs.remove(slotID) }
     }
 }

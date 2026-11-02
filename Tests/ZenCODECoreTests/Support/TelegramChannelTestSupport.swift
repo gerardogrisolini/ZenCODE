@@ -120,6 +120,15 @@ enum TelegramChannelTestSupport {
         return writes
     }
 
+    /// Stands in for the interactive input loop of `terminal`, which
+    /// `/telegram on` needs (``TerminalChat/loopEventQueue``), for a test that
+    /// drives the commands directly. Nothing reads the queue: a test that
+    /// adopts a turn runs the real loop instead.
+    @ChatSessionActor
+    static func standInForInteractiveLoop(of terminal: TerminalChat) {
+        terminal.loopEventQueue = TerminalChatEventQueue()
+    }
+
     /// Polls `condition` for up to five seconds.
     @ChatSessionActor
     static func waitUntil(_ condition: () async -> Bool) async throws {

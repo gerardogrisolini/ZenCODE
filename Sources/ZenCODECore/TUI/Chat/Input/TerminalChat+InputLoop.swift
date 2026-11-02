@@ -151,9 +151,12 @@ extension TerminalChat {
         }
 
         func scheduleQueuedPromptIfNeeded() {
+            // While Telegram drives the slot the queue waits, whole, for
+            // `/telegram off` (see `handleSubmittedPanelLine`).
             guard !isGenerating,
                   !queuedPrompts.isEmpty,
-                  !isQueuedPromptStartScheduled else {
+                  !isQueuedPromptStartScheduled,
+                  sessionHost.activeChannel(in: terminalSlotID) == .primary else {
                 return
             }
             isQueuedPromptStartScheduled = true
@@ -261,6 +264,9 @@ extension TerminalChat {
         }
 
         func startGeneration(attempt: TerminalPromptAttempt) async {
+            // Every turn the terminal starts passes here: none starts while
+            // Telegram drives the slot.
+            guard await admitTerminalInput() else { return }
             // The turn is reserved in the session host, so the slot's Telegram
             // channel sees the session busy and never runs a turn alongside.
             // A reservation that fails (the channel's own turn still runs
@@ -314,6 +320,9 @@ extension TerminalChat {
         }
 
         func startDirectPrompt(_ prompt: String, origin: TerminalPromptOrigin) async {
+            // Asked before the prompt takes the staged attachments or is
+            // echoed; `startGeneration` asks again for the other turns.
+            guard await admitTerminalInput() else { return }
             let attempt = promptAttempt(prompt: prompt, origin: origin)
             await writeSubmittedPrompt(prompt)
             await startGeneration(attempt: attempt)
@@ -327,6 +336,9 @@ extension TerminalChat {
             isGenerating = true
             onInteractiveGenerationStateForTesting?(true)
             await synchronizeSharedChatConsumerBusyState()
+            // Not redundant with the presenter's `turnDidMoveToChannel`: a
+            // turn whose prompt is reserved before it opens, or after it
+            // finished, is adopted without moving.
             await statusBar.beginRequest()
             await statusBar.setProcessing(true)
             await interactiveReader.setPanelProcessing(true)
@@ -351,6 +363,7 @@ extension TerminalChat {
             origin: TerminalPromptOrigin = .local
         ) async -> Bool {
             let shouldSuspendPanel = origin == .local && Self.shouldSuspendPanelInput(for: line)
+            let wasDormant = sessionHost.activeChannel(in: terminalSlotID) != .primary
             if shouldSuspendPanel {
                 await stopPanelInput(clearPanel: false)
                 await renderCoordinator.setOverviewPublishingSuspended(true)
@@ -363,6 +376,11 @@ extension TerminalChat {
             // `/telegram off` while a turn from Telegram runs: the loop takes
             // the turn over before it handles anything else.
             await adoptRunningTurnIfNeeded()
+            // `/telegram off` gave the slot back: the prompts queued before
+            // `/telegram on` run now, or once the adopted turn ends.
+            if wasDormant, sessionHost.activeChannel(in: terminalSlotID) == .primary {
+                scheduleQueuedPromptIfNeeded()
+            }
 
             switch action {
             case .continueChat:
@@ -408,7 +426,10 @@ extension TerminalChat {
         /// A typed or dictated line. Returns `false` when the loop must end.
         func handleSubmittedInputLine(_ line: String) async -> Bool {
             // While Telegram drives the slot the terminal runs only what takes
-            // it back; everything else is refused before it is routed.
+            // it back; everything else is refused before it is routed. The
+            // one admission of a line: a queued line starts only while the
+            // terminal drives its slot, and the line-by-line fallback never
+            // hands its slot over.
             guard await admitTerminalLine(line) else {
                 return true
             }
@@ -432,7 +453,10 @@ extension TerminalChat {
             case .none:
                 break
             }
-            if !isGenerating, !queuedPrompts.isEmpty {
+            // While Telegram drives the slot the queue waits for
+            // `/telegram off`, which runs now instead of queuing behind it.
+            if !isGenerating, !queuedPrompts.isEmpty,
+               sessionHost.activeChannel(in: terminalSlotID) == .primary {
                 guard queuedPrompts.enqueue(
                     ChatQueuedPrompt<TerminalPromptOrigin>(text: line, origin: .local)
                 ) else {
@@ -475,7 +499,10 @@ extension TerminalChat {
         func handleVoicePromptCompleted(_ result: TerminalVoicePromptResult) async {
             switch result.outcome {
             case let .success(prompt):
-                guard await admitTerminalLine(prompt) else { return }
+                // A dictation is never a command, whatever it reads: while
+                // Telegram drives the slot it is refused, a dictated `/exit`
+                // or `/telegram off` included.
+                guard await admitTerminalInput() else { return }
                 if isGenerating || !queuedPrompts.isEmpty {
                     guard queuedPrompts.enqueue(
                         ChatQueuedPrompt<TerminalPromptOrigin>(
@@ -628,6 +655,9 @@ extension TerminalChat {
             case .askMessageText:
                 await speakVoiceDialogueOrCancel(TerminalVoiceChatPhrases.messagePrompt(languageCode: voiceLanguageCode()))
             case let .send(destination, text, label):
+                // A mention by voice is not one of the lines that take the
+                // slot back: refused like a typed one while Telegram drives.
+                guard await admitTerminalInput() else { return true }
                 let languageCode = await voiceLanguageCode()
                 // Checked here as well so the spoken reason names the agent;
                 // the terminal gets the same notice a typed mention would.
@@ -686,8 +716,15 @@ extension TerminalChat {
                     }
                 case .cancelRequested:
                     generationTask?.cancel()
+                    // A turn adopted from Telegram runs without a task of
+                    // this loop: the slot's channel stops it.
+                    if isGenerating, generationTask == nil {
+                        await stopAdoptedTurn()
+                    }
                     await interruptVoicePlayback()
                 case .toggleAccessModeRequested:
+                    // The session Telegram drives keeps its access mode.
+                    guard await admitTerminalInput() else { continue }
                     let accessMode = await sessionRunner.toggleLocalExecAccessMode()
                     await statusBar.update(localExecAccessMode: accessMode)
                     await writeAccessModeChangeMessage(accessMode)
@@ -785,9 +822,10 @@ extension TerminalChat {
                 await synchronizePanelPendingAttachmentCount()
                 // The channel that drives the slot presents the ending: the
                 // terminal, or Telegram when `/telegram on` ran meanwhile.
-                await presentOwnTurnEnding(result)
+                let didPresentEnding = await presentOwnTurnEnding(result)
                 var isReadingAnswer = false
-                if case let .success(success) = result {
+                // An answer Telegram presented is not read aloud here.
+                if didPresentEnding, case let .success(success) = result {
                     // Replaces a comment still being read: `speak` takes over
                     // whatever is being read and the answer is not subject to
                     // the "nothing else is being read" rule of comments.
@@ -808,7 +846,10 @@ extension TerminalChat {
                 scheduleQueuedPromptIfNeeded()
             case .startNextQueuedPrompt:
                 isQueuedPromptStartScheduled = false
-                guard !isGenerating, !queuedPrompts.isEmpty else {
+                // Scheduled before `/telegram on` ran: the queue waits for
+                // `/telegram off`, whole.
+                guard !isGenerating, !queuedPrompts.isEmpty,
+                      sessionHost.activeChannel(in: terminalSlotID) == .primary else {
                     continue
                 }
                 let nextPrompt = queuedPrompts.dequeue()!

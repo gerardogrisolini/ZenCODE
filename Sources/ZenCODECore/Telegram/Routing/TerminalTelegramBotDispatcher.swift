@@ -7,15 +7,17 @@
 
 import Foundation
 
-/// Process-wide owner of Bot API polling and persisted offsets.
+/// Owner of Bot API polling and persisted offsets for the control services
+/// that share it: one per ``ChatSessionHost``, which hands it to the Telegram
+/// channel of every slot (`ChatSessionHost+Telegram.swift`).
 ///
-/// There is exactly one long poll for a bot id. Every active terminal service
-/// receives a broadcast copy of each update and applies its own route/room ACL;
-/// therefore one session can never acknowledge and discard another session's
-/// update before that session sees it.
+/// There is exactly one long poll for a bot id per dispatcher. Every active
+/// terminal service receives a broadcast copy of each update and applies its
+/// own route/room ACL; therefore one session can never acknowledge and
+/// discard another session's update before that session sees it. Two
+/// dispatchers polling the same bot run two long polls, which the Bot API
+/// refuses (HTTP 409): the services of one process share one dispatcher.
 actor TerminalTelegramBotDispatcher {
-    static let shared = TerminalTelegramBotDispatcher()
-
     struct Subscription: Sendable {
         let id: UUID
         let botID: Int64

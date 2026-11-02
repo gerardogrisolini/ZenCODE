@@ -355,6 +355,102 @@ struct TerminalSessionStoreTests {
         #expect(FileManager.default.fileExists(atPath: sourceURL.path))
     }
 
+    /// A save writes `.<name>.<UUID>.tmp` and renames it: the migration,
+    /// which may run in another process, never moves a hidden file or a
+    /// `*.tmp`, so the rename of a first save cannot fail under it.
+    @Test
+    func migrationLeavesSavesInProgressAndHiddenFilesWhereTheyAre() throws {
+        let supportDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+        let projectURL = supportDirectory
+            .appendingPathComponent("Project", isDirectory: true)
+        let session = sampleSession(
+            name: "saving now",
+            workingDirectory: projectURL
+        )
+        let directoryURL = TerminalSessionStore.sessionsDirectoryURL(
+            for: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+        let destinationURL = TerminalSessionStore.sessionFileURL(
+            name: session.name,
+            workingDirectory: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+        try FileManager.default.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: true
+        )
+        let data = try PropertyListEncoder().encode(session)
+        let inProgressURL = directoryURL.appendingPathComponent(
+            ".\(destinationURL.lastPathComponent).\(UUID().uuidString).tmp"
+        )
+        let hiddenURL = directoryURL.appendingPathComponent(".stored-record")
+        let temporaryURL = directoryURL.appendingPathComponent("stored-record.tmp")
+        for url in [inProgressURL, hiddenURL, temporaryURL] {
+            try data.write(to: url)
+        }
+
+        let listed = try TerminalSessionStore.savedSessions(
+            for: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+        #expect(throws: (any Error).self) {
+            try TerminalSessionStore.load(
+                name: session.name,
+                workingDirectory: projectURL,
+                supportDirectoryURL: supportDirectory
+            )
+        }
+
+        #expect(listed.isEmpty)
+        for url in [inProgressURL, hiddenURL, temporaryURL] {
+            #expect(FileManager.default.fileExists(atPath: url.path))
+        }
+        #expect(!FileManager.default.fileExists(atPath: destinationURL.path))
+    }
+
+    /// `migrating: false` only lists: a session file with another name
+    /// stays where it is, and is not listed.
+    @Test
+    func listingWithoutMigrationMovesNothing() throws {
+        let supportDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+        let projectURL = supportDirectory
+            .appendingPathComponent("Project", isDirectory: true)
+        let current = sampleSession(name: "current", workingDirectory: projectURL)
+        let legacy = sampleSession(name: "legacy", workingDirectory: projectURL)
+        _ = try TerminalSessionStore.save(current, supportDirectoryURL: supportDirectory)
+        let directoryURL = TerminalSessionStore.sessionsDirectoryURL(
+            for: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+        let sourceURL = directoryURL.appendingPathComponent("stored-record")
+        try PropertyListEncoder().encode(legacy).write(to: sourceURL)
+        let destinationURL = TerminalSessionStore.sessionFileURL(
+            name: legacy.name,
+            workingDirectory: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+
+        let listed = try TerminalSessionStore.savedSessions(
+            for: projectURL,
+            migrating: false,
+            supportDirectoryURL: supportDirectory
+        )
+
+        #expect(listed == [current])
+        #expect(FileManager.default.fileExists(atPath: sourceURL.path))
+        #expect(!FileManager.default.fileExists(atPath: destinationURL.path))
+        // The default listing still migrates it.
+        let migrated = try TerminalSessionStore.savedSessions(
+            for: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+        #expect(Set(migrated.map(\.name)) == ["current", "legacy"])
+        #expect(!FileManager.default.fileExists(atPath: sourceURL.path))
+    }
+
     @Test
     func deletesSavedSessionByName() throws {
         let supportDirectory = temporaryDirectory()

@@ -176,6 +176,10 @@ final class ChatSlot {
     /// presents), set by the host when it opens the slot (see
     /// `ChatSessionHost+Shell.swift`).
     var shellFactsDidChange: (@ChatSessionActor () -> Void)?
+    /// `true` while the host replaces the slot's incarnation: the shell
+    /// shows the slot once the replacement is done, never in between (see
+    /// `ChatSessionHost+Shell.swift`).
+    var holdsShellFacts = false
     /// The epoch of the incarnation the shell last read the saved sessions
     /// for, so that a new incarnation reads them again.
     var shellSavedSessionsEpoch: UInt64?
@@ -208,6 +212,12 @@ final class ChatSlot {
     var telegramTurnPromptID: UUID? {
         didSet { shellFactsDidChange?() }
     }
+    /// `true` while ``ChatSessionHost/activateTelegram(in:primaryChannelDescription:)``
+    /// runs on the slot: another activation waits for it
+    /// (``waitForTelegramActivation()``) instead of handing the slot over a
+    /// second time.
+    var isActivatingTelegram = false
+    private var telegramActivationWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(id: ChatSlotID, descriptor: ChatSlotDescriptor) {
         self.id = id
@@ -242,7 +252,7 @@ final class ChatSlot {
     func setIncarnation(_ incarnation: ChatSessionIncarnation?) {
         self.incarnation = incarnation
         if activeChannel == .primary {
-            slotInteractionHost.setActiveHost(primaryInteractionHost)
+            setPrimaryInteractionHostActive()
         }
         for observer in incarnationObservers.values {
             observer(incarnation)
@@ -267,11 +277,44 @@ final class ChatSlot {
         activeChannel = channel
         switch channel {
         case .primary:
-            slotInteractionHost.setActiveHost(primaryInteractionHost)
+            setPrimaryInteractionHostActive()
         case .telegram:
-            slotInteractionHost.setActiveHost(telegramChannel ?? primaryInteractionHost)
+            slotInteractionHost.setActiveHost(
+                telegramChannel ?? primaryInteractionHost,
+                channel: .telegram,
+                incarnationEpoch: incarnation?.epoch
+            )
         }
         shellFactsDidChange?()
+    }
+
+    /// Points the slot's host at the primary host of the incarnation the slot
+    /// runs; nothing moves when that is the host already active.
+    private func setPrimaryInteractionHostActive() {
+        slotInteractionHost.setActiveHost(
+            primaryInteractionHost,
+            channel: .primary,
+            incarnationEpoch: incarnation?.epoch
+        )
+    }
+
+    /// Waits until no activation of Telegram runs on the slot.
+    func waitForTelegramActivation() async {
+        while isActivatingTelegram {
+            await withCheckedContinuation { telegramActivationWaiters.append($0) }
+        }
+    }
+
+    /// Ends the activation of Telegram that runs on the slot and wakes the
+    /// activations that wait for it; the first of them to run goes on, the
+    /// others wait for that one.
+    func endTelegramActivation() {
+        isActivatingTelegram = false
+        let waiters = telegramActivationWaiters
+        telegramActivationWaiters = []
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 
     /// Forgets the observers and ends the streams: the slot is closing.

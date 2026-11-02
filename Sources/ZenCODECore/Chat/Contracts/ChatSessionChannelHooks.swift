@@ -180,11 +180,13 @@ public protocol ChatSessionChannelHooks: AnyObject, Sendable {
     /// composition with ``responseLanguageSection()``
     /// (``ChatSessionController/turnSessionConfiguration(for:responseLanguageSection:)``),
     /// which is the terminal's; a channel that composes its turns otherwise
-    /// overrides it.
+    /// overrides it. A channel that no longer runs `controller`'s session (an
+    /// ACP session that closed) throws instead of composing, and the turn is
+    /// released without starting.
     func turnSessionConfiguration(
         for purpose: ChatTurnPurpose,
         controller: ChatSessionController
-    ) async -> AgentCoreSessionConfiguration
+    ) async throws -> AgentCoreSessionConfiguration
 
     /// Runs `body`, the turn that another channel of the slot (its Telegram
     /// channel) starts on `controller`, in the environment this channel gives
@@ -192,9 +194,11 @@ public protocol ChatSessionChannelHooks: AnyObject, Sendable {
     /// beyond its configuration (a text file system the host client serves,
     /// the prompt-skill selection of the active agent). The channel sets that
     /// environment up, runs `body` once inside it, and returns what `body`
-    /// returns or rethrows what it throws; it never skips `body` or runs it
-    /// more than once. The default runs `body` as it is, which is the
-    /// terminal's: its turns have no environment of their own.
+    /// returns or rethrows what it throws; it never runs `body` more than
+    /// once, and skips it only to refuse the turn, by throwing before it
+    /// runs, when it no longer runs `controller`'s session. The default runs
+    /// `body` as it is, which is the terminal's: its turns have no
+    /// environment of their own.
     func runTurnFromAnotherChannel(
         controller: ChatSessionController,
         _ body: () async throws -> ChatTurnResult

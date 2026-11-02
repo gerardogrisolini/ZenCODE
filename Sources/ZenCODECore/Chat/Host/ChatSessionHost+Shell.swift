@@ -15,25 +15,31 @@ import ToolCore
 /// The sessions and the slots Telegram drives are in memory and kept current
 /// without suspending: the slot reports every change of its incarnation, of
 /// the channel that drives it, and of the state its controller presents, and
-/// a reducer the host created reports every change of its summary. The saved
-/// sessions, the Telegram settings, and the poller's state are read only
-/// while a shell observes the host, from its first ``shellSnapshots()`` or
-/// ``refreshShellSnapshot()`` on, never on a timer: the saved sessions of a
-/// workspace when a slot of it starts another session and when a session of
-/// the host is saved or deleted, the poller when a slot hands itself to
-/// Telegram, takes itself back, or closes, and everything on request. Disk
-/// reads run off the chat actor and are applied on it, dropped when a later
-/// read of the same thing overtook them or the workspace is no longer open.
+/// a reducer the host created reports every change of its summary; a new or
+/// loaded session is shown once, with the session, never as a slot without
+/// one in between. The saved sessions, the Telegram settings, and the
+/// poller's state are read only while a shell observes the host, from its
+/// first ``shellSnapshots()`` or ``refreshShellSnapshot()`` until its last
+/// stream ends, never on a timer: the saved sessions of a workspace when a
+/// slot of it starts another session and when a session of the host is
+/// saved or deleted, the settings and the poller together when a slot hands
+/// itself to Telegram, takes itself back, or closes, and everything on
+/// request. Disk reads run off the chat actor and are applied on it, dropped
+/// when a later read of the same thing overtook them or the workspace is no
+/// longer open. The workspaces are keyed by their standardized URL
+/// (`standardizedFileURL`).
 extension ChatSessionHost {
     // MARK: - Observation
 
     /// A stream of the shell snapshots: the current one at once, then one
     /// after every change. Like a reducer's snapshots, a slow consumer skips
     /// to the newest. Each call returns a new stream; it ends when the
-    /// consumer stops iterating or on ``shutdown(keepingExternalTools:)``,
-    /// after the last snapshot, and at once after a shutdown. The first call
-    /// starts observing the host: the saved sessions and the Telegram state
-    /// are read, off the chat actor, and follow in later snapshots.
+    /// consumer stops iterating, on ``shutdown(keepingExternalTools:)``,
+    /// after the last snapshot, or when the host is released, and at once
+    /// after a shutdown. The first call starts observing the host: the saved
+    /// sessions and the Telegram state are read, off the chat actor, and
+    /// follow in later snapshots; the observation stops when the last open
+    /// stream ends.
     public func shellSnapshots() -> AsyncStream<ChatShellSnapshot> {
         let (stream, continuation) = AsyncStream.makeStream(
             of: ChatShellSnapshot.self,
@@ -49,7 +55,7 @@ extension ChatSessionHost {
         continuation.onTermination = { [weak self] _ in
             guard let self else { return }
             Task { @ChatSessionActor in
-                self.shellStreams.removeValue(forKey: token)
+                self.shellStreamDidEnd(token)
             }
         }
         startShellObservationIfNeeded()
@@ -59,7 +65,8 @@ extension ChatSessionHost {
     /// Reads again what the shell snapshot does not keep in memory, off the
     /// chat actor, and publishes it: the saved sessions of every workspace an
     /// open slot runs sessions in, whether Telegram is configured, and
-    /// whether the poller runs. The host is observed from then on (see
+    /// whether the poller runs. The host is observed from then on, until the
+    /// last open stream of ``shellSnapshots()`` ends (see
     /// ``ChatShellSnapshot/savedSessions``). Nothing happens after a
     /// shutdown.
     public func refreshShellSnapshot() async {
@@ -68,8 +75,14 @@ extension ChatSessionHost {
         for workspace in shellWorkspaces.sorted(by: { $0.path < $1.path }) {
             await readShellSavedSessions(in: workspace)
         }
-        await readShellTelegramConfiguration()
-        await readShellTelegramPolling()
+        await readShellTelegramState()
+    }
+
+    /// The stream `token` ended: the shell stops observing the host with the
+    /// last one, so nothing is read on disk for nobody.
+    private func shellStreamDidEnd(_ token: UUID) {
+        guard shellStreams.removeValue(forKey: token) != nil, shellStreams.isEmpty else { return }
+        isShellObserved = false
     }
 
     // MARK: - Sessions
@@ -97,8 +110,9 @@ extension ChatSessionHost {
         return summary
     }
 
-    /// The observer a reducer the host creates for `slot` calls when its
-    /// summary changes.
+    /// The observer of what the shell shows of `slot`: the slot's
+    /// ``ChatSlot/shellFactsDidChange``, and the `summaryDidChange` of every
+    /// reducer the host creates for it.
     func shellSummaryObserver(for slot: ChatSlot) -> @ChatSessionActor () -> Void {
         { [weak self, weak slot] in
             guard let self, let slot else { return }
@@ -109,24 +123,36 @@ extension ChatSessionHost {
     /// `slot` opened: the shell follows it, and reads the saved sessions of
     /// its workspace when no other slot runs sessions in it.
     func shellSlotDidOpen(_ slot: ChatSlot) {
-        slot.shellFactsDidChange = { [weak self, weak slot] in
-            guard let self, let slot else { return }
-            self.shellSlotDidChange(slot)
-        }
+        slot.shellFactsDidChange = shellSummaryObserver(for: slot)
+        let workspace = Self.shellWorkspace(of: slot)
         let isNewWorkspace = !slots.values.contains {
-            $0 !== slot && $0.workingDirectory == slot.workingDirectory
+            $0 !== slot && Self.shellWorkspace(of: $0) == workspace
         }
         shellSlotDidChange(slot)
         if isNewWorkspace {
-            scheduleShellSavedSessionsRead(in: slot.workingDirectory)
+            scheduleShellSavedSessionsRead(in: workspace)
         }
+    }
+
+    /// Runs `body`, which replaces the incarnation of `slot`, with what the
+    /// shell shows of the slot held, then shows the slot once: the session
+    /// that ends, its refused requests, and the slot left without session
+    /// in between are never published.
+    func holdingShellFacts<Value>(of slot: ChatSlot, _ body: () -> Value) -> Value {
+        slot.holdsShellFacts = true
+        defer {
+            slot.holdsShellFacts = false
+            shellSlotDidChange(slot)
+        }
+        return body()
     }
 
     /// What the shell shows of `slot` changed: its summary and whether
     /// Telegram drives it are read again, and a new incarnation reads the
-    /// saved sessions of its workspace.
+    /// saved sessions of its workspace. Nothing happens while the host
+    /// replaces the slot's incarnation (``holdingShellFacts(of:_:)``).
     func shellSlotDidChange(_ slot: ChatSlot) {
-        guard !isShutDown, slots[slot.id] === slot else { return }
+        guard !isShutDown, !slot.holdsShellFacts, slots[slot.id] === slot else { return }
         var next = shellSnapshot
         next.sessions[slot.id] = shellSummary(of: slot)
         next.telegram.drivenSlots = shellDrivenSlots
@@ -136,7 +162,7 @@ extension ChatSessionHost {
             slot.shellSavedSessionsEpoch = epoch
             // The slot's opening reads them already.
             if !isFirstIncarnation {
-                scheduleShellSavedSessionsRead(in: slot.workingDirectory)
+                scheduleShellSavedSessionsRead(in: Self.shellWorkspace(of: slot))
             }
         }
     }
@@ -148,9 +174,10 @@ extension ChatSessionHost {
         var next = shellSnapshot
         next.sessions.removeValue(forKey: slot.id)
         next.telegram.drivenSlots = shellDrivenSlots
-        if !shellWorkspaces.contains(slot.workingDirectory) {
-            next.savedSessions.removeValue(forKey: slot.workingDirectory)
-            shellSavedSessionsReads.removeValue(forKey: slot.workingDirectory)
+        let workspace = Self.shellWorkspace(of: slot)
+        if !shellWorkspaces.contains(workspace) {
+            next.savedSessions.removeValue(forKey: workspace)
+            shellSavedSessionsReads.removeValue(forKey: workspace)
         }
         publishShellSnapshot(next)
     }
@@ -158,7 +185,7 @@ extension ChatSessionHost {
     /// A session of the host was saved or deleted in `workspace`: its saved
     /// sessions are read again.
     func savedSessionsDidChange(in workspace: URL) {
-        scheduleShellSavedSessionsRead(in: workspace)
+        scheduleShellSavedSessionsRead(in: workspace.standardizedFileURL)
     }
 
     /// The host shut down: the last snapshot has no session, and every
@@ -177,6 +204,7 @@ extension ChatSessionHost {
         }
         let streams = shellStreams
         shellStreams.removeAll()
+        isShellObserved = false
         for continuation in streams.values {
             continuation.finish()
         }
@@ -184,17 +212,14 @@ extension ChatSessionHost {
 
     // MARK: - Reads
 
-    /// The first observation reads what nobody read before.
+    /// An observation that starts reads what nobody read before it.
     private func startShellObservationIfNeeded() {
         guard !isShellObserved else { return }
         isShellObserved = true
         for workspace in shellWorkspaces {
             scheduleShellSavedSessionsRead(in: workspace)
         }
-        Task { [weak self] in
-            await self?.readShellTelegramConfiguration()
-        }
-        scheduleShellTelegramPollingRead()
+        scheduleShellTelegramRead()
     }
 
     private func scheduleShellSavedSessionsRead(in workspace: URL) {
@@ -204,18 +229,24 @@ extension ChatSessionHost {
         }
     }
 
-    /// Reads the poller's state again, while a shell observes the host.
-    func scheduleShellTelegramPollingRead() {
+    /// Reads the Telegram settings and the poller's state again, while a
+    /// shell observes the host.
+    func scheduleShellTelegramRead() {
         guard isShellObserved, !isShutDown else { return }
         Task { [weak self] in
-            await self?.readShellTelegramPolling()
+            await self?.readShellTelegramState()
         }
     }
 
     private func readShellSavedSessions(in workspace: URL) async {
         let read = nextShellRead()
         shellSavedSessionsReads[workspace] = read
-        guard let summaries = await Self.savedSessionSummaries(in: workspace),
+        let summaries = if let reader = shellSavedSessionsReader {
+            await reader(workspace)
+        } else {
+            await Self.savedSessionSummaries(in: workspace)
+        }
+        guard let summaries,
               !isShutDown,
               shellWorkspaces.contains(workspace),
               shellSavedSessionsReads[workspace] == read else {
@@ -226,24 +257,19 @@ extension ChatSessionHost {
         publishShellSnapshot(next)
     }
 
-    private func readShellTelegramConfiguration() async {
+    /// Reads whether the settings configure Telegram and whether the poller
+    /// runs, and publishes both in one snapshot, so that they never come
+    /// from reads made at different times.
+    private func readShellTelegramState() async {
         let read = nextShellRead()
-        shellTelegramConfigurationRead = read
+        shellTelegramRead = read
         let isConfigured = await Self.telegramIsConfigured()
-        guard !isShutDown, shellTelegramConfigurationRead == read else { return }
-        var next = shellSnapshot
-        next.telegram.isConfigured = isConfigured
-        publishShellSnapshot(next)
-    }
-
-    private func readShellTelegramPolling() async {
-        let read = nextShellRead()
-        shellTelegramPollingRead = read
         // The poller exists from the first `/telegram on`; it is never
         // created to be read.
         let isPolling = await telegramDispatcherStorage?.isPolling() ?? false
-        guard !isShutDown, shellTelegramPollingRead == read else { return }
+        guard !isShutDown, shellTelegramRead == read else { return }
         var next = shellSnapshot
+        next.telegram.isConfigured = isConfigured
         next.telegram.isPolling = isPolling
         publishShellSnapshot(next)
     }
@@ -255,10 +281,13 @@ extension ChatSessionHost {
     }
 
     /// The saved sessions of `workspace`, most recently saved first, read off
-    /// the chat actor; `nil` when the store cannot be read.
+    /// the chat actor; `nil` when the store cannot be read. The store is
+    /// only listed: migrating its files would move a save in progress.
     @concurrent
     private nonisolated static func savedSessionSummaries(in workspace: URL) async -> [ChatSavedSessionSummary]? {
-        guard let sessions = try? TerminalSessionStore.savedSessions(for: workspace) else { return nil }
+        guard let sessions = try? TerminalSessionStore.savedSessions(for: workspace, migrating: false) else {
+            return nil
+        }
         return sessions.map(ChatSavedSessionSummary.init)
     }
 
@@ -271,9 +300,16 @@ extension ChatSessionHost {
 
     // MARK: - State
 
-    /// The working directories of the open slots.
+    /// The working directories of the open slots, standardized.
     private var shellWorkspaces: Set<URL> {
-        Set(slots.values.map(\.workingDirectory))
+        Set(slots.values.map(Self.shellWorkspace(of:)))
+    }
+
+    /// The key of the workspace of `slot` in the shell: its standardized
+    /// working directory, so that two spellings of one folder are one
+    /// workspace.
+    private static func shellWorkspace(of slot: ChatSlot) -> URL {
+        slot.workingDirectory.standardizedFileURL
     }
 
     /// The slots the linked chat drives now.

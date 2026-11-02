@@ -130,8 +130,10 @@ public actor ZenCODEACPBridge {
     ///
     /// The bridge's own copy of the fence, latched before its first
     /// suspension: every handler checks it synchronously before it looks a
-    /// session up. The host latches its own in `host.shutdown()`, which the
-    /// bridge's `shutdown()` calls last.
+    /// session up. The host latches its own in the same step
+    /// (`host.beginShutdown()`, which refuses every new reservation) and ends
+    /// its slots in `host.shutdown()`, which the bridge's `shutdown()` calls
+    /// last.
     private var didShutDown = false
     /// Authentication method IDs advertised by the most recent `initialize`.
     /// `authenticate` must only acknowledge one of these methods; keeping the
@@ -207,6 +209,10 @@ public actor ZenCODEACPBridge {
         // Fence first, without suspending: every prompt still winding down is
         // now cancelled and forbidden from writing session state back.
         didShutDown = true
+        // The host's copy of the fence, latched in the same step: nothing more
+        // is reserved on any slot (no turn the slots' Telegram channels read
+        // meanwhile), until `host.shutdown()` below ends them.
+        host.beginShutdown()
         // Every lifecycle handler suspended right now is fenced: its next
         // re-check fails, so it cannot create a session, build a backend, or
         // answer on the closing transport.

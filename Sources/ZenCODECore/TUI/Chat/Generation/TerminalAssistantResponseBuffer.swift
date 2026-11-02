@@ -16,6 +16,16 @@ actor TerminalAssistantResponseBuffer {
         return pending
     }
 
+    /// The turn moved onto the terminal after running on another channel,
+    /// and the catch-up rendered what it streamed there, the block held
+    /// here included: that block is dropped, and the turn counts as one that
+    /// streamed content, so its end shows only what streams from now on
+    /// (`Done.` when nothing does) instead of the whole response again.
+    func discardPresentedContent() {
+        pending = ""
+        receivedContent = true
+    }
+
     /// Whether a block is waiting for its tool boundary or the turn end,
     /// without taking it: the Telegram overview barrier reads it to tell that
     /// the tool boundary in progress will write a comment.
