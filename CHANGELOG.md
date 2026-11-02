@@ -221,6 +221,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   are not kept. `/sessions load` restores the selection saved with the
   session, and `/sessions restore` the active saved session from a checkpoint,
   as before. The output of the commands is unchanged.
+- Terminal: the ZenCODE logo shown at startup is now a compact, three-row
+  wordmark with a lowercase "en", instead of the six-row block lettering.
 
 ### Fixed
 
