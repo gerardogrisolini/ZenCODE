@@ -458,6 +458,9 @@ extension ZenCODEACPBridge {
         )
     }
 
+    /// The prompt skills `selectedAgent` (or the launch agent) declares,
+    /// discovered afresh on every call so a skill installed or removed
+    /// meanwhile is picked up. The derivation is the chat controller's.
     public func selectedAgentSkills(
         for selectedAgent: AgentProfile? = nil
     ) -> [PromptSkill] {
@@ -469,10 +472,27 @@ extension ZenCODEACPBridge {
         let availableSkills = PromptSkillCatalog.discoverSkills(
             searchRoots: PromptSkillCatalog.appCatalogSearchRoots()
         )
-        let selectedSkillIDs = selectedAgent.selectedSkillIDs(
-            availableSkills: availableSkills
+        return ChatSessionController.promptSkills(
+            withIDs: ChatSessionController.promptSkillIDs(
+                of: selectedAgent,
+                in: availableSkills
+            ),
+            in: availableSkills
         )
-        return availableSkills.filter { selectedSkillIDs.contains($0.id) }
+    }
+
+    /// Points the runner's prompt-skill selection of `sessionID` at the skills
+    /// `selectedAgent` declares (``selectedAgentSkills(for:)``). The turns the
+    /// session runs begin with it, whichever channel starts them: the editor's
+    /// prompts and the turns of the slot's Telegram channel.
+    func applySelectedAgentSkills(
+        sessionID: String,
+        selectedAgent: AgentProfile?
+    ) async {
+        await sessionRunner.updatePromptSkillSelection(
+            selectedAgentSkills(for: selectedAgent),
+            sessionID: sessionID
+        )
     }
 
 }

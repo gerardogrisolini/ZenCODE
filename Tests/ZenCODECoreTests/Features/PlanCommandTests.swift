@@ -9,7 +9,7 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite
 struct PlanCommandTests {
     @Test
@@ -2771,9 +2771,594 @@ struct PlanCommandTests {
             forFinalText: Self.structuredPlannerFinalText
         ) == nil)
     }
+
+    private static let twoPlanPlannerFinalText = """
+    Piano 1/2: Modello condiviso
+
+    Specifiche concordate
+    - Keep compatibility.
+
+    Implementation plan
+    1. Add the shared model.
+       Dependencies: none
+    2. Wire the TUI command.
+       Dependencies: 1
+
+    Piano 2/2: Validazione
+
+    Specifiche concordate
+    - Validate every frontend.
+
+    Implementation plan
+    1. Validate the ACP bridge.
+       Dependencies: none
+    """
+
+    private static let twoPlanFirstSectionText = """
+    Piano 1/2: Modello condiviso
+
+    Specifiche concordate
+    - Keep compatibility.
+
+    Implementation plan
+    1. Add the shared model.
+       Dependencies: none
+    2. Wire the TUI command.
+       Dependencies: 1
+    """
+
+    private static let twoPlanSecondSectionText = """
+    Piano 2/2: Validazione
+
+    Specifiche concordate
+    - Validate every frontend.
+
+    Implementation plan
+    1. Validate the ACP bridge.
+       Dependencies: none
+    """
+
+    private static func registeredPoint(
+        _ id: String,
+        _ text: String,
+        dependsOn: [String] = []
+    ) -> TerminalSessionPlanPoint {
+        TerminalSessionPlanPoint(
+            id: id,
+            text: text,
+            dependsOn: dependsOn,
+            hasExplicitDependencies: true
+        )
+    }
+
+    private static let twoPlanRegisteredPoints = [
+        registeredPoint("plan-alpha-1", "Add the shared model."),
+        registeredPoint("plan-alpha-2", "Wire the TUI command.", dependsOn: ["plan-alpha-1"]),
+        registeredPoint("plan-beta-1", "Validate the ACP bridge."),
+    ]
+
+    @Test
+    func planSequenceHeadingRecognisesMarkdownBoldAndOptionalTitle() {
+        let headings: [(line: String, number: Int, total: Int, heading: String)] = [
+            ("Piano 1/2: Titolo", 1, 2, "Piano 1/2: Titolo"),
+            ("## Plan 2/3 — Wire the bridge", 2, 3, "Plan 2/3 — Wire the bridge"),
+            ("  **Piano 1 / 2**  ", 1, 2, "Piano 1 / 2"),
+            ("### **PIANO 3/3. Final**", 3, 3, "PIANO 3/3. Final"),
+            ("Plan 1/2 - Setup", 1, 2, "Plan 1/2 - Setup"),
+            ("Piano 2/2 – Rifinitura", 2, 2, "Piano 2/2 – Rifinitura"),
+            ("plan 1/1", 1, 1, "plan 1/1"),
+            ("Piano 10/12:", 10, 12, "Piano 10/12:"),
+        ]
+        for expected in headings {
+            let parsed = PlanningCommandKernel.planSequenceHeading(expected.line)
+            #expect(parsed?.number == expected.number, "\(expected.line)")
+            #expect(parsed?.total == expected.total, "\(expected.line)")
+            #expect(parsed?.heading == expected.heading, "\(expected.line)")
+        }
+
+        let nonHeadings = [
+            "Piano 1/2 senza separatore",
+            "Planning 1/2: Title",
+            "Implementation plan",
+            "Piano: 1/2",
+            "1. Piano 1/2: Title",
+            "Piano 1: Title",
+            "Piano a/2: Title",
+            "Il Piano 1/2: Title",
+            "",
+        ]
+        for line in nonHeadings {
+            #expect(PlanningCommandKernel.planSequenceHeading(line) == nil, "\(line)")
+        }
+    }
+
+    @Test
+    func planSectionTextsSplitValidSequencesAndRejectMalformedOnes() throws {
+        let headingless = try #require(
+            PlanningCommandKernel.planSectionTexts(in: Self.structuredPlannerFinalText)
+        )
+        #expect(headingless.count == 1)
+        #expect(headingless.first?.heading == nil)
+        #expect(headingless.first?.text == Self.structuredPlannerFinalText)
+        let untrimmed = "\n  Ecco alcune idee sparse.  \n"
+        #expect(PlanningCommandKernel.planSectionTexts(in: untrimmed)?.first?.text == untrimmed)
+
+        let sections = try #require(
+            PlanningCommandKernel.planSectionTexts(in: "\n\n" + Self.twoPlanPlannerFinalText + "\n")
+        )
+        #expect(sections.map { $0.heading } == ["Piano 1/2: Modello condiviso", "Piano 2/2: Validazione"])
+        #expect(sections.map { $0.text } == [
+            Self.twoPlanFirstSectionText,
+            Self.twoPlanSecondSectionText,
+        ])
+
+        let markdown = try #require(PlanningCommandKernel.planSectionTexts(in: """
+        ## **Piano 1/1**
+        Specifiche concordate
+        """))
+        #expect(markdown.map { $0.heading } == ["Piano 1/1"])
+        #expect(markdown.map { $0.text } == ["## **Piano 1/1**\nSpecifiche concordate"])
+
+        let malformed = [
+            // Preamble before the first heading.
+            "Ecco i piani.\n" + Self.twoPlanPlannerFinalText,
+            // Gap in the numbering.
+            "Piano 1/2: A\nSpecifiche concordate\nPiano 3/2: B\nSpecifiche concordate",
+            // Out-of-order numbering.
+            "Piano 2/2: A\nSpecifiche concordate\nPiano 1/2: B\nSpecifiche concordate",
+            // Declared total larger than the headings present.
+            "Piano 1/3: A\nSpecifiche concordate\nPiano 2/3: B\nSpecifiche concordate",
+            // Totals that disagree.
+            "Piano 1/2: A\nSpecifiche concordate\nPiano 2/3: B\nSpecifiche concordate",
+            // A lone heading that is not the first plan.
+            "Piano 2/2: A\nSpecifiche concordate",
+        ]
+        for text in malformed {
+            #expect(PlanningCommandKernel.planSectionTexts(in: text) == nil, "\(text)")
+        }
+    }
+
+    @Test
+    func planSectionsMatchRegisteredPointsPlanByPlan() throws {
+        let sections = try #require(PlanningCommandKernel.planSections(
+            forFinalText: Self.twoPlanPlannerFinalText,
+            registeredPoints: Self.twoPlanRegisteredPoints
+        ))
+        #expect(sections == [
+            PlanningCommandKernel.PlanSection(
+                heading: "Piano 1/2: Modello condiviso",
+                text: Self.twoPlanFirstSectionText,
+                points: Array(Self.twoPlanRegisteredPoints[0...1])
+            ),
+            PlanningCommandKernel.PlanSection(
+                heading: "Piano 2/2: Validazione",
+                text: Self.twoPlanSecondSectionText,
+                points: [Self.twoPlanRegisteredPoints[2]]
+            ),
+        ])
+
+        let rejected: [[TerminalSessionPlanPoint]] = [
+            // A dependency that crosses into the previous plan.
+            [
+                Self.twoPlanRegisteredPoints[0],
+                Self.twoPlanRegisteredPoints[1],
+                Self.registeredPoint(
+                    "plan-beta-1",
+                    "Validate the ACP bridge.",
+                    dependsOn: ["plan-alpha-2"]
+                ),
+            ],
+            // Interleaved groups.
+            [
+                Self.twoPlanRegisteredPoints[0],
+                Self.twoPlanRegisteredPoints[2],
+                Self.twoPlanRegisteredPoints[1],
+            ],
+            // One shared token: a single group for two plans.
+            [
+                Self.twoPlanRegisteredPoints[0],
+                Self.twoPlanRegisteredPoints[1],
+                Self.registeredPoint("plan-alpha-3", "Validate the ACP bridge."),
+            ],
+            // More groups than plans.
+            [
+                Self.twoPlanRegisteredPoints[0],
+                Self.registeredPoint("plan-gamma-1", "Wire the TUI command."),
+                Self.twoPlanRegisteredPoints[2],
+            ],
+            // Only the first plan registered.
+            Array(Self.twoPlanRegisteredPoints[0...1]),
+            [],
+        ]
+        for points in rejected {
+            #expect(PlanningCommandKernel.planSections(
+                forFinalText: Self.twoPlanPlannerFinalText,
+                registeredPoints: points
+            ) == nil, "\(points.map(\.id))")
+        }
+
+        // A dependency on a point of the previous plan written in the text is
+        // out of range for its own plan and is rejected as well.
+        let crossPlanText = Self.twoPlanPlannerFinalText.replacingOccurrences(
+            of: "1. Validate the ACP bridge.\n   Dependencies: none",
+            with: "1. Validate the ACP bridge.\n   Dependencies: 2"
+        )
+        #expect(crossPlanText != Self.twoPlanPlannerFinalText)
+        #expect(PlanningCommandKernel.planSections(
+            forFinalText: crossPlanText,
+            registeredPoints: [
+                Self.twoPlanRegisteredPoints[0],
+                Self.twoPlanRegisteredPoints[1],
+                Self.registeredPoint(
+                    "plan-beta-1",
+                    "Validate the ACP bridge.",
+                    dependsOn: ["plan-alpha-2"]
+                ),
+            ]
+        ) == nil)
+        #expect(PlanningCommandKernel.planSections(derivedFromFinalText: crossPlanText) == nil)
+    }
+
+    @Test
+    func headinglessPlanSectionsMatchTheSinglePlanCoherenceCheck() {
+        let valid = [
+            Self.registeredPoint("plan-registered-1", "Implement shared routing."),
+            Self.registeredPoint(
+                "plan-registered-2",
+                "Validate every frontend.",
+                dependsOn: ["plan-registered-1"]
+            ),
+        ]
+        #expect(PlanningCommandKernel.planSections(
+            forFinalText: Self.structuredPlannerFinalText,
+            registeredPoints: valid
+        ) == [
+            PlanningCommandKernel.PlanSection(
+                heading: nil,
+                text: Self.structuredPlannerFinalText,
+                points: valid
+            ),
+        ])
+
+        let candidates: [[TerminalSessionPlanPoint]] = [
+            valid,
+            [],
+            Array(valid.prefix(1)),
+            [valid[1], valid[0]],
+            [valid[0], Self.registeredPoint("plan-other-2", "Validate every frontend.")],
+            [valid[0], Self.registeredPoint("plan-registered", "Validate every frontend.")],
+            [valid[0], Self.registeredPoint("plan-registered-2", "Validate every frontend.")],
+            [
+                Self.registeredPoint("plan-1", "Implement shared routing."),
+                Self.registeredPoint("plan-2", "Validate every frontend.", dependsOn: ["plan-1"]),
+            ],
+        ]
+        for points in candidates {
+            #expect(
+                (PlanningCommandKernel.planSections(
+                    forFinalText: Self.structuredPlannerFinalText,
+                    registeredPoints: points
+                ) != nil) == PlanningCommandKernel.structuredPlanOutputIsCoherent(
+                    text: Self.structuredPlannerFinalText,
+                    points: points
+                ),
+                "\(points.map(\.id))"
+            )
+        }
+    }
+
+    @Test
+    func derivedPlanSectionsUseADistinctTokenPerPlan() throws {
+        let sections = try #require(PlanningCommandKernel.planSections(
+            derivedFromFinalText: Self.twoPlanPlannerFinalText
+        ))
+        #expect(sections.map(\.heading) == ["Piano 1/2: Modello condiviso", "Piano 2/2: Validazione"])
+        #expect(sections.map(\.text) == [Self.twoPlanFirstSectionText, Self.twoPlanSecondSectionText])
+
+        let firstID = PlanningCommandKernel.planID(from: sections[0].points)
+        let secondID = PlanningCommandKernel.planID(from: sections[1].points)
+        #expect(firstID != secondID)
+        #expect(sections[0].points == [
+            Self.registeredPoint("\(firstID)-1", "Add the shared model."),
+            Self.registeredPoint("\(firstID)-2", "Wire the TUI command.", dependsOn: ["\(firstID)-1"]),
+        ])
+        #expect(sections[1].points == [
+            Self.registeredPoint("\(secondID)-1", "Validate the ACP bridge."),
+        ])
+        #expect(PlanningCommandKernel.planSections(
+            forFinalText: Self.twoPlanPlannerFinalText,
+            registeredPoints: sections.flatMap(\.points)
+        ) == sections)
+
+        // A heading-less plan stays one heading-less section.
+        let single = try #require(PlanningCommandKernel.planSections(
+            derivedFromFinalText: Self.structuredPlannerFinalText
+        ))
+        #expect(single.count == 1)
+        #expect(single.first?.heading == nil)
+        #expect(single.first?.text == Self.structuredPlannerFinalText)
+        #expect(single.first?.points.map(\.text) == [
+            "Implement shared routing.",
+            "Validate every frontend.",
+        ])
+
+        // Questions, malformed sequences, and any malformed plan are rejected.
+        #expect(PlanningCommandKernel.planSections(
+            derivedFromFinalText: "Planner questions\n1. Quale piattaforma?"
+        ) == nil)
+        #expect(PlanningCommandKernel.planSections(
+            derivedFromFinalText: "Ecco i piani.\n" + Self.twoPlanPlannerFinalText
+        ) == nil)
+        #expect(PlanningCommandKernel.planSections(
+            derivedFromFinalText: Self.twoPlanPlannerFinalText.replacingOccurrences(
+                of: "1. Validate the ACP bridge.\n   Dependencies: none",
+                with: "1. Validate the ACP bridge."
+            )
+        ) == nil)
+    }
+
+    @Test
+    func collectorResolvesPlanSectionsWithAndWithoutTodoWrite() async throws {
+        let derivedCollector = PlanningPointCollector()
+        let derived = try #require(await derivedCollector.finalPlanSections(
+            forFinalText: Self.twoPlanPlannerFinalText
+        ))
+        #expect(derived.count == 2)
+        #expect(derived.map(\.points.count) == [2, 1])
+        #expect(await derivedCollector.snapshot() == derived.flatMap(\.points))
+        // The cached derivation is reused for the same final text.
+        #expect(await derivedCollector.finalPlanSections(
+            forFinalText: Self.twoPlanPlannerFinalText
+        ) == derived)
+        #expect(await derivedCollector.finalPlanPoints(
+            forFinalText: Self.twoPlanPlannerFinalText
+        ) == derived.flatMap(\.points))
+
+        let registeredCollector = PlanningPointCollector()
+        await registeredCollector.recordTodoWrite(
+            (points: Self.twoPlanRegisteredPoints, mode: .upsert)
+        )
+        let registered = try #require(await registeredCollector.finalPlanSections(
+            forFinalText: Self.twoPlanPlannerFinalText
+        ))
+        #expect(registered.map(\.heading) == ["Piano 1/2: Modello condiviso", "Piano 2/2: Validazione"])
+        #expect(registered.map { $0.points.map(\.id) } == [
+            ["plan-alpha-1", "plan-alpha-2"],
+            ["plan-beta-1"],
+        ])
+        #expect(await registeredCollector.finalPlanPoints(
+            forFinalText: Self.twoPlanPlannerFinalText
+        ) == Self.twoPlanRegisteredPoints)
+
+        // A registration that does not split by plan is never replaced by a
+        // derived fallback.
+        let mismatchedCollector = PlanningPointCollector()
+        await mismatchedCollector.recordTodoWrite(
+            (points: Array(Self.twoPlanRegisteredPoints[0...1]), mode: .upsert)
+        )
+        #expect(await mismatchedCollector.finalPlanSections(
+            forFinalText: Self.twoPlanPlannerFinalText
+        ) == nil)
+    }
+
+    @Test
+    func promotedMultiPlanResponseYieldsOnePlanPerSection() throws {
+        let createdAt = Date(timeIntervalSince1970: 1_000)
+        let messages = [
+            AgentRuntimeMessage(role: .user, content: "Ship the shared routing"),
+            AgentRuntimeMessage(role: .assistant, content: Self.twoPlanPlannerFinalText),
+        ]
+
+        let plans = PlanningCommandKernel.plansFromLatestAssistantMessage(
+            in: messages,
+            createdAt: createdAt
+        )
+        #expect(plans.count == 2)
+        #expect(plans.map(\.originalGoal) == [
+            "Piano 1/2: Modello condiviso — Ship the shared routing",
+            "Piano 2/2: Validazione — Ship the shared routing",
+        ])
+        #expect(plans.map(\.consolidatedText) == [
+            Self.twoPlanFirstSectionText,
+            Self.twoPlanSecondSectionText,
+        ])
+        #expect(plans.map { $0.points.map(\.text) } == [
+            ["Add the shared model.", "Wire the TUI command."],
+            ["Validate the ACP bridge."],
+        ])
+        #expect(plans.allSatisfy { $0.id == PlanningCommandKernel.planID(from: $0.points) })
+        #expect(Set(plans.map(\.id)).count == 2)
+        #expect(plans.allSatisfy { $0.createdAt == createdAt && !$0.isApproved })
+        #expect(plans[1].points.first?.dependsOn == [])
+
+        let first = try #require(PlanningCommandKernel.planFromLatestAssistantMessage(in: messages))
+        #expect(first.originalGoal == plans[0].originalGoal)
+        #expect(first.consolidatedText == plans[0].consolidatedText)
+    }
+
+    @Test
+    func promotedHeadinglessResponsesKeepTheirSinglePlan() throws {
+        let createdAt = Date(timeIntervalSince1970: 2_000)
+        let structured = PlanningCommandKernel.plansFromLatestAssistantMessage(
+            in: [
+                AgentRuntimeMessage(role: .user, content: "Ship the shared routing"),
+                AgentRuntimeMessage(
+                    role: .assistant,
+                    content: Self.structuredThreePointPlannerFinalText
+                ),
+            ],
+            createdAt: createdAt
+        )
+        let plan = try #require(structured.first)
+        #expect(structured.count == 1)
+        #expect(plan.originalGoal == "Ship the shared routing")
+        #expect(plan.consolidatedText == Self.structuredThreePointPlannerFinalText)
+        #expect(plan.points.map(\.id) == (1...3).map { "\(plan.id)-\($0)" })
+
+        let textOnly = PlanningCommandKernel.plansFromLatestAssistantMessage(
+            in: [
+                AgentRuntimeMessage(role: .user, content: "Sketch the idea"),
+                AgentRuntimeMessage(role: .assistant, content: "Ecco alcune idee sparse."),
+            ],
+            createdAt: createdAt
+        )
+        #expect(textOnly.count == 1)
+        #expect(textOnly.first?.originalGoal == "Sketch the idea")
+        #expect(textOnly.first?.consolidatedText == "Ecco alcune idee sparse.")
+        #expect(textOnly.first?.points.isEmpty == true)
+
+        #expect(PlanningCommandKernel.plansFromLatestAssistantMessage(in: []).isEmpty)
+        #expect(PlanningCommandKernel.plansFromLatestAssistantMessage(in: [
+            AgentRuntimeMessage(role: .user, content: "Ship it"),
+            AgentRuntimeMessage(role: .assistant, content: "Planner questions\n1. Which one?"),
+        ]).isEmpty)
+    }
+
+    @Test
+    func planSequenceHeadingIsAPlannerProtocolHeading() {
+        #expect(PlanningCommandKernel.plannerAuthoredBlock(
+            "Analizzo il codice.\nControllo i test.\n\n" + Self.twoPlanPlannerFinalText + "\n"
+        ) == Self.twoPlanPlannerFinalText)
+        #expect(PlanningCommandKernel.plannerAuthoredBlock(
+            "Analizzo il codice.\n## **Piano 1/1: Unico**\nSpecifiche concordate"
+        ) == "## **Piano 1/1: Unico**\nSpecifiche concordate")
+        #expect(PlanningCommandKernel.plannerAuthoredBlock(Self.twoPlanPlannerFinalText)
+            == Self.twoPlanPlannerFinalText)
+
+        #expect(PlanningCommandKernel.isPlannerQuestionResponse("Planner questions\n1. Which one?"))
+        #expect(!PlanningCommandKernel.isPlannerQuestionResponse(
+            "Planner questions\n1. Which one?\n\nPiano 1/2: Draft"
+        ))
+    }
+
+    @Test
+    func loadableSavedPlanPicksTheOldestDraftWhateverTheOrder() {
+        let base = Date(timeIntervalSince1970: 10_000)
+        func savedPlan(
+            id: String,
+            state: TaskGraphState,
+            savedAt: Date
+        ) -> SavedTaskPlan {
+            let plan = TerminalSessionPlan(
+                id: id,
+                originalGoal: "Goal \(id)",
+                consolidatedText: "Text \(id)"
+            )
+            return SavedTaskPlan(
+                librarySessionID: "saved-plans-test",
+                graph: TaskGraphSnapshot(
+                    id: plan.id,
+                    source: .plan(planID: plan.id),
+                    state: state,
+                    tasks: [TaskRecord(id: "task", title: "Task", order: 1)],
+                    savedPlan: TaskGraphSavedPlan(plan: plan, savedAt: savedAt),
+                    createdAt: savedAt,
+                    updatedAt: savedAt
+                ),
+                snapshot: TaskGraphSavedPlan(plan: plan, savedAt: savedAt)
+            )
+        }
+
+        let newestFirst = [
+            savedPlan(id: "plan-third", state: .draft, savedAt: base.addingTimeInterval(20)),
+            savedPlan(id: "plan-second", state: .draft, savedAt: base.addingTimeInterval(10)),
+            savedPlan(id: "plan-first", state: .draft, savedAt: base),
+            savedPlan(id: "plan-done", state: .completed, savedAt: base.addingTimeInterval(-10)),
+        ]
+        #expect(PlanningCommandKernel.loadableSavedPlan(from: newestFirst)?.graph.id == "plan-first")
+        #expect(PlanningCommandKernel.loadableSavedPlan(
+            from: newestFirst.reversed()
+        )?.graph.id == "plan-first")
+        #expect(TerminalChat.loadableSavedPlan(from: newestFirst)?.graph.id == "plan-first")
+
+        // Equal save dates fall back to the smaller graph id.
+        let tied = [
+            savedPlan(id: "plan-b", state: .draft, savedAt: base),
+            savedPlan(id: "plan-a", state: .draft, savedAt: base),
+        ]
+        #expect(PlanningCommandKernel.loadableSavedPlan(from: tied)?.graph.id == "plan-a")
+        #expect(PlanningCommandKernel.loadableSavedPlan(
+            from: tied.reversed()
+        )?.graph.id == "plan-a")
+    }
+
+    @Test
+    func planningPromptsCarryThePlanSequenceInstructions() {
+        let planner = AgentProfile(
+            id: AgentProfileRole.planner.rawValue,
+            name: AgentProfileStore.plannerAgentName,
+            role: .planner,
+            tools: []
+        )
+        let format = PlanningCommandKernel.plannerPlanSequenceFormatInstruction
+        let registration = PlanningCommandKernel.plannerPlanSequenceRegistrationInstruction
+        let dependencies = PlanningCommandKernel.plannerDependenciesFormatInstruction
+        #expect(format.hasPrefix("Coordinator note for the Planner:"))
+        #expect(format.contains("\"Piano N/M: <title>\""))
+        #expect(format.contains("numbering restarts from 1"))
+        #expect(format.contains("Dependencies may name only points of the same plan"))
+        #expect(format.contains("A single plan has no \"Piano\" heading."))
+        #expect(registration.contains("single todo.write call"))
+        #expect(registration.contains("different fresh token for each plan"))
+        #expect(registration.contains("only to IDs of the same plan"))
+
+        let startPrompt = PlanningCommandKernel.planStartPrompt(
+            goal: "split a large migration",
+            planner: planner
+        )
+        #expect(startPrompt.contains(
+            "(empty arrays for independent items). \(registration)\n- A claimed final response"
+        ))
+
+        var state = PlanningCommandRuntimeState(goal: "split a large migration")
+        state.recordPlannerOutput(
+            "Planner questions\n1. How many plans?",
+            agentID: "planner-sequence-test",
+            revision: 1
+        )
+        let recordedReply = state.recordReply("As many as needed.")
+        #expect(recordedReply)
+        let existingPlannerPrompt = PlanningCommandKernel.planContinuationPrompt(
+            state: state,
+            planner: planner
+        )
+        var recreatedPlannerState = state
+        recreatedPlannerState.plannerAgentID = nil
+        let recreatedPlannerPrompt = PlanningCommandKernel.planContinuationPrompt(
+            state: recreatedPlannerState,
+            planner: planner
+        )
+
+        #expect(existingPlannerPrompt.contains(
+            "include this coordinator note unchanged: \(dependencies) \(format) Then wait for that same agent."
+        ))
+        #expect(recreatedPlannerPrompt.contains(
+            "coordinator note unchanged: \(dependencies) \(format) Then wait for it."
+        ))
+        for prompt in [existingPlannerPrompt, recreatedPlannerPrompt] {
+            #expect(prompt.contains(
+                "\(PlanningCommandKernel.plannerFinalPlanRegistrationInstruction) \(registration) "
+            ))
+        }
+    }
+
+    @Test
+    func defaultPlannerPolicySplitsOversizedWorkIntoAPlanSequence() throws {
+        let planner = try #require(AgentProfileStore.defaultProfiles().first {
+            $0.id.caseInsensitiveCompare(AgentProfileRole.planner.rawValue) == .orderedSame
+        })
+        let policy = try #require(planner.promptSection)
+        let bullet = "- When the work is too large for one coherent plan, split it into several plans to be executed in sequence instead of one oversized plan. Begin each plan with its own line `Piano N/M: <title>`, followed by its own `Specifiche concordate` and numbered `Implementation plan`, numbering points from 1 within each plan. `Dependencies` may name only points of the same plan; each plan must be implementable and verifiable on its own once the previous plans are completed. A single plan has no `Piano` heading."
+
+        let lines = policy.components(separatedBy: "\n")
+        let decisionsIndex = try #require(lines.firstIndex {
+            $0.hasPrefix("- Do not produce the plan while material decisions remain unresolved")
+        })
+        #expect(lines.firstIndex(of: bullet) == decisionsIndex + 1)
+    }
 }
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite(.serialized)
 struct PlanApprovalResponseLanguageTests {
     @Test
@@ -2787,7 +3372,7 @@ struct PlanApprovalResponseLanguageTests {
             withIntermediateDirectories: true
         )
         defer { try? FileManager.default.removeItem(at: root) }
-        try await AppStorageDirectory.withSupportDirectoryURL(supportDirectory) { @Sendable @TerminalChatActor in
+        try await AppStorageDirectory.withSupportDirectoryURL(supportDirectory) { @Sendable @ChatSessionActor in
             try AgentSettingsManifestStore.save(
                 AgentSettingsManifest(models: [], responseLanguage: "it")
             )

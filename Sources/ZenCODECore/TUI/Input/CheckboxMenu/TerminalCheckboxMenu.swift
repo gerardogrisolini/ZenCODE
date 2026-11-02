@@ -118,7 +118,7 @@ public enum TerminalCheckboxMenu {
     /// Runs an interactive selection off the cooperative executor.
     ///
     /// The synchronous `select(...)` blocks its thread for the whole
-    /// interaction. Called straight from a `@TerminalChatActor` method it would
+    /// interaction. Called straight from a `@ChatSessionActor` method it would
     /// hold the actor — and therefore the entire chat runtime — until the
     /// operator answers. This variant keeps the same rendering and key handling
     /// but runs the blocking loop on a dedicated thread and unwinds on

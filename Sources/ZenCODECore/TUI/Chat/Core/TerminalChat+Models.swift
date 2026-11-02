@@ -12,7 +12,7 @@ enum TerminalSubmittedLineAction {
     case exitChat
     case requestSetup
     case runPrompt(String)
-    case runHiddenPrompt(String, purpose: TerminalPromptPurpose)
+    case runHiddenPrompt(String, purpose: ChatTurnPurpose)
     case prefillPrompt(String)
 }
 
@@ -27,6 +27,7 @@ public struct TerminalChatResumeSnapshot: Sendable {
     public let history: [AgentRuntimeMessage]
     public let transcriptHistory: [AgentRuntimeMessage]
     public let activePlan: TerminalSessionPlan?
+    public let queuedPlans: [TerminalSessionPlan]
     public let checkpointTree: SessionCheckpointTree?
     public let savedSessionName: String?
     /// Prompt submissions for this process, separate from saved conversation data.
@@ -38,6 +39,7 @@ public struct TerminalChatResumeSnapshot: Sendable {
         history: [AgentRuntimeMessage],
         transcriptHistory: [AgentRuntimeMessage],
         activePlan: TerminalSessionPlan?,
+        queuedPlans: [TerminalSessionPlan] = [],
         checkpointTree: SessionCheckpointTree?,
         savedSessionName: String?,
         commandHistory: [String] = []
@@ -47,6 +49,7 @@ public struct TerminalChatResumeSnapshot: Sendable {
         self.history = history
         self.transcriptHistory = transcriptHistory
         self.activePlan = activePlan
+        self.queuedPlans = queuedPlans
         self.checkpointTree = checkpointTree
         self.savedSessionName = savedSessionName
         self.commandHistory = commandHistory
@@ -58,26 +61,12 @@ public enum TerminalChatRunOutcome: Sendable {
     case setupRequested(TerminalChatResumeSnapshot)
 }
 
-enum TerminalPromptPurpose: Sendable, Equatable {
-    case normal
-    case plan(originalGoal: String)
-    /// A `/goal` turn. The graph ID travels with the purpose so the turn can
-    /// grant workflow tools, keep the clarification round-trip on the same
-    /// graph, and clean up an empty graph when the turn fails or is cancelled.
-    case workflow(originalGoal: String, graphID: String)
-    case review
-}
-
-/// Compatibility name used by the terminal frontend. The implementation lives
-/// in the shared coordinator kernel and remains deliberately non-Codable.
-typealias TerminalPlanBrainstormingState = PlanningCommandRuntimeState
-
 struct TerminalPromptAttempt: Sendable {
     let prompt: String
     let attachments: [AgentRuntimeAttachment]
     let origin: TerminalPromptOrigin
     let locksResponseLanguage: Bool
-    let purpose: TerminalPromptPurpose
+    let purpose: ChatTurnPurpose
 }
 
 struct TerminalChatGenerationFailure: Sendable {
@@ -127,58 +116,11 @@ struct TerminalChatGenerationRunError: Error, Sendable {
     let fileChangeSummary: TurnFileChangeSummary?
 }
 
+/// Where a prompt the terminal runs came from. The terminal runs only its
+/// own prompts: a prompt from Telegram runs through the session host, by the
+/// slot's Telegram channel, never through the terminal's loop.
 enum TerminalPromptOrigin: Sendable, Equatable {
     case local
-    case telegram(chatID: Int64)
-    case telegramRoute(TerminalTelegramRouteKey)
-    case telegramLease(TerminalTelegramRouteLease)
-
-    var telegramChatID: Int64? {
-        switch self {
-        case .local:
-            return nil
-        case let .telegram(chatID):
-            return chatID
-        case let .telegramRoute(route):
-            return route.chatID
-        case let .telegramLease(lease):
-            return lease.key.chatID
-        }
-    }
-
-    var telegramRoute: TerminalTelegramRouteKey? {
-        switch self {
-        case let .telegramRoute(route): return route
-        case let .telegramLease(lease): return lease.key
-        case .local, .telegram: return nil
-        }
-    }
-
-    var telegramLease: TerminalTelegramRouteLease? {
-        guard case let .telegramLease(lease) = self else { return nil }
-        return lease
-    }
-}
-
-struct TerminalQueuedPrompt: Sendable, Equatable {
-    let text: String
-    let origin: TerminalPromptOrigin
-    let mode: TerminalQueuedPromptMode
-
-    init(
-        text: String,
-        origin: TerminalPromptOrigin,
-        mode: TerminalQueuedPromptMode = .submittedLine
-    ) {
-        self.text = text
-        self.origin = origin
-        self.mode = mode
-    }
-}
-
-enum TerminalQueuedPromptMode: Sendable, Equatable {
-    case submittedLine
-    case directPrompt
 }
 
 struct TerminalVoicePromptResult: Sendable {
@@ -200,10 +142,6 @@ enum TerminalChatRuntimeEvent: Sendable {
     case input(TerminalPromptInputEvent)
     case generationCompleted(TerminalChatGenerationResult)
     case startNextQueuedPrompt
-    case telegramMessage(TerminalTelegramIncomingMessage)
-    case telegramRouteInvalidated(TerminalTelegramRouteLease)
-    /// Telegram polling entered or left a persistent failure.
-    case telegramPollHealthChanged(TerminalTelegramPollHealthNotice)
     case voicePromptCompleted(TerminalVoicePromptResult)
     /// A dictated utterance. The runtime loop decides whether it answers a
     /// spoken live-chat question, sends a "message to …" phrase, or becomes
@@ -249,9 +187,6 @@ enum TerminalChatRuntimeEvent: Sendable {
         case .input,
              .generationCompleted,
              .startNextQueuedPrompt,
-             .telegramMessage,
-             .telegramRouteInvalidated,
-             .telegramPollHealthChanged,
              .voicePromptCompleted,
              .voiceUtterance,
              .voiceSpeakingChanged,

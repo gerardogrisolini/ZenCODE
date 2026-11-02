@@ -848,6 +848,107 @@ struct MemoryServiceTests {
     }
 
     @Test
+    func savedSessionsIndexRemovesTheDeletedSessionOfItsProject() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
+        let storeDirectoryURL = rootURL.appendingPathComponent("store", isDirectory: true)
+        let firstProjectURL = rootURL.appendingPathComponent("first", isDirectory: true)
+        let secondProjectURL = rootURL.appendingPathComponent("second", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let store = SavedSessionsStore(directoryURL: storeDirectoryURL)
+        try store.recordSavedSession(
+            projectPath: firstProjectURL.path,
+            sessionName: "first checkpoint",
+            sessionID: "first-session",
+            savedAt: Date(timeIntervalSince1970: 100)
+        )
+        try store.recordSavedSession(
+            projectPath: secondProjectURL.path,
+            sessionName: "second checkpoint",
+            sessionID: "second-session",
+            savedAt: Date(timeIntervalSince1970: 200)
+        )
+
+        // The path and the name are normalized as when the entry was recorded.
+        let removed = try store.removeSavedSession(
+            projectPath: firstProjectURL.path + "/./",
+            sessionName: "  first checkpoint \n"
+        )
+
+        #expect(removed)
+        #expect(store.sessions().map(\.sessionID) == ["second-session"])
+    }
+
+    @Test
+    func savedSessionsIndexRemovalKeepsOtherSessionsAndLeavesTheFileUntouched() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
+        let storeDirectoryURL = rootURL.appendingPathComponent("store", isDirectory: true)
+        let firstProjectURL = rootURL.appendingPathComponent("first", isDirectory: true)
+        let secondProjectURL = rootURL.appendingPathComponent("second", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let store = SavedSessionsStore(directoryURL: storeDirectoryURL)
+        try store.recordSavedSession(
+            projectPath: firstProjectURL.path,
+            sessionName: "latest",
+            sessionID: "first-session",
+            savedAt: Date(timeIntervalSince1970: 300)
+        )
+        let originalData = try Data(contentsOf: store.sessionsFileURL())
+
+        // Another session of the same project, and the same name in another
+        // project, are not the indexed entry.
+        #expect(try store.removeSavedSession(projectPath: firstProjectURL.path, sessionName: "older") == false)
+        #expect(try store.removeSavedSession(projectPath: secondProjectURL.path, sessionName: "latest") == false)
+
+        #expect(try Data(contentsOf: store.sessionsFileURL()) == originalData)
+        #expect(store.sessions().map(\.sessionID) == ["first-session"])
+    }
+
+    @Test
+    func savedSessionsIndexRemovalWithoutAnIndexCreatesNoFile() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
+        let storeDirectoryURL = rootURL.appendingPathComponent("store", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let store = SavedSessionsStore(directoryURL: storeDirectoryURL)
+        let removed = try store.removeSavedSession(
+            projectPath: rootURL.appendingPathComponent("project", isDirectory: true).path,
+            sessionName: "missing"
+        )
+
+        #expect(!removed)
+        #expect(!FileManager.default.fileExists(atPath: store.sessionsFileURL().path))
+    }
+
+    @Test
+    func savedSessionsIndexRemovalRequiresASessionName() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("memory-tests-\(UUID().uuidString)", isDirectory: true)
+        let storeDirectoryURL = rootURL.appendingPathComponent("store", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+
+        let store = SavedSessionsStore(directoryURL: storeDirectoryURL)
+        #expect(throws: MemoryServiceError.self) {
+            try store.removeSavedSession(
+                projectPath: rootURL.appendingPathComponent("project", isDirectory: true).path,
+                sessionName: " \n "
+            )
+        }
+    }
+
+    @Test
     func savedSessionsIndexCreatesPrivateFilesystemEntries() throws {
         #if canImport(Darwin) || canImport(Glibc)
         let fileManager = FileManager.default

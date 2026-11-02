@@ -180,7 +180,7 @@ extension TerminalChat {
         let homeDirectory = UserHomeDirectory.current()
         // Isolated to the actor, so it cannot start before `activeCronRun` is
         // assigned; the runner itself waits for the child off the actor.
-        let task = Task(name: "ZenCODE.TUI.cron-run") { @TerminalChatActor [weak self] in
+        let task = Task(name: "ZenCODE.TUI.cron-run") { @ChatSessionActor [weak self] in
             let result: Result<ZenCronRunOutcome, any Error>
             do {
                 result = .success(

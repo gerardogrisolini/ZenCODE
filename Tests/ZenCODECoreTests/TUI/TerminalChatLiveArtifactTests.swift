@@ -4,14 +4,14 @@ import ToolCore
 @testable import ZenCODECore
 
 @Suite
-@TerminalChatActor
+@ChatSessionActor
 struct TerminalChatLiveArtifactTests {
     @Test
     nonisolated func rootAndDelegatedArtifactsAppearBeforeGenerationReturns() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try await AppStorageDirectory.withSupportDirectoryURL(directory.appendingPathComponent("support")) {
-            try await Task(name: "ZenCODE.Tests.live-artifacts") { @TerminalChatActor in
+            try await Task(name: "ZenCODE.Tests.live-artifacts") { @ChatSessionActor in
                 let renderer = makeRenderer()
                 let backend = LiveArtifactBackend()
                 let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
@@ -98,7 +98,7 @@ struct TerminalChatLiveArtifactTests {
             #expect(process.terminationStatus == 0)
         }
         try await AppStorageDirectory.withSupportDirectoryURL(directory.appendingPathComponent("support")) {
-            try await Task(name: "ZenCODE.Tests.artifact-ordering") { @TerminalChatActor in
+            try await Task(name: "ZenCODE.Tests.artifact-ordering") { @ChatSessionActor in
                 let renderer = makeRenderer(isTerminal: isTerminal)
                 let backend = CompletionArtifactBackend(workspace: workspace, delegated: delegated)
                 let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })

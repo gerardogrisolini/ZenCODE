@@ -9,12 +9,6 @@ import Foundation
 import ToolCore
 
 extension TerminalChat {
-    /// Terminal-facing input is bounded before parsing or sanitising it. These
-    /// mirrors of the bus limits avoid a large trim/split/Base64 allocation when
-    /// this public helper is called with an adversarial String directly.
-    private nonisolated static let maximumSharedChatTerminalInputScalars = AgentSharedChat.maximumMessageLength
-    private nonisolated static let maximumSharedChatTerminalInputUTF8 = AgentSharedChat.maximumMessageUTF8Length
-
     /// The input-panel catalogue combines ordinary slash commands with live
     /// agent mentions. Mention handles are readable aliases derived from the
     /// participant's display name by the actor-isolated catalogue, while routing
@@ -33,60 +27,34 @@ extension TerminalChat {
     /// tie-breaker, never by handle or by the internal id. Each `@handle` is a
     /// readable alias assigned by the catalogue from the participant's display
     /// name; the stable id is never leaked into the autocomplete list.
+    ///
+    /// The catalogue is ``SharedChatMentionParser/suggestions(for:handleMap:)``;
+    /// the terminal adds the summaries and fits each agent's name to 48
+    /// columns.
     nonisolated static func sharedChatMentionSuggestions(
         for participants: [AgentSharedChat.Participant],
         handleMap: [String: String]
     ) -> [TerminalCommandSuggestion] {
-        let idToHandle = Dictionary(
-            handleMap.map { ($0.value, $0.key) },
-            uniquingKeysWith: { _, latest in latest }
-        )
-        var seenHandles = Set<String>()
-        let reserved = [
-            TerminalCommandSuggestion(
-                command: "@coordinator ",
-                summary: "message the live coordinator"
-            ),
-            TerminalCommandSuggestion(
-                command: "@all ",
-                summary: "message the coordinator and all active agent instances"
-            ),
-        ]
-        let agents = participants
-            .filter { $0.kind == .agent && $0.isActive }
-            .sorted { lhs, rhs in
-                switch lhs.name.localizedCaseInsensitiveCompare(rhs.name) {
-                case .orderedAscending: return true
-                case .orderedDescending: return false
-                case .orderedSame: return lhs.joinedAt < rhs.joinedAt
+        SharedChatMentionParser.suggestions(for: participants, handleMap: handleMap)
+            .map { suggestion in
+                let summary = switch suggestion.target {
+                case .coordinator:
+                    "message the live coordinator"
+                case .all:
+                    "message the coordinator and all active agent instances"
+                case let .agent(name):
+                    "message active agent: \(sharedChatSuggestionLabel(name))"
                 }
+                return TerminalCommandSuggestion(command: suggestion.command, summary: summary)
             }
-            .compactMap { participant -> TerminalCommandSuggestion? in
-                guard let handle = idToHandle[participant.id],
-                      handle != "all", handle != "coordinator",
-                      seenHandles.insert(handle).inserted else {
-                    return nil
-                }
-                let label = sharedChatSuggestionLabel(participant.name)
-                return TerminalCommandSuggestion(
-                    command: "@\(handle) ",
-                    summary: "message active agent: \(label)"
-                )
-            }
-        return reserved + agents
     }
 
     /// Hidden backward-compatibility handle: the legacy `@agent-Base64` spelling
     /// is still accepted by the parser but never offered by the autocomplete
-    /// list. It encodes the stable participant identifier reversibly.
+    /// list. It encodes the stable participant identifier reversibly (see
+    /// ``SharedChatMentionParser/mentionHandle(forParticipantID:)``).
     nonisolated static func sharedChatMentionHandle(forParticipantID participantID: String) -> String {
-        let boundedID = sharedChatBoundedRawInput(participantID)
-        let encoded = Data(boundedID.utf8)
-            .base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-        return "agent-\(encoded)"
+        SharedChatMentionParser.mentionHandle(forParticipantID: participantID)
     }
 
     func refreshSharedChatPanelSuggestions() async {
@@ -114,19 +82,14 @@ extension TerminalChat {
         }
     }
 
-    struct SharedChatMentionRoute: Sendable, Equatable {
-        let destination: AgentSharedChat.Destination
-        let text: String
-    }
+    /// A complete live mention (see ``SharedChatMentionParser/Route``).
+    typealias SharedChatMentionRoute = SharedChatMentionParser.Route
 
     /// The parser must distinguish ordinary prompts from a valid live mention
     /// that omitted its message body. The latter is terminal input validation,
-    /// not a prompt to queue behind a running generation.
-    enum SharedChatMentionParse: Sendable, Equatable {
-        case none
-        case missingText(destination: AgentSharedChat.Destination)
-        case route(SharedChatMentionRoute)
-    }
+    /// not a prompt to queue behind a running generation (see
+    /// ``SharedChatMentionParser/Parse``).
+    typealias SharedChatMentionParse = SharedChatMentionParser.Parse
 
     /// Parses only a leading mention. `@coordinator` and `@all` always target
     /// the live broadcast destinations — the catalogue reserves those spellings
@@ -134,51 +97,13 @@ extension TerminalChat {
     /// disambiguated to `@all-2` / `@coordinator-2` and routes by its stable
     /// id; every other direct mention resolves a readable handle from the
     /// catalogue back to the stable participant id, with a hidden fallback to
-    /// the legacy `@agent-Base64` spelling for backward compatibility.
+    /// the legacy `@agent-Base64` spelling for backward compatibility (see
+    /// ``SharedChatMentionParser/parse(from:readableHandles:)``).
     nonisolated static func parseSharedChatMention(
         from rawInput: String,
         readableHandles: [String: String] = [:]
     ) -> SharedChatMentionParse {
-        let input = sharedChatBoundedRawInput(rawInput)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard input.first == "@" else { return .none }
-        let pieces = input.split(maxSplits: 1, whereSeparator: \.isWhitespace)
-        guard let mention = pieces.first, mention.count > 1 else {
-            return .none
-        }
-
-        let rawTarget = mention.dropFirst()
-        // Reject a huge token before materialising it as a String for lookup or
-        // Base64 decoding.
-        guard rawTarget.utf8.count <= maximumSharedChatMentionHandleUTF8Length else {
-            return .none
-        }
-        let target = String(rawTarget)
-        let destination: AgentSharedChat.Destination
-        if target.caseInsensitiveCompare("coordinator") == .orderedSame {
-            destination = .coordinator
-        } else if target.caseInsensitiveCompare("all") == .orderedSame {
-            destination = .all
-        } else if let participantID = readableHandles[target] {
-            // Readable catalogue handle: routing is always by stable id.
-            destination = .direct([participantID])
-        } else if let participantID = sharedChatParticipantID(fromMentionHandle: target) {
-            // Hidden backward-compatibility: the legacy `@agent-Base64` spelling.
-            destination = .direct([participantID])
-        } else {
-            return .none
-        }
-
-        guard pieces.count == 2,
-              let rawText = String(pieces[1]).nilIfBlank else {
-            return .missingText(destination: destination)
-        }
-        let text = sharedChatTerminalSafeText(rawText)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
-            return .missingText(destination: destination)
-        }
-        return .route(SharedChatMentionRoute(destination: destination, text: text))
+        SharedChatMentionParser.parse(from: rawInput, readableHandles: readableHandles)
     }
 
     /// Compatibility convenience for callers interested only in a complete
@@ -214,16 +139,16 @@ extension TerminalChat {
         }
     }
 
-    /// Publishes a live mention. Returns `true` when the message was accepted
-    /// by the room (or short-circuited by the test effect hook), `false` for
-    /// a destination that is no longer active or a failed publication; the
-    /// failure is already written to the terminal.
+    /// Publishes a live mention the operator typed or dictated. Returns
+    /// `true` when the message was accepted by the room (or short-circuited
+    /// by the test seam), `false` for a destination that is no longer
+    /// active or a failed publication; the failure is already written to the
+    /// terminal. A mention sent from Telegram is published by the slot's
+    /// Telegram channel, which records its route for the coordinator turn it
+    /// triggers.
     @discardableResult
-    func sendSharedChatMention(
-        _ route: SharedChatMentionRoute,
-        telegramOrigin: TerminalPromptOrigin? = nil
-    ) async -> Bool {
-        if onTelegramWorkEffectForTesting?(.sharedChatPublication) == true { return true }
+    func sendSharedChatMention(_ route: SharedChatMentionRoute) async -> Bool {
+        if onSharedChatPublicationForTesting?() == true { return true }
         guard await isCurrentSharedChatDirectDestination(route.destination) else {
             await writeFailureMessage("ZenCODE message: selected agent is no longer active.\n")
             await refreshSharedChatPanelSuggestions()
@@ -231,12 +156,6 @@ extension TerminalChat {
         }
 
         let messageID = UUID()
-        if let telegramOrigin {
-            // Record before crossing an actor boundary. The backend publishes and
-            // wakes the coordinator while this actor is suspended, so recording
-            // only after `sendSharedChatMessage` returns races the auto-trigger.
-            recordTelegramSharedChatMessageOrigin(messageID, origin: telegramOrigin)
-        }
         do {
             let delivery = try await sessionRunner.sendSharedChatMessage(
                 text: route.text,
@@ -248,60 +167,10 @@ extension TerminalChat {
             await refreshSharedChatPanelSuggestions()
             return true
         } catch {
-            discardTelegramSharedChatMessageOrigin(messageID)
             let safeError = Self.sharedChatInlineTerminalSafeText(error.localizedDescription)
-            let failureMessage = "ZenCODE message: \(safeError)"
-            await writeFailureMessage(failureMessage + "\n")
-            if let telegramOrigin {
-                // Use the same generation-fenced route that admitted the mention.
-                // A revoked/stale lease therefore produces no network egress, and
-                // transport details are never reflected to another chat.
-                await sendTelegramSystemMessageIfLinked(
-                    failureMessage,
-                    origin: telegramOrigin
-                )
-            }
+            await writeFailureMessage("ZenCODE message: \(safeError)\n")
             return false
         }
-    }
-
-    /// Associates a Telegram-originated operator message with the synthetic
-    /// coordinator turn that will consume it. The shared-chat bus intentionally
-    /// has no UI transport metadata, so this short-lived surface association
-    /// preserves the Telegram response route without changing the bus protocol.
-    func recordTelegramSharedChatMessageOrigin(
-        _ messageID: UUID, origin: TerminalPromptOrigin
-    ) {
-        if telegramSharedChatMessageOrigins[messageID] == nil {
-            telegramSharedChatMessageOriginOrder.append(messageID)
-        }
-        telegramSharedChatMessageOrigins[messageID] = origin
-        let maximumOrigins = AgentSharedChat.maximumRetainedMessagesPerRoom
-        while telegramSharedChatMessageOriginOrder.count > maximumOrigins {
-            let oldestMessageID = telegramSharedChatMessageOriginOrder.removeFirst()
-            telegramSharedChatMessageOrigins.removeValue(forKey: oldestMessageID)
-        }
-    }
-
-    func discardTelegramSharedChatMessageOrigin(_ messageID: UUID) {
-        telegramSharedChatMessageOrigins.removeValue(forKey: messageID)
-        telegramSharedChatMessageOriginOrder.removeAll { $0 == messageID }
-    }
-
-    /// Returns the Telegram origin of a trigger, consuming its batch mappings
-    /// so a replay cannot mirror an unrelated later coordinator response.
-    func takeTelegramSharedChatOrigin(
-        for messages: [AgentSharedChat.Message]
-    ) -> TerminalPromptOrigin? {
-        var origin: TerminalPromptOrigin?
-        for message in messages {
-            if origin == nil {
-                origin = telegramSharedChatMessageOrigins[message.id]
-            }
-            telegramSharedChatMessageOrigins.removeValue(forKey: message.id)
-            telegramSharedChatMessageOriginOrder.removeAll { $0 == message.id }
-        }
-        return origin
     }
 
     /// Formats the original send instant in the local time zone, independently
@@ -349,151 +218,20 @@ extension TerminalChat {
     /// Replaces controls with visible inert text, preserving LF as the sole
     /// multiline separator. C0, C1, DEL, bidi/format controls and Unicode line
     /// separators are never emitted verbatim, so a payload cannot create an
-    /// ANSI/OSC sequence, reorder a route label, or create a visual prompt row.
+    /// ANSI/OSC sequence, reorder a route label, or create a visual prompt row
+    /// (see ``SharedChatMentionParser/terminalSafeText(_:)``).
     nonisolated static func sharedChatTerminalSafeText(_ text: String) -> String {
-        var result = ""
-        var scalarCount = 0
-        var utf8Count = 0
-        for scalar in text.unicodeScalars {
-            guard sharedChatCanConsumeRawScalar(
-                scalar,
-                scalarCount: scalarCount,
-                utf8Count: utf8Count
-            ) else {
-                result += "…"
-                break
-            }
-            scalarCount += 1
-            utf8Count += sharedChatUTF8Length(of: scalar)
-            switch scalar.value {
-            case 0x0A:
-                result.unicodeScalars.append(scalar)
-            case 0x09:
-                result += "    "
-            case 0x00...0x1F:
-                // U+2400…U+241F are the Unicode control pictures, including
-                // ESC → ␛ and CR → ␍.
-                if let picture = UnicodeScalar(0x2400 + scalar.value) {
-                    result.unicodeScalars.append(picture)
-                }
-            case 0x7F:
-                result += "␡"
-            case 0x80...0x9F:
-                // Unicode has no complete C1 control-picture block. An ASCII
-                // notation is unambiguous, terminal-safe and width-aware.
-                result += String(format: "<C1-%02X>", scalar.value)
-            case 0x2028:
-                result += "<LS>"
-            case 0x2029:
-                result += "<PS>"
-            default:
-                if scalar.properties.isBidiControl
-                    || scalar.properties.isJoinControl
-                    || scalar.properties.generalCategory == .format {
-                    // Keep the event visible but inert. This is intentionally
-                    // ASCII so no terminal can reinterpret it as a directional
-                    // or zero-width formatting instruction.
-                    result += String(format: "<U+%04X>", scalar.value)
-                } else {
-                    result.unicodeScalars.append(scalar)
-                }
-            }
-        }
-        return result
+        SharedChatMentionParser.terminalSafeText(text)
     }
 
-    /// Copies at most the bus's scalar and UTF-8 budget without normalising
-    /// characters. Parsing still sees ordinary spaces exactly as entered, but
-    /// never has to trim or split an unbounded adversarial value.
-    private nonisolated static func sharedChatBoundedRawInput(_ raw: String) -> String {
-        var bounded = String.UnicodeScalarView()
-        var scalarCount = 0
-        var utf8Count = 0
-        for scalar in raw.unicodeScalars {
-            guard sharedChatCanConsumeRawScalar(
-                scalar,
-                scalarCount: scalarCount,
-                utf8Count: utf8Count
-            ) else {
-                break
-            }
-            bounded.append(scalar)
-            scalarCount += 1
-            utf8Count += sharedChatUTF8Length(of: scalar)
-        }
-        return String(bounded)
-    }
-
-    private nonisolated static var maximumSharedChatMentionHandleUTF8Length: Int {
-        // Base64URL has no padding, so ceil(bytes / 3) * 4 is its longest
-        // canonical representation. The small fixed `agent-` prefix is checked
-        // separately by the parser.
-        ((AgentSharedChat.maximumParticipantIdentifierUTF8Length + 2) / 3) * 4
-    }
-
-    private nonisolated static func sharedChatCanConsumeRawScalar(
-        _ scalar: Unicode.Scalar,
-        scalarCount: Int,
-        utf8Count: Int
-    ) -> Bool {
-        let scalarUTF8Length = sharedChatUTF8Length(of: scalar)
-        return scalarCount < maximumSharedChatTerminalInputScalars
-            && utf8Count <= maximumSharedChatTerminalInputUTF8 - scalarUTF8Length
-    }
-
-    private nonisolated static func sharedChatUTF8Length(of scalar: Unicode.Scalar) -> Int {
-        switch scalar.value {
-        case 0...0x7F:
-            return 1
-        case 0x80...0x7FF:
-            return 2
-        case 0x800...0xFFFF:
-            return 3
-        default:
-            return 4
-        }
-    }
-
+    /// ``sharedChatTerminalSafeText(_:)`` on one line (see
+    /// ``SharedChatMentionParser/inlineTerminalSafeText(_:)``).
     nonisolated static func sharedChatInlineTerminalSafeText(_ text: String) -> String {
-        let flattened = sharedChatTerminalSafeText(text)
-            .split(whereSeparator: { $0.isWhitespace })
-            .joined(separator: " ")
-        return flattened.nilIfBlank ?? "unnamed agent"
+        SharedChatMentionParser.inlineTerminalSafeText(text)
     }
 
     private nonisolated static func sharedChatSuggestionLabel(_ name: String) -> String {
         fitDisplayWidth(sharedChatInlineTerminalSafeText(name), width: 48)
-    }
-
-    private nonisolated static func sharedChatParticipantID(fromMentionHandle handle: String) -> String? {
-        guard handle.hasPrefix("agent-") else { return nil }
-        let encoded = String(handle.dropFirst("agent-".count))
-        guard !encoded.isEmpty,
-              encoded.unicodeScalars.allSatisfy({ scalar in
-                  (scalar.value >= 0x41 && scalar.value <= 0x5A)
-                      || (scalar.value >= 0x61 && scalar.value <= 0x7A)
-                      || (scalar.value >= 0x30 && scalar.value <= 0x39)
-                      || scalar == "-"
-                      || scalar == "_"
-              }) else {
-            return nil
-        }
-        let standardBase64 = encoded
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        let paddedBase64 = standardBase64 + String(
-            repeating: "=",
-            count: (4 - standardBase64.count % 4) % 4
-        )
-        guard let data = Data(base64Encoded: paddedBase64),
-              let participantID = String(data: data, encoding: .utf8),
-              !participantID.isEmpty,
-              // Reject non-canonical encodings so every valid handle has one
-              // spelling and completion/routing cannot collide by alias.
-              sharedChatMentionHandle(forParticipantID: participantID) == handle else {
-            return nil
-        }
-        return participantID
     }
 
     nonisolated static func sharedChatWrappedRows(_ text: String, width: Int) -> [String] {

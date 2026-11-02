@@ -459,11 +459,11 @@ Commands start with `/`:
 
 **Agentic workflow:**
 - `/plan <goal>` — delegate planning to a sub-agent using a profile with the `planner` role (the built-in `Planner` by default). It may ask numbered clarification blocks over multiple turns; normal replies continue that runtime-only discussion with the same Planner, while a new goal closes and replaces it. The same command family is routed by the linked Telegram chat and ACP. See [planner.md](planner.md).
-- `/plan save` — save the active plan, or the latest non-empty assistant response, as a reusable unapproved draft in the current project's plan library.
-- `/plan load` — when no plan is active, load the latest saved project plan into the current context as unapproved and pending. Use `/plan clear` first to replace an active plan; loading never resumes old execution attempts.
-- `/plan status` — show plan progress from the graph state.
-- `/plan approve` — activate the plan and start implementation.
-- `/plan clear` — archive the graph and remove the active plan.
+- `/plan save` — save the active plan, or the latest non-empty assistant response, as a reusable unapproved draft in the current project's plan library. When the Planner authored a sequence of plans, it saves all of them (the active plan and the queued ones) in one atomic write, in sequence order; without an active plan it can also promote the latest assistant response that contains several plans in the strict Planner format and save all of them.
+- `/plan load` — when no plan is active, load the first saved project plan that is not completed (the oldest save among the unfinished drafts) into the current context as unapproved and pending. Use `/plan clear` first to replace an active plan; loading never resumes old execution attempts.
+- `/plan status` — show plan progress from the graph state: the active plan and, when the Planner authored a sequence, the queued plans.
+- `/plan approve` — activate the plan and start implementation. With queued plans it approves and implements only the active (first) plan.
+- `/plan clear` — archive the graph and remove the active plan and any queued plans. Copies saved in the plan library are untouched.
 - `/goal <goal>` — autonomously inspect the workspace and context to turn the request into a concrete objective with testable acceptance criteria, then work until completion or a genuine blocker, executing directly or delegating when useful. It creates an active persistent workflow graph up front and keeps the DAG even for entirely direct work; sub-agent tools are optional. A normal model `end_turn` does not stop the command while that graph remains open and its workflow is `running`: ZenCODE automatically continues coordinating, executing directly or delegating, retrying, and validating until the graph is completed, the user explicitly cancels it, or the coordinator records `awaiting_user` (a material ambiguity) or `blocked` (a genuine unresolved blocker) through structured `tasks.update` workflow control. The text only explains the pause; no `Workflow question` heading is required. Paused workflows do not auto-retry. Your next message resumes the same graph. The original goal and workflow state are retained separately from tasks in the checkpoint and reinserted on continuation/resume, including workflows paused before task creation or after the last currently defined task completes. Completing tasks does not close `/goal`: after verifying the entire objective, the coordinator explicitly finalizes with `tasks.update`, `graphID`, the current `expectedRevision`, and `workflow: {state: "completed"}`. Legacy checkpoints remain readable with an explicit unavailable-objective fallback; only metadata-free legacy graphs retain the old heading protocol until adopted. It refuses to start while an active `/plan` exists; finish that plan or use `/plan clear` first. The current agent executes or coordinates the work and validates results, retaining its normal tool grant; `/goal` does not implicitly enable delegation or mutation tools. No separate Planner sub-agent, routine objective-confirmation step, or approval step. Use `/tasks` to monitor progress.
 - `/review [focus]` — delegate review to sub-agents using the profiles with the `reviewer` role (the built-in `Reviewer` by default). See [reviewer.md](reviewer.md).
 - `/feature` — manage Swift feature packages (profiles with the `builder` role, such as `Builder`, only). See [builder.md](builder.md).
@@ -535,13 +535,30 @@ tasks and dependencies; any other response is saved as a text-only plan. The
 saved copy is reset to an unapproved draft with pending task statuses, while the
 currently active plan is left unchanged.
 
+The Planner may split work that is too large for one coherent plan into several
+plans to be executed in sequence, each starting with its own
+`Piano N/M: <title>` line. The first plan becomes the active, unapproved plan;
+the following ones form a queue of plans saved with the session. `/plan save`
+then saves every plan of the sequence, the active one and the queued ones, in
+one atomic write and in sequence order, so their save times increase in that
+order; without an active plan it can promote and save all the plans of the
+latest assistant response in the strict Planner format, each with its own tasks
+and dependencies. Saving a plan that is already in the library again keeps its
+original position. See [planner.md](planner.md#saving-and-loading-plans).
+
 To hand a plan to another session, start a new session with `/sessions new` (or
 use any session for the same working directory with no active plan), then run
-`/plan load`. The command selects the newest saved plan, displays it, and adds a
-handoff message to the model context. It refuses to replace an active plan, so
-run `/plan clear` first when necessary. Loading does not restore the source
+`/plan load`. The command selects the first saved plan that is not completed
+(the oldest save among the unfinished drafts), displays it, and adds a handoff
+message to the model context. It refuses to replace an active plan, so run
+`/plan clear` first when necessary. Loading does not restore the source
 session, its active attempts, or its execution progress; review or revise the
 draft, then run `/plan approve` to begin implementation.
+
+A sequence continues through the library: with the plans saved in order,
+successive sessions load plan 1, then, once plan 1 is completed and marked as
+completed in the library, plan 2, and so on. The session never promotes the next
+queued plan on its own, and `/plan approve` implements only the active plan.
 
 Approval creates and activates the plan's task graph in the receiving session.
 A plan saved with structured tasks keeps them. For a saved text-only plan with
@@ -549,7 +566,35 @@ no structured items, ZenCODE creates one stable implementation task rather than
 guessing a task breakdown from prose.
 
 **Optional integrations:**
-- `/telegram` / `/telegram on` / `/telegram off` — remote control (requires setup). Available even while a prompt is running.
+- `/telegram` / `/telegram on` / `/telegram off` — remote control (requires setup and the interactive terminal: the line-by-line fallback, for example with standard error redirected, refuses `/telegram on`). Available even while a prompt is running.
+
+`/telegram on` moves the chat to the linked Telegram chat, which drives the
+session from then on: prompts, voice notes, `/plan`, `/goal`, `/review`,
+replies to pending questions, and the permission replies `/allow`, `/always`,
+and `/deny` come from the chat, which also answers `/start`, `/help`,
+`/status`, `/changes`, `/diff`, and `/chat`; `/undo` stays in the terminal. The
+chat first receives the last six prompts and responses of the session as
+context. Meanwhile the terminal shows `Session driven from Telegram. Type
+/telegram off to take it back.` and accepts only `/telegram`, `/telegram off`,
+and `/exit` (a dictation, a mention by voice, and the access-mode shortcut are
+refused too); a question the session had open in the terminal is asked again in
+the chat, and the prompts already queued in the terminal wait, to run after
+`/telegram off`. `/telegram off` takes the session back: the terminal renders
+what it did not see under `Catch-up from Telegram:`, with the response still in
+progress, before anything more of a turn still running from Telegram, which
+goes on in the terminal (Esc stops it); `Telegram remote control stopped.`
+follows the catch-up. An *Always* given in the chat covers the session in the
+terminal too.
+
+In ACP clients such as Xcode the same commands exist (`/telegram`, `/telegram
+on`, `/telegram off`), answered at once. While Telegram drives the session the
+editor's prompts are refused with `ZenCODE: this session is driven from
+Telegram. Use /telegram off to take it back.`, and the reply to `/telegram
+off` carries the catch-up as text. Unlike the terminal, the editor cannot take
+the session back in the middle of a turn from Telegram: cancel it from the
+editor first (the chat sees `Stopped.`), or wait for it to end, then send
+`/telegram off`, which catches up with it. The link is not saved: after the
+client loads the session again, send `/telegram on` again.
 
 Telegram pairs exactly one global owner through a private chat. That owner may route
 multiple terminal sessions through a default private route or distinct private
@@ -1248,12 +1293,14 @@ Checkpoints are written atomically under `~/.zencode/task-graphs/<project key>/`
 plan store. It writes a draft copy of the active plan, or the latest non-empty
 assistant response, to a stable project plan-library logical session, so
 `/sessions new` may delete the live chat checkpoint without deleting explicitly
-saved plans. Todo-derived items remain graph tasks, while optional metadata
-carries the full goal and plan text needed by `/plan load`. `/plan load` selects
-the newest saved draft only when no plan is active, adds its handoff to the
-current model context, and does not activate its source session or resume old
-execution state. Saved drafts are excluded from the interrupted-work startup
-picker.
+saved plans. A sequence of plans is written as several draft graphs in one
+atomic checkpoint write, in sequence order; saving a plan again keeps its
+original position. Todo-derived items remain graph tasks, while optional
+metadata carries the full goal and plan text needed by `/plan load`.
+`/plan load` selects the first saved draft that is not completed (the oldest
+save) only when no plan is active, adds its handoff to the current model
+context, and does not activate its source session or resume old execution
+state. Saved drafts are excluded from the interrupted-work startup picker.
 At interactive startup, ZenCODE enumerates every incomplete graph for the
 current project and lets the operator resume one or delete obsolete graphs. A
 selection is keyed by `sessionID + graphID`: the orchestrator restores the
@@ -1308,7 +1355,7 @@ To split a conversation into a separate file, restore to the desired point and t
 
 ### Session Format
 
-Version 4 snapshots embed the checkpoint tree alongside the task graph and active plan. Sessions saved before v4 are not loadable. Remote sessions save the local transcript with replay metadata. Subscription sessions persist continuation metadata for efficient resume.
+Version 4 snapshots embed the checkpoint tree alongside the task graph and active plan, and may also carry the queued plans of a plan sequence as an optional ordered list (sessions saved without it still load). Sessions saved before v4 are not loadable. Remote sessions save the local transcript with replay metadata. Subscription sessions persist continuation metadata for efficient resume.
 
 ## Memory and Project Context
 

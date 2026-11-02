@@ -34,44 +34,16 @@ struct TerminalOverviewArbitration<Kind: Hashable, Pending> {
     var publicationCounters: [Kind: Int] = [:]
     var isSuspended = false
     /// Once an assistant turn has reached its final transcript tail, automatic
-    /// task/sub-agent updates continue through their runtime and mirror paths
-    /// but must not append local terminal text below that response.
+    /// task/sub-agent updates continue through their runtime paths but must
+    /// not append local terminal text below that response.
     var isAutomaticTerminalOverviewRenderingSuppressed = false
-    /// Tokens already printed into the local transcript. These stay separate
-    /// from mirrored tokens so a terminal-only tail fence does not make a later
-    /// explicit inspection lose model-authored sub-agent content.
+    /// Tokens already printed into the local transcript, so a later refresh
+    /// does not print the same model-authored sub-agent content again.
     var consumedResponseTokens = Set<String>()
     var consumedPartialResponseTokens = Set<String>()
-    var mirroredResponseTokens = Set<String>()
-    var mirroredPartialResponseTokens = Set<String>()
-}
-
-/// Actor-confined FIFO mirror queue state. Keeping continuations beside the
-/// drain flag makes the quiescence hand-off a single state transition.
-struct TerminalOverviewMirrorQueue<Notification> {
-    var pending: [Notification] = []
-    var isDraining = false
-    var drainWaiters: [CheckedContinuation<Void, Never>] = []
-    var epoch = 0
 }
 
 extension TerminalChatRenderCoordinator {
-    /// Remote-renderable overview output. Keeping this sum type narrow makes it
-    /// impossible to accidentally mirror transient sub-agent status, thinking,
-    /// tools, or metadata as a generic overview snapshot.
-    enum OverviewMirrorNotification: Sendable, Equatable {
-        case taskGraph(signature: String, markdown: String)
-        case subAgentPartialResponse(SubAgentPartialResponse)
-        case subAgentResponse(SubAgentMarkdownResponse)
-    }
-
-    /// Epoch is transport fencing rather than overview content, so it remains
-    /// outside the typed notification payload.
-    struct OverviewMirrorQueueEntry: Sendable {
-        let notification: OverviewMirrorNotification
-        let epoch: Int
-    }
-
     enum ToolBlockLifecycle: Sendable {
         case started
         case completed(

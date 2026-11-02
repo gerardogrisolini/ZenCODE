@@ -17,11 +17,15 @@ extension TerminalChat {
 
     /// Detects incomplete task graphs persisted by previous sessions and, in an
     /// interactive terminal, offers to resume one. When the user confirms a
-    /// choice, the orchestrator restores the checkpoint and makes that exact
-    /// graph current before `sessionID` is switched. The later session creation
-    /// therefore cannot silently fall back to another graph from the same
-    /// checkpoint. Returns the resumed graph (if any) so the caller can print a
-    /// notice after the startup screen has been rendered.
+    /// choice, the session takes the graph's id, in place through the host
+    /// (``ChatSessionHost/adoptSessionID(_:in:)``), and the orchestrator
+    /// restores the checkpoint and makes that exact graph current; a graph
+    /// that cannot be resumed gives the previous id back. The selection the
+    /// startup steps applied so far stays, as the runtime session does not
+    /// exist yet. The later session creation therefore cannot silently fall
+    /// back to another graph from the same checkpoint. Returns the resumed
+    /// graph (if any) so the caller can print a notice after the startup
+    /// screen has been rendered.
     ///
     /// Non-interactive (piped) input and ACP mode are skipped: resuming requires
     /// a choice the operator can make without contaminating ACP JSON-RPC I/O.
@@ -50,12 +54,21 @@ extension TerminalChat {
                 guard let chosen = resumable.first(where: { $0.id == id }) else {
                     return nil
                 }
+                // The id first: a refusal leaves the graph where it was, and
+                // a graph that cannot be resumed gives the id back, so the
+                // session never runs under one without the other.
+                let previousSessionID = sessionID
                 do {
-                    _ = try await sessionRunner.resumeTaskGraph(
-                        chosen,
-                        workingDirectory: workingDirectory
-                    )
-                    sessionID = chosen.sessionID
+                    try sessionHost.adoptSessionID(chosen.sessionID, in: terminalSlotID)
+                    do {
+                        _ = try await sessionRunner.resumeTaskGraph(
+                            chosen,
+                            workingDirectory: workingDirectory
+                        )
+                    } catch {
+                        sessionID = previousSessionID
+                        throw error
+                    }
                     return chosen
                 } catch {
                     await writeSystemMessage(
@@ -160,21 +173,9 @@ extension TerminalChat {
         }
     }
 
+    /// See ``ChatSessionController/restoreWorkflowProjection(from:)``.
     func restoreWorkflowProjection(from snapshot: TaskGraphSnapshot?) {
-        guard let snapshot, snapshot.source.isWorkflow,
-              !snapshot.state.isTerminal else {
-            activeWorkflow = nil
-            return
-        }
-        var workflow = WorkflowCommandRuntimeState(
-            goal: snapshot.workflow?.originalGoal ?? "", graphID: snapshot.id
-        )
-        if snapshot.workflow != nil, snapshot.workflow?.state != .running {
-            workflow.recordCoordinatorOutput(nil, graph: snapshot)
-        } else {
-            workflow.armForResumedGraph()
-        }
-        activeWorkflow = workflow
+        chatSession.restoreWorkflowProjection(from: snapshot)
     }
 
     func writeResumedTaskGraphNotice(_ graph: ResumableTaskGraph) async {

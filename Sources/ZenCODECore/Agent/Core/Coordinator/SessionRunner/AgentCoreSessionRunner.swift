@@ -22,7 +22,7 @@ public actor AgentCoreSessionRunner {
     /// Identifies one incarnation of a session. Every `createSession` starts a
     /// new generation and every close/reset drops it, so work that started
     /// before the change cannot cache or restore state afterwards.
-    typealias SessionGeneration = AgentCoreSessionSnapshotStore.Generation
+    public typealias SessionGeneration = AgentCoreSessionSnapshotStore.Generation
 
     var memoryLearningPermits: [String: MemoryLearningPermit] = [:]
     var backendManager = AgentCoreBackendManager()

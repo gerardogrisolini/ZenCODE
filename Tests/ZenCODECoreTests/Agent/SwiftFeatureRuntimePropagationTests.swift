@@ -10,7 +10,7 @@ import Testing
 @Suite
 struct SwiftFeatureRuntimePropagationTests {
     @Test
-    @TerminalChatActor
+    @ChatSessionActor
     func terminalChatUsesTheRuntimeOwnedByAnInjectedSessionRunner() throws {
         let runtime = SwiftFeatureRuntime()
         let runner = AgentCoreSessionRunner(swiftFeatureRuntime: runtime)

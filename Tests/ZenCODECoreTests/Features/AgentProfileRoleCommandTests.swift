@@ -23,7 +23,7 @@ struct AgentProfileRoleCommandTests {
     private static func withProject(
         agents: [AgentProfile] = Self.agents,
         selecting selection: [AgentProfile]?,
-        _ body: @escaping @Sendable @TerminalChatActor (TerminalChat, URL) async throws -> Void
+        _ body: @escaping @Sendable @ChatSessionActor (TerminalChat, URL) async throws -> Void
     ) async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("zencode-role-commands-\(UUID().uuidString)", isDirectory: true)
@@ -33,7 +33,7 @@ struct AgentProfileRoleCommandTests {
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        try await AppStorageDirectory.withSupportDirectoryURL(support) { @Sendable @TerminalChatActor in
+        try await AppStorageDirectory.withSupportDirectoryURL(support) { @Sendable @ChatSessionActor in
             if let selection {
                 try ProjectAgentSelectionStore.save(
                     agentIDs: selection.map(\.id),
@@ -53,7 +53,7 @@ struct AgentProfileRoleCommandTests {
         }
     }
 
-    @TerminalChatActor
+    @ChatSessionActor
     private static func approvePlan(on terminal: TerminalChat) {
         terminal.activePlan = TerminalSessionPlan(
             originalGoal: "goal",
@@ -62,13 +62,13 @@ struct AgentProfileRoleCommandTests {
         )
     }
 
-    @TerminalChatActor
+    @ChatSessionActor
     private static func hiddenPrompt(_ action: TerminalSubmittedLineAction) -> String? {
         guard case let .runHiddenPrompt(prompt, _) = action else { return nil }
         return prompt
     }
 
-    @TerminalChatActor
+    @ChatSessionActor
     private static func isContinueChat(_ action: TerminalSubmittedLineAction) -> Bool {
         if case .continueChat = action { return true }
         return false
@@ -149,7 +149,7 @@ struct AgentProfileRoleCommandTests {
     @Test
     func planReplyIsKeptPendingWhileTheProjectAssociatesNoPlanner() async throws {
         try await Self.withProject(selecting: nil) { terminal, workspace in
-            var state = TerminalPlanBrainstormingState(goal: "ship roles")
+            var state = PlanningCommandRuntimeState(goal: "ship roles")
             state.recordPlannerOutput(
                 "Planner questions\n1. Which roles?",
                 agentID: "planner-1",

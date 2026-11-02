@@ -5,8 +5,8 @@ import Foundation
 /// Authoritative in-memory session/snapshot cache for the runner. Session
 /// incarnations are fenced here so teardown and late prompt finalization share
 /// one invariant instead of manipulating parallel dictionaries independently.
-struct AgentCoreSessionSnapshotStore {
-    struct Generation: Hashable {
+public struct AgentCoreSessionSnapshotStore {
+    public struct Generation: Hashable, Sendable {
         let rawValue: UInt64
     }
 

@@ -80,6 +80,114 @@ struct TerminalSessionStoreTests {
     }
 
     @Test
+    func savesAndLoadsQueuedPlansInOrder() throws {
+        let supportDirectory = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: supportDirectory)
+        }
+        func plan(_ goal: String, createdAt: TimeInterval) -> TerminalSessionPlan {
+            TerminalSessionPlan(
+                originalGoal: goal,
+                consolidatedText: "\(goal). Implement and validate.",
+                createdAt: Date(timeIntervalSince1970: createdAt),
+                isApproved: false,
+                points: [
+                    TerminalSessionPlanPoint(id: "\(goal)-1", text: "Do \(goal)")
+                ]
+            )
+        }
+        let active = plan("First step", createdAt: 30)
+        let queued = [plan("Second step", createdAt: 31), plan("Third step", createdAt: 32)]
+        let session = sampleSession(
+            name: "queued work",
+            workingDirectory: supportDirectory.appendingPathComponent("Project"),
+            activePlan: active,
+            queuedPlans: queued
+        )
+
+        let fileURL = try TerminalSessionStore.save(
+            session,
+            supportDirectoryURL: supportDirectory
+        )
+        let loaded = try TerminalSessionStore.load(from: fileURL)
+
+        #expect(loaded.version == TerminalSavedSession.currentVersion)
+        #expect(loaded.activePlan == active)
+        #expect(loaded.queuedPlans == queued)
+        #expect(loaded == session)
+    }
+
+    @Test
+    func sessionWithoutQueuedPlansEncodesNoKeyAndDecodesToNil() throws {
+        let supportDirectory = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: supportDirectory)
+        }
+        let session = sampleSession(
+            name: "no queue",
+            workingDirectory: supportDirectory.appendingPathComponent("Project")
+        )
+
+        // A nil queue is omitted from the encoded form, so sessions saved
+        // without a queue stay byte-compatible with files written before it.
+        let encoded = try PropertyListEncoder().encode(session)
+        let propertyList = try #require(
+            try PropertyListSerialization.propertyList(
+                from: encoded,
+                format: nil
+            ) as? [String: Any]
+        )
+        #expect(propertyList["queuedPlans"] == nil)
+
+        let fileURL = try TerminalSessionStore.save(
+            session,
+            supportDirectoryURL: supportDirectory
+        )
+        let loaded = try TerminalSessionStore.load(from: fileURL)
+        #expect(loaded.queuedPlans == nil)
+        #expect(loaded == session)
+    }
+
+    @Test
+    func decodesSnapshotWrittenBeforeQueuedPlansExisted() throws {
+        let checkpointTreeData = try PropertyListEncoder().encode(
+            SessionCheckpointTree.fromLinearHistory([], sessionID: "terminal-no-queue")
+        )
+        let checkpointTreeDict = try PropertyListSerialization.propertyList(
+            from: checkpointTreeData,
+            format: nil
+        ) as! [String: Any]
+        let propertyList: [String: Any] = [
+            "version": TerminalSavedSession.currentVersion,
+            "name": "no queue",
+            "sessionID": "terminal-no-queue",
+            "workingDirectoryPath": "/tmp/no-queue-project",
+            "createdAt": Date(timeIntervalSince1970: 10),
+            "savedAt": Date(timeIntervalSince1970: 20),
+            "selectedTools": [],
+            "selectedSkillIDs": [],
+            "history": [],
+            "checkpointTree": checkpointTreeDict,
+            "activePlan": [
+                "originalGoal": "Existing goal",
+                "consolidatedText": "Existing consolidated plan",
+                "createdAt": Date(timeIntervalSince1970: 15),
+                "isApproved": true,
+            ],
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: propertyList,
+            format: .binary,
+            options: 0
+        )
+
+        let decoded = try PropertyListDecoder().decode(TerminalSavedSession.self, from: data)
+
+        #expect(decoded.activePlan?.originalGoal == "Existing goal")
+        #expect(decoded.queuedPlans == nil)
+    }
+
+    @Test
     func savesAndLoadsTaskGraphSnapshot() throws {
         let supportDirectory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: supportDirectory) }
@@ -355,6 +463,102 @@ struct TerminalSessionStoreTests {
         #expect(FileManager.default.fileExists(atPath: sourceURL.path))
     }
 
+    /// A save writes `.<name>.<UUID>.tmp` and renames it: the migration,
+    /// which may run in another process, never moves a hidden file or a
+    /// `*.tmp`, so the rename of a first save cannot fail under it.
+    @Test
+    func migrationLeavesSavesInProgressAndHiddenFilesWhereTheyAre() throws {
+        let supportDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+        let projectURL = supportDirectory
+            .appendingPathComponent("Project", isDirectory: true)
+        let session = sampleSession(
+            name: "saving now",
+            workingDirectory: projectURL
+        )
+        let directoryURL = TerminalSessionStore.sessionsDirectoryURL(
+            for: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+        let destinationURL = TerminalSessionStore.sessionFileURL(
+            name: session.name,
+            workingDirectory: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+        try FileManager.default.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: true
+        )
+        let data = try PropertyListEncoder().encode(session)
+        let inProgressURL = directoryURL.appendingPathComponent(
+            ".\(destinationURL.lastPathComponent).\(UUID().uuidString).tmp"
+        )
+        let hiddenURL = directoryURL.appendingPathComponent(".stored-record")
+        let temporaryURL = directoryURL.appendingPathComponent("stored-record.tmp")
+        for url in [inProgressURL, hiddenURL, temporaryURL] {
+            try data.write(to: url)
+        }
+
+        let listed = try TerminalSessionStore.savedSessions(
+            for: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+        #expect(throws: (any Error).self) {
+            try TerminalSessionStore.load(
+                name: session.name,
+                workingDirectory: projectURL,
+                supportDirectoryURL: supportDirectory
+            )
+        }
+
+        #expect(listed.isEmpty)
+        for url in [inProgressURL, hiddenURL, temporaryURL] {
+            #expect(FileManager.default.fileExists(atPath: url.path))
+        }
+        #expect(!FileManager.default.fileExists(atPath: destinationURL.path))
+    }
+
+    /// `migrating: false` only lists: a session file with another name
+    /// stays where it is, and is not listed.
+    @Test
+    func listingWithoutMigrationMovesNothing() throws {
+        let supportDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+        let projectURL = supportDirectory
+            .appendingPathComponent("Project", isDirectory: true)
+        let current = sampleSession(name: "current", workingDirectory: projectURL)
+        let legacy = sampleSession(name: "legacy", workingDirectory: projectURL)
+        _ = try TerminalSessionStore.save(current, supportDirectoryURL: supportDirectory)
+        let directoryURL = TerminalSessionStore.sessionsDirectoryURL(
+            for: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+        let sourceURL = directoryURL.appendingPathComponent("stored-record")
+        try PropertyListEncoder().encode(legacy).write(to: sourceURL)
+        let destinationURL = TerminalSessionStore.sessionFileURL(
+            name: legacy.name,
+            workingDirectory: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+
+        let listed = try TerminalSessionStore.savedSessions(
+            for: projectURL,
+            migrating: false,
+            supportDirectoryURL: supportDirectory
+        )
+
+        #expect(listed == [current])
+        #expect(FileManager.default.fileExists(atPath: sourceURL.path))
+        #expect(!FileManager.default.fileExists(atPath: destinationURL.path))
+        // The default listing still migrates it.
+        let migrated = try TerminalSessionStore.savedSessions(
+            for: projectURL,
+            supportDirectoryURL: supportDirectory
+        )
+        #expect(Set(migrated.map(\.name)) == ["current", "legacy"])
+        #expect(!FileManager.default.fileExists(atPath: sourceURL.path))
+    }
+
     @Test
     func deletesSavedSessionByName() throws {
         let supportDirectory = temporaryDirectory()
@@ -538,6 +742,7 @@ struct TerminalSessionStoreTests {
         workingDirectory: URL,
         transcriptHistory: [AgentRuntimeMessage]? = nil,
         activePlan: TerminalSessionPlan? = nil,
+        queuedPlans: [TerminalSessionPlan]? = nil,
         taskGraph: TaskGraphSnapshot? = nil
     ) -> TerminalSavedSession {
         TerminalSavedSession(
@@ -584,6 +789,7 @@ struct TerminalSessionStoreTests {
             ],
             transcriptHistory: transcriptHistory,
             activePlan: activePlan,
+            queuedPlans: queuedPlans,
             taskGraph: taskGraph,
             checkpointTree: SessionCheckpointTree.fromLinearHistory(
                 transcriptHistory ?? [

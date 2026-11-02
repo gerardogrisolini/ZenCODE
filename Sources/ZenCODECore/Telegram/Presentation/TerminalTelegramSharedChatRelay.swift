@@ -357,7 +357,7 @@ actor TerminalTelegramSharedChatRelay {
 
     // MARK: - Forwarding
 
-    /// Offers one observer batch. Every message in the active room is mirrored:
+    /// Offers one observer batch. Every message in the active room is relayed:
     /// operator-originated traffic, coordinator ↔ agent traffic, peer traffic,
     /// direct multi-recipient traffic and broadcasts are all visible.
     ///
@@ -748,7 +748,7 @@ actor TerminalTelegramSharedChatRelay {
     /// is activated again.
     ///
     /// A card whose sender has no live destination — today the operator's own
-    /// traffic, which is mirrored as evidence and must never address the Telegram
+    /// traffic, which is relayed as evidence and must never address the Telegram
     /// user back to themselves — gets **no** target at all: not installed, not
     /// parked. Recording one would make the card look answerable to every caller
     /// that only asks "is this a reply to a card?", such as the voice-note guard,

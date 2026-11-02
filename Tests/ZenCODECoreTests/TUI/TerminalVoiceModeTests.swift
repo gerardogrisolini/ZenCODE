@@ -7,7 +7,7 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite("Terminal voice mode")
 struct TerminalVoiceModeTests {
     @Test
@@ -77,10 +77,10 @@ struct TerminalVoiceModeTests {
     }
 
     private func output(of command: String, in chat: TerminalChat) async -> String {
-        chat.telegramImmediateCommandOutput = []
+        chat.capturedCommandOutputForTesting = []
         await chat.handleVoiceCommand(command)
-        defer { chat.telegramImmediateCommandOutput = nil }
-        return chat.telegramImmediateCommandOutput?.joined() ?? ""
+        defer { chat.capturedCommandOutputForTesting = nil }
+        return chat.capturedCommandOutputForTesting?.joined() ?? ""
     }
 
     private func configuration() throws -> AgentConfiguration {

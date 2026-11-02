@@ -7,88 +7,9 @@
 
 import Foundation
 
-/// Overview arbitration (signatures, revisions, deferral, publication suspension), the sub-agent in-place section, and the FIFO mirror queue.
+/// Overview arbitration (signatures, revisions, deferral, publication suspension) and the sub-agent in-place section.
 extension TerminalChatRenderCoordinator {
     // MARK: - Overview arbitration
-
-    /// Advances and returns the mirroring epoch. The chat calls this at each
-    /// turn boundary so undelivered notifications from the previous turn are
-    /// fenced off from the new turn's reporter.
-    func advanceMirrorEpoch() -> Int {
-        mirrorQueue.epoch += 1
-        return mirrorQueue.epoch
-    }
-
-    /// Installs or replaces the overview mirroring hook. Actor-isolated so the
-    /// handler swap cannot race an in-flight mirror dispatch.
-    func setOverviewMirroringHandler(
-        _ handler: (@Sendable (
-            _ notification: OverviewMirrorNotification,
-            _ epoch: Int
-        ) async -> Void)?
-    ) {
-        overviewMirroringHandler = handler
-    }
-
-    /// Turn-boundary barrier over the mirror queue: returns once every
-    /// notification queued so far has been handed to the mirroring handler.
-    /// This is a snapshot contract over the queue, not over producers: a
-    /// publication whose render has not happened yet (for example a debounced
-    /// task-graph observer render still inside its coalescing window) is by
-    /// contract a post-turn publication and will not be mirrored for the
-    /// retiring turn. Callers flush the remote channel and retire the turn
-    /// reporter right after, so the turn's final message cannot be overtaken
-    /// by sections the turn already rendered.
-    func waitForOverviewMirrorsToDrain() async {
-        guard mirrorQueue.isDraining
-            || !mirrorQueue.pending.isEmpty else {
-            return
-        }
-        await withCheckedContinuation { continuation in
-            mirrorQueue.drainWaiters.append(continuation)
-        }
-    }
-    private func enqueueMirrorNotification(
-        _ notification: OverviewMirrorNotification
-    ) {
-        mirrorQueue.pending.append(
-            OverviewMirrorQueueEntry(
-                notification: notification,
-                epoch: mirrorQueue.epoch
-            )
-        )
-        guard !mirrorQueue.isDraining else {
-            return
-        }
-        mirrorQueue.isDraining = true
-        Task(name: "ZenCODE.TUI.overview-mirror-drain") {
-            await drainMirrorNotifications()
-        }
-    }
-
-    /// FIFO delivery: appends happen on this actor in render order, and this
-    /// single drain task hands them to the handler one at a time. While it
-    /// awaits the handler, new appends are picked up by the same loop, so the
-    /// remote order always matches the local render order.
-    private func drainMirrorNotifications() async {
-        while !mirrorQueue.pending.isEmpty {
-            let notification = mirrorQueue.pending.removeFirst()
-            if let overviewMirroringHandler {
-                await overviewMirroringHandler(
-                    notification.notification,
-                    notification.epoch
-                )
-            }
-        }
-        // No suspension between the loop exit and the flag/waiter handoff, so
-        // a concurrent append cannot slip past this drain unnoticed.
-        mirrorQueue.isDraining = false
-        let waiters = mirrorQueue.drainWaiters
-        mirrorQueue.drainWaiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
-        }
-    }
 
     /// Reserves a monotonically increasing publication token before snapshot
     /// work starts. Reserving eagerly lets a newer request fence an older one
@@ -112,8 +33,8 @@ extension TerminalChatRenderCoordinator {
     }
 
     /// Closes the local transcript at an assistant turn's final response. Live
-    /// task/sub-agent progress is still observed and mirrored, but it must not
-    /// append an automatic section beneath that response (or a model question).
+    /// task/sub-agent progress is still observed, but it must not append an
+    /// automatic section beneath that response (or a model question).
     func beginAssistantTranscriptTail() {
         overviewState.isAutomaticTerminalOverviewRenderingSuppressed = true
     }
@@ -223,11 +144,11 @@ extension TerminalChatRenderCoordinator {
 
         // Do not let a late automatic snapshot overtake an already completed
         // assistant response in the local terminal. The same data remains
-        // observable by the runtime and is mirrored for the linked Telegram
-        // turn; only the local transcript write is fenced here.
+        // observable by the runtime; only the local transcript write is
+        // fenced here.
         if origin == .automatic,
            overviewState.isAutomaticTerminalOverviewRenderingSuppressed {
-            publishOverviewWithoutLocalTerminalOutput(overview)
+            rememberOverviewWithoutLocalTerminalOutput(overview)
             return .rendered
         }
 
@@ -292,41 +213,22 @@ extension TerminalChatRenderCoordinator {
             }
             if overview.origin == .automatic,
                overviewState.isAutomaticTerminalOverviewRenderingSuppressed {
-                publishOverviewWithoutLocalTerminalOutput(overview)
+                rememberOverviewWithoutLocalTerminalOutput(overview)
             } else {
                 renderOverviewNow(overview)
             }
         }
     }
 
-    /// Delivers the mirror projection of an automatic overview that the local
-    /// transcript tail intentionally withholds. Keeping this separate from
-    /// `renderOverviewNow` prevents a terminal-only policy from changing linked
-    /// Telegram delivery or the runtime's current-state observation.
-    private func publishOverviewWithoutLocalTerminalOutput(_ overview: PendingOverview) {
+    /// Records an automatic overview that the local transcript tail
+    /// intentionally withholds: its signature is remembered, so the same
+    /// content is not rendered again later, and nothing is written. The
+    /// channel that presents the session elsewhere (the Telegram channel,
+    /// while it drives the slot) receives the overview through its own
+    /// presenter, not through the terminal's renderer.
+    private func rememberOverviewWithoutLocalTerminalOutput(_ overview: PendingOverview) {
         if overview.rememberSignature {
             overviewState.signatures[overview.kind] = overview.rememberedSignature
-        }
-        switch overview.content {
-        case let .markdown(markdown):
-            enqueueMirrorNotification(
-                .taskGraph(signature: overview.signature, markdown: markdown)
-            )
-        case let .subAgents(_, partialResponses, responses, _, _):
-            for response in partialResponses {
-                guard !overviewState.mirroredPartialResponseTokens.contains(response.token) else {
-                    continue
-                }
-                overviewState.mirroredPartialResponseTokens.insert(response.token)
-                enqueueMirrorNotification(.subAgentPartialResponse(response))
-            }
-            for response in responses {
-                guard !overviewState.mirroredResponseTokens.contains(response.token) else {
-                    continue
-                }
-                overviewState.mirroredResponseTokens.insert(response.token)
-                enqueueMirrorNotification(.subAgentResponse(response))
-            }
         }
     }
 
@@ -337,9 +239,6 @@ extension TerminalChatRenderCoordinator {
         switch overview.content {
         case let .markdown(markdown):
             renderMarkdownMessage(markdown)
-            enqueueMirrorNotification(
-                .taskGraph(signature: overview.signature, markdown: markdown)
-            )
         case let .subAgents(
             text,
             partialResponses,
@@ -410,14 +309,10 @@ extension TerminalChatRenderCoordinator {
         activeSubAgentOverviewBlock = nil
 
         // These model-authored blocks are already visible as 💬 rows inside the
-        // overview. Notify remote mirrors only after the local render succeeds.
-        // Local-consumption and mirror identities remain distinct so a response
-        // withheld by the terminal tail can still appear in an explicit view.
+        // overview; they are consumed once the local render succeeded, so a
+        // later refresh does not print them again.
         for response in pendingPartialResponses {
             overviewState.consumedPartialResponseTokens.insert(response.token)
-            if overviewState.mirroredPartialResponseTokens.insert(response.token).inserted {
-                enqueueMirrorNotification(.subAgentPartialResponse(response))
-            }
         }
 
         guard pendingResponses.isEmpty else {
@@ -436,9 +331,6 @@ extension TerminalChatRenderCoordinator {
                 )
                 writeChat("\n\n", to: .standardError)
                 overviewState.consumedResponseTokens.insert(response.token)
-                if overviewState.mirroredResponseTokens.insert(response.token).inserted {
-                    enqueueMirrorNotification(.subAgentResponse(response))
-                }
             }
             return
         }

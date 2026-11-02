@@ -53,11 +53,16 @@ extension ZenCODESetupRunner {
     }
 
     static func promptTelegramSettings(
-        existingSettings: AgentTelegramSettingsManifest?
+        existingSettings: AgentTelegramSettingsManifest?,
+        transport: any TelegramHTTPTransport = NIOTelegramHTTPTransport(),
+        confirm: (String, Bool) throws -> Bool = {
+            try ZenCODESetupRunner.promptYesNo($0, defaultValue: $1)
+        },
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) }
     ) async throws -> AgentTelegramSettingsManifest? {
-        let shouldEnableTelegram = try promptYesNo(
+        let shouldEnableTelegram = try confirm(
             "Enable Telegram remote control?",
-            defaultValue: existingSettings?.isConfigured == true
+            existingSettings?.isConfigured == true
         )
         guard shouldEnableTelegram else {
             return nil
@@ -65,18 +70,23 @@ extension ZenCODESetupRunner {
 
         let existingToken = existingSettings?.botToken?.nilIfBlank
         if existingSettings?.isEnabled == true {
-            let shouldReplacePairing = try promptYesNo(
+            let shouldReplacePairing = try confirm(
                 "Replace stored Telegram bot token and pairing?",
-                defaultValue: false
+                false
             )
             if !shouldReplacePairing {
+                await printStoredTelegramThreadedModeStatus(
+                    botToken: existingToken,
+                    transport: transport,
+                    write: write
+                )
                 return existingSettings
             }
         }
 
         let token: String
         if let existingToken,
-           try promptYesNo("Use stored Telegram bot token for pairing?", defaultValue: true) {
+           try confirm("Use stored Telegram bot token for pairing?", true) {
             token = existingToken
         } else {
             printTelegramBotTokenGuide()
@@ -86,7 +96,37 @@ extension ZenCODESetupRunner {
             )
         }
 
-        return try await pairTelegram(botToken: token)
+        return try await pairTelegram(botToken: token, transport: transport, write: write)
+    }
+
+    /// Status line for Telegram Threaded mode (Bot API 9.3 topics in the private
+    /// chat), from `getMe().has_topics_enabled`. A bot that does not report the
+    /// flag counts as disabled. The text carries no trailing newline.
+    static func telegramThreadedModeStatus(hasTopicsEnabled: Bool?) -> String {
+        if hasTopicsEnabled == true {
+            return "Threaded mode: enabled — each ZenCODE session gets its own Telegram topic."
+        }
+        return "Threaded mode: disabled — all sessions share the chat. "
+            + "To get one topic per session, open @BotFather › your bot › Bot Settings "
+            + "and enable Threaded mode."
+    }
+
+    /// Best-effort Threaded-mode status for a pairing that setup keeps. It is a
+    /// plain `getMe` with the stored token: no `deleteWebhook`, no pairing
+    /// grant, no update offset and no file. Any failure (network, token,
+    /// decoding) is ignored and prints nothing.
+    static func printStoredTelegramThreadedModeStatus(
+        botToken: String?,
+        transport: any TelegramHTTPTransport = NIOTelegramHTTPTransport(),
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) }
+    ) async {
+        guard let botToken = botToken?.nilIfBlank,
+              let bot = try? await TerminalTelegramAPIClient(
+                  token: botToken, transport: transport
+              ).getMe() else {
+            return
+        }
+        write("\(telegramThreadedModeStatus(hasTopicsEnabled: bot.hasTopicsEnabled))\n")
     }
 
     static func printTelegramBotTokenGuide() {
@@ -104,10 +144,15 @@ extension ZenCODESetupRunner {
     }
 
     static func pairTelegram(
-        botToken: String
+        botToken: String,
+        transport: any TelegramHTTPTransport = NIOTelegramHTTPTransport(),
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) }
     ) async throws -> AgentTelegramSettingsManifest {
-        let pairingService = TerminalTelegramPairingService(botToken: botToken)
+        let pairingService = TerminalTelegramPairingService(
+            botToken: botToken, transport: transport
+        )
         let bot = try await pairingService.prepare()
+        write("\(telegramThreadedModeStatus(hasTopicsEnabled: bot.hasTopicsEnabled))\n")
         let botLabel = bot.username.map { "@\($0)" } ?? "your Telegram bot"
 
         // Deep-link grant: 128 bits of entropy, single use, 10-minute TTL.
@@ -138,13 +183,13 @@ extension ZenCODESetupRunner {
           Waiting for Telegram...
 
         """
-        AgentOutput.standardError.writeString(instructions)
+        write(instructions)
 
         let linkedChat = try await pairingService.waitForPairing(
             code: payload, deadline: pairingDeadline
         )
         let title = linkedChat.chatTitle?.nilIfBlank ?? "chat \(linkedChat.chatID)"
-        AgentOutput.standardError.writeString("Telegram linked: \(title)\n")
+        write("Telegram linked: \(title)\n")
         return AgentTelegramSettingsManifest(
             enabled: true,
             botToken: botToken,

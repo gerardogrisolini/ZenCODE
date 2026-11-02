@@ -9,6 +9,25 @@ import Foundation
 import ToolCore
 
 extension ZenCODEACPBridge {
+    /// The models ACP sessions choose from: the host's models, or the user's
+    /// configured catalog read on every use. Shared with the other channels.
+    var modelCatalog: ChatModelCatalog {
+        ChatModelCatalog(hostedModels: configuration.hostedModels)
+    }
+
+    /// The model a new session defaults to (see
+    /// ``ChatModelCatalog/defaultModelID(explicitModelID:agentModelID:launchModelID:)``):
+    /// with hosted models the launch-time model, otherwise `--model`, the
+    /// launch agent's model, then the selected model, read from the settings
+    /// now, so a model saved by `set_model` becomes the next default.
+    func defaultSessionModelID() -> String? {
+        modelCatalog.defaultModelID(
+            explicitModelID: configuration.modelID,
+            agentModelID: configuration.selectedAgent?.modelID,
+            launchModelID: configuration.effectiveModelID
+        )
+    }
+
     public func configOptions(
         for modelID: String?,
         thinkingSelection: AgentThinkingSelection? = nil
@@ -18,7 +37,7 @@ extension ZenCODEACPBridge {
             return []
         }
         let selectedModelID = modelID?.nilIfBlank
-            ?? configuration.effectiveModelID?.nilIfBlank
+            ?? defaultSessionModelID()?.nilIfBlank
             ?? (modelOptions.first?["value"] as? String)
             ?? ""
         var options: [[String: Any]] = [
@@ -59,7 +78,7 @@ extension ZenCODEACPBridge {
     public func thinkingConfigOptions(
         for model: AgentSettingsModelManifest
     ) -> [[String: Any]] {
-        model.availableThinkingSelections.map { selection in
+        ChatModelCatalog.thinkingOptions(for: model).map { selection in
             [
                 "value": selection.rawValue,
                 "name": selection.displayTitle,
@@ -69,22 +88,17 @@ extension ZenCODEACPBridge {
     }
 
     public func availableModelManifests() -> [AgentSettingsModelManifest] {
-        configuration.hostedModels ?? AgentSettingsStore.availableModels()
+        modelCatalog.availableModels()
     }
 
     public func modelManifest(for modelID: String?) -> AgentSettingsModelManifest? {
-        guard let modelID = modelID?.nilIfBlank else {
-            return nil
-        }
-        return availableModelManifests().first { model in
-            model.matches(modelID)
-        }
+        modelCatalog.model(matching: modelID)
     }
 
     public func modelState(for modelID: String?) -> [String: Any] {
         let modelOptions = modelConfigOptions()
         let selectedModelID = modelID?.nilIfBlank
-            ?? configuration.effectiveModelID?.nilIfBlank
+            ?? defaultSessionModelID()?.nilIfBlank
             ?? (modelOptions.first?["value"] as? String)
             ?? ""
         return [
@@ -99,90 +113,109 @@ extension ZenCODEACPBridge {
         ]
     }
 
-    /// Builds a session state with a fresh epoch. Pass `epoch` to preserve the
-    /// existing incarnation when only refreshing an already-live session.
-    public func sessionState(
+    /// The ACP state of a new incarnation the host runs: unannounced, with
+    /// fresh presentation state and no prompt.
+    func sessionState(
         configuration: AgentCoreSessionConfiguration,
         selectedAgent: AgentProfile? = nil,
-        epoch: UInt64? = nil,
-        activePromptID: UUID? = nil,
-        activePromptTask: Task<PromptCompletion, Error>? = nil,
-        operationState: SessionOperationState = .idle
-    ) -> SessionState {
-        sessionStateWithCommandState(
-            configuration: configuration,
-            selectedAgent: selectedAgent,
-            epoch: epoch,
-            activePromptID: activePromptID,
-            activePromptTask: activePromptTask,
-            operationState: operationState
-        )
-    }
-
-    // All same-incarnation reconstruction paths (mention, refresh and
-    // reconfiguration) inherit ACP presentation state from the live entry.
-    // A fresh epoch, including load/resume, deliberately starts unannounced.
-    func sessionStateWithCommandState(
-        configuration: AgentCoreSessionConfiguration,
-        selectedAgent: AgentProfile? = nil,
-        epoch: UInt64? = nil,
-        activePromptID: UUID? = nil,
-        activePromptTask: Task<PromptCompletion, Error>? = nil,
-        operationState: SessionOperationState = .idle,
-        activePlan: TerminalSessionPlan? = nil,
-        planBrainstorming: PlanningCommandRuntimeState? = nil,
-        pendingPlanApprovalPlanID: String? = nil,
-        workflowContinuation: WorkflowCommandRuntimeState? = nil
+        incarnation: ChatSessionIncarnation
     ) -> SessionState {
         SessionState(
             id: configuration.sessionID,
             cwd: configuration.workingDirectory.path,
             allowedToolNames: configuration.allowedToolNames,
             configuration: configuration,
-            epoch: epoch ?? makeSessionEpoch(),
+            epoch: incarnation.epoch,
+            slotID: incarnation.slotID,
             selectedAgent: selectedAgent,
-            hasPresentedInitialConfiguration: epoch.flatMap { expectedEpoch in
-                sessions[configuration.sessionID].flatMap { existing in
-                    existing.epoch == expectedEpoch
-                        ? existing.hasPresentedInitialConfiguration
-                        : nil
-                }
-            } ?? false,
-            presentedCommands: epoch.flatMap { expectedEpoch in
-                sessions[configuration.sessionID].flatMap { $0.epoch == expectedEpoch ? $0.presentedCommands : nil }
-            },
-            tasklessPresentation: epoch.flatMap { expectedEpoch in
-                sessions[configuration.sessionID].flatMap { $0.epoch == expectedEpoch ? $0.tasklessPresentation : nil }
-            } ?? ACPTasklessPresentation(),
-            taskPresentation: epoch.flatMap { expectedEpoch in
-                sessions[configuration.sessionID].flatMap { $0.epoch == expectedEpoch ? $0.taskPresentation : nil }
-            } ?? ACPTaskPresentation(),
-            activePromptID: activePromptID,
-            activePromptTask: activePromptTask,
-            operationState: operationState,
-            activePlan: activePlan,
-            planBrainstorming: planBrainstorming,
-            pendingPlanApprovalPlanID: pendingPlanApprovalPlanID ?? epoch.flatMap { expectedEpoch in
-                sessions[configuration.sessionID].flatMap {
-                    $0.epoch == expectedEpoch ? $0.pendingPlanApprovalPlanID : nil
-                }
-            },
-            workflowContinuation: workflowContinuation
+            controller: incarnation.controller
         )
+    }
+
+    /// The ACP state of the live incarnation `live` with another
+    /// configuration. All same-incarnation reconstruction paths (mention,
+    /// refresh and reconfiguration) inherit the ACP presentation state, the
+    /// incarnation binding (its slot, epoch, and controller with its command
+    /// state) and the registered prompt task from the live entry. A new
+    /// epoch, including load/resume, deliberately starts unannounced with a
+    /// new controller (``sessionState(configuration:selectedAgent:incarnation:)``);
+    /// the slot's Telegram channel, if any, belongs to the slot and follows
+    /// it by itself.
+    func sessionState(
+        configuration: AgentCoreSessionConfiguration,
+        selectedAgent: AgentProfile? = nil,
+        inheriting live: SessionState
+    ) -> SessionState {
+        SessionState(
+            id: configuration.sessionID,
+            cwd: configuration.workingDirectory.path,
+            allowedToolNames: configuration.allowedToolNames,
+            configuration: configuration,
+            epoch: live.epoch,
+            slotID: live.slotID,
+            selectedAgent: selectedAgent,
+            hasPresentedInitialConfiguration: live.hasPresentedInitialConfiguration,
+            presentedCommands: live.presentedCommands,
+            promptUpdatePipeline: live.promptUpdatePipeline,
+            delegatedToolNotifications: live.delegatedToolNotifications,
+            tasklessObserver: live.tasklessObserver,
+            tasklessPresentation: live.tasklessPresentation,
+            taskPresentation: live.taskPresentation,
+            activeWorkflowPromptID: live.activeWorkflowPromptID,
+            activePromptTask: live.activePromptTask,
+            activePromptTaskID: live.activePromptTaskID,
+            controller: live.controller
+        )
+    }
+
+    /// Runs a new incarnation of `configuration.sessionID` in the host and
+    /// publishes its ACP state: what `session/new` and `session/load` do
+    /// between their fences, in one step, for the tests that install a
+    /// session directly. The runner session is not created. An entry of an
+    /// earlier incarnation with the same id is replaced and its slot closed,
+    /// as a close followed by a load of the same id would leave it.
+    func installSession(
+        configuration: AgentCoreSessionConfiguration,
+        selectedAgent: AgentProfile? = nil
+    ) async throws -> SessionState {
+        if let replaced = sessions.removeValue(forKey: configuration.sessionID) {
+            await host.closeSlot(replaced.slotID, runtimeSession: .keep)
+        }
+        let incarnation = try await openACPSession(
+            sessionID: configuration.sessionID,
+            cwd: configuration.workingDirectory.path
+        )
+        let state = sessionState(
+            configuration: configuration,
+            selectedAgent: selectedAgent,
+            incarnation: incarnation
+        )
+        sessions[configuration.sessionID] = state
+        return state
     }
 
     /// Describes the selected runtime configuration without resolving a new
     /// thinking value or injecting presentation metadata into the model turn.
     func initialConfigurationSummary(for session: SessionState) -> String {
-        let agent = session.selectedAgent?.name.nilIfBlank
-            ?? session.configuration.agentName?.nilIfBlank
-            ?? session.configuration.agentID?.nilIfBlank
+        initialConfigurationSummary(
+            configuration: session.configuration,
+            selectedAgent: session.selectedAgent
+        )
+    }
+
+    func initialConfigurationSummary(
+        configuration: AgentCoreSessionConfiguration,
+        selectedAgent: AgentProfile?
+    ) -> String {
+        let agent = selectedAgent?.name.nilIfBlank
+            ?? configuration.agentName?.nilIfBlank
+            ?? configuration.agentID?.nilIfBlank
             ?? "Default"
-        let model = session.configuration.modelID?.nilIfBlank ?? "Default"
+        let model = configuration.modelID?.nilIfBlank ?? "Default"
         let thinking: String
-        if let selection = session.configuration.thinkingSelection {
+        if let selection = configuration.thinkingSelection {
             thinking = selection.displayTitle
-        } else if modelManifest(for: session.configuration.modelID)?.supportsThinking == false {
+        } else if modelManifest(for: configuration.modelID)?.supportsThinking == false {
             thinking = "Not supported"
         } else {
             // Missing/unknown capability is not evidence that thinking is off.
@@ -245,90 +278,101 @@ extension ZenCODEACPBridge {
         if let expectedEpoch, existingSession.epoch != expectedEpoch {
             return
         }
-        if let expectedPromptID,
-           existingSession.activePromptID != expectedPromptID {
-            return
-        }
         let epoch = existingSession.epoch
+        // The prompt reservation is the host's: a refresh bound to a prompt
+        // runs only while that prompt still holds its incarnation.
+        if let expectedPromptID {
+            guard await host.holdsPrompt(existingSession.promptReservation(expectedPromptID)) else {
+                return
+            }
+        }
         guard let snapshot = await sessionRunner.snapshotSession(id: sessionID) else {
             return
         }
         guard let session = liveSession(id: sessionID, epoch: epoch) else {
             return
         }
-        if let expectedPromptID, session.activePromptID != expectedPromptID {
-            return
+        if let expectedPromptID {
+            guard await host.holdsPrompt(session.promptReservation(expectedPromptID)) else {
+                return
+            }
         }
-        sessions[sessionID] = sessionStateWithCommandState(
-            configuration: AgentCoreSessionConfiguration(
-                sessionID: snapshot.sessionID,
-                modelID: snapshot.modelID ?? configuration.effectiveModelID,
-                agentID: session.configuration.agentID,
-                agentName: session.configuration.agentName,
-                agentRole: session.configuration.agentRole,
-                workingDirectory: snapshot.workingDirectoryPath,
-                systemPrompt: snapshot.systemPrompt,
-                dynamicContext: snapshot.dynamicContext,
-                cacheKey: snapshot.cacheKey,
-                sessionRevision: session.configuration.sessionRevision,
-                history: snapshot.history,
-                allowedToolNames: allowedToolNames ?? snapshot.allowedToolNames,
-                configuredContextWindowLimit: session.configuration.configuredContextWindowLimit,
-                generationParameterOverrides: session.configuration.generationParameterOverrides,
-                maxToolRounds: configuration.maxToolRounds,
-                maxOutputTokens: configuration.maxOutputTokens,
-                appMode: configuration.appMode,
-                thinkingSelection: snapshot.thinkingSelection,
-                preserveThinking: snapshot.preserveThinking
-            ),
-            selectedAgent: session.selectedAgent,
-            epoch: session.epoch,
-            activePromptID: session.activePromptID,
-            activePromptTask: session.activePromptTask,
-            operationState: session.operationState,
-            activePlan: session.activePlan,
-            planBrainstorming: session.planBrainstorming,
-            workflowContinuation: session.workflowContinuation
-        )
+        // Rebuild from the entry as it is after the last hop.
+        updateLiveSession(id: sessionID, epoch: epoch) { live in
+            live = sessionState(
+                configuration: AgentCoreSessionConfiguration(
+                    sessionID: snapshot.sessionID,
+                    modelID: snapshot.modelID ?? configuration.effectiveModelID,
+                    agentID: session.configuration.agentID,
+                    agentName: session.configuration.agentName,
+                    agentRole: session.configuration.agentRole,
+                    workingDirectory: snapshot.workingDirectoryPath,
+                    systemPrompt: snapshot.systemPrompt,
+                    dynamicContext: snapshot.dynamicContext,
+                    cacheKey: snapshot.cacheKey,
+                    sessionRevision: session.configuration.sessionRevision,
+                    history: snapshot.history,
+                    allowedToolNames: allowedToolNames ?? snapshot.allowedToolNames,
+                    configuredContextWindowLimit: session.configuration.configuredContextWindowLimit,
+                    generationParameterOverrides: session.configuration.generationParameterOverrides,
+                    maxToolRounds: configuration.maxToolRounds,
+                    maxOutputTokens: configuration.maxOutputTokens,
+                    appMode: configuration.appMode,
+                    thinkingSelection: snapshot.thinkingSelection,
+                    preserveThinking: snapshot.preserveThinking
+                ),
+                selectedAgent: session.selectedAgent,
+                inheriting: live
+            )
+        }
     }
 
+    /// Replays `snapshot`'s history to the client (`session/load`,
+    /// `session/resume`): the log entries rebuilt from it
+    /// (``ChatTurnEntry/kinds(fromTranscript:)``, the one rebuild every
+    /// channel shares), rendered as the editor's chunks. A prompt is a
+    /// `user_message_chunk` (a blank prompt with attachments says so), a
+    /// block its `agent_thought_chunk` and `agent_message_chunk`; tool calls,
+    /// their results, and system messages are not replayed.
     public func replaySessionHistory(_ snapshot: AgentRuntimeSessionSnapshot) async {
-        for message in snapshot.history {
-            switch message.role {
-            case .user:
-                let text = replayText(for: message)
-                guard let text else {
+        for kind in ChatTurnEntry.kinds(fromTranscript: snapshot.history) {
+            switch kind {
+            case let .userPrompt(text, attachments, _):
+                guard let text = Self.replayText(prompt: text, attachments: attachments) else {
                     continue
                 }
                 await sendUserMessageChunk(sessionID: snapshot.sessionID, text: text)
-            case .assistant:
+            case let .thought(thought):
                 // Snapshots have no per-message provider provenance. The current
                 // snapshot.modelID may follow a provider switch, so replay must
                 // not apply the live ChatGPT formatter to possibly foreign text.
-                if let thought = message.reasoningContent?.nilIfBlank {
-                    await writer.sendSessionUpdate(
-                        sessionID: snapshot.sessionID,
-                        update: Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: thought)
-                    )
-                }
-                guard let text = message.content.nilIfBlank else {
+                // A thought entry is trimmed and never blank.
+                await writer.sendSessionUpdate(
+                    sessionID: snapshot.sessionID,
+                    update: Self.textChunkJSONUpdate(kind: "agent_thought_chunk", text: thought)
+                )
+            case let .assistantText(content):
+                guard let text = content.nilIfBlank else {
                     continue
                 }
                 await writer.sendSessionUpdate(
                     sessionID: snapshot.sessionID,
                     update: Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: text)
                 )
-            case .system, .tool:
+            default:
                 continue
             }
         }
     }
 
-    private func replayText(for message: AgentRuntimeMessage) -> String? {
-        if let content = message.content.nilIfBlank {
+    /// The text a replayed prompt shows: the prompt, or, for a blank prompt
+    /// with attachments, a request to analyze them; `nil` for a blank prompt
+    /// without attachments.
+    private static func replayText(prompt: String, attachments: [AgentRuntimeAttachment]) -> String? {
+        if let content = prompt.nilIfBlank {
             return content
         }
-        guard !message.attachments.isEmpty else {
+        guard !attachments.isEmpty else {
             return nil
         }
         return "Analyze the attached media."

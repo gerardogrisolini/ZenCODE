@@ -10,8 +10,257 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- The terminal UI, ACP clients such as Xcode, and headless runs (`zen -p`,
+  including `--jsonl`) now share one chat-session controller, as the base for
+  further interfaces. It runs the same plan, goal, file-change, and
+  tool-consent handling in every channel, the session operations (new, save,
+  list, load, delete, compact, and restore from a checkpoint, DS4 engine
+  checkpoints included), the selections of model, thinking level, agent and
+  project agents, tools, and skills (with install and uninstall), and `/help`,
+  `/plan`, `/goal`, `/review`, `/tasks`, `/changes`, `/undo`, `/artifacts`,
+  `/open`, and `/attach`. The terminal UI and ACP share one model list, and
+  one command registry decides which commands the terminal UI shows, in its
+  command menu and in `/help`, and which run while a prompt is running. ACP
+  clients run `/plan`, `/goal`, and `/review` on the same operations, and
+  their ACP replies and the ACP wire stay the same. Headless runs compose
+  their session from the controller instead of the terminal chat, and their
+  output and JSONL records are unchanged. Command output stays the same,
+  apart from the `/agents`, `/open`, and `/tasks` entries under Changed and
+  Fixed.
+- Public Chat API for host apps, such as a macOS app that imports
+  `ZenCODECore`: `ChatSessionController`, `ChatSessionPresenter`,
+  `ChatSessionObserver` (added to a controller with `addObserver(_:)`, it
+  sees every event before the channel's presenter), `ChatInteractionHost`,
+  `ChatSessionChannelHooks` (the app's own steps between those of an
+  operation; the steps of a new, loaded, or compacted session are one
+  `incarnationDidChange(reason:)`, whose `ChatIncarnationChange` names the
+  step), `ChatSessionEnvironment`, `ChatModelCatalog`, `ChatCommandRegistry`,
+  `TelegramChannel`, and the contracts, notices, and outcomes they use. The
+  API follows semantic versioning: see [Docs/embedding.md](Docs/embedding.md).
+- `ChatSessionRuntimeFactory`, the public construction point of a session
+  runner, described in the same guide.
+- Observable session state for host apps: `ChatSessionStateReducer` records
+  what a session shows in one ordered log, with a sequence number per entry,
+  and publishes a `ChatSessionSnapshot` (transcript, tool activity, the turn in
+  progress, overviews, file changes, selection, pending requests, and a
+  summary) after every change. `ChatPendingRequestHost` publishes tool
+  consents, menus, and text requests in it until the app answers them. The
+  log and the snapshot are never saved: see
+  [Docs/embedding.md](Docs/embedding.md#observing-a-session).
+- `ChatSessionHost`, the container of the chat sessions of one process, for
+  host apps and the channels alike. A channel opens a slot for each place it
+  runs sessions in (`ChatSlotDescriptor`: identity, working directory,
+  presenter, interaction, consent authorizer, channel hooks, commands,
+  whether a `ChatSessionStateReducer` is attached, and the prefix of the ids
+  of its new sessions), and the slot runs one session at a time
+  (`ChatSessionIncarnation`: id, controller, reducer, and an epoch that is
+  never reused). `newSession(in:sessionID:)` and
+  `loadSavedSession(in:name:checkpointEntryID:)` replace the session with a
+  new controller from the launch profile; `adoptSessionID(_:in:)` changes the
+  id in place before the runtime session exists; `reservePrompt(in:)`,
+  `releasePrompt(_:)`, `holdsPrompt(_:)`, `cancelPrompt(in:)`,
+  `withReservedIncarnation(_:_:)`, and `withLiveIncarnation(_:epoch:_:)` run
+  one prompt per session and keep late work from writing into a replaced
+  session; `incarnations(in:)` and `reducer(in:)` observe a slot;
+  `closeSession(in:)`, `closeSlot(_:)`, and `shutdown(keepingExternalTools:)`
+  end them. The host owns the runner, the Telegram router and poller every
+  Telegram channel shares, and the sleep assertion. The terminal UI and ACP
+  sessions now run in it; see [Docs/embedding.md](Docs/embedding.md#composition).
+- `ChatShellSnapshot`, what a host app's sidebar shows about every session of
+  a `ChatSessionHost`: the summary of the session each slot runs, the saved
+  sessions of the slots' workspaces, and the Telegram state of the process
+  (configured, polling, and the slots the linked chat drives).
+  `shellSnapshots()` streams it and `shellSnapshot` is the current one. The
+  saved sessions are listed without migrating the store, and they and the
+  Telegram settings and poller are read only while an app observes the host
+  (from the first `shellSnapshots()` or `refreshShellSnapshot()` to the end of
+  its last stream): the saved sessions of a workspace again when a slot of it
+  starts another session or a session is saved or deleted, the settings and
+  the poller together when a slot hands itself to Telegram, takes itself back,
+  or closes, and everything on `refreshShellSnapshot()`, never on a timer. See
+  [Docs/embedding.md](Docs/embedding.md#observing-the-host).
+- Telegram is a channel of the slot (`TelegramChannel`), in the terminal UI,
+  in ACP clients such as Xcode, and in host apps: `/telegram on` hands the
+  session to the linked chat, which drives it from then on, and `/telegram off`
+  takes it back. In the terminal UI, Telegram works as before, apart from the
+  changes listed below. Host apps call
+  `ChatSessionHost.activateTelegram(in:primaryChannelDescription:)` and
+  `deactivateTelegram(in:presentingCatchUp:)`, which returns the catch-up
+  (`ChatTelegramCatchUp`: the log entries the app did not see, by sequence, and
+  the response still streaming) and, given `presentingCatchUp`, hands it to the
+  app right after the switch, before the rest of the turn in progress;
+  `activeChannel(in:)` (`ChatSlotChannel`) says which channel drives a slot,
+  and `admitLine(_:in:)` (`ChatSlotAdmission`) which lines a dormant channel
+  may still run (`/telegram`, `/telegram off`, and `/exit`). The turns of the
+  chat take their composition from
+  `ChatSessionChannelHooks.turnSessionConfiguration(for:controller:)`, which is
+  `async throws` (a hook that throws refuses the turn), and run inside
+  `runTurnFromAnotherChannel(controller:_:)`. `TelegramChannel.stoppedNoticeText`
+  is the notice that tells the link stopped. A new or loaded session of a slot
+  that Telegram drives keeps the link, and
+  `TelegramChannel.rebind(sessionID:displayName:)` moves its topic to the new
+  session. The consent authorizer resolves the host that asks each session's
+  consent (`ChatToolConsentAuthorizer.setConsentHostResolver(_:)`), so an
+  *Always* given in the chat covers the session on every channel.
+- Telegram topics: when the bot has Threaded mode (enabled in @BotFather, your
+  bot › Bot Settings), each session linked with `/telegram on` gets a topic of
+  its own in the private chat with the bot, named after the working directory
+  and the end of the session ID. A message in the session's topic reaches that
+  session only, and a message in General reaches every linked session. A new
+  `/telegram on` after `/telegram off`, or a new launch of ZenCODE, opens a new
+  topic; the previous one stays in Telegram and receives nothing more. Without
+  Threaded mode every session shares the chat, as before.
+- ACP: `/telegram on` hands the session to Telegram, `/telegram off` takes it
+  back, and `/telegram` shows its status. While Telegram drives the session
+  the linked chat runs prompts, voice notes, `/plan`, `/goal`, `/review`, and
+  replies to pending questions, with the editor's composition and environment
+  (the files the turn writes go to the client's text file system, not past it
+  to the disk, and the agent's skills are selected); answers
+  `/start`, `/help`, `/status`, `/changes`, `/diff`, and `/chat`; and
+  approves or denies tools with `/allow`, `/always`, and `/deny`, which are
+  asked in the chat only. `/undo` is refused from Telegram with a message. The
+  editor's prompts are refused until `/telegram off`, whose reply carries the
+  catch-up; a turn from Telegram still running cannot be taken over from the
+  editor: `session/cancel` stops it (the chat sees `Stopped.`) and the next
+  `/telegram off` catches up with it, and a prompt sent meanwhile is refused
+  with `A turn from Telegram is running for this session. Send session/cancel
+  to stop it, or wait for it to end, then send /telegram off.` `session/load`
+  replays the turns run from Telegram with the others. The link is not saved:
+  after the client loads the session again, send `/telegram on` again.
+- With several sessions linked to the same bot in one process (for example the
+  sessions of one ACP client), `/allow`, `/always`, and `/deny` without a
+  request ID where those sessions share the chat (General, or the whole chat
+  without Threaded mode) are refused with `ZenCODE: several ZenCODE sessions
+  are attached to this chat; reply with the request ID: /allow ID, /always ID
+  or /deny ID.`
+- The Planner can author several plans to be executed in sequence when the work
+  is too large for one coherent plan, which it decides on its own. Its final
+  response has one section per plan, each starting with its own line
+  `Piano N/M: <title>` and holding its own `Specifiche concordate` and numbered
+  `Implementation plan` (numbering restarts at 1, and `Dependencies:` names only
+  points of the same plan); the plans run in the order they appear. A single
+  plan has no `Piano` heading and is unchanged. The first plan becomes the
+  active, unapproved plan and the following ones form a queue of plans saved
+  with the session (an optional field: sessions saved earlier still load).
+  `/plan approve` approves and implements only the active plan, `/plan status`
+  also lists the queued plans, and `/plan clear` discards the active plan and
+  the queue, leaving the copies saved in the library untouched. The next plan
+  is never promoted in the same session: the sequence continues through the
+  library, with `/plan save` and then `/plan load` in a later session.
+  `/plan save` saves all the plans of the sequence, the active one and the
+  queued ones, in one atomic write and in sequence order, and with no active
+  plan it can promote the latest assistant response that contains several
+  plans in the strict Planner format and save all of them, each with its own
+  tasks and dependencies. Each plan of a sequence is saved with the goal
+  `Piano N/M: <title> — <original goal>`.
+
+### Changed
+
+- The `ZenCODE` logo in the startup banner now uses a fixed darker orange
+  instead of the dimmed one, so it looks the same in every terminal rather
+  than depending on how the terminal renders dimmed text; the prompt and menu
+  frames keep their dimmed orange.
+- `/telegram on` moves the chat to Telegram: the terminal and the editor no
+  longer show the turns until `/telegram off` brings them back and catches
+  them up; in ACP, prompts from Telegram are now accepted. The terminal shows
+  `Session driven from Telegram. Type /telegram off to take it back.` and
+  accepts only `/telegram`, `/telegram off`, and `/exit` meanwhile (every
+  other line, a dictated prompt, a mention by voice, and the access-mode
+  shortcut answer `ZenCODE: this session is driven from Telegram. Use
+  /telegram off to take it back.`); the prompts already queued in the terminal
+  wait and run after `/telegram off`, which renders what the terminal did not
+  see under `Catch-up from Telegram:`, with the response still in progress,
+  before anything more of a turn still running from Telegram; that turn goes
+  on in the terminal, where Esc stops it. At `/telegram on` the chat receives
+  the last 6 prompts and responses of the session as context. A question the
+  session asked (a tool consent, a line of text, an attachment) is asked again
+  on the channel that takes the slot. `/telegram on` needs the interactive
+  input loop of the terminal UI: where the chat falls back to reading lines
+  (standard error is not a terminal, or the window is too small when the chat
+  starts) it answers `ZenCODE: /telegram requires the interactive TUI.`
+- ACP: a turn that changes files now ends with its file-change summary
+  (`🪬 Summary: …` and one line per file) as a final message, before the turn
+  completes.
+- Terminal: "Always" approvals of destructive tools other than `local.exec`
+  (`local.delete`, `git.push`, `git.restore`, and the gated `desktop.run`
+  actions) now last for the current session instead of the whole process.
+  `local.exec` approvals are still saved and valid across sessions.
+- Terminal `/review` turns now give the coordinator `tasks.create`,
+  `tasks.list`, `tasks.get`, and `tasks.update`, which the review prompt asks
+  for, as ACP already did. ACP turns now get the plan task tools whenever an
+  approved plan is open and keep its progress in sync, as the terminal does.
+- ACP: the model and the thinking level chosen from the client
+  (`session/set_model`, `session/set_config_option`) are now saved in
+  `settings.json` as the default for every channel, as the terminal does, once
+  the change has taken effect, and new ACP sessions start from that default
+  instead of the model resolved when `zen --acp` started. A `modelId`
+  sent by the client and `--model` still take precedence. A host app that
+  supplies its own models never has a choice saved and keeps its model. ACP
+  requests, replies, and notifications are unchanged.
+- Terminal: when the chat has no interactive terminal (neither stdin nor
+  `/dev/tty` is a terminal), `/open <file-or-url>` no longer opens the file or
+  URL and answers `ZenCODE: Opening files is not supported by this channel.`
+  A missing file is still reported as not found.
+- ACP: when Telegram is set up, `available_commands_update` also lists the
+  `telegram` command ("Telegram status, or turn it on/off for this session",
+  with the hint "on or off"), after the existing commands.
+- ACP: `/telegram` in a prompt is now a command, answered at once. Without
+  Telegram set up it answers `ZenCODE: unknown command '/telegram'.` instead
+  of being sent to the model.
+- Telegram topics: when the topic of a session is created, General receives
+  once `ZenCODE session “<name>” now has its own topic; messages sent here in
+  General reach every attached session.`
+- `/setup` > Telegram now says whether the bot has Threaded mode, while pairing
+  and when the stored pairing is kept: `Threaded mode: enabled — each ZenCODE
+  session gets its own Telegram topic.` or `Threaded mode: disabled — all
+  sessions share the chat. To get one topic per session, open @BotFather ›
+  your bot › Bot Settings and enable Threaded mode.`
+- `/telegram`, in the terminal UI and in ACP, now shows a `Topic: <name>` line
+  while the session has its own topic.
+- Terminal: the notices that Telegram polling stopped receiving messages and
+  that it recovered now also appear when the chat runs without its status bar
+  (standard error is not a terminal, or the window is too small when the chat
+  starts). There they were visible only through `/telegram`.
+- `TerminalChatActor` is deprecated; use `ChatSessionActor`. It is removed in
+  the next major release.
+- For code that integrates `ZenCODECore` directly: the ACP bridge keeps its
+  sessions in a `ChatSessionHost`, so `ZenCODEACPBridge.SessionState.activePromptID`
+  and `operationState`, and `ZenCODEACPBridge.holdSessionSleepAssertionIfNeeded()`
+  and `updateSessionSleepAssertion()` are removed, and
+  `ZenCODEACPBridge.sessionState(configuration:selectedAgent:epoch:activePromptID:activePromptTask:operationState:)`
+  is no longer public; the prompt and operation state are those of the
+  host's incarnation (`ChatSessionHost.incarnation(in:)`), and the host holds
+  the sleep assertion. `TerminalChat.telegramControlService`,
+  `telegramControlState`, `telegramLinkedChatID`, `telegramLinkedChatTitle`,
+  and `telegramLinkedUserID` are removed: Telegram is the `TelegramChannel` of
+  the terminal's slot (`ChatSessionHost.telegramChannel(in:)`, with
+  `isActive`, `linkedChatID`, and `linkedChatTitle`). A
+  `TerminalTelegramControlService` created with `init()` now has a dispatcher
+  of its own, so two of them on the same bot poll it twice and the Bot API
+  answers HTTP 409; the channels of one `ChatSessionHost` share its dispatcher.
+- Terminal: `/sessions new` starts a new session with the launch profile's
+  selection; the model, thinking level, agent, tools, and skills chosen before
+  are not kept. `/sessions load` restores the selection saved with the
+  session, and `/sessions restore` the active saved session from a checkpoint,
+  as before. The output of the commands is unchanged.
+- Terminal: the ZenCODE logo shown at startup is now a compact, three-row
+  wordmark with a lowercase "en", instead of the six-row block lettering.
+- `/plan load` now loads the first saved plan that is not completed, the oldest
+  save among the unfinished drafts, instead of the newest, so the plans of a
+  sequence saved in order load as plan 1 and then, once plan 1 is completed,
+  plan 2, and so on. `/plan list` still shows the newest save first. Saving a
+  plan that is already in the library again keeps its original place instead of
+  moving it to the end.
+
 ### Fixed
 
+- ACP: `session/cancel` sent while a `_zencode/session/set_model` or
+  `session/set_config_option` of the same session is still running no longer
+  cancels that reconfiguration, which used to end without a reply. The cancel
+  still answers at once, the reconfiguration commits and answers as usual, and
+  a running prompt is cancelled as before.
 - In ACP clients such as Xcode, only `local.exec` is shown as a "Terminal
   Command". Every other tool that used to report the ACP tool kind `execute`
   now reports the generic `other`, because it does not run a shell command:
@@ -26,6 +275,34 @@ Release tags follow the strict `vX.Y.Z` contract described in
   The terminal UI keeps their actions (`Run`, `Build`, `Commit`, …). Rebuild
   the installed Xcode, Swift, Git, and Browser features to apply the change to
   their tools.
+- Selected skills are no longer dropped from the session when a `/tools`
+  change rebuilds it.
+- `/sessions delete` now also removes the deleted session from the
+  saved-sessions index (`sessions.json`), which kept recording it.
+- Terminal `/agents` now says `Switched to agent: <name>. Plan and task graph
+  reset; conversation kept.` instead of `… Session reset.`: the conversation
+  was already kept, and only the plan and the task graph are reset.
+- Terminal: `/tasks`, `/tasks status`, `/tasks list`, and `/tasks ls` typed
+  with leading spaces while a prompt is running now show the task graph
+  instead of answering `ZenCODE: command '/tasks' is unavailable while a
+  prompt is running.`: the action was read from the line before its leading
+  spaces were removed.
+- Telegram: the live draft of a response sent to a topic now appears in that
+  topic, as the final message does, instead of in the chat outside it.
+- Telegram: `/review` written in another case, such as `/REVIEW focus on
+  parsing`, now keeps its argument as the review focus instead of reviewing
+  without it.
+- Telegram: the notice shown when the Bot API polling stops now points to
+  `/telegram`, which shows the latest error, instead of the nonexistent
+  `/telegram status`.
+- ACP: the reply to `/telegram on` now includes, after the activation text,
+  the notices presented while the session was being linked, for example that
+  the Bot API did not create the session's topic. They used to be dropped.
+- Terminal: a prompt sent while another one was generating was queued and
+  then dropped without running. It now runs when the turn in progress ends.
+- Telegram: an *Always* approval given in the linked chat now also covers
+  later turns of the session after `/telegram off` or a topic change; for
+  `local.exec` it is saved like an *Always* given in the terminal.
 
 ## [3.2.0] - 2026-10-30
 

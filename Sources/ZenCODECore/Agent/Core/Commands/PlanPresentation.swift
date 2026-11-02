@@ -50,10 +50,7 @@ extension PlanningCommandKernel {
             "|---|---|---|---:|---|",
         ]
         for saved in savedPlans {
-            let id = saved.graph.id
-            let shortID = id.hasPrefix("plan-")
-                ? String(id.prefix("plan-".count + 8))
-                : String(id.prefix(12))
+            let shortID = shortPlanTableID(saved.graph.id)
             let savedAt = saved.snapshot.savedAt.formatted(
                 date: .abbreviated,
                 time: .shortened
@@ -74,7 +71,38 @@ extension PlanningCommandKernel {
         }
         lines.append("")
         lines.append(
-            "Use /plan load to restore the newest draft, or /plan delete <plan|prefix|all> to remove saved plans."
+            "Use /plan load to restore the first unfinished draft (oldest save), or /plan delete <plan|prefix|all> to remove saved plans."
+        )
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// The table of the plans queued after the active plan, numbered from 2
+    /// because the active plan is the first of the sequence.
+    static func queuedPlansMessage(
+        for queuedPlans: [TerminalSessionPlan]
+    ) -> String {
+        var lines = [
+            "## Queued plans",
+            "",
+            "| # | Plan | Goal |",
+            "|---:|---|---|",
+        ]
+        for (offset, plan) in queuedPlans.enumerated() {
+            let goal = plan.originalGoal
+                .replacingOccurrences(of: "\n", with: " ")
+            let truncatedGoal = goal.count > 60
+                ? String(goal.prefix(60)) + "…"
+                : goal
+            lines.append(
+                "| \(offset + 2) | `\(shortPlanTableID(plan.id))` "
+                    + "| \(escapedPlanTableCell(truncatedGoal)) |"
+            )
+        }
+        lines.append("")
+        lines.append(
+            "Only the active plan is approved and implemented in this session. "
+                + "Use /plan save to keep the queued plans in the project library; "
+                + "/plan load restores them in order in later sessions."
         )
         return lines.joined(separator: "\n") + "\n"
     }
@@ -125,6 +153,14 @@ extension PlanningCommandKernel {
             })
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// The plan id a plan table shows: `plan-` and the first 8 characters of
+    /// its token, otherwise the first 12 characters.
+    private static func shortPlanTableID(_ id: String) -> String {
+        id.hasPrefix("plan-")
+            ? String(id.prefix("plan-".count + 8))
+            : String(id.prefix(12))
     }
 
     private static func escapedPlanTableCell(_ text: String) -> String {

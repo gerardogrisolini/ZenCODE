@@ -248,7 +248,7 @@ extension TerminalChat {
         await renderCoordinator.endBottomOverlayTransition(
             maximumInPlaceRows: currentOutputCapacity
         )
-        await renderSubAgentOverview(force: false)
+        await publishSubAgentOverviewIfChanged()
         return result
     }
 }

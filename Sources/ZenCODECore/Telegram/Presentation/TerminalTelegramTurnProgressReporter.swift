@@ -8,7 +8,7 @@
 import Foundation
 import ToolCore
 
-/// The only turn-scoped payloads that may be mirrored to Telegram.
+/// The only turn-scoped payloads that may be sent to Telegram.
 ///
 /// Keeping this surface closed prevents reasoning, streaming deltas, and tool
 /// lifecycle details from reaching the remote chat.
@@ -31,7 +31,7 @@ enum TerminalTelegramTurnPayload: Sendable {
     }
 }
 
-/// Single FIFO outbound channel for one Telegram-mirrored turn.
+/// Single FIFO outbound channel for one turn presented in Telegram.
 ///
 /// All remote turn output travels through this actor so root responses, task
 /// updates, delegated responses, authorization requests, the final response,
@@ -143,7 +143,7 @@ actor TerminalTelegramTurnProgressReporter {
 
     /// Returns the aggregated trailing root response without queueing it.
     ///
-    /// The finalization path reads it to mirror the turn's final response
+    /// The finalization path reads it to send the turn's final response
     /// alone, instead of the accumulated turn text that already contains every
     /// intermediate response published at its own boundary.
     func pendingAgentResponseText() -> String {

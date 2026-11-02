@@ -62,7 +62,7 @@ struct ZenCODEHeadlessRunnerToolGrantTests {
     }
     #endif
 
-    @TerminalChatActor
+    @ChatSessionActor
     private static func headlessAllowedToolNames(
         agentName: String?,
         workspace: URL

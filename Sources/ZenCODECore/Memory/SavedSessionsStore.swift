@@ -121,6 +121,53 @@ public final class SavedSessionsStore {
         return savedEntry ?? entry
     }
 
+    /// Removes the entry of a deleted saved session: the entry for the same
+    /// project name (see ``ProjectStorageKey``) whose session name matches.
+    /// The project path and the session name are normalized as
+    /// ``recordSavedSession(projectPath:sessionName:sessionID:savedAt:)``
+    /// does. The index is rewritten only when an entry is removed.
+    ///
+    /// - Returns: `true` when an entry was removed.
+    @discardableResult
+    public func removeSavedSession(
+        projectPath: String,
+        sessionName: String
+    ) throws -> Bool {
+        let normalizedProjectPath = URL(fileURLWithPath: projectPath)
+            .standardizedFileURL
+            .path
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedSessionName = sessionName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !normalizedProjectPath.isEmpty else {
+            throw MemoryServiceError.missingField("projectPath")
+        }
+        guard !normalizedSessionName.isEmpty else {
+            throw MemoryServiceError.missingField("sessionName")
+        }
+
+        let fileURL = sessionsFileURL()
+        return try SensitiveManifestCoordination.withExclusiveLock(
+            supportDirectoryURL: fileURL.deletingLastPathComponent(),
+            fileManager: fileManager
+        ) {
+            try Self.fileTransactionCoordinator.withLock(for: fileURL) {
+                var index = try readIndexFile(at: fileURL)
+                let projectName = ProjectStorageKey.projectName(forPath: normalizedProjectPath)
+                let originalCount = index.sessions.count
+                index.sessions.removeAll {
+                    ProjectStorageKey.projectName(forPath: $0.projectPath) == projectName
+                        && $0.sessionName == normalizedSessionName
+                }
+                guard index.sessions.count != originalCount else {
+                    return false
+                }
+                try writeIndexFile(index, to: fileURL)
+                return true
+            }
+        }
+    }
+
     // MARK: - Storage
 
     private func directoryURLResolved() -> URL {

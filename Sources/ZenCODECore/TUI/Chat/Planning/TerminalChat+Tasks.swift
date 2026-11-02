@@ -9,139 +9,38 @@ import Foundation
 import ToolCore
 
 extension TerminalChat {
+    // MARK: - Task-graph observer
+
+    /// Binds the shared task-graph observer to the current session (see
+    /// ``ChatSessionController/startTaskGraphObserver()``). The terminal's
+    /// task section starts over between the stop of the previous observer and
+    /// the subscription of the new one.
     func startTaskGraphObserver() async {
-        await stopTaskGraphObserver()
+        await chatSession.stopTaskGraphObserver()
         await renderCoordinator.resetOverview(.taskGraph)
-        taskGraphDebouncedRender = nil
-        let observedSessionID = sessionID
-        let runner = sessionRunner
-        // Subscribe BEFORE spawning the consumer task and only then return:
-        // registering the continuation here closes the snapshot→subscription
-        // handoff window (the event stream has no replay), so a graph
-        // mutation that lands after this call is seen by the new observer
-        // even when a turn-boundary snapshot raced it. Events buffered
-        // between registration and the consumer's first await are retained
-        // by the stream.
-        let stream = await runner.taskOrchestrator.events(
-            sessionID: observedSessionID
-        )
-
-        taskGraphObserverTask = Task(name: "ZenCODE.TUI.task-graph-observer") { [weak self] in
-            for await _ in stream {
-                guard !Task.isCancelled,
-                      let coordinator = self?.renderCoordinator,
-                      self?.sessionID == observedSessionID else {
-                    break
-                }
-                let publicationRevision = await coordinator.beginOverviewPublication(.taskGraph)
-                guard let self, !Task.isCancelled else { break }
-                let previousRender = self.taskGraphDebouncedRender
-                previousRender?.cancel()
-                self.taskGraphDebouncedRender = Task(name: "ZenCODE.TUI.task-graph-render") { [weak self] in
-                    try? await Task.sleep(nanoseconds: 150_000_000)
-                    await previousRender?.value
-                    guard !Task.isCancelled, let self else { return }
-                    await self.publishTaskGraphOverviewIfChanged(
-                        observedSessionID: observedSessionID,
-                        publicationRevision: publicationRevision
-                    )
-                }
-            }
-            if let pendingRender = self?.taskGraphDebouncedRender {
-                pendingRender.cancel()
-                await pendingRender.value
-                self?.taskGraphDebouncedRender = nil
-            }
-        }
+        await chatSession.startTaskGraphObserver()
     }
 
+    /// See ``ChatSessionController/stopTaskGraphObserver()``.
     func stopTaskGraphObserver() async {
-        let observer = taskGraphObserverTask
-        taskGraphObserverTask = nil
-        observer?.cancel()
-        await observer?.value
-        if let pendingRender = taskGraphDebouncedRender {
-            pendingRender.cancel()
-            await pendingRender.value
-            taskGraphDebouncedRender = nil
-        }
+        await chatSession.stopTaskGraphObserver()
     }
 
-    /// Turn-boundary quiescence for the task-graph section: stops the event
-    /// observer, drains any in-flight debounced render, and publishes the
-    /// latest known graph state once, so the retiring turn's final section is
-    /// mirrored while its reporter is still alive. The observer is NOT
-    /// restarted here: the caller restarts it only after the turn's Telegram
-    /// reporter has been retired, so no observer-driven render can cross the
-    /// retirement boundary and be adopted by the next turn's reporter.
-    /// Restarts should follow with a fresh
-    /// ``publishTaskGraphOverviewIfChanged(observedSessionID:)`` snapshot,
-    /// which also recovers graph mutations that landed between this
-    /// publication and the new event subscription (the event stream has no
-    /// replay).
+    /// Turn-boundary quiescence for the task-graph section (see
+    /// ``ChatSessionController/quiesceTaskGraphObserver()``): the latest known
+    /// section is published once while the turn's Telegram reporter is still
+    /// alive. The caller restarts the observer only after that reporter has
+    /// been retired, so no observer-driven render can cross the retirement
+    /// boundary and be adopted by the next turn's reporter, and follows the
+    /// restart with a fresh ``publishTaskGraphOverviewIfChanged(observedSessionID:)``.
     func quiesceTaskGraphObserverForTurnBoundary() async {
-        await stopTaskGraphObserver()
-        await publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
+        await chatSession.quiesceTaskGraphObserver()
     }
 
-    func publishTaskGraphOverviewIfChanged(
-        observedSessionID: String,
-        publicationRevision reservedPublicationRevision: Int? = nil
-    ) async {
-        guard sessionID == observedSessionID else { return }
-        let publicationRevision: Int
-        if let reservedPublicationRevision {
-            publicationRevision = reservedPublicationRevision
-        } else {
-            publicationRevision = await renderCoordinator.beginOverviewPublication(.taskGraph)
-        }
-        guard !Task.isCancelled else { return }
-        guard let graph = try? await sessionRunner.taskGraphSnapshot(
-            sessionID: observedSessionID
-        ) else {
-            guard !Task.isCancelled, sessionID == observedSessionID else { return }
-            await renderCoordinator.resetOverview(
-                .taskGraph,
-                revision: publicationRevision
-            )
-            return
-        }
-        guard !Task.isCancelled, sessionID == observedSessionID else { return }
-        let shouldRender = graph.tasks.count > 1 || graph.tasks.contains { task in
-            !task.attempts.isEmpty
-                || task.status == .blocked
-                || task.status == .failed
-                || task.status == .awaitingValidation
-        }
-        guard shouldRender else {
-            await renderCoordinator.clearDeferredOverview(
-                .taskGraph,
-                revision: publicationRevision
-            )
-            return
-        }
-        guard let tasks = try? await sessionRunner.taskOrchestrator.listTasks(
-            sessionID: observedSessionID,
-            graphID: graph.id
-        ) else {
-            return
-        }
-        guard !Task.isCancelled,
-              sessionID == observedSessionID,
-              let currentGraph = try? await sessionRunner.taskGraphSnapshot(
-                sessionID: observedSessionID
-              ),
-              currentGraph.id == graph.id,
-              currentGraph.revision == graph.revision else {
-            return
-        }
-        guard !Task.isCancelled, sessionID == observedSessionID else { return }
-        let signature = Self.taskGraphOverviewSignature(graph)
-        let markdown = Self.taskGraphMarkdown(graph: graph, tasks: tasks)
-        _ = await renderCoordinator.renderTaskGraphOverview(
-            signature: signature,
-            markdown: markdown,
-            revision: publicationRevision
+    /// See ``ChatSessionController/publishTaskGraphOverviewIfChanged(observedSessionID:)``.
+    func publishTaskGraphOverviewIfChanged(observedSessionID: String) async {
+        await chatSession.publishTaskGraphOverviewIfChanged(
+            observedSessionID: observedSessionID
         )
     }
 
@@ -149,89 +48,65 @@ extension TerminalChat {
         await renderCoordinator.shouldPublishDeferredOverview(.taskGraph)
     }
 
-    nonisolated static func taskGraphOverviewSignature(_ graph: TaskGraphSnapshot) -> String {
-        let tasks = graph.tasks.sorted { $0.id < $1.id }.map { task in
-            let attempts = task.attempts.map {
-                "\($0.id):\($0.status.rawValue)"
-            }.joined(separator: ",")
-            return "\(task.id):\(task.revision):\(task.status.rawValue):\(task.activeAttemptID, default: "-"):\(attempts)"
-        }.joined(separator: "|")
-        return "\(graph.id):\(graph.revision):\(graph.state.rawValue):\(tasks)"
-    }
+    // MARK: - Task-graph section
 
-    func handleTasksCommand(_ command: String) async {
-        await writeSubmittedPrompt(command)
-        let argument = Self.slashCommandArguments(
-            from: command,
-            commandPrefix: "/tasks"
+    /// Reserves the next publication of the task section: its revision fences
+    /// every publication reserved before it and drops the section deferred
+    /// so far.
+    func reserveTaskGraphOverviewPublication() async -> ChatOverviewPublication {
+        ChatOverviewPublication(
+            revision: await renderCoordinator.beginOverviewPublication(.taskGraph)
         )
-        let components = argument.split(whereSeparator: \.isWhitespace).map(String.init)
-        let action = components.first?.lowercased() ?? "status"
-
-        do {
-            switch action {
-            case "status", "list", "ls":
-                try await renderCurrentTaskGraph()
-            case "show", "get":
-                guard components.count >= 2 else {
-                    throw TerminalTaskCommandError.missingTaskID(action)
-                }
-                let view = try await sessionRunner.taskOrchestrator.task(
-                    sessionID: sessionID,
-                    taskID: components[1]
-                )
-                await writeMarkdownMessage(Self.taskDetailMarkdown(view))
-            case "retry":
-                guard components.count >= 2 else {
-                    throw TerminalTaskCommandError.missingTaskID(action)
-                }
-                _ = try await sessionRunner.retryTask(
-                    id: components[1],
-                    sessionID: sessionID
-                )
-                await writeSystemMessage("Retried task \(components[1]).\n")
-                try await renderCurrentTaskGraph()
-            case "cancel":
-                guard components.count >= 2 else {
-                    throw TerminalTaskCommandError.missingTaskID(action)
-                }
-                let reason = components.dropFirst(2).joined(separator: " ").nilIfBlank
-                _ = try await sessionRunner.cancelTask(
-                    id: components[1],
-                    sessionID: sessionID,
-                    reason: reason
-                )
-                await writeSystemMessage("Cancelled task \(components[1]).\n")
-                try await renderCurrentTaskGraph()
-            case "clear":
-                try await sessionRunner.clearTaskGraphs(sessionID: sessionID)
-                await writeSystemMessage("Cleared the session task graphs.\n")
-            default:
-                throw TerminalTaskCommandError.unknownAction(action)
-            }
-        } catch {
-            await writeFailureMessage("ZenCODE: \(error.localizedDescription)\n")
-        }
     }
 
-    func renderCurrentTaskGraph() async throws {
-        let publicationRevision = await renderCoordinator.beginOverviewPublication(.taskGraph)
-        guard let graph = try await sessionRunner.taskGraphSnapshot(sessionID: sessionID) else {
-            await writeSystemMessage("No task graph for this session.\n")
+    /// Renders an overview the controller presented, with the revision of
+    /// its reservation. No graph forgets the section; an automatic graph
+    /// below the threshold drops only the deferred section; an explicit
+    /// overview (`/tasks`) is always written and leaves the remembered
+    /// section alone.
+    func renderTaskGraphOverview(
+        _ overview: ChatTaskGraphOverview?,
+        origin: ChatOverviewOrigin,
+        publication: ChatOverviewPublication?
+    ) async {
+        let revision = publication?.revision
+        guard let overview else {
+            await renderCoordinator.resetOverview(.taskGraph, revision: revision)
             return
         }
-        let views = try await sessionRunner.taskOrchestrator.listTasks(
-            sessionID: sessionID,
-            graphID: graph.id
-        )
-        _ = await renderCoordinator.renderTaskGraphOverview(
-            signature: Self.taskGraphOverviewSignature(graph),
-            markdown: Self.taskGraphMarkdown(graph: graph, tasks: views),
-            revision: publicationRevision,
-            force: true,
-            rememberSignature: false,
-            origin: .explicit
-        )
+        switch origin {
+        case .automatic:
+            guard overview.isSignificant else {
+                await renderCoordinator.clearDeferredOverview(.taskGraph, revision: revision)
+                return
+            }
+            _ = await renderCoordinator.renderTaskGraphOverview(
+                signature: overview.signature,
+                markdown: Self.taskGraphMarkdown(graph: overview.graph, tasks: overview.tasks),
+                revision: revision
+            )
+        case .explicit:
+            _ = await renderCoordinator.renderTaskGraphOverview(
+                signature: overview.signature,
+                markdown: Self.taskGraphMarkdown(graph: overview.graph, tasks: overview.tasks),
+                revision: revision,
+                force: true,
+                rememberSignature: false,
+                origin: .explicit
+            )
+        }
+    }
+
+    nonisolated static func taskGraphOverviewSignature(_ graph: TaskGraphSnapshot) -> String {
+        ChatTaskGraphOverview.signature(for: graph)
+    }
+
+    // MARK: - /tasks
+
+    /// `/tasks` and its actions, run by the shared controller (see
+    /// ``ChatSessionController/runTasksCommand(line:)``).
+    func handleTasksCommand(_ command: String) async {
+        await writeSessionNotices(await chatSession.runTasksCommand(line: command).notices)
     }
 
     nonisolated static func taskGraphMarkdown(
@@ -390,60 +265,10 @@ extension TerminalChat {
     }
 
     nonisolated static func taskDetailMarkdown(_ view: TaskRecordView) -> String {
-        let task = view.task
-        var lines = [
-            "## Task `\(task.id)`",
-            "",
-            "**Title:** \(escapedTaskMarkdown(task.title))",
-            "",
-            "**Status:** `\(task.status.rawValue)` · **priority:** `\(task.priority.rawValue)` · **complexity:** `\(task.complexity)/10` · **revision:** \(task.revision)",
-            "",
-            "**Runnable:** `\(view.isRunnable)`",
-        ]
-        if let reason = view.blockedReason { lines.append("**Runnable reason:** \(escapedTaskMarkdown(reason))") }
-        if let details = task.details { lines.append("\n\(escapedTaskMarkdown(details))") }
-        if !task.dependsOn.isEmpty { lines.append("\n**Dependencies:** " + task.dependsOn.map { "`\($0)`" }.joined(separator: ", ")) }
-        if !view.dependents.isEmpty { lines.append("\n**Dependents:** " + view.dependents.map { "`\($0)`" }.joined(separator: ", ")) }
-        if !task.acceptanceCriteria.isEmpty {
-            lines.append("\n### Acceptance criteria")
-            lines.append(contentsOf: task.acceptanceCriteria.map { "- \(escapedTaskMarkdown($0))" })
-        }
-        if !task.attempts.isEmpty {
-            lines.append("\n### Attempts")
-            for attempt in task.attempts {
-                let agent = attempt.agentID.map { " · agent `\($0)`" } ?? ""
-                lines.append("- **#\(attempt.ordinal)** `\(attempt.status.rawValue)`\(agent) · `\(attempt.id)`")
-                if let output = attempt.output { lines.append("  - output: \(escapedTaskMarkdown(output))") }
-                if let error = attempt.error { lines.append("  - error: \(escapedTaskMarkdown(error))") }
-            }
-        }
-        if let result = task.result, !result.evidence.isEmpty {
-            lines.append("\n### Evidence")
-            lines.append(contentsOf: result.evidence.map { evidence in
-                let location = evidence.location.map { " (`\($0)`)" } ?? ""
-                return "- `\(evidence.kind)`\(location): \(escapedTaskMarkdown(evidence.summary))"
-            })
-        }
-        return lines.joined(separator: "\n") + "\n"
+        ChatSessionNoticeText.taskDetailMarkdown(view)
     }
 
     private nonisolated static func escapedTaskMarkdown(_ text: String) -> String {
-        text.replacingOccurrences(of: "\r\n", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-    }
-}
-
-enum TerminalTaskCommandError: LocalizedError {
-    case missingTaskID(String)
-    case unknownAction(String)
-
-    var errorDescription: String? {
-        switch self {
-        case let .missingTaskID(action):
-            return "/tasks \(action) requires a task id."
-        case let .unknownAction(action):
-            return "Unknown /tasks action '\(action)'. Use status, show, retry, cancel, or clear."
-        }
+        ChatSessionNoticeText.escapedTaskMarkdown(text)
     }
 }

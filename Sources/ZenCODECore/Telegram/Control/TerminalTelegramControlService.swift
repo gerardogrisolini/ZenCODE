@@ -36,6 +36,15 @@ public struct TerminalTelegramControlState: Equatable, Sendable {
     /// Last command-menu (`setMyCommands`) publication failure. Cleared by a
     /// later successful publication and on start/stop.
     public var commandMenuError: String?
+    /// Whether the bot has Threaded mode (private-chat topics, Bot API 9.3)
+    /// enabled, as reported by `getMe` in the last successful `start()`. `nil`
+    /// before the first start or when Telegram omits the flag. Like
+    /// `botUsername` it survives `stop()` and the next `start()` overwrites it.
+    public var hasTopicsEnabled: Bool?
+    /// The bot's `id`, as reported by `getMe` in the last successful
+    /// `start()`. `nil` before the first start. Like `botUsername` it survives
+    /// `stop()` and the next `start()` overwrites it.
+    public var botID: Int64?
 
     public init(
         isConfigured: Bool,
@@ -46,7 +55,9 @@ public struct TerminalTelegramControlState: Equatable, Sendable {
         lastMessagePreview: String?,
         wireLifecycleEpoch: UUID? = nil,
         pollError: String? = nil,
-        commandMenuError: String? = nil
+        commandMenuError: String? = nil,
+        hasTopicsEnabled: Bool? = nil,
+        botID: Int64? = nil
     ) {
         self.isConfigured = isConfigured
         self.isActive = isActive
@@ -57,6 +68,8 @@ public struct TerminalTelegramControlState: Equatable, Sendable {
         self.wireLifecycleEpoch = wireLifecycleEpoch
         self.pollError = pollError
         self.commandMenuError = commandMenuError
+        self.hasTopicsEnabled = hasTopicsEnabled
+        self.botID = botID
     }
 
     public static func inactive(
@@ -130,13 +143,24 @@ public actor TerminalTelegramControlService {
     /// 0600 temporaries and their deterministic cleanup.
     let inboundAttachments = TerminalTelegramInboundAttachmentStore()
 
+    /// A service on the production transport with a dispatcher of its own.
+    /// Two services created this way for the same bot poll it twice, which
+    /// the Bot API refuses (HTTP 409): services that share a bot must share
+    /// one dispatcher, as the Telegram channels of a ``ChatSessionHost`` do.
     public init() {
         self.init(
             transportFactory: { NIOTelegramHTTPTransport() },
-            dispatcher: .shared
+            dispatcher: TerminalTelegramBotDispatcher()
         )
     }
 
+    /// A service on `transportFactory`, subscribed through `dispatcher`.
+    ///
+    /// The default dispatcher is a new one, for the tests that drive one
+    /// service on its own: a second service created with the default for the
+    /// same bot would run a second long poll (HTTP 409 from the Bot API).
+    /// Production passes the dispatcher of its ``ChatSessionHost``
+    /// (`ChatSessionHost+Channels.swift`).
     init(
         transportFactory: @escaping @Sendable () -> any TelegramHTTPTransport,
         dispatcher: TerminalTelegramBotDispatcher = TerminalTelegramBotDispatcher()
@@ -234,7 +258,9 @@ public actor TerminalTelegramControlService {
             lastMessagePreview: state.lastMessagePreview,
             wireLifecycleEpoch: UUID(),
             pollError: nil,
-            commandMenuError: nil
+            commandMenuError: nil,
+            hasTopicsEnabled: bot.hasTopicsEnabled,
+            botID: bot.id
         )
         pollFailureNotified = false
         lifecycleGate.setActive(true)

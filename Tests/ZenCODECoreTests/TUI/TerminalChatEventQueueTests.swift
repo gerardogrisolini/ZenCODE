@@ -138,7 +138,7 @@ struct TerminalChatEventQueueTests {
         queue.send(.input(.submitted("before teardown")))
         queue.finish()
 
-        // Producers that outlive the runtime loop (Telegram forwarder, a voice
+        // Producers that outlive the runtime loop (a voice
         // task being cancelled) must not buffer into a stream nobody drains.
         #expect(queue.isFinished)
         #expect(!queue.send(.input(.submitted("after teardown"))))
@@ -301,24 +301,16 @@ struct TerminalChatEventQueueTests {
         #expect(queue.bufferedEventCount <= queue.capacity)
     }
 
-    /// Telegram forwarding is a single finite producer. A full runtime FIFO
-    /// suspends that producer instead of accepting a growing backlog or losing a
-    /// remote prompt before `queuedPrompts` can apply its own admission policy.
+    /// A finite producer that must not lose its event (a dictated utterance)
+    /// suspends on a full runtime FIFO instead of accepting a growing backlog
+    /// or dropping the event before the loop can apply its own admission
+    /// policy.
     @Test
-    func telegramProducerBackpressuresUntilRuntimeQueueDrains() async {
+    func finiteProducerBackpressuresUntilRuntimeQueueDrains() async {
         let queue = TerminalChatEventQueue(capacity: 1)
-        let telegram = TerminalTelegramIncomingMessage(
-            chatID: 7,
-            userID: 9,
-            text: "remote prompt",
-            voice: nil,
-            messageID: 11,
-            chatTitle: "Test chat",
-            username: "remote"
-        )
         queue.send(.input(.submitted("occupies the only slot")))
         let producer = Task {
-            await queue.sendWithBackpressure(.telegramMessage(telegram))
+            await queue.sendWithBackpressure(.voiceUtterance("remote prompt"))
         }
 
         try? await Task.sleep(for: .milliseconds(20))
@@ -328,21 +320,21 @@ struct TerminalChatEventQueueTests {
         var iterator = queue.events.makeAsyncIterator()
         _ = await iterator.next()
         #expect(await producer.value)
-        if case let .some(.telegramMessage(delivered)) = await iterator.next() {
-            #expect(delivered == telegram)
+        if case let .some(.voiceUtterance(delivered)) = await iterator.next() {
+            #expect(delivered == "remote prompt")
         } else {
-            Issue.record("Expected Telegram message after backpressure release")
+            Issue.record("Expected the utterance after backpressure release")
         }
     }
 
     /// Completed voice transcriptions are bounded by the voice registry, then
-    /// use the same runtime backpressure as Telegram text rather than dropping a
-    /// transcript when the terminal is temporarily busy.
+    /// use the runtime backpressure rather than dropping a transcript when
+    /// the terminal is temporarily busy.
     @Test
     func voiceCompletionBackpressuresUntilRuntimeQueueDrains() async {
         let queue = TerminalChatEventQueue(capacity: 1)
         let voice = TerminalVoicePromptResult(
-            origin: .telegram(chatID: 7),
+            origin: .local,
             outcome: .success("transcribed prompt")
         )
         queue.send(.input(.submitted("occupies the only slot")))
@@ -354,7 +346,7 @@ struct TerminalChatEventQueueTests {
         _ = await iterator.next()
         #expect(await producer.value)
         if case let .some(.voicePromptCompleted(delivered)) = await iterator.next() {
-            #expect(delivered.origin == .telegram(chatID: 7))
+            #expect(delivered.origin == .local)
             if case let .success(prompt) = delivered.outcome {
                 #expect(prompt == "transcribed prompt")
             } else {
@@ -368,10 +360,10 @@ struct TerminalChatEventQueueTests {
 
     @Test
     func queuedPromptsRejectOverflowWithoutChangingFIFO() {
-        var prompts = TerminalQueuedPromptBuffer(capacity: 2)
-        let first = TerminalQueuedPrompt(text: "first", origin: .local)
-        let second = TerminalQueuedPrompt(text: "second", origin: .local)
-        let overflow = TerminalQueuedPrompt(text: "overflow", origin: .local)
+        var prompts = ChatPromptQueue<TerminalPromptOrigin>(capacity: 2)
+        let first = ChatQueuedPrompt<TerminalPromptOrigin>(text: "first", origin: .local)
+        let second = ChatQueuedPrompt<TerminalPromptOrigin>(text: "second", origin: .local)
+        let overflow = ChatQueuedPrompt<TerminalPromptOrigin>(text: "overflow", origin: .local)
 
         let acceptedFirst = prompts.enqueue(first)
         let acceptedSecond = prompts.enqueue(second)

@@ -4,12 +4,15 @@ import Foundation
 import ToolCore
 
 /// Runtime projection only; the session owns one instance per incarnation and
-/// the orchestrator remains the sole DAG owner.
+/// the orchestrator remains the sole DAG owner. The projection reads the graph
+/// of the shared ``ChatTaskGraphOverview``: the `plan` lists its tasks and
+/// every delegated attempt is a `tool_call`.
 actor ACPTaskPresentation {
     private var lastPlan: JSONValue?
     private var attempts: [String: JSONValue] = [:]
 
-    func updates(for graph: TaskGraphSnapshot?) -> [JSONValue] {
+    func updates(for overview: ChatTaskGraphOverview?) -> [JSONValue] {
+        let graph = overview?.graph
         let tasks = (graph?.tasks ?? []).sorted {
             $0.order == $1.order ? $0.id < $1.id : $0.order < $1.order
         }
@@ -93,25 +96,26 @@ actor ACPTaskPresentation {
 }
 
 extension ZenCODEACPBridge {
-    func isCurrentPresentation(sessionID: String, epoch: UInt64, promptID: UUID) -> Bool {
-        guard let session = liveSession(id: sessionID, epoch: epoch) else { return false }
-        return session.activePromptID == promptID && session.operationState == .prompting(promptID)
+    /// Whether `promptID` still holds the live incarnation `epoch` of
+    /// `sessionID`: the bridge's own entry and the host's reservation.
+    func isCurrentPresentation(sessionID: String, epoch: UInt64, promptID: UUID) async -> Bool {
+        await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil
     }
 
     func publishTaskPresentation(
         sessionID: String, epoch: UInt64, promptID: UUID,
         presentation: ACPTaskPresentation, pipeline: ACPPromptUpdatePipeline
     ) async {
-        guard isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else { return }
-        let graph: TaskGraphSnapshot?
-        do { graph = try await sessionRunner.taskGraphSnapshot(sessionID: sessionID) }
+        guard await isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else { return }
+        let overview: ChatTaskGraphOverview?
+        do { overview = try await ChatTaskGraphOverview.current(in: sessionRunner, sessionID: sessionID) }
         catch { return } // An unavailable snapshot is not an authoritative clear.
         guard !Task.isCancelled,
-              isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else { return }
-        let updates = await presentation.updates(for: graph)
+              await isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else { return }
+        let updates = await presentation.updates(for: overview)
         for update in updates {
             guard !Task.isCancelled,
-                  isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else { return }
+                  await isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) else { return }
             await pipeline.enqueue(.init(kind: .consume(update)), onAccepted: {
                 await presentation.acknowledge(update)
             }).value
@@ -122,16 +126,20 @@ extension ZenCODEACPBridge {
 extension ZenCODEACPBridge {
     func presentDelegatedToolEvent(_ event: DirectSubAgentToolEvent) async {
         // Capture ownership before the cross-actor lookup. A suspended callback
-        // must never adopt a replacement session or a later prompt.
-        let owners = sessions.mapValues { ($0.epoch, $0.activePromptID) }
+        // must never adopt a replacement session or a later prompt. The
+        // reservations are the host's: they are read in one step, for every
+        // live entry, before anything else suspends.
+        let bindings = sessions.mapValues { ($0.slotID, $0.epoch) }
+        let activePrompts = await host.activePromptIDs(
+            in: Dictionary(uniqueKeysWithValues: bindings.values.map { ($0.0, $0.1) })
+        )
+        let owners = bindings.mapValues { binding in (binding.1, activePrompts[binding.0]) }
         let snapshots = await sessionRunner.subAgentSnapshots()
         guard let agent = snapshots.first(where: { $0.id == event.agentID }),
               let (epoch, ownerPromptID) = owners[agent.rootSessionID],
               let promptID = ownerPromptID,
-              let session = liveSession(id: agent.rootSessionID, epoch: epoch),
-              session.activePromptID == promptID,
-              let pipeline = session.promptUpdatePipeline,
-              isCurrentPresentation(sessionID: session.id, epoch: session.epoch, promptID: promptID) else { return }
+              let session = await reservedPromptSession(sessionID: agent.rootSessionID, epoch: epoch, promptID: promptID),
+              let pipeline = session.promptUpdatePipeline else { return }
         // Runtime agent IDs are unique per creation/attempt, and are also
         // available to the permission broker before any operation executes.
         let id = "acp:tool:\(agent.id):\(event.toolCall.id)"

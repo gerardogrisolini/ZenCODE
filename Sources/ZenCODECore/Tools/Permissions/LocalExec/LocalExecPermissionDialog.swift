@@ -27,27 +27,63 @@ final class ConsentReadCancellationFlag: Sendable {
     }
 }
 
-extension LocalExecPermissionAuthorizer {
+/// Terminal implementation of the consent host: renders the authorization card
+/// and reads the operator's key, either from an injected reader or from the
+/// controlling terminal.
+///
+/// The terminal is one input surface shared by every dialog, so the host
+/// declares ``ChatChannelCapabilities/serialConsentDialogs`` and the shared
+/// authorizer queues requests instead of presenting them concurrently. The
+/// terminal card has no "never" choice, hence no deny-always decision.
+final class TerminalConsentHost: ChatInteractionHost {
+    /// Injected single-key reader for consent prompts. When nil, the default
+    /// terminal reader is used.
+    private let reader = Mutex<ConsentKeyReader?>(nil)
+
+    var capabilities: ChatChannelCapabilities {
+        [.toolConsent, .serialConsentDialogs]
+    }
+
+    func setConsentReader(_ newReader: ConsentKeyReader?) {
+        reader.withLock { $0 = newReader }
+    }
+
+    func requestToolConsent(
+        _ request: AgentToolAuthorizationRequest
+    ) async -> ChatConsentDecision? {
+        guard let decision = await presentDialog(for: request) else {
+            return nil
+        }
+        switch decision {
+        case .allowOnce:
+            return .allowOnce
+        case .allowAlways:
+            return .allowAlways
+        case .deny:
+            return .denyOnce
+        }
+    }
+
     /// Presents consent on the terminal itself, so the same flow works on
     /// macOS, Linux, and WSL — including over SSH, where a GUI `osascript`
     /// dialog would never reach the operator's screen.
     func presentDialog(
         for request: AgentToolAuthorizationRequest
-    ) async -> PermissionDecision? {
-        let reader = consentReader
+    ) async -> LocalExecPermissionAuthorizer.PermissionDecision? {
+        let reader = reader.withLock { $0 }
 
         // Only the default terminal reader needs the headless diagnostic: an
         // injected reader (TUI panel path or tests) owns its own availability
         // and must not be bypassed by this check.
         if reader == nil, !TerminalRawInput.supportsInteractiveInput() {
             AgentOutput.standardError.writeString(
-                Self.nonInteractiveConsentMessage(for: request)
+                LocalExecPermissionAuthorizer.nonInteractiveConsentMessage(for: request)
             )
             return nil
         }
 
         let readKey: ConsentKeyReader = reader ?? { prompt in
-            await Self.readTerminalKey(prompt: prompt)
+            await LocalExecPermissionAuthorizer.readTerminalKey(prompt: prompt)
         }
 
         // Claim the terminal for the whole prompt, retries included. Otherwise a
@@ -60,17 +96,29 @@ extension LocalExecPermissionAuthorizer {
         var firstAttempt = true
         while true {
             let prompt = firstAttempt
-                ? Self.terminalPrompt(for: request)
-                : Self.terminalRetryPrompt()
+                ? LocalExecPermissionAuthorizer.terminalPrompt(for: request)
+                : LocalExecPermissionAuthorizer.terminalRetryPrompt()
             firstAttempt = false
             guard let answer = await readKey(prompt) else {
                 // EOF / Ctrl+D: no consent obtainable.
                 return nil
             }
-            if let decision = Self.permissionDecision(forTerminalAnswer: answer) {
+            if let decision = LocalExecPermissionAuthorizer.permissionDecision(
+                forTerminalAnswer: answer
+            ) {
                 return decision
             }
         }
+    }
+}
+
+extension LocalExecPermissionAuthorizer {
+    /// Runs the terminal consent dialog directly, without the shared cache and
+    /// queue. Kept for focused prompt/retry coverage.
+    func presentDialog(
+        for request: AgentToolAuthorizationRequest
+    ) async -> PermissionDecision? {
+        await terminalHost.presentDialog(for: request)
     }
 
     /// Reads a single key from the terminal on a non-cooperative thread, so the

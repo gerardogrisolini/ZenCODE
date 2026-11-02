@@ -51,7 +51,7 @@ struct ZenCODEHeadlessRunnerSkillSelectionTests {
         }
     }
 
-    @TerminalChatActor
+    @ChatSessionActor
     private static func headlessSelectedSkillNames(
         initialSkillSelection: String?,
         workspace: URL

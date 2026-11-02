@@ -1051,8 +1051,11 @@ private actor ACPMultiSessionRuntimeBackend: AgentRuntimeBackend {
 }
 
 extension ZenCODEACPBridge {
-    func testActivePromptID(sessionID: String) -> UUID? {
-        sessions[sessionID]?.activePromptID
+    /// The prompt reserved on the live incarnation of `sessionID`, as the
+    /// host holds it.
+    func testActivePromptID(sessionID: String) async -> UUID? {
+        guard let session = sessions[sessionID] else { return nil }
+        return await host.activePromptID(in: session.slotID, epoch: session.epoch)
     }
 
     func testHasSession(sessionID: String) -> Bool {

@@ -129,6 +129,10 @@ public enum TerminalTelegramRouteDenial: Error, Equatable, Sendable {
 
 /// Actor-serialized authority for one globally paired private chat owner and
 /// that owner's personal session routes.
+///
+/// Every mutation (`create`, `rebind`, `close`, `delete`, `prune`) builds a
+/// draft, persists it exactly once and publishes it only after the save
+/// succeeds; a mutation that changes nothing does not persist.
 public actor TerminalTelegramSessionRouter {
     public typealias Persist = @Sendable (Int64, [AgentTelegramRouteManifest]) throws -> Void
 
@@ -200,6 +204,49 @@ public actor TerminalTelegramSessionRouter {
         return lease(candidate, chatID: chatID, userID: userID, effectiveMessageThreadID: topicID)
     }
 
+    /// The active route bound to `roomID`, used to reuse a session's topic.
+    ///
+    /// Room IDs are not unique across routes, so several active routes can
+    /// carry the same room (one session attached through several topics).
+    /// The lookup is deterministic: the route with the highest `topicID`
+    /// wins and the topicless route ranks lowest, the same order the manifest
+    /// is stored in. `.closed` and `.deleted` routes are never returned.
+    public func activeRoute(forRoomID roomID: String) -> AgentTelegramRouteManifest? {
+        guard let room = roomID.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank else {
+            return nil
+        }
+        return routes
+            .filter { $0.roomID == room && $0.lifecycle == .active }
+            .max { ($0.topicID ?? Int.min) < ($1.topicID ?? Int.min) }
+    }
+
+    /// Rebinds the topic owned by `lease` to `roomID` and returns the new
+    /// lease.
+    ///
+    /// The route keeps its `topicID`, stays `.active` and its generation is
+    /// incremented even when `roomID` is unchanged, so the previous lease (and
+    /// every turn, queue, draft or wire fence still holding it) fails
+    /// `validate` from the commit on. `lease` must be current exactly as
+    /// `validate` requires. The topicless route is the legacy route shared by
+    /// every attached session and is never rebound (`unauthorized`). Another
+    /// active route may already carry `roomID`: room IDs are not unique.
+    @discardableResult
+    public func rebind(
+        _ lease: TerminalTelegramRouteLease,
+        toRoomID roomID: String
+    ) throws -> TerminalTelegramRouteLease {
+        try validate(lease)
+        guard let topicID = lease.key.topicID else { throw TerminalTelegramRouteDenial.unauthorized }
+        guard let room = roomID.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank else {
+            throw TerminalTelegramRouteDenial.noRoute
+        }
+        let rebound = AgentTelegramRouteManifest(
+            topicID: topicID, roomID: room, lifecycle: .active, generation: lease.generation + 1
+        )
+        try mutate(lease) { _ in rebound }
+        return self.lease(rebound, chatID: lease.key.chatID, userID: lease.key.userID)
+    }
+
     public func close(_ lease: TerminalTelegramRouteLease) throws {
         try mutate(lease) { route in
             AgentTelegramRouteManifest(topicID: route.topicID, roomID: route.roomID,
@@ -212,6 +259,32 @@ public actor TerminalTelegramSessionRouter {
             AgentTelegramRouteManifest(topicID: route.topicID, roomID: route.roomID,
                 lifecycle: .deleted, generation: route.generation + 1)
         }
+    }
+
+    /// Drops the oldest inactive topic routes, keeping at most `limit` of the
+    /// routes that are not `.active` (`.closed` and `.deleted`).
+    ///
+    /// The retained inactive routes are those with the highest `topicID`, so
+    /// the result depends only on the route set. Active routes and the
+    /// topicless route are never touched. A negative `limit` counts as zero.
+    /// Requires a paired owner like `create`; when nothing is dropped nothing
+    /// is persisted. With `limit` zero and neither an active nor a topicless
+    /// route the route list becomes empty and the Telegram settings stop
+    /// reporting `isEnabled`; callers prune with a positive limit.
+    public func prune(keepingInactive limit: Int) throws {
+        guard linkedChatID != nil, ownerUserID != nil else {
+            throw TerminalTelegramRouteDenial.unauthorized
+        }
+        let inactiveTopics = routes
+            .filter { $0.lifecycle != .active }
+            .compactMap(\.topicID)
+        let retained = Set(inactiveTopics.sorted(by: >).prefix(max(0, limit)))
+        guard retained.count < inactiveTopics.count else { return }
+        let draft = routes.filter { route in
+            guard let topicID = route.topicID, route.lifecycle != .active else { return true }
+            return retained.contains(topicID)
+        }
+        try commit(draft)
     }
 
     public func validate(_ lease: TerminalTelegramRouteLease) throws {

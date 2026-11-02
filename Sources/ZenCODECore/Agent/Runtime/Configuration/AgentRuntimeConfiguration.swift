@@ -31,7 +31,7 @@ public enum AgentToolAuthorizationContext {
     @TaskLocal public static var turnID: UUID? = nil
 }
 
-public struct AgentToolAuthorizationRequest: Sendable {
+public struct AgentToolAuthorizationRequest: Sendable, Equatable {
     /// Identifies a delegated sub-agent as the origin of an authorization
     /// request, together with the operator session that owns its delegation
     /// tree.

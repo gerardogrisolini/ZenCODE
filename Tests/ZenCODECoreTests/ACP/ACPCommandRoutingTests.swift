@@ -766,6 +766,75 @@ struct ACPCommandRoutingTests {
     }
 
     @Test
+    func acpPlanSavePromotesEveryPlanOfAMultiPlanHistoryResponseAndLoadsTheFirst() async throws {
+        let planText = """
+        Piano 1/2: Shared model
+
+        Specifiche concordate
+        - Keep compatibility.
+
+        Implementation plan
+        1. Add the shared model.
+           Dependencies: none
+        2. Wire the ACP command.
+           Dependencies: 1
+
+        Piano 2/2: Validation
+
+        Specifiche concordate
+        - Validate every frontend.
+
+        Implementation plan
+        1. Validate every frontend.
+           Dependencies: none
+        """
+        let fixture = try await makeFixture(
+            sessionID: "acp-command-sequence-save",
+            history: [
+                AgentRuntimeMessage(role: .user, content: "Ship the shared routing"),
+                AgentRuntimeMessage(role: .assistant, content: planText),
+            ]
+        )
+        let bridge = fixture.bridge
+        let sessionID = fixture.sessionID
+
+        try await bridge.prompt(id: .number(1), params: [
+            "sessionId": sessionID,
+            "prompt": "/plan save",
+        ])
+
+        let active = try #require(await bridge.planStateForTesting(sessionID: sessionID).activePlan)
+        let queued = await bridge.queuedPlansForTesting(sessionID: sessionID)
+        #expect(queued.count == 1)
+        let next = try #require(queued.first)
+        #expect(active.originalGoal == "Piano 1/2: Shared model — Ship the shared routing")
+        #expect(next.originalGoal == "Piano 2/2: Validation — Ship the shared routing")
+        #expect(active.points.map(\.text) == ["Add the shared model.", "Wire the ACP command."])
+        #expect(next.points.map(\.text) == ["Validate every frontend."])
+        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").contains {
+            $0.contains("Saved 2 plans to run in sequence: \(active.id), \(next.id).")
+        })
+        let library = await bridge.sessionRunner.savedTaskPlans(
+            workingDirectory: bridge.configuration.workingDirectory
+        )
+        #expect(library.map(\.graph.id) == [next.id, active.id])
+
+        // Clearing drops the queue; loading restores the first plan alone.
+        try await bridge.prompt(id: .number(2), params: [
+            "sessionId": sessionID,
+            "prompt": "/plan clear",
+        ])
+        #expect(await bridge.queuedPlansForTesting(sessionID: sessionID).isEmpty)
+        try await bridge.prompt(id: .number(3), params: [
+            "sessionId": sessionID,
+            "prompt": "/plan load",
+        ])
+        let loaded = try #require(await bridge.planStateForTesting(sessionID: sessionID).activePlan)
+        #expect(loaded.id == active.id)
+        #expect(await bridge.queuedPlansForTesting(sessionID: sessionID).isEmpty)
+    }
+
+    @Test
     func acpCancelAbandonsThePlannerCollectionInsteadOfLeavingAZombie() async throws {
         let fixture = try await makeFixture(sessionID: "acp-command-cancel")
         try await fixture.bridge.prompt(id: .number(1), params: [
@@ -838,21 +907,26 @@ struct ACPCommandRoutingTests {
 
     @Test
     func legacyACPWorkflowSignalUsesOnlyTheFinalAssistantBlockAfterTools() async {
-        let questionThenSummary = ACPAssistantBlockCollector()
-        await questionThenSummary.append("Workflow question\nWhich surface?")
-        await questionThenSummary.finishBlock()
-        await questionThenSummary.append("Summary: task list refreshed.")
+        // ACP turns run through the shared chat controller, whose transcript
+        // splits coordinator content into blocks at every tool call.
+        let toolCall = DirectAgentToolCall(
+            id: "list", name: "tasks.list", argumentsObject: [:], argumentsJSON: "{}"
+        )
+        let questionThenSummary = ChatTranscriptTurn(prompt: "/goal Ship it", attachments: [])
+        await questionThenSummary.appendAssistantContent("Workflow question\nWhich surface?")
+        await questionThenSummary.appendToolCallStarted(toolCall)
+        await questionThenSummary.appendAssistantContent("Summary: task list refreshed.")
 
         var state = WorkflowCommandRuntimeState(goal: "Ship it", graphID: "workflow_test")
-        let ignoredSummary = state.recordCoordinatorOutput(await questionThenSummary.lastBlock())
+        let ignoredSummary = state.recordCoordinatorOutput(await questionThenSummary.lastAssistantContent())
         #expect(!ignoredSummary)
         #expect(!state.isAwaitingReply)
 
-        let progressThenQuestion = ACPAssistantBlockCollector()
-        await progressThenQuestion.append("Progress: task list refreshed.")
-        await progressThenQuestion.finishBlock()
-        await progressThenQuestion.append("Workflow question\nWhich surface?")
-        let recordedQuestion = state.recordCoordinatorOutput(await progressThenQuestion.lastBlock())
+        let progressThenQuestion = ChatTranscriptTurn(prompt: "/goal Ship it", attachments: [])
+        await progressThenQuestion.appendAssistantContent("Progress: task list refreshed.")
+        await progressThenQuestion.appendToolCallStarted(toolCall)
+        await progressThenQuestion.appendAssistantContent("Workflow question\nWhich surface?")
+        let recordedQuestion = state.recordCoordinatorOutput(await progressThenQuestion.lastAssistantContent())
         #expect(recordedQuestion)
         #expect(state.isAwaitingReply)
     }
@@ -877,14 +951,15 @@ struct ACPCommandRoutingTests {
             ]
         )
 
-        let promptID = UUID()
-        await bridge.reserveWorkflowPromptForTesting(sessionID: sessionID, promptID: promptID)
-        await bridge.handleFailedACPWorkflowTurn(
+        // The session controller handles the failed turn while that turn is
+        // still the current one.
+        let controller = try #require(await bridge.chatSessionControllerForTesting(sessionID: sessionID))
+        let token = await controller.beginTurnToken()
+        await controller.handleFailedWorkflowTurn(
             graphID: graphID,
             reason: "the turn was cancelled",
-            sessionID: sessionID,
-            epoch: await bridge.sessionEpochForTesting(sessionID: sessionID),
-            promptID: promptID
+            token: token,
+            turnSessionID: sessionID
         )
 
         let graph = try #require(try await bridge.sessionRunner.taskGraphSnapshot(
@@ -933,10 +1008,11 @@ struct ACPCommandRoutingTests {
             sessionID: fixture.sessionID, id: "workflow-stale", source: .workflow, state: .active,
             tasks: [], originalGoal: "Keep this goal"
         )
-        await fixture.bridge.reserveWorkflowPromptForTesting(sessionID: fixture.sessionID, promptID: UUID())
-        await fixture.bridge.handleFailedACPWorkflowTurn(
-            graphID: graph.id, reason: "stale", sessionID: fixture.sessionID,
-            epoch: await fixture.bridge.sessionEpochForTesting(sessionID: fixture.sessionID), promptID: UUID()
+        // A newer turn owns the controller: the stale turn's failure is fenced.
+        let controller = try #require(await fixture.bridge.chatSessionControllerForTesting(sessionID: fixture.sessionID))
+        _ = await controller.beginTurnToken()
+        await controller.handleFailedWorkflowTurn(
+            graphID: graph.id, reason: "stale", token: UUID(), turnSessionID: fixture.sessionID
         )
         #expect(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID) == graph)
         #expect(await fixture.bridge.workflowStateForTesting(sessionID: fixture.sessionID) == nil)
@@ -1021,7 +1097,7 @@ struct ACPCommandRoutingTests {
             state: .active, tasks: [], originalGoal: "Do not capture ordinary chat"
         )
         await fixture.bridge.installDisarmedWorkflowForTesting(sessionID: fixture.sessionID, graphID: graph.id)
-        await fixture.bridge.reserveWorkflowPromptForTesting(sessionID: fixture.sessionID, promptID: UUID())
+        try await fixture.bridge.reserveOrdinaryPromptForTesting(sessionID: fixture.sessionID)
         try await fixture.bridge.cancel(id: .number(1), params: ["sessionId": fixture.sessionID])
         #expect(await fixture.bridge.workflowStateForTesting(sessionID: fixture.sessionID)?.isAwaitingReply == false)
         #expect(try await fixture.bridge.sessionRunner.taskGraphSnapshot(sessionID: fixture.sessionID) == graph)
@@ -1033,6 +1109,135 @@ struct ACPCommandRoutingTests {
         let names = await fixture.bridge.commandNamesForGoalTesting(sessionID: fixture.sessionID).sorted()
         #expect(names == (tools.contains("agent.create") && tools.contains("agent.wait")
             ? ["goal", "plan", "review"] : ["goal"]))
+    }
+
+    /// Replaces the characterization of task 1
+    /// (`configuredTelegramDoesNotAnnounceATelegramCommand`), on purpose: ACP
+    /// now answers `/telegram` (plan 4, decision D1 b), so complete routing-v2
+    /// Telegram settings announce `telegram` after the commands announced
+    /// before, with exactly this entry, while without them the list is the
+    /// one of before.
+    @Test(arguments: [Set<String>(), ["agent.create", "agent.wait"]], [false, true])
+    func configuredTelegramAnnouncesTheTelegramCommandAfterTheOthers(
+        tools: Set<String>, telegramConfigured: Bool
+    ) async throws {
+        try await withTelegramSupportDirectory(telegramConfigured: telegramConfigured) {
+            let fixture = try await makeFixture(
+                sessionID: "acp-telegram-discovery-\(UUID().uuidString)", allowedToolNames: tools
+            )
+            let commands = await fixture.bridge.availableCommandsForTesting(sessionID: fixture.sessionID)
+            let names = commands.compactMap { $0.objectValue?["name"]?.stringValue }
+            let previous = tools.isEmpty ? ["goal"] : ["goal", "review", "plan"]
+            #expect(names == (telegramConfigured ? previous + ["telegram"] : previous))
+            if telegramConfigured {
+                #expect(commands.last == .object([
+                    "name": .string("telegram"),
+                    "description": .string("Telegram status, or turn it on/off for this session"),
+                    "input": .object(["hint": .string("on or off")]),
+                ]))
+            }
+        }
+    }
+
+    /// Replaces the characterization of task 1
+    /// (`telegramOnIsRoutedToTheModelAsAnOrdinaryPrompt`), on purpose: a line
+    /// whose command is `/telegram` is now answered at once and never reaches
+    /// the model, whether Telegram is configured or not. Without Telegram
+    /// settings every such line gets the terminal's unknown-command text
+    /// (without its trailing newline, like every immediate ACP reply). With
+    /// them, the lines that need no Bot API are answered as in the terminal.
+    @Test(arguments: [false, true])
+    func telegramLinesAreAnsweredAtOnceAndNeverReachTheModel(telegramConfigured: Bool) async throws {
+        try await withTelegramSupportDirectory(telegramConfigured: telegramConfigured) {
+            let fixture = try await makeFixture(sessionID: "acp-telegram-route-\(UUID().uuidString)")
+            #expect(CoordinatorCommandParser.parse("/telegram on") == nil)
+
+            let expectations: [(line: String, text: String)] = telegramConfigured
+                ? [
+                    ("/telegram", "Telegram: Configured"),
+                    ("/telegram off", "Telegram remote control stopped."),
+                    ("/telegram later", "Usage: /telegram [on|off]"),
+                ]
+                : ["/telegram", "/telegram on", "/telegram off", "/telegram later"].map {
+                    ($0, "ZenCODE: unknown command '/telegram'.")
+                }
+            for expectation in expectations {
+                let route = try await fixture.bridge.commandRouteForTesting(
+                    sessionID: fixture.sessionID, prompt: expectation.line
+                )
+                guard case let .immediate(text) = route else {
+                    Issue.record("\(expectation.line) must be answered at once, got \(route)")
+                    continue
+                }
+                #expect(text == expectation.text)
+            }
+
+            try await fixture.bridge.prompt(id: .number(1), params: [
+                "sessionId": fixture.sessionID, "prompt": telegramConfigured ? "/telegram" : "/telegram on",
+            ])
+            #expect(await fixture.backend.recordedPrompts().isEmpty)
+            #expect(fixture.wire.updateTexts(kind: "agent_message_chunk") == [expectations[0].text])
+            #expect(fixture.wire.stopReason(for: 1) == "end_turn")
+        }
+    }
+
+    /// `/telegram on` hands the session's slot to its Telegram channel
+    /// through the scripted Bot API, which reads the linked chat; `/telegram`
+    /// reports the link as the channel does; `/telegram off` takes the slot
+    /// back and stops the link. None of them reaches the model, and while
+    /// Telegram drives the slot the editor's prompts are refused.
+    @Test(.timeLimit(.minutes(1)))
+    func telegramOnHandsTheSlotOverStatusReportsAndOffTakesItBack() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let transport = ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
+            let sessionID = "acp-telegram-on-\(UUID().uuidString)"
+            let fixture = try await ACPTelegramBridgeFixture.make(
+                root: root, sessionIDs: [sessionID], transport: transport
+            )
+            let bridge = fixture.bridge
+
+            #expect(try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram")
+                == "Telegram: Configured")
+            #expect(await fixture.telegramChannel(sessionID: sessionID) == nil)
+
+            #expect(try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram on")
+                == "Telegram remote control is active.\nLinked chat: Test")
+            let channel = try #require(await fixture.telegramChannel(sessionID: sessionID))
+            #expect(await channel.isActive)
+            #expect(await channel.readsIngress)
+            #expect(await channel.drivesSlot)
+            #expect(await channel.primaryChannelDescription == "editor")
+            #expect(await ACPTelegramTestSupport.waitUntil { await transport.pollCount > 0 })
+
+            // The editor is dormant: a prompt is refused without reaching the
+            // model, the status is still answered.
+            #expect(try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "Hello from the editor")
+                == "ZenCODE: this session is driven from Telegram. Use /telegram off to take it back.")
+            #expect(await fixture.backend.prompts.isEmpty)
+            let status = try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram")
+            #expect(status == (await channel.statusText()))
+            #expect(status?.hasPrefix("Telegram: ") == true)
+            #expect(status?.contains("Linked chat: Test") == true)
+
+            #expect(try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram off")
+                == "Telegram remote control stopped.")
+            #expect(await !channel.isActive)
+            #expect(await !channel.readsIngress)
+            #expect(await !channel.drivesSlot)
+            #expect(await fixture.telegramChannel(sessionID: sessionID) === channel)
+
+            // A failed start answers the terminal's failure text.
+            await transport.setGetMeFails(true)
+            let failure = try #require(
+                try await bridge.immediateTextForTesting(sessionID: sessionID, prompt: "/telegram on")
+            )
+            let lastError = try #require(await channel.controlState.lastError)
+            #expect(failure == "ZenCODE: \(lastError)")
+            #expect(await !channel.isActive)
+            #expect(await !channel.drivesSlot)
+            #expect(await fixture.backend.prompts.isEmpty)
+            await bridge.shutdown()
+        }
     }
 
     @Test
@@ -1059,7 +1264,8 @@ struct ACPCommandRoutingTests {
         #expect(resumed.workflow?.originalGoal == graph.workflow?.originalGoal)
         #expect(resumed.workflow?.state == .awaitingUser)
         #expect(await fixture.bridge.commandNamesForGoalTesting(sessionID: fixture.sessionID) == ["goal"])
-        let expectedGrant = ACPCommandPromptPurpose.workflow(graphID: graph.id).additionalToolNames
+        let expectedGrant = ChatTurnPurpose.workflow(originalGoal: "", graphID: graph.id)
+            .additionalToolNames(activePlan: nil)
             .union(["local.readFile"])
         let grants = await fixture.backend.recordedToolGrants()
         #expect(grants.contains(expectedGrant))
@@ -1135,22 +1341,94 @@ struct ACPCommandRoutingTests {
         await bridge.installTestSession(sessionConfiguration)
         return (bridge, backend, wire, sessionID)
     }
+
+    /// Runs `body` in a fresh UUID support directory of its own, holding a
+    /// complete routing-v2 Telegram `settings.json` when `telegramConfigured`.
+    /// Every test case gets its own directory, so a configured case can never
+    /// leak its settings into an unconfigured one.
+    private func withTelegramSupportDirectory(
+        telegramConfigured: Bool,
+        _ body: () async throws -> Void
+    ) async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("acp-telegram-commands-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await AppStorageDirectory.withSupportDirectoryURL(root) {
+            if telegramConfigured {
+                try AgentSettingsManifestStore.save(AgentSettingsManifest(
+                    models: [],
+                    telegram: AgentTelegramSettingsManifest(
+                        enabled: true,
+                        botToken: "123456:ABCDEF",
+                        linkedChatID: 42,
+                        ownerUserID: 7,
+                        routingVersion: 2,
+                        routes: [.init(roomID: "default")]
+                    )
+                ))
+            }
+            #expect((AgentSettingsManifestStore.load()?.telegram?.isEnabled == true) == telegramConfigured)
+            try await body()
+        }
+    }
 }
 
 extension ZenCODEACPBridge {
     fileprivate func commandNamesForGoalTesting(sessionID: String) -> [String] {
-        guard let session = sessions[sessionID] else { return [] }
-        return availableCommandsUpdate(for: session).objectValue?["availableCommands"]?.arrayValue?.compactMap {
+        availableCommandsForTesting(sessionID: sessionID).compactMap {
             $0.objectValue?["name"]?.stringValue
-        } ?? []
+        }
+    }
+
+    fileprivate func availableCommandsForTesting(sessionID: String) -> [JSONValue] {
+        guard let session = sessions[sessionID] else { return [] }
+        return availableCommandsUpdate(for: session).objectValue?["availableCommands"]?.arrayValue ?? []
+    }
+
+    /// The text of the immediate answer to `prompt`, routed as
+    /// `session/prompt` routes it; `nil` when the line would start a turn.
+    fileprivate func immediateTextForTesting(sessionID: String, prompt: String) async throws -> String? {
+        guard case let .immediate(text) = try await commandRouteForTesting(sessionID: sessionID, prompt: prompt) else {
+            return nil
+        }
+        return text
     }
 
     fileprivate func installDisarmedWorkflowForTesting(sessionID: String, graphID: String) {
-        sessions[sessionID]?.workflowContinuation = WorkflowCommandRuntimeState(goal: "Do not capture ordinary chat", graphID: graphID)
+        sessions[sessionID]?.controller.commitCommandState(ifToken: nil) {
+            $0.activeWorkflow = WorkflowCommandRuntimeState(goal: "Do not capture ordinary chat", graphID: graphID)
+        }
     }
 
-    fileprivate func reserveWorkflowPromptForTesting(sessionID: String, promptID: UUID) {
-        sessions[sessionID]?.activePromptID = promptID
-        sessions[sessionID]?.operationState = .prompting(promptID)
+    /// Reserves, in the host, a prompt that is not a workflow prompt on the
+    /// live incarnation of `sessionID`, as `session/prompt` does before it
+    /// routes the line.
+    fileprivate func reserveOrdinaryPromptForTesting(sessionID: String) async throws {
+        guard let session = sessions[sessionID] else { throw CancellationError() }
+        _ = try await host.reservePrompt(in: session.slotID)
+    }
+
+    /// Routes `prompt` the way `session/prompt` does once it holds the
+    /// reservation, and returns the route instead of running the turn.
+    fileprivate func commandRouteForTesting(sessionID: String, prompt: String) async throws -> ACPCommandTurnRoute {
+        guard let session = sessions[sessionID] else { throw CancellationError() }
+        let reservation = try await host.reservePrompt(in: session.slotID)
+        let route: ACPCommandTurnRoute
+        do {
+            route = try await routeACPCommandTurn(
+                command: CoordinatorCommandParser.parse(prompt),
+                routedPromptText: prompt,
+                hasAgentMention: false,
+                sessionID: sessionID,
+                epoch: reservation.epoch,
+                promptID: reservation.promptID
+            )
+        } catch {
+            await host.releasePrompt(reservation)
+            throw error
+        }
+        await host.releasePrompt(reservation)
+        return route
     }
 }

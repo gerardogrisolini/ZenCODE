@@ -282,7 +282,7 @@ struct TerminalTelegramSharedChatRelayTests {
         #expect(cards.first?.text.contains("build is green") == true)
     }
 
-    /// There is no recipient filter: the Telegram mirror shows every message
+    /// There is no recipient filter: the Telegram relay shows every message
     /// observed for its active room, regardless of sender or destination shape.
     @Test
     func everySharedChatTrafficShapeIsForwardedWithReadableRoute() async {

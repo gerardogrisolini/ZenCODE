@@ -126,6 +126,123 @@ extension PlanningCommandKernel {
         return points
     }
 
+    /// One plan of a final Planner output. A multi-plan output has one section
+    /// per `Piano N/M` heading; a heading-less output is a single section whose
+    /// `heading` is `nil` and whose `text` is the original text unchanged.
+    struct PlanSection: Equatable, Sendable {
+        let heading: String?
+        let text: String
+        let points: [TerminalSessionPlanPoint]
+    }
+
+    /// Splits a final Planner output into its plan sections. Without any
+    /// sequence heading the text is one heading-less section, unchanged. With
+    /// headings, the first non-blank line must be a heading and the headings
+    /// must be numbered 1...M with the same total M equal to their count;
+    /// otherwise the output is malformed and `nil` is returned. Each section
+    /// spans from its heading (included) to the next one (excluded), trimmed.
+    static func planSectionTexts(
+        in text: String
+    ) -> [(heading: String?, text: String)]? {
+        let lines = text.components(separatedBy: "\n")
+        let headings = lines.indices.compactMap { index in
+            planSequenceHeading(lines[index]).map { (index: index, value: $0) }
+        }
+        guard let firstHeading = headings.first else { return [(nil, text)] }
+        guard lines.firstIndex(where: { $0.nilIfBlank != nil }) == firstHeading.index,
+              headings.enumerated().allSatisfy({ offset, heading in
+                  heading.value.number == offset + 1
+                      && heading.value.total == headings.count
+              }) else {
+            return nil
+        }
+        return headings.enumerated().map { offset, heading in
+            let end = offset + 1 < headings.count ? headings[offset + 1].index : lines.count
+            return (
+                heading.value.heading,
+                lines[heading.index..<end]
+                    .joined(separator: "\n")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+    }
+
+    /// Matches registered points to the plan sections of a final Planner
+    /// output. Points are grouped by ID prefix in order, one group per section,
+    /// and every section must be coherent with its own group, so dependencies
+    /// across plans, interleaved groups, or a section/group count mismatch
+    /// yield `nil`. A heading-less output is equivalent to
+    /// `structuredPlanOutputIsCoherent(text:points:)` on the whole text.
+    static func planSections(
+        forFinalText text: String,
+        registeredPoints: [TerminalSessionPlanPoint]
+    ) -> [PlanSection]? {
+        guard let sectionTexts = planSectionTexts(in: text),
+              let groups = planPointGroups(registeredPoints),
+              groups.count == sectionTexts.count else {
+            return nil
+        }
+        var sections: [PlanSection] = []
+        for (section, points) in zip(sectionTexts, groups) {
+            guard structuredPlanOutputIsCoherent(text: section.text, points: points) else {
+                return nil
+            }
+            sections.append(PlanSection(heading: section.heading, text: section.text, points: points))
+        }
+        return sections
+    }
+
+    /// Derives every plan section strictly from a final Planner output, each
+    /// with its own fresh identifier token. Questions or any malformed section
+    /// yield `nil`.
+    static func planSections(
+        derivedFromFinalText text: String
+    ) -> [PlanSection]? {
+        guard !isPlannerQuestionResponse(text),
+              let sectionTexts = planSectionTexts(in: text) else {
+            return nil
+        }
+        var sections: [PlanSection] = []
+        for section in sectionTexts {
+            guard let points = planPoints(derivedFromFinalText: section.text) else {
+                return nil
+            }
+            sections.append(PlanSection(heading: section.heading, text: section.text, points: points))
+        }
+        return sections
+    }
+
+    /// The goal of one plan in a sequence carries its heading so the plans
+    /// stay distinguishable; a heading-less plan keeps the goal unchanged.
+    static func planGoal(_ goal: String, for section: PlanSection) -> String {
+        guard let heading = section.heading else { return goal }
+        return "\(heading) — \(goal)"
+    }
+
+    /// Groups points by ID prefix (the ID without its trailing `-<Int>`),
+    /// preserving order. An ID without a numeric suffix, or a prefix that
+    /// reappears after another group, yields `nil`.
+    private static func planPointGroups(
+        _ points: [TerminalSessionPlanPoint]
+    ) -> [[TerminalSessionPlanPoint]]? {
+        var groups: [(prefix: String, points: [TerminalSessionPlanPoint])] = []
+        var seenPrefixes = Set<String>()
+        for point in points {
+            let components = point.id.split(separator: "-", omittingEmptySubsequences: false)
+            guard components.count > 1, let last = components.last, Int(last) != nil else {
+                return nil
+            }
+            let prefix = components.dropLast().joined(separator: "-")
+            if groups.last?.prefix == prefix {
+                groups[groups.count - 1].points.append(point)
+            } else {
+                guard seenPrefixes.insert(prefix).inserted else { return nil }
+                groups.append((prefix, [point]))
+            }
+        }
+        return groups.map(\.points)
+    }
+
     private struct DescribedImplementationPoint {
         let text: String
         let dependencyOrdinals: [Int]

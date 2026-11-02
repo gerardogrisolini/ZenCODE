@@ -72,6 +72,11 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
     public let history: [AgentRuntimeMessage]
     public let transcriptHistory: [AgentRuntimeMessage]?
     public let activePlan: TerminalSessionPlan?
+    /// Plans that follow `activePlan` in a Planner sequence, in order. Sessions
+    /// saved without it decode to `nil`; the writer sets it only when the queue
+    /// is non-empty, so existing files and sessions without a queue encode
+    /// identically (no new key, no version bump).
+    public let queuedPlans: [TerminalSessionPlan]?
     public let taskGraph: TaskGraphSnapshot?
     /// Session checkpoint tree (v4+).
     public let checkpointTree: SessionCheckpointTree
@@ -96,6 +101,7 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         history: [AgentRuntimeMessage],
         transcriptHistory: [AgentRuntimeMessage]? = nil,
         activePlan: TerminalSessionPlan? = nil,
+        queuedPlans: [TerminalSessionPlan]? = nil,
         taskGraph: TaskGraphSnapshot? = nil,
         checkpointTree: SessionCheckpointTree
     ) {
@@ -120,6 +126,7 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         self.history = history
         self.transcriptHistory = transcriptHistory
         self.activePlan = activePlan
+        self.queuedPlans = queuedPlans
         self.taskGraph = taskGraph
         self.checkpointTree = checkpointTree
     }
@@ -192,8 +199,14 @@ public enum TerminalSessionStore {
         return session
     }
 
+    /// The saved sessions of the project of `workingDirectory`, most recently
+    /// saved first. With `migrating` (the default) the session files of the
+    /// directory that do not have their current name are renamed first;
+    /// `false` only lists, moving nothing, for a reader that runs beside the
+    /// saves (the shell snapshot of ``ChatSessionHost``).
     public static func savedSessions(
         for workingDirectory: URL,
+        migrating: Bool = true,
         fileManager: FileManager = .default,
         supportDirectoryURL: URL? = nil
     ) throws -> [TerminalSavedSession] {
@@ -206,10 +219,12 @@ public enum TerminalSessionStore {
             return []
         }
 
-        try migrateNonCurrentSessionFiles(
-            in: directoryURL,
-            fileManager: fileManager
-        )
+        if migrating {
+            try migrateNonCurrentSessionFiles(
+                in: directoryURL,
+                fileManager: fileManager
+            )
+        }
         let fileURLs = try fileManager.contentsOfDirectory(
             at: directoryURL,
             includingPropertiesForKeys: nil
@@ -406,6 +421,12 @@ public enum TerminalSessionStore {
             guard !isEngineCheckpointArtifact(sourceURL) else {
                 continue
             }
+            // A save in progress, of this process or another one, writes
+            // `.<name>.<UUID>.tmp` before it renames it: moving it would make
+            // that rename fail.
+            guard !isHiddenOrTemporaryFile(sourceURL) else {
+                continue
+            }
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(
                 atPath: sourceURL.path,
@@ -435,6 +456,11 @@ public enum TerminalSessionStore {
 
     private static func isEngineCheckpointArtifact(_ url: URL) -> Bool {
         url.lastPathComponent.contains(".\(engineCheckpointFileExtension)")
+    }
+
+    /// A hidden file or a `*.tmp`: never a session to migrate.
+    private static func isHiddenOrTemporaryFile(_ url: URL) -> Bool {
+        url.lastPathComponent.hasPrefix(".") || url.pathExtension == "tmp"
     }
 
     private static func validate(_ session: TerminalSavedSession) throws {

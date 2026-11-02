@@ -1097,9 +1097,14 @@ private actor ControlledHeadlessSessionRunner: ZenCODEHeadlessSessionRunning {
         if failure == .create { throw Failure.create }
     }
 
-    func headlessSendPrompt(
+    func sendPrompt(
         configuration _: AgentCoreSessionConfiguration,
         prompt _: String,
+        attachments _: [AgentRuntimeAttachment],
+        authorizeTool _: AgentToolAuthorizationHandler?,
+        onToolWillExecute _: (@Sendable (DirectAgentToolCall) async -> Void)?,
+        toolProviders _: [AgentToolProvider],
+        turnInstruction _: String?,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
         calls.append("send")
@@ -1108,6 +1113,45 @@ private actor ControlledHeadlessSessionRunner: ZenCODEHeadlessSessionRunning {
             await onEvent(event)
         }
         return response
+    }
+
+    nonisolated let taskOrchestrator = SessionTaskOrchestrator()
+
+    func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
+        []
+    }
+
+    func closeSubAgent(id _: String) async -> Bool {
+        false
+    }
+
+    func taskGraphSnapshot(
+        sessionID _: String,
+        graphID _: String?
+    ) async throws -> TaskGraphSnapshot? {
+        nil
+    }
+
+    func removeTaskGraph(id _: String, sessionID _: String) async throws -> TaskGraphSnapshot {
+        throw Failure.send
+    }
+
+    func snapshotSession(id _: String) async -> AgentRuntimeSessionSnapshot? {
+        nil
+    }
+
+    func currentSessionGeneration(
+        for _: String
+    ) -> AgentCoreSessionRunner.SessionGeneration? {
+        nil
+    }
+
+    func replaceSessionHistory(
+        id _: String,
+        history _: [AgentRuntimeMessage],
+        expectedSessionGeneration _: AgentCoreSessionRunner.SessionGeneration
+    ) async -> Bool {
+        false
     }
 
     func headlessCloseSession(id _: String) async throws {

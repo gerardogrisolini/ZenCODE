@@ -12,7 +12,7 @@ public enum AgentRuntimeLauncher {
     /// Runs one non-interactive turn. Legacy headless mode writes only the final
     /// assistant text; JSONL mode writes the approved lifecycle records. The
     /// sinks receive that output instead of standard output (nil prints it).
-    @TerminalChatActor
+    @ChatSessionActor
     public static func runHeadless(
         configuration: AgentConfiguration,
         prompt: String,
@@ -31,14 +31,20 @@ public enum AgentRuntimeLauncher {
         )
     }
 
-    /// Runs one terminal-chat lifecycle. The caller owns the supplied runner so
-    /// it can preserve the task orchestrator while rebuilding the chat after
-    /// `/setup`.
-    @TerminalChatActor
+    /// Runs one terminal-chat lifecycle. The caller owns the supplied runner,
+    /// or the host whose runner it is, so it can preserve the task
+    /// orchestrator while rebuilding the chat after `/setup`. With
+    /// `sessionHost` the terminal opens its slot there and the caller shuts
+    /// the host down (``ChatSessionHost/shutdown(keepingExternalTools:)``);
+    /// `sessionRunner` is then ignored, as the host's runner is the
+    /// terminal's. Without a host the terminal builds one over
+    /// `sessionRunner`, or over a new runner.
+    @ChatSessionActor
     public static func runTerminalChat(
         configuration: AgentConfiguration,
         stdinIsTerminal: Bool,
         sessionRunner: AgentCoreSessionRunner? = nil,
+        sessionHost: ChatSessionHost? = nil,
         permissionAuthorizer: LocalExecPermissionAuthorizer? = nil,
         runtimeSetupResumeSnapshot: TerminalChatResumeSnapshot? = nil
     ) async throws -> TerminalChatRunOutcome {
@@ -46,8 +52,10 @@ public enum AgentRuntimeLauncher {
             configuration: configuration,
             stdinIsTerminal: stdinIsTerminal,
             sessionRunner: sessionRunner,
+            sessionHost: sessionHost,
             permissionAuthorizer: permissionAuthorizer,
-            runtimeSetupResumeSnapshot: runtimeSetupResumeSnapshot
+            runtimeSetupResumeSnapshot: runtimeSetupResumeSnapshot,
+            telegramTransportFactory: nil
         )
         return try await terminal.run()
     }

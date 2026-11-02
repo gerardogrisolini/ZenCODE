@@ -13,7 +13,7 @@ import Synchronization
 import Testing
 @testable import ZenCODECore
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite
 struct TerminalVoiceChatLoopTests {
     private typealias Spoken = FakeVoiceController.Spoken
@@ -24,7 +24,7 @@ struct TerminalVoiceChatLoopTests {
         count: 20
     ).trimmingCharacters(in: .whitespaces)
 
-    @TerminalChatActor
+    @ChatSessionActor
     private final class Harness {
         let terminal: TerminalChat
         let queue = TerminalChatEventQueue()
@@ -60,8 +60,7 @@ struct TerminalVoiceChatLoopTests {
             terminal.bypassInteractivePanelInputForTesting = true
             terminal.voiceController = voice
             let recorder = recorder
-            terminal.onTelegramWorkEffectForTesting = { effect in
-                guard case .sharedChatPublication = effect else { return false }
+            terminal.onSharedChatPublicationForTesting = {
                 recorder.recordPublication()
                 return publicationsSucceed
             }

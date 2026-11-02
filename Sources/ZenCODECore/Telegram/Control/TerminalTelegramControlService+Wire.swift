@@ -250,15 +250,23 @@ extension TerminalTelegramControlService {
         let settings = try telegramSettings()
         let token = try telegramToken(from: settings)
         try await wireClient(token: token, generation: wireGeneration, fence: fence, chatID: chatID, topicID: topicID)
-            .sendMessageDraft(text, to: chatID, draftID: draftID, governor: rateGovernor)
+            .sendMessageDraft(
+                text, to: chatID, messageThreadID: topicID, draftID: draftID, governor: rateGovernor
+            )
         try ensureCurrentWireGeneration(wireGeneration)
     }
 
     /// Streams a structured draft and falls back to the legacy draft method on a
     /// definite API/client incompatibility. The caller's coalescer remains the
     /// sole owner of draft timing and cancellation.
+    ///
+    /// Both draft calls target the lease's topic (`message_thread_id` is omitted
+    /// without one) and carry `canStop`. The default `true` keeps today's wire,
+    /// `can_stop: true` with `keep_on_stop: true`; `false` hides the stop button
+    /// and leaves `keep_on_stop` at its default.
     func sendRichMessageDraftWithFallback(
         _ text: String, to chatID: Int64, draftID: Int,
+        canStop: Bool = true,
         fence: TerminalTelegramWireFence
     ) async throws {
         let topicID = fence.lease.effectiveMessageThreadID
@@ -270,22 +278,81 @@ extension TerminalTelegramControlService {
         let client = wireClient(token: token, generation: wireGeneration, fence: fence, chatID: chatID, topicID: topicID)
         do {
             try await client.sendRichMessageDraft(
-                document, to: chatID, draftID: draftID, governor: rateGovernor
+                document, to: chatID, messageThreadID: topicID, draftID: draftID,
+                canStop: canStop, governor: rateGovernor
             )
         } catch is CancellationError {
             throw CancellationError()
         } catch is TerminalTelegramRichMessageError {
             try ensureCurrentWireGeneration(wireGeneration)
             try await client.sendMessageDraft(
-                document.plainText, to: chatID, draftID: draftID, governor: rateGovernor
+                document.plainText, to: chatID, messageThreadID: topicID, draftID: draftID,
+                canStop: canStop, governor: rateGovernor
             )
         } catch let error as TerminalTelegramControlError {
             guard Self.isRichMessageCompatibilityError(error) else { throw error }
             try ensureCurrentWireGeneration(wireGeneration)
             try await client.sendMessageDraft(
-                document.plainText, to: chatID, draftID: draftID, governor: rateGovernor
+                document.plainText, to: chatID, messageThreadID: topicID, draftID: draftID,
+                canStop: canStop, governor: rateGovernor
             )
         }
+        try ensureCurrentWireGeneration(wireGeneration)
+    }
+
+    /// Creates a topic in the private chat (Bot API 9.4) and returns its
+    /// `message_thread_id`.
+    ///
+    /// `fence` is the lease of the route the request starts from (General or
+    /// the legacy shared route), so it is validated with that lease's own
+    /// thread, like ``editMessageText(_:chatID:messageID:fence:)``. This call
+    /// binds nothing: the created topic gets a route of its own afterwards,
+    /// from the topic-mode routing. The name is trimmed and cut on grapheme
+    /// boundaries within 128 UTF-16 units; a blank name throws
+    /// ``TerminalTelegramControlError/emptyMessage`` before the wire.
+    func createTopic(
+        name: String, chatID: Int64, fence: TerminalTelegramWireFence
+    ) async throws -> Int {
+        let topicID = fence.lease.effectiveMessageThreadID
+        let wireGeneration = try await beginWireEffect(fence: fence, chatID: chatID, topicID: topicID)
+        defer { endWireEffect(fence: fence) }
+        let settings = try telegramSettings()
+        let token = try telegramToken(from: settings)
+        let bounded = TerminalTelegramAPIClient.boundedTopicName(name)
+        guard !bounded.isEmpty else {
+            throw TerminalTelegramControlError.emptyMessage
+        }
+        let topic = try await wireClient(
+            token: token, generation: wireGeneration, fence: fence,
+            chatID: chatID, topicID: topicID
+        )
+            .createForumTopic(chatID: chatID, name: bounded, governor: rateGovernor)
+        try ensureCurrentWireGeneration(wireGeneration)
+        return topic.messageThreadID
+    }
+
+    /// Renames the topic `topicID` (`editForumTopic`, name only). Like
+    /// ``sendMessage(_:to:topicID:fence:)`` the fence is validated with the
+    /// given `topicID`, so only the topic the lease owns can be renamed. The
+    /// name is bounded as in ``createTopic(name:chatID:fence:)``.
+    func renameTopic(
+        name: String, chatID: Int64, topicID: Int, fence: TerminalTelegramWireFence
+    ) async throws {
+        let wireGeneration = try await beginWireEffect(fence: fence, chatID: chatID, topicID: topicID)
+        defer { endWireEffect(fence: fence) }
+        let settings = try telegramSettings()
+        let token = try telegramToken(from: settings)
+        let bounded = TerminalTelegramAPIClient.boundedTopicName(name)
+        guard !bounded.isEmpty else {
+            throw TerminalTelegramControlError.emptyMessage
+        }
+        try await wireClient(
+            token: token, generation: wireGeneration, fence: fence,
+            chatID: chatID, topicID: topicID
+        )
+            .editForumTopic(
+                chatID: chatID, messageThreadID: topicID, name: bounded, governor: rateGovernor
+            )
         try ensureCurrentWireGeneration(wireGeneration)
     }
 

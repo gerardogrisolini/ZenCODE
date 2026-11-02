@@ -4,6 +4,12 @@ import Testing
 import ToolCore
 @testable import ZenCODECore
 
+/// The ACP projection reads only the graph of the shared overview, so the
+/// overview a test hands it carries no task views.
+private func taskOverview(_ graph: TaskGraphSnapshot?) -> ChatTaskGraphOverview? {
+    graph.map { ChatTaskGraphOverview(graph: $0, tasks: []) }
+}
+
 @Suite(.timeLimit(.minutes(1)))
 struct ACPPresentationLifecycleIntegrationTests {
     @Test func textOnlySecondPromptReattachesPersistentTasklessAgent() async throws {
@@ -186,11 +192,10 @@ struct ACPPresentationLifecycleIntegrationTests {
 }
 
 private extension ZenCODEACPBridge {
-    func installPresentationTestPrompt(sessionID: String) -> (UInt64, UUID) {
-        let promptID = UUID()
-        sessions[sessionID]?.activePromptID = promptID
-        sessions[sessionID]?.operationState = .prompting(promptID)
-        return (sessions[sessionID]!.epoch, promptID)
+    func installPresentationTestPrompt(sessionID: String) async -> (UInt64, UUID) {
+        let session = sessions[sessionID]!
+        let reservation = try! await host.reservePrompt(in: session.slotID)
+        return (reservation.epoch, reservation.promptID)
     }
 
     func installTasklessPreparationGate(sessionID: String, gate: PresentationSuspensionGate) {
@@ -214,9 +219,9 @@ private extension ZenCODEACPBridge {
 
     func presentationEpoch(sessionID: String) -> UInt64? { sessions[sessionID]?.epoch }
 
-    func replacePresentationTestSession(sessionID: String) {
+    func replacePresentationTestSession(sessionID: String) async {
         let old = sessions[sessionID]!
-        sessions[sessionID] = sessionState(configuration: old.configuration)
+        _ = try! await installSession(configuration: old.configuration)
     }
 }
 
@@ -306,7 +311,7 @@ extension ACPPresentationLifecycleIntegrationTests {
         func publishNext(_ events: inout AsyncStream<TaskGraphEvent>.Iterator) async throws {
             _ = try #require(await events.next())
             let graph = try await orchestrator.graphSnapshot(sessionID: "root")
-            for update in await projection.updates(for: graph) {
+            for update in await projection.updates(for: taskOverview(graph)) {
                 await pipeline.enqueue(.init(kind: .consume(update)), onAccepted: {
                     await projection.acknowledge(update)
                 }).value

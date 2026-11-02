@@ -95,6 +95,14 @@ private final class CloseQuiescenceTransport: Sendable {
         return nil
     }
 
+    /// The `message` of the JSON-RPC error that answered this id, if any.
+    func errorMessage(id: Int) -> String? {
+        let reply = decoded.first { message in
+            (message["id"] as? NSNumber)?.intValue == id && message["error"] != nil
+        }
+        return (reply?["error"] as? [String: Any])?["message"] as? String
+    }
+
     /// `session/update` notifications for this session at or after wire index
     /// `index`, i.e. everything the closed session emitted after that slot.
     func sessionUpdateCount(sessionID: String, from index: Int) -> Int {
@@ -589,5 +597,293 @@ extension ZenCODEACPBridge {
 
     func testRunnerHasSessionEntry(sessionID: String) async -> Bool {
         await sessionRunner.snapshotSession(id: sessionID) != nil
+    }
+
+    /// The host slot of the live session `sessionID`.
+    fileprivate func testSlotID(sessionID: String) -> ChatSlotID? {
+        sessions[sessionID]?.slotID
+    }
+
+    /// Starts, from one step of the bridge and in this order, `session/prompt`
+    /// (request `promptID`), a job that holds the bridge until `hold` is
+    /// released, and `session/close` (request `closeID`) for `sessionID`. The
+    /// prompt runs up to its hop to the host and suspends; while the bridge is
+    /// held the host reserves the prompt, so the prompt resumes only after the
+    /// close, queued before it, removed the session.
+    fileprivate func testPromptReservedThenClosed(
+        sessionID: String,
+        promptID: Int,
+        closeID: Int,
+        hold: CloseQuiescenceBridgeHold
+    ) -> [Task<Void, Never>] {
+        [
+            Task {
+                _ = try? await self.prompt(
+                    id: .number(Double(promptID)),
+                    params: ["sessionId": sessionID, "prompt": "reserved, then closed"]
+                )
+            },
+            Task { self.testHold(hold) },
+            Task {
+                _ = try? await self.close(id: .number(Double(closeID)), params: ["sessionId": sessionID])
+            },
+        ]
+    }
+
+    private func testHold(_ hold: CloseQuiescenceBridgeHold) {
+        hold.blockUntilReleased()
+    }
+
+    /// Starts, from one step of the bridge and in this order, the wire
+    /// requests `session/prompt` (request `promptID`) and `session/close`
+    /// (request `closeID`) for `sessionID`: the prompt runs up to its hop to
+    /// the host before the close starts.
+    fileprivate func testPromptThenClose(
+        sessionID: String,
+        promptID: Int,
+        closeID: Int
+    ) -> [Task<Void, Never>] {
+        [
+            Task {
+                await self.handleMessage([
+                    "jsonrpc": "2.0", "id": promptID, "method": "session/prompt",
+                    "params": ["sessionId": sessionID, "prompt": "on its way"] as [String: Any],
+                ])
+            },
+            Task {
+                await self.handleMessage([
+                    "jsonrpc": "2.0", "id": closeID, "method": "session/close",
+                    "params": ["sessionId": sessionID] as [String: Any],
+                ])
+            },
+        ]
+    }
+}
+
+/// Holds the thread that runs it, and so the actor it runs on, until
+/// ``release()``, or for ten seconds at most: for the one interleaving that
+/// needs an actor to stay busy while another actor serves a request.
+private final class CloseQuiescenceBridgeHold: Sendable {
+    private let isReleased = Mutex(false)
+    private let isHolding = Mutex(false)
+
+    func release() {
+        isReleased.withLock { $0 = true }
+    }
+
+    func blockUntilReleased() {
+        isHolding.withLock { $0 = true }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while !isReleased.withLock({ $0 }), ContinuousClock.now < deadline {}
+    }
+
+    /// Waits until ``blockUntilReleased()`` holds its actor.
+    func waitUntilHolding() async {
+        while !isHolding.withLock({ $0 }) {
+            await Task.yield()
+        }
+    }
+}
+
+extension ACPCloseQuiescenceTests {
+    /// A `session/prompt` the host reserved right before `session/close`
+    /// removed the session answers `cancelled`, as a prompt the close finds
+    /// running does, and before the close's own reply: the bridge tracks the
+    /// prompt's handler from before its hop to the host, so the close drains
+    /// it. Nothing of the prompt reaches the backend.
+    @Test
+    func aPromptReservedRightBeforeTheCloseAnswersCancelledBeforeTheCloseReply() async throws {
+        let transport = CloseQuiescenceTransport()
+        let gate = CloseQuiescenceGate()
+        let backend = CloseQuiescenceBackend(promptGate: gate, bufferedChunk: "unused")
+        let bridge = try Self.makeBridge(transport: transport, backend: backend)
+        try await bridge.newSession(id: .number(1), params: Self.sessionParams())
+        let sessionID = try #require(await bridge.testAnySessionID())
+        let slotID = try #require(await bridge.testSlotID(sessionID: sessionID))
+        let host = await bridge.host
+        let hold = CloseQuiescenceBridgeHold()
+
+        let tasks = await bridge.testPromptReservedThenClosed(
+            sessionID: sessionID, promptID: 2, closeID: 3, hold: hold
+        )
+        #expect(await ACPTelegramTestSupport.waitUntil { await host.activePromptID(in: slotID) != nil })
+        hold.release()
+        for task in tasks {
+            await task.value
+        }
+
+        let promptReplyIndex = try #require(transport.responseIndex(id: 2, stopReason: "cancelled"))
+        let closeReplyIndex = try #require(transport.responseIndex(id: 3))
+        #expect(promptReplyIndex < closeReplyIndex)
+        #expect(transport.responseIndex(id: 2) == promptReplyIndex)
+        #expect(await bridge.testHasSessionEntry(sessionID: sessionID) == false)
+        await bridge.shutdown()
+    }
+
+    /// A `session/prompt` that meets a `session/close` keeps the answer it
+    /// always had, the `invalidParams` error `Unknown or missing sessionId.`,
+    /// before the close reply: one sent once the close removed the session,
+    /// and one on its way to the host when the close retired the incarnation
+    /// (the host, held, serves its reservation only afterwards and reserves
+    /// nothing).
+    @Test
+    func aPromptThatMeetsTheCloseAnswersTheUnknownSessionErrorAsBefore() async throws {
+        let transport = CloseQuiescenceTransport()
+        let gate = CloseQuiescenceGate()
+        let backend = CloseQuiescenceBackend(promptGate: gate, bufferedChunk: "unused")
+        let bridge = try Self.makeBridge(transport: transport, backend: backend)
+        try await bridge.newSession(id: .number(1), params: Self.sessionParams())
+        let sessionID = try #require(await bridge.testAnySessionID())
+        let slotID = try #require(await bridge.testSlotID(sessionID: sessionID))
+        let host = await bridge.host
+        let hostHold = CloseQuiescenceBridgeHold()
+        let holding = Task { @ChatSessionActor in hostHold.blockUntilReleased() }
+        await hostHold.waitUntilHolding()
+
+        let tasks = await bridge.testPromptThenClose(sessionID: sessionID, promptID: 2, closeID: 3)
+        #expect(await ACPTelegramTestSupport.waitUntil {
+            await bridge.testHasSessionEntry(sessionID: sessionID) == false
+        })
+        await bridge.handleMessage([
+            "jsonrpc": "2.0", "id": 4, "method": "session/prompt",
+            "params": ["sessionId": sessionID, "prompt": "after the close began"] as [String: Any],
+        ])
+        hostHold.release()
+        await holding.value
+        for task in tasks {
+            await task.value
+        }
+
+        #expect(transport.errorMessage(id: 2) == "Unknown or missing sessionId.")
+        #expect(transport.errorMessage(id: 4) == "Unknown or missing sessionId.")
+        let closeReplyIndex = try #require(transport.responseIndex(id: 3))
+        #expect(try #require(transport.responseIndex(id: 2)) < closeReplyIndex)
+        #expect(try #require(transport.responseIndex(id: 4)) < closeReplyIndex)
+        #expect(await host.incarnation(in: slotID) == nil)
+        await bridge.shutdown()
+    }
+}
+
+// MARK: - Telegram channel
+
+/// The Telegram channel of an ACP session's slot ends with the slot:
+/// `session/close` and a discarded incarnation close the slot, which shuts
+/// the channel down, and the bridge's `shutdown()` shuts every one down.
+/// Telegram goes through a scripted Bot API.
+extension ACPCloseQuiescenceTests {
+    /// `session/close` shuts the channel down before it answers; the session
+    /// created again with the same id is a new slot, without a link, that
+    /// needs `/telegram on` again.
+    @Test
+    func closeShutsDownTheTelegramChannelBeforeItsReply() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let sessionID = "acp-close-telegram-\(UUID().uuidString)"
+            let fixture = try await ACPTelegramBridgeFixture.make(
+                root: root,
+                sessionIDs: [sessionID],
+                transport: ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
+            )
+            #expect(await fixture.turnTelegramOn(sessionID: sessionID, id: 1)
+                == "Telegram remote control is active.\nLinked chat: Test")
+            let channel = try #require(await fixture.telegramChannel(sessionID: sessionID))
+            #expect(await channel.isActive)
+            #expect(await ACPTelegramTestSupport.waitUntil { await fixture.transport.runningPollCount == 1 })
+
+            await fixture.bridge.handleMessage([
+                "jsonrpc": "2.0", "id": 2, "method": "session/close",
+                "params": ["sessionId": sessionID],
+            ])
+
+            #expect(fixture.wire.response(id: 2)?["result"] == .object([:]))
+            #expect(await !channel.isActive)
+            #expect(await !channel.readsIngress)
+            #expect(await ACPTelegramTestSupport.waitUntil { await fixture.transport.runningPollCount == 0 })
+
+            let sessionConfiguration = AgentCoreSessionConfiguration(
+                sessionID: sessionID,
+                modelID: "test-model",
+                workingDirectory: fixture.workingDirectory,
+                systemPrompt: "ACP Telegram test",
+                cacheKey: nil,
+                history: [],
+                allowedToolNames: nil
+            )
+            try await fixture.bridge.sessionRunner.createSession(configuration: sessionConfiguration)
+            await fixture.bridge.installTestSession(sessionConfiguration)
+            #expect(await fixture.telegramChannel(sessionID: sessionID) == nil)
+            let start = fixture.wire.count
+            await fixture.prompt("/telegram", id: 3, sessionID: sessionID)
+            #expect(fixture.lastAgentText(from: start) == "Telegram: Configured")
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// Discarding an incarnation closes its slot only: a discard that names
+    /// an older epoch of the same id leaves the newer incarnation and the
+    /// link of its slot untouched.
+    @Test
+    func discardingAnIncarnationShutsDownOnlyItsOwnChannel() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let sessionID = "acp-discard-telegram-\(UUID().uuidString)"
+            let fixture = try await ACPTelegramBridgeFixture.make(
+                root: root,
+                sessionIDs: [sessionID],
+                transport: ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
+            )
+            let staleEpoch = try #require(await fixture.bridge.telegramTestEpoch(sessionID: sessionID))
+            let sessionConfiguration = try #require(await fixture.bridge.telegramTestConfiguration(sessionID: sessionID))
+            // A newer incarnation with the same id replaces the first one.
+            await fixture.bridge.installTestSession(sessionConfiguration)
+            let epoch = try #require(await fixture.bridge.telegramTestEpoch(sessionID: sessionID))
+            #expect(epoch != staleEpoch)
+            await fixture.turnTelegramOn(sessionID: sessionID, id: 1)
+            let channel = try #require(await fixture.telegramChannel(sessionID: sessionID))
+            #expect(await channel.isActive)
+
+            await fixture.bridge.discardSessionIfCurrent(id: sessionID, epoch: staleEpoch)
+            #expect(await fixture.telegramChannel(sessionID: sessionID) === channel)
+            #expect(await channel.isActive)
+
+            await fixture.bridge.discardSessionIfCurrent(id: sessionID, epoch: epoch)
+            #expect(await fixture.bridge.telegramTestEpoch(sessionID: sessionID) == nil)
+            #expect(await !channel.isActive)
+            await fixture.bridge.shutdown()
+        }
+    }
+
+    /// `shutdown()` shuts down the channel of every session's slot: each
+    /// link stops, the reducer each handover created leaves its controller,
+    /// and nothing more is written on the closed ACP transport.
+    @Test
+    func shutdownShutsDownEveryTelegramChannel() async throws {
+        try await ACPTelegramTestSupport.withSupportDirectory { root in
+            let sessionIDs = (1...2).map { "acp-shutdown-telegram-\($0)-\(UUID().uuidString)" }
+            let fixture = try await ACPTelegramBridgeFixture.make(
+                root: root,
+                sessionIDs: sessionIDs,
+                transport: ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
+            )
+            var channels: [(channel: TelegramChannel, controller: ChatSessionController)] = []
+            for (index, sessionID) in sessionIDs.enumerated() {
+                await fixture.turnTelegramOn(sessionID: sessionID, id: index + 1)
+                let channel = try #require(await fixture.telegramChannel(sessionID: sessionID))
+                let controller = try #require(await channel.controller)
+                #expect(await channel.isActive)
+                #expect(await channel.drivesSlot)
+                #expect(await controller.observers.count == 1)
+                channels.append((channel, controller))
+            }
+            let wireCount = fixture.wire.count
+
+            await fixture.bridge.shutdown()
+
+            for (channel, controller) in channels {
+                #expect(await !channel.isActive)
+                #expect(await !channel.readsIngress)
+                #expect(await controller.observers.isEmpty)
+            }
+            #expect(await ACPTelegramTestSupport.waitUntil { await fixture.transport.runningPollCount == 0 })
+            #expect(fixture.wire.count == wireCount)
+        }
     }
 }

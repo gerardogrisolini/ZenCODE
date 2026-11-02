@@ -9,18 +9,14 @@ import Foundation
 
 /// Minimal lifecycle surface used by the headless turn executor. Production
 /// delegates to `AgentCoreSessionRunner`; tests can supply a controlled actor
-/// without replacing the CLI or weakening the real session composition.
-protocol ZenCODEHeadlessSessionRunning: Actor {
+/// without replacing the CLI or weakening the real session composition. The
+/// turn itself runs through the shared ``ChatSessionController``.
+protocol ZenCODEHeadlessSessionRunning: ChatSessionRuntime {
     /// Creates the session and installs its prompt-skill selection.
     func headlessCreateSession(
         configuration: AgentCoreSessionConfiguration,
         promptSkills: [PromptSkill]
     ) async throws
-    func headlessSendPrompt(
-        configuration: AgentCoreSessionConfiguration,
-        prompt: String,
-        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
-    ) async throws -> DirectAgentResponse
     func headlessCloseSession(id: String) async throws
     func headlessShutdown() async
 }
@@ -41,19 +37,6 @@ extension AgentCoreSessionRunner: ZenCODEHeadlessSessionRunning {
         )
     }
 
-    func headlessSendPrompt(
-        configuration: AgentCoreSessionConfiguration,
-        prompt: String,
-        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
-    ) async throws -> DirectAgentResponse {
-        try await sendPrompt(
-            configuration: configuration,
-            prompt: prompt,
-            attachments: [],
-            onEvent: onEvent
-        )
-    }
-
     func headlessCloseSession(id: String) async throws {
         try await closeSessionThrowing(id: id)
     }
@@ -63,7 +46,7 @@ extension AgentCoreSessionRunner: ZenCODEHeadlessSessionRunning {
     }
 }
 
-/// A headless session as composed by `TerminalChat`: the session
+/// A headless session as composed by ``ChatSessionController``: the session
 /// configuration and the prompt skills selected for it.
 struct ZenCODEHeadlessSession: Sendable {
     let configuration: AgentCoreSessionConfiguration
@@ -119,7 +102,7 @@ public enum ZenCODEHeadlessRunner {
     /// The sinks receive what would otherwise be printed on standard output
     /// (nil prints it), so a caller can capture the run's output, as Mail.app
     /// delivery of a scheduled run does.
-    @TerminalChatActor
+    @ChatSessionActor
     public static func run(
         configuration: AgentConfiguration,
         prompt: String,
@@ -128,13 +111,13 @@ public enum ZenCODEHeadlessRunner {
         jsonlSink: ZenCODEHeadlessJSONLWriter.Sink? = nil,
         textSink: TextSink? = nil
     ) async throws {
-        let sessionRunner = AgentCoreSessionRunner(
+        let sessionRunner = ChatSessionRuntimeFactory.makeSessionRunner(
             // This path never opens or reads a terminal consent dialog. It still
             // honors persisted approvals and tools which do not require consent.
-            defaultToolAuthorizationHandler: { request in
+            toolAuthorizationHandler: { request in
                 await permissionAuthorizer.authorizeNonInteractively(request)
             },
-            backendFactory: backendFactory
+            backendFactory: backendFactory ?? ChatSessionRuntimeFactory.productionBackendFactory
         )
         let session = await makeSession(
             configuration: configuration,
@@ -146,55 +129,71 @@ public enum ZenCODEHeadlessRunner {
             sessionRunner: sessionRunner,
             sessionConfiguration: session.configuration,
             promptSkills: session.promptSkills,
+            consentAuthorizer: permissionAuthorizer.consentAuthorizer,
             jsonlSink: jsonlSink,
             textSink: textSink
         )
     }
 
     /// Composes the headless session configuration through the same
-    /// `TerminalChat` code used by the interactive session, without starting
-    /// its UI.
+    /// ``ChatSessionController`` composition used by the interactive session,
+    /// without a terminal.
     ///
-    /// `TerminalChat` only applies the selected agent profile (its tool
-    /// selection and prompt skills) from `run()`, which this path never
-    /// enters. Applying it here is what grants the profile's tools and skills
-    /// to the session: without it the allowlist would hold only the intrinsic
-    /// prompt-skill tools and no skill would be selected. The skills always
-    /// come from the profile: `--skills` / `ZENCODE_AGENT_SKILLS` are an
-    /// interactive startup selection and are deliberately not applied here.
-    /// Profile application has no terminal output, and tool authorization is
-    /// untouched: consent-requiring actions still go through the
-    /// non-interactive authorizer.
-    @TerminalChatActor
+    /// The interactive session applies the selected agent profile (its tool
+    /// selection and prompt skills) when it starts. Applying it here is what
+    /// grants the profile's tools and skills to the session: without it the
+    /// allowlist would hold only the intrinsic prompt-skill tools and no skill
+    /// would be selected. The skills always come from the profile: `--skills`
+    /// / `ZENCODE_AGENT_SKILLS` are an interactive startup selection and are
+    /// deliberately not applied here. Profile application has no output, and
+    /// tool authorization is untouched: consent-requiring actions still go
+    /// through the non-interactive authorizer.
+    ///
+    /// The prompt carries no response-language section, as for an interactive
+    /// session before its first prompt locks a language.
+    @ChatSessionActor
     static func makeSession(
         configuration: AgentConfiguration,
         sessionRunner: AgentCoreSessionRunner
     ) async -> ZenCODEHeadlessSession {
-        let terminal = TerminalChat(
-            configuration: configuration,
-            stdinIsTerminal: false,
-            sessionRunner: sessionRunner
+        let host = HeadlessInteractionHost()
+        let chatSession = ChatSessionController(
+            sessionID: TerminalChat.newTerminalSessionID(),
+            managementRuntime: sessionRunner,
+            environment: ChatSessionEnvironment(
+                configuration: configuration,
+                featureRuntime: sessionRunner.swiftFeatureRuntime,
+                userHomeDirectoryURL: UserHomeDirectory.current()
+            ),
+            workingDirectory: configuration.workingDirectory,
+            presenter: HeadlessSilentPresenter(),
+            host: host,
+            authorizer: ChatToolConsentAuthorizer(host: host),
+            retainsTranscript: false,
+            retainsFileArtifactHistory: false
         )
-        await terminal.applyInitialAgentSelectionIfNeeded()
-        let sessionConfiguration = await terminal.currentSessionConfiguration(
-            discoverExternalTools: false
+        await chatSession.applyInitialAgentSelectionIfNeeded()
+        let sessionConfiguration = await chatSession.currentSessionConfiguration(
+            discoverExternalTools: false,
+            responseLanguageSection: nil
         )
         return ZenCODEHeadlessSession(
             configuration: sessionConfiguration,
-            promptSkills: terminal.selectedPromptSkills()
+            promptSkills: chatSession.selectedPromptSkills()
         )
     }
 
     /// Lifecycle seam for focused tests. Output mode still comes only from the
     /// same configuration used by production; sinks merely observe framed JSONL
     /// records or the legacy final text. A nil sink writes to standard output.
-    @TerminalChatActor
+    @ChatSessionActor
     static func runTurn(
         configuration: AgentConfiguration,
         prompt: String,
         sessionRunner: any ZenCODEHeadlessSessionRunning,
         sessionConfiguration: AgentCoreSessionConfiguration,
         promptSkills: [PromptSkill] = [],
+        consentAuthorizer: ChatToolConsentAuthorizer? = nil,
         jsonlSink: ZenCODEHeadlessJSONLWriter.Sink? = nil,
         textSink: TextSink? = nil
     ) async throws {
@@ -222,15 +221,40 @@ public enum ZenCODEHeadlessRunner {
             throw error
         }
 
+        let host = HeadlessInteractionHost()
+        let presenter: any ChatSessionPresenter = writer.map(HeadlessJSONLPresenter.init)
+            ?? HeadlessSilentPresenter()
+        let chatSession = ChatSessionController(
+            sessionID: sessionConfiguration.sessionID,
+            runtime: sessionRunner,
+            // The turn runs on the composed configuration; this controller
+            // composes nothing, so it needs no feature runtime.
+            environment: ChatSessionEnvironment(
+                configuration: configuration,
+                featureRuntime: nil,
+                userHomeDirectoryURL: UserHomeDirectory.current()
+            ),
+            workingDirectory: configuration.workingDirectory,
+            presenter: presenter,
+            host: host,
+            authorizer: consentAuthorizer ?? ChatToolConsentAuthorizer(host: host),
+            retainsTranscript: false,
+            retainsFileArtifactHistory: false
+        )
         let response: DirectAgentResponse
         do {
-            response = try await sessionRunner.headlessSendPrompt(
-                configuration: sessionConfiguration,
-                prompt: prompt
-            ) { event in
-                if let writer {
-                    await writer.write(event: event)
-                }
+            do {
+                response = try await chatSession.runTurn(
+                    ChatTurnRequest(
+                        prompt: prompt,
+                        attachments: [],
+                        purpose: .normal,
+                        sessionConfiguration: sessionConfiguration
+                    )
+                ).response
+            } catch let failure as ChatTurnFailure {
+                // The JSONL error record classifies the runtime error itself.
+                throw failure.underlying
             }
             guard configuration.jsonl
                 ? !response.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -307,3 +331,40 @@ public enum ZenCODEHeadlessRunnerError: LocalizedError {
 /// Marker used only for public classification. The underlying teardown error is
 /// deliberately not retained or serialized.
 struct ZenCODEHeadlessTeardownError: Error {}
+
+/// Headless JSONL output of a chat turn: only the protocol-approved records
+/// (tool lifecycle and the turn outcome that classifies a failure). No other
+/// event reaches the public wire.
+struct HeadlessJSONLPresenter: ChatSessionPresenter {
+    let writer: ZenCODEHeadlessJSONLWriter
+
+    func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {
+        await writer.write(event: .toolCallStarted(toolCall))
+    }
+
+    func presentToolCallCompleted(
+        _ toolCall: DirectAgentToolCall,
+        result: DirectAgentToolResult
+    ) async {
+        await writer.write(event: .toolCallCompleted(toolCall, result))
+    }
+
+    func presentTurnEnded(_ outcome: DirectAgentTurnOutcome) async {
+        await writer.write(event: .turnEnded(outcome))
+    }
+}
+
+/// Plain-text headless output: only the final text, written by the runner.
+struct HeadlessSilentPresenter: ChatSessionPresenter {}
+
+/// The headless runner has no operator: it offers no interaction at all, so
+/// gated tools are refused instead of prompting.
+struct HeadlessInteractionHost: ChatInteractionHost {
+    var capabilities: ChatChannelCapabilities { [] }
+
+    func requestToolConsent(
+        _ request: AgentToolAuthorizationRequest
+    ) async -> ChatConsentDecision? {
+        nil
+    }
+}

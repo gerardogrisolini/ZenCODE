@@ -41,7 +41,7 @@ struct TerminalChatLaunchFolderProjectsTests {
 
     /// Drives the real `applyAgentSelection` of a terminal chat and checks
     /// what each later prompt composition lists.
-    @TerminalChatActor
+    @ChatSessionActor
     private static func selectionScenario(in workspace: URL) async throws {
         let agents = [Support.developer, Self.organizer]
         try AgentProfileStore.save(agents)
@@ -104,7 +104,7 @@ struct TerminalChatLaunchFolderProjectsTests {
         #expect(developerContext?.contains(headline) == false)
     }
 
-    @TerminalChatActor
+    @ChatSessionActor
     private static func cacheKeyScenario(in workspace: URL) throws {
         try makeFolder("one", in: workspace)
         try makeFolder("two", in: workspace)

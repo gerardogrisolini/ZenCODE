@@ -178,4 +178,18 @@ extension ZenCODEACPBridge {
     func canUseClientFileSystem(sessionID: String, epoch: UInt64) -> Bool {
         liveSession(id: sessionID, epoch: epoch) != nil
     }
+
+    /// The text file system the client serves to the turns of incarnation
+    /// `epoch` of `sessionID`, or `nil` when the client advertised no file
+    /// system capability. It stays usable for as long as the incarnation is
+    /// live, not only during one prompt: the editor's prompts and the turns of
+    /// the slot's Telegram channel run inside it
+    /// (`ClientTextFileSystem.$current`), so their writes reach the editor's
+    /// buffers instead of the disk, and a request made after the session
+    /// closed is cancelled.
+    func clientTextFileSystem(sessionID: String, epoch: UInt64) -> ClientTextFileSystem? {
+        clientFileSystem?.access(sessionID: sessionID) { [weak self] in
+            await self?.canUseClientFileSystem(sessionID: sessionID, epoch: epoch) == true
+        }
+    }
 }

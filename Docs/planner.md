@@ -37,15 +37,27 @@ Dependencies form a minimum-safe-edge DAG; independent points remain parallel
 where that has a real latency or ownership benefit. The plan also indicates
 when to run `/review` after implementation.
 
+When the work is too large for one coherent plan, the Planner decides on its own
+to author several plans to be executed in sequence. The final output is then one
+response with one section per plan. Each section starts with its own line
+`Piano N/M: <title>` (N counts from 1, M is the total), followed by its own
+`Specifiche concordate` and its own numbered `Implementation plan`, whose
+numbering restarts at 1. `Dependencies:` may name only points of the same plan.
+Each plan is implementable and verifiable on its own once the previous plans are
+completed; the plans run in the order they appear, with no dependencies between
+plans. A single plan has no `Piano` heading and is unchanged. The coordinator
+registers all plans with one `todo.write`, using one fresh token per plan
+(`plan-<tokA>-1…`, `plan-<tokB>-1…`).
+
 ## Running A Plan
 
 ```text
 /plan <goal>          # delegate planning to a read-only Planner
-/plan save            # persist a reusable plan draft for this project
-/plan load            # load the latest saved draft as unapproved
-/plan status          # show plan progress from the graph state
+/plan save            # persist reusable drafts, all plans of a sequence
+/plan load            # load the first unfinished saved draft as unapproved
+/plan status          # show plan progress and the queued plans
 /plan approve         # activate the plan and start implementation
-/plan clear           # archive the graph and remove the active plan
+/plan clear           # archive the graph; remove the active plan and queue
 ```
 
 A goal is required. Examples:
@@ -127,6 +139,16 @@ does not alter the plan that remains active in the current session. No separate
 plan store or directory is created, and `/sessions new` can discard the live
 chat checkpoint without deleting the saved plan.
 
+When the Planner authored a sequence of plans, the first plan becomes the
+active, unapproved plan of the session and the following ones form a queue of
+plans, persisted with the saved session (an optional field: sessions saved
+earlier still load). `/plan save` then saves all the plans of the sequence, the
+active one and the queued ones, to the project library in one atomic write and
+in sequence order, so their save times increase in that order. Saving again a
+plan that is already in the library keeps its original position (its original
+save time) instead of moving it to the end. Each plan of a sequence is saved
+with the goal `Piano N/M: <title> — <original goal>`.
+
 If no plan is active, `/plan save` can promote the latest non-empty assistant
 response into an active plan and persist it through the same checkpoint
 mechanism. This supports plans written outside `/plan`. When the promoted answer
@@ -134,17 +156,31 @@ is in the strict Planner format — `Specifiche concordate`, a numbered
 `Implementation plan`, and a `Dependencies:` line on its own line for every
 point, with closed and acyclic dependencies — it is saved with its structured
 tasks and dependencies exactly like a plan produced by `/plan`, so `/plan load`
-and `/plan approve` use one task per point. Any other answer stays a text-only
-plan, which receives one stable implementation task at approval time rather than
-an invented task breakdown. Plans already in the library are not rewritten.
+and `/plan approve` use one task per point. When the response contains several
+plans in that format, each under its own `Piano N/M: <title>` line, `/plan save`
+saves all of them, each with its own tasks and dependencies. Any other answer
+stays a text-only plan, which receives one stable implementation task at
+approval time rather than an invented task breakdown. Plans already in the
+library are not rewritten.
 
 In a session for the same working directory with **no active plan**, `/plan load`
-retrieves the newest saved plan, displays it, adds it to the model context, and
-resets it to **unapproved** with pending task statuses so it can be reviewed or
-revised safely. It refuses to replace an active plan; run `/plan clear` first
+retrieves the first saved plan that is not completed — the oldest save among the
+unfinished drafts, not the newest — displays it, adds it to the model context,
+and resets it to **unapproved** with pending task statuses so it can be reviewed
+or revised safely. It refuses to replace an active plan; run `/plan clear` first
 when replacing one. Loading does not resume old execution attempts or the source
 session and never starts implementation automatically. Use `/plan approve` only
 after the loaded plan is ready.
+
+A sequence therefore continues through the library, one plan per session. With
+the plans saved in order, `/plan load` loads plan 1; once plan 1 is completed
+and its library copy is marked as completed, the next `/plan load` in a later
+session loads plan 2, and so on. The session never promotes the next queued
+plan on its own. While plans are queued, `/plan approve` approves and implements
+only the active (first) plan, `/plan status` shows the active plan and lists the
+queued ones, and `/plan clear` discards the active plan and the queue; the
+copies saved in the library are untouched. `/plan list` is unchanged and shows
+the newest save first.
 
 `todo.write` itself is session-scoped in-memory compatibility state; durable plan data belongs to `SessionTaskOrchestrator` and its atomic task-graph checkpoint.
 
@@ -161,3 +197,7 @@ The intended loop:
 ```text
 /plan <goal> -> /plan save -> /sessions new (or /plan clear) -> /plan load -> review/revise -> /plan approve -> implementation -> /review
 ```
+
+For a sequence of plans, the loop from `/plan load` repeats for each plan, one
+per session: load -> review/revise -> approve -> implementation -> `/review`,
+then load the next plan once the previous one is completed.

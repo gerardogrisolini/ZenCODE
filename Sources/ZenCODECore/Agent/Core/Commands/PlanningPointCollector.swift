@@ -36,38 +36,45 @@ actor PlanningPointCollector {
 
     /// Resolves the final structured plan points for a Planner turn, shared by
     /// the terminal TUI and the ACP bridge so both surfaces behave identically.
+    /// The points of every plan section are flattened in order.
+    func finalPlanPoints(forFinalText text: String) -> [TerminalSessionPlanPoint]? {
+        finalPlanSections(forFinalText: text)?.flatMap(\.points)
+    }
+
+    /// Resolves the final plan sections for a Planner turn: one section per
+    /// `Piano N/M` plan, or one heading-less section for a single plan.
     ///
     /// Registered points (a single valid `todo.write`) keep priority and are
-    /// still required to be coherent with the final text. When the coordinator
-    /// emitted **no** `todo.write` at all, the points are derived from the final
-    /// text itself, but only if that text is rigorously valid. A `todo.write`
-    /// that was malformed, in the wrong mode, or repeated remains a hard
-    /// failure: no fallback is attempted in that case.
-    func finalPlanPoints(forFinalText text: String) -> [TerminalSessionPlanPoint]? {
+    /// still required to be coherent with the final text, section by section.
+    /// When the coordinator emitted **no** `todo.write` at all, the points are
+    /// derived from the final text itself, but only if that text is rigorously
+    /// valid. A `todo.write` that was malformed, in the wrong mode, or repeated
+    /// remains a hard failure: no fallback is attempted in that case.
+    func finalPlanSections(
+        forFinalText text: String
+    ) -> [PlanningCommandKernel.PlanSection]? {
         if observedTodoWriteCount > 0 {
-            guard let registered = validFinalPlanPoints(),
-                  PlanningCommandKernel.structuredPlanOutputIsCoherent(
-                      text: text,
-                      points: registered
-                  ) else {
-                return nil
-            }
-            return registered
+            guard let registered = validFinalPlanPoints() else { return nil }
+            return PlanningCommandKernel.planSections(
+                forFinalText: text,
+                registeredPoints: registered
+            )
         }
         if let derivedFinalPoints,
-           PlanningCommandKernel.structuredPlanOutputIsCoherent(
-               text: text,
-               points: derivedFinalPoints
+           let sections = PlanningCommandKernel.planSections(
+               forFinalText: text,
+               registeredPoints: derivedFinalPoints
            ) {
-            return derivedFinalPoints
+            return sections
         }
-        guard let derived = PlanningCommandKernel.planPoints(
+        guard let derived = PlanningCommandKernel.planSections(
             derivedFromFinalText: text
         ) else {
             return nil
         }
-        derivedFinalPoints = derived
-        points = derived
+        let derivedPoints = derived.flatMap(\.points)
+        derivedFinalPoints = derivedPoints
+        points = derivedPoints
         return derived
     }
 

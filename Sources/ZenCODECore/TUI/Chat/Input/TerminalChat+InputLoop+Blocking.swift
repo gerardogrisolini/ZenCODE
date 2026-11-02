@@ -71,7 +71,7 @@ extension TerminalChat {
     /// Reads one interactive line off the cooperative executor.
     ///
     /// `readLine(prompt:)` puts the terminal in raw mode and blocks the thread
-    /// until a line is submitted, so it must never run on `TerminalChatActor`
+    /// until a line is submitted, so it must never run on `ChatSessionActor`
     /// (it would stall rendering, the status bar and background refreshes). The
     /// read is cancellation-aware, so a cancelled turn never leaves the terminal
     /// owned by a read nobody awaits.
@@ -135,16 +135,10 @@ extension TerminalChat {
         promptGate: TerminalBlockingPromptGate
     ) async {
         switch event {
-        case let .messages(messages):
-            // Shared-chat traffic is never appended to the main transcript.
-            // `/telegram` works in this fallback too, so cards are forwarded;
-            // the relay binding is refreshed at the room boundary, and this
-            // guard only drops batches of a room that is no longer live.
-            guard observation.roomID == sessionID else { break }
-            await forwardSharedChatMessagesToTelegram(
-                messages,
-                roomID: observation.roomID
-            )
+        case .messages:
+            // Shared-chat traffic is never appended to the main transcript;
+            // this fallback has no dock, so a batch is only observed.
+            break
         case .participantsChanged:
             break
         case let .autoTrigger(trigger):
@@ -174,7 +168,7 @@ extension TerminalChat {
             await runPromptBlocking(
                 promptAttempt(
                     prompt: trigger.prompt,
-                    origin: takeTelegramSharedChatOrigin(for: trigger.messages) ?? .local,
+                    origin: .local,
                     isUserVisible: false
                 )
             )
@@ -209,10 +203,6 @@ extension TerminalChat {
             )
         )
         await sharedChatObservations.start()
-        // Bind the relay to the initial room up front. Waiting for the first
-        // `.messages` batch would leave a `/telegram on` session unbound in a
-        // quiet room, so nothing addressed to the operator would be forwarded.
-        await rebindTelegramSharedChatRelay(roomID: sessionID)
 
         var shouldContinue = true
         while shouldContinue {
@@ -266,12 +256,6 @@ extension TerminalChat {
             }
 
             if shouldContinue {
-                // Fence and bind Telegram before attaching the next room's
-                // observer. Its replay may arrive as soon as `follow` suspends;
-                // binding afterward could drop that first batch or let a retired
-                // room keep sending during the attach. Re-activating an
-                // unchanged room is idempotent.
-                await rebindTelegramSharedChatRelay(roomID: sessionID)
                 // A stream that ended by itself was already repaired; this only
                 // follows a `/new` or `/resume` room swap.
                 await sharedChatObservations.follow(roomID: sessionID)

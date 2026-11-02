@@ -7,7 +7,7 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
-@TerminalChatActor
+@ChatSessionActor
 @Suite
 struct PlanLibraryCommandTests {
     private func makeTemp() throws -> (
