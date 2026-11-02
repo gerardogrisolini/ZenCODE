@@ -33,6 +33,27 @@ extension PlanningCommandKernel {
         array for "none".
         """
 
+    /// Format rule for a Planner output split into several plans to execute in
+    /// sequence; it must stay in step with `planSectionTexts(in:)`.
+    static let plannerPlanSequenceFormatInstruction = """
+        Coordinator note for the Planner: if the requested work is too large for one coherent plan, \
+        split it into several plans to execute in sequence instead of one oversized plan. Start each \
+        plan with its own line "Piano N/M: <title>" (N from 1, M the total number of plans), followed \
+        by its own "Specifiche concordate" and its own numbered "Implementation plan" whose numbering \
+        restarts from 1. Dependencies may name only points of the same plan; each plan must be \
+        implementable and verifiable on its own once the previous plans are completed. A single plan \
+        has no "Piano" heading.
+        """
+
+    /// Registration rule for a multi-plan Planner output; it must stay in step
+    /// with `planSections(forFinalText:registeredPoints:)`.
+    static let plannerPlanSequenceRegistrationInstruction = """
+        If the Planner's final output contains several plans, each headed by its own line \
+        "Piano N/M: <title>", register all of them in that single todo.write call, plan by plan in \
+        order, using a different fresh token for each plan, numbering the IDs from 1 within each \
+        plan, and translating dependencies only to IDs of the same plan.
+        """
+
     static func planStartPrompt(goal: String, planner: AgentProfile) -> String {
         planStartPrompt(goal: goal, planners: [planner])
     }
@@ -65,7 +86,8 @@ extension PlanningCommandKernel {
         - If the Planner reports a final plan, call todo.write once with mode "upsert" and one pending item \
         for every numbered implementation point. Copy wording/order without reinterpretation, use a fresh \
         shared short token and stable IDs "plan-<token>-1", "plan-<token>-2", and so on, and \
-        translate every explicit dependency to those IDs (empty arrays for independent items).
+        translate every explicit dependency to those IDs (empty arrays for independent items). \
+        \(plannerPlanSequenceRegistrationInstruction)
         - A claimed final response without a valid todo.write task for every point is a structural error; \
         never disguise it as a clarification request or invent tasks yourself.
         - Your final response is exactly the Planner's latest output, verbatim, with no wrapper. Freshness is \
@@ -95,6 +117,7 @@ extension PlanningCommandKernel {
             Send the operator's newest reply verbatim to the existing Planner with agent.message, \
             using agent id "\(plannerAgentID)". In that same message, after the reply and on separate \
             lines, include this coordinator note unchanged: \(plannerDependenciesFormatInstruction) \
+            \(plannerPlanSequenceFormatInstruction) \
             Then wait for that same agent. \(plannerWaitInstruction) \
             Do not reinterpret, summarize, or answer the reply yourself. If and only if that agent no \
             longer exists, recreate exactly one agent named "\(planAuthorAgentName)" with role "Planner" and \
@@ -105,7 +128,8 @@ extension PlanningCommandKernel {
             routing = """
             Recreate exactly one agent named "\(planAuthorAgentName)" with role "Planner" and \
             \(profileClause), give it the original goal, the complete transcript below, and this \
-            coordinator note unchanged: \(plannerDependenciesFormatInstruction) Then wait for it. \
+            coordinator note unchanged: \(plannerDependenciesFormatInstruction) \
+            \(plannerPlanSequenceFormatInstruction) Then wait for it. \
             \(plannerWaitInstruction) Do not reinterpret, summarize, or answer the operator replies yourself.
             """
         }
@@ -123,6 +147,7 @@ extension PlanningCommandKernel {
         return exactly one fresh numbered block headed "Planner questions" and do not call todo.write. \
         Otherwise return "Specifiche concordate" followed by the numbered "Implementation plan". \
         \(plannerFinalPlanRegistrationInstruction) \
+        \(plannerPlanSequenceRegistrationInstruction) \
         A final answer without those structured tasks is an error. Return only the Planner's fresh latest \
         output verbatim and do not edit files.
         """

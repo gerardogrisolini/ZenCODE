@@ -639,6 +639,7 @@ extension ChatSessionController {
         await channelHooks?.agentDidChange(agent)
         await applyAgentProfile(agent)
         savedSessionState.systemPromptOverride = nil
+        queuedPlans = []
         activePlan = nil
         pendingPlanApprovalPlanID = nil
         selection.modelIDOverride = previousModelIDOverride

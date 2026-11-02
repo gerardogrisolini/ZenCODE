@@ -258,7 +258,8 @@ public final class ChatSessionController {
     // MARK: - Command state shortcuts
 
     /// Transient `/plan` and `/goal` state. Never persisted except
-    /// ``ChatCommandState/activePlan``. A snapshot: write it, and run every
+    /// ``ChatCommandState/activePlan`` and ``ChatCommandState/queuedPlans``.
+    /// A snapshot: write it, and run every
     /// read-check-write sequence, through ``ChatSessionStateStore/withLock(_:)``.
     nonisolated var commandState: ChatCommandState {
         stateStore.commandState
@@ -269,6 +270,14 @@ public final class ChatSessionController {
     public internal(set) var activePlan: TerminalSessionPlan? {
         get { commandState.activePlan }
         set { stateStore.withLock { $0.commandState.activePlan = newValue } }
+    }
+
+    /// The plans that follow ``activePlan`` in a Planner sequence, in order;
+    /// non-empty only while ``activePlan`` is set. Like ``activePlan``, a
+    /// channel may persist it with the session.
+    public internal(set) var queuedPlans: [TerminalSessionPlan] {
+        get { commandState.queuedPlans }
+        set { stateStore.withLock { $0.commandState.queuedPlans = newValue } }
     }
 
     var planBrainstorming: PlanningCommandRuntimeState? {

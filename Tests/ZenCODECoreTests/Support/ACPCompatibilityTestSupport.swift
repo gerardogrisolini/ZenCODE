@@ -148,6 +148,10 @@ extension ZenCODEACPBridge {
         return (commandState?.activePlan, commandState?.planBrainstorming)
     }
 
+    func queuedPlansForTesting(sessionID: String) -> [TerminalSessionPlan] {
+        sessions[sessionID]?.controller.commandState.queuedPlans ?? []
+    }
+
     func workflowStateForTesting(
         sessionID: String
     ) -> WorkflowCommandRuntimeState? {

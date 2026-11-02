@@ -60,15 +60,15 @@ struct ChatPlanningCommandPolicy: Sendable {
 
     /// `/plan save`.
     enum PlanSave: Sendable {
-        /// The terminal's candidate
-        /// (``ChatSessionController/reusablePlanCandidate(createdAt:)``),
+        /// The terminal's candidates
+        /// (``ChatSessionController/reusablePlanCandidates(createdAt:)``),
         /// saved by the selected agent.
         case terminal
-        /// ACP's candidate: the active plan whatever its goal, otherwise the
-        /// latest plan in the runtime session's history (`fallbackHistory`
-        /// when the runtime has no session); a candidate without text is
-        /// refused; `savingAgent` (the ACP session's agent) is recorded as
-        /// the saver.
+        /// ACP's candidates: the active plan whatever its goal and its queued
+        /// plans, otherwise the latest plans in the runtime session's history
+        /// (`fallbackHistory` when the runtime has no session); a sequence
+        /// with a plan without text is refused; `savingAgent` (the ACP
+        /// session's agent) is recorded as the saver.
         case acp(savingAgent: AgentProfile?, fallbackHistory: [AgentRuntimeMessage])
     }
 

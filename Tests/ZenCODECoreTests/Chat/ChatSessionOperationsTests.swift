@@ -299,6 +299,37 @@ struct ChatSessionOperationsTests {
     }
 
     @Test
+    func theQueuedPlansAreSavedWithTheSessionAndRestoredWithIt() async throws {
+        try await withChatHarness { harness in
+            let controller = harness.controller
+            try await harness.startSession(conversation: Fixtures.conversation)
+            let savedSessionID = controller.sessionID
+            let queued = [Self.plan(id: "plan-queued-2"), Self.plan(id: "plan-queued-3")]
+            controller.activePlan = Self.plan()
+            controller.queuedPlans = queued
+            _ = await controller.saveSession(named: "sequence", contextWindow: nil)
+            let saved = try Self.stored("sequence", in: harness)
+            #expect(saved.activePlan?.id == "plan-save")
+            #expect(saved.queuedPlans == queued)
+
+            // A new session starts without a queue.
+            _ = try await controller.startNewSession(newSessionID: "channel-session-2")
+            #expect(controller.activePlan == nil)
+            #expect(controller.queuedPlans.isEmpty)
+
+            _ = try await controller.loadSavedSession(saved)
+            #expect(controller.sessionID == savedSessionID)
+            #expect(controller.activePlan?.id == "plan-save")
+            #expect(controller.queuedPlans == queued)
+
+            // Without a queue the session stores none.
+            controller.queuedPlans = []
+            _ = await controller.saveSession(named: "single", contextWindow: nil)
+            #expect(try Self.stored("single", in: harness).queuedPlans == nil)
+        }
+    }
+
+    @Test
     func theSavedSessionMenuLoadsTheChosenSessionAndReportsTheListWhenCancelled() async throws {
         try await withChatHarness(hostCapabilities: [.singleChoice]) { harness in
             let controller = harness.controller

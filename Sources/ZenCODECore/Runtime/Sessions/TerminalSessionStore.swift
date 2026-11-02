@@ -72,6 +72,11 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
     public let history: [AgentRuntimeMessage]
     public let transcriptHistory: [AgentRuntimeMessage]?
     public let activePlan: TerminalSessionPlan?
+    /// Plans that follow `activePlan` in a Planner sequence, in order. Sessions
+    /// saved without it decode to `nil`; the writer sets it only when the queue
+    /// is non-empty, so existing files and sessions without a queue encode
+    /// identically (no new key, no version bump).
+    public let queuedPlans: [TerminalSessionPlan]?
     public let taskGraph: TaskGraphSnapshot?
     /// Session checkpoint tree (v4+).
     public let checkpointTree: SessionCheckpointTree
@@ -96,6 +101,7 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         history: [AgentRuntimeMessage],
         transcriptHistory: [AgentRuntimeMessage]? = nil,
         activePlan: TerminalSessionPlan? = nil,
+        queuedPlans: [TerminalSessionPlan]? = nil,
         taskGraph: TaskGraphSnapshot? = nil,
         checkpointTree: SessionCheckpointTree
     ) {
@@ -120,6 +126,7 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         self.history = history
         self.transcriptHistory = transcriptHistory
         self.activePlan = activePlan
+        self.queuedPlans = queuedPlans
         self.taskGraph = taskGraph
         self.checkpointTree = checkpointTree
     }

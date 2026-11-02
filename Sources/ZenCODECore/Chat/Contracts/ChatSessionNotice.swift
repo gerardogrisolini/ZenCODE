@@ -227,6 +227,9 @@ public enum ChatSessionNotice: Sendable, Equatable {
     case planUnavailableForSaving
     /// The plan was saved to the project's library (`saveReusablePlan`).
     case planSaved(planID: String)
+    /// The plans of a sequence were saved to the project's library together,
+    /// in sequence order (`saveReusablePlan`).
+    case planSequenceSaved(planIDs: [String])
     /// `/plan load` while a plan is active (`loadReusablePlan`). Failure channel.
     case activePlanAlreadyExists
     /// The project's library holds no plan, for `/plan load` and
@@ -273,6 +276,9 @@ public enum ChatSessionNotice: Sendable, Equatable {
     /// graph's progress onto the active plan, which the terminal also keeps as
     /// the active plan. Markdown channel.
     case planStatus(TerminalSessionPlan, graph: TaskGraphSnapshot?)
+    /// `/plan status` with the plans queued after the active plan, in
+    /// sequence order (`planStatus`). Markdown channel.
+    case queuedPlans([TerminalSessionPlan])
     /// There is no completed plan to approve (`handlePlanCommand`,
     /// `handlePlanApprovalGoalReply`). Failure channel.
     case planUnavailableForApproval
@@ -466,6 +472,7 @@ public enum ChatSessionNotice: Sendable, Equatable {
         case .savedPlanLoaded,
              .savedPlans,
              .planStatus,
+             .queuedPlans,
              .taskDetail,
              .fileArtifacts:
             return .markdown
@@ -506,6 +513,7 @@ public enum ChatSessionNotice: Sendable, Equatable {
              .help,
              .noSavedPlans,
              .planSaved,
+             .planSequenceSaved,
              .savedPlansDeleted,
              .planClarificationActive,
              .planAwaitingApprovalGoal,

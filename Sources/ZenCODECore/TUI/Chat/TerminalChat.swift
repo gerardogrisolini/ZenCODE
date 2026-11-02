@@ -183,6 +183,11 @@ public final class TerminalChat {
         get { chatSession.activePlan }
         set { chatSession.activePlan = newValue }
     }
+    /// Plans that follow ``activePlan`` in a Planner sequence, in order.
+    public var queuedPlans: [TerminalSessionPlan] {
+        get { chatSession.queuedPlans }
+        set { chatSession.queuedPlans = newValue }
+    }
     /// Ephemeral `/plan` clarification state. Never copy this into snapshots or
     /// persisted session models.
     var planBrainstorming: PlanningCommandRuntimeState? {

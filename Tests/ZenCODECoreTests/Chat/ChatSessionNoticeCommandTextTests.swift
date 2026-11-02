@@ -253,7 +253,46 @@ struct ChatSessionCommandTextTests {
                 + "|---|---|---|---:|---|\n"
                 + "| `plan-12345678` | \(savedAtText) | `draft` | 1/2 | Fix the parser |\n"
                 + "\n"
-                + "Use /plan load to restore the newest draft, or /plan delete <plan|prefix|all> to remove saved plans.\n"
+                + "Use /plan load to restore the first unfinished draft (oldest save), or /plan delete <plan|prefix|all> to remove saved plans.\n"
+        )
+    }
+
+    @Test
+    func aSavedPlanSequenceNamesEveryPlanInOrder() {
+        #expect(
+            text(.planSequenceSaved(planIDs: ["plan-a", "plan-b", "plan-c"]))
+                == "Saved 3 plans to run in sequence: plan-a, plan-b, plan-c. "
+                + "Use /plan load in a new session to load the first one that is not completed.\n"
+        )
+    }
+
+    @Test
+    func queuedPlansAreATableNumberedAfterTheActivePlan() {
+        let longGoal = TerminalSessionPlan(
+            id: "custom-identifier-123456",
+            originalGoal: "Piano 3/3: Docs — " + String(repeating: "a", count: 60) + "\nsecond line",
+            consolidatedText: "1. Document."
+        )
+        let plans = [
+            TerminalSessionPlan(
+                id: "plan-1234567890ab",
+                originalGoal: "Piano 2/3: Fix a | b\nnext",
+                consolidatedText: "1. Fix."
+            ),
+            longGoal,
+        ]
+        #expect(
+            text(.queuedPlans(plans))
+                == "## Queued plans\n"
+                + "\n"
+                + "| # | Plan | Goal |\n"
+                + "|---:|---|---|\n"
+                + "| 2 | `plan-12345678` | Piano 2/3: Fix a \\| b next |\n"
+                + "| 3 | `custom-ident` | Piano 3/3: Docs — " + String(repeating: "a", count: 42) + "… |\n"
+                + "\n"
+                + "Only the active plan is approved and implemented in this session. "
+                + "Use /plan save to keep the queued plans in the project library; "
+                + "/plan load restores them in order in later sessions.\n"
         )
     }
 
@@ -660,6 +699,7 @@ struct ChatSessionCommandTextTests {
             .savedPlanLoaded(Self.plan()),
             .savedPlans([]),
             .planStatus(Self.plan(), graph: nil),
+            .queuedPlans([Self.plan()]),
             .taskDetail(view),
             .fileArtifacts([]),
         ]
@@ -667,6 +707,7 @@ struct ChatSessionCommandTextTests {
             .help(commandHelp: []),
             .noSavedPlans,
             .planSaved(planID: "plan-a"),
+            .planSequenceSaved(planIDs: ["plan-a", "plan-b"]),
             .savedPlansDeleted(planIDs: ["plan-a"], activePlanAffected: false),
             .planClarificationActive(goal: "Fix the parser"),
             .planAwaitingApprovalGoal,

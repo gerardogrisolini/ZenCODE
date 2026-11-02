@@ -90,8 +90,9 @@ enum PlanningCommandKernel {
     /// Drops the progress commentary the Planner streamed before its protocol
     /// block. The provider concatenates the text of every tool round, so a
     /// narrating Planner leaves a preamble ahead of its `Planner questions`,
-    /// `Specifiche concordate`, or `Implementation plan` heading. The text is
-    /// returned unchanged when it has no such heading or already starts with it.
+    /// `Specifiche concordate`, `Implementation plan`, or `Piano 1/M` heading.
+    /// The text is returned unchanged when it has no such heading or already
+    /// starts with it.
     static func plannerAuthoredBlock(_ text: String) -> String {
         let lines = text.components(separatedBy: .newlines)
         guard let headingIndex = lines.firstIndex(where: { line in
@@ -158,6 +159,37 @@ enum PlanningCommandKernel {
             || heading == "specifiche concordate:"
             || heading == "implementation plan"
             || heading == "implementation plan:"
+            || planSequenceHeading(line) != nil
+    }
+
+    /// Recognises the heading that opens one plan of a multi-plan Planner
+    /// output, such as `Piano 1/2: Title`, `## Plan 2/2`, or `**Piano 1/3**`.
+    /// Markdown heading markers and surrounding bold markers are ignored; the
+    /// returned `heading` is that cleaned line in its original case.
+    static func planSequenceHeading(
+        _ line: String
+    ) -> (number: Int, total: Int, heading: String)? {
+        let heading = String(
+            line.trimmingCharacters(in: .whitespacesAndNewlines)
+                .drop(while: { $0 == "#" || $0.isWhitespace })
+        )
+        .trimmingCharacters(in: CharacterSet(charactersIn: "*").union(.whitespacesAndNewlines))
+        guard heading.range(
+            of: #"^(piano|plan)\s+[0-9]+\s*/\s*[0-9]+(\s*[:.\-–—].*)?$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil else {
+            return nil
+        }
+        let isDigit: (Character) -> Bool = { $0.isASCII && $0.isNumber }
+        let ordinals = heading.drop(while: \.isLetter).drop(while: \.isWhitespace)
+        let numberText = ordinals.prefix(while: isDigit)
+        let totalText = ordinals.dropFirst(numberText.count)
+            .drop(while: { $0.isWhitespace || $0 == "/" })
+            .prefix(while: isDigit)
+        guard let number = Int(numberText), let total = Int(totalText) else {
+            return nil
+        }
+        return (number, total, heading)
     }
 
     static func historyByReplacingCoordinatorOutput(

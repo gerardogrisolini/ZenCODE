@@ -638,6 +638,93 @@ struct ChatCommandDispatchTests {
     }
 
     @Test
+    func acpPlanSaveStoresTheActivePlanWithItsQueueAndRefusesASequenceWithABlankPlan() async throws {
+        try await withChatHarness(catalog: Self.catalog, persistsTaskGraphs: true) { harness in
+            let controller = harness.controller
+            let first = Self.plan(id: "acp-first")
+            let second = Self.plan(id: "acp-second", goal: "Validate the parser")
+
+            // A blank plan anywhere in the sequence makes it unsaveable.
+            controller.activePlan = first
+            controller.queuedPlans = [
+                TerminalSessionPlan(id: "acp-blank", originalGoal: "Goal", consolidatedText: " "),
+            ]
+            #expect(await controller.runPlanCommand(line: "/plan save", policy: Self.acpPolicy())
+                == ChatCommandOutcome(notices: [.planUnavailableForSaving]))
+            #expect(await harness.runtime.savedTaskPlans(workingDirectory: harness.workspace).isEmpty)
+
+            controller.queuedPlans = [second]
+            let outcome = await controller.runPlanCommand(
+                line: "/plan save",
+                policy: Self.acpPolicy(savingAgent: Roles.systemReviewer)
+            )
+            #expect(outcome == ChatCommandOutcome(notices: [
+                .planSequenceSaved(planIDs: ["acp-first", "acp-second"]),
+            ]))
+            #expect(controller.activePlan == first)
+            #expect(controller.queuedPlans == [second])
+            let library = await harness.runtime.savedTaskPlans(workingDirectory: harness.workspace)
+            #expect(library.map(\.graph.id) == ["acp-second", "acp-first"])
+            #expect(library.allSatisfy { $0.snapshot.savingAgentName == Roles.systemReviewer.name })
+        }
+    }
+
+    @Test
+    func acpPlanSavePromotesEveryPlanOfTheLatestAnswerInTheFallbackHistory() async throws {
+        try await withChatHarness(catalog: Self.catalog, persistsTaskGraphs: true) { harness in
+            let controller = harness.controller
+            let answer = """
+            Piano 1/2: Parser
+
+            Specifiche concordate
+            - Keep the public API.
+
+            Implementation plan
+            1. Read the parser.
+               Dependencies: none
+
+            Piano 2/2: Validation
+
+            Specifiche concordate
+            - Cover the regression.
+
+            Implementation plan
+            1. Add the regression test.
+               Dependencies: none
+            """
+            let outcome = await controller.runPlanCommand(
+                line: "/plan save",
+                policy: Self.acpPolicy(fallbackHistory: [
+                    Fixtures.message(.user, "Ship the parser fix"),
+                    Fixtures.message(.assistant, answer),
+                ])
+            )
+
+            let active = try #require(controller.activePlan)
+            let next = try #require(controller.queuedPlans.first)
+            #expect(controller.queuedPlans.count == 1)
+            #expect(outcome == ChatCommandOutcome(notices: [.planSequenceSaved(planIDs: [active.id, next.id])]))
+            #expect(active.originalGoal == "Piano 1/2: Parser — Ship the parser fix")
+            #expect(next.originalGoal == "Piano 2/2: Validation — Ship the parser fix")
+            let library = await harness.runtime.savedTaskPlans(workingDirectory: harness.workspace)
+            #expect(library.map(\.graph.id) == [next.id, active.id])
+        }
+    }
+
+    @Test
+    func acpWordsThePlanSequenceNotices() {
+        typealias Bridge = ZenCODEACPBridge
+        #expect(Bridge.acpText(for: .planSequenceSaved(planIDs: ["p1", "p2"]), context: .plan(.save))
+            == "Saved 2 plans to run in sequence: p1, p2. "
+            + "Use /plan load in a new session to load the first one that is not completed.")
+        let queued = [Self.plan(id: "plan-queued-2", goal: "Validate the parser")]
+        #expect(Bridge.acpText(for: .queuedPlans(queued), context: .plan(.status))
+            == PlanningCommandKernel.queuedPlansMessage(for: queued))
+        #expect(Bridge.acpText(for: .queuedPlans(queued), context: .plan(.status))
+            == ChatSessionNoticeText.text(for: .queuedPlans(queued)))
+    }
+
+    @Test
     func acpPlanLoadExtendsTheRuntimeSessionsHistory() async throws {
         try await withChatHarness(catalog: Self.catalog, persistsTaskGraphs: true) { harness in
             let controller = harness.controller

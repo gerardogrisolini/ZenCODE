@@ -172,9 +172,9 @@ extension ChatSessionController {
         }
     }
 
-    /// `/plan status`: the open discussion, the Goal request, and the active
+    /// `/plan status`: the open discussion, the Goal request, the active
     /// plan projected from its task graph, which (in the terminal's
-    /// sequence) becomes the active plan.
+    /// sequence) becomes the active plan, and the plans queued after it.
     private func planStatus(style: ChatPlanningCommandPolicy.Style) async -> [ChatSessionNotice] {
         var notices: [ChatSessionNotice] = []
         if let planBrainstorming {
@@ -200,12 +200,16 @@ extension ChatSessionController {
             self.activePlan = projectedPlan
         }
         notices.append(.planStatus(projectedPlan, graph: graph))
+        let queue = queuedPlans
+        if !queue.isEmpty {
+            notices.append(.queuedPlans(queue))
+        }
         return notices
     }
 
     /// `/plan clear`: drops the discussion and the Goal request, then the
-    /// active plan, archiving its task graph in this session. The saved-plan
-    /// library is left alone.
+    /// active plan and its queued plans, archiving the active plan's task
+    /// graph in this session. The saved-plan library is left alone.
     private func clearActivePlan(
         fence: ChatCommandFence?,
         style: ChatPlanningCommandPolicy.Style
@@ -245,6 +249,7 @@ extension ChatSessionController {
         }
         guard commitCommandState(fence, { state in
             state.activePlan = nil
+            state.queuedPlans = []
             if style == .acp {
                 state.pendingPlanApprovalPlanID = nil
             }
@@ -472,40 +477,61 @@ extension ChatSessionController {
 
     // MARK: - Saved-plan library
 
-    /// `/plan save`: stores the active plan, or the latest plan an agent
-    /// wrote, in the project's saved-plan library and makes it the active
-    /// plan.
+    /// `/plan save`: stores the active plan and its queued plans, or the
+    /// latest plans an agent wrote, in the project's saved-plan library in one
+    /// commit, and makes the first the active plan and the others its queue.
+    /// A plan the library already holds keeps its original save time; new
+    /// plans get increasing save times in sequence order, so `/plan load`
+    /// restores the sequence from its first unfinished plan.
     private func saveReusablePlan(
         fence: ChatCommandFence?,
         source: ChatPlanningCommandPolicy.PlanSave,
         savedAt: Date = Date()
     ) async -> [ChatSessionNotice] {
-        let candidate: TerminalSessionPlan?
+        let candidates: [TerminalSessionPlan]
         let savingAgent: AgentProfile?
         switch source {
         case .terminal:
-            candidate = reusablePlanCandidate(createdAt: savedAt)
+            candidates = reusablePlanCandidates(createdAt: savedAt)
             savingAgent = selection.agent
         case let .acp(agent, fallbackHistory):
-            let snapshot = await runtime.snapshotSession(id: sessionID)
-            let plan = activePlan ?? PlanningCommandKernel.planFromLatestAssistantMessage(
-                in: snapshot?.history ?? fallbackHistory,
-                createdAt: savedAt
-            )
-            candidate = plan?.consolidatedText.nilIfBlank != nil ? plan : nil
+            let plans: [TerminalSessionPlan]
+            if let activePlan {
+                plans = [activePlan] + queuedPlans
+            } else {
+                let snapshot = await runtime.snapshotSession(id: sessionID)
+                plans = PlanningCommandKernel.plansFromLatestAssistantMessage(
+                    in: snapshot?.history ?? fallbackHistory,
+                    createdAt: savedAt
+                )
+            }
+            // A plan without text is not saveable, and neither is a sequence
+            // that holds one.
+            candidates = plans.allSatisfy { $0.consolidatedText.nilIfBlank != nil } ? plans : []
             savingAgent = agent
         }
-        guard let plan = candidate else {
+        guard let firstPlan = candidates.first else {
             return [.planUnavailableForSaving]
         }
 
-        let storedPlan = PlanningCommandKernel.planPreparedForSaving(plan)
-        let savedPlan = TaskGraphSavedPlan(
-            plan: storedPlan,
-            savedAt: savedAt,
-            savingAgentID: savingAgent?.id,
-            savingAgentName: savingAgent?.name
+        let existingSavedAt = Dictionary(
+            await runtime.taskOrchestrator.savedTaskPlans(workingDirectory: workingDirectory)
+                .map { ($0.graph.id, $0.snapshot.savedAt) },
+            uniquingKeysWith: { first, _ in first }
         )
+        let drafts = candidates.enumerated().map { index, plan in
+            let storedPlan = PlanningCommandKernel.planPreparedForSaving(plan)
+            return SavedPlanDraft(
+                savedPlan: TaskGraphSavedPlan(
+                    plan: storedPlan,
+                    savedAt: existingSavedAt[plan.id]
+                        ?? savedAt.addingTimeInterval(Double(index) * 0.001),
+                    savingAgentID: savingAgent?.id,
+                    savingAgentName: savingAgent?.name
+                ),
+                tasks: PlanningCommandKernel.taskDefinitions(for: storedPlan.points)
+            )
+        }
         let librarySessionID = SessionTaskOrchestrator.savedPlanLibrarySessionID(
             for: workingDirectory
         )
@@ -514,43 +540,58 @@ extension ChatSessionController {
                 id: librarySessionID,
                 workingDirectory: workingDirectory
             )
-            _ = try await runtime.taskOrchestrator.savePlanDraft(
-                savedPlan,
-                sessionID: librarySessionID,
-                tasks: PlanningCommandKernel.taskDefinitions(for: storedPlan.points)
+            _ = try await runtime.taskOrchestrator.savePlanDrafts(
+                drafts,
+                sessionID: librarySessionID
             )
         } catch {
             return [.operationFailed(description: error.localizedDescription)]
         }
 
-        guard commitCommandState(fence, { $0.activePlan = plan }) else {
+        let queue = Array(candidates.dropFirst())
+        guard commitCommandState(fence, { state in
+            state.activePlan = firstPlan
+            state.queuedPlans = queue
+        }) else {
             return []
         }
-        return [.planSaved(planID: plan.id)]
+        guard candidates.count > 1 else {
+            return [.planSaved(planID: firstPlan.id)]
+        }
+        return [.planSequenceSaved(planIDs: candidates.map(\.id))]
     }
 
-    /// The plan `/plan save` stores: the active plan when it has a goal and a
-    /// text, otherwise the latest plan in the transcript, then in the history.
-    func reusablePlanCandidate(createdAt: Date = Date()) -> TerminalSessionPlan? {
+    /// The plans `/plan save` stores, in sequence order: the active plan and
+    /// its queued plans when the active plan has a goal and a text, otherwise
+    /// the latest plans in the transcript, then in the history.
+    func reusablePlanCandidates(createdAt: Date = Date()) -> [TerminalSessionPlan] {
         if let activePlan,
            activePlan.originalGoal.nilIfBlank != nil,
            activePlan.consolidatedText.nilIfBlank != nil {
-            return activePlan
+            return [activePlan] + queuedPlans
         }
-        if let plan = PlanningCommandKernel.planFromLatestAssistantMessage(
+        let transcriptPlans = PlanningCommandKernel.plansFromLatestAssistantMessage(
             in: transcript,
             createdAt: createdAt
-        ) {
-            return plan
+        )
+        if !transcriptPlans.isEmpty {
+            return transcriptPlans
         }
-        return PlanningCommandKernel.planFromLatestAssistantMessage(
+        return PlanningCommandKernel.plansFromLatestAssistantMessage(
             in: history,
             createdAt: createdAt
         )
     }
 
-    /// `/plan load`: makes the newest reusable saved plan the unapproved
-    /// active plan and adds it to the session context.
+    /// The first plan `/plan save` stores
+    /// (``reusablePlanCandidates(createdAt:)``).
+    func reusablePlanCandidate(createdAt: Date = Date()) -> TerminalSessionPlan? {
+        reusablePlanCandidates(createdAt: createdAt).first
+    }
+
+    /// `/plan load`: makes the first saved plan that is not completed, i.e.
+    /// the oldest save, the unapproved active plan with an empty queue, and
+    /// adds it to the session context.
     private func loadReusablePlan(
         fence: ChatCommandFence?,
         source: ChatPlanningCommandPolicy.PlanLoad
@@ -592,7 +633,10 @@ extension ChatSessionController {
 
             history = replacementHistory
             appendTranscript(contextMessage)
-            guard commitCommandState(fence, { $0.activePlan = plan }) else {
+            guard commitCommandState(fence, { state in
+                state.activePlan = plan
+                state.queuedPlans = []
+            }) else {
                 return []
             }
             return [.savedPlanLoaded(plan)]
@@ -613,7 +657,10 @@ extension ChatSessionController {
             ) else {
                 return [.savedPlanContextNotAdded]
             }
-            guard commitCommandState(fence, { $0.activePlan = plan }) else {
+            guard commitCommandState(fence, { state in
+                state.activePlan = plan
+                state.queuedPlans = []
+            }) else {
                 // Superseded after the replacement: put the history back while
                 // the replacement is still the installed one.
                 if let installed = await runtime.snapshotSession(id: sessionID),

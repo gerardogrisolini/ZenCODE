@@ -55,6 +55,7 @@ extension ChatSessionController {
         savedSessionState.dynamicContextOverride = nil
         savedSessionState.savedSessionName = nil
         savedSessionState.checkpointTree = nil
+        queuedPlans = []
         activePlan = nil
         pendingPlanApprovalPlanID = nil
         activeWorkflow = nil
@@ -195,6 +196,7 @@ extension ChatSessionController {
             history: snapshot.history,
             transcriptHistory: transcript,
             activePlan: activePlan,
+            queuedPlans: queuedPlans.isEmpty ? nil : queuedPlans,
             taskGraph: taskGraph,
             checkpointTree: (savedSessionState.checkpointTree ?? existingSession?.checkpointTree)?
                 .mergingHistory(transcript)
@@ -502,6 +504,7 @@ extension ChatSessionController {
         savedSessionState.systemPromptOverride = savedSession.systemPrompt
         savedSessionState.dynamicContextOverride = savedSession.dynamicContext
         activePlan = savedSession.activePlan
+        queuedPlans = savedSession.activePlan == nil ? [] : (savedSession.queuedPlans ?? [])
         // Deliberately absent from TerminalSavedSession; abandonment above closes
         // the runtime Planner before the restored state is installed.
         pendingPlanApprovalPlanID = nil

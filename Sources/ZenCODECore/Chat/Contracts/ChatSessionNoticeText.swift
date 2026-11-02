@@ -131,6 +131,9 @@ public enum ChatSessionNoticeText {
             return planUnavailableForSavingMessage
         case let .planSaved(planID):
             return "Saved plan: \(planID). Use /plan load in a new session to review or revise it.\n"
+        case let .planSequenceSaved(planIDs):
+            return "Saved \(planIDs.count) plans to run in sequence: \(planIDs.joined(separator: ", ")). "
+                + "Use /plan load in a new session to load the first one that is not completed.\n"
         case .activePlanAlreadyExists:
             return failureText(
                 "an active plan already exists. Use /plan clear before loading a saved plan."
@@ -166,6 +169,8 @@ public enum ChatSessionNoticeText {
             return "No active plan.\n"
         case let .planStatus(plan, graph):
             return PlanningCommandKernel.planStatusTable(for: plan, graph: graph)
+        case let .queuedPlans(plans):
+            return PlanningCommandKernel.queuedPlansMessage(for: plans)
         case .planUnavailableForApproval:
             return planUnavailableForApprovalMessage
         case .noPendingPlanApproval:

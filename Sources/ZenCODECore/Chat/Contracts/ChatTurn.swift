@@ -140,9 +140,13 @@ public enum ChatWorkflowNotice: Sendable, Equatable {
 ///
 /// Never copy the planning clarification, the approval handshake, or the
 /// workflow continuation into snapshots, checkpoints, or persisted session
-/// models: only ``activePlan`` is session state that channels may persist.
+/// models: only ``activePlan`` and ``queuedPlans`` are session state that
+/// channels may persist.
 struct ChatCommandState: Sendable, Equatable {
     var activePlan: TerminalSessionPlan?
+    /// The plans that follow ``activePlan`` in a Planner sequence, in order.
+    /// Invariant: non-empty only while ``activePlan`` is set.
+    var queuedPlans: [TerminalSessionPlan]
     /// Ephemeral `/plan` clarification state.
     var planBrainstorming: PlanningCommandRuntimeState?
     /// Ephemeral `/plan` approval state: only the plan being confirmed.
@@ -152,11 +156,13 @@ struct ChatCommandState: Sendable, Equatable {
 
     init(
         activePlan: TerminalSessionPlan? = nil,
+        queuedPlans: [TerminalSessionPlan] = [],
         planBrainstorming: PlanningCommandRuntimeState? = nil,
         pendingPlanApprovalPlanID: String? = nil,
         activeWorkflow: WorkflowCommandRuntimeState? = nil
     ) {
         self.activePlan = activePlan
+        self.queuedPlans = queuedPlans
         self.planBrainstorming = planBrainstorming
         self.pendingPlanApprovalPlanID = pendingPlanApprovalPlanID
         self.activeWorkflow = activeWorkflow

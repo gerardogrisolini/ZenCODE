@@ -16,6 +16,7 @@ extension TerminalChat {
             history: runtimeSnapshot?.history ?? activeSessionHistory,
             transcriptHistory: activeSessionTranscript,
             activePlan: activePlan,
+            queuedPlans: queuedPlans,
             checkpointTree: activeCheckpointTree,
             savedSessionName: activeSavedSessionName,
             commandHistory: interactiveReader.commandHistory
@@ -34,6 +35,7 @@ extension TerminalChat {
         activeSessionHistory = snapshot.history
         replaceActiveSessionTranscript(with: snapshot.transcriptHistory)
         activePlan = snapshot.activePlan
+        queuedPlans = snapshot.activePlan == nil ? [] : snapshot.queuedPlans
         // A setup restart restores persisted session data only, never an
         // unfinished conversational planning exchange.
         planBrainstorming = nil

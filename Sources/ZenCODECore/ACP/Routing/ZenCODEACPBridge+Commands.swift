@@ -375,6 +375,9 @@ extension ZenCODEACPBridge {
             return "ZenCODE: no completed plan is available to save."
         case let .planSaved(planID):
             return "Saved plan: \(planID). Use /plan load in a new session to review or revise it."
+        case let .planSequenceSaved(planIDs):
+            return "Saved \(planIDs.count) plans to run in sequence: \(planIDs.joined(separator: ", ")). "
+                + "Use /plan load in a new session to load the first one that is not completed."
         case .runtimeSessionUnavailable:
             switch context {
             case .plan(.clear):
@@ -415,6 +418,8 @@ extension ZenCODEACPBridge {
             return "No active plan."
         case let .planStatus(plan, graph):
             return PlanningCommandKernel.planStatusTable(for: plan, graph: graph)
+        case let .queuedPlans(plans):
+            return PlanningCommandKernel.queuedPlansMessage(for: plans)
         case .planUnavailableForApproval:
             if case .approvalReply = context {
                 return "ZenCODE: no completed plan is available to approve."

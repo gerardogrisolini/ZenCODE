@@ -278,8 +278,8 @@ enum TerminalPromptCompletionCatalog {
             TerminalCommandSuggestion(command: "clear", summary: "clear the task graphs")
         ],
         "/plan": [
-            TerminalCommandSuggestion(command: "save", summary: "persist the current plan"),
-            TerminalCommandSuggestion(command: "load", summary: "restore the newest saved draft"),
+            TerminalCommandSuggestion(command: "save", summary: "persist the current plan and its queue"),
+            TerminalCommandSuggestion(command: "load", summary: "restore the first unfinished saved draft"),
             TerminalCommandSuggestion(command: "list", summary: "list saved plans"),
             TerminalCommandSuggestion(
                 command: "delete",

@@ -135,6 +135,26 @@ Release tags follow the strict `vX.Y.Z` contract described in
   without Threaded mode) are refused with `ZenCODE: several ZenCODE sessions
   are attached to this chat; reply with the request ID: /allow ID, /always ID
   or /deny ID.`
+- The Planner can author several plans to be executed in sequence when the work
+  is too large for one coherent plan, which it decides on its own. Its final
+  response has one section per plan, each starting with its own line
+  `Piano N/M: <title>` and holding its own `Specifiche concordate` and numbered
+  `Implementation plan` (numbering restarts at 1, and `Dependencies:` names only
+  points of the same plan); the plans run in the order they appear. A single
+  plan has no `Piano` heading and is unchanged. The first plan becomes the
+  active, unapproved plan and the following ones form a queue of plans saved
+  with the session (an optional field: sessions saved earlier still load).
+  `/plan approve` approves and implements only the active plan, `/plan status`
+  also lists the queued plans, and `/plan clear` discards the active plan and
+  the queue, leaving the copies saved in the library untouched. The next plan
+  is never promoted in the same session: the sequence continues through the
+  library, with `/plan save` and then `/plan load` in a later session.
+  `/plan save` saves all the plans of the sequence, the active one and the
+  queued ones, in one atomic write and in sequence order, and with no active
+  plan it can promote the latest assistant response that contains several
+  plans in the strict Planner format and save all of them, each with its own
+  tasks and dependencies. Each plan of a sequence is saved with the goal
+  `Piano N/M: <title> — <original goal>`.
 
 ### Changed
 
@@ -227,6 +247,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   as before. The output of the commands is unchanged.
 - Terminal: the ZenCODE logo shown at startup is now a compact, three-row
   wordmark with a lowercase "en", instead of the six-row block lettering.
+- `/plan load` now loads the first saved plan that is not completed, the oldest
+  save among the unfinished drafts, instead of the newest, so the plans of a
+  sequence saved in order load as plan 1 and then, once plan 1 is completed,
+  plan 2, and so on. `/plan list` still shows the newest save first. Saving a
+  plan that is already in the library again keeps its original place instead of
+  moving it to the end.
 
 ### Fixed
 

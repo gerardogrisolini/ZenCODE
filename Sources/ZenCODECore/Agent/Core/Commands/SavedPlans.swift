@@ -34,12 +34,23 @@ extension PlanningCommandKernel {
         in messages: [AgentRuntimeMessage],
         createdAt: Date = Date()
     ) -> TerminalSessionPlan? {
+        plansFromLatestAssistantMessage(in: messages, createdAt: createdAt).first
+    }
+
+    /// Promotes the latest assistant answer to one plan per plan section: a
+    /// multi-plan Planner output yields its plans in sequence order, each with
+    /// its own points, text, and heading-prefixed goal; any other answer yields
+    /// at most one plan.
+    static func plansFromLatestAssistantMessage(
+        in messages: [AgentRuntimeMessage],
+        createdAt: Date = Date()
+    ) -> [TerminalSessionPlan] {
         guard let assistantIndex = messages.indices.reversed().first(where: { index in
             messages[index].role == .assistant
                 && messages[index].content.nilIfBlank != nil
         }), let content = messages[assistantIndex].content.nilIfBlank,
               !isPlannerQuestionResponse(content) else {
-            return nil
+            return []
         }
         let originalGoal = planGoal(
             in: messages,
@@ -48,20 +59,24 @@ extension PlanningCommandKernel {
         // A promoted answer that passes the strict Planner parser keeps every
         // point and dependency, exactly like a plan created by `/plan`. Any
         // other text stays text-only and receives one generic task at approval.
-        if let points = planPoints(derivedFromFinalText: content) {
-            return TerminalSessionPlan(
-                id: planID(from: points),
+        if let sections = planSections(derivedFromFinalText: content) {
+            return sections.map { section in
+                TerminalSessionPlan(
+                    id: planID(from: section.points),
+                    originalGoal: planGoal(originalGoal, for: section),
+                    consolidatedText: section.text,
+                    createdAt: createdAt,
+                    points: section.points
+                )
+            }
+        }
+        return [
+            TerminalSessionPlan(
                 originalGoal: originalGoal,
                 consolidatedText: content,
-                createdAt: createdAt,
-                points: points
-            )
-        }
-        return TerminalSessionPlan(
-            originalGoal: originalGoal,
-            consolidatedText: content,
-            createdAt: createdAt
-        )
+                createdAt: createdAt
+            ),
+        ]
     }
 
     /// Finds the request that originated a text-only plan. A Planner may ask
@@ -165,10 +180,19 @@ extension PlanningCommandKernel {
         }
     }
 
+    /// Returns the first saved draft: the non-terminal saved plan saved
+    /// earliest (`snapshot.savedAt`, ties broken by the smaller graph id),
+    /// whatever the order of `savedPlans`. Completed entries are historical,
+    /// and the plans of a sequence therefore load from the first one.
     static func loadableSavedPlan(
         from savedPlans: [SavedTaskPlan]
     ) -> SavedTaskPlan? {
-        savedPlans.first { !$0.graph.state.isTerminal }
+        savedPlans.filter { !$0.graph.state.isTerminal }.min { lhs, rhs in
+            guard lhs.snapshot.savedAt == rhs.snapshot.savedAt else {
+                return lhs.snapshot.savedAt < rhs.snapshot.savedAt
+            }
+            return lhs.graph.id < rhs.graph.id
+        }
     }
 
     static func planPreparedForReuse(

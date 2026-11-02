@@ -94,8 +94,10 @@ extension ChatSessionController {
     }
 
     /// Replaces the coordinator output of a `/plan` turn with the Planner's
-    /// fresh output, records either the clarification or the structured plan,
-    /// and returns the Planner response.
+    /// fresh output, records either the clarification or the structured plans,
+    /// and returns the Planner response. A multi-plan output makes its first
+    /// plan the active plan and queues the others in order; any final plan
+    /// replaces the previous queue.
     func finalizePlanningTurn(
         parentResponse: DirectAgentResponse,
         originalGoal: String,
@@ -129,19 +131,19 @@ extension ChatSessionController {
         )
         let response = plannerResult.response
         let isQuestion = PlanningCommandKernel.isPlannerQuestionResponse(response.text)
-        let plannerPoints: [TerminalSessionPlanPoint]
+        let plannerSections: [PlanningCommandKernel.PlanSection]
         if isQuestion {
             guard !(await collector.hasObservedTodoWrites()) else {
                 throw ChatPlanGenerationError.unexpectedStructuredTasksForQuestions
             }
-            plannerPoints = []
+            plannerSections = []
         } else {
-            guard let finalPoints = await collector.finalPlanPoints(
+            guard let finalSections = await collector.finalPlanSections(
                 forFinalText: response.text
             ) else {
                 throw ChatPlanGenerationError.structuredTasksUnavailable
             }
-            plannerPoints = finalPoints
+            plannerSections = finalSections
         }
         guard let generation = await runtime.currentSessionGeneration(for: turnSessionID) else {
             throw ChatPlanGenerationError.sessionHistoryUnavailable
@@ -181,13 +183,19 @@ extension ChatSessionController {
             throw CancellationError()
         }
         history = correctedPlanningHistory
-        let structuredPlan = isQuestion
-            ? nil
-            : try Self.structuredPlan(
-                responseText: response.text,
-                originalGoal: originalGoal,
-                points: plannerPoints
-            )
+        // One plan per section, in sequence order. A heading-less single plan
+        // keeps the whole response text and the original goal.
+        var structuredPlans: [TerminalSessionPlan] = []
+        for section in plannerSections {
+            if let plan = try Self.structuredPlan(
+                responseText: section.text,
+                originalGoal: PlanningCommandKernel.planGoal(originalGoal, for: section),
+                points: section.points
+            ) {
+                structuredPlans.append(plan)
+            }
+        }
+        let recordedPlans = structuredPlans
         let recordedBrainstorming = brainstorming
         let didCommit = stateStore.withLock { state in
             guard state.activeTurnToken == token,
@@ -197,9 +205,10 @@ extension ChatSessionController {
             if isQuestion {
                 state.commandState.planBrainstorming = recordedBrainstorming
             } else {
-                if let structuredPlan {
-                    state.commandState.activePlan = structuredPlan
+                if let firstPlan = recordedPlans.first {
+                    state.commandState.activePlan = firstPlan
                 }
+                state.commandState.queuedPlans = Array(recordedPlans.dropFirst())
                 state.commandState.planBrainstorming = nil
             }
             return true

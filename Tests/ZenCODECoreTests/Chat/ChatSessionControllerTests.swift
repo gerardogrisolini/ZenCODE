@@ -361,6 +361,70 @@ struct ChatSessionControllerTests {
     }
 
     @Test
+    func multiPlanTurnRecordsTheFirstPlanAndQueuesTheOthersThenASinglePlanClearsTheQueue() async throws {
+        try await withHarness { harness in
+            try await seedPlannerDiscussion(harness)
+            let sessionID = harness.sessionID
+            await harness.runtime.append { call in
+                await call.onEvent(.toolCallStarted(twoPlanTodoWrite))
+                await call.onEvent(.toolCallCompleted(
+                    twoPlanTodoWrite,
+                    DirectAgentToolResult(output: "updated", summary: "updated")
+                ))
+                await call.runtime.setPlannerSnapshots([
+                    plannerSnapshot(rootSessionID: sessionID, revision: 2, output: plannerTwoPlanFinalPlan),
+                ])
+                return DirectAgentResponse(text: "COORDINATOR", stopReason: "end_turn", modelID: "coordinator-model")
+            }
+
+            let result = try await harness.controller.runTurn(
+                harness.request("Plan the chat controller", purpose: .plan(originalGoal: planGoal))
+            )
+
+            #expect(result.response.text == plannerTwoPlanFinalPlan)
+            let active = try #require(harness.controller.activePlan)
+            #expect(active.id == "plan-chatctl01")
+            #expect(!active.isApproved)
+            #expect(active.originalGoal == "Piano 1/2: Shared controller — \(planGoal)")
+            #expect(active.consolidatedText == plannerTwoPlanFirstSection)
+            #expect(active.points.map(\.id) == ["plan-chatctl01-1", "plan-chatctl01-2"])
+            #expect(active.points[1].dependsOn == ["plan-chatctl01-1"])
+            let queued = harness.controller.queuedPlans
+            #expect(queued.map(\.id) == ["plan-chatctl02"])
+            #expect(queued.first?.originalGoal == "Piano 2/2: Channels — \(planGoal)")
+            #expect(queued.first?.consolidatedText == plannerTwoPlanSecondSection)
+            #expect(queued.first?.points.map(\.id) == ["plan-chatctl02-1"])
+            #expect(queued.first?.isApproved == false)
+            #expect(harness.controller.commandState.planBrainstorming == nil)
+            // The whole sequence is the Planner output in the history.
+            #expect(harness.controller.history.last?.content == plannerTwoPlanFinalPlan)
+
+            // A later single plan replaces the active plan and clears the queue.
+            try await seedPlannerDiscussion(harness)
+            await harness.runtime.append { call in
+                await call.onEvent(.toolCallStarted(planTodoWrite))
+                await call.onEvent(.toolCallCompleted(
+                    planTodoWrite,
+                    DirectAgentToolResult(output: "updated", summary: "updated")
+                ))
+                await call.runtime.setPlannerSnapshots([
+                    plannerSnapshot(rootSessionID: sessionID, revision: 2, output: plannerFinalPlan),
+                ])
+                return DirectAgentResponse(text: "COORDINATOR", stopReason: "end_turn", modelID: "coordinator-model")
+            }
+            _ = try await harness.controller.runTurn(
+                harness.request("Plan it again", purpose: .plan(originalGoal: planGoal))
+            )
+
+            let single = try #require(harness.controller.activePlan)
+            #expect(single.originalGoal == planGoal)
+            #expect(single.consolidatedText == plannerFinalPlan)
+            #expect(single.points.map(\.id) == ["plan-chatctl01-1", "plan-chatctl01-2"])
+            #expect(harness.controller.queuedPlans.isEmpty)
+        }
+    }
+
+    @Test
     func planTurnWithoutFreshPlannerOutputFailsAndRecordsNoPlan() async throws {
         try await withHarness { harness in
             try await seedPlannerDiscussion(harness)
@@ -1064,6 +1128,63 @@ private let planTodoWrite = DirectAgentToolCall(
                 "content": "Cover the controller with scripted tests.",
                 "status": "pending",
                 "dependsOn": ["plan-chatctl01-1"],
+            ],
+        ],
+    ],
+    argumentsJSON: "{}"
+)
+
+private let plannerTwoPlanFirstSection = """
+Piano 1/2: Shared controller
+
+Specifiche concordate
+- The controller is shared by the terminal, ACP, and headless channels.
+
+Implementation plan
+1. Extract the shared chat controller.
+   Dependencies: none
+2. Cover the controller with scripted tests.
+   Dependencies: 1
+"""
+
+private let plannerTwoPlanSecondSection = """
+Piano 2/2: Channels
+
+Specifiche concordate
+- Every channel adopts the controller.
+
+Implementation plan
+1. Wire the ACP bridge to the controller.
+   Dependencies: none
+"""
+
+/// A two-plan Planner output: one `Piano N/2` section per plan.
+private let plannerTwoPlanFinalPlan = plannerTwoPlanFirstSection + "\n\n" + plannerTwoPlanSecondSection
+
+/// The `todo.write` of `plannerTwoPlanFinalPlan`: one ID prefix per plan.
+private let twoPlanTodoWrite = DirectAgentToolCall(
+    id: "todo-plans",
+    name: "todo.write",
+    argumentsObject: [
+        "mode": "upsert",
+        "todos": [
+            [
+                "id": "plan-chatctl01-1",
+                "content": "Extract the shared chat controller.",
+                "status": "pending",
+                "dependsOn": [String](),
+            ],
+            [
+                "id": "plan-chatctl01-2",
+                "content": "Cover the controller with scripted tests.",
+                "status": "pending",
+                "dependsOn": ["plan-chatctl01-1"],
+            ],
+            [
+                "id": "plan-chatctl02-1",
+                "content": "Wire the ACP bridge to the controller.",
+                "status": "pending",
+                "dependsOn": [String](),
             ],
         ],
     ],

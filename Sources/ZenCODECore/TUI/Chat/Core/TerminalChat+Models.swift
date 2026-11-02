@@ -27,6 +27,7 @@ public struct TerminalChatResumeSnapshot: Sendable {
     public let history: [AgentRuntimeMessage]
     public let transcriptHistory: [AgentRuntimeMessage]
     public let activePlan: TerminalSessionPlan?
+    public let queuedPlans: [TerminalSessionPlan]
     public let checkpointTree: SessionCheckpointTree?
     public let savedSessionName: String?
     /// Prompt submissions for this process, separate from saved conversation data.
@@ -38,6 +39,7 @@ public struct TerminalChatResumeSnapshot: Sendable {
         history: [AgentRuntimeMessage],
         transcriptHistory: [AgentRuntimeMessage],
         activePlan: TerminalSessionPlan?,
+        queuedPlans: [TerminalSessionPlan] = [],
         checkpointTree: SessionCheckpointTree?,
         savedSessionName: String?,
         commandHistory: [String] = []
@@ -47,6 +49,7 @@ public struct TerminalChatResumeSnapshot: Sendable {
         self.history = history
         self.transcriptHistory = transcriptHistory
         self.activePlan = activePlan
+        self.queuedPlans = queuedPlans
         self.checkpointTree = checkpointTree
         self.savedSessionName = savedSessionName
         self.commandHistory = commandHistory

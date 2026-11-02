@@ -766,6 +766,75 @@ struct ACPCommandRoutingTests {
     }
 
     @Test
+    func acpPlanSavePromotesEveryPlanOfAMultiPlanHistoryResponseAndLoadsTheFirst() async throws {
+        let planText = """
+        Piano 1/2: Shared model
+
+        Specifiche concordate
+        - Keep compatibility.
+
+        Implementation plan
+        1. Add the shared model.
+           Dependencies: none
+        2. Wire the ACP command.
+           Dependencies: 1
+
+        Piano 2/2: Validation
+
+        Specifiche concordate
+        - Validate every frontend.
+
+        Implementation plan
+        1. Validate every frontend.
+           Dependencies: none
+        """
+        let fixture = try await makeFixture(
+            sessionID: "acp-command-sequence-save",
+            history: [
+                AgentRuntimeMessage(role: .user, content: "Ship the shared routing"),
+                AgentRuntimeMessage(role: .assistant, content: planText),
+            ]
+        )
+        let bridge = fixture.bridge
+        let sessionID = fixture.sessionID
+
+        try await bridge.prompt(id: .number(1), params: [
+            "sessionId": sessionID,
+            "prompt": "/plan save",
+        ])
+
+        let active = try #require(await bridge.planStateForTesting(sessionID: sessionID).activePlan)
+        let queued = await bridge.queuedPlansForTesting(sessionID: sessionID)
+        #expect(queued.count == 1)
+        let next = try #require(queued.first)
+        #expect(active.originalGoal == "Piano 1/2: Shared model — Ship the shared routing")
+        #expect(next.originalGoal == "Piano 2/2: Validation — Ship the shared routing")
+        #expect(active.points.map(\.text) == ["Add the shared model.", "Wire the ACP command."])
+        #expect(next.points.map(\.text) == ["Validate every frontend."])
+        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").contains {
+            $0.contains("Saved 2 plans to run in sequence: \(active.id), \(next.id).")
+        })
+        let library = await bridge.sessionRunner.savedTaskPlans(
+            workingDirectory: bridge.configuration.workingDirectory
+        )
+        #expect(library.map(\.graph.id) == [next.id, active.id])
+
+        // Clearing drops the queue; loading restores the first plan alone.
+        try await bridge.prompt(id: .number(2), params: [
+            "sessionId": sessionID,
+            "prompt": "/plan clear",
+        ])
+        #expect(await bridge.queuedPlansForTesting(sessionID: sessionID).isEmpty)
+        try await bridge.prompt(id: .number(3), params: [
+            "sessionId": sessionID,
+            "prompt": "/plan load",
+        ])
+        let loaded = try #require(await bridge.planStateForTesting(sessionID: sessionID).activePlan)
+        #expect(loaded.id == active.id)
+        #expect(await bridge.queuedPlansForTesting(sessionID: sessionID).isEmpty)
+    }
+
+    @Test
     func acpCancelAbandonsThePlannerCollectionInsteadOfLeavingAZombie() async throws {
         let fixture = try await makeFixture(sessionID: "acp-command-cancel")
         try await fixture.bridge.prompt(id: .number(1), params: [
