@@ -171,7 +171,9 @@ struct ZenTranscriptItemView: View {
 ///
 /// Calls are keyed by their row id, which is unique across the sessions of a
 /// window (`<epoch>-log-<sequence>`), so a later session never inherits a
-/// duration. The window observes the closed rows only, when they change.
+/// duration. The window observes the closed rows only, when they change. A
+/// sub-agent tab measures the calls of its transcript with durations of its
+/// own.
 @MainActor
 @Observable
 final class ZenToolDurations {

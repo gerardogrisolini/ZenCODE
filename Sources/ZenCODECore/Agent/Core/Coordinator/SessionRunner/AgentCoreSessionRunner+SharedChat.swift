@@ -241,4 +241,17 @@ extension AgentCoreSessionRunner {
         guard let backend else { return AsyncStream { $0.finish() } }
         return await backend.subAgentSnapshotEvents(rootSessionID: rootSessionID)
     }
+
+    /// The live transcript of the delegated agent `agentID` of the root
+    /// session `rootSessionID`, read without keeping any state; `nil` while
+    /// the runner has no backend, or when the agent is unknown, belongs to
+    /// another root session, or its backend was shut down. Never creates a
+    /// backend.
+    public func subAgentTranscript(
+        agentID: String,
+        rootSessionID: String
+    ) async -> ChatSubAgentTranscript? {
+        guard let backend else { return nil }
+        return await backend.subAgentTranscript(agentID: agentID, rootSessionID: rootSessionID)
+    }
 }

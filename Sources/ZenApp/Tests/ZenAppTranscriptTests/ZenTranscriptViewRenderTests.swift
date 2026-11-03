@@ -56,15 +56,51 @@ struct ZenTranscriptViewRenderTests {
         ])
     }
 
+    /// A pending agent that reasons, with no tool running.
+    private static var reasoningSubAgent: DirectSubAgentRuntime.AgentSnapshot {
+        DirectSubAgentRuntime.AgentSnapshot(
+            id: "a4", name: "planner", role: "Planner",
+            status: .running, pending: true,
+            currentActivity: "Reading", currentActivityKind: .thinking,
+            latestOutput: nil, latestError: nil, createdAt: .now, updatedAt: .now
+        )
+    }
+
     private static var subAgentOverview: ChatSubAgentOverview {
         ChatSubAgentOverview(snapshots: [
             DirectSubAgentRuntime.AgentSnapshot(
-                id: "a1", name: "dev", role: "Developer", profileName: "Developer",
+                id: "a1", taskID: "t1", taskAttemptOrdinal: 2, name: "dev", role: "Developer", profileName: "Developer",
                 status: .running, pending: true, configuredModelID: "model",
                 currentActivity: "Reading", currentActivityKind: .thinking,
                 currentToolName: "local.exec", currentToolTarget: "swift build",
                 latestMetrics: DirectAgentGenerationMetrics(promptTokenCount: 10, completionTokenCount: 5),
                 latestOutput: nil, latestError: "boom", createdAt: .now, updatedAt: .now
+            ),
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "a2", name: "reviewer", role: "Reviewer",
+                status: .queued, pending: true,
+                latestOutput: nil, latestError: nil, createdAt: .now, updatedAt: .now
+            ),
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "a3", name: "builder", role: "Builder",
+                status: .idle, pending: false,
+                latestOutput: "Done.", latestError: nil, createdAt: .now, updatedAt: .now
+            )
+        ])
+    }
+
+    /// Sub-agents that all finished: the card has nothing to show.
+    private static var finishedSubAgentOverview: ChatSubAgentOverview {
+        ChatSubAgentOverview(snapshots: [
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "a3", name: "builder", role: "Builder",
+                status: .idle, pending: false,
+                latestOutput: "Done.", latestError: nil, createdAt: .now, updatedAt: .now
+            ),
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "a4", name: "tester", role: "Tester",
+                status: .failed, pending: false,
+                latestOutput: nil, latestError: "The build failed.", createdAt: .now, updatedAt: .now
             )
         ])
     }
@@ -109,6 +145,12 @@ struct ZenTranscriptViewRenderTests {
             AnyView(ZenLocalMessageView(text: "Saved.\n", isFailure: false)),
             AnyView(ZenTaskGraphCard(overview: Self.taskOverview)),
             AnyView(ZenSubAgentsCard(overview: Self.subAgentOverview)),
+            AnyView(ZenSubAgentsCard(overview: Self.subAgentOverview, onSelect: { _ in })),
+            AnyView(ZenSubAgentDetailCard(snapshot: Self.subAgentOverview.snapshots[0])),
+            AnyView(ZenSubAgentDetailCard(snapshot: Self.finishedSubAgentOverview.snapshots[1])),
+            // Reasoning in progress, then the placeholder of a queued agent.
+            AnyView(ZenSubAgentLiveActivityView(snapshot: Self.reasoningSubAgent)),
+            AnyView(ZenSubAgentLiveActivityView(snapshot: Self.subAgentOverview.snapshots[1])),
             AnyView(ZenWelcomeView(workspace: URL(fileURLWithPath: "/tmp"), modelID: "model")),
             AnyView(ZenDiffRowsView(rows: ZenToolCallFormatting.lineDiff(old: "a\nb", new: "a\nc"))),
             AnyView(ZenCodeLinesView(content: "let a = 1\nlet b = 2")),
@@ -118,6 +160,27 @@ struct ZenTranscriptViewRenderTests {
             let size = layOut(view, scheme: scheme)
             #expect(size.height > 0)
         }
+    }
+
+    @Test("the sub-agents card draws nothing without agents in progress", arguments: [ColorScheme.light, .dark])
+    func subAgentsCardIsEmptyWithoutPendingAgents(scheme: ColorScheme) {
+        #expect(layOut(ZenSubAgentsCard(overview: ChatSubAgentOverview(snapshots: [])), scheme: scheme).height == 0)
+        #expect(layOut(ZenSubAgentsCard(overview: Self.finishedSubAgentOverview), scheme: scheme).height == 0)
+        #expect(layOut(
+            ZenSubAgentsCard(overview: Self.finishedSubAgentOverview, onSelect: { _ in }),
+            scheme: scheme
+        ).height == 0)
+        #expect(layOut(ZenSubAgentsCard(overview: Self.subAgentOverview), scheme: scheme).height > 0)
+    }
+
+    @Test("the live activity of a sub-agent tab draws nothing for an agent that is not pending or runs a tool", arguments: [ColorScheme.light, .dark])
+    func liveActivityIsEmptyWhenNotPending(scheme: ColorScheme) {
+        for snapshot in Self.finishedSubAgentOverview.snapshots {
+            #expect(layOut(ZenSubAgentLiveActivityView(snapshot: snapshot), scheme: scheme).height == 0)
+        }
+        #expect(layOut(ZenSubAgentLiveActivityView(snapshot: nil), scheme: scheme).height == 0)
+        // Reasoning while `local.exec` runs: the transcript has the call's row.
+        #expect(layOut(ZenSubAgentLiveActivityView(snapshot: Self.subAgentOverview.snapshots[0]), scheme: scheme).height == 0)
     }
 
     @Test("an artifact card splits its path into the file name and the folder before it")

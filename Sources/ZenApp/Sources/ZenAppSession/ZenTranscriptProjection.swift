@@ -3,7 +3,8 @@
 //  ZenApp
 //
 //  The projection of a session snapshot, the window's own rows, and the
-//  prompts the window hid into the rows of a transcript.
+//  prompts the window hid into the rows of a transcript, and the projection
+//  of a sub-agent's transcript with the same row rules.
 //
 
 import Foundation
@@ -355,10 +356,46 @@ public struct ZenTranscriptProjection: Sendable {
     }
 }
 
+// MARK: - Sub-agent transcripts
+
+/// Projects the conversation of one delegated sub-agent
+/// (`ChatSubAgentTranscript.kinds`, oldest first) into ``ZenTranscriptItem``
+/// values, with the row rules of the session log (``ZenTranscriptProjection``):
+///
+/// - one row per kind, in order, with the id `subagent-<agentID>-<n>`, where
+///   `n` is the index of the kind in `kinds`, so a transcript that grows keeps
+///   the ids of its rows;
+/// - `.toolCallCompleted` fills the result of the row of its start (by call
+///   id, the latest call with that id; oldest first for calls without id) and
+///   adds no row; a call that has not completed stays a row without result;
+/// - every `.userPrompt` (the brief, a message the agent received) starts a
+///   visible turn (``ZenTranscriptItem/startsTurn``), so a separator goes
+///   before every prompt after the first;
+/// - reasoning and assistant text are closed blocks (`isStreaming == false`);
+/// - `.turnPhase`, and any kind a later release adds, adds no row.
+///
+/// A sub-agent transcript has no turn numbers: every row has a `nil`
+/// ``ZenTranscriptItem/turnID``.
+public enum ZenSubAgentTranscriptProjection {
+    /// The rows of `kinds`, the transcript of the sub-agent `agentID`.
+    public static func items(for kinds: [ChatTurnEntry.Kind], agentID: String) -> [ZenTranscriptItem] {
+        var rows = LogRows(idPrefix: rowIDPrefix(agentID: agentID))
+        for (index, kind) in kinds.enumerated() {
+            rows.apply(kind, sequence: index, turnID: nil)
+        }
+        return rows.rows.map(\.item)
+    }
+
+    /// `subagent-<agentID>-`, the prefix of the ids of the rows of `agentID`.
+    public static func rowIDPrefix(agentID: String) -> String {
+        "subagent-\(agentID)-"
+    }
+}
+
 // MARK: - Log rows
 
-/// The rows of the log entries of one epoch, with what merging the tool
-/// results needs.
+/// The rows of the log entries of one epoch (or of the kinds of a sub-agent
+/// transcript), with what merging the tool results needs.
 private struct LogRows: Sendable {
     struct Row: Sendable {
         let sequence: Int
@@ -370,7 +407,9 @@ private struct LogRows: Sendable {
         let callID: String
     }
 
-    let epoch: UInt64
+    /// The prefix of the row ids, followed by the sequence: `<epoch>-log-`
+    /// for the log of a session.
+    let idPrefix: String
     private(set) var rows: [Row] = []
     /// The index of the last row of each turn.
     private(set) var lastRowIndexByTurn: [Int: Int] = [:]
@@ -384,16 +423,25 @@ private struct LogRows: Sendable {
     private var closedBlockCountByTurn: [Int: Int] = [:]
 
     init(epoch: UInt64) {
-        self.epoch = epoch
+        self.init(idPrefix: Self.logIDPrefix(epoch: epoch))
+    }
+
+    init(idPrefix: String) {
+        self.idPrefix = idPrefix
         lastSequence = 0
     }
 
     init(epoch: UInt64, entries: [ChatTurnEntry], firstRetainedSequence: Int) {
-        self.epoch = epoch
+        idPrefix = Self.logIDPrefix(epoch: epoch)
         lastSequence = firstRetainedSequence - 1
         for entry in entries {
             apply(entry)
         }
+    }
+
+    /// `<epoch>-log-`, the prefix of the rows of a session log.
+    private static func logIDPrefix(epoch: UInt64) -> String {
+        "\(epoch)-log-"
     }
 
     func closedBlockCount(inTurn turnID: Int) -> Int {
@@ -403,29 +451,36 @@ private struct LogRows: Sendable {
     /// Applies `entry`; `true` when it added or changed a row.
     @discardableResult
     mutating func apply(_ entry: ChatTurnEntry) -> Bool {
-        lastSequence = max(lastSequence, entry.sequence)
+        apply(entry.kind, sequence: entry.sequence, turnID: entry.turnID)
+    }
+
+    /// Applies an entry of `kind` at `sequence` in `turnID`; `true` when it
+    /// added or changed a row.
+    @discardableResult
+    mutating func apply(_ kind: ChatTurnEntry.Kind, sequence: Int, turnID: Int?) -> Bool {
+        lastSequence = max(lastSequence, sequence)
         let content: ZenTranscriptItem.Content
         var startsTurn = false
-        switch entry.kind {
+        switch kind {
         case let .userPrompt(text, attachments, origin):
             content = .userPrompt(text: text, attachments: attachments, origin: origin)
             startsTurn = true
         case let .assistantText(text):
             content = .assistantText(text, isStreaming: false)
-            countClosedBlock(in: entry.turnID)
+            countClosedBlock(in: turnID)
         case let .thought(text):
             content = .thought(text, isStreaming: false)
-            countClosedBlock(in: entry.turnID)
+            countClosedBlock(in: turnID)
         case let .toolCallStarted(call):
             let index = rows.count
             if call.id.isEmpty {
-                openCallsWithoutID[entry.turnID, default: []].append(index)
+                openCallsWithoutID[turnID, default: []].append(index)
             } else {
-                openCalls[CallKey(turnID: entry.turnID, callID: call.id)] = index
+                openCalls[CallKey(turnID: turnID, callID: call.id)] = index
             }
             content = .toolCall(call: call, result: nil)
         case let .toolCallCompleted(call, result):
-            return complete(call, result: result, turnID: entry.turnID)
+            return complete(call, result: result, turnID: turnID)
         case let .fileArtifacts(turn, agentID, isSealed):
             content = .fileArtifacts(turn, agentID: agentID, isSealed: isSealed)
         case let .notice(notice):
@@ -436,14 +491,14 @@ private struct LogRows: Sendable {
             // `.turnPhase` adds no row, nor does a kind a later release adds.
             return false
         }
-        if let turnID = entry.turnID {
+        if let turnID {
             lastRowIndexByTurn[turnID] = rows.count
         }
         rows.append(Row(
-            sequence: entry.sequence,
+            sequence: sequence,
             item: ZenTranscriptItem(
-                id: "\(epoch)-log-\(entry.sequence)",
-                turnID: entry.turnID,
+                id: "\(idPrefix)\(sequence)",
+                turnID: turnID,
                 startsTurn: startsTurn,
                 content: content
             )

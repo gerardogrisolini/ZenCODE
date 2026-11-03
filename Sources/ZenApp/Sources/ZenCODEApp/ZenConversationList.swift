@@ -96,7 +96,6 @@ struct ZenConversationList: View {
     /// (the operator sent a line).
     let followToken: Int
 
-    @Environment(\.zenPalette) private var palette
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var isFollowing = true
     @State private var durations = ZenToolDurations()
@@ -137,24 +136,14 @@ struct ZenConversationList: View {
         }
         .overlay(alignment: .bottom) {
             if !isFollowing {
-                jumpButton
-                    .padding(.bottom, 10)
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                ZenJumpToLatestButton {
+                    jumpToLatest(animated: true)
+                }
+                .padding(.bottom, 10)
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
         }
         .animation(.easeOut(duration: 0.15), value: isFollowing)
-    }
-
-    private var jumpButton: some View {
-        Button {
-            jumpToLatest(animated: true)
-        } label: {
-            Label("Jump to latest", systemImage: "arrow.down")
-                .font(.callout.weight(.medium))
-        }
-        .buttonStyle(.glass)
-        .tint(palette.accent)
-        .help("Scroll to the latest message")
     }
 
     private func follow(old: ZenScrollMetrics, new: ZenScrollMetrics) {
@@ -180,6 +169,26 @@ struct ZenConversationList: View {
     }
 }
 
+/// The "Jump to latest" button of a list that stopped following its bottom:
+/// the conversation and the transcript of a sub-agent tab.
+struct ZenJumpToLatestButton: View {
+    let action: @MainActor () -> Void
+
+    @Environment(\.zenPalette) private var palette
+
+    var body: some View {
+        Button {
+            action()
+        } label: {
+            Label("Jump to latest", systemImage: "arrow.down")
+                .font(.callout.weight(.medium))
+        }
+        .buttonStyle(.glass)
+        .tint(palette.accent)
+        .help("Scroll to the latest message")
+    }
+}
+
 /// The welcome view of an empty session, until a block streams. Its own
 /// view, so only it reads the live block id and the status.
 struct ZenWelcomeSlot: View {
@@ -194,8 +203,9 @@ struct ZenWelcomeSlot: View {
     }
 }
 
-/// The overview cards after the rows: the task graph, the sub-agents. Their
-/// own view, so an overview update does not run the list's body.
+/// The overview cards after the rows: the task graph, the sub-agents in
+/// progress, whose rows open the sub-agent's tab. Their own view, so an
+/// overview update does not run the list's body.
 struct ZenOverviewCards: View {
     let session: ZenWindowSession
 
@@ -203,8 +213,10 @@ struct ZenOverviewCards: View {
         if let taskGraph = session.taskGraph {
             ZenTaskGraphCard(overview: taskGraph)
         }
-        if !session.subAgents.snapshots.isEmpty {
-            ZenSubAgentsCard(overview: session.subAgents)
+        if session.subAgents.snapshots.contains(where: \.pending) {
+            ZenSubAgentsCard(overview: session.subAgents) { agentID in
+                session.openSubAgentTab(agentID)
+            }
         }
     }
 }

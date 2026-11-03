@@ -35,6 +35,18 @@ import ZenCODECore
 /// (``fileArtifacts``), which only the operator shows and hides
 /// (``toggleArtifactsSidebar()``, `/artifacts`).
 ///
+/// The window has tabs (``tabs``): the conversation (``ZenWindowTab/chat``),
+/// always first and never closed, then the transcript of each sub-agent the
+/// operator opened (``openSubAgentTab(_:)``), in the order they were opened,
+/// each followed by its own ``ZenSubAgentTranscriptModel``, which keeps what
+/// it read for as long as the tab stays open and knows whether its tab is
+/// the selected one. Only the operator opens and selects tabs; the commands
+/// the operator launches (``run(_:)``, the session operations) select the
+/// conversation before they start, so their result shows; a new or loaded
+/// session closes the sub-agent tabs and selects the conversation, and
+/// closing the window stops them. The tabs are transient state of the
+/// window: never saved.
+///
 /// Every action returns at once; the work runs in tasks that hop to the chat
 /// actor.
 @MainActor
@@ -119,6 +131,15 @@ public final class ZenWindowSession: Identifiable {
     /// saved, kept across new and loaded sessions, and changed only by the
     /// operator (``toggleArtifactsSidebar()``, `/artifacts`, the sidebar).
     public var isArtifactsSidebarPresented = false
+    /// The tab the window shows. Transient state of the window: never saved,
+    /// back to ``ZenWindowTab/chat`` with a new or loaded session and with a
+    /// command the operator launches, and otherwise changed only by the
+    /// operator (``selectTab(_:)``, ``openSubAgentTab(_:)``,
+    /// ``closeSubAgentTab(_:)``).
+    public private(set) var selectedTab: ZenWindowTab = .chat
+    /// The models of the open sub-agent tabs, in the order the operator
+    /// opened them.
+    public private(set) var subAgentTabs: [ZenSubAgentTranscriptModel] = []
 
     /// The latest snapshot of the current incarnation's reducer. Not
     /// observed: a view observes the properties derived from it.
@@ -157,6 +178,12 @@ public final class ZenWindowSession: Identifiable {
     /// The prompts submitted in this window, oldest first.
     public var promptHistory: [String] {
         history.entries
+    }
+
+    /// The tabs of the window: ``ZenWindowTab/chat``, then the open sub-agent
+    /// tabs, in the order they were opened.
+    public var tabs: [ZenWindowTab] {
+        ZenWindowTab.tabs(subAgentIDs: subAgentTabs.map(\.agentID))
     }
 
     // MARK: Composition
@@ -300,6 +327,8 @@ public final class ZenWindowSession: Identifiable {
         // A slot without session keeps showing the last one.
         guard !isClosed, let incarnation, incarnation.epoch != current.epoch else { return }
         current = incarnation
+        // The sub-agents of the earlier session are not this one's.
+        closeSubAgentTabs()
         explicitTaskGraphID = nil
         lastSnapshotTaskGraph = nil
         if taskGraph != nil {
@@ -550,10 +579,13 @@ public final class ZenWindowSession: Identifiable {
     }
 
     /// Runs `line` through the window's executor, routed like a submitted
-    /// line, without touching the draft or the history.
+    /// line, without touching the draft or the history. The conversation is
+    /// selected first, so the line's result shows (the menu and toolbar
+    /// commands come here).
     public func run(_ line: String) {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isClosed else { return }
+        selectTab(.chat)
         route(trimmed)
     }
 
@@ -737,6 +769,82 @@ public final class ZenWindowSession: Identifiable {
         isArtifactsSidebarPresented.toggle()
     }
 
+    // MARK: - Tabs
+
+    /// The model of the open tab of the sub-agent `agentID`; `nil` when no
+    /// such tab is open.
+    public func subAgentTab(_ agentID: String) -> ZenSubAgentTranscriptModel? {
+        subAgentTabs.first { $0.agentID == agentID }
+    }
+
+    /// Opens the tab of the sub-agent `agentID` of the current session, after
+    /// the open ones, unless it is open already, and selects it. The tab
+    /// starts with the agent's snapshot from the latest overview and follows
+    /// the agent from then on, selected before it starts.
+    public func openSubAgentTab(_ agentID: String) {
+        guard !isClosed else { return }
+        guard subAgentTab(agentID) == nil else {
+            selectTab(.subAgent(agentID))
+            return
+        }
+        let model = ZenSubAgentTranscriptModel(
+            agentID: agentID,
+            snapshot: subAgents.snapshots.first { $0.id == agentID },
+            source: .incarnation(epoch: current.epoch, agentID: agentID, in: sessionHost, slotID: slotID)
+        )
+        subAgentTabs.append(model)
+        selectTab(.subAgent(agentID))
+        model.start()
+    }
+
+    /// Closes the tab of the sub-agent `agentID` and stops its model. When it
+    /// was selected, the tab after it is selected, else the one before it
+    /// (``ZenWindowTab/selection(afterClosing:in:selected:)``).
+    public func closeSubAgentTab(_ agentID: String) {
+        guard let index = subAgentTabs.firstIndex(where: { $0.agentID == agentID }) else { return }
+        let selection = ZenWindowTab.selection(afterClosing: agentID, in: tabs, selected: selectedTab)
+        subAgentTabs[index].stop()
+        subAgentTabs.remove(at: index)
+        setSelectedTab(selection)
+    }
+
+    /// Selects `tab`, when it is ``ZenWindowTab/chat`` or an open sub-agent
+    /// tab.
+    public func selectTab(_ tab: ZenWindowTab) {
+        guard tabs.contains(tab) else { return }
+        setSelectedTab(tab)
+    }
+
+    /// Selects `tab` and tells every sub-agent model whether its tab is the
+    /// selected one (``ZenSubAgentTranscriptModel/isSelected``).
+    private func setSelectedTab(_ tab: ZenWindowTab) {
+        if selectedTab != tab {
+            selectedTab = tab
+        }
+        for model in subAgentTabs {
+            let isSelected = tab == .subAgent(model.agentID)
+            if model.isSelected != isSelected {
+                model.isSelected = isSelected
+            }
+        }
+    }
+
+    /// Closes every sub-agent tab, stopping their models, and selects the
+    /// conversation.
+    private func closeSubAgentTabs() {
+        stopSubAgentTabs()
+        if !subAgentTabs.isEmpty {
+            subAgentTabs = []
+        }
+        setSelectedTab(.chat)
+    }
+
+    private func stopSubAgentTabs() {
+        for model in subAgentTabs {
+            model.stop()
+        }
+    }
+
     /// Runs one turn in one chat-actor step (see
     /// ``ZenWindowSteps/runTurn(_:controller:in:slotID:hooks:hiddenPrompts:didReserve:)``),
     /// then shows how it ended.
@@ -873,7 +981,8 @@ public final class ZenWindowSession: Identifiable {
 
     // MARK: - Sessions
 
-    /// `/sessions new`. Refused while a line runs.
+    /// `/sessions new`. Refused while a line runs. Selects the conversation
+    /// first, as every session operation does, so its result shows.
     public func startNewSession() {
         runOperationLine("/sessions new")
     }
@@ -887,6 +996,7 @@ public final class ZenWindowSession: Identifiable {
     /// incarnation. Refused while a line runs.
     public func loadSavedSession(named name: String) {
         guard !isClosed else { return }
+        selectTab(.chat)
         guard !isBusy else {
             refuseWhileBusy(command: "/sessions")
             return
@@ -900,6 +1010,7 @@ public final class ZenWindowSession: Identifiable {
     /// line runs.
     public func deleteSavedSession(named name: String) {
         guard !isClosed else { return }
+        selectTab(.chat)
         guard !isBusy else {
             refuseWhileBusy(command: "/sessions")
             return
@@ -911,6 +1022,7 @@ public final class ZenWindowSession: Identifiable {
 
     private func runOperationLine(_ line: String) {
         guard !isClosed else { return }
+        selectTab(.chat)
         guard !isBusy else {
             refuseWhileBusy(command: ZenLineRoute.commandToken(of: line))
             return
@@ -1005,6 +1117,8 @@ public final class ZenWindowSession: Identifiable {
         besideTasks = [:]
         queuedLines = []
         isBusy = false
+        // The tabs stay as they are; their models stop.
+        stopSubAgentTabs()
     }
 
     // MARK: - Testing

@@ -4,7 +4,8 @@
 //
 //  The composition of the app over a scripted backend: a runtime, a window,
 //  commands, prompts, the queue, a cancel, the sub-agent overview, hidden
-//  prompts, the task graph, the artifacts sidebar, and the close.
+//  prompts, the task graph, the artifacts sidebar, the sub-agent tabs, and the
+//  close.
 //
 
 import Foundation
@@ -762,6 +763,230 @@ struct ZenWindowSessionTests {
         }
     }
 
+    @Test("Sub-agent tabs open only when asked, once each, follow their agent, and close to the adjacent tab")
+    func subAgentTabsOpenSelectAndClose() async throws {
+        try await withRuntime { runtime, backend, workspace in
+            let window = try await runtime.openWindow(workspace: workspace)
+            // A turn gives the session the backend the tabs read.
+            window.draft = "Hello"
+            window.submitDraft()
+            #expect(await window.waitUntilIdle())
+            let root = window.current.sessionID
+            await backend.setSubAgents(["agent-1", "agent-2", "agent-3"].map { Self.subAgent($0, root: root) })
+            await backend.setSubAgentTranscript(ChatSubAgentTranscript(
+                agentID: "agent-1",
+                kinds: [
+                    .userPrompt(text: "Brief", attachments: [], origin: .unknown),
+                    .assistantText("Working on it."),
+                ]
+            ))
+            // Nothing opens a tab by itself.
+            #expect(window.tabs == [.chat])
+            #expect(window.selectedTab == .chat)
+            #expect(window.subAgentTabs.isEmpty)
+
+            window.openSubAgentTab("agent-1")
+            #expect(window.tabs == [.chat, .subAgent("agent-1")])
+            #expect(window.selectedTab == .subAgent("agent-1"))
+            let first = try #require(window.subAgentTab("agent-1"))
+            // The tab follows its agent: its snapshot and its transcript.
+            #expect(await eventually {
+                first.snapshot?.name == "Worker agent-1" && first.items.count == 2
+            })
+            #expect(first.items.map(\.id) == ["subagent-agent-1-0", "subagent-agent-1-1"])
+            #expect(first.availability == .available)
+            #expect(await backend.snapshotObserverCount == 1)
+
+            // Opening an open tab selects it and adds nothing.
+            window.selectTab(.chat)
+            #expect(window.selectedTab == .chat)
+            window.openSubAgentTab("agent-1")
+            #expect(window.subAgentTabs.count == 1)
+            #expect(window.subAgentTab("agent-1") === first)
+            #expect(window.selectedTab == .subAgent("agent-1"))
+
+            window.openSubAgentTab("agent-2")
+            window.openSubAgentTab("agent-3")
+            #expect(window.tabs == [.chat, .subAgent("agent-1"), .subAgent("agent-2"), .subAgent("agent-3")])
+            #expect(window.selectedTab == .subAgent("agent-3"))
+            // A tab that is not open cannot be selected.
+            window.selectTab(.subAgent("agent-9"))
+            #expect(window.selectedTab == .subAgent("agent-3"))
+            // An agent without a transcript says so.
+            let second = try #require(window.subAgentTab("agent-2"))
+            #expect(await eventually { second.availability == .unavailable })
+
+            // Closing a tab that is not selected keeps the selection.
+            window.closeSubAgentTab("agent-2")
+            #expect(window.tabs == [.chat, .subAgent("agent-1"), .subAgent("agent-3")])
+            #expect(window.selectedTab == .subAgent("agent-3"))
+            #expect(second.isStopped)
+            // Closing the selected tab selects the tab after it, else the one before.
+            window.selectTab(.subAgent("agent-1"))
+            window.closeSubAgentTab("agent-1")
+            #expect(window.selectedTab == .subAgent("agent-3"))
+            #expect(first.isStopped)
+            window.closeSubAgentTab("agent-3")
+            #expect(window.selectedTab == .chat)
+            #expect(window.tabs == [.chat])
+            // Every model released its stream.
+            #expect(await waitUntil("the streams are released") { await backend.snapshotObserverCount == 0 })
+            await runtime.shutdown()
+        }
+    }
+
+    @Test("A new or loaded session closes the sub-agent tabs and shows the conversation; closing the window stops them")
+    func subAgentTabsCloseWithTheSession() async throws {
+        try await withRuntime { runtime, backend, workspace in
+            let window = try await runtime.openWindow(workspace: workspace)
+            window.draft = "Hello"
+            window.submitDraft()
+            #expect(await window.waitUntilIdle())
+            await backend.setSubAgents([Self.subAgent("agent-1", root: window.current.sessionID)])
+            window.saveSession()
+            #expect(await window.waitUntilIdle())
+            #expect(await eventually { window.currentSavedSessionName != nil })
+            let name = try #require(window.currentSavedSessionName)
+
+            // A new session.
+            window.openSubAgentTab("agent-1")
+            let beforeNew = try #require(window.subAgentTab("agent-1"))
+            let firstEpoch = window.current.epoch
+            window.startNewSession()
+            #expect(await window.waitUntilIdle())
+            #expect(await eventually { window.current.epoch != firstEpoch })
+            #expect(window.subAgentTabs.isEmpty)
+            #expect(window.selectedTab == .chat)
+            #expect(beforeNew.isStopped)
+
+            // A loaded session.
+            window.openSubAgentTab("agent-1")
+            let beforeLoad = try #require(window.subAgentTab("agent-1"))
+            #expect(window.selectedTab == .subAgent("agent-1"))
+            let secondEpoch = window.current.epoch
+            window.loadSavedSession(named: name)
+            #expect(await window.waitUntilIdle())
+            #expect(await eventually { window.current.epoch != secondEpoch })
+            #expect(window.subAgentTabs.isEmpty)
+            #expect(window.selectedTab == .chat)
+            #expect(beforeLoad.isStopped)
+
+            // Closing the window stops the tabs it has, and opens no other.
+            window.openSubAgentTab("agent-1")
+            let beforeClose = try #require(window.subAgentTab("agent-1"))
+            await window.close()
+            #expect(beforeClose.isStopped)
+            window.openSubAgentTab("agent-2")
+            #expect(window.subAgentTab("agent-2") == nil)
+            await runtime.shutdown()
+        }
+    }
+
+    @Test("Each tab model knows whether its tab is the selected one, from the opening on")
+    func subAgentTabsKnowTheirSelection() async throws {
+        try await withRuntime { runtime, backend, workspace in
+            let window = try await runtime.openWindow(workspace: workspace)
+            window.draft = "Hello"
+            window.submitDraft()
+            #expect(await window.waitUntilIdle())
+            let root = window.current.sessionID
+            await backend.setSubAgents(["agent-1", "agent-2"].map { Self.subAgent($0, root: root) })
+
+            window.openSubAgentTab("agent-1")
+            let first = try #require(window.subAgentTab("agent-1"))
+            #expect(first.isSelected)
+            window.openSubAgentTab("agent-2")
+            let second = try #require(window.subAgentTab("agent-2"))
+            #expect(!first.isSelected)
+            #expect(second.isSelected)
+            window.selectTab(.chat)
+            #expect(!first.isSelected)
+            #expect(!second.isSelected)
+            window.selectTab(.subAgent("agent-1"))
+            #expect(first.isSelected)
+            #expect(!second.isSelected)
+            // Closing the selected tab selects the next one, and says so.
+            window.closeSubAgentTab("agent-1")
+            #expect(window.selectedTab == .subAgent("agent-2"))
+            #expect(second.isSelected)
+            window.closeSubAgentTab("agent-2")
+            #expect(window.selectedTab == .chat)
+            await runtime.shutdown()
+        }
+    }
+
+    @Test("A tab opened with the overview's snapshot reads the transcript once: the stream's first value repeats it")
+    func subAgentTabReadsOnceWhenItOpens() async throws {
+        try await withRuntime { runtime, backend, workspace in
+            let window = try await runtime.openWindow(workspace: workspace)
+            let call = DirectAgentToolCall(id: "agent-call", name: "agent.create", argumentsObject: [:], argumentsJSON: "{}")
+            await backend.script(prompt: "Delegate", events: [
+                .toolCallStarted(call),
+                .toolCallCompleted(call, DirectAgentToolResult(output: "created", summary: "created")),
+            ])
+            await backend.setSubAgents([Self.subAgent("agent-1", root: window.current.sessionID)])
+            await backend.setSubAgentTranscript(ChatSubAgentTranscript(
+                agentID: "agent-1",
+                kinds: [.userPrompt(text: "Brief", attachments: [], origin: .unknown)]
+            ))
+            window.draft = "Delegate"
+            window.submitDraft()
+            #expect(await window.waitUntilIdle())
+            #expect(await eventually { window.subAgents.snapshots.map(\.id) == ["agent-1"] })
+
+            window.openSubAgentTab("agent-1")
+            let model = try #require(window.subAgentTab("agent-1"))
+            #expect(await eventually { model.updateCount >= 1 && model.items.count == 1 })
+            try? await Task.sleep(for: .milliseconds(80))
+            #expect(await backend.subAgentTranscriptReadCount == 1)
+            #expect(model.transcriptReadCount == 1)
+            await runtime.shutdown()
+        }
+    }
+
+    @Test("The commands the operator launches select the conversation first; stop leaves the tab as it is")
+    func commandsSelectTheConversation() async throws {
+        try await withRuntime { runtime, backend, workspace in
+            let window = try await runtime.openWindow(workspace: workspace)
+            window.draft = "Hello"
+            window.submitDraft()
+            #expect(await window.waitUntilIdle())
+            await backend.setSubAgents([Self.subAgent("agent-1", root: window.current.sessionID)])
+
+            // A menu or toolbar command.
+            window.openSubAgentTab("agent-1")
+            window.run("/help")
+            #expect(window.selectedTab == .chat)
+            #expect(await window.waitUntilIdle())
+
+            // The session operations that write in the conversation.
+            window.selectTab(.subAgent("agent-1"))
+            window.saveSession()
+            #expect(window.selectedTab == .chat)
+            #expect(await window.waitUntilIdle())
+
+            window.selectTab(.subAgent("agent-1"))
+            window.loadSavedSession(named: "missing-session")
+            #expect(window.selectedTab == .chat)
+            #expect(await window.waitUntilIdle())
+
+            window.selectTab(.subAgent("agent-1"))
+            window.deleteSavedSession(named: "missing-session")
+            #expect(window.selectedTab == .chat)
+            #expect(await window.waitUntilIdle())
+
+            // ⌘. stops from any tab, where it is.
+            window.selectTab(.subAgent("agent-1"))
+            window.stop()
+            #expect(window.selectedTab == .subAgent("agent-1"))
+
+            window.startNewSession()
+            #expect(window.selectedTab == .chat)
+            #expect(await window.waitUntilIdle())
+            await runtime.shutdown()
+        }
+    }
+
     @Test("A new session is a new incarnation: the transcript starts over")
     func newSessionReplacesTheIncarnation() async throws {
         try await withRuntime { runtime, _, workspace in
@@ -914,6 +1139,22 @@ struct ZenWindowSessionTests {
         default:
             return false
         }
+    }
+
+    /// A running sub-agent of the root session `root`.
+    private static func subAgent(_ id: String, root: String) -> DirectSubAgentRuntime.AgentSnapshot {
+        DirectSubAgentRuntime.AgentSnapshot(
+            id: id,
+            rootSessionID: root,
+            name: "Worker \(id)",
+            role: "developer",
+            status: .running,
+            pending: true,
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
     }
 
     /// Polls `condition` on the main actor until it holds or 10 s pass.

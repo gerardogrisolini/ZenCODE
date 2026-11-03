@@ -809,6 +809,18 @@ id only, while the rebuilt log completes it, and because the rebuilt log
 keeps one start of a tool call id repeated in a turn. The shell snapshot of a
 host (`ChatShellSnapshot`) is transient too.
 
+The transcript of a delegated sub-agent (`ChatSubAgentTranscript`, read with
+`ChatSessionController.subAgentTranscript(agentID:)` and scoped to the
+controller's session as the root session) adds no event log and no state: it
+is the same rebuild of the agent's own backend history, read from the live
+backend at each call. The system prompt, the dynamic context, and the memory
+block are not in that history. Once the agent's backend is shut down (the
+agent was closed, cancelled, failed, or released from standby) the read
+returns `nil`: the runtime keeps no copy of the history, in the agent's record
+or anywhere else, so nothing reaches saved sessions, session snapshots,
+checkpoint trees, or task checkpoints. A host that wants to show the
+conversation after the agent ends keeps its own last read.
+
 Local operation evidence may also contain a complete compact unified patch and
 its counts instead of full old/new text. Compaction runs on the operation's
 captured regular-file preimage and committed text, never in the mapper or TUI.

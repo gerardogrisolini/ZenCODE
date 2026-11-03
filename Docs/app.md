@@ -113,7 +113,9 @@ The transcript shows what the terminal shows:
   show in the artifacts sidebar instead.
 - The notices of the commands and of the session operations.
 - The task-graph card (`🫧 Tasks`) when the graph is significant or after
-  `/tasks`, and the sub-agent card (`👥 Sub-Agents`) while sub-agents exist.
+  `/tasks`, and the sub-agent card (`👥 Sub-Agents`) while sub-agents are in
+  progress (queued or running). Click a sub-agent in it to open its tab (see
+  [Sub-agent tabs](#sub-agent-tabs)).
 
 The list follows the bottom while a response streams. Scroll up to stop
 following, and a button scrolls back to the latest message. An empty session
@@ -132,6 +134,52 @@ itself. Whether it shows is a state of the window: it is not saved, and a new
 or loaded session keeps it. Artifacts are runtime-only, so a loaded session
 shows none.
 
+### Sub-agent tabs
+
+Click a sub-agent in the `👥 Sub-Agents` card to open a tab with its
+transcript, or to select its tab when it is open already. While a sub-agent
+tab is open, a tab bar shows under the toolbar: **Chat**, the conversation,
+always first and never closed, then one tab per sub-agent you opened, in the
+order you opened them, each with the agent's status color, its name, and a
+close button. The bar scrolls sideways when the tabs do not fit. Tabs open
+only when you click: a sub-agent never opens one by itself, and closing the
+selected tab selects the tab after it, else the one before it.
+
+A sub-agent tab is read-only. A card at its top shows the agent: its status,
+name, role, profile, task and attempt, model and token counts, the elapsed
+time (live while it works, else its duration), and its latest error. Under it
+is the agent's conversation, with the rows of the chat: the brief and the
+messages it received, as prompts, its reasoning, its text, and its tool calls
+with their results. While the agent works, the last row is its reasoning in
+progress, else `🤔 thinking…`, so it is never empty; only a running tool
+call, which has its own row, replaces it. The tab follows the bottom as the
+chat does.
+
+The selected tab updates live, at most twice a second, and at once when the
+agent starts, ends, or begins a new run. A tab that is not selected keeps the
+agent's card up to date, and reads the conversation only when the agent
+starts, ends, or begins a new run; the rest is read as soon as you select the
+tab. The tab keeps the conversation it read for as long as it stays open:
+ZenCODE keeps nothing once a sub-agent ends, so a finished agent's tab shows
+the last conversation it read, the end of the last run included, and a tab
+whose agent ZenCODE no longer tracks keeps what it showed last. A tab that
+never read a conversation (an agent that ended before you opened its tab)
+says that it is not available.
+
+The composer, the consent card, and the status bar are in the Chat tab only,
+which keeps its scroll position and your draft while another tab shows. When
+the session waits for an answer while another tab shows, the Chat tab shows a
+dot, and the window never switches to it by itself: a tool consent shows only
+in the Chat tab, while the menus and the requests for a line of text are
+sheets of the window, over any tab. The commands you launch (the toolbar
+buttons, the menu items, New and Save Session, loading or deleting a saved
+session) select the Chat tab before they start, so you see their result. Esc
+works in the Chat tab only: in a sub-agent tab it does nothing. ⌘. and the
+Stop button stop the turn from any tab, without changing tab. The toolbar and
+the artifacts sidebar belong to the window. The tabs are a state of the
+window: they are not saved, a new or loaded session closes the sub-agent tabs
+and shows the Chat tab, and closing the window stops them.
+
 ## Composer
 
 The composer is at the bottom of the window.
@@ -149,9 +197,9 @@ The composer is at the bottom of the window.
 - The paperclip opens the attachment picker (images and movies), and files
   dropped on the composer are attached, one `/attach` each. `/attach list` and
   `/attach delete` work as in the terminal.
-- **Stop** (Esc, ⌘., or the stop button) cancels the turn and refuses the open
-  requests. The queue is kept. While a consent card shows, Esc denies the call
-  instead.
+- **Stop** (Esc in the Chat tab, ⌘., or the stop button) cancels the turn and
+  refuses the open requests. The queue is kept. While a consent card shows,
+  Esc denies the call instead.
 
 The response language is locked on the first prompt you type in a session, as
 in the terminal: the configured language, else the system one. It is decided
@@ -201,7 +249,8 @@ workspace, the newest first, with the age, the number of messages, and the
 model. Click a saved session to load it, or use its context menu to load or
 delete it (a confirmation asks first). **New Session** (⇧⌘N) and **Save**
 (⌘S) run `/sessions new` and `/sessions save`, and are refused while a line
-runs. The rest of `/sessions` (a named snapshot, `compact`, `restore`) is
+runs. They, and loading or deleting a saved session, select the Chat tab
+first. The rest of `/sessions` (a named snapshot, `compact`, `restore`) is
 typed in the composer.
 
 ## Toolbar and menus
@@ -214,7 +263,9 @@ review changes), **Stop** while a turn runs, and, always last, the
 **Session** menu has Stop (⌘.) and repeats the model, thinking, agent, tools,
 skills, tasks, changes, undo, and help items. Each item runs the slash
 command it names (the artifacts items toggle the sidebar, as `/artifacts`
-does), so everything is also available from the composer.
+does), so everything is also available from the composer. An item that runs
+a command selects the Chat tab first, so its result shows; Stop and the
+artifacts items leave the tab as it is.
 
 ## Keyboard shortcuts
 
@@ -226,8 +277,9 @@ does), so everything is also available from the composer.
 | ↑, ↓, Tab | Command suggestions | Moves the highlight, completes the highlighted command |
 | Return | Command suggestions | Completes the highlighted command and sends it, unless it takes an argument |
 | Esc | Command suggestions | Hides the list until the next edit |
-| Esc | Window | Denies the tool call while a consent card shows, otherwise stops the turn |
-| ⌘. | Window | Stops the turn |
+| Esc | Chat tab | Denies the tool call while a consent card shows, otherwise stops the turn |
+| Esc | Sub-agent tab | Does nothing |
+| ⌘. | Window | Stops the turn, from any tab |
 | ←, →, Return, Esc | Consent card | Moves the focus, chooses the focused button, denies |
 | ↑, ↓, Space, Return, Esc | Menu sheet | Moves, toggles or chooses, confirms, cancels |
 | ⌘O | Menu bar | Opens a folder in a window |
@@ -279,10 +331,10 @@ the root graph already resolves. The root graph never depends on it.
 | --- | --- |
 | `ZenAppTheme` | The palette of the terminal UI as SwiftUI colors, in dark and light, and the glass helpers |
 | `ZenAppMarkdown` | The Markdown renderer on swift-markdown: blocks, tables, diffs, and the syntax highlighter |
-| `ZenAppSession` | The composition and the window model, without SwiftUI: one `ChatSessionHost` over the production runner, one slot per window, the transcript projection, the line routing, and the prompt history |
-| `ZenAppTranscript` | The conversation views: prompts, tool calls, thinking, artifacts, summaries, notices, and the task-graph and sub-agent cards |
+| `ZenAppSession` | The composition and the window model, without SwiftUI: one `ChatSessionHost` over the production runner, one slot per window, the transcript projection, the line routing, the prompt history, and the window's tabs with the model of each sub-agent tab |
+| `ZenAppTranscript` | The conversation views: prompts, tool calls, thinking, artifacts, summaries, notices, the task-graph and sub-agent cards, and the detail card of a sub-agent tab |
 | `ZenAppControls` | The composer, the status bar, the consent card, and the menu and request sheets |
-| `ZenCODEApp` | The app shell: the window group, the menu bar, the sessions sidebar, the artifacts sidebar, the toolbar, and the launch |
+| `ZenCODEApp` | The app shell: the window group, the menu bar, the sessions sidebar, the artifacts sidebar, the toolbar, the tab bar and the sub-agent tabs, and the launch |
 
 Every target has its tests in `Tests/<Target>Tests` (`ZenCODEAppTests` covers
 the pure logic of the shell), and they run on their own:

@@ -170,6 +170,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   plans in the strict Planner format and save all of them, each with its own
   tasks and dependencies. Each plan of a sequence is saved with the goal
   `Piano N/M: <title> — <original goal>`.
+- `ChatSessionController.subAgentTranscript(agentID:)` returns the live
+  conversation of one sub-agent of the session (`ChatSubAgentTranscript`:
+  `ChatTurnEntry.Kind` values, oldest first), so a host app can show what a
+  sub-agent does. It reads the agent's backend history at the time of the
+  call, a turn still running included, and is `nil` once the agent's backend
+  is shut down. The Core keeps no state for it: a host that shows the
+  conversation after the agent ends keeps its own last read. See
+  [Docs/embedding.md](Docs/embedding.md#overviews).
 - ZenCODE for macOS, a native SwiftUI app (Liquid Glass, in the colors of the
   terminal UI, with the ZenCODE icon in the Dock) that replicates the terminal
   chat, one window per workspace. It is a host app of the public Chat API and
@@ -180,19 +188,29 @@ Release tags follow the strict `vX.Y.Z` contract described in
   builds the app on first use and after each update, then starts it detached;
   File > Open Folder… opens another workspace in another window). It shows
   the transcript with Markdown (highlighted code, diffs, tables), thinking,
-  tool calls with details and durations, file-change summaries, and the
-  task-graph and sub-agent cards; the file artifacts show in a sidebar on the
-  right, grouped by turn, that the toolbar button or `/artifacts` shows and
-  hides. Tool consent is a card (Allow once, Always allow, Deny), and menus
-  and text requests are sheets. The composer completes slash commands,
-  recalls the prompt history, attaches files (picker, drop, or `/attach`), and
-  queues the prompts sent while a turn runs; Esc or ⌘. stops the turn. A
-  status bar like the terminal's, a sidebar of the current and saved
-  sessions, and a toolbar and Session menu for `/models`, `/think`, `/agents`,
-  `/tools`, `/skills`, `/tasks`, `/changes`, `/undo`, `/review`, and `/help`,
-  with the toggle of the artifacts sidebar, complete it. `/setup`, `/voice`,
-  `/telegram`, `/feature`, `/cron`, `/ds4`, and `/tools logs` stay in the
-  terminal. See [Docs/app.md](Docs/app.md).
+  tool calls with details and durations, file-change summaries, the task-graph
+  card, and the card of the sub-agents in progress, whose rows open a
+  read-only tab with the sub-agent's details and transcript in a tab bar under
+  the toolbar. The selected tab updates live; a hidden one reads the
+  transcript when its agent starts or ends a run, and catches up when it is
+  selected. A tab keeps what it read for as long as it stays open, so after
+  the agent ends it shows the last conversation it read. The commands
+  launched from the toolbar, the menus, and the sessions sidebar select the
+  Chat tab first, so their result shows. The Chat tab shows a dot while the
+  session waits for an answer; the tabs are not saved, and a new or loaded
+  session closes them. The file artifacts show in a sidebar on the right,
+  grouped by turn, that the toolbar button or `/artifacts` shows and hides.
+  Tool consent is a card in the Chat tab (Allow once, Always allow, Deny), and
+  menus and text requests are sheets of the window. The composer completes
+  slash commands, recalls the prompt history, attaches files (picker, drop, or
+  `/attach`), and queues the prompts sent while a turn runs; Esc stops the
+  turn in the Chat tab and does nothing in a sub-agent tab, and ⌘. stops it
+  from any tab. A status bar like the terminal's, a sidebar of the current
+  and saved sessions, and a toolbar and Session menu for `/models`, `/think`,
+  `/agents`, `/tools`, `/skills`, `/tasks`, `/changes`, `/undo`, `/review`,
+  and `/help`, with the toggle of the artifacts sidebar, complete it.
+  `/setup`, `/voice`, `/telegram`, `/feature`, `/cron`, `/ds4`, and
+  `/tools logs` stay in the terminal. See [Docs/app.md](Docs/app.md).
 
 ### Changed
 

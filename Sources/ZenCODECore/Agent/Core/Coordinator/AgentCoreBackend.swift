@@ -850,4 +850,14 @@ extension AgentCoreBackend {
         guard let activeBackend else { return AsyncStream { $0.finish() } }
         return await activeBackend.subAgentSnapshotEvents(rootSessionID: rootSessionID)
     }
+
+    /// Forwards to the active backend; `nil` while none is resolved (a
+    /// transcript read never builds a backend).
+    public func subAgentTranscript(
+        agentID: String,
+        rootSessionID: String
+    ) async -> ChatSubAgentTranscript? {
+        guard let activeBackend else { return nil }
+        return await activeBackend.subAgentTranscript(agentID: agentID, rootSessionID: rootSessionID)
+    }
 }

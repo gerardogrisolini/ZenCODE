@@ -342,160 +342,228 @@ struct ZenStatusRoleTests {
     }
 }
 
-// MARK: - File changes
+// MARK: - Sub-agents card
 
-@Suite("File changes")
-struct ZenFileChangeFormattingTests {
-    private func entry(
-        _ path: String,
-        _ additions: Int,
-        _ deletions: Int,
-        binary: Bool = false,
-        patch: String? = nil
-    ) -> TurnFileChangeSummary.Entry {
-        TurnFileChangeSummary.Entry(
-            path: path,
-            additions: additions,
-            deletions: deletions,
-            status: .modified,
-            isBinary: binary,
-            existedBefore: true,
-            beforeDataBase64: nil,
-            patch: patch
+@Suite("Sub-agents card")
+struct ZenSubAgentsCardTests {
+    private let palette = ZenPalette.dark
+
+    private func snapshot(
+        id: String = "agent",
+        name: String = "agent",
+        role: String = "Developer",
+        profileName: String? = nil,
+        taskID: String? = nil,
+        taskAttemptOrdinal: Int? = nil,
+        status: DirectSubAgentRuntime.Status = .running,
+        configuredModelID: String? = nil,
+        modelID: String? = nil,
+        activity: String? = nil,
+        activityKind: DirectSubAgentRuntime.ActivityKind? = nil,
+        toolName: String? = nil,
+        metrics: DirectAgentGenerationMetrics? = nil,
+        output: String? = nil
+    ) -> DirectSubAgentRuntime.AgentSnapshot {
+        DirectSubAgentRuntime.AgentSnapshot(
+            id: id,
+            taskID: taskID,
+            taskAttemptOrdinal: taskAttemptOrdinal,
+            name: name,
+            role: role,
+            profileName: profileName,
+            status: status,
+            pending: status.isPending,
+            configuredModelID: configuredModelID,
+            modelID: modelID,
+            currentActivity: activity,
+            currentActivityKind: activityKind,
+            currentToolName: toolName,
+            latestMetrics: metrics,
+            latestOutput: output,
+            latestError: nil,
+            createdAt: .now,
+            updatedAt: .now
         )
     }
 
-    @Test("the summary header carries the file count and the line totals")
-    func summaryTotals() {
-        let summary = TurnFileChangeSummary(entries: [
-            entry("a.swift", 3, 1, patch: "@@ -1 +1 @@"),
-            entry("b.swift", 2, 4, patch: "@@ -1 +1 @@"),
-            entry("logo.png", 0, 0, binary: true)
-        ])
-        #expect(summary.totalAdditions == 5)
-        #expect(summary.totalDeletions == 5)
-        #expect(ZenFileChangeFormatting.summaryHeaderText(summary) == "3 files changed  +5 −5")
-        let single = TurnFileChangeSummary(entries: [entry("a.swift", 1, 0, patch: "@@ -0,0 +1 @@")])
-        #expect(ZenFileChangeFormatting.summaryHeaderText(single) == "1 file changed  +1 −0")
+    /// The metadata lines as plain text.
+    private func metadata(_ snapshot: DirectSubAgentRuntime.AgentSnapshot) -> [String] {
+        ZenSubAgentRow.metadataLines(for: snapshot, palette: palette).map { $0.map(\.text).joined() }
     }
 
-    @Test("the hint offers /undo only when every file can be restored")
-    func hint() {
-        let undoable = TurnFileChangeSummary(entries: [
-            TurnFileChangeSummary.Entry(
-                path: "new.swift", additions: 1, deletions: 0, status: .added, isBinary: false,
-                existedBefore: false, beforeDataBase64: nil, patch: "@@ -0,0 +1 @@\n+x"
+    @Test("only the agents in progress are shown, in the given order")
+    func visibleSnapshotsKeepOnlyPending() {
+        let snapshots = [
+            snapshot(id: "a", status: .running),
+            snapshot(id: "b", status: .idle, output: "done"),
+            snapshot(id: "c", status: .queued),
+            snapshot(id: "d", status: .failed),
+            snapshot(id: "e", status: .standby),
+            snapshot(id: "f", status: .closed),
+            snapshot(id: "g", status: .running)
+        ]
+        #expect(ZenSubAgentsCard.visibleSnapshots(snapshots).map(\.id) == ["a", "c", "g"])
+        #expect(ZenSubAgentsCard.visibleSnapshots([]).isEmpty)
+        #expect(ZenSubAgentsCard.visibleSnapshots([snapshot(status: .idle)]).isEmpty)
+    }
+
+    @Test("the summary counts the agents in progress")
+    func summaryCountsVisibleAgents() {
+        let visible = ZenSubAgentsCard.visibleSnapshots([
+            snapshot(id: "a", status: .running),
+            snapshot(id: "b", status: .queued),
+            snapshot(id: "c", status: .idle)
+        ])
+        let segments = ZenSubAgentsCard.summarySegments(visible)
+        #expect(segments.map(\.text) == ["2 in progress"])
+        #expect(segments.map(\.role) == [nil])
+    }
+
+    @Test("metadata shows role, agent, task, attempt, model, and tokens when present")
+    func metadataWithEverything() {
+        let lines = metadata(snapshot(
+            role: "Developer",
+            profileName: "Builder",
+            taskID: "transcript-views",
+            taskAttemptOrdinal: 2,
+            configuredModelID: "claude-opus",
+            modelID: "claude-opus-4",
+            metrics: DirectAgentGenerationMetrics(
+                promptTokenCount: 1_250,
+                cachedPromptTokenCount: 48_000,
+                completionTokenCount: 312
             )
+        ))
+        #expect(lines == [
+            "role: Developer  ·  agent: Builder",
+            "task: transcript-views  ·  attempt: 2",
+            "model: claude-opus  ·  c:48.0k p:1.2k g:312"
         ])
-        #expect(ZenFileChangeFormatting.hintText(undoable) == "Use /undo to revert, /changes diff to show patches.")
-        let stuck = TurnFileChangeSummary(entries: [
-            TurnFileChangeSummary.Entry(
-                path: "a.bin", additions: 0, deletions: 0, status: .modified, isBinary: true,
-                existedBefore: true, beforeDataBase64: nil, patch: nil
-            )
-        ])
-        #expect(ZenFileChangeFormatting.hintText(stuck) == "Undo is not available for this summary.")
+        #expect(!lines.joined().contains("id:"))
     }
 
-    @Test("patch lines are classified for coloring")
-    func patchLines() {
-        let lines = ZenFileChangeFormatting.patchLines(
-            "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n keep\n-old\n+new\n\\ No newline at end of file\n"
-        )
-        #expect(lines.map(\.kind) == [.header, .header, .header, .hunk, .context, .deletion, .addition, .note])
+    @Test("metadata leaves out what the snapshot does not have")
+    func metadataOmitsMissingValues() {
+        // Role only.
+        #expect(metadata(snapshot(role: "Reviewer")) == ["role: Reviewer"])
+        // A blank role and no profile, task, model, or metrics: nothing.
+        #expect(metadata(snapshot(role: "  ")).isEmpty)
+        // An attempt without a task is not shown.
+        #expect(metadata(snapshot(role: "", taskAttemptOrdinal: 3)).isEmpty)
+        // A task without an attempt.
+        #expect(metadata(snapshot(role: "", taskID: "t1")) == ["task: t1"])
+        // Only the agent profile.
+        #expect(metadata(snapshot(role: "", profileName: "Tester")) == ["agent: Tester"])
     }
 
-    @Test("an artifact diff comes from the full texts, else from the patch")
-    func artifactDiff() {
-        let modified = FileChangeArtifact(
-            absolutePath: "/p/a.swift", displayPath: "a.swift", status: .modified,
-            additions: 1, deletions: 1, oldText: "a\nb\n", newText: "a\nc\n"
+    @Test("the model falls back to the reported one and the counters can stand alone")
+    func metadataModelAndTokens() {
+        #expect(metadata(snapshot(role: "", modelID: "gpt-5")) == ["model: gpt-5"])
+        #expect(metadata(snapshot(role: "", configuredModelID: " ", modelID: "gpt-5")) == ["model: gpt-5"])
+        // Only some of the counters.
+        let partial = DirectAgentGenerationMetrics(promptTokenCount: 10, completionTokenCount: 5)
+        #expect(metadata(snapshot(role: "", configuredModelID: "m", metrics: partial)) == ["model: m  ·  p:10 g:5"])
+        // Counters without a model.
+        #expect(metadata(snapshot(role: "", metrics: partial)) == ["p:10 g:5"])
+        // Metrics without any counter.
+        #expect(metadata(snapshot(
+            role: "",
+            metrics: DirectAgentGenerationMetrics(promptTokenCount: nil, completionTokenCount: nil)
+        )).isEmpty)
+    }
+
+    @Test("metadata labels are muted and values use the inline-code color")
+    func metadataColors() {
+        let lines = ZenSubAgentRow.metadataLines(
+            for: snapshot(
+                role: "Developer",
+                taskID: "t1",
+                taskAttemptOrdinal: 1,
+                configuredModelID: "m",
+                metrics: DirectAgentGenerationMetrics(promptTokenCount: 10, completionTokenCount: nil)
+            ),
+            palette: palette
         )
-        guard case let .hunks(hunks) = ZenFileChangeFormatting.artifactDiff(modified) else {
-            Issue.record("expected hunks")
-            return
+        #expect(lines.count == 3)
+        let labels: Set<String> = ["role: ", "task: ", "attempt: ", "model: ", "  ·  ", "p:"]
+        for run in lines.flatMap(\.self) {
+            if labels.contains(run.text) {
+                #expect(run.color == palette.textMuted, "\(run.text)")
+            } else {
+                #expect(run.color == palette.inlineCodeForeground, "\(run.text)")
+            }
         }
-        #expect(hunks.flatMap { $0 }.map(\.kind) == [.context, .deletion, .addition])
-
-        let patched = FileChangeArtifact(
-            absolutePath: "/p/b.swift", displayPath: "", status: .modified, patch: "@@ -1 +1 @@\n-x\n+y"
-        )
-        #expect(ZenFileChangeFormatting.artifactDiff(patched) == .patch([
-            ZenPatchLine(kind: .hunk, text: "@@ -1 +1 @@"),
-            ZenPatchLine(kind: .deletion, text: "-x"),
-            ZenPatchLine(kind: .addition, text: "+y")
-        ]))
-        #expect(ZenFileChangeFormatting.displayPath(of: patched) == "/p/b.swift")
-
-        // Missing evidence is not an empty file.
-        let unknown = FileChangeArtifact(absolutePath: "/p/c", displayPath: "c", status: .modified, newText: "x")
-        #expect(ZenFileChangeFormatting.artifactDiff(unknown) == nil)
-        let binary = FileChangeArtifact(absolutePath: "/p/d", displayPath: "d", status: .added, isBinary: true, newText: "x")
-        #expect(ZenFileChangeFormatting.artifactDiff(binary) == nil)
-    }
-}
-
-// MARK: - Text helpers
-
-@Suite("Transcript text")
-struct ZenTranscriptTextTests {
-    @Test("only prompts from other channels get a badge")
-    func originBadges() {
-        #expect(ZenTranscriptText.originBadge(for: .app) == nil)
-        #expect(ZenTranscriptText.originBadge(for: .telegram)?.title == "Telegram")
-        #expect(ZenTranscriptText.originBadge(for: .acp)?.title == "ACP")
-        #expect(ZenTranscriptText.originBadge(for: .unknown)?.title == "Restored")
-        #expect(ZenTranscriptText.originBadge(for: .local)?.title == "Terminal")
     }
 
-    @Test("a command line splits into its token and its arguments")
-    func commandToken() {
-        #expect(ZenTranscriptText.commandToken(in: "/tasks show  build ") == ZenCommandToken(command: "/tasks", arguments: "show  build"))
-        #expect(ZenTranscriptText.commandToken(in: "/help") == ZenCommandToken(command: "/help", arguments: ""))
-        #expect(ZenTranscriptText.commandToken(in: "hello /tasks") == nil)
-        #expect(ZenTranscriptText.commandToken(in: "/") == nil)
+    @Test("the activity follows the terminal: reasoning, message, tool, or the placeholder")
+    func activityPhases() {
+        let thinking = ZenSubAgentActivity(snapshot(
+            activity: "Checking\nthe palette.", activityKind: .thinking
+        ))
+        #expect(thinking.phase == .thinking(paragraph: "Checking the palette."))
+        #expect(!thinking.showsThinkingPlaceholder)
+
+        // Reasoning without a paragraph yet is still the thinking row.
+        let bare = ZenSubAgentActivity(snapshot(activityKind: .thinking))
+        #expect(bare.phase == .thinking(paragraph: nil))
+        #expect(!bare.showsThinkingPlaceholder)
+
+        let message = ZenSubAgentActivity(snapshot(activity: "Writing the file.", activityKind: .content))
+        #expect(message.phase == .message("Writing the file."))
+        #expect(ZenSubAgentActivity(snapshot(activity: "No kind.")).phase == .message("No kind."))
+
+        let tool = ZenSubAgentActivity(snapshot(toolName: "local.exec"))
+        #expect(tool.phase == .none)
+        #expect(tool.toolName == "local.exec")
+        #expect(!tool.showsThinkingPlaceholder)
+
+        // A pending agent with nothing to show holds the thinking placeholder.
+        let idleWork = ZenSubAgentActivity(snapshot(status: .queued))
+        #expect(idleWork.phase == .none)
+        #expect(idleWork.toolName == nil)
+        #expect(idleWork.showsThinkingPlaceholder)
     }
 
-    @Test("the home directory is abbreviated with a tilde")
-    func abbreviatedPath() {
-        #expect(ZenTranscriptText.abbreviatedPath("/Users/me/Projects/Zen", homeDirectory: "/Users/me") == "~/Projects/Zen")
-        #expect(ZenTranscriptText.abbreviatedPath("/Users/me", homeDirectory: "/Users/me/") == "~")
-        #expect(ZenTranscriptText.abbreviatedPath("/Users/meta/x", homeDirectory: "/Users/me") == "/Users/meta/x")
-        #expect(ZenTranscriptText.abbreviatedPath("/tmp/x", homeDirectory: "/Users/me") == "/tmp/x")
+    @Test("a hidden tool is left out and does not stop the placeholder")
+    func hiddenToolIsExcluded() {
+        let hidden = ZenSubAgentActivity(snapshot(toolName: "agent.message"))
+        #expect(hidden.toolName == nil)
+        #expect(hidden.showsThinkingPlaceholder)
+
+        let blank = ZenSubAgentActivity(snapshot(activity: "  \n ", toolName: "  "))
+        #expect(blank.phase == .none)
+        #expect(blank.toolName == nil)
+        #expect(blank.showsThinkingPlaceholder)
+
+        // A finished agent has no placeholder.
+        #expect(!ZenSubAgentActivity(snapshot(status: .idle)).showsThinkingPlaceholder)
     }
 
-    @Test("parameters become sorted key/value rows")
-    func parameterRows() {
-        let rows = ZenToolCallFormatting.parameterRows(for: .object([
-            "path": .string("a.swift"),
-            "count": .number(3),
-            "flags": .array([.bool(true), .null])
-        ]))
-        #expect(rows == [
-            ZenToolParameterRow(key: "count", value: "3"),
-            ZenToolParameterRow(key: "flags", value: "[true,null]"),
-            ZenToolParameterRow(key: "path", value: "a.swift")
-        ])
-        #expect(ZenToolCallFormatting.parameterRows(for: .string("x"), label: "query") == [
-            ZenToolParameterRow(key: "query", value: "x")
-        ])
-    }
-
-    @Test("collapsed thoughts preview their first non-blank line")
-    func firstLinePreview() {
-        #expect(ZenTranscriptText.firstLinePreview("\n  \nFirst   idea\nsecond") == "First idea")
-        #expect(ZenTranscriptText.firstLinePreview("   ") == nil)
-    }
-
-    @Test("the default Markdown renderer is installed in the environment")
-    @MainActor
-    func defaultRenderer() {
-        let values = EnvironmentValues()
-        _ = values.zenMarkdownRenderer.render("**bold**", isStreaming: false)
-        var custom = EnvironmentValues()
-        custom.zenMarkdownRenderer = ZenMarkdownRenderer { text, isStreaming in
-            AnyView(Text(isStreaming ? text + "…" : text))
-        }
-        _ = custom.zenMarkdownRenderer.render("text", isStreaming: true)
+    @Test("the live activity of a tab: never empty while pending, except while a tool runs")
+    func liveActivity() {
+        #expect(ZenSubAgentLiveActivity(snapshot(
+            activity: "Checking\nthe palette.", activityKind: .thinking
+        )) == .thought("Checking\nthe palette."))
+        // Reasoning without a paragraph yet.
+        #expect(ZenSubAgentLiveActivity(snapshot(activityKind: .thinking)) == .thinkingPlaceholder)
+        #expect(ZenSubAgentLiveActivity(snapshot(activity: " \n", activityKind: .thinking)) == .thinkingPlaceholder)
+        // The message phase shows the placeholder too, with its text or not.
+        #expect(ZenSubAgentLiveActivity(snapshot(activity: "Writing.", activityKind: .content)) == .thinkingPlaceholder)
+        #expect(ZenSubAgentLiveActivity(snapshot(activityKind: .content)) == .thinkingPlaceholder)
+        // Nothing else to show: queued, or a tool the transcript hides.
+        #expect(ZenSubAgentLiveActivity(snapshot(status: .queued)) == .thinkingPlaceholder)
+        #expect(ZenSubAgentLiveActivity(snapshot(toolName: "agent.message")) == .thinkingPlaceholder)
+        // A running tool has its row in the transcript: nothing, while
+        // reasoning too.
+        #expect(ZenSubAgentLiveActivity(snapshot(toolName: "local.exec")) == .none)
+        #expect(ZenSubAgentLiveActivity(snapshot(
+            activity: "Reading the output.", activityKind: .thinking, toolName: "local.exec"
+        )) == .none)
+        // Not pending, or no snapshot: nothing.
+        #expect(ZenSubAgentLiveActivity(snapshot(
+            status: .idle, activity: "Old thought", activityKind: .thinking, output: "Done."
+        )) == .none)
+        #expect(ZenSubAgentLiveActivity(snapshot(status: .failed)) == .none)
+        #expect(ZenSubAgentLiveActivity(nil) == .none)
     }
 }

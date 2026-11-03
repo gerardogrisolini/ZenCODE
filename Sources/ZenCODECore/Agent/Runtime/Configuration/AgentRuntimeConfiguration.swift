@@ -824,6 +824,16 @@ public protocol AgentRuntimeBackend: Actor {
 
     func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot]
     func subAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]>
+    /// The live transcript of the delegated agent `agentID` of the root
+    /// session `rootSessionID` (see
+    /// ``DirectSubAgentRuntime/transcript(agentID:rootSessionID:)``), read
+    /// without keeping any state. `nil` when the agent is unknown, belongs to
+    /// another root session, its backend was shut down, or the backend has no
+    /// sub-agent runtime (the default).
+    func subAgentTranscript(
+        agentID: String,
+        rootSessionID: String
+    ) async -> ChatSubAgentTranscript?
 
     func sharedChatParticipants(rootSessionID: String) async -> [AgentSharedChat.Participant]
     func sendSharedChatMessage(
@@ -1008,5 +1018,12 @@ extension AgentRuntimeBackend {
 extension AgentRuntimeBackend {
     public func subAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]> {
         AsyncStream { $0.finish() }
+    }
+
+    public func subAgentTranscript(
+        agentID _: String,
+        rootSessionID _: String
+    ) async -> ChatSubAgentTranscript? {
+        nil
     }
 }

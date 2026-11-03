@@ -476,6 +476,27 @@ The task-graph and sub-agent overviews reach the presenter as values
   `reserveSubAgentOverviewPublication()` let the presenter drop a publication
   that a later one overtook. The default `nil` presents them as they come.
 
+The app can also read the session's sub-agents itself, without a presenter.
+Both reads are scoped to the controller's `sessionID`, the root session the
+sub-agents of the session are registered under (the runner receives it as
+`rootSessionID`):
+
+- `AgentCoreSessionRunner.subAgentSnapshotEvents(rootSessionID:)` streams the
+  snapshots of the session's sub-agents (`DirectSubAgentRuntime.AgentSnapshot`)
+  now and after every change. While the runner has no backend yet (no turn ran
+  and no model was preloaded), the stream finishes at once: subscribe again
+  once a turn has started. The stream never finishes by itself, not even when
+  the backend shuts down, so cancel the task that iterates it when the window
+  closes or the session changes.
+- `ChatSessionController.subAgentTranscript(agentID:)` returns the live
+  conversation of one sub-agent as a `ChatSubAgentTranscript`
+  (`ChatTurnEntry.Kind` values, oldest first): the agent's backend history at
+  the time of the call, including a turn still running. The read keeps no
+  state. It is `nil` for an agent that does not belong to the session and for
+  an agent whose backend was shut down (closed, cancelled, failed, or released
+  from standby): the Core keeps no copy of the history, so an app that shows
+  the conversation after the agent ends keeps its own last read.
+
 ## Observing a Session
 
 `ChatSessionStateReducer` is a presenter that keeps the observable state of a
@@ -853,7 +874,8 @@ it comprises:
   (`ChatSessionNotice` with its payloads, and `ChatSessionNoticeText`); the
   outcomes (`ChatCommandOutcome`, `ChatSelectionOutcome`,
   `ChatSessionOperationOutcome`, and the others); the overviews
-  (`ChatTaskGraphOverview` and `ChatSubAgentOverview`); `ChatModelCatalog`;
+  (`ChatTaskGraphOverview` and `ChatSubAgentOverview`); the sub-agent
+  transcript (`ChatSubAgentTranscript`); `ChatModelCatalog`;
   `ChatCommandRegistry`, `ChatCommandDescriptor`, and `ChatCommandContext`;
   `ChatPromptQueue` and `ChatQueuedPrompt`; `SharedChatMentionParser`; and
   `ChatSessionRuntimeFactory`;

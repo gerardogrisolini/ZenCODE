@@ -107,8 +107,9 @@ final class ZenBackendLifecycle: Sendable {
 }
 
 /// A model backend that answers every prompt with one scripted block, can
-/// hold a turn until the test releases it, and reports scripted sub-agents.
-/// Every wait is bounded.
+/// hold a turn until the test releases it, and reports scripted sub-agents,
+/// their transcripts, and their snapshots to the streams of
+/// `subAgentSnapshotEvents(rootSessionID:)`. Every wait is bounded.
 actor ZenScriptedBackend: AgentRuntimeBackend {
     struct HoldTimedOut: Error {}
 
@@ -122,6 +123,16 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
     private(set) var systemPrompts: [String] = []
     private var scripts: [String: [DirectAgentEvent]] = [:]
     private var subAgents: [DirectSubAgentRuntime.AgentSnapshot] = []
+    private var subAgentTranscripts: [String: ChatSubAgentTranscript] = [:]
+    private var snapshotObservers: [UUID: (rootSessionID: String, continuation: AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]>.Continuation)] = [:]
+    /// The streams of sub-agent snapshots handed out.
+    private(set) var snapshotSubscriptionCount = 0
+    /// The streams of sub-agent snapshots still observed.
+    var snapshotObserverCount: Int {
+        snapshotObservers.count
+    }
+    /// The sub-agent transcripts read.
+    private(set) var subAgentTranscriptReadCount = 0
     private var holdsNextTurn = false
     private(set) var isHolding = false
     private var released = false
@@ -153,8 +164,49 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
         scripts[prompt] = events
     }
 
+    /// The sub-agents from now on, published to every snapshot stream of
+    /// their root session.
     func setSubAgents(_ snapshots: [DirectSubAgentRuntime.AgentSnapshot]) {
         subAgents = snapshots
+        for observer in snapshotObservers.values {
+            observer.continuation.yield(snapshots.filter { $0.rootSessionID == observer.rootSessionID })
+        }
+    }
+
+    /// The transcript of the sub-agent `transcript.agentID`, read while the
+    /// agent is one of the sub-agents of the root session asked.
+    func setSubAgentTranscript(_ transcript: ChatSubAgentTranscript) {
+        subAgentTranscripts[transcript.agentID] = transcript
+    }
+
+    func subAgentTranscript(agentID: String, rootSessionID: String) async -> ChatSubAgentTranscript? {
+        subAgentTranscriptReadCount += 1
+        guard subAgents.contains(where: { $0.id == agentID && $0.rootSessionID == rootSessionID }) else {
+            return nil
+        }
+        return subAgentTranscripts[agentID]
+    }
+
+    /// The sub-agents of `rootSessionID` now and after every
+    /// ``setSubAgents(_:)``, the newest only for a slow reader, until the
+    /// reader cancels.
+    func subAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]> {
+        snapshotSubscriptionCount += 1
+        let (stream, continuation) = AsyncStream.makeStream(
+            of: [DirectSubAgentRuntime.AgentSnapshot].self,
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        let id = UUID()
+        snapshotObservers[id] = (rootSessionID, continuation)
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeSnapshotObserver(id) }
+        }
+        continuation.yield(subAgents.filter { $0.rootSessionID == rootSessionID })
+        return stream
+    }
+
+    private func removeSnapshotObserver(_ id: UUID) {
+        snapshotObservers[id] = nil
     }
 
     func createSession(

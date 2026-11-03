@@ -3,8 +3,8 @@
 //  ZenApp
 //
 //  The pure logic of the conversation shell: following the bottom, where the
-//  turn separators go, the row cache, the tool-call durations, and what Esc
-//  does.
+//  turn separators go, the row cache, the tool-call durations, what Esc
+//  does, and the tab bar.
 //
 
 import Foundation
@@ -308,5 +308,66 @@ struct ZenEscapeRoutingTests {
                 kind: .chooseOne(title: "Model", items: [], selectedID: nil)
             ) == .stop
         )
+    }
+
+    @Test("Esc acts in the conversation only: a sub-agent tab consumes it and does nothing")
+    func onlyTheConversationTab() {
+        let id = UUID()
+        #expect(ZenEscapeAction(selectedTab: .chat, pendingRequestID: nil, kind: nil) == .stop)
+        #expect(ZenEscapeAction(selectedTab: .chat, pendingRequestID: id, kind: consent) == .denyConsent(requestID: id))
+        #expect(ZenEscapeAction(selectedTab: .subAgent("a"), pendingRequestID: nil, kind: nil) == .consume)
+        #expect(ZenEscapeAction(selectedTab: .subAgent("a"), pendingRequestID: id, kind: consent) == .consume)
+        #expect(
+            ZenEscapeAction(selectedTab: .subAgent("a"), pendingRequestID: id, kind: .readLine(prompt: "Name")) == .consume
+        )
+    }
+}
+
+// MARK: - Tabs
+
+@Suite("Window tab bar")
+struct ZenWindowTabBarTests {
+    @Test("the bar shows while a sub-agent tab is open")
+    func barVisibility() {
+        #expect(!ZenWindowTabBarLogic.showsBar(subAgentTabCount: 0))
+        #expect(ZenWindowTabBarLogic.showsBar(subAgentTabCount: 1))
+        #expect(ZenWindowTabBarLogic.showsBar(subAgentTabCount: 5))
+    }
+
+    @Test("the Chat tab has a badge while a request waits and another tab shows")
+    func chatBadge() {
+        #expect(ZenWindowTabBarLogic.showsChatBadge(hasPendingRequest: true, selectedTab: .subAgent("a")))
+        #expect(!ZenWindowTabBarLogic.showsChatBadge(hasPendingRequest: true, selectedTab: .chat))
+        #expect(!ZenWindowTabBarLogic.showsChatBadge(hasPendingRequest: false, selectedTab: .subAgent("a")))
+        #expect(!ZenWindowTabBarLogic.showsChatBadge(hasPendingRequest: false, selectedTab: .chat))
+    }
+
+    @Test("a sub-agent tab is titled with the agent's name on one line, cut with an ellipsis, else its id")
+    func titles() {
+        #expect(ZenWindowTabBarLogic.title(name: "transcript-dev", agentID: "agent_1") == "transcript-dev")
+        #expect(ZenWindowTabBarLogic.title(name: "two\nlines", agentID: "agent_1") == "two lines")
+        #expect(ZenWindowTabBarLogic.title(name: "  ", agentID: "agent_1") == "agent_1")
+        #expect(ZenWindowTabBarLogic.title(name: nil, agentID: "agent_1") == "agent_1")
+        let long = ZenWindowTabBarLogic.title(name: String(repeating: "x", count: 80), agentID: "agent_1")
+        #expect(long.count <= ZenWindowTabBarLogic.titleLimit + 1)
+        #expect(long.hasSuffix("…"))
+    }
+
+    @Test("the rows of a sub-agent transcript put a separator before every prompt after the brief")
+    func subAgentSeparators() {
+        let items = ZenSubAgentTranscriptProjection.items(
+            for: [
+                .userPrompt(text: "Brief", attachments: [], origin: .unknown),
+                .assistantText("On it."),
+                .toolCallStarted(DirectAgentToolCall(id: "m", name: "agent.message", argumentsObject: [:], argumentsJSON: "{}")),
+                .userPrompt(text: "A message", attachments: [], origin: .unknown),
+                .assistantText("Done."),
+            ],
+            agentID: "a"
+        )
+        let rows = ZenConversationRow.rows(for: items)
+        // `agent.message` is hidden, as in the conversation.
+        #expect(rows.map(\.id) == ["subagent-a-0", "subagent-a-1", "subagent-a-3", "subagent-a-4"])
+        #expect(rows.map(\.showsSeparator) == [false, false, true, false])
     }
 }

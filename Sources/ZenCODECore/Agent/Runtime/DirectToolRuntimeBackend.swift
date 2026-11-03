@@ -111,4 +111,11 @@ extension DirectToolRuntimeBackend {
     public func subAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]> {
         await toolExecutor.subAgentSnapshotEvents(rootSessionID: rootSessionID)
     }
+
+    public func subAgentTranscript(
+        agentID: String,
+        rootSessionID: String
+    ) async -> ChatSubAgentTranscript? {
+        await toolExecutor.subAgentTranscript(agentID: agentID, rootSessionID: rootSessionID)
+    }
 }
