@@ -170,6 +170,29 @@ Release tags follow the strict `vX.Y.Z` contract described in
   plans in the strict Planner format and save all of them, each with its own
   tasks and dependencies. Each plan of a sequence is saved with the goal
   `Piano N/M: <title> — <original goal>`.
+- ZenCODE for macOS, a native SwiftUI app (Liquid Glass, in the colors of the
+  terminal UI, with the ZenCODE icon in the Dock) that replicates the terminal
+  chat, one window per workspace. It is a host app of the public Chat API and
+  a new standalone SwiftPM package, `Sources/ZenApp`, outside the root
+  package: root commands do not build it. It needs macOS 26 and the settings
+  and sessions that `zen` saves, so run `zen` once to configure ZenCODE, then
+  start the app from the workspace folder with `zen --ui` (macOS only: it
+  builds the app on first use and after each update, then starts it detached;
+  File > Open Folder… opens another workspace in another window). It shows
+  the transcript with Markdown (highlighted code, diffs, tables), thinking,
+  tool calls with details and durations, file-change summaries, and the
+  task-graph and sub-agent cards; the file artifacts show in a sidebar on the
+  right, grouped by turn, that the toolbar button or `/artifacts` shows and
+  hides. Tool consent is a card (Allow once, Always allow, Deny), and menus
+  and text requests are sheets. The composer completes slash commands,
+  recalls the prompt history, attaches files (picker, drop, or `/attach`), and
+  queues the prompts sent while a turn runs; Esc or ⌘. stops the turn. A
+  status bar like the terminal's, a sidebar of the current and saved
+  sessions, and a toolbar and Session menu for `/models`, `/think`, `/agents`,
+  `/tools`, `/skills`, `/tasks`, `/changes`, `/undo`, `/review`, and `/help`,
+  with the toggle of the artifacts sidebar, complete it. `/setup`, `/voice`,
+  `/telegram`, `/feature`, `/cron`, `/ds4`, and `/tools logs` stay in the
+  terminal. See [Docs/app.md](Docs/app.md).
 
 ### Changed
 

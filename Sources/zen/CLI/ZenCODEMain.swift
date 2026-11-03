@@ -44,6 +44,27 @@ struct ZenCODEMain {
             Foundation.exit(exitCode)
         }
 
+        #if os(macOS)
+        if ZenAppLaunchCommand.isRequested(arguments) {
+            // `zen --ui` opens the macOS app and exits. It accepts only the
+            // options the app reads, so its own parser runs instead of
+            // `validateArguments`; then the key migration and the setup gate
+            // run exactly as for the chat, since the app has no setup.
+            let forwardedArguments: [String]
+            do {
+                forwardedArguments = try ZenAppLaunchCommand.forwardedArguments(from: arguments)
+            } catch {
+                AgentOutput.standardError.writeString("ZenCODE: \(error.localizedDescription)\n")
+                Foundation.exit(1)
+            }
+            AgentProviderKeyMigration.migrateIfNeededReportingFailures()
+            if requiresInteractiveSetup() {
+                await completeInteractiveSetupOrExit()
+            }
+            Foundation.exit(await ZenAppLaunchCommand.run(forwardedArguments: forwardedArguments))
+        }
+        #endif
+
         do {
             try AgentConfiguration.validateArguments(arguments)
         } catch {
@@ -66,16 +87,7 @@ struct ZenCODEMain {
         // configuration, so the client can offer the terminal setup method. The
         // setup then runs in its own terminal, never inside the ACP stream.
         if requiresInteractiveSetup(), !runsHeadless(arguments), !runsACP(arguments) {
-            do {
-                guard try await runInteractiveSetup() else {
-                    Foundation.exit(0)
-                }
-            } catch {
-                AgentOutput.standardError.writeString(
-                    "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"
-                )
-                Foundation.exit(1)
-            }
+            await completeInteractiveSetupOrExit()
         }
 
         await ZenCODECommandLineRunner.main(
@@ -119,6 +131,23 @@ struct ZenCODEMain {
         )
     }
 
+    /// The setup gate of the chat and of `zen --ui`: runs the interactive
+    /// setup and returns once ZenCODE is configured. Exits 0 when the setup
+    /// ends without a valid configuration (cancelled), and exits 1 with the
+    /// error and the troubleshooting hint when it fails.
+    private static func completeInteractiveSetupOrExit() async {
+        do {
+            guard try await runInteractiveSetup() else {
+                Foundation.exit(0)
+            }
+        } catch {
+            AgentOutput.standardError.writeString(
+                "ZenCODE: \(error.localizedDescription)\n\(ZenCODEDoctorRunner.troubleshootingHint)"
+            )
+            Foundation.exit(1)
+        }
+    }
+
     private static func runInteractiveSetup() async throws -> Bool {
         while true {
             let outcome = try await ZenCODESetupRunner.run()
@@ -157,7 +186,7 @@ private enum ZenCODEStandaloneHelp {
           --zen-package-path DIR Source ZenCODE checkout used to install optional features.
         """
 
-        return AgentConfiguration.helpText
+        let help = AgentConfiguration.helpText
             .replacingOccurrences(
                 of: "zen [-p PROMPT] [-f PATH] [--jsonl] [--acp]",
                 with: usage
@@ -166,5 +195,16 @@ private enum ZenCODEStandaloneHelp {
                 of: "  -p, --prompt PROMPT    Run one headless text prompt.\n  -f PATH                Run one headless prompt read from a file (absolute path). With -p, the file is added as context.\n  --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt or -f).\n  --acp                  ACP JSON-RPC over stdio for compatible clients.",
                 with: options
             )
+
+        #if os(macOS)
+        // `--ui` exists only on macOS: elsewhere the help stays as above.
+        let acpOption = "  --acp                  ACP JSON-RPC over stdio for compatible clients."
+        let uiOption = "  --ui                   Open the ZenCODE macOS app (built on first use). Accepts --agent, --model, --skills, --working-directory."
+        return help
+            .replacingOccurrences(of: usage, with: "\(usage) [--ui]")
+            .replacingOccurrences(of: acpOption, with: "\(acpOption)\n\(uiOption)")
+        #else
+        return help
+        #endif
     }
 }

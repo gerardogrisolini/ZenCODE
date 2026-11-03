@@ -1,0 +1,306 @@
+# ZenCODE for macOS
+
+A native SwiftUI app that replicates the terminal chat of `zen` in windows,
+with Liquid Glass and the colors of the terminal UI. It runs the same chat
+sessions as `zen`: the same models, agents, tools, skills, plans, goals, and
+tool consent, read from the same settings. It is a host app of the public Chat
+API (see [embedding.md](embedding.md)), kept in this repository as the
+standalone SwiftPM package `Sources/ZenApp`.
+
+## Requirements
+
+- macOS 26 and the Swift 6.4 toolchain that the project requires (see the
+  [project README](../README.md)).
+- ZenCODE configured by `zen`. The app reads the settings, the provider keys,
+  and the saved sessions from the support directory that `zen` writes
+  (`~/.zencode`, or the directory in `ZENCODE_SUPPORT_DIRECTORY`; see
+  [zen.md](zen.md)). It has no setup of its own: run `zen` once in a terminal
+  to configure ZenCODE (`zen --ui` runs the setup first when ZenCODE is not
+  configured). Without a configuration the window says that ZenCODE is not
+  configured and asks you to run `zen` in a terminal, then to start the app
+  again.
+- The app is not sandboxed. It has the access of the user who starts it, as
+  `zen` does, so the workspace access of the Chat API is granted without
+  asking.
+
+## Run and build
+
+On macOS, `zen --ui` opens the app on the current folder, which is the
+workspace of the first window:
+
+```bash
+cd /path/to/your/project
+zen --ui
+```
+
+The first `zen --ui`, and the first one after each ZenCODE update, builds the
+package in release mode from the checkout that `zen` was built from, or from
+the installer copy in `~/.zencode/source/`, into `~/.zencode/app/`: the
+SwiftPM scratch path `app/build` keeps the next builds incremental, and the
+app is installed in `app/current`. The build needs the Swift toolchain and can
+take a few minutes, and the first one needs network access to fetch the
+package dependencies. Then `zen` starts the app as a separate process and exits:
+the terminal returns at once, closing it does not close the app, and each
+`zen --ui` starts another instance. The output of the app goes to
+`~/.zencode/app/ZenCODE.log`; an app that exits within about 1.5 seconds of
+starting is reported in the terminal with the end of that log. When ZenCODE is
+not configured, `zen --ui` runs the setup in the terminal first.
+
+`zen --ui` accepts only the options that the app reads, and forwards them to
+it: `--agent NAME`, `--model MODEL_ID`, `--skills LIST`, and
+`--working-directory PATH` (see [zen.md](zen.md#command-line-options)). For
+example, `zen --ui --agent Reviewer --working-directory ~/Projects/site` opens
+the first window on `~/Projects/site` with the Reviewer agent. An unknown
+agent is reported in the terminal, and the options of the other modes (`-p`,
+`-f`, `--jsonl`, `--acp`, and the limits of a turn) are refused. The app reads
+the same four options from its own command line and ignores the others, such
+as the ones AppKit and Xcode add; a wrong one (an unknown agent, a missing
+value) is shown in the window, without the setup hint.
+
+For development, run the package with `swift run`. It is outside the root
+package: root commands such as `swift build` and `swift test` do not build it.
+Run it from the workspace folder, with the same options after the product
+name:
+
+```bash
+cd /path/to/your/project
+swift run --package-path /path/to/ZenCODE/Sources/ZenApp ZenCODE
+```
+
+From a checkout of ZenCODE, `swift run --package-path Sources/ZenApp ZenCODE`
+opens the checkout itself as the workspace. A release build:
+
+```bash
+swift build -c release --package-path Sources/ZenApp --product ZenCODE
+```
+
+The product is the `ZenCODE` executable. There is no `.app` bundle: the app
+delegate gives the bare executable a regular activation policy, which is what
+gives it a menu bar and a key window. It also sets the ZenCODE icon at launch
+(the symbol on a rounded dark tile, drawn from the `icon.svg` in the resource
+bundle next to the executable, which is why `zen --ui` installs the resource
+bundles with it), so the icon shows in the Dock and in ⌘Tab while the app
+runs, while the Finder shows the bare executable with the generic icon.
+
+## Windows and workspaces
+
+Each window is a workspace with its own session, and the title bar shows the
+session title and the workspace path. **File > Open Folder…** (⌘O) opens a
+window on another folder, or brings forward the window already open on it.
+`/exit` closes a window (it is refused while a turn runs, as in the terminal),
+closing the last window quits the app, and quitting waits for the sessions to
+shut down, for about 5 seconds at most.
+
+## Conversation
+
+The transcript shows what the terminal shows:
+
+- Your prompts, with their attachments, and the slash commands you ran. The
+  prompts a command builds (`/plan`, `/goal`, `/review`, an approved plan, a
+  Planner continuation) are hidden, as in the terminal; a reply you type to
+  one of them shows as your prompt.
+- Assistant text as Markdown: headings, lists, quotes, tables, task lists,
+  links, and fenced code with syntax highlighting. Fences marked `diff` or
+  `patch` show the added and removed lines in color.
+- The model's reasoning, as a `Thinking` block that is open while it streams
+  and collapses to a one-line preview when it ends.
+- Tool calls, one line each with a status glyph, the tool, its target, and,
+  for the calls that ran while the window was watching, the duration. Click a
+  line for the details the tool declares (parameters, code, diff, list) and
+  the bounded output of the result.
+- The file-change summary at the end of a turn, with the patch of each file
+  behind a disclosure and the `/undo` hint. The file artifacts of the turns
+  show in the artifacts sidebar instead.
+- The notices of the commands and of the session operations.
+- The task-graph card (`🫧 Tasks`) when the graph is significant or after
+  `/tasks`, and the sub-agent card (`👥 Sub-Agents`) while sub-agents exist.
+
+The list follows the bottom while a response streams. Scroll up to stop
+following, and a button scrolls back to the latest message. An empty session
+shows the workspace and the model.
+
+The artifacts sidebar, on the right of the window, shows the file artifacts
+of the session: the files each turn created, modified, or deleted, the ones
+of the sub-agents included, grouped by turn (`Turn N · K files`), oldest
+first, one card per file operation with the status icon, the file name and
+its folder, the line counts, and the sub-agent that made the change, if any.
+A card starts collapsed; its disclosure reveals the explanation and the
+diff. The sidebar updates live while a turn runs. The **Artifacts** button at
+the end of the toolbar, the **Show Artifacts** (**Hide Artifacts**) item of
+the **Changes** menu, and `/artifacts` show and hide it; it never opens by
+itself. Whether it shows is a state of the window: it is not saved, and a new
+or loaded session keeps it. Artifacts are runtime-only, so a loaded session
+shows none.
+
+## Composer
+
+The composer is at the bottom of the window.
+
+- Typing `/` suggests the slash commands you can run, and after a command
+  and a space its arguments, as in the terminal.
+- ↑ and ↓ walk the prompts you sent in the window.
+- A prompt sent while a turn runs waits as a `queued` chip above the field,
+  which you can remove, and runs when the turn ends. At most 32 prompts wait:
+  a full queue refuses the prompt with the terminal's message, keeping your
+  draft. A command sent during a turn is never queued: `/help`, `/artifacts`,
+  and `/tasks` (alone, or with `status`, `list`, or `ls`) run at once, beside
+  the turn, and any other command, `/exit` included, is refused with the
+  terminal's message, keeping your draft.
+- The paperclip opens the attachment picker (images and movies), and files
+  dropped on the composer are attached, one `/attach` each. `/attach list` and
+  `/attach delete` work as in the terminal.
+- **Stop** (Esc, ⌘., or the stop button) cancels the turn and refuses the open
+  requests. The queue is kept. While a consent card shows, Esc denies the call
+  instead.
+
+The response language is locked on the first prompt you type in a session, as
+in the terminal: the configured language, else the system one. It is decided
+again after a new or loaded session and after an agent switch.
+
+## Tool consent, menus, and requests
+
+A tool that needs consent shows a card above the composer with the tool, the
+command or title, and the working directory. **Allow once** is the default
+(Return); **Always allow** remembers the choice (across sessions for
+`local.exec`, for the session for the other tools); **Deny** (Esc) refuses the
+call, even when the focus is in the composer. ← and → move the focus; Space
+does not choose, as in the terminal. Return and clicks are ignored for half a
+second after the card appears and after any other key it receives, so you
+pause before Return answers, and key repeats always are, so a keystroke meant
+for the composer cannot approve a call.
+
+The menus of the commands (`/models`, `/think`, `/agents`, `/tools`,
+`/skills`, `/sessions`, `/open`, and the others) open as sheets: ↑ and ↓ move
+the highlight, typing filters the list, Return confirms, and Esc cancels. In a
+menu with checkboxes, Space toggles the highlighted row. A request for a line
+of text is a sheet with a text field. `/open` lists the files, URLs, and
+attachments of the conversation and opens the one you choose with its default
+application.
+
+## Status bar
+
+The line under the composer has the fragments of the terminal status bar, in
+its order and separated by ` · `:
+
+- the model and the thinking level, with a spinner while a turn runs;
+- the context window, `used/max`, with a small gauge;
+- the elapsed time of the turn, live, then the duration of the last response;
+- the token counts (`c:` cached, `p:` prompt, `g:` generated);
+- the throughput, in `tok/s`;
+- the subscription usage (`d:` daily, `w:` weekly), when the provider reports
+  it;
+- the git changes of the workspace (`N files +A -D`), refreshed after each
+  command and after a tool that changed files.
+
+The agent and the workspace are at the other end of the line.
+
+## Sessions
+
+The sidebar lists the current session and the saved sessions of the
+workspace, the newest first, with the age, the number of messages, and the
+model. Click a saved session to load it, or use its context menu to load or
+delete it (a confirmation asks first). **New Session** (⇧⌘N) and **Save**
+(⌘S) run `/sessions new` and `/sessions save`, and are refused while a line
+runs. The rest of `/sessions` (a named snapshot, `compact`, `restore`) is
+typed in the composer.
+
+## Toolbar and menus
+
+The toolbar has buttons for the model, the thinking level, the agent, the
+tools, the skills, the task graph, and a **Changes** menu (show changes, show
+changes with the diff, undo changes, show or hide the artifacts sidebar,
+review changes), **Stop** while a turn runs, and, always last, the
+**Artifacts** button, which shows and hides the artifacts sidebar. The
+**Session** menu has Stop (⌘.) and repeats the model, thinking, agent, tools,
+skills, tasks, changes, undo, and help items. Each item runs the slash
+command it names (the artifacts items toggle the sidebar, as `/artifacts`
+does), so everything is also available from the composer.
+
+## Keyboard shortcuts
+
+| Keys | Where | What it does |
+| --- | --- | --- |
+| Return | Composer | Sends the prompt, or queues it while a turn runs |
+| Shift+Return, Option+Return | Composer | Inserts a new line |
+| ↑, ↓ | Composer | Recalls the previous or next prompt, from the first or last line of the field |
+| ↑, ↓, Tab | Command suggestions | Moves the highlight, completes the highlighted command |
+| Return | Command suggestions | Completes the highlighted command and sends it, unless it takes an argument |
+| Esc | Command suggestions | Hides the list until the next edit |
+| Esc | Window | Denies the tool call while a consent card shows, otherwise stops the turn |
+| ⌘. | Window | Stops the turn |
+| ←, →, Return, Esc | Consent card | Moves the focus, chooses the focused button, denies |
+| ↑, ↓, Space, Return, Esc | Menu sheet | Moves, toggles or chooses, confirms, cancels |
+| ⌘O | Menu bar | Opens a folder in a window |
+| ⇧⌘N | Menu bar | Starts a new session |
+| ⌘S | Menu bar | Saves the session |
+
+## Commands
+
+The app runs the shared slash commands of the Chat API, with a `/artifacts`
+of its own, and `/exit`:
+
+| Commands | Notes |
+| --- | --- |
+| `/help` | Lists the commands the window runs |
+| `/models`, `/think`, `/agents` | Selection sheets |
+| `/tools`, `/skills` | Selection sheets; `/skills` also installs and uninstalls |
+| `/sessions` | List, save, new, compact, delete, restore |
+| `/attach`, `/open` | Attachment picker and files, default application |
+| `/artifacts` | Shows or hides the artifacts sidebar; runs while a turn runs |
+| `/changes`, `/undo`, `/review` | Changes (`/changes diff`), undo, review |
+| `/tasks`, `/plan`, `/goal` | Task graph, planning, and goals |
+| `/exit` | Closes the window; refused while a turn runs |
+
+## Limits
+
+Some features of the terminal chat are not in the app. They stay in the
+terminal:
+
+- `/setup`, `/voice` and dictation, `/telegram`, `/feature`, `/cron`, and
+  `/ds4` are not offered, and answer as unknown commands. `/tools logs`
+  answers that it is not available in the app.
+- The live `@` mentions of the shared chat and the full-access toggle
+  (Ctrl+G) do not exist in the app.
+- There is no `.app` bundle: the app runs as the bare executable that
+  `zen --ui` installs in `~/.zencode/app/current`, from `swift run`, or from a
+  release build.
+- Files are attached while no turn runs: the picker and a drop are refused
+  during one.
+
+## Package layout and tests
+
+`Sources/ZenApp` is a standalone SwiftPM package (`ZenApp`, product
+`ZenCODE`, plus one library product per library target, for the Xcode
+schemes of the previews). It depends on the root package through `path: "../.."`, only on
+its public products `ZenCODECore` and `ToolCore`, and on swift-markdown, which
+the root graph already resolves. The root graph never depends on it.
+
+| Target | Responsibility |
+| --- | --- |
+| `ZenAppTheme` | The palette of the terminal UI as SwiftUI colors, in dark and light, and the glass helpers |
+| `ZenAppMarkdown` | The Markdown renderer on swift-markdown: blocks, tables, diffs, and the syntax highlighter |
+| `ZenAppSession` | The composition and the window model, without SwiftUI: one `ChatSessionHost` over the production runner, one slot per window, the transcript projection, the line routing, and the prompt history |
+| `ZenAppTranscript` | The conversation views: prompts, tool calls, thinking, artifacts, summaries, notices, and the task-graph and sub-agent cards |
+| `ZenAppControls` | The composer, the status bar, the consent card, and the menu and request sheets |
+| `ZenCODEApp` | The app shell: the window group, the menu bar, the sessions sidebar, the artifacts sidebar, the toolbar, and the launch |
+
+Every target has its tests in `Tests/<Target>Tests` (`ZenCODEAppTests` covers
+the pure logic of the shell), and they run on their own:
+
+```bash
+swift test --package-path Sources/ZenApp
+```
+
+### SwiftUI previews in Xcode
+
+Open `Sources/ZenApp/Package.swift` in Xcode. The `#Preview`s are in the
+library targets `ZenAppTranscript` and `ZenAppControls`, and each library
+target is also a library product so that Xcode creates a scheme for it.
+Select the scheme of the file's target (for example `ZenAppTranscript`)
+before you open the canvas: with the `ZenCODE` scheme Xcode tries to run the
+previews in the executable and stops with the `ENABLE_DEBUG_DYLIB` error,
+because a SwiftPM executable target cannot set that build setting. Keep new
+previews in a library target, not in `ZenCODEApp`.
+
+See [embedding.md](embedding.md) for the Chat API the app is built on, and
+[architecture.md](architecture.md#target-layout) for its place in the layout.

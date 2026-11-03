@@ -240,8 +240,9 @@ extension LocalExecPermissionAuthorizer {
     }
 
     /// Replaces the user's home-directory prefix with `~` so paths stay short.
-    private static func abbreviatedHomePath(_ path: String) -> String {
-        let home = NSHomeDirectory()
+    /// `zen --ui` prints its workspace with it too, over an injected home.
+    static func abbreviatedHomePath(_ path: String, homeDirectory: String = NSHomeDirectory()) -> String {
+        let home = homeDirectory
         guard !home.isEmpty else { return path }
         if path == home { return "~" }
         if path.hasPrefix(home + "/") {

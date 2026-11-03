@@ -477,7 +477,58 @@ struct ZenCODECommandLineRunnerTests {
         #expect(help.contains("  --doctor               Print a redacted diagnostic report"))
         #expect(help.contains("  --zen-package-path DIR Source ZenCODE checkout used to install optional features."))
         #expect(help.contains("With -p or -f, piped stdin is supplied as additional context."))
+        #if os(macOS)
+        // `zen --ui` opens the macOS app: in the usage line and in the options.
+        let appUsage = "\(standaloneUsage) [--ui] [--agent NAME]"
+        let appOptionLine = "  --ui                   Open the ZenCODE macOS app (built on first use). Accepts --agent, --model, --skills, --working-directory."
+        #expect(help.components(separatedBy: appUsage).count == 2)
+        #expect(help.components(separatedBy: appOptionLine).count == 2)
+        #expect(help.contains("  --acp                  ACP JSON-RPC over stdio for compatible clients.\n\(appOptionLine)\n"))
+        #else
+        // Elsewhere the option does not exist.
+        #expect(help.contains("\(standaloneUsage) [--agent NAME]"))
+        #expect(!help.contains("--ui"))
+        #endif
     }
+
+    #if os(macOS)
+    @Test
+    func zenExecutableRefusesAnOptionOfAnotherModeWithTheAppBeforeSetup() throws {
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-ui-conflict-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: supportURL)
+        }
+        var environment = ProcessInfo.processInfo.environment
+        environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
+
+        let result = try runZen(zenExecutableURL(), arguments: ["--ui", "-p", "x"], environment: environment)
+
+        #expect(result.exitCode == 1)
+        #expect(String(decoding: result.stderr, as: UTF8.self) == "ZenCODE: Options --ui and -p cannot be combined.\n")
+        #expect(result.stdout.isEmpty)
+        // Refused before the setup gate: nothing was written for setup or the app.
+        #expect(!FileManager.default.fileExists(atPath: supportURL.path))
+    }
+    #else
+    @Test
+    func zenExecutableTreatsTheAppOptionAsUnknownOutsideMacOS() throws {
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-ui-unknown-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: supportURL)
+        }
+        var environment = ProcessInfo.processInfo.environment
+        environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
+
+        let result = try runZen(zenExecutableURL(), arguments: ["--ui"], environment: environment)
+
+        #expect(result.exitCode == 1)
+        #expect(String(decoding: result.stderr, as: UTF8.self) == "ZenCODE: Unknown argument: --ui\n")
+        #expect(result.stdout.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: supportURL.path))
+    }
+    #endif
 
     @Test
     func jsonlIsIgnoredForEveryTextualMetaCommand() throws {

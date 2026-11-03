@@ -10,6 +10,7 @@ zen -p "Summarize the changes"   # one headless turn; final text on stdout
 zen --jsonl -p "Summarize"       # one headless turn; JSON Lines events on stdout
 zen -f /path/to/prompt.md        # one headless turn; prompt read from a file
 zen --acp                        # ACP over stdio for compatible clients
+zen --ui                         # the ZenCODE macOS app (macOS only)
 ```
 
 Standalone `zen` uses providers/models from `~/.zencode/settings.json`.
@@ -196,7 +197,7 @@ exact paths involved.
 ## Command Line Options
 
 ```text
-zen [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N]
+zen [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--ui] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N]
 ```
 
 - `-p, --prompt PROMPT`: run one non-interactive turn. Redirected stdin, when
@@ -215,6 +216,20 @@ zen [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] [--install-features [
 - `--doctor`: print a redacted, read-only diagnostic report and exit. It never
   starts setup, accesses a provider, creates configuration, or writes a log.
 - `--acp`: run ACP JSON-RPC over stdio.
+- `--ui` (macOS only): open [ZenCODE for macOS](app.md), the SwiftUI app. On
+  first use and after each ZenCODE update, `zen` builds the app (the package
+  `Sources/ZenApp`) from the checkout it was built from, or from the installer
+  copy in `~/.zencode/source/`, into `~/.zencode/app/`; the build needs the
+  Swift toolchain and can take a few minutes, and the first one needs network
+  access to fetch the package dependencies. Then `zen` starts the app
+  detached and exits, so the terminal returns at once; every invocation starts
+  a new instance. Only `--agent`, `--model`, `--skills`, and
+  `--working-directory` are accepted, and they are forwarded to the app; the
+  options of the other modes are refused, and an unknown agent is reported in
+  the terminal. When ZenCODE is not configured, setup runs first. The output
+  of the app goes to `~/.zencode/app/ZenCODE.log`; an app that exits within
+  about 1.5 seconds of starting is reported in the terminal with the end of
+  that log. On Linux, `--ui` is an unknown argument.
 - `--install-features [id,id,...]`: copy the requested optional feature package(s), build their release products, and enable them. With no IDs in an interactive terminal, opens the optional-feature picker.
 - `--no-features`: skip optional-feature installation when used with `--install-features`.
 - `--zen-package-path DIR`: use this ZenCODE checkout as the feature source and rewritten local package dependency. This is useful after a manual installation; platform installers preserve their checkout under `~/.zencode/source/` automatically.
