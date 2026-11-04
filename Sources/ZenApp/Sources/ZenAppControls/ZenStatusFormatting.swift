@@ -423,16 +423,6 @@ public enum ZenStatusFormatting {
             .joined(separator: separator)
     }
 
-    /// The trailing text: agent name and abbreviated workspace, joined by
-    /// `" · "`; `nil` when neither is known.
-    public static func trailingText(for state: ZenStatusBarState) -> String? {
-        let parts = [
-            state.agentName.flatMap { $0.isEmpty ? nil : $0 },
-            state.workspace.map { abbreviatedPath($0.path(percentEncoded: false)) }
-        ].compactMap(\.self)
-        return parts.isEmpty ? nil : parts.joined(separator: separator)
-    }
-
     /// The context-window fill fraction, clamped to 0...1.
     static func contextFraction(usedTokens: Int?, maxTokens: Int?) -> Double? {
         guard let maxTokens, maxTokens > 0 else {

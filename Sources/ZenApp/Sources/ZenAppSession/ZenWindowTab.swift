@@ -12,8 +12,7 @@ import Foundation
 /// present and never closed) or the transcript of one sub-agent the operator
 /// opened (``subAgent(_:)``, by agent id).
 public enum ZenWindowTab: Hashable, Sendable {
-    /// The conversation, with the composer, the consent card, and the status
-    /// bar.
+    /// The conversation, with the composer and the status bar.
     case chat
     /// The read-only transcript of the sub-agent with this id.
     case subAgent(String)

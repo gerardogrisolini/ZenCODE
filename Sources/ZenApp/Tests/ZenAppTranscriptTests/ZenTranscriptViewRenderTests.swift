@@ -106,12 +106,24 @@ struct ZenTranscriptViewRenderTests {
     }
 
     @Test("every public view lays out in light and dark", arguments: [ColorScheme.light, .dark])
-    func everyViewLaysOut(scheme: ColorScheme) {
+    func everyViewLaysOut(scheme: ColorScheme) throws {
         let views: [AnyView] = [
             AnyView(ZenUserPromptView(
                 text: "Hello",
                 attachments: [AgentRuntimeAttachment(kind: .image, originalFilename: "a.png")],
                 origin: .telegram
+            )),
+            AnyView(ZenUserPromptView(
+                text: "Look",
+                attachments: [
+                    AgentRuntimeAttachment(
+                        kind: .image,
+                        data: try ZenTestImages.png(width: 800, height: 400),
+                        originalFilename: "shot.png"
+                    ),
+                    AgentRuntimeAttachment(kind: .video, originalFilename: "clip.mov")
+                ],
+                origin: .app
             )),
             AnyView(ZenCommandLineView(text: "/tasks show t1")),
             AnyView(ZenAssistantTextView(text: "**Done**", isStreaming: true)),

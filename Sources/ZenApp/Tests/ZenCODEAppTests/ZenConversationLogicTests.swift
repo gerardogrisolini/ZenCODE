@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import SwiftUI
 import Testing
 import ToolCore
 import ZenAppSession
@@ -44,14 +45,27 @@ private func toolCall(_ id: String, name: String = "local.exec", completed: Bool
 private func metrics(
     offsetY: CGFloat,
     contentHeight: CGFloat,
-    containerHeight: CGFloat = 500,
+    viewportHeight: CGFloat = 500,
     bottomInset: CGFloat = 0
 ) -> ZenScrollMetrics {
     ZenScrollMetrics(
         offsetY: offsetY,
         contentHeight: contentHeight,
-        containerHeight: containerHeight,
+        viewportHeight: viewportHeight,
         bottomInset: bottomInset
+    )
+}
+
+/// A geometry as the scroll view of a window reports it on macOS: 40 points
+/// of bars over the top, 150 points of bottom chrome over the bottom, and a
+/// container of the 310 points between them (a 500-point viewport). The
+/// offset starts at -40 and stops at `contentHeight + 150 - 500`.
+private func windowGeometry(offsetY: CGFloat, contentHeight: CGFloat) -> ScrollGeometry {
+    ScrollGeometry(
+        contentOffset: CGPoint(x: 0, y: offsetY),
+        contentSize: CGSize(width: 600, height: contentHeight),
+        contentInsets: EdgeInsets(top: 40, leading: 0, bottom: 150, trailing: 0),
+        containerSize: CGSize(width: 600, height: 310)
     )
 }
 
@@ -121,6 +135,60 @@ struct ZenScrollFollowTests {
         let above = metrics(offsetY: 500, contentHeight: 1000, bottomInset: 60)
         #expect(above.distanceFromBottom == 60)
         #expect(!above.isAtBottom)
+    }
+
+    @Test("a window's geometry counts the bottom chrome's inset once: where the scroll stops is the bottom")
+    func geometryCountsTheInsetsOnce() {
+        let end = ZenScrollMetrics(windowGeometry(offsetY: 650, contentHeight: 1000))
+        #expect(end.viewportHeight == 500)
+        #expect(end.distanceFromBottom == 0)
+        #expect(end.isAtBottom)
+
+        let top = ZenScrollMetrics(windowGeometry(offsetY: -40, contentHeight: 1000))
+        #expect(top.distanceFromBottom == 690)
+        #expect(!top.isAtBottom)
+    }
+
+    @Test("content that grows under the bottom chrome is scrolled into view and keeps being followed")
+    func growthUnderTheBottomChrome() {
+        // The content first fits above the chrome, then grows past it.
+        let fits = ZenScrollMetrics(windowGeometry(offsetY: -40, contentHeight: 300))
+        let grown = ZenScrollMetrics(windowGeometry(offsetY: -40, contentHeight: 340))
+        #expect(ZenScrollMetrics.followStep(old: fits, new: grown, isFollowing: true) == .scrollToBottom)
+
+        // The scroll stops at 340 + 150 - 500 = -10: the bottom, still
+        // followed (no "Jump to latest").
+        let scrolled = ZenScrollMetrics(windowGeometry(offsetY: -10, contentHeight: 340))
+        #expect(ZenScrollMetrics.followStep(old: grown, new: scrolled, isFollowing: true) == .setFollowing(true))
+    }
+
+    @Test("the visible height is the chat between the bars")
+    func visibleHeight() {
+        let metrics = ZenScrollMetrics(windowGeometry(offsetY: 650, contentHeight: 1000))
+        #expect(metrics.topInset == 40)
+        #expect(metrics.visibleHeight == 310)
+    }
+
+    @Test("the view is far from the bottom only with more than a visible height of chat under it")
+    func farFromTheBottom() {
+        // The bottom is at 650; the visible height is 310.
+        let atBottom = ZenScrollMetrics(windowGeometry(offsetY: 650, contentHeight: 1000))
+        #expect(!atBottom.isFarFromBottom)
+
+        // Scrolled up, but less than a visible height: no button.
+        let scrolledUp = ZenScrollMetrics(windowGeometry(offsetY: 400, contentHeight: 1000))
+        #expect(!scrolledUp.isAtBottom)
+        #expect(!scrolledUp.isFarFromBottom)
+        let exactlyOneHeight = ZenScrollMetrics(windowGeometry(offsetY: 340, contentHeight: 1000))
+        #expect(!exactlyOneHeight.isFarFromBottom)
+
+        // More than a visible height under the view: the button.
+        let farUp = ZenScrollMetrics(windowGeometry(offsetY: 339, contentHeight: 1000))
+        #expect(farUp.isFarFromBottom)
+
+        // Content that grows while the operator reads far enough above.
+        let grownUnderTheReader = ZenScrollMetrics(windowGeometry(offsetY: 400, contentHeight: 1100))
+        #expect(grownUnderTheReader.isFarFromBottom)
     }
 }
 
@@ -285,7 +353,7 @@ struct ZenEscapeRoutingTests {
         workingDirectory: "/tmp"
     ))
 
-    @Test("Esc with a consent card denies its request once")
+    @Test("Esc with a tool consent waiting denies its request once")
     func consentDenies() {
         let id = UUID()
         #expect(ZenEscapeAction(pendingRequestID: id, kind: consent) == .denyConsent(requestID: id))

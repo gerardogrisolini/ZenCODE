@@ -14,8 +14,8 @@ import ZenCODECore
 
 @testable import ZenAppControls
 
-@Suite("ZenConsentCard")
-struct ZenConsentCardTests {
+@Suite("ZenConsentSheet")
+struct ZenConsentSheetTests {
     private func request(
         toolName: String = "local.exec",
         title: String = "Run a command",
@@ -65,6 +65,7 @@ struct ZenConsentCardTests {
             homeDirectory: "/Users/me"
         )
         #expect(content.title == "Tool consent: local.exec")
+        #expect(content.question == "Allow the agent to run this command?")
         #expect(content.executable == "git")
         #expect(content.arguments == " push --force-with-lease origin main")
         #expect(content.metadata == ["⊙ ~/Projects/ZenCODE", "always · remembered across sessions"])
@@ -82,10 +83,24 @@ struct ZenConsentCardTests {
             homeDirectory: "/Users/me"
         )
         #expect(content.executable == nil)
+        #expect(content.question == "Allow the agent to use this tool?")
         #expect(content.metadata == ["Delete Sources/Old", "always · this session only"])
     }
 
-    @Test("control characters cannot spoof the card")
+    @Test("the command shrinks to its text, at least one line and at most eight, and scrolls the rest")
+    func commandHeight() {
+        #expect(ZenConsentContent.maximumVisibleCommandLines == 8)
+        // Not measured yet, or shorter than a line: one line.
+        #expect(ZenConsentContent.commandHeight(contentHeight: 0, lineHeight: 16) == 16)
+        // Up to eight lines: the text's height.
+        #expect(ZenConsentContent.commandHeight(contentHeight: 48, lineHeight: 16) == 48)
+        #expect(ZenConsentContent.commandHeight(contentHeight: 128, lineHeight: 16) == 128)
+        // A longer command (a heredoc collapsed to one line): eight lines.
+        #expect(ZenConsentContent.commandHeight(contentHeight: 129, lineHeight: 16) == 128)
+        #expect(ZenConsentContent.commandHeight(contentHeight: 20_000, lineHeight: 16) == 128)
+    }
+
+    @Test("control characters cannot spoof the sheet")
     func sanitization() {
         let content = ZenConsentContent(
             request: request(command: "rm\u{1B}[2J -rf\r/", workingDirectory: "/tmp/\u{07}x"),
@@ -117,7 +132,7 @@ struct ZenConsentGuardTests {
         ZenConsentGuard(now: { clock.now })
     }
 
-    @Test("Return and clicks are ignored for 0.5 s after the card appears")
+    @Test("Return and clicks are ignored for 0.5 s after the sheet appears")
     func gracePeriod() {
         let clock = ManualClock()
         var consentGuard = makeGuard(clock)
@@ -143,7 +158,7 @@ struct ZenConsentGuardTests {
         #expect(consentGuard.hasDecided)
     }
 
-    @Test("the card answers once")
+    @Test("the sheet answers once")
     func answersOnce() {
         let clock = ManualClock()
         var consentGuard = makeGuard(clock)
@@ -221,7 +236,7 @@ struct ZenConsentGuardTests {
         clock.advance(by: .seconds(1))
         #expect(consentGuard.isArmed)
 
-        // A key the card does not handle disarms it again.
+        // A key the sheet does not handle disarms it again.
         consentGuard.noteTyping()
         #expect(!consentGuard.isArmed)
         #expect(consentGuard.remainingGrace == .milliseconds(500))
@@ -310,7 +325,7 @@ struct ZenPendingRequestsTests {
             command: "ls",
             workingDirectory: "/tmp"
         )
-        #expect(ZenPendingRequestPresentation(kind: .toolConsent(consent)) == .inlineConsent)
+        #expect(ZenPendingRequestPresentation(kind: .toolConsent(consent)) == .consent(consent))
     }
 
     @Test("workspace access is granted and an unknown kind refused without asking")
@@ -327,7 +342,16 @@ struct ZenPendingRequestsTests {
             .menu(state),
             .textLine(prompt: "Name:"),
             .attachmentPicker(startingAt: URL(filePath: "/tmp")),
-            .inlineConsent
+            .consent(AgentToolAuthorizationRequest(
+                turnID: nil,
+                sessionID: nil,
+                toolCallID: "c",
+                toolName: "local.exec",
+                title: "",
+                kind: "",
+                command: "ls",
+                workingDirectory: "/tmp"
+            ))
         ]
         for presentation in waiting {
             #expect(presentation.automaticAnswer == nil)

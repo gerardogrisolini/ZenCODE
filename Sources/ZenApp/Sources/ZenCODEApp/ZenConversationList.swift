@@ -19,13 +19,18 @@ import ZenCODECore
 struct ZenScrollMetrics: Equatable {
     var offsetY: CGFloat
     var contentHeight: CGFloat
-    var containerHeight: CGFloat
+    /// The height of the whole scroll view, the insets of the bars over its
+    /// edges included (the bottom chrome, the tab bar, the toolbar).
+    var viewportHeight: CGFloat
     var bottomInset: CGFloat
+    var topInset: CGFloat
 
     /// How far the visible region ends above the end of the content
-    /// (`0` or less at the bottom, or when the content fits).
+    /// (`0` or less at the bottom, or when the content fits). At the bottom
+    /// the end of the content sits right above the bottom inset, so the last
+    /// line stays above the composer.
     var distanceFromBottom: CGFloat {
-        contentHeight + bottomInset - containerHeight - offsetY
+        contentHeight + bottomInset - viewportHeight - offsetY
     }
 
     /// The distance under which the view counts as at the bottom.
@@ -39,26 +44,53 @@ struct ZenScrollMetrics: Equatable {
         distanceFromBottom <= Self.bottomThreshold
     }
 
-    init(offsetY: CGFloat, contentHeight: CGFloat, containerHeight: CGFloat, bottomInset: CGFloat) {
-        self.offsetY = offsetY
-        self.contentHeight = contentHeight
-        self.containerHeight = containerHeight
-        self.bottomInset = bottomInset
+    /// The height of the chat that shows between the bars: above the bottom
+    /// chrome, under the tab bar and the toolbar.
+    var visibleHeight: CGFloat {
+        max(0, viewportHeight - topInset - bottomInset)
     }
 
+    /// More than a whole visible height of chat is left under the view: the
+    /// "Jump to latest" button shows only then (and only while the view does
+    /// not follow the bottom).
+    var isFarFromBottom: Bool {
+        distanceFromBottom > visibleHeight
+    }
+
+    init(
+        offsetY: CGFloat,
+        contentHeight: CGFloat,
+        viewportHeight: CGFloat,
+        bottomInset: CGFloat,
+        topInset: CGFloat = 0
+    ) {
+        self.offsetY = offsetY
+        self.contentHeight = contentHeight
+        self.viewportHeight = viewportHeight
+        self.bottomInset = bottomInset
+        self.topInset = topInset
+    }
+
+    /// The metrics of `geometry`. Its `containerSize` leaves the insets out
+    /// (on macOS the scroll view reports the height between the bars), so
+    /// the insets are added back: counting the bottom inset only in
+    /// ``distanceFromBottom`` keeps the bottom where the scroll view stops.
     init(_ geometry: ScrollGeometry) {
         self.init(
             offsetY: geometry.contentOffset.y,
             contentHeight: geometry.contentSize.height,
-            containerHeight: geometry.containerSize.height,
-            bottomInset: geometry.contentInsets.bottom
+            viewportHeight: geometry.containerSize.height
+                + geometry.contentInsets.top
+                + geometry.contentInsets.bottom,
+            bottomInset: geometry.contentInsets.bottom,
+            topInset: geometry.contentInsets.top
         )
     }
 
-    /// The layout changed (content or container), not only the offset.
+    /// The layout changed (content or viewport), not only the offset.
     func hasLayoutChange(from old: ZenScrollMetrics) -> Bool {
         contentHeight != old.contentHeight
-            || containerHeight != old.containerHeight
+            || viewportHeight != old.viewportHeight
             || bottomInset != old.bottomInset
     }
 
@@ -98,12 +130,15 @@ struct ZenConversationList: View {
 
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var isFollowing = true
+    /// ``ZenScrollMetrics/isFarFromBottom``, set only when it changes.
+    @State private var isFarFromBottom = false
     @State private var durations = ZenToolDurations()
     @State private var rowCache = ZenConversationRowCache()
 
     var body: some View {
         let transcript = session.transcript
         let rows = rowCache.rows(for: transcript)
+        let showsJumpToLatest = !isFollowing && isFarFromBottom
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
                 if transcript.isEmpty {
@@ -135,7 +170,7 @@ struct ZenConversationList: View {
             jumpToLatest(animated: false)
         }
         .overlay(alignment: .bottom) {
-            if !isFollowing {
+            if showsJumpToLatest {
                 ZenJumpToLatestButton {
                     jumpToLatest(animated: true)
                 }
@@ -143,7 +178,7 @@ struct ZenConversationList: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
         }
-        .animation(.easeOut(duration: 0.15), value: isFollowing)
+        .animation(.easeOut(duration: 0.15), value: showsJumpToLatest)
     }
 
     private func follow(old: ZenScrollMetrics, new: ZenScrollMetrics) {
@@ -154,6 +189,9 @@ struct ZenConversationList: View {
             if isFollowing != following {
                 isFollowing = following
             }
+        }
+        if isFarFromBottom != new.isFarFromBottom {
+            isFarFromBottom = new.isFarFromBottom
         }
     }
 
@@ -169,8 +207,10 @@ struct ZenConversationList: View {
     }
 }
 
-/// The "Jump to latest" button of a list that stopped following its bottom:
-/// the conversation and the transcript of a sub-agent tab.
+/// The "Jump to latest" button of a list that stopped following its bottom
+/// and has more than a visible height of content left under the view
+/// (``ZenScrollMetrics/isFarFromBottom``): the conversation and the
+/// transcript of a sub-agent tab.
 struct ZenJumpToLatestButton: View {
     let action: @MainActor () -> Void
 

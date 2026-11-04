@@ -55,12 +55,15 @@ struct ZenSubAgentTabView: View {
 
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var isFollowing = true
+    /// ``ZenScrollMetrics/isFarFromBottom``, set only when it changes.
+    @State private var isFarFromBottom = false
     @State private var durations = ZenToolDurations()
     @State private var rowCache = ZenConversationRowCache()
 
     var body: some View {
         let items = model.items
         let rows = rowCache.rows(for: items)
+        let showsJumpToLatest = !isFollowing && isFarFromBottom
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
                 ZenSubAgentDetailSlot(model: model)
@@ -82,7 +85,7 @@ struct ZenSubAgentTabView: View {
             durations.observe(items)
         }
         .overlay(alignment: .bottom) {
-            if !isFollowing {
+            if showsJumpToLatest {
                 ZenJumpToLatestButton {
                     jumpToLatest()
                 }
@@ -90,7 +93,7 @@ struct ZenSubAgentTabView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
         }
-        .animation(.easeOut(duration: 0.15), value: isFollowing)
+        .animation(.easeOut(duration: 0.15), value: showsJumpToLatest)
     }
 
     /// Follows the bottom without animation, so a tab that is not shown only
@@ -103,6 +106,9 @@ struct ZenSubAgentTabView: View {
             if isFollowing != following {
                 isFollowing = following
             }
+        }
+        if isFarFromBottom != new.isFarFromBottom {
+            isFarFromBottom = new.isFarFromBottom
         }
     }
 

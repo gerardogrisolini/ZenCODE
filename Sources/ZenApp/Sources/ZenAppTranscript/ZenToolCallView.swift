@@ -61,7 +61,6 @@ public struct ZenToolCallView: View {
     private func compactLine(status: ZenToolCallStatus) -> some View {
         let line = ZenToolCallFormatting.compactLine(for: call)
         var runs = [
-            ZenTextRun(text: ToolCallPresentation.toolIcon(for: call.name) + " ", color: palette.toolTitle),
             ZenTextRun(text: line.title, color: palette.toolTitle, isBold: true)
         ]
         if let target = line.target {

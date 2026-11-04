@@ -2,8 +2,8 @@
 //  ZenSharedChatPanel.swift
 //  ZenApp
 //
-//  The shared-chat panel of a window, above the consent card and the
-//  composer in the conversation: the terminal's reader dock. Closed, it shows
+//  The shared-chat panel of a window, above the composer in the
+//  conversation: the terminal's reader dock. Closed, it shows
 //  one row while messages wait unread; open, it shows one message at a time,
 //  with its author and route, and the reader keys of the terminal (← → Home
 //  End between messages, ↑ ↓ to scroll the message), even while the composer

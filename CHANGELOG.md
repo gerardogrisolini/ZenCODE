@@ -200,10 +200,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   session waits for an answer; the tabs are not saved, and a new or loaded
   session closes them. The file artifacts show in a sidebar on the right,
   grouped by turn, that the toolbar button or `/artifacts` shows and hides.
-  Tool consent is a card in the Chat tab (Allow once, Always allow, Deny), and
-  menus and text requests are sheets of the window. The composer completes
+  Tool consent (Allow once, Always allow, Deny, with the command in a code
+  box that scrolls past eight lines), menus, and text requests are sheets of
+  the window, over any tab. The composer completes
   slash commands, recalls the prompt history, attaches files (picker, drop, or
-  `/attach`), and queues the prompts sent while a turn runs; Esc stops the
+  `/attach`; an attached image shows small in the prompt and opens on a click,
+  a video plays in Quick Look), and queues the prompts sent while a turn runs; Esc stops the
   turn in the Chat tab and does nothing in a sub-agent tab, and ⌘. stops it
   from any tab. A status bar like the terminal's, a sidebar of the current
   and saved sessions, and a toolbar and Session menu for `/models`, `/think`,
@@ -212,8 +214,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `/setup`, `/voice`, `/telegram`, `/feature`, `/cron`, `/ds4`, and
   `/tools logs` stay in the terminal. See [Docs/app.md](Docs/app.md).
 - The shared chat in the macOS app. Each window follows the live chat room of
-  its session. A `Chat` panel in the Chat tab, above the consent card and the
-  composer, shows the room's messages one at a time: `Chat · i/N · U new`, the
+  its session. A `Chat` panel in the Chat tab, above the composer, shows the
+  room's messages one at a time: `Chat · i/N · U new`, the
   buttons for the previous and the next message, `Author: Worker [18:05:09] →
   Coordinator` (the terminal reader's label), and the text, plain and
   selectable. It is invisible while it is closed and every message is read, one

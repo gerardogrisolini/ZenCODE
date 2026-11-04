@@ -68,9 +68,12 @@ struct ZenMenuCommands: Commands {
             Divider()
 
             Group {
+                Button("Agents…") { session?.run(ZenSessionCommand.agents) }
+
+                Divider()
+
                 Button("Models…") { session?.run(ZenSessionCommand.models) }
                 Button("Thinking…") { session?.run(ZenSessionCommand.thinking) }
-                Button("Agents…") { session?.run(ZenSessionCommand.agents) }
 
                 Divider()
 

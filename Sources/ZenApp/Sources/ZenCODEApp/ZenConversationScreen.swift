@@ -3,13 +3,13 @@
 //  ZenApp
 //
 //  The detail of a window: the tab bar, the conversation with the floating
-//  bottom chrome (shared-chat panel, consent card, composer, status bar) and
-//  the open sub-agent tabs, the artifacts sidebar on their right, the
-//  toolbar, and Esc, which in the conversation denies the tool call a consent
-//  card asks about and otherwise stops the turn, and in a sub-agent tab does
-//  nothing. While the shared-chat reader is open in the conversation, the
-//  unmodified ← → Home End move between its messages and ↑ ↓ scroll the one
-//  shown, even from the composer, as in the terminal.
+//  bottom chrome (shared-chat panel, composer, status bar) and the open
+//  sub-agent tabs, the artifacts sidebar on their right, the toolbar, and
+//  Esc, which in the conversation denies a waiting tool consent (its sheet
+//  answers Esc itself) and otherwise stops the turn, and in a sub-agent tab
+//  does nothing. While the shared-chat reader is open in the conversation,
+//  the unmodified ← → Home End move between its messages and ↑ ↓ scroll the
+//  one shown, even from the composer, as in the terminal.
 //
 
 import Foundation
@@ -19,10 +19,11 @@ import ZenAppSession
 import ZenAppTheme
 import ZenCODECore
 
-/// What Esc does in a window, as in the terminal: while a consent card shows,
-/// it denies the call the card asks about (the card's own Esc answer);
-/// otherwise it stops the turn. ⌘. and the stop buttons always stop. Esc acts
-/// only in the conversation: a sub-agent tab consumes it and does nothing.
+/// What Esc does in a window, as in the terminal: while a tool consent waits,
+/// it denies the call (the answer of the consent sheet's own Esc, which
+/// handles the key while it shows); otherwise it stops the turn. ⌘. and the
+/// stop buttons always stop. Esc acts only in the conversation: a sub-agent
+/// tab consumes it and does nothing.
 enum ZenEscapeAction: Equatable {
     /// Answer the consent request `requestID` with ``consentAnswer``.
     case denyConsent(requestID: UUID)
@@ -32,7 +33,7 @@ enum ZenEscapeAction: Equatable {
     /// included): a sub-agent tab.
     case consume
 
-    /// The answer Esc gives a consent request: deny once, as the card's Esc.
+    /// The answer Esc gives a consent request: deny once, as the sheet's Esc.
     static let consentAnswer: ChatPendingRequest.Answer = .consent(ZenConsentChoice.escapeDecision)
 
     /// The action for the request the window waits for: its id and kind,
@@ -64,7 +65,7 @@ enum ZenEscapeAction: Equatable {
 /// artifacts sidebar as its inspector.
 ///
 /// The conversation stays alive while a sub-agent tab shows (its scroll
-/// position, its draft, its consent card), hidden and inert
+/// position, its draft), hidden and inert
 /// (``View/zenTabContent(isSelected:)``), and so does every open sub-agent
 /// tab. The body reads the selected tab and the pending request only (for the
 /// focus); the status, the draft, the queue, the commands, the tabs, the
@@ -101,13 +102,13 @@ struct ZenConversationScreen: View {
             ZenArtifactsSidebar(session: session)
                 .inspectorColumnWidth(min: 280, ideal: 420, max: 800)
         }
-        // The composer's own Esc (dismissing the suggestion list) and the
-        // consent card's Esc (deny) handle the key first. The composer
+        // The composer's own Esc (dismissing the suggestion list) handles
+        // the key first. The composer
         // ignores any other Esc, which reaches the key press handler;
         // `onExitCommand` covers Esc without a focused field. Neither acts
         // while an input method composes: its Esc cancels the composition.
         // A sub-agent tab consumes Esc and does nothing; the window's sheets
-        // handle their own Esc.
+        // (the consent sheet's Esc denies) handle their own Esc.
         .onKeyPress(.escape, phases: .down) { _ in
             guard !ZenComposerLogic.focusedInputHasMarkedText() else { return .ignored }
             perform(escapeAction)
@@ -128,8 +129,7 @@ struct ZenConversationScreen: View {
             }
         }
         // Back in the conversation the composer takes the focus again,
-        // unless a request waits: its consent card (shown again) or its
-        // sheet takes it.
+        // unless a request waits: its sheet has it.
         .onChange(of: session.selectedTab) { _, tab in
             if tab == .chat, session.pendingRequest == nil {
                 isComposerFocused = true
@@ -159,8 +159,10 @@ struct ZenConversationScreen: View {
 }
 
 /// The floating chrome under the conversation, in one glass container: the
-/// shared-chat panel (``ZenSharedChatPanel``), the consent card, the composer
-/// (which does not add a container of its own), and the status bar.
+/// shared-chat panel (``ZenSharedChatPanel``), the composer (which does not
+/// add a container of its own), and the status bar. A tool consent is a sheet
+/// of the window (``ZenConsentSheet``), so it never changes the height of the
+/// chrome.
 ///
 /// It owns the window's reader keys: the composer and the panel hand them
 /// over (``ZenComposerActions/readerKey``), and while the reader is open in
@@ -180,7 +182,6 @@ struct ZenBottomChrome: View {
         GlassEffectContainer(spacing: 10) {
             VStack(alignment: .leading, spacing: 8) {
                 ZenSharedChatPanel(session: session, scroller: scroller, readerKey: readerKey)
-                ZenConsentSlot(session: session)
                 ZenWindowComposer(session: session, focus: focus, didSubmit: didSubmit, readerKey: readerKey)
                 ZenWindowStatusBar(session: session)
             }
@@ -203,26 +204,6 @@ struct ZenBottomChrome: View {
                 navigate: { session.navigateSharedChat($0) },
                 scroll: { scroller.scroll($0) }
             )
-        }
-    }
-}
-
-/// The consent card of the tool call the session waits for, when it waits
-/// for one and the conversation shows: back from a sub-agent tab the card
-/// appears again, so it takes the focus and its grace period starts over.
-struct ZenConsentSlot: View {
-    let session: ZenWindowSession
-
-    var body: some View {
-        if session.selectedTab == .chat,
-           let request = session.pendingRequest,
-           case let .toolConsent(consentRequest) = request.kind {
-            ZenConsentCard(request: consentRequest) { decision in
-                session.answer(request.id, with: decision.map(ChatPendingRequest.Answer.consent))
-            }
-            // A new card (and a new answer) for every request, even when two
-            // requests carry the same command.
-            .id(request.id)
         }
     }
 }
@@ -301,12 +282,10 @@ extension ZenStatusBarState {
             turnStartedAt: status.turnStartedAt,
             modelID: status.modelID,
             thinking: status.thinking,
-            agentName: status.agentName,
             metrics: status.metrics,
             contextWindow: status.contextWindow,
             subscriptionUsage: status.subscriptionUsage,
-            gitStatus: status.gitStatus,
-            workspace: status.workspace
+            gitStatus: status.gitStatus
         )
     }
 }

@@ -22,8 +22,6 @@ public struct ZenStatusBarState: Equatable, Sendable {
     public var modelID: String?
     /// The thinking selection shown after the model name.
     public var thinking: AgentThinkingSelection?
-    /// The selected agent, shown at the trailing edge.
-    public var agentName: String?
     /// The latest generation metrics of the session.
     public var metrics: DirectAgentGenerationMetrics?
     /// The latest context-window status.
@@ -32,31 +30,25 @@ public struct ZenStatusBarState: Equatable, Sendable {
     public var subscriptionUsage: DirectAgentSubscriptionUsageStatus?
     /// The git working-tree summary of the workspace.
     public var gitStatus: TerminalGitStatusSummary?
-    /// The workspace folder, shown abbreviated at the trailing edge.
-    public var workspace: URL?
 
     public init(
         isGenerating: Bool = false,
         turnStartedAt: Date? = nil,
         modelID: String? = nil,
         thinking: AgentThinkingSelection? = nil,
-        agentName: String? = nil,
         metrics: DirectAgentGenerationMetrics? = nil,
         contextWindow: DirectAgentContextWindowStatus? = nil,
         subscriptionUsage: DirectAgentSubscriptionUsageStatus? = nil,
-        gitStatus: TerminalGitStatusSummary? = nil,
-        workspace: URL? = nil
+        gitStatus: TerminalGitStatusSummary? = nil
     ) {
         self.isGenerating = isGenerating
         self.turnStartedAt = turnStartedAt
         self.modelID = modelID
         self.thinking = thinking
-        self.agentName = agentName
         self.metrics = metrics
         self.contextWindow = contextWindow
         self.subscriptionUsage = subscriptionUsage
         self.gitStatus = gitStatus
-        self.workspace = workspace
     }
 }
 
@@ -66,8 +58,7 @@ public struct ZenStatusBarState: Equatable, Sendable {
 /// (formatted by ``ZenStatusFormatting``): a spinner while generating, model
 /// and thinking, the context window with a small gauge, the live elapsed time
 /// (refreshed every second) or the last response duration, token counts,
-/// throughput, subscription usage, and the git summary. The trailing side
-/// shows the agent name and the abbreviated workspace.
+/// throughput, subscription usage, and the git summary.
 public struct ZenStatusBar: View {
     @Environment(\.zenPalette) private var palette
     private let state: ZenStatusBarState
@@ -86,12 +77,6 @@ public struct ZenStatusBar: View {
                 leading(now: Date())
             }
             Spacer(minLength: 12)
-            if let trailing = ZenStatusFormatting.trailingText(for: state) {
-                Text(trailing)
-                    .foregroundStyle(palette.textMuted)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
         }
         .font(.system(.caption, design: .monospaced))
         .monospacedDigit()
@@ -182,7 +167,6 @@ struct ZenContextGauge: View {
         turnStartedAt: Date().addingTimeInterval(-42),
         modelID: "remote-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
         thinking: .high,
-        agentName: "Developer",
         metrics: DirectAgentGenerationMetrics(
             promptTokenCount: 120,
             cachedPromptTokenCount: 800,
@@ -204,8 +188,7 @@ struct ZenContextGauge: View {
             dailyUsedPercent: 12,
             weeklyUsedPercent: 4.5
         ),
-        gitStatus: TerminalGitStatusSummary(changedFileCount: 3, additions: 12, deletions: 4),
-        workspace: URL(filePath: NSHomeDirectory()).appending(path: "Projects/ZenCODE")
+        gitStatus: TerminalGitStatusSummary(changedFileCount: 3, additions: 12, deletions: 4)
     ))
     .padding()
     .frame(width: 900)
@@ -218,8 +201,7 @@ struct ZenContextGauge: View {
             promptTokenCount: 15_000,
             completionTokenCount: 20_000,
             responseDurationSeconds: 12
-        ),
-        workspace: URL(filePath: "/tmp/project")
+        )
     ))
     .padding()
     .frame(width: 700)

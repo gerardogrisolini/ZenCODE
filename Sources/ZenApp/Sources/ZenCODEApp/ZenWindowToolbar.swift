@@ -2,11 +2,11 @@
 //  ZenWindowToolbar.swift
 //  ZenApp
 //
-//  The glass toolbar of a window: the session's selections (model, thinking,
-//  agent), its capabilities (tools, skills), its work (tasks, changes), Stop,
-//  and, always last, the artifacts sidebar toggle. Every other item runs a
-//  slash command; the menus a command needs arrive as pending requests and
-//  open as sheets.
+//  The glass toolbar of a window: the agent, the session's other selections
+//  (model, thinking), its capabilities (tools, skills), its work (tasks,
+//  changes), Stop, and, always last, the artifacts sidebar toggle. Every other
+//  item runs a slash command; the menus a command needs arrive as pending
+//  requests and open as sheets.
 //
 
 import Foundation
@@ -32,13 +32,25 @@ enum ZenSessionCommand {
 
 /// The toolbar items of a window. The busy state is passed in by the owner's
 /// body, so Stop follows it; the labels that show the status read it in
-/// their own bodies. The artifacts sidebar toggle is always the trailing
-/// item.
+/// their own bodies. The agent comes first, with its name; the model and
+/// thinking buttons follow as icons only. The artifacts sidebar toggle is
+/// always the trailing item.
 struct ZenWindowToolbar: ToolbarContent {
     let session: ZenWindowSession
     let isBusy: Bool
 
     var body: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                session.run(ZenSessionCommand.agents)
+            } label: {
+                ZenAgentToolbarLabel(session: session)
+            }
+            .help("Choose the agent (/agents)")
+        }
+
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+
         ToolbarItemGroup(placement: .primaryAction) {
             Button {
                 session.run(ZenSessionCommand.models)
@@ -52,13 +64,6 @@ struct ZenWindowToolbar: ToolbarContent {
             } label: {
                 ZenThinkingToolbarLabel(session: session)
             }
-
-            Button {
-                session.run(ZenSessionCommand.agents)
-            } label: {
-                ZenAgentToolbarLabel(session: session)
-            }
-            .help("Choose the agent (/agents)")
         }
 
         ToolbarSpacer(.fixed, placement: .primaryAction)
@@ -94,7 +99,7 @@ struct ZenWindowToolbar: ToolbarContent {
             } label: {
                 Label("Changes", systemImage: "plusminus")
             }
-            .help("File changes, undo, artifacts and review")
+            .help("File changes, undo and review")
         }
 
         if isBusy {
@@ -129,24 +134,26 @@ struct ZenWindowToolbar: ToolbarContent {
     }
 }
 
-/// The label of the model button: the model's display name. It reads the
+/// The label of the model button: the `cpu` icon only. The model's display
+/// name stays its title, for accessibility, but does not show. It reads the
 /// status in its own body.
 struct ZenModelToolbarLabel: View {
     let session: ZenWindowSession
 
     var body: some View {
         Label(ZenWindowToolbar.modelTitle(session.status.modelID), systemImage: "cpu")
-            .labelStyle(.titleAndIcon)
+            .labelStyle(.iconOnly)
     }
 }
 
-/// The label of the thinking button, with the current level as its help. It
-/// reads the status in its own body.
+/// The label of the thinking button: the `brain` icon only, with the current
+/// level as its help. It reads the status in its own body.
 struct ZenThinkingToolbarLabel: View {
     let session: ZenWindowSession
 
     var body: some View {
         Label("Thinking", systemImage: "brain")
+            .labelStyle(.iconOnly)
             .help(ZenWindowToolbar.thinkingHelp(session.status))
     }
 }
@@ -163,8 +170,7 @@ struct ZenAgentToolbarLabel: View {
 }
 
 /// The items of the Changes menu, shared by the toolbar and the Session menu.
-/// The artifacts item shows or hides the artifacts sidebar, titled after
-/// whether it shows; every other item runs its slash command.
+/// Every item runs its slash command.
 struct ZenChangesMenuItems: View {
     let session: ZenWindowSession?
 
@@ -174,9 +180,6 @@ struct ZenChangesMenuItems: View {
         Divider()
         Button("Undo Changes") { session?.run(ZenSessionCommand.undo) }
         Divider()
-        Button(session?.isArtifactsSidebarPresented == true ? "Hide Artifacts" : "Show Artifacts") {
-            session?.toggleArtifactsSidebar()
-        }
         Button("Review Changes") { session?.run(ZenSessionCommand.review) }
     }
 }

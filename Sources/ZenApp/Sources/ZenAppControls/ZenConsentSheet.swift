@@ -1,9 +1,10 @@
 //
-//  ZenConsentCard.swift
+//  ZenConsentSheet.swift
 //  ZenApp
 //
-//  The inline tool-consent card: the content of the terminal consent card
-//  (`LocalExecPermissionDialog`) with the run once / always / cancel choices.
+//  The tool-consent sheet of a window: the content of the terminal consent
+//  card (`LocalExecPermissionDialog`) with the run once / always / cancel
+//  choices.
 //
 
 import Foundation
@@ -11,7 +12,7 @@ import SwiftUI
 import ZenAppTheme
 import ZenCODECore
 
-/// A button of the consent card.
+/// A button of the consent sheet.
 public enum ZenConsentChoice: CaseIterable, Sendable, Identifiable {
     /// Run this call only (the terminal's `[R]un once`).
     case allowOnce
@@ -21,7 +22,7 @@ public enum ZenConsentChoice: CaseIterable, Sendable, Identifiable {
     /// Refuse this call (the terminal's `[C]ancel`).
     case deny
 
-    /// The focused choice when the card appears: like the terminal, Return
+    /// The focused choice when the sheet appears: like the terminal, Return
     /// runs the call once.
     public static let defaultChoice: ZenConsentChoice = .allowOnce
 
@@ -57,8 +58,8 @@ public enum ZenConsentChoice: CaseIterable, Sendable, Identifiable {
     }
 }
 
-/// What a key does on the consent card. Like the terminal card, only Return
-/// chooses: Space is typing, as any other key the card does not handle.
+/// What a key does on the consent sheet. Like the terminal card, only Return
+/// chooses: Space is typing, as any other key the sheet does not handle.
 enum ZenConsentKeyAction: Equatable {
     /// Return: chooses the focused button.
     case choose
@@ -82,12 +83,15 @@ enum ZenConsentKeyAction: Equatable {
     }
 }
 
-/// The text of a consent card, built from the request like the terminal
+/// The text of a consent sheet, built from the request like the terminal
 /// consent card: untrusted fields are stripped of control characters and
 /// collapsed to one line.
 struct ZenConsentContent: Equatable {
     /// `"Tool consent: <toolName>"`.
     let title: String
+    /// The question under the title: about the command, or about the tool
+    /// without one.
+    let question: String
     /// The executable token of the command, `nil` without a command.
     let executable: String?
     /// The rest of the command after the executable, with its leading
@@ -99,6 +103,17 @@ struct ZenConsentContent: Equatable {
 
     /// The marker before the command.
     static let marker = "❯ "
+
+    /// The lines of the command the sheet shows at most; a longer command
+    /// scrolls inside the sheet, so the sheet never grows taller than the
+    /// window (a heredoc collapsed to one line can be thousands of points).
+    static let maximumVisibleCommandLines = 8
+
+    /// The height of the command's scroll view: the command's, at least one
+    /// line and at most ``maximumVisibleCommandLines``.
+    static func commandHeight(contentHeight: CGFloat, lineHeight: CGFloat) -> CGFloat {
+        min(max(contentHeight, lineHeight), lineHeight * CGFloat(maximumVisibleCommandLines))
+    }
 
     init(request: AgentToolAuthorizationRequest, homeDirectory: String = NSHomeDirectory()) {
         title = "Tool consent: \(Self.singleLined(Self.sanitized(request.toolName)))"
@@ -114,6 +129,9 @@ struct ZenConsentContent: Equatable {
             executable = command
             arguments = ""
         }
+        question = executable == nil
+            ? "Allow the agent to use this tool?"
+            : "Allow the agent to run this command?"
 
         var metadata: [String] = []
         if command.isEmpty {
@@ -143,7 +161,7 @@ struct ZenConsentContent: Equatable {
     }
 
     /// Replaces control characters (except newlines and tabs) with spaces, so
-    /// a crafted command cannot spoof the card.
+    /// a crafted command cannot spoof the sheet.
     static func sanitized(_ text: String) -> String {
         String(text.map { character -> Character in
             guard let scalar = character.unicodeScalars.first else {
@@ -161,21 +179,24 @@ struct ZenConsentContent: Equatable {
     }
 }
 
-/// The inline tool-consent card, tinted with the permission border color.
+/// The tool-consent sheet of a window, in the colors of the terminal consent
+/// card.
 ///
-/// It shows the tool, the command (`❯` marker, bold executable, plain
-/// arguments) or the request title, the working directory and the scope of
-/// "Always", then Allow once / Always allow / Deny. Allow once is focused
-/// when the card appears, like the terminal's default; ←/→ move the focus,
-/// Return chooses the focused button, Esc denies. Space does not choose, as
-/// in the terminal. The card answers once.
+/// A header with the tool and the question, then the command (`❯` marker,
+/// bold executable, plain arguments) in a code box, whole and selectable and
+/// scrolling past ``ZenConsentContent/maximumVisibleCommandLines`` lines, or
+/// the request title; under it the working directory and the scope of
+/// "Always", and the Allow once / Always allow / Deny buttons. Allow once is
+/// focused when the sheet appears, like the terminal's default; ←/→ move the
+/// focus, Return chooses the focused button, Esc denies. Space does not
+/// choose, as in the terminal. The sheet answers once.
 ///
-/// Return and clicks are ignored for 0.5 s after the card appears, after
+/// Return and clicks are ignored for 0.5 s after the sheet appears, after
 /// its request changes, and after any key it does not handle (a typist must
 /// pause before Return answers), and key repeats always are, so a keystroke
 /// meant for the composer cannot approve a call; the focused button looks
 /// disabled meanwhile. Esc denies at once (``ZenConsentGuard``).
-public struct ZenConsentCard: View {
+public struct ZenConsentSheet: View {
     @Environment(\.zenPalette) private var palette
     private let request: AgentToolAuthorizationRequest
     private let onDecision: @MainActor (ChatConsentDecision?) -> Void
@@ -198,14 +219,12 @@ public struct ZenConsentCard: View {
 
     public var body: some View {
         let content = ZenConsentContent(request: request)
-        VStack(alignment: .leading, spacing: 10) {
-            Text(content.title)
-                .font(.headline)
-                .foregroundStyle(palette.permissionTitle)
+        VStack(alignment: .leading, spacing: 16) {
+            header(content)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 8) {
                 if let executable = content.executable {
-                    commandLine(executable: executable, arguments: content.arguments)
+                    commandBox(executable: executable, arguments: content.arguments)
                 }
                 ForEach(Array(content.metadata.enumerated()), id: \.offset) { _, line in
                     Text(line)
@@ -215,23 +234,10 @@ public struct ZenConsentCard: View {
                 }
             }
 
-            HStack(spacing: 8) {
-                ForEach(ZenConsentChoice.allCases) { choice in
-                    choiceButton(choice)
-                }
-                Spacer(minLength: 0)
-                Text("Return: \(focusedChoice.title) · Esc: Deny")
-                    .font(.caption)
-                    .foregroundStyle(palette.permissionMetadata)
-            }
+            footer
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .zenGlassCard(tint: palette.permissionBorder, cornerRadius: 16, padding: 14)
-        .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(palette.permissionBorder, lineWidth: 1)
-                .allowsHitTesting(false)
-        }
+        .padding(20)
+        .frame(minWidth: 520, idealWidth: 600, maxWidth: 760, alignment: .leading)
         .focusable()
         .focused($isFocused)
         .focusEffectDisabled()
@@ -259,6 +265,11 @@ public struct ZenConsentCard: View {
             }
             return .ignored
         }
+        // Esc when no view of the sheet has the focus (a click in the
+        // command's text, for example).
+        .onExitCommand {
+            decide(ZenConsentChoice.escapeDecision, trigger: .escape)
+        }
         .onAppear {
             restartGracePeriod()
             isFocused = true
@@ -279,7 +290,30 @@ public struct ZenConsentCard: View {
         .accessibilityLabel(content.title)
     }
 
-    private func commandLine(executable: String, arguments: String) -> some View {
+    /// The tool and the question, beside a symbol of the request: a terminal
+    /// for a command, a shield for another tool.
+    private func header(_ content: ZenConsentContent) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: content.executable == nil ? "lock.shield" : "terminal")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(palette.permissionTitle)
+                .frame(width: 44, height: 44)
+                .glassEffect(.regular.tint(palette.permissionTitle.opacity(0.15)), in: .circle)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(content.title)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(palette.permissionTitle)
+                Text(content.question)
+                    .font(.callout)
+                    .foregroundStyle(palette.textSecondary)
+            }
+        }
+    }
+
+    /// The command in a box of the code colors, framed in the permission
+    /// border color.
+    private func commandBox(executable: String, arguments: String) -> some View {
         var line = AttributedString(ZenConsentContent.marker)
         line.foregroundColor = palette.permissionMarker
         var executablePart = AttributedString(executable)
@@ -287,12 +321,32 @@ public struct ZenConsentCard: View {
         executablePart.inlinePresentationIntent = .stronglyEmphasized
         line.append(executablePart)
         var argumentsPart = AttributedString(arguments)
-        argumentsPart.foregroundColor = palette.textPrimary
+        argumentsPart.foregroundColor = palette.codeForeground
         line.append(argumentsPart)
-        return Text(line)
-            .font(ZenFonts.mono)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
+        return ZenConsentCommandText(line: line)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(palette.codeBackground, in: .rect(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(palette.permissionBorder, lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+    }
+
+    /// The key hint, then the buttons in the terminal's order.
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Text("Return: \(focusedChoice.title) · Esc: Deny")
+                .font(.caption)
+                .foregroundStyle(palette.permissionMetadata)
+            Spacer(minLength: 12)
+            ForEach(ZenConsentChoice.allCases) { choice in
+                choiceButton(choice)
+            }
+        }
+        .controlSize(.large)
     }
 
     @ViewBuilder
@@ -333,8 +387,35 @@ public struct ZenConsentCard: View {
     }
 }
 
+/// The command line of the sheet: the whole command, selectable, in a scroll
+/// view that shrinks to it up to ``ZenConsentContent/maximumVisibleCommandLines``
+/// lines and scrolls the rest. Its own view, so a geometry change does not run
+/// the sheet's body.
+private struct ZenConsentCommandText: View {
+    let line: AttributedString
+
+    /// The line height of ``ZenFonts/mono`` (16 points at the body size).
+    @ScaledMetric(relativeTo: .body) private var lineHeight: CGFloat = 16
+    @State private var contentHeight: CGFloat = 0
+
+    var body: some View {
+        ScrollView(.vertical) {
+            Text(line)
+                .font(ZenFonts.mono)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(height: ZenConsentContent.commandHeight(contentHeight: contentHeight, lineHeight: lineHeight))
+        .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentSize.height }) { _, height in
+            contentHeight = height
+        }
+    }
+}
+
 #Preview("Consent – local.exec") {
-    ZenConsentCard(
+    ZenConsentSheet(
         request: AgentToolAuthorizationRequest(
             sessionID: "preview",
             toolCallID: "call-1",
@@ -346,12 +427,25 @@ public struct ZenConsentCard: View {
         ),
         onDecision: { _ in }
     )
-    .padding()
-    .frame(width: 640)
+}
+
+#Preview("Consent – long command") {
+    ZenConsentSheet(
+        request: AgentToolAuthorizationRequest(
+            sessionID: "preview",
+            toolCallID: "call-3",
+            toolName: "local.exec",
+            title: "Run a shell command",
+            kind: "execute",
+            command: "cat > notes.txt <<'EOF'\n" + String(repeating: "a long line of the heredoc body\n", count: 80) + "EOF",
+            workingDirectory: NSHomeDirectory() + "/Projects/ZenCODE"
+        ),
+        onDecision: { _ in }
+    )
 }
 
 #Preview("Consent – direct tool") {
-    ZenConsentCard(
+    ZenConsentSheet(
         request: AgentToolAuthorizationRequest(
             sessionID: "preview",
             toolCallID: "call-2",
@@ -363,6 +457,4 @@ public struct ZenConsentCard: View {
         ),
         onDecision: { _ in }
     )
-    .padding()
-    .frame(width: 640)
 }

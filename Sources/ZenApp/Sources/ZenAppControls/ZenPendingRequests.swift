@@ -2,8 +2,9 @@
 //  ZenPendingRequests.swift
 //  ZenApp
 //
-//  Presents the session's pending operator requests (menus, text line,
-//  attachment picker, workspace access) and answers each one exactly once.
+//  Presents the session's pending operator requests (tool consents, menus,
+//  text line, attachment picker, workspace access) and answers each one
+//  exactly once.
 //
 
 import Foundation
@@ -14,6 +15,7 @@ import ZenCODECore
 extension View {
     /// Presents `request` and reports the operator's answer with `onAnswer`.
     ///
+    /// - `.toolConsent`: a ``ZenConsentSheet``.
     /// - `.chooseOne`, `.chooseMany`, `.chooseManyWithFocus`: a
     ///   ``ZenChoiceSheet``.
     /// - `.readLine`: a ``ZenTextLineSheet``.
@@ -21,15 +23,13 @@ extension View {
     ///   opened at the starting directory), answering `.attachment(url)`.
     /// - `.workspaceAccess`: answered `.workspaceAccess(granted: true)` at
     ///   once, since the app is not sandboxed.
-    /// - `.toolConsent`: not presented here; place a ``ZenConsentCard``
-    ///   inline.
     /// - A kind newer than the app: answered `nil` at once, so the command
     ///   that asked never waits for an answer the app cannot give.
     ///
     /// The sheet closes when the request disappears or changes id. Each
     /// request is answered at most once: a cancelled or dismissed sheet or
-    /// importer answers `nil`; a request withdrawn by the session is not
-    /// answered.
+    /// importer answers `nil` (for a tool consent, a refusal); a request
+    /// withdrawn by the session is not answered.
     public func zenPendingRequests(
         _ request: ChatPendingRequest?,
         onAnswer: @escaping @MainActor (UUID, ChatPendingRequest.Answer?) -> Void
@@ -48,8 +48,8 @@ enum ZenPendingRequestPresentation: Equatable {
     case attachmentPicker(startingAt: URL)
     /// Granted without asking.
     case grantWorkspaceAccess
-    /// Presented inline by the owner with a ``ZenConsentCard``.
-    case inlineConsent
+    /// A tool consent sheet.
+    case consent(AgentToolAuthorizationRequest)
     /// A kind the app does not know: answered `nil` without asking.
     case unsupported
 
@@ -64,8 +64,8 @@ enum ZenPendingRequestPresentation: Equatable {
             self = .attachmentPicker(startingAt: directory)
         case .workspaceAccess:
             self = .grantWorkspaceAccess
-        case .toolConsent:
-            self = .inlineConsent
+        case let .toolConsent(request):
+            self = .consent(request)
         @unknown default:
             self = .unsupported
         }
@@ -81,7 +81,7 @@ enum ZenPendingRequestPresentation: Equatable {
             return ZenAutomaticAnswer(answer: .workspaceAccess(granted: true))
         case .unsupported:
             return ZenAutomaticAnswer(answer: nil)
-        case .menu, .textLine, .attachmentPicker, .inlineConsent:
+        case .menu, .textLine, .attachmentPicker, .consent:
             return nil
         }
     }
@@ -151,6 +151,7 @@ struct ZenPendingRequestGate: Equatable {
 /// A sheet presented for a request.
 struct ZenPresentedSheet: Identifiable {
     enum Content {
+        case consent(AgentToolAuthorizationRequest)
         case menu(ZenChoiceMenuState)
         case textLine(prompt: String)
     }
@@ -195,6 +196,10 @@ struct ZenPendingRequestsModifier: ViewModifier {
     @ViewBuilder
     private func sheetView(_ sheet: ZenPresentedSheet) -> some View {
         switch sheet.content {
+        case let .consent(request):
+            ZenConsentSheet(request: request) { decision in
+                answer(sheet.id, decision.map(ChatPendingRequest.Answer.consent))
+            }
         case let .menu(state):
             ZenChoiceSheet(state: state) { value in
                 answer(sheet.id, value)
@@ -209,11 +214,13 @@ struct ZenPendingRequestsModifier: ViewModifier {
     private var presentedSheet: ZenPresentedSheet? {
         guard let request, gate.isOpen(request.id) else { return nil }
         switch ZenPendingRequestPresentation(kind: request.kind) {
+        case let .consent(consentRequest):
+            return ZenPresentedSheet(id: request.id, content: .consent(consentRequest))
         case let .menu(state):
             return ZenPresentedSheet(id: request.id, content: .menu(state))
         case let .textLine(prompt):
             return ZenPresentedSheet(id: request.id, content: .textLine(prompt: prompt))
-        case .attachmentPicker, .grantWorkspaceAccess, .inlineConsent, .unsupported:
+        case .attachmentPicker, .grantWorkspaceAccess, .unsupported:
             return nil
         }
     }

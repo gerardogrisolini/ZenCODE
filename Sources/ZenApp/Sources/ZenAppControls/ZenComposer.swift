@@ -549,8 +549,8 @@ public struct ZenComposer: View {
         // Esc while an input method composes cancels the composition.
         guard !ZenComposerLogic.focusedInputHasMarkedText() else { return .ignored }
         guard !visibleSuggestions.isEmpty else {
-            // Let the window's Esc handle it: it denies the tool call a
-            // consent card asks about, otherwise it stops the turn.
+            // Let the window's Esc handle it: it denies a waiting tool
+            // consent, otherwise it stops the turn.
             return .ignored
         }
         navigator.dismiss(draft: draft)

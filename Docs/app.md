@@ -95,7 +95,10 @@ shut down, for about 5 seconds at most.
 
 The transcript shows what the terminal shows:
 
-- Your prompts, with their attachments, and the slash commands you ran. The
+- Your prompts, with their attachments, and the slash commands you ran. An
+  attached image shows small in the prompt (at most 320 × 200 points) and a
+  click opens it in its default application; a video shows as its name and a
+  click plays it in Quick Look. The
   prompts a command builds (`/plan`, `/goal`, `/review`, an approved plan, a
   Planner continuation) are hidden, as in the terminal; a reply you type to
   one of them shows as your prompt.
@@ -117,9 +120,11 @@ The transcript shows what the terminal shows:
   progress (queued or running). Click a sub-agent in it to open its tab (see
   [Sub-agent tabs](#sub-agent-tabs)).
 
-The list follows the bottom while a response streams. Scroll up to stop
-following, and a button scrolls back to the latest message. An empty session
-shows the workspace and the model.
+The list follows the bottom while a response streams, and its end stays above
+the composer and the bars under it. Scroll up to stop following; once more
+than a screenful of chat (the height shown between the bars) is left under
+the view, a button scrolls back to the latest message. Scroll back to the
+bottom to follow it again. An empty session shows the workspace and the model.
 
 The artifacts sidebar, on the right of the window, shows the file artifacts
 of the session: the files each turn created, modified, or deleted, the ones
@@ -128,8 +133,7 @@ first, one card per file operation with the status icon, the file name and
 its folder, the line counts, and the sub-agent that made the change, if any.
 A card starts collapsed; its disclosure reveals the explanation and the
 diff. The sidebar updates live while a turn runs. The **Artifacts** button at
-the end of the toolbar, the **Show Artifacts** (**Hide Artifacts**) item of
-the **Changes** menu, and `/artifacts` show and hide it; it never opens by
+the end of the toolbar and `/artifacts` show and hide it; it never opens by
 itself. Whether it shows is a state of the window: it is not saved, and a new
 or loaded session keeps it. Artifacts are runtime-only, so a loaded session
 shows none.
@@ -166,13 +170,13 @@ whose agent ZenCODE no longer tracks keeps what it showed last. A tab that
 never read a conversation (an agent that ended before you opened its tab)
 says that it is not available.
 
-The chat panel (see [Shared chat](#shared-chat)), the composer, the consent
-card, and the status bar are in the Chat tab only, which keeps its scroll
-position and your draft while another tab shows. When the session waits for an
-answer while another tab shows, the Chat tab shows a dot, and the window never
-switches to it by itself: a tool consent shows only in the Chat tab, while the
-menus and the requests for a line of text are sheets of the window, over any
-tab. The commands you launch (the toolbar buttons, the menu items, New and
+The chat panel (see [Shared chat](#shared-chat)), the composer, and the
+status bar are in the Chat tab only, which keeps its scroll position and your
+draft while another tab shows. When the session waits for an answer while
+another tab shows, the Chat tab shows a dot, and the window never switches to
+it by itself: the tool consents, the menus, and the requests for a line of
+text are sheets of the window, over any tab. The commands you launch (the
+toolbar buttons, the menu items, New and
 Save Session, loading or deleting a saved session) select the Chat tab before
 they start, so you see their result; **Show Chat Reader** (⌃Y) selects it and
 opens the reader. Esc works in the Chat tab only: in a sub-agent tab it does
@@ -207,7 +211,7 @@ The composer is at the bottom of the window.
   dropped on the composer are attached, one `/attach` each. `/attach list` and
   `/attach delete` work as in the terminal.
 - **Stop** (Esc in the Chat tab, ⌘., or the stop button) cancels the turn and
-  refuses the open requests. The queue is kept. While a consent card shows,
+  refuses the open requests. The queue is kept. While a consent sheet shows,
   Esc denies the call instead.
 
 The response language is locked on the first prompt you type in a session, as
@@ -267,8 +271,8 @@ happens when the turn does not start, for example when you stop it first.
 
 ### The chat panel
 
-The panel is titled `Chat` and sits in the Chat tab, above the consent card
-and the composer. It has four states:
+The panel is titled `Chat` and sits in the Chat tab, above the composer. It
+has four states:
 
 - Hidden, while the reader is closed and every message is read, as the
   terminal's compact reader disappears once every message is read.
@@ -304,15 +308,18 @@ Chat tab and opens the reader.
 
 ## Tool consent, menus, and requests
 
-A tool that needs consent shows a card above the composer with the tool, the
-command or title, and the working directory. **Allow once** is the default
-(Return); **Always allow** remembers the choice (across sessions for
-`local.exec`, for the session for the other tools); **Deny** (Esc) refuses the
-call, even when the focus is in the composer. ← and → move the focus; Space
-does not choose, as in the terminal. Return and clicks are ignored for half a
-second after the card appears and after any other key it receives, so you
-pause before Return answers, and key repeats always are, so a keystroke meant
-for the composer cannot approve a call.
+A tool that needs consent opens a sheet over the window, whichever tab shows,
+with the tool, the command or title, the working directory, and the scope of
+**Always allow**. The command is in a code box, whole and selectable; past
+eight lines it scrolls inside the box. While the sheet shows, the window waits
+for your answer: the composer takes your typing again once you answer.
+**Allow once** is the default (Return); **Always allow** remembers the choice
+(across sessions for `local.exec`, for the session for the other tools);
+**Deny** (Esc) refuses the call. ← and → move the focus; Space does not
+choose, as in the terminal. Return and clicks are ignored for half a second
+after the sheet appears and after any other key it receives, so you pause
+before Return answers, and key repeats always are, so a keystroke meant for
+the composer cannot approve a call.
 
 The menus of the commands (`/models`, `/think`, `/agents`, `/tools`,
 `/skills`, `/sessions`, `/open`, and the others) open as sheets: ↑ and ↓ move
@@ -337,8 +344,6 @@ its order and separated by ` · `:
 - the git changes of the workspace (`N files +A -D`), refreshed after each
   command and after a tool that changed files.
 
-The agent and the workspace are at the other end of the line.
-
 ## Sessions
 
 The sidebar lists the current session and the saved sessions of the
@@ -352,19 +357,21 @@ typed in the composer.
 
 ## Toolbar and menus
 
-The toolbar has buttons for the model, the thinking level, the agent, the
-tools, the skills, the task graph, and a **Changes** menu (show changes, show
-changes with the diff, undo changes, show or hide the artifacts sidebar,
-review changes), **Stop** while a turn runs, and, always last, the
-**Artifacts** button, which shows and hides the artifacts sidebar. The
-**Session** menu has Stop (⌘.), then **Show Chat Reader** (**Hide Chat
-Reader**, ⌃Y) in a section of its own, and repeats the model, thinking, agent,
-tools, skills, tasks, changes, undo, and help items. Each of those items runs
-the slash command it names (the artifacts items toggle the sidebar, as
-`/artifacts` does), so everything is also available from the composer. An item
-that runs a command selects the Chat tab first, so its result shows; Stop and
-the artifacts items leave the tab as it is, and the chat reader item selects it
-only to open the reader (see [Shared chat](#shared-chat)).
+The toolbar starts with the agent button, which shows the agent's name, then,
+apart, the model and thinking-level buttons, as icons only (the status bar
+shows the model and the level). Buttons for the tools, the skills, the task
+graph, and a **Changes** menu (show changes, show changes with the diff, undo
+changes, review changes) follow, then **Stop** while a turn runs, and, always
+last, the **Artifacts** button, which shows and hides the artifacts sidebar.
+The **Session** menu has Stop (⌘.), then **Show Chat Reader** (**Hide Chat
+Reader**, ⌃Y) in a section of its own, and repeats the agent, model, thinking,
+tools, skills, tasks, changes, undo, and help items, in the order of the
+toolbar. Each of those items runs
+the slash command it names, so everything is also available from the
+composer. An item that runs a command selects the Chat tab first, so its
+result shows; Stop and the **Artifacts** button leave the tab as it is, and
+the chat reader item selects it only to open the reader (see
+[Shared chat](#shared-chat)).
 
 ## Keyboard shortcuts
 
@@ -380,10 +387,10 @@ only to open the reader (see [Shared chat](#shared-chat)).
 | ←, →, Home, End | Chat tab, reader open | Shows the previous, next, first, or last chat message, also from the composer |
 | ↑, ↓ | Chat tab, reader open | Scrolls the chat message shown, also from the composer, ahead of the history and the suggestions |
 | ⌃Y | Menu bar | Shows or hides the chat reader |
-| Esc | Chat tab | Denies the tool call while a consent card shows, otherwise stops the turn |
+| Esc | Chat tab | Denies the tool call while a tool consent waits, otherwise stops the turn |
 | Esc | Sub-agent tab | Does nothing |
 | ⌘. | Window | Stops the turn, from any tab |
-| ←, →, Return, Esc | Consent card | Moves the focus, chooses the focused button, denies |
+| ←, →, Return, Esc | Consent sheet | Moves the focus, chooses the focused button, denies |
 | ↑, ↓, Space, Return, Esc | Menu sheet | Moves, toggles or chooses, confirms, cancels |
 | ⌘O | Menu bar | Opens a folder in a window |
 | ⇧⌘N | Menu bar | Starts a new session |
@@ -436,7 +443,7 @@ the root graph already resolves. The root graph never depends on it.
 | `ZenAppMarkdown` | The Markdown renderer on swift-markdown: blocks, tables, diffs, and the syntax highlighter |
 | `ZenAppSession` | The composition and the window model, without SwiftUI: one `ChatSessionHost` over the production runner, one slot per window, the transcript projection, the line routing, the prompt history, the window's tabs with the model of each sub-agent tab, and the window's shared chat (its observation of the room and the reader) |
 | `ZenAppTranscript` | The conversation views: prompts, tool calls, thinking, artifacts, summaries, notices, the task-graph and sub-agent cards, and the detail card of a sub-agent tab |
-| `ZenAppControls` | The composer (with the completion of slash commands and mentions), the status bar, the consent card, and the menu and request sheets |
+| `ZenAppControls` | The composer (with the completion of slash commands and mentions), the status bar, the consent sheet, and the menu and request sheets |
 | `ZenCODEApp` | The app shell: the window group, the menu bar, the sessions sidebar, the artifacts sidebar, the toolbar, the tab bar and the sub-agent tabs, the shared-chat panel, and the launch |
 
 Every target has its tests in `Tests/<Target>Tests` (`ZenCODEAppTests` covers

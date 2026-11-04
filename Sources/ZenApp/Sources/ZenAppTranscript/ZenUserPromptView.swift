@@ -11,8 +11,10 @@ import ZenAppTheme
 import ZenCODECore
 
 /// The operator's prompt: a full-width rounded block on the prompt surface
-/// with the `❯` marker in the accent color, the attachments as chips, and a
-/// small badge naming the channel when the prompt did not come from the app.
+/// with the `❯` marker in the accent color, the attachments
+/// (``ZenAttachmentPreviewView``: each image shown small, each video as a
+/// chip), and a small badge naming the channel when the prompt did not come
+/// from the app.
 public struct ZenUserPromptView: View {
     private let text: String
     private let attachments: [AgentRuntimeAttachment]
@@ -53,9 +55,9 @@ public struct ZenUserPromptView: View {
                     .foregroundStyle(palette.accentCount)
                 }
                 if !attachments.isEmpty {
-                    ZenFlowLayout(spacing: 6) {
+                    ZenFlowLayout(spacing: 8) {
                         ForEach(Array(attachments.enumerated()), id: \.offset) { _, attachment in
-                            ZenAttachmentChip(attachment: attachment)
+                            ZenAttachmentPreviewView(attachment: attachment)
                         }
                     }
                 }
@@ -71,7 +73,7 @@ public struct ZenUserPromptView: View {
     }
 }
 
-/// One attachment of a prompt: its icon and file name.
+/// One attachment of a prompt without a preview: its icon and file name.
 struct ZenAttachmentChip: View {
     let attachment: AgentRuntimeAttachment
 

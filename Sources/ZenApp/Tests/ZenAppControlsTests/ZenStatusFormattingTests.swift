@@ -348,7 +348,6 @@ struct ZenStatusFormattingTests {
             turnStartedAt: start,
             modelID: "mlx/Qwen3-Coder",
             thinking: .medium,
-            agentName: "Developer",
             metrics: DirectAgentGenerationMetrics(
                 promptTokenCount: 120,
                 completionTokenCount: 32,
@@ -362,8 +361,7 @@ struct ZenStatusFormattingTests {
                 isApproximate: false
             ),
             subscriptionUsage: DirectAgentSubscriptionUsageStatus(provider: "p", dailyUsedPercent: 5, weeklyUsedPercent: 50),
-            gitStatus: TerminalGitStatusSummary(changedFileCount: 2, additions: 7, deletions: 1),
-            workspace: URL(filePath: "/tmp/project")
+            gitStatus: TerminalGitStatusSummary(changedFileCount: 2, additions: 7, deletions: 1)
         )
         let now = start.addingTimeInterval(65.4)
         let fragments = ZenStatusFormatting.fragments(for: state, now: now)
@@ -401,7 +399,6 @@ struct ZenStatusFormattingTests {
     @Test("an empty state has no fragment")
     func emptyState() {
         #expect(ZenStatusFormatting.fragments(for: ZenStatusBarState()).isEmpty)
-        #expect(ZenStatusFormatting.trailingText(for: ZenStatusBarState()) == nil)
     }
 
     @Test("the gauge fraction is clamped and needs a window size")
@@ -413,16 +410,8 @@ struct ZenStatusFormattingTests {
         #expect(ZenStatusFormatting.contextFraction(usedTokens: 50, maxTokens: 0) == nil)
     }
 
-    @Test("the trailing edge shows the agent and the abbreviated workspace")
-    func trailingText() {
-        let home = NSHomeDirectory()
-        let state = ZenStatusBarState(
-            agentName: "Developer",
-            workspace: URL(filePath: home).appending(path: "Projects/ZenCODE")
-        )
-        #expect(ZenStatusFormatting.trailingText(for: state) == "Developer · ~/Projects/ZenCODE")
-        #expect(ZenStatusFormatting.trailingText(for: ZenStatusBarState(agentName: "")) == nil)
-
+    @Test("a path under the home folder is abbreviated with ~")
+    func abbreviatedPath() {
         #expect(ZenStatusFormatting.abbreviatedPath("/Users/me", homeDirectory: "/Users/me") == "~")
         #expect(ZenStatusFormatting.abbreviatedPath("/Users/me/x", homeDirectory: "/Users/me") == "~/x")
         #expect(ZenStatusFormatting.abbreviatedPath("/Users/meme", homeDirectory: "/Users/me") == "/Users/meme")

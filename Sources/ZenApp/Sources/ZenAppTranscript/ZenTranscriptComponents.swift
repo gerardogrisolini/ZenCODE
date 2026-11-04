@@ -171,7 +171,7 @@ struct ZenDetailLabel: View {
 /// The surface of a content card of the transcript (file-change summary,
 /// task graph, sub-agents): a rounded `surface` fill with a `turnSeparator`
 /// border. Content inside the scroll view never uses Liquid Glass, which
-/// stays on the controls (composer, consent card, suggestions, buttons).
+/// stays on the controls (composer, consent sheet, suggestions, buttons).
 ///
 /// The fill is a translucent `surface`, so the code, diff, and patch blocks
 /// drawn on the opaque code backgrounds stand out inside the card.
@@ -458,7 +458,7 @@ struct ZenToolOutputView: View {
 // MARK: - Layout
 
 /// Places its subviews left to right, wrapping to a new row when the width
-/// runs out (attachment chips).
+/// runs out (attachments).
 struct ZenFlowLayout: Layout {
     var spacing: CGFloat = 6
 
