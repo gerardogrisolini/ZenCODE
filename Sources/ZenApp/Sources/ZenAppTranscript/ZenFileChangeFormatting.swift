@@ -87,6 +87,35 @@ public enum ZenFileChangeFormatting {
             ?? "(unknown path)"
     }
 
+    /// The syntax-highlighting language of an artifact's file, from the
+    /// extension of its display path (else its absolute path), as the terminal
+    /// UI chooses it (`TerminalChat.codeLanguageHint(forPath:)`). `nil` for
+    /// text, documentation, configuration, and unknown files.
+    public static func sourceLanguage(of artifact: FileChangeArtifact) -> String? {
+        TerminalChat.codeLanguageHint(
+            forPath: ZenTranscriptText.nonBlank(artifact.displayPath) ?? artifact.absolutePath
+        )
+    }
+
+    /// The diff marker and the source of a patch line that carries source, as
+    /// the terminal UI splits them before it colors the source: an addition, a
+    /// deletion, or a context line that starts with a space. `nil` for hunk
+    /// and file headers, notes, and any other line.
+    public static func patchSource(of line: ZenPatchLine) -> (marker: String, source: String)? {
+        switch line.kind {
+        case .addition, .deletion:
+            break
+        case .context:
+            guard line.text.hasPrefix(" ") else { return nil }
+        case .hunk, .header, .note:
+            return nil
+        }
+        // The marker is one ASCII scalar: a combining scalar after it stays
+        // with the source.
+        guard let marker = line.text.unicodeScalars.first else { return nil }
+        return (String(marker), String(line.text.unicodeScalars.dropFirst()))
+    }
+
     /// The diff of an artifact, when its evidence establishes one: the complete
     /// old and new texts (only an added or deleted status establishes the
     /// absent side), else the captured patch. `nil` without evidence.

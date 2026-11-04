@@ -200,7 +200,9 @@ struct ZenFileArtifactStatusIcon: View {
 
 /// What the disclosure of a file artifact reveals: its explanation, then the
 /// diff its evidence establishes (``ZenFileChangeFormatting/artifactDiff(_:)``),
-/// computed only while it shows.
+/// computed only while it shows. As in the terminal, the diff numbers its
+/// lines in one column and colors the source in the file's language
+/// (``ZenFileChangeFormatting/sourceLanguage(of:)``).
 struct ZenFileArtifactDetails: View {
     let artifact: FileChangeArtifact
     /// The explanation (``ZenFileArtifactPresentation/explanation(of:)``).
@@ -216,11 +218,12 @@ struct ZenFileArtifactDetails: View {
                     .foregroundStyle(palette.textSecondary)
                     .textSelection(.enabled)
             }
+            let language = ZenFileChangeFormatting.sourceLanguage(of: artifact)
             switch ZenFileChangeFormatting.artifactDiff(artifact) {
             case let .hunks(hunks):
-                ZenDiffRowsView(hunks: hunks)
+                ZenDiffRowsView(hunks: hunks, language: language, lineNumbers: .source)
             case let .patch(lines):
-                ZenPatchLinesView(lines: lines)
+                ZenPatchLinesView(lines: lines, language: language)
             case nil:
                 EmptyView()
             }

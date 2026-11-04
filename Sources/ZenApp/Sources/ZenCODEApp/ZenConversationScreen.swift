@@ -260,16 +260,15 @@ struct ZenWindowStatusBar: View {
     }
 }
 
-/// The toolbar of a window. A modifier, so the busy state it shows is read by
-/// its body and not by the screen's; the labels that show the status (model,
-/// thinking, agent) read it in their own bodies, so a metrics update does
-/// not rebuild the toolbar.
+/// The toolbar of a window. The labels that show the status (model, thinking,
+/// agent) read it in their own bodies, so a metrics update does not rebuild
+/// the toolbar.
 struct ZenWindowToolbarModifier: ViewModifier {
     let session: ZenWindowSession
 
     func body(content: Content) -> some View {
         content.toolbar {
-            ZenWindowToolbar(session: session, isBusy: session.isBusy)
+            ZenWindowToolbar(session: session)
         }
     }
 }

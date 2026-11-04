@@ -35,6 +35,7 @@ struct ZenWindowScene: View {
         }
         .frame(minWidth: 720, minHeight: 480)
         .environment(\.zenMarkdownRenderer, .zenMarkdownView)
+        .environment(\.zenCodeHighlighter, .zenSyntaxHighlighter)
         .onAppear { launcher.start() }
     }
 }

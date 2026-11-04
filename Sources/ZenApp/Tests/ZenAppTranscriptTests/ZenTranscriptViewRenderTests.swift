@@ -210,4 +210,61 @@ struct ZenTranscriptViewRenderTests {
             #expect(split.directory == directory, "\(path)")
         }
     }
+
+    @Test("an artifact's diff and patch color their source with the environment's highlighter", arguments: [ColorScheme.light, .dark])
+    func artifactDiffUsesTheHighlighter(scheme: ColorScheme) {
+        let recorder = ZenHighlightRecorder()
+        let highlighter = ZenCodeHighlighter { line, language, _ in
+            recorder.record(line: line, language: language)
+            return AttributedString(line)
+        }
+        let modified = FileChangeArtifact(
+            absolutePath: "/p/Sources/App.swift", displayPath: "Sources/App.swift", status: .modified,
+            additions: 1, deletions: 1, oldText: "let a = 1\n", newText: "let a = 2\n"
+        )
+        let patched = FileChangeArtifact(
+            absolutePath: "/p/Sources/Tool.py", displayPath: "Sources/Tool.py", status: .modified,
+            additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-x = 1\n+x = 2\n"
+        )
+        let notes = FileChangeArtifact(
+            absolutePath: "/p/README.md", displayPath: "README.md", status: .modified,
+            additions: 1, deletions: 1, oldText: "# Old\n", newText: "# New\n"
+        )
+        for artifact in [modified, patched, notes] {
+            let size = layOut(
+                ZenFileArtifactDetails(artifact: artifact, explanation: nil)
+                    .environment(\.zenCodeHighlighter, highlighter),
+                scheme: scheme
+            )
+            #expect(size.height > 0)
+        }
+        let calls = recorder.calls
+        #expect(calls.contains(.init(line: "let a = 2", language: "swift")))
+        #expect(calls.contains(.init(line: "let a = 1", language: "swift")))
+        // The patch hands over the source without its marker.
+        #expect(calls.contains(.init(line: "x = 2", language: "python")))
+        #expect(calls.contains(.init(line: "x = 1", language: "python")))
+        #expect(!calls.contains { $0.line.hasPrefix("@@") })
+        // A Markdown file has no language: nothing is highlighted.
+        #expect(!calls.contains { $0.line.contains("Old") || $0.line.contains("New") })
+    }
+}
+
+/// The lines a test highlighter was asked to color.
+private final class ZenHighlightRecorder: @unchecked Sendable {
+    struct Call: Equatable {
+        let line: String
+        let language: String
+    }
+
+    private let lock = NSLock()
+    private var recorded: [Call] = []
+
+    var calls: [Call] {
+        lock.withLock { recorded }
+    }
+
+    func record(line: String, language: String) {
+        lock.withLock { recorded.append(Call(line: line, language: language)) }
+    }
 }

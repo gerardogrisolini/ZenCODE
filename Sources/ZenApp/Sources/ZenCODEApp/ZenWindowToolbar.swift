@@ -3,10 +3,10 @@
 //  ZenApp
 //
 //  The glass toolbar of a window: the agent, the session's other selections
-//  (model, thinking), its capabilities (tools, skills), its work (tasks,
-//  changes), Stop, and, always last, the artifacts sidebar toggle. Every other
-//  item runs a slash command; the menus a command needs arrive as pending
-//  requests and open as sheets.
+//  (model, thinking), its capabilities and its work (tools, skills, tasks,
+//  changes) in one group, and, always last, the artifacts sidebar toggle.
+//  Every other item runs a slash command; the menus a command needs arrive as
+//  pending requests and open as sheets.
 //
 
 import Foundation
@@ -30,14 +30,13 @@ enum ZenSessionCommand {
     static let help = "/help"
 }
 
-/// The toolbar items of a window. The busy state is passed in by the owner's
-/// body, so Stop follows it; the labels that show the status read it in
+/// The toolbar items of a window. The labels that show the status read it in
 /// their own bodies. The agent comes first, with its name; the model and
-/// thinking buttons follow as icons only. The artifacts sidebar toggle is
-/// always the trailing item.
+/// thinking buttons follow as icons only, then the tools, skills, tasks, and
+/// changes in one group. The artifacts sidebar toggle is always the trailing
+/// item.
 struct ZenWindowToolbar: ToolbarContent {
     let session: ZenWindowSession
-    let isBusy: Bool
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
@@ -74,45 +73,28 @@ struct ZenWindowToolbar: ToolbarContent {
             } label: {
                 Label("Tools", systemImage: "wrench.and.screwdriver")
             }
-            .help("Choose the tools (/tools)")
+            .help("Tools (/tools)")
 
             Button {
                 session.run(ZenSessionCommand.skills)
             } label: {
                 Label("Skills", systemImage: "sparkles")
             }
-            .help("Choose the skills (/skills)")
-        }
+            .help("Skills (/skills)")
 
-        ToolbarSpacer(.fixed, placement: .primaryAction)
-
-        ToolbarItemGroup(placement: .primaryAction) {
             Button {
                 session.run(ZenSessionCommand.tasks)
             } label: {
                 Label("Tasks", systemImage: "checklist")
             }
-            .help("Show the task graph (/tasks)")
+            .help("Tasks (/tasks)")
 
             Menu {
                 ZenChangesMenuItems(session: session)
             } label: {
                 Label("Changes", systemImage: "plusminus")
             }
-            .help("File changes, undo and review")
-        }
-
-        if isBusy {
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    session.stop()
-                } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                }
-                .help("Stop the turn (Esc, ⌘.)")
-            }
+            .help("Changes (/changes)")
         }
 
         ToolbarSpacer(.fixed, placement: .primaryAction)

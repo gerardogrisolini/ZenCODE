@@ -132,7 +132,12 @@ of the sub-agents included, grouped by turn (`Turn N · K files`), oldest
 first, one card per file operation with the status icon, the file name and
 its folder, the line counts, and the sub-agent that made the change, if any.
 A card starts collapsed; its disclosure reveals the explanation and the
-diff. The sidebar updates live while a turn runs. The **Artifacts** button at
+diff. As in the terminal, the diff numbers its lines in one column (the old
+line of a removed line, the new line of the others) and colors the source of
+each line in the language of the file, chosen from its extension (Swift,
+Python, TypeScript, and the other languages the terminal colors); text,
+documentation, and unknown files keep the diff colors. The sidebar updates
+live while a turn runs. The **Artifacts** button at
 the end of the toolbar and `/artifacts` show and hide it; it never opens by
 itself. Whether it shows is a state of the window: it is not saved, and a new
 or loaded session keeps it. Artifacts are runtime-only, so a loaded session
@@ -180,8 +185,8 @@ toolbar buttons, the menu items, New and
 Save Session, loading or deleting a saved session) select the Chat tab before
 they start, so you see their result; **Show Chat Reader** (⌃Y) selects it and
 opens the reader. Esc works in the Chat tab only: in a sub-agent tab it does
-nothing. ⌘. and the
-Stop button stop the turn from any tab, without changing tab. The toolbar and
+nothing. ⌘. (**Stop** in the **Session** menu) stops the turn from any tab,
+without changing tab. The toolbar and
 the artifacts sidebar belong to the window. The tabs are a state of the
 window: they are not saved, a new or loaded session closes the sub-agent tabs
 and shows the Chat tab, and closing the window stops them.
@@ -361,8 +366,8 @@ The toolbar starts with the agent button, which shows the agent's name, then,
 apart, the model and thinking-level buttons, as icons only (the status bar
 shows the model and the level). Buttons for the tools, the skills, the task
 graph, and a **Changes** menu (show changes, show changes with the diff, undo
-changes, review changes) follow, then **Stop** while a turn runs, and, always
-last, the **Artifacts** button, which shows and hides the artifacts sidebar.
+changes, review changes) follow, in one group, and, always last, the
+**Artifacts** button, which shows and hides the artifacts sidebar.
 The **Session** menu has Stop (⌘.), then **Show Chat Reader** (**Hide Chat
 Reader**, ⌃Y) in a section of its own, and repeats the agent, model, thinking,
 tools, skills, tasks, changes, undo, and help items, in the order of the

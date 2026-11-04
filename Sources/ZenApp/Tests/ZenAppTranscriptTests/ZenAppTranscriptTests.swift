@@ -197,6 +197,59 @@ struct ZenLineDiffTests {
     }
 }
 
+// MARK: - File artifact diffs
+
+@Suite("File artifact diffs")
+struct ZenFileArtifactDiffTests {
+    @Test("the language of an artifact follows the extension of its display path, else its absolute path")
+    func sourceLanguage() {
+        let swift = FileChangeArtifact(absolutePath: "/p/Sources/App.swift", displayPath: "Sources/App.swift", status: .modified)
+        let blankDisplay = FileChangeArtifact(absolutePath: "/p/Sources/main.py", displayPath: "  ", status: .added)
+        let markdown = FileChangeArtifact(absolutePath: "/p/README.md", displayPath: "README.md", status: .modified)
+        #expect(ZenFileChangeFormatting.sourceLanguage(of: swift) == "swift")
+        #expect(ZenFileChangeFormatting.sourceLanguage(of: blankDisplay) == "python")
+        #expect(ZenFileChangeFormatting.sourceLanguage(of: markdown) == nil)
+    }
+
+    @Test("the source column numbers a deletion with its old line and the other rows with their new line")
+    func sourceLineNumbers() {
+        let rows = ZenToolCallFormatting.lineDiff(old: "a\nb\nc\n", new: "a\nx\nc\n")
+        #expect(rows.map(ZenDiffRowsView.sourceLineNumber(of:)) == [1, 2, 2, 3])
+    }
+
+    @Test("the gutter is as wide as the widest number the rows show")
+    func gutterWidth() {
+        let rows = [
+            ZenTranscriptDiffRow(kind: .deletion, oldLineNumber: 120, newLineNumber: nil, text: "old"),
+            ZenTranscriptDiffRow(kind: .addition, oldLineNumber: nil, newLineNumber: 9, text: "new")
+        ]
+        #expect(ZenDiffRowsView.gutterWidth([rows], lineNumbers: .oldAndNew) == 3)
+        #expect(ZenDiffRowsView.gutterWidth([rows], lineNumbers: .source) == 3)
+        let added = [ZenTranscriptDiffRow(kind: .addition, oldLineNumber: nil, newLineNumber: 7, text: "x")]
+        #expect(ZenDiffRowsView.gutterWidth([added], lineNumbers: .source) == 1)
+        #expect(ZenDiffRowsView.gutterWidth([], lineNumbers: .source) == 1)
+    }
+
+    @Test("a patch line that carries source splits into its marker and its source")
+    func patchSource() {
+        let lines = ZenFileChangeFormatting.patchLines("@@ -1,2 +1,2 @@\n-let a = 1\n+let a = 2\n same\n\\ No newline at end of file")
+        let parts = lines.map(ZenFileChangeFormatting.patchSource(of:))
+        #expect(parts[0] == nil)
+        #expect(parts[1]?.marker == "-" && parts[1]?.source == "let a = 1")
+        #expect(parts[2]?.marker == "+" && parts[2]?.source == "let a = 2")
+        #expect(parts[3]?.marker == " " && parts[3]?.source == "same")
+        #expect(parts[4] == nil)
+        // File headers and a context line without its space carry no source.
+        #expect(ZenFileChangeFormatting.patchSource(of: ZenPatchLine(kind: .header, text: "+++ b/App.swift")) == nil)
+        #expect(ZenFileChangeFormatting.patchSource(of: ZenPatchLine(kind: .context, text: "loose")) == nil)
+    }
+
+    @Test("the default highlighter colors nothing")
+    func plainHighlighter() {
+        #expect(ZenCodeHighlighter.plain.highlight("let a = 1", language: "swift", palette: .dark) == nil)
+    }
+}
+
 // MARK: - Bounding
 
 @Suite("Output bounding")

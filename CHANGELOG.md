@@ -41,6 +41,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   API follows semantic versioning: see [Docs/embedding.md](Docs/embedding.md).
 - `ChatSessionRuntimeFactory`, the public construction point of a session
   runner, described in the same guide.
+- `TerminalChat.codeLanguageHint(forPath:)` is public: it chooses the
+  syntax-highlighting language of a file from its extension, as the terminal
+  UI does, so a host app colors a file the same way.
 - Observable session state for host apps: `ChatSessionStateReducer` records
   what a session shows in one ordered log, with a sequence number per entry,
   and publishes a `ChatSessionSnapshot` (transcript, tool activity, the turn in
@@ -199,7 +202,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   Chat tab first, so their result shows. The Chat tab shows a dot while the
   session waits for an answer; the tabs are not saved, and a new or loaded
   session closes them. The file artifacts show in a sidebar on the right,
-  grouped by turn, that the toolbar button or `/artifacts` shows and hides.
+  grouped by turn, that the toolbar button or `/artifacts` shows and hides;
+  their diffs number the lines in one column and color the source by the
+  file's extension, as in the terminal.
   Tool consent (Allow once, Always allow, Deny, with the command in a code
   box that scrolls past eight lines), menus, and text requests are sheets of
   the window, over any tab. The composer completes
