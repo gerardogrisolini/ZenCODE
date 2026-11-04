@@ -165,6 +165,7 @@ struct ZenTranscriptViewRenderTests {
             AnyView(ZenSubAgentLiveActivityView(snapshot: Self.subAgentOverview.snapshots[1])),
             AnyView(ZenWelcomeView(workspace: URL(fileURLWithPath: "/tmp"), modelID: "model")),
             AnyView(ZenSessionLoadingView(name: "session")),
+            AnyView(ZenSessionLoadingView(name: "session", step: "Loading the model and tools…")),
             AnyView(ZenDiffRowsView(rows: ZenToolCallFormatting.lineDiff(old: "a\nb", new: "a\nc"))),
             AnyView(ZenCodeLinesView(content: "let a = 1\nlet b = 2")),
             AnyView(ZenPatchLinesView(lines: ZenFileChangeFormatting.patchLines("@@ -1 +1 @@\n-x\n+y")))

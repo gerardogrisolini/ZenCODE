@@ -12,9 +12,10 @@ import ToolCore
 import ZenAppTheme
 import ZenCODECore
 
-/// A tool call as the terminal's compact line shows it: the status glyph,
-/// the tool name in `toolTitle`, its target (the command of `local.exec`) in
-/// `toolValue`, and the elapsed time in `toolDuration`. Clicking the line
+/// A tool call as the terminal's compact line shows it: the disclosure
+/// chevron, the tool name in `toolTitle`, its target (the command of
+/// `local.exec`) in `toolValue`, the elapsed time in `toolDuration`, and the
+/// status glyph at the end of the line. Clicking the line
 /// shows the expanded presentation the tool declares (metadata, parameters,
 /// code, diff, list, summary) and the bounded output of the result.
 public struct ZenToolCallView: View {
@@ -51,7 +52,7 @@ public struct ZenToolCallView: View {
 
             if isExpanded {
                 ZenToolCallDetailsView(call: call, result: result)
-                    .padding(.leading, 22)
+                    .padding(.leading, 20)
                     .transition(.opacity)
             }
         }
@@ -67,7 +68,7 @@ public struct ZenToolCallView: View {
             runs.append(ZenTextRun(text: "  " + target, color: palette.toolValue))
         }
         return HStack(alignment: .firstTextBaseline, spacing: 8) {
-            ZenToolStatusGlyph(status: status)
+            ZenDisclosureChevron(isExpanded: isExpanded)
             Text(AttributedString.zen(runs))
                 .font(ZenFonts.monoSmall)
                 .lineLimit(isExpanded ? 6 : 2)
@@ -80,7 +81,7 @@ public struct ZenToolCallView: View {
                     .foregroundStyle(palette.toolDuration)
                     .fixedSize()
             }
-            ZenDisclosureChevron(isExpanded: isExpanded)
+            ZenToolStatusGlyph(status: status)
         }
         .contentShape(Rectangle())
     }

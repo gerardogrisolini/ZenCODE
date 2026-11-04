@@ -3,10 +3,10 @@
 //  ZenApp
 //
 //  The scrolling conversation of a window: the closed rows, the block still
-//  streaming after them, the welcome view of an empty session (or the
-//  loading indicator of a saved session the sidebar loads), the overview
-//  cards pinned after the rows, and the bottom-following scroll with its
-//  "jump to latest" button.
+//  streaming after them, the welcome view of an empty session, the overview
+//  cards pinned after the rows, the bottom-following scroll with its "jump
+//  to latest" button, and the loading indicator that takes the place of the
+//  conversation while the sidebar loads a saved session.
 //
 
 import Foundation
@@ -119,10 +119,17 @@ struct ZenScrollMetrics: Equatable {
 /// The scrolling transcript of a window.
 ///
 /// Its body reads the closed rows (``ZenWindowSession/transcript``, changed
-/// only when a row closes or changes) and the epoch; the live text, the
-/// status, and the overviews are read by the small views that show them. A
-/// streamed token runs ``ZenLiveRows`` alone, and the content it grows is
-/// followed through the scroll geometry, without work per row.
+/// only when a row closes or changes), the epoch, and whether the sidebar
+/// loads a saved session; the live text, the status, the overviews, and the
+/// step of a load are read by the small views that show them. A streamed
+/// token runs ``ZenLiveRows`` alone, and the content it grows is followed
+/// through the scroll geometry, without work per row.
+///
+/// While the sidebar loads a saved session
+/// (``ZenWindowSession/loadingSavedSessionName``) the scroll view stays, so
+/// its position and its following go on as usual, but hidden and inert: the
+/// loading indicator (``ZenSavedSessionLoadingSlot``) shows in its place,
+/// centered between the bars, until the window shows how the load ended.
 struct ZenConversationList: View {
     let session: ZenWindowSession
     /// Changes when the view must jump to the bottom and follow it again
@@ -139,7 +146,8 @@ struct ZenConversationList: View {
     var body: some View {
         let transcript = session.transcript
         let rows = rowCache.rows(for: transcript)
-        let showsJumpToLatest = !isFollowing && isFarFromBottom
+        let isLoadingSavedSession = session.loadingSavedSessionName != nil
+        let showsJumpToLatest = !isFollowing && isFarFromBottom && !isLoadingSavedSession
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
                 if transcript.isEmpty {
@@ -169,6 +177,12 @@ struct ZenConversationList: View {
         // A new or loaded session starts at its latest row.
         .onChange(of: session.epoch) { _, _ in
             jumpToLatest(animated: false)
+        }
+        .opacity(isLoadingSavedSession ? 0 : 1)
+        .allowsHitTesting(!isLoadingSavedSession)
+        .accessibilityHidden(isLoadingSavedSession)
+        .overlay {
+            ZenSavedSessionLoadingSlot(session: session)
         }
         .overlay(alignment: .bottom) {
             if showsJumpToLatest {
@@ -230,24 +244,30 @@ struct ZenJumpToLatestButton: View {
     }
 }
 
-/// The welcome view of an empty session, until a block streams; while the
-/// sidebar loads a saved session (``ZenWindowSession/loadingSavedSessionName``),
-/// the loading indicator in its place, with the same layout. Its own view, so
-/// only it reads the live block id, the loading state, and the status.
+/// The welcome view of an empty session, until a block streams. Its own
+/// view, so only it reads the live block id and the status.
 struct ZenWelcomeSlot: View {
     let session: ZenWindowSession
 
     var body: some View {
         if session.liveBlockID == nil {
-            Group {
-                if let name = session.loadingSavedSessionName {
-                    ZenSessionLoadingView(name: name)
-                } else {
-                    ZenWelcomeView(workspace: session.workspace, modelID: session.status.modelID)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 72)
+            ZenWelcomeView(workspace: session.workspace, modelID: session.status.modelID)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 72)
+        }
+    }
+}
+
+/// The loading indicator of a saved session the sidebar loads
+/// (``ZenWindowSession/loadingSavedSessionName``), with the step the load is
+/// at (``ZenWindowSession/loadingSavedSessionStep``), over the conversation
+/// it takes the place of. Its own view, so only it reads the step.
+struct ZenSavedSessionLoadingSlot: View {
+    let session: ZenWindowSession
+
+    var body: some View {
+        if let name = session.loadingSavedSessionName {
+            ZenSessionLoadingView(name: name, step: session.loadingSavedSessionStep?.text)
         }
     }
 }

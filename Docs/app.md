@@ -107,10 +107,11 @@ The transcript shows what the terminal shows:
   `patch` show the added and removed lines in color.
 - The model's reasoning, as a `Thinking` block that is open while it streams
   and collapses to a one-line preview when it ends.
-- Tool calls, one line each with a status glyph, the tool, its target, and,
-  for the calls that ran while the window was watching, the duration. Click a
-  line for the details the tool declares (parameters, code, diff, list) and
-  the bounded output of the result.
+- Tool calls, one line each with the tool, its target, and, for the calls
+  that ran while the window was watching, the duration, between a disclosure
+  chevron at the start, as in the `Thinking` block, and a status glyph at the
+  end. Click a line for the details the tool declares (parameters, code, diff,
+  list) and the bounded output of the result.
 - The file-change summary at the end of a turn, with the patch of each file
   behind a disclosure, its lines numbered like the artifacts' diffs, and the
   `/undo` hint. The file artifacts of the turns show in the artifacts sidebar
@@ -363,8 +364,11 @@ The sidebar lists the current session and the saved sessions of the
 workspace, the newest first, with the age, the number of messages, and the
 model. Click a saved session to load it, or use its context menu to load or
 delete it (a confirmation asks first). While a saved session loads from the
-sidebar, the chat shows a loading indicator in place of the welcome view until
-the restored conversation appears. **New Session** (⇧⌘N) and **Save**
+sidebar, a large spinner takes the place of the conversation, centered in
+the chat, with the session's name and the step the load is at (reading the
+saved session, closing the current session, loading the model and tools,
+restoring the conversation), until the restored conversation, or the
+failure of the load, appears. **New Session** (⇧⌘N) and **Save**
 (⌘S) run `/sessions new` and `/sessions save`, and are refused while a line
 runs. They, and loading or deleting a saved session, select the Chat tab
 first. The rest of `/sessions` (a named snapshot, `compact`, `restore`) is

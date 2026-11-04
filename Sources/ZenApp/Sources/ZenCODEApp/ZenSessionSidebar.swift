@@ -102,7 +102,7 @@ struct ZenSessionSidebar: View {
                     Text(summary.savedAt, format: .relative(presentation: .named))
                     Text(" · ")
                     Text(Self.messageCountText(summary.messageCount))
-                        .foregroundStyle(palette.accentCount)
+                        .foregroundStyle(palette.toolValue)
                     if let modelID = summary.modelID, !modelID.isEmpty {
                         Text(" · ")
                         Text(ZenStatusFormatting.modelDisplayName(modelID))

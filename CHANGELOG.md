@@ -220,8 +220,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   a video plays in Quick Look), and queues the prompts sent while a turn runs; Esc stops the
   turn in the Chat tab and does nothing in a sub-agent tab, and ⌘. stops it
   from any tab. A status bar like the terminal's, a sidebar of the current
-  and saved sessions (a saved session loaded from it shows a loading
-  indicator in the chat until its restored conversation appears), and a
+  and saved sessions (while a saved session loads from it, a large spinner
+  centered in place of the conversation shows the step the load is at, until
+  its restored conversation appears), and a
   toolbar and Session menu for `/models`, `/think`,
   `/agents`, `/tools`, `/skills`, `/tasks`, `/changes`, `/undo`, `/review`,
   and `/help`, with the toggle of the artifacts sidebar, complete it.

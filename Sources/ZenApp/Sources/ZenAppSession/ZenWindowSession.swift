@@ -121,13 +121,19 @@ public final class ZenWindowSession: Identifiable {
     public private(set) var currentSavedSessionName: String?
     /// The name of the saved session the sidebar loads
     /// (``loadSavedSession(named:)``), while the conversation shows a loading
-    /// indicator in place of the welcome view; `nil` otherwise. Set when the
+    /// indicator in its place; `nil` otherwise. Set when the
     /// load starts (not when it is refused), and cleared once the window
     /// applied the snapshot that shows how the load ended (the restored
     /// conversation, or its failure), when the window follows another
     /// session, or when it closes. A `/sessions load` line does not set it.
     /// Transient state of the window: never saved.
     public private(set) var loadingSavedSessionName: String?
+    /// The step of the sidebar load ``loadingSavedSessionName`` names, which
+    /// the loading indicator shows: ``ZenSavedSessionLoadStep/reading`` when
+    /// the load starts, then the steps of the slot's hooks, only forward;
+    /// `nil` whenever ``loadingSavedSessionName`` is. Transient state of the
+    /// window: never saved.
+    public private(set) var loadingSavedSessionStep: ZenSavedSessionLoadStep?
     /// `/exit` ran: the window should close (call ``close()``).
     public private(set) var closeRequested = false
     /// ``close()`` ran, or the runtime shut down.
@@ -389,6 +395,9 @@ public final class ZenWindowSession: Identifiable {
             },
             statusFacts: { [weak self] in
                 Task { @MainActor in self?.statusFactsDidChange() }
+            },
+            savedSessionLoadStep: { [weak self] step in
+                Task { @MainActor in self?.savedSessionLoadDidReach(step) }
             }
         )
         observeSnapshots(of: current)
@@ -1139,8 +1148,9 @@ public final class ZenWindowSession: Identifiable {
     }
 
     /// Loads the saved session `name` of the workspace into a new
-    /// incarnation, with the loading indicator (``loadingSavedSessionName``)
-    /// until the window shows how the load ended. Refused while a line runs.
+    /// incarnation, with the loading indicator (``loadingSavedSessionName``,
+    /// ``loadingSavedSessionStep``) until the window shows how the load
+    /// ended. Refused while a line runs.
     public func loadSavedSession(named name: String) {
         guard !isClosed else { return }
         selectTab(.chat)
@@ -1226,7 +1236,18 @@ public final class ZenWindowSession: Identifiable {
         savedSessionLoadGeneration &+= 1
         savedSessionLoadAnchor = nil
         loadingSavedSessionName = name
+        loadingSavedSessionStep = .reading
         return savedSessionLoadGeneration
+    }
+
+    /// The sidebar load that shows reached `step` (a hook of the slot): the
+    /// indicator moves to it, never back. A load the sidebar did not start
+    /// (a typed `/sessions` line) shows no step.
+    private func savedSessionLoadDidReach(_ step: ZenSavedSessionLoadStep) {
+        guard !isClosed, loadingSavedSessionName != nil,
+              let current = loadingSavedSessionStep, step > current
+        else { return }
+        loadingSavedSessionStep = step
     }
 
     /// The sidebar load of `generation` ended, loaded or not. The restored
@@ -1266,6 +1287,9 @@ public final class ZenWindowSession: Identifiable {
         savedSessionLoadAnchor = nil
         if loadingSavedSessionName != nil {
             loadingSavedSessionName = nil
+        }
+        if loadingSavedSessionStep != nil {
+            loadingSavedSessionStep = nil
         }
     }
 
@@ -1859,10 +1883,12 @@ enum ZenWindowSteps {
         presenter: ZenWindowPresenter,
         hooks: ZenWindowHooks,
         fileMutation: @escaping @Sendable () -> Void,
-        statusFacts: @escaping @Sendable () -> Void
+        statusFacts: @escaping @Sendable () -> Void,
+        savedSessionLoadStep: @escaping @Sendable (ZenSavedSessionLoadStep) -> Void
     ) {
         presenter.fileMutationHandler = fileMutation
         hooks.statusFactsHandler = statusFacts
+        hooks.savedSessionLoadStepHandler = savedSessionLoadStep
     }
 
     /// The last log entry of the current reducer, for a local row.

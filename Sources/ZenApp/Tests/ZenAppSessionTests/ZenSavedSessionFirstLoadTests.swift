@@ -5,8 +5,9 @@
 //  The first load of a saved session from the sidebar in a window that just
 //  opened: the saved session already exists on disk, written by an earlier
 //  run, and the load replaces the window's initial incarnation. While it
-//  loads, the window shows the loading indicator in place of the welcome
-//  view (`loadingSavedSessionName`).
+//  loads, the window shows the loading indicator in place of the
+//  conversation (`loadingSavedSessionName`), with the step the load is at
+//  (`loadingSavedSessionStep`).
 //
 
 import Foundation
@@ -28,15 +29,18 @@ struct ZenSavedSessionFirstLoadTests {
                 #expect(await eventually { window.snapshot != nil && window.epoch == window.current.epoch })
                 #expect(await eventually { window.savedSessions.map(\.name) == [name] })
                 #expect(window.loadingSavedSessionName == nil)
+                #expect(window.loadingSavedSessionStep == nil)
                 let initialEpoch = window.current.epoch
 
                 window.loadSavedSession(named: name)
                 #expect(window.loadingSavedSessionName == name)
+                #expect(window.loadingSavedSessionStep == .reading)
                 #expect(await window.waitUntilIdle())
                 #expect(await eventually { window.current.epoch != initialEpoch })
                 #expect(await eventually {
                     Self.showsRestored(window, prompt: "Hello", name: name) && window.loadingSavedSessionName == nil
                 })
+                #expect(window.loadingSavedSessionStep == nil)
                 await window.close()
             }
         }
@@ -44,7 +48,18 @@ struct ZenSavedSessionFirstLoadTests {
 
     // MARK: - The loading indicator
 
-    @Test("While the first load waits for the model preload, the window shows the loading indicator over an empty transcript")
+    @Test("The hooks of a saved-session load move its step forward; the hooks of the other operations do not")
+    func stepsOfTheHooks() {
+        #expect(ZenSavedSessionLoadStep.allCases == [.reading, .closing, .restoring, .presenting])
+        #expect(ZenSavedSessionLoadStep.allCases.sorted() == ZenSavedSessionLoadStep.allCases)
+        #expect(ZenSavedSessionLoadStep(.savedSessionWillLoad) == .closing)
+        #expect(ZenSavedSessionLoadStep(.savedSessionWillRestore) == .restoring)
+        #expect(ZenSavedSessionLoadStep(.savedSessionDidRestore(transcript: [], contextWindow: nil)) == .presenting)
+        #expect(ZenSavedSessionLoadStep(.newSessionWillStart) == nil)
+        #expect(ZenSavedSessionLoadStep(.newSessionDidStart) == nil)
+    }
+
+    @Test("While the first load waits for the model preload, the window shows the loading indicator, at the model step, over an empty transcript")
     func firstLoadShowsTheIndicatorUntilThePreloadEnds() async throws {
         try await withSupport { workspace in
             let name = try await Self.saveSessionInEarlierRun(workspace: workspace, prompt: "Hello")
@@ -62,6 +77,7 @@ struct ZenSavedSessionFirstLoadTests {
                 #expect(await eventually { window.current.epoch != initialEpoch && window.epoch == window.current.epoch })
                 #expect(window.transcript.isEmpty)
                 #expect(window.loadingSavedSessionName == name)
+                #expect(await eventually { window.loadingSavedSessionStep == .restoring })
                 #expect(window.isBusy)
 
                 await gate.open()
@@ -69,6 +85,7 @@ struct ZenSavedSessionFirstLoadTests {
                 #expect(await eventually {
                     Self.showsRestored(window, prompt: "Hello", name: name) && window.loadingSavedSessionName == nil
                 })
+                #expect(window.loadingSavedSessionStep == nil)
                 await window.close()
             }
         }
@@ -99,12 +116,15 @@ struct ZenSavedSessionFirstLoadTests {
                 #expect(!window.isBusy)
                 #expect(window.transcript.isEmpty)
                 #expect(window.loadingSavedSessionName == name)
+                // The conversation is restored: the window still has to show it.
+                #expect(await eventually { window.loadingSavedSessionStep == .presenting })
 
                 window.snapshotWillApply = nil
                 await apply.open()
                 #expect(await eventually {
                     Self.showsRestored(window, prompt: "Hello", name: name) && window.loadingSavedSessionName == nil
                 })
+                #expect(window.loadingSavedSessionStep == nil)
                 await window.close()
             }
         }
@@ -144,6 +164,8 @@ struct ZenSavedSessionFirstLoadTests {
                 #expect(await eventually { window.current.epoch != firstLoadEpoch && window.epoch == window.current.epoch })
                 #expect(window.transcript.isEmpty)
                 #expect(window.loadingSavedSessionName == name)
+                // The second load's own step, from its own start.
+                #expect(await eventually { window.loadingSavedSessionStep == .restoring })
 
                 await secondPreload.open()
                 #expect(await window.waitUntilIdle())
@@ -174,6 +196,7 @@ struct ZenSavedSessionFirstLoadTests {
                     window.loadingSavedSessionName == nil
                         && window.transcript.last?.content == .local(text: "Scripted preload failure", isFailure: true)
                 })
+                #expect(window.loadingSavedSessionStep == nil)
                 #expect(!window.transcript.contains {
                     $0.content == .userPrompt(text: "Hello", attachments: [], origin: .unknown)
                 })
@@ -200,6 +223,7 @@ struct ZenSavedSessionFirstLoadTests {
 
                 window.loadSavedSession(named: "missing-session")
                 #expect(window.loadingSavedSessionName == "missing-session")
+                #expect(window.loadingSavedSessionStep == .reading)
                 #expect(await window.waitUntilIdle())
                 #expect(await eventually {
                     window.loadingSavedSessionName == nil && window.transcript.last?.content == .local(
@@ -207,6 +231,7 @@ struct ZenSavedSessionFirstLoadTests {
                         isFailure: true
                     )
                 })
+                #expect(window.loadingSavedSessionStep == nil)
                 #expect(window.current.epoch == epoch)
                 await window.close()
             }
@@ -230,6 +255,7 @@ struct ZenSavedSessionFirstLoadTests {
 
                 window.loadSavedSession(named: name)
                 #expect(window.loadingSavedSessionName == nil)
+                #expect(window.loadingSavedSessionStep == nil)
                 #expect(window.transcript.last?.content == .local(
                     text: "ZenCODE: command '/sessions' is unavailable while a prompt is running.",
                     isFailure: true
@@ -238,6 +264,7 @@ struct ZenSavedSessionFirstLoadTests {
                 await backend.release()
                 #expect(await window.waitUntilIdle())
                 #expect(window.loadingSavedSessionName == nil)
+                #expect(window.loadingSavedSessionStep == nil)
                 #expect(window.current.epoch == epoch)
                 await window.close()
             }

@@ -28,7 +28,8 @@ import ZenCODECore
 /// replaced, and `.newSessionDidStart` and `.savedSessionDidRestore` start
 /// the new controller's, so exactly one observer runs. The steps that change
 /// what the status bar shows (a selection, an agent, a session created anew, a
-/// new or loaded session) call ``statusFactsHandler``.
+/// new or loaded session) call ``statusFactsHandler``; the steps of a
+/// saved-session load call ``savedSessionLoadStepHandler``.
 @ChatSessionActor
 final class ZenWindowHooks: ChatSessionChannelHooks {
     weak var sessionHost: ChatSessionHost?
@@ -44,6 +45,9 @@ final class ZenWindowHooks: ChatSessionChannelHooks {
     /// Called when the model, thinking level, agent, or command context of
     /// the next turn may have changed.
     var statusFactsHandler: (@Sendable () -> Void)?
+    /// Called when a saved-session load reaches a step
+    /// (``ZenSavedSessionLoadStep/init(_:)``), first thing in the hook.
+    var savedSessionLoadStepHandler: (@Sendable (ZenSavedSessionLoadStep) -> Void)?
 
     private var lockedEpoch: UInt64?
     private var languageName: String?
@@ -110,6 +114,9 @@ final class ZenWindowHooks: ChatSessionChannelHooks {
     }
 
     func incarnationDidChange(reason: ChatIncarnationChange) async {
+        if let step = ZenSavedSessionLoadStep(reason) {
+            savedSessionLoadStepHandler?(step)
+        }
         switch reason {
         case .newSessionWillStart, .savedSessionWillLoad:
             // On the controller being replaced.
