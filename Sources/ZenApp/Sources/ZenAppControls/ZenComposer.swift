@@ -3,8 +3,9 @@
 //  ZenApp
 //
 //  The floating Liquid Glass prompt composer of the app: the terminal UI's
-//  input panel (multi-line draft, history keys, slash-command completion)
-//  plus attachments, file drops, Send/Stop and the queued prompts.
+//  input panel (multi-line draft, history keys, slash-command and @mention
+//  completion, the shared-chat reader keys) plus attachments, file drops,
+//  Send/Stop and the queued prompts.
 //
 
 import AppKit
@@ -22,6 +23,24 @@ public struct ZenComposerQueuedItem: Identifiable, Equatable, Sendable {
         self.id = id
         self.text = text
     }
+}
+
+/// A key of the shared-chat reader, as the terminal maps it while its reader
+/// is open: ← and → move between messages, Home and End go to the first and
+/// the last one, ↑ and ↓ scroll the message shown.
+public enum ZenReaderKey: Sendable, Equatable {
+    /// ←: the message before the one shown.
+    case previousMessage
+    /// →: the message after the one shown.
+    case nextMessage
+    /// Home: the oldest message.
+    case firstMessage
+    /// End: the newest message.
+    case lastMessage
+    /// ↑: scroll the message shown up.
+    case scrollUp
+    /// ↓: scroll the message shown down.
+    case scrollDown
 }
 
 /// What the composer asks its owner to do. Every closure runs on the main
@@ -44,6 +63,17 @@ public struct ZenComposerActions {
     public var historyNext: @MainActor () -> Bool
     /// Removes a queued prompt.
     public var removeQueued: @MainActor (UUID) -> Void
+    /// The cursor started completing the leading `@mention` of the draft
+    /// (the operator starts typing one, or comes back to edit it): the
+    /// operator may be addressing a live participant, so the owner refreshes
+    /// the mention roster it passes as ``ZenComposer``'s `mentions`.
+    public var refreshMentions: @MainActor () -> Void
+    /// An unmodified reader key (``ZenComposerLogic/readerKey(for:modifiers:)``)
+    /// pressed in the field: `true` when the owner's shared-chat reader
+    /// consumed it, so the key neither moves the cursor nor recalls the
+    /// history nor moves the suggestion highlight; `false` (the default)
+    /// leaves the key its ordinary meaning.
+    public var readerKey: @MainActor (ZenReaderKey) -> Bool
 
     public init(
         submit: @escaping @MainActor () -> Void = {},
@@ -52,7 +82,9 @@ public struct ZenComposerActions {
         dropFiles: @escaping @MainActor ([URL]) -> Void = { _ in },
         historyPrevious: @escaping @MainActor () -> Bool = { false },
         historyNext: @escaping @MainActor () -> Bool = { false },
-        removeQueued: @escaping @MainActor (UUID) -> Void = { _ in }
+        removeQueued: @escaping @MainActor (UUID) -> Void = { _ in },
+        refreshMentions: @escaping @MainActor () -> Void = {},
+        readerKey: @escaping @MainActor (ZenReaderKey) -> Bool = { _ in false }
     ) {
         self.submit = submit
         self.stop = stop
@@ -61,12 +93,15 @@ public struct ZenComposerActions {
         self.historyPrevious = historyPrevious
         self.historyNext = historyNext
         self.removeQueued = removeQueued
+        self.refreshMentions = refreshMentions
+        self.readerKey = readerKey
     }
 }
 
 /// The prompt composer: a floating Liquid Glass container with a multi-line
 /// field, an attach button and the Send/Stop buttons, the queued prompts
-/// above the field and the slash-command suggestions above the container.
+/// above the field and the slash-command and @mention suggestions above the
+/// container.
 ///
 /// Keys mirror the terminal UI's input panel:
 /// - Return submits; Shift+Return and Option+Return insert a newline. While
@@ -78,8 +113,20 @@ public struct ZenComposerActions {
 ///   highlighted suggestion, Return completes it and sends the draft unless
 ///   the suggestion requires an argument, Esc hides the list until the next
 ///   edit.
+/// - The leading `@mention` of a single-line draft (`@coordinator`, `@all`,
+///   `@<agent-handle>`) completes from the `mentions` the owner passes
+///   (``ZenMentionSuggestions``) with the same keys, except that Return, like
+///   Tab and a click, only completes the mention (`@handle` and a space):
+///   a mention needs a message, so it is never sent by a suggestion.
+///   `ZenComposerActions.refreshMentions` asks the owner for a fresh roster
+///   when the cursor starts completing that mention, not on every keystroke.
 /// - Otherwise ↑ on the first line and ↓ on the last line recall the history;
 ///   while a recalled entry is unchanged the arrows keep walking the history.
+/// - The unmodified ←, →, ↑, ↓, Home and End go first to the owner's
+///   shared-chat reader (`ZenComposerActions.readerKey`), ahead of the
+///   suggestions and the history, as in the terminal; a key the reader does
+///   not consume keeps its ordinary meaning, and so does any key with Shift,
+///   Option, Command or Control. An input method composing keeps priority.
 ///
 /// Prompts submitted while busy are queued by the owner, so Send stays
 /// available next to Stop when the draft is not empty.
@@ -94,6 +141,7 @@ public struct ZenComposer: View {
     private let isBusy: Bool
     private let isEnabled: Bool
     private let commands: [ChatCommandDescriptor]
+    private let mentions: [SharedChatMentionParser.Suggestion]
     private let queued: [ZenComposerQueuedItem]
     private let externalFocus: FocusState<Bool>.Binding?
     private let monospaced: Bool
@@ -116,6 +164,9 @@ public struct ZenComposer: View {
     ///   - isEnabled: `false` disables the field, attach and Send (Stop stays
     ///     available while busy).
     ///   - commands: The slash commands the operator can run, in display order.
+    ///   - mentions: The live `@mention` catalogue (`@coordinator`, `@all`, the
+    ///     active agents), in display order; refreshed by the owner on
+    ///     ``ZenComposerActions/refreshMentions``.
     ///   - queued: The prompts waiting in the queue.
     ///   - focus: The caller's focus binding of the field; `nil` uses an
     ///     internal one that focuses the field when it appears.
@@ -129,6 +180,7 @@ public struct ZenComposer: View {
         isBusy: Bool,
         isEnabled: Bool = true,
         commands: [ChatCommandDescriptor] = [],
+        mentions: [SharedChatMentionParser.Suggestion] = [],
         queued: [ZenComposerQueuedItem] = [],
         focus: FocusState<Bool>.Binding? = nil,
         monospaced: Bool = false,
@@ -139,6 +191,7 @@ public struct ZenComposer: View {
         self.isBusy = isBusy
         self.isEnabled = isEnabled
         self.commands = commands
+        self.mentions = mentions
         self.queued = queued
         self.externalFocus = focus
         self.monospaced = monospaced
@@ -156,6 +209,16 @@ public struct ZenComposer: View {
             }
             .onChange(of: cursor) { _, _ in
                 navigator.cursorMoved()
+            }
+            .onChange(of: draftPosition) { old, new in
+                if ZenMentionSuggestions.refreshesMentions(
+                    from: old.draft,
+                    oldCursor: old.cursor,
+                    to: new.draft,
+                    newCursor: new.cursor
+                ) {
+                    actions.refreshMentions()
+                }
             }
             .onAppear {
                 if externalFocus == nil {
@@ -249,11 +312,17 @@ public struct ZenComposer: View {
         .onKeyPress(.return, phases: .down) { press in
             handleReturn(modifiers: press.modifiers)
         }
-        .onKeyPress(.upArrow, phases: [.down, .repeat]) { _ in
-            handleVerticalKey(delta: -1)
+        .onKeyPress(.upArrow, phases: [.down, .repeat]) { press in
+            handleVerticalKey(delta: -1, modifiers: press.modifiers)
         }
-        .onKeyPress(.downArrow, phases: [.down, .repeat]) { _ in
-            handleVerticalKey(delta: 1)
+        .onKeyPress(.downArrow, phases: [.down, .repeat]) { press in
+            handleVerticalKey(delta: 1, modifiers: press.modifiers)
+        }
+        .onKeyPress(
+            keys: [.leftArrow, .rightArrow, .home, .end],
+            phases: [.down, .repeat]
+        ) { press in
+            handleReaderKey(press.key, modifiers: press.modifiers)
         }
         .onKeyPress(.tab, phases: .down) { _ in
             handleTab()
@@ -360,19 +429,38 @@ public struct ZenComposer: View {
 
     /// The suggestions on screen: none while disabled, while a recalled
     /// history entry is unchanged, or after Esc dismissed them for this draft.
-    private var visibleSuggestions: [ChatCommandDescriptor] {
+    private var visibleSuggestions: [ZenSuggestionRow] {
         guard isEnabled,
               recalledDraft != draft,
               !navigator.isDismissed(for: draft) else {
             return []
         }
-        return ZenCommandSuggestions.matches(for: draft, cursor: cursor, in: commands)
+        return ZenSuggestionRow.rows(
+            for: draft,
+            cursor: cursor,
+            commands: commands,
+            mentions: mentions
+        )
     }
 
     /// The cursor of the field in characters; `nil` (the end of the draft)
     /// without an insertion point.
     private var cursor: Int? {
         ZenComposerLogic.cursorOffset(in: draft, selection: selectedRange)
+    }
+
+    /// The draft and the cursor, observed together: the roster is refreshed
+    /// when the cursor starts completing the leading `@mention`
+    /// (``ZenMentionSuggestions/refreshesMentions(from:oldCursor:to:newCursor:)``),
+    /// so typing the message after the mention refreshes nothing.
+    private var draftPosition: DraftPosition {
+        DraftPosition(draft: draft, cursor: cursor)
+    }
+
+    /// A draft and the cursor in it (`nil`: the end of the draft).
+    private struct DraftPosition: Equatable {
+        let draft: String
+        let cursor: Int?
     }
 
     // MARK: - Keys
@@ -400,9 +488,13 @@ public struct ZenComposer: View {
         return .handled
     }
 
-    private func handleVerticalKey(delta: Int) -> KeyPress.Result {
+    private func handleVerticalKey(delta: Int, modifiers: EventModifiers) -> KeyPress.Result {
         // The input method's candidate window owns ↑ and ↓ while it composes.
         guard !ZenComposerLogic.focusedInputHasMarkedText() else { return .ignored }
+        // An open reader scrolls its message, over the suggestions too.
+        if readerConsumes(delta < 0 ? .upArrow : .downArrow, modifiers: modifiers) {
+            return .handled
+        }
         let matches = visibleSuggestions
         if !matches.isEmpty {
             navigator.move(by: delta, count: matches.count)
@@ -429,12 +521,27 @@ public struct ZenComposer: View {
         return .handled
     }
 
+    /// ←, →, Home and End: the reader's when it consumes them, otherwise the
+    /// field's (cursor moves, selection).
+    private func handleReaderKey(_ key: KeyEquivalent, modifiers: EventModifiers) -> KeyPress.Result {
+        guard !ZenComposerLogic.focusedInputHasMarkedText() else { return .ignored }
+        return readerConsumes(key, modifiers: modifiers) ? .handled : .ignored
+    }
+
+    /// Offers a reader key to the owner: `true` when it consumed it.
+    private func readerConsumes(_ key: KeyEquivalent, modifiers: EventModifiers) -> Bool {
+        guard let readerKey = ZenComposerLogic.readerKey(for: key, modifiers: modifiers) else {
+            return false
+        }
+        return actions.readerKey(readerKey)
+    }
+
     private func handleTab() -> KeyPress.Result {
         guard !ZenComposerLogic.focusedInputHasMarkedText(),
-              let descriptor = navigator.highlighted(in: visibleSuggestions) else {
+              let suggestion = navigator.highlighted(in: visibleSuggestions) else {
             return .ignored
         }
-        accept(descriptor, submitting: false)
+        accept(suggestion, submitting: false)
         return .handled
     }
 
@@ -459,9 +566,10 @@ public struct ZenComposer: View {
         return range
     }
 
-    private func accept(_ descriptor: ChatCommandDescriptor, submitting: Bool) {
-        guard let acceptance = ZenCommandSuggestions.accept(
-            descriptor,
+    /// Accepts a suggestion for the token under the cursor. `submitting` is
+    /// Return: a mention never submits, whatever the key.
+    private func accept(_ suggestion: ZenSuggestionRow, submitting: Bool) {
+        guard let acceptance = suggestion.accept(
             in: draft,
             cursor: cursor,
             submitting: submitting
@@ -607,6 +715,26 @@ public enum ZenComposerLogic {
         return .submit
     }
 
+    /// The reader key of a key press, as the terminal maps it while its reader
+    /// is open: ← previous, → next, Home first, End last message, ↑/↓ scroll.
+    /// Only unmodified keys: with Shift, Option, Command or Control a key
+    /// keeps its text-editing meaning (`nil`). Caps Lock and the numeric-pad
+    /// and function flags the arrow keys carry do not count.
+    public static func readerKey(for key: KeyEquivalent, modifiers: EventModifiers) -> ZenReaderKey? {
+        guard modifiers.isDisjoint(with: [.shift, .option, .command, .control]) else {
+            return nil
+        }
+        switch key {
+        case .leftArrow: return .previousMessage
+        case .rightArrow: return .nextMessage
+        case .home: return .firstMessage
+        case .end: return .lastMessage
+        case .upArrow: return .scrollUp
+        case .downArrow: return .scrollDown
+        default: return nil
+        }
+    }
+
     /// Whether the focused text input of the key window holds marked text,
     /// i.e. an input method (IME, dead keys, press-and-hold accents) is
     /// composing in the field editor. While it does, Return, ↑, ↓, Tab and
@@ -644,6 +772,19 @@ public enum ZenComposerLogic {
     .frame(width: 640, height: 320, alignment: .bottom)
 }
 
+#Preview("Composer – mentions") {
+    @Previewable @State var draft = "@"
+    ZenComposer(
+        draft: $draft,
+        isBusy: false,
+        commands: ZenControlsPreviewData.commands,
+        mentions: ZenControlsPreviewData.mentions,
+        monospaced: true
+    )
+    .padding()
+    .frame(width: 640, height: 320, alignment: .bottom)
+}
+
 #Preview("Composer – busy with queue") {
     @Previewable @State var draft = "And then run the tests"
     ZenComposer(
@@ -672,6 +813,13 @@ enum ZenControlsPreviewData {
             requiresArgument: true
         ),
         ChatCommandDescriptor(command: "/models", summary: "choose the model", help: "/models")
+    ]
+
+    static let mentions: [SharedChatMentionParser.Suggestion] = [
+        SharedChatMentionParser.Suggestion(handle: "coordinator", target: .coordinator),
+        SharedChatMentionParser.Suggestion(handle: "all", target: .all),
+        SharedChatMentionParser.Suggestion(handle: "reviewer", target: .agent(name: "Reviewer")),
+        SharedChatMentionParser.Suggestion(handle: "builder-2", target: .agent(name: "Builder"))
     ]
 
     static let items: [ChatChoiceItem] = [

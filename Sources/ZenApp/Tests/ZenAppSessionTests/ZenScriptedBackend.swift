@@ -109,12 +109,32 @@ final class ZenBackendLifecycle: Sendable {
 /// A model backend that answers every prompt with one scripted block, can
 /// hold a turn until the test releases it, and reports scripted sub-agents,
 /// their transcripts, and their snapshots to the streams of
-/// `subAgentSnapshotEvents(rootSessionID:)`. Every wait is bounded.
+/// `subAgentSnapshotEvents(rootSessionID:)`. Its shared chat is a real room
+/// bus, reached through the public bridge of a `DirectSubAgentRuntime` (the
+/// operator's messages included), which the test drives through
+/// ``sharedChat()``. Every wait is bounded.
 actor ZenScriptedBackend: AgentRuntimeBackend {
     struct HoldTimedOut: Error {}
 
+    /// One message the operator sent through the backend.
+    struct SentSharedChatMessage: Equatable, Sendable {
+        let text: String
+        let destination: AgentSharedChat.Destination
+        let rootSessionID: String
+        let messageID: UUID
+    }
+
     /// The shutdown of the backend and the cancellations of its held turns.
     nonisolated let lifecycle = ZenBackendLifecycle()
+    /// The bridge to the shared chat; it never creates an agent.
+    private let sharedChatRuntime = DirectSubAgentRuntime(
+        backendFactory: { ZenScriptedBackend() },
+        profileResolver: { _ in nil }
+    )
+    /// The messages the operator sent, in order.
+    private(set) var sentSharedChatMessages: [SentSharedChatMessage] = []
+    /// The error the next sends of the operator fail with, when set.
+    private var sharedChatSendError: AgentSharedChat.Error?
 
     private(set) var prompts: [String] = []
     /// The attachments of each prompt, in the order of ``prompts``.
@@ -263,6 +283,58 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
 
     func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
         subAgents
+    }
+
+    // MARK: Shared chat
+
+    /// The room bus behind the backend's shared chat.
+    func sharedChat() async -> AgentSharedChat {
+        await sharedChatRuntime.sharedChat
+    }
+
+    /// Makes the next sends of the operator fail with `error`; `nil` lets them
+    /// through again.
+    func failSharedChatSends(with error: AgentSharedChat.Error?) {
+        sharedChatSendError = error
+    }
+
+    func sharedChatParticipants(rootSessionID: String) async -> [AgentSharedChat.Participant] {
+        await sharedChatRuntime.sharedChatParticipants(rootSessionID: rootSessionID)
+    }
+
+    func sendSharedChatMessage(
+        text: String,
+        destination: AgentSharedChat.Destination,
+        rootSessionID: String,
+        messageID: UUID
+    ) async throws -> AgentSharedChat.Delivery {
+        sentSharedChatMessages.append(SentSharedChatMessage(
+            text: text,
+            destination: destination,
+            rootSessionID: rootSessionID,
+            messageID: messageID
+        ))
+        if let sharedChatSendError {
+            throw sharedChatSendError
+        }
+        return try await sharedChatRuntime.sendSharedChatMessage(
+            text: text,
+            destination: destination,
+            rootSessionID: rootSessionID,
+            messageID: messageID
+        )
+    }
+
+    func drainCoordinatorSharedChatMessages(rootSessionID: String) async -> [AgentSharedChat.Message] {
+        await sharedChatRuntime.drainCoordinatorSharedChatMessages(rootSessionID: rootSessionID)
+    }
+
+    func sharedChatTranscriptMessages(rootSessionID: String) async -> [AgentSharedChat.Message] {
+        await sharedChatRuntime.sharedChatTranscriptMessages(rootSessionID: rootSessionID)
+    }
+
+    func updateSharedChatMessageAvailableHandler(_ handler: (@Sendable (String) -> Void)?) async {
+        await sharedChatRuntime.updateSharedChatMessageAvailableHandler(handler)
     }
 
     func sendPrompt(

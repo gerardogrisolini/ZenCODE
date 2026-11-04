@@ -3,10 +3,13 @@
 //  ZenApp
 //
 //  The detail of a window: the tab bar, the conversation with the floating
-//  bottom chrome (consent card, composer, status bar) and the open sub-agent
-//  tabs, the artifacts sidebar on their right, the toolbar, and Esc, which in
-//  the conversation denies the tool call a consent card asks about and
-//  otherwise stops the turn, and in a sub-agent tab does nothing.
+//  bottom chrome (shared-chat panel, consent card, composer, status bar) and
+//  the open sub-agent tabs, the artifacts sidebar on their right, the
+//  toolbar, and Esc, which in the conversation denies the tool call a consent
+//  card asks about and otherwise stops the turn, and in a sub-agent tab does
+//  nothing. While the shared-chat reader is open in the conversation, the
+//  unmodified ← → Home End move between its messages and ↑ ↓ scroll the one
+//  shown, even from the composer, as in the terminal.
 //
 
 import Foundation
@@ -64,9 +67,9 @@ enum ZenEscapeAction: Equatable {
 /// position, its draft, its consent card), hidden and inert
 /// (``View/zenTabContent(isSelected:)``), and so does every open sub-agent
 /// tab. The body reads the selected tab and the pending request only (for the
-/// focus); the status, the draft, the queue, the commands, the tabs, and the
-/// artifacts are read by the subviews that show them, so a status update does
-/// not run this body.
+/// focus); the status, the draft, the queue, the commands, the tabs, the
+/// artifacts, and the shared chat are read by the subviews that show them, so
+/// a status update does not run this body.
 struct ZenConversationScreen: View {
     let session: ZenWindowSession
 
@@ -156,25 +159,51 @@ struct ZenConversationScreen: View {
 }
 
 /// The floating chrome under the conversation, in one glass container: the
-/// consent card, the composer (which does not add a container of its own),
-/// and the status bar.
+/// shared-chat panel (``ZenSharedChatPanel``), the consent card, the composer
+/// (which does not add a container of its own), and the status bar.
+///
+/// It owns the window's reader keys: the composer and the panel hand them
+/// over (``ZenComposerActions/readerKey``), and while the reader is open in
+/// the conversation they move its selection or scroll its message
+/// (``ZenSharedChatPanelLogic/handle(_:isReaderOpen:selectedTab:navigate:scroll:)``).
 struct ZenBottomChrome: View {
     let session: ZenWindowSession
     let focus: FocusState<Bool>.Binding
     /// The operator sent a line.
     let didSubmit: @MainActor () -> Void
 
+    /// The panel's scroll requests; read by the message view alone.
+    @State private var scroller = ZenSharedChatScroller()
+
     var body: some View {
+        let readerKey = readerKeyHandler
         GlassEffectContainer(spacing: 10) {
             VStack(alignment: .leading, spacing: 8) {
+                ZenSharedChatPanel(session: session, scroller: scroller, readerKey: readerKey)
                 ZenConsentSlot(session: session)
-                ZenWindowComposer(session: session, focus: focus, didSubmit: didSubmit)
+                ZenWindowComposer(session: session, focus: focus, didSubmit: didSubmit, readerKey: readerKey)
                 ZenWindowStatusBar(session: session)
             }
         }
         .padding(.horizontal, 16)
         .padding(.top, 6)
         .padding(.bottom, 10)
+    }
+
+    /// The window's reader keys. The reader's state is read when a key
+    /// arrives, not by this body.
+    private var readerKeyHandler: @MainActor (ZenReaderKey) -> Bool {
+        let session = session
+        let scroller = scroller
+        return { key in
+            ZenSharedChatPanelLogic.handle(
+                key,
+                isReaderOpen: session.sharedChat.isReaderOpen,
+                selectedTab: session.selectedTab,
+                navigate: { session.navigateSharedChat($0) },
+                scroll: { scroller.scroll($0) }
+            )
+        }
     }
 }
 
@@ -198,17 +227,21 @@ struct ZenConsentSlot: View {
     }
 }
 
-/// The composer of a window, inside the chrome's glass container.
+/// The composer of a window, inside the chrome's glass container, with the
+/// live `@mentions` of the session's shared chat and the window's reader
+/// keys.
 struct ZenWindowComposer: View {
     @Bindable var session: ZenWindowSession
     let focus: FocusState<Bool>.Binding
     let didSubmit: @MainActor () -> Void
+    let readerKey: @MainActor (ZenReaderKey) -> Bool
 
     var body: some View {
         ZenComposer(
             draft: $session.draft,
             isBusy: session.isBusy,
             commands: session.commandDescriptors,
+            mentions: session.mentionSuggestions,
             queued: session.queuedLines.map { ZenComposerQueuedItem(id: $0.id, text: $0.text) },
             focus: focus,
             usesGlassContainer: false,
@@ -229,7 +262,9 @@ struct ZenWindowComposer: View {
             dropFiles: { urls in session.attach(urls) },
             historyPrevious: { session.recallPreviousPrompt() },
             historyNext: { session.recallNextPrompt() },
-            removeQueued: { id in session.removeQueuedLine(id) }
+            removeQueued: { id in session.removeQueuedLine(id) },
+            refreshMentions: { session.refreshMentionSuggestions() },
+            readerKey: readerKey
         )
     }
 }

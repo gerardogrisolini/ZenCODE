@@ -3,7 +3,8 @@
 //  ZenApp
 //
 //  The menu bar of the app: Open Folder, New and Save Session in the File
-//  menu, and the Session menu, acting on the session of the key window.
+//  menu, and the Session menu, acting on the session of the key window; its
+//  Show/Hide Chat Reader item (⌃Y) opens and closes the shared-chat reader.
 //
 
 import AppKit
@@ -13,6 +14,11 @@ import ZenAppSession
 
 /// The menu bar commands. They act on the session the key window publishes
 /// (``FocusedValues/zenWindowSession``) and are disabled without one.
+///
+/// Show/Hide Chat Reader (⌃Y) is titled after what a click does
+/// (``ZenSharedChatPanelLogic/menuTitle(isReaderOpen:selectedTab:)``). As a
+/// menu key equivalent, ⌃Y reaches it before the focused composer, whose text
+/// view would read it as the emacs yank.
 struct ZenMenuCommands: Commands {
     @FocusedValue(\.zenWindowSession) private var session
     @Environment(\.openWindow) private var openWindow
@@ -46,6 +52,17 @@ struct ZenMenuCommands: Commands {
                 session?.stop()
             }
             .keyboardShortcut(".", modifiers: .command)
+            .disabled(session == nil)
+
+            Divider()
+
+            Button(ZenSharedChatPanelLogic.menuTitle(
+                isReaderOpen: session?.isSharedChatReaderOpen == true,
+                selectedTab: session?.selectedTab ?? .chat
+            )) {
+                session?.toggleSharedChatReader()
+            }
+            .keyboardShortcut("y", modifiers: .control)
             .disabled(session == nil)
 
             Divider()

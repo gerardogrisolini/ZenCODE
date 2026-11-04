@@ -353,18 +353,20 @@ struct ZenSuggestionNavigator: Equatable {
         return min(max(0, highlightedIndex), count - 1)
     }
 
-    /// The highlighted descriptor of `matches`, `nil` when there is none.
-    func highlighted(in matches: [ChatCommandDescriptor]) -> ChatCommandDescriptor? {
+    /// The highlighted row of `matches` (command descriptors or
+    /// ``ZenSuggestionRow``s), `nil` when there is none.
+    func highlighted<Row>(in matches: [Row]) -> Row? {
         guard !matches.isEmpty else { return nil }
         return matches[boundedIndex(count: matches.count)]
     }
 }
 
-/// The glass list of slash-command suggestions shown above the composer
-/// field: command in the accent color, summary in the suggestion color.
+/// The glass list of suggestions shown above the composer field: the slash
+/// command or the `@mention` in the accent color, its summary in the
+/// suggestion color.
 struct ZenCommandSuggestionList: View {
     @Environment(\.zenPalette) private var palette
-    let matches: [ChatCommandDescriptor]
+    let matches: [ZenSuggestionRow]
     let highlightedIndex: Int
     let monospaced: Bool
     let onSelect: (Int) -> Void
@@ -376,8 +378,8 @@ struct ZenCommandSuggestionList: View {
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(matches.enumerated()), id: \.offset) { index, descriptor in
-                        row(descriptor, isHighlighted: index == highlightedIndex)
+                    ForEach(Array(matches.enumerated()), id: \.offset) { index, suggestion in
+                        row(suggestion, isHighlighted: index == highlightedIndex)
                             .id(index)
                             .onTapGesture { onSelect(index) }
                     }
@@ -391,19 +393,24 @@ struct ZenCommandSuggestionList: View {
             }
         }
         .glassEffect(.regular, in: .rect(cornerRadius: 14))
-        .accessibilityLabel("Command suggestions")
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    /// The list is either all commands or all mentions.
+    private var accessibilityLabel: String {
+        matches.first?.isMention == true ? "Mention suggestions" : "Command suggestions"
     }
 
     private var listHeight: CGFloat {
         CGFloat(min(matches.count, Self.maximumVisibleRows)) * Self.rowHeight + 12
     }
 
-    private func row(_ descriptor: ChatCommandDescriptor, isHighlighted: Bool) -> some View {
+    private func row(_ suggestion: ZenSuggestionRow, isHighlighted: Bool) -> some View {
         HStack(spacing: 10) {
-            Text(descriptor.command)
+            Text(suggestion.title)
                 .font(monospaced ? ZenFonts.monoSmall : .callout.weight(.medium))
                 .foregroundStyle(palette.accent)
-            Text(descriptor.summary)
+            Text(suggestion.summary)
                 .font(.callout)
                 .foregroundStyle(palette.suggestion)
                 .lineLimit(1)

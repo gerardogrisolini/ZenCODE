@@ -35,6 +35,15 @@ import ZenCODECore
 /// (``fileArtifacts``), which only the operator shows and hides
 /// (``toggleArtifactsSidebar()``, `/artifacts`).
 ///
+/// The window observes its session's shared-chat room (``sharedChat``): the
+/// messages for the operator show in the reader, one at a time
+/// (``toggleSharedChatReader()``, ``navigateSharedChat(_:)``); a message for
+/// the coordinator runs a hidden coordinator turn once the window is idle, as
+/// any line of the executor; and a line that starts with a live `@mention`
+/// (``mentionSuggestions``) is sent to the room at once, even while a line
+/// runs, never queued. The reader and the roster are transient state of the
+/// window: never saved, and reset with a new or loaded session.
+///
 /// The window has tabs (``tabs``): the conversation (``ZenWindowTab/chat``),
 /// always first and never closed, then the transcript of each sub-agent the
 /// operator opened (``openSubAgentTab(_:)``), in the order they were opened,
@@ -140,6 +149,23 @@ public final class ZenWindowSession: Identifiable {
     /// The models of the open sub-agent tabs, in the order the operator
     /// opened them.
     public private(set) var subAgentTabs: [ZenSubAgentTranscriptModel] = []
+    /// The shared-chat messages of the current session and what the operator
+    /// read of them. Changed by the room's messages and by the operator alone
+    /// (``toggleSharedChatReader()``, ``navigateSharedChat(_:)``).
+    public private(set) var sharedChat = ZenSharedChatReader()
+    /// Whether the shared-chat reader is open, ``sharedChat``'s
+    /// ``ZenSharedChatReader/isReaderOpen`` observed on its own: assigned
+    /// only when it changes, so a view that needs just this bit (the menu) is
+    /// not invalidated by every room message.
+    public private(set) var isSharedChatReaderOpen = false
+    /// The active participants of the current session's room by id, the
+    /// operator included, for the route labels of the reader.
+    public private(set) var sharedChatParticipants: [String: AgentSharedChat.Participant] = [:]
+    /// The live `@mentions` the composer offers: `@coordinator`, `@all`, then
+    /// one per active agent, from one roster snapshot
+    /// (``refreshMentionSuggestions()``).
+    public private(set) var mentionSuggestions: [SharedChatMentionParser.Suggestion] =
+        ZenWindowSession.emptyMentionSuggestions
 
     /// The latest snapshot of the current incarnation's reducer. Not
     /// observed: a view observes the properties derived from it.
@@ -199,6 +225,20 @@ public final class ZenWindowSession: Identifiable {
     /// Awaited by the turn step right after it reserved the prompt, for
     /// tests.
     @ObservationIgnored var turnDidReserve: (@Sendable () async -> Void)?
+    /// The observation of the current session's shared-chat room.
+    @ObservationIgnored let sharedChatObservation: ZenSharedChatObservation
+    /// Awaited before an auto-trigger of the shared chat is answered, for
+    /// tests.
+    @ObservationIgnored var sharedChatTriggerWillResolve: (@Sendable () async -> Void)?
+    /// Awaited on the chain of the busy declarations right before the
+    /// window's own answer to an auto-trigger (its claim, `.started`, or its
+    /// give-back, `.declined`) reaches the Core, for tests. It runs on the
+    /// chain, so it must never await the chain itself
+    /// (``ZenSharedChatObservation/flushConsumerBusy()``,
+    /// ``ZenSharedChatObservation/serialized(_:)``, a give-back): it would
+    /// wait on itself.
+    @ObservationIgnored var sharedChatClaimWillResolve:
+        (@Sendable (AgentSharedChatAutoTriggerResolution) async -> Void)?
 
     // MARK: Private state
 
@@ -224,6 +264,22 @@ public final class ZenWindowSession: Identifiable {
     @ObservationIgnored private(set) var statusFactsReadCount = 0
     @ObservationIgnored private var lastSnapshotTaskGraph: ChatTaskGraphOverview?
     @ObservationIgnored private var explicitTaskGraphID: String?
+    /// The readable mention handles of ``mentionSuggestions`` (handle →
+    /// participant id), for the parser.
+    @ObservationIgnored private var mentionHandles: [String: String] = [:]
+    /// The latest read of the room's roster; an older read that ends later
+    /// is dropped, and so is one of a room the window left.
+    @ObservationIgnored private var rosterGeneration = 0
+    @ObservationIgnored private var rosterTask: Task<Void, Never>?
+    /// The window's claims of an auto-trigger (`.started`) on the chain of the
+    /// busy declarations, from the moment each is enqueued until the window
+    /// decided what to do with its result. Only the declarations count them
+    /// as busy (``isSharedChatConsumerBusy``). A counter rather than a flag,
+    /// so the claim of a retired observation that is still on its way and
+    /// the claim of its replacement never clear each other.
+    @ObservationIgnored private var sharedChatClaimsInFlight = 0
+    /// The mentions being sent.
+    @ObservationIgnored private var mentionTasks: [UUID: Task<Void, Never>] = [:]
 
     private init(
         id: UUID,
@@ -242,6 +298,7 @@ public final class ZenWindowSession: Identifiable {
         self.presenter = presenter
         self.current = incarnation
         self.status = ZenWindowStatus(workspace: workspace)
+        self.sharedChatObservation = ZenSharedChatObservation(environment: .runner(runtime.sessionHost.runner))
     }
 
     /// Opens a slot for `workspace` and starts its first session: the launch
@@ -308,6 +365,8 @@ public final class ZenWindowSession: Identifiable {
             }
         )
         observeSnapshots(of: current)
+        startSharedChat()
+        await followSharedChat(of: current)
         let incarnations = await sessionHost.incarnations(in: slotID)
         incarnationTask = Task { [weak self] in
             for await incarnation in incarnations {
@@ -321,14 +380,17 @@ public final class ZenWindowSession: Identifiable {
 
     // MARK: - Following the slot
 
-    /// Follows a new incarnation of the slot: its snapshots, and its status
-    /// facts. The hooks move the task-graph observer with it.
+    /// Follows a new incarnation of the slot: its snapshots, its status
+    /// facts, and its shared-chat room. The hooks move the task-graph
+    /// observer with it.
     private func follow(_ incarnation: ChatSessionIncarnation?) async {
         // A slot without session keeps showing the last one.
         guard !isClosed, let incarnation, incarnation.epoch != current.epoch else { return }
         current = incarnation
         // The sub-agents of the earlier session are not this one's.
         closeSubAgentTabs()
+        // Nor are its shared-chat room and messages.
+        resetSharedChat()
         explicitTaskGraphID = nil
         lastSnapshotTaskGraph = nil
         if taskGraph != nil {
@@ -338,6 +400,7 @@ public final class ZenWindowSession: Identifiable {
         guard !isClosed, current.epoch == incarnation.epoch else { return }
         observeSnapshots(of: incarnation)
         statusFactsDidChange()
+        await followSharedChat(of: incarnation)
     }
 
     private func observeSnapshots(of incarnation: ChatSessionIncarnation) {
@@ -567,14 +630,25 @@ public final class ZenWindowSession: Identifiable {
     // MARK: - Lines
 
     /// Submits ``draft``: records it in the prompt history and routes it as
-    /// the terminal does (see ``ZenLineRoute``). The draft is cleared unless
-    /// the line is refused. A blank draft does nothing.
+    /// the terminal does: a leading live `@mention` is sent to the shared
+    /// chat at once, even while a line runs, and never queued (one without a
+    /// message is refused); any other line goes through ``ZenLineRoute``. The
+    /// draft is cleared unless the line is refused. A blank draft does
+    /// nothing.
     public func submitDraft() {
         let line = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !line.isEmpty, !isClosed else { return }
         history.record(line)
-        if route(line) {
+        switch SharedChatMentionParser.parse(from: line, readableHandles: mentionHandles) {
+        case let .route(mention):
             draft = ""
+            sendMention(mention, line: line)
+        case .missingText:
+            appendLocalNow(.local(text: Self.mentionMissingTextMessage, isFailure: true))
+        case .none:
+            if route(line) {
+                draft = ""
+            }
         }
     }
 
@@ -611,6 +685,7 @@ public final class ZenWindowSession: Identifiable {
             }
             queuedLines.append(ZenQueuedLine(text: line))
             drainQueueIfIdle()
+            sharedChatConsumerStateDidChange()
         case let .refuse(message):
             appendLocalNow(.local(text: message, isFailure: true))
             return false
@@ -629,6 +704,7 @@ public final class ZenWindowSession: Identifiable {
     /// after it.
     private func startExclusive(_ work: @escaping @MainActor (ZenLineStop) async -> Void) {
         isBusy = true
+        sharedChatConsumerStateDidChange()
         let stop = ZenLineStop()
         lineStop = stop
         lineTask = Task { [weak self] in
@@ -646,6 +722,7 @@ public final class ZenWindowSession: Identifiable {
             scheduleStatusRefresh()
         }
         drainQueueIfIdle()
+        sharedChatConsumerStateDidChange()
     }
 
     private func drainQueueIfIdle() {
@@ -670,6 +747,7 @@ public final class ZenWindowSession: Identifiable {
     /// Removes a prompt from the queue before it runs.
     public func removeQueuedLine(_ id: UUID) {
         queuedLines.removeAll { $0.id == id }
+        sharedChatConsumerStateDidChange()
     }
 
     /// The flow of one line (Docs/embedding.md, "Running a Line"), then the
@@ -847,14 +925,15 @@ public final class ZenWindowSession: Identifiable {
 
     /// Runs one turn in one chat-actor step (see
     /// ``ZenWindowSteps/runTurn(_:controller:in:slotID:hooks:hiddenPrompts:didReserve:)``),
-    /// then shows how it ended.
+    /// then shows how it ended, and returns it.
+    @discardableResult
     private func runTurn(
         prompt: String,
         purpose: ChatTurnPurpose,
         typedByOperator: Bool,
         stop: ZenLineStop,
         controller: ChatSessionController
-    ) async {
+    ) async -> ZenTurnOutcome {
         let outcome = await ZenWindowSteps.runTurn(
             ZenTurnStart(prompt: prompt, purpose: purpose, typedByOperator: typedByOperator, stop: stop),
             controller: controller,
@@ -885,6 +964,7 @@ public final class ZenWindowSession: Identifiable {
                 await appendLocal(.local(text: error.localizedDescription, isFailure: true))
             }
         }
+        return outcome
     }
 
     /// `/tasks` shows the graph it published, significant or not.
@@ -1069,31 +1149,438 @@ public final class ZenWindowSession: Identifiable {
         }
     }
 
+    // MARK: - Shared chat
+
+    /// The reader's toggle: from a sub-agent tab it selects the conversation
+    /// and opens the reader; on the conversation it opens a closed reader and
+    /// closes an open one.
+    public func toggleSharedChatReader() {
+        guard !isClosed else { return }
+        guard selectedTab == .chat else {
+            selectTab(.chat)
+            updateSharedChat { reader in
+                if !reader.isReaderOpen {
+                    reader.openReader()
+                }
+            }
+            return
+        }
+        updateSharedChat { reader in
+            if reader.isReaderOpen {
+                reader.closeReader()
+            } else {
+                reader.openReader()
+            }
+        }
+    }
+
+    /// Moves the open reader's selection (``ZenSharedChatReader/navigate(_:)``).
+    public func navigateSharedChat(_ action: ZenSharedChatReader.Navigation) {
+        guard !isClosed else { return }
+        updateSharedChat { $0.navigate(action) }
+    }
+
+    /// Reads the roster of the current session's room again, for
+    /// ``mentionSuggestions`` and ``sharedChatParticipants``: the composer
+    /// calls it when the operator starts completing a leading `@mention`, so
+    /// the list never waits for a roster notification. A read still on its way
+    /// is cancelled.
+    public func refreshMentionSuggestions() {
+        guard !isClosed else { return }
+        rosterTask?.cancel()
+        rosterTask = Task { [weak self] in
+            await self?.refreshSharedChatRoster()
+        }
+    }
+
+    /// Applies `change` to ``sharedChat``, assigned only when it changes, and
+    /// keeps ``isSharedChatReaderOpen`` in step with it.
+    private func updateSharedChat(_ change: (inout ZenSharedChatReader) -> Void) {
+        var reader = sharedChat
+        change(&reader)
+        if reader != sharedChat {
+            sharedChat = reader
+        }
+        if reader.isReaderOpen != isSharedChatReaderOpen {
+            isSharedChatReaderOpen = reader.isReaderOpen
+        }
+    }
+
+    /// A line of the window runs or waits.
+    private var isLineRunningOrWaiting: Bool {
+        isBusy || !queuedLines.isEmpty
+    }
+
+    /// A claim of the window is on its way to the Core
+    /// (``sharedChatClaimsInFlight``).
+    private var isClaimingSharedChatTrigger: Bool {
+        sharedChatClaimsInFlight > 0
+    }
+
+    /// The busy state the window declares for the shared chat: a line runs
+    /// or waits, or a claim of the window is on its way. A claim in flight
+    /// counts, so a line that starts and ends meanwhile without a Core turn
+    /// (a local command, a refused line) cannot declare the window idle
+    /// behind the claim: an idle owner releases its claim and the batch with
+    /// it. Only the declarations use it; whether a line runs is
+    /// ``isLineRunningOrWaiting``.
+    private var isSharedChatConsumerBusy: Bool {
+        isLineRunningOrWaiting || isClaimingSharedChatTrigger
+    }
+
+    /// Declares the window's busy state on its observation, so the Core never
+    /// offers a coordinator turn while a line of the window runs or waits, or
+    /// while a claim of the window is on its way. Called whenever ``isBusy``,
+    /// ``queuedLines``, or ``sharedChatClaimsInFlight`` change.
+    private func sharedChatConsumerStateDidChange() {
+        guard !isClosed else { return }
+        sharedChatObservation.declareConsumerBusy(isSharedChatConsumerBusy)
+    }
+
+    private func startSharedChat() {
+        sharedChatObservation.handlers = ZenSharedChatObservation.Handlers(
+            consumerIsBusy: { [weak self] in
+                self?.isSharedChatConsumerBusy ?? false
+            },
+            didAttach: { [weak self] _ in
+                await self?.refreshSharedChatRoster()
+            },
+            handle: { [weak self] event, observation in
+                await self?.handleSharedChatEvent(event, observation: observation)
+            },
+            mayRecover: { [weak self] roomID in
+                await self?.mayRecoverSharedChat(roomID: roomID) ?? false
+            }
+        )
+    }
+
+    /// Observes the room of `incarnation`, its controller's session, while
+    /// the slot runs it.
+    private func followSharedChat(of incarnation: ChatSessionIncarnation) async {
+        guard !isClosed else { return }
+        let roomID = await ZenSharedChatSteps.roomID(in: sessionHost, slotID: slotID, epoch: incarnation.epoch)
+        guard let roomID, !isClosed, current.epoch == incarnation.epoch else { return }
+        await sharedChatObservation.follow(roomID: roomID)
+    }
+
+    /// Leaves the room of the earlier session at once: its observation is
+    /// retired, and the reader, the roster, and the handles start over.
+    private func resetSharedChat() {
+        sharedChatObservation.retire()
+        rosterGeneration &+= 1
+        updateSharedChat { $0.reset() }
+        applyRoster(participants: [], handleMap: [:])
+    }
+
+    /// A stream ended on its own: the observation is replaced only while the
+    /// window is open and `roomID` is still its current session's room.
+    private func mayRecoverSharedChat(roomID: String) async -> Bool {
+        guard !isClosed else { return false }
+        let currentRoomID = await ZenSharedChatSteps.currentRoomID(in: sessionHost, slotID: slotID)
+        return !isClosed && currentRoomID == roomID
+    }
+
+    private func handleSharedChatEvent(
+        _ event: AgentSharedChatCoordinatorEvent,
+        observation: ZenSharedChatObservation.Observation
+    ) async {
+        switch event {
+        case let .messages(messages):
+            guard !isClosed, sharedChatObservation.isCurrent(observation) else { return }
+            updateSharedChat { _ = $0.append(messages) }
+        case .participantsChanged:
+            guard !isClosed, sharedChatObservation.isCurrent(observation) else { return }
+            await refreshSharedChatRoster()
+        case let .autoTrigger(trigger):
+            await answerSharedChatTrigger(trigger, observation: observation)
+        }
+    }
+
+    /// Reads the participants and the readable handles of the observed room
+    /// from one roster snapshot.
+    private func refreshSharedChatRoster() async {
+        guard !isClosed, let roomID = sharedChatObservation.roomID else { return }
+        rosterGeneration &+= 1
+        let generation = rosterGeneration
+        let roster = await sessionHost.runner.sharedChatMentionRoster(rootSessionID: roomID)
+        guard !isClosed, generation == rosterGeneration, sharedChatObservation.roomID == roomID else { return }
+        applyRoster(participants: roster.participants, handleMap: roster.handleMap)
+    }
+
+    private func applyRoster(participants: [AgentSharedChat.Participant], handleMap: [String: String]) {
+        let byID = Dictionary(participants.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        if sharedChatParticipants != byID {
+            sharedChatParticipants = byID
+        }
+        mentionHandles = handleMap
+        let suggestions = SharedChatMentionParser.suggestions(for: participants, handleMap: handleMap)
+        if mentionSuggestions != suggestions {
+            mentionSuggestions = suggestions
+        }
+    }
+
+    /// Answers an auto-trigger of the Core, the one coordinator turn it
+    /// allows at a time for the room's messages to the coordinator. A
+    /// trigger of a room the window does not observe now, or reaching a
+    /// closed window, goes back to the room ownerless; so does one reaching
+    /// a busy window, after the window declared itself busy, so it is not
+    /// offered straight back. Otherwise the window claims it and, only when
+    /// it acquired it, runs its prompt as a line of the executor
+    /// (``runSharedChatTurn(_:roomID:observation:stop:)``). The claim, every
+    /// give-back of it, and the decline of a busy window run on the chain of
+    /// the busy declarations (``ZenSharedChatObservation/serialized(_:)``).
+    /// While the claim is on its way, the window declares itself busy
+    /// (``sharedChatClaimsInFlight``), so no idle declaration made meanwhile
+    /// can land behind the claim and release it; once the window decided
+    /// what to do with the result, its real state is declared again.
+    private func answerSharedChatTrigger(
+        _ trigger: AgentSharedChatAutoTrigger,
+        observation: ZenSharedChatObservation.Observation
+    ) async {
+        await sharedChatTriggerWillResolve?()
+        let runner = sessionHost.runner
+        let triggerID = trigger.id
+        let triggerRoomID = trigger.roomID
+        guard let roomID = await sharedChatRoom(of: trigger, observation: observation) else {
+            await runner.declineSharedChatAutoTrigger(id: triggerID, rootSessionID: triggerRoomID)
+            return
+        }
+        guard !isLineRunningOrWaiting else {
+            // Ownerless on purpose: this may be a re-offered duplicate of a
+            // trigger the window claimed, whose turn must not be released.
+            // On the chain, it lands after the busy declaration.
+            sharedChatObservation.declareConsumerBusy(true)
+            await sharedChatObservation.serialized {
+                await runner.declineSharedChatAutoTrigger(id: triggerID, rootSessionID: triggerRoomID)
+            }
+            return
+        }
+        // Counted before the claim takes its place on the chain, in the same
+        // step: every declaration made from now on, the idle one of a line
+        // that starts and ends while the claim is on its way included, says
+        // busy. On the chain, the claim lands after every declaration made
+        // before it, so an idle one on its way cannot land after it and
+        // release it.
+        sharedChatClaimsInFlight += 1
+        let claim = await resolveSharedChatTrigger(trigger, observation: observation, resolution: .started)
+        guard claim == .acquired else {
+            // Nothing to hold: the real state, since a busy one may have been
+            // declared while the claim was on its way.
+            sharedChatClaimsInFlight -= 1
+            sharedChatConsumerStateDidChange()
+            return
+        }
+        guard !isClosed, sharedChatObservation.isCurrent(observation), !isLineRunningOrWaiting else {
+            // A line started, or the window closed or left the room, while
+            // the claim was taken: the window gives it back. The claim stops
+            // counting right before the give-back, which enqueues, before it
+            // first suspends, its busy declaration (while the observation is
+            // the current one) and the give-back itself: nothing runs in
+            // between, so no idle declaration can come before them. The
+            // give-back then declares the real state while the observation
+            // is still the current one.
+            sharedChatClaimsInFlight -= 1
+            await giveBackSharedChatClaim(trigger, observation: observation)
+            if !sharedChatObservation.isCurrent(observation) {
+                // The give-back declared nothing on this retired observation,
+                // while its replacement may have been declared busy for the
+                // claim: the real state on it.
+                sharedChatConsumerStateDidChange()
+            }
+            return
+        }
+        startExclusive { [weak self] stop in
+            await self?.runSharedChatTurn(trigger, roomID: roomID, observation: observation, stop: stop)
+        }
+        // The line is busy and declared so: the claim is its turn's from now
+        // on, and the line's end declares the real state.
+        sharedChatClaimsInFlight -= 1
+    }
+
+    /// The room `trigger` is for, when it is the one the window observes now
+    /// with `observation` and the room of the session the slot runs; `nil`
+    /// otherwise, or once the window closed.
+    private func sharedChatRoom(
+        of trigger: AgentSharedChatAutoTrigger,
+        observation: ZenSharedChatObservation.Observation
+    ) async -> String? {
+        guard !isClosed,
+              sharedChatObservation.isCurrent(observation),
+              trigger.roomID == observation.roomID,
+              let roomID = sharedChatObservation.roomID else {
+            return nil
+        }
+        let currentRoomID = await ZenSharedChatSteps.currentRoomID(in: sessionHost, slotID: slotID)
+        guard !isClosed, sharedChatObservation.isCurrent(observation), currentRoomID == roomID else { return nil }
+        return roomID
+    }
+
+    /// The line of a coordinator turn the window acquired: `trigger.prompt`
+    /// runs verbatim, through the turn path and nothing else (no command, no
+    /// pending reply), as a prompt the operator did not type, so its turn
+    /// shows and its prompt does not. Stop ends it like any turn. A turn that
+    /// does not start (refused, stopped or cancelled before it started, no
+    /// controller for the room) gives the claim back, so its messages are
+    /// offered again once the window is idle.
+    private func runSharedChatTurn(
+        _ trigger: AgentSharedChatAutoTrigger,
+        roomID: String,
+        observation: ZenSharedChatObservation.Observation,
+        stop: ZenLineStop
+    ) async {
+        var didStart = false
+        if !isClosed,
+           let controller = await ZenSharedChatSteps.controller(in: sessionHost, slotID: slotID, roomID: roomID),
+           !isClosed {
+            let outcome = await runTurn(
+                prompt: trigger.prompt,
+                purpose: .normal,
+                typedByOperator: false,
+                stop: stop,
+                controller: controller
+            )
+            switch outcome {
+            case .finished, .failed:
+                didStart = true
+            case .refused, .cancelledBeforeStart:
+                didStart = false
+            }
+        }
+        if !didStart {
+            // The line still runs: the batch waits for its end.
+            await giveBackSharedChatClaim(trigger, observation: observation)
+        }
+        guard !isClosed else { return }
+        if statusFactsAreStale {
+            await refreshStatus()
+        }
+        refreshGitStatus()
+    }
+
+    /// Gives back the claim `observation` acquired for `trigger`, as one
+    /// sequence on the chain of the busy declarations, so the owner never
+    /// declares itself idle between the claim and the give-back (an idle
+    /// owner releases its claim and the batch with it): busy first, while the
+    /// observation is the current one; then the give-back, which returns the
+    /// batch to the room; then, while the observation is still the current
+    /// one and the window open, its real busy state, so the batch is offered
+    /// again once the window is idle. A declaration made meanwhile, such as
+    /// the idle one of a line that ends, lands after the give-back. The busy
+    /// declaration and the give-back take their places on the chain before
+    /// this first suspends; ``answerSharedChatTrigger(_:observation:)``
+    /// relies on it.
+    private func giveBackSharedChatClaim(
+        _ trigger: AgentSharedChatAutoTrigger,
+        observation: ZenSharedChatObservation.Observation
+    ) async {
+        if sharedChatObservation.isCurrent(observation) {
+            sharedChatObservation.declareConsumerBusy(true)
+        }
+        _ = await resolveSharedChatTrigger(trigger, observation: observation, resolution: .declined)
+        if !isClosed, sharedChatObservation.isCurrent(observation) {
+            sharedChatObservation.declareConsumerBusy(isSharedChatConsumerBusy)
+        }
+    }
+
+    /// Answers `trigger` as the owner `observation` (its claim or its
+    /// give-back) on the chain of the busy declarations
+    /// (``ZenSharedChatObservation/serialized(_:)``).
+    private func resolveSharedChatTrigger(
+        _ trigger: AgentSharedChatAutoTrigger,
+        observation: ZenSharedChatObservation.Observation,
+        resolution: AgentSharedChatAutoTriggerResolution
+    ) async -> AgentSharedChatAutoTriggerClaimResult {
+        let runner = sessionHost.runner
+        let willResolve = sharedChatClaimWillResolve
+        let triggerID = trigger.id
+        return await sharedChatObservation.serialized {
+            await willResolve?(resolution)
+            return await runner.resolveSharedChatAutoTrigger(
+                id: triggerID,
+                observation: observation,
+                resolution: resolution
+            )
+        }
+    }
+
+    /// Sends a live mention the operator submitted, beside whatever runs. On
+    /// a failure the window shows why and, when the draft is empty by then,
+    /// puts `line` back in it.
+    private func sendMention(_ mention: SharedChatMentionParser.Route, line: String) {
+        let token = UUID()
+        mentionTasks[token] = Task { [weak self] in
+            guard let self else { return }
+            let failure = await self.deliver(mention)
+            self.mentionTasks[token] = nil
+            guard let failure, !self.isClosed else { return }
+            self.appendLocalNow(.local(text: failure, isFailure: true))
+            if self.draft.isEmpty {
+                self.draft = line
+            }
+        }
+    }
+
+    /// Publishes `mention` in the room of the session the slot runs now, as
+    /// the operator; the failure text when it was not published.
+    private func deliver(_ mention: SharedChatMentionParser.Route) async -> String? {
+        let runner = sessionHost.runner
+        guard let roomID = await ZenSharedChatSteps.currentRoomID(in: sessionHost, slotID: slotID) else {
+            return Self.mentionFailureMessage(for: AgentSharedChat.Error.unavailable)
+        }
+        if case let .direct(identifiers) = mention.destination,
+           identifiers.count == 1,
+           let identifier = identifiers.first {
+            // The room also takes a display name as a direct identifier; a
+            // mention must name one active agent by its id.
+            let participants = await runner.sharedChatParticipants(rootSessionID: roomID)
+            guard participants.contains(where: { $0.kind == .agent && $0.isActive && $0.id == identifier }) else {
+                await refreshSharedChatRoster()
+                return Self.mentionInactiveAgentMessage
+            }
+        }
+        do {
+            _ = try await runner.sendSharedChatMessage(
+                text: mention.text,
+                destination: mention.destination,
+                rootSessionID: roomID,
+                messageID: UUID()
+            )
+        } catch {
+            return Self.mentionFailureMessage(for: error)
+        }
+        await refreshSharedChatRoster()
+        return nil
+    }
+
     // MARK: - Close
 
-    /// Ends the window. It writes nothing from now on; one chat-actor step
-    /// closes the slot, which fences the turn that runs, drops its
-    /// reservation, and refuses the open requests before it suspends; the
-    /// task-graph observer is stopped; then the window's tasks are cancelled
-    /// and the runtime forgets the window.
+    /// Ends the window. It writes nothing from now on; its shared-chat
+    /// observation is detached; one chat-actor step closes the slot, which
+    /// fences the turn that runs, drops its reservation, and refuses the open
+    /// requests before it suspends; the task-graph observer is stopped; then
+    /// the window's tasks are cancelled and the runtime forgets the window.
     public func close() async {
         guard !isClosed else { return }
         isClosed = true
         queuedLines = []
+        let detach = sharedChatObservation.stop()
         await ZenWindowSteps.close(sessionHost, slotID: slotID)
         cancelWork()
+        await detach?.value
         runtime?.windowDidClose(self)
     }
 
-    /// Marks the window closed and drops its queue at once, for the
-    /// runtime's shutdown: the window writes nothing from now on. Its work
-    /// is cancelled by the runtime (``cancelWork()``) only after the host
-    /// shutdown fenced every controller, so a cancelled turn cannot write
-    /// back first. A second call does nothing.
+    /// Marks the window closed, drops its queue, and stops its shared-chat
+    /// observation at once, for the runtime's shutdown: the window writes
+    /// nothing from now on. Its work is cancelled by the runtime
+    /// (``cancelWork()``) only after the host shutdown fenced every
+    /// controller, so a cancelled turn cannot write back first. A second call
+    /// does nothing.
     func markClosed() {
         guard !isClosed else { return }
         isClosed = true
         queuedLines = []
+        sharedChatObservation.stop()
     }
 
     /// Cancels the window's tasks and leaves it idle. Called once its slot
@@ -1115,6 +1602,13 @@ public final class ZenWindowSession: Identifiable {
             task.cancel()
         }
         besideTasks = [:]
+        for task in mentionTasks.values {
+            task.cancel()
+        }
+        mentionTasks = [:]
+        rosterTask?.cancel()
+        rosterTask = nil
+        sharedChatObservation.stop()
         queuedLines = []
         isBusy = false
         // The tabs stay as they are; their models stop.
@@ -1123,12 +1617,12 @@ public final class ZenWindowSession: Identifiable {
 
     // MARK: - Testing
 
-    /// Waits until no line runs, beside or queued, and no status read is
-    /// scheduled; `false` when `timeout` passed first.
+    /// Waits until no line runs, beside or queued, no mention is being sent,
+    /// and no status read is scheduled; `false` when `timeout` passed first.
     func waitUntilIdle(timeout: Duration = .seconds(10)) async -> Bool {
         let deadline = ContinuousClock.now + timeout
         while ContinuousClock.now < deadline {
-            if lineTask == nil, besideTasks.isEmpty, queuedLines.isEmpty, statusTask == nil {
+            if lineTask == nil, besideTasks.isEmpty, mentionTasks.isEmpty, queuedLines.isEmpty, statusTask == nil {
                 return true
             }
             try? await Task.sleep(for: .milliseconds(5))
@@ -1140,6 +1634,17 @@ public final class ZenWindowSession: Identifiable {
 
     /// The ending of a turn the operator stopped.
     static let turnCancelledText = "Turn cancelled."
+    /// The answer to a live mention without a message, the terminal's.
+    static let mentionMissingTextMessage = "ZenCODE message: add a message after the live mention."
+    /// The answer to a mention of an agent that left the room, the terminal's.
+    static let mentionInactiveAgentMessage = "ZenCODE message: selected agent is no longer active."
+    /// The mentions of a room without agents: `@coordinator` and `@all`.
+    nonisolated static let emptyMentionSuggestions = SharedChatMentionParser.suggestions(for: [], handleMap: [:])
+
+    /// The answer to a mention the room did not take, the terminal's.
+    static func mentionFailureMessage(for error: any Error) -> String {
+        "ZenCODE message: \(SharedChatMentionParser.inlineTerminalSafeText(error.localizedDescription))"
+    }
 
     static func text(for error: ChatSessionHostError) -> String {
         switch error {

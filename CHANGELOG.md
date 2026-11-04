@@ -211,6 +211,36 @@ Release tags follow the strict `vX.Y.Z` contract described in
   and `/help`, with the toggle of the artifacts sidebar, complete it.
   `/setup`, `/voice`, `/telegram`, `/feature`, `/cron`, `/ds4`, and
   `/tools logs` stay in the terminal. See [Docs/app.md](Docs/app.md).
+- The shared chat in the macOS app. Each window follows the live chat room of
+  its session. A `Chat` panel in the Chat tab, above the consent card and the
+  composer, shows the room's messages one at a time: `Chat · i/N · U new`, the
+  buttons for the previous and the next message, `Author: Worker [18:05:09] →
+  Coordinator` (the terminal reader's label), and the text, plain and
+  selectable. It is invisible while it is closed and every message is read, one
+  row (`Chat · N messages · U new`) while it is closed and some are unread, and
+  `Chat · 0 messages` while it is open on an empty history. ⌃Y and **Session >
+  Show Chat Reader** (**Hide Chat Reader**) open and close it, from a sub-agent
+  tab too, and while it is open ←, →, Home, and End change message and ↑ and ↓
+  scroll the text, also from the composer (keys with Shift, Option, Command, or
+  Control keep their editing meaning). A leading `@coordinator`, `@all`, or
+  `@agent-name` in the composer is sent to the room at once, also while a turn
+  runs and never queued; the composer completes it, and accepting a suggestion
+  only completes (Return does not send). A mention without a message answers
+  `ZenCODE message: add a message after the live mention.` and keeps the draft.
+  The messages for the coordinator run as hidden coordinator turns of the
+  window: the prompt is hidden, like the ones a command builds, and the window
+  takes the turn only when it is idle and gives it back when the turn does not
+  start. The chat is never saved, and a new or loaded session resets it.
+  Telegram is not available in the app, so its relay does not apply. See
+  [Docs/app.md](Docs/app.md#shared-chat).
+- `SharedChatMessageLabel`, a public type of `Chat/Contracts` that builds the
+  route label of a live shared-chat message: `timestamp(_:timeZone:)` formats
+  the send time as `HH:mm:ss`, and `route(for:participantMap:timeZone:)`
+  returns `Worker [18:05:09] → Coordinator` (or `All`, `Operator`, the name of
+  the agent, or `Agent`). The terminal reader and the macOS app render the
+  same label, and the terminal output is unchanged. The embedding guide also
+  describes how a host app observes the shared chat: see
+  [Docs/embedding.md](Docs/embedding.md#observing-the-shared-chat).
 
 ### Changed
 

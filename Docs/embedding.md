@@ -430,7 +430,8 @@ Notes on the flow:
   (`ChatCommandContext`).
 - Route live `@mentions` before `pendingReplyAction(for:)`:
   `SharedChatMentionParser.parse(from:)` reads them, and they are never a
-  reply.
+  reply (see [Observing the Shared Chat](#observing-the-shared-chat) for
+  sending them).
 - Run one turn at a time, as the terminal and ACP do: `reservePrompt(in:)`
   refuses a second one with `.sessionBusy`, and so do `/sessions new` and a
   load while a prompt is reserved. A line that arrives while a turn runs
@@ -661,6 +662,99 @@ Notes:
 - Switch over `ChatTurnEntry.Kind` and `ChatPendingRequest.Kind` with a
   `default` case, as over every public Chat enum.
 
+## Observing the Shared Chat
+
+The coordinator and the active agents of a session share a live, transient chat
+room (see [agents.md](agents.md#messages)). An app that wants to show it, write
+to it, or run the coordinator turns it asks for uses public methods of
+`AgentCoreSessionRunner` (`sessionHost.runner`). The room is keyed by the
+controller's `sessionID`, which the calls take as `rootSessionID`. Nothing of
+the room is persisted. The Core owns the auto-trigger (mailbox polling,
+batching, and the decision to offer one coordinator turn at a time); the app
+renders the messages and runs the turn.
+
+```swift
+let observation = await runner.attachSharedChatObservation(rootSessionID: controller.sessionID)
+await runner.setSharedChatConsumerBusy(isBusy, observation: observation)
+
+for await event in observation.events {
+    switch event {
+    case let .messages(messages):
+        show(messages)
+    case .participantsChanged:
+        await refreshRoster()
+    case let .autoTrigger(trigger):
+        await answer(trigger, observation: observation)
+    default:
+        break
+    }
+}
+await runner.detachSharedChatObservation(observation)
+```
+
+- `attachSharedChatObservation(rootSessionID:)` returns an
+  `AgentSharedChatCoordinator.Observation` (`id`, `roomID`, `events`), the
+  identity of this consumer. Keep one per window.
+  `detachSharedChatObservation(_:)` ends its stream and releases its busy state
+  and its claimed turn, and nothing of another observer. Detach and attach
+  again on every new incarnation of the session, a new or a loaded one alike,
+  because loading the active saved session can keep the same `sessionID`. The
+  stream also ends on its own when the Core stops the room at session teardown;
+  attach again only if the session is still the app's.
+- A message has a stable `AgentSharedChat.Message.id`, and the bounded room
+  transcript is replayed to every observer, so keep each id once and the
+  history bounded (`AgentSharedChat.maximumRetainedMessagesPerRoom`, 512, is
+  the room's own bound). Make the control characters of a text inert before
+  showing it: `SharedChatMentionParser.terminalSafeText(_:)`, or
+  `inlineTerminalSafeText(_:)` for a one-line label.
+  `SharedChatMessageLabel.route(for:participantMap:)` builds the label of the
+  terminal reader, `Worker [18:05:09] → Coordinator`, from the participants of
+  the roster keyed by id, and `SharedChatMessageLabel.timestamp(_:)` its
+  `HH:mm:ss` clock.
+- `setSharedChatConsumerBusy(_:observation:)` declares that a line of the app
+  runs or waits in its queue, so the Core never offers a coordinator turn
+  beside it. Declare it right after attaching and whenever it changes, in the
+  order the changes happen. Another observer reporting itself idle cannot
+  clear it.
+- Resolve each `.autoTrigger(trigger)` with
+  `resolveSharedChatAutoTrigger(id:observation:resolution:)` and `.started`.
+  Run `trigger.prompt` verbatim, as a turn, only when it returns `.acquired`:
+  the trigger reaches every observer of the room, and `.notAcquired` is stale.
+  Run it through steps 4 to 6 of [Running a Line](#running-a-line) as a prompt
+  the operator did not type (no attachments, no response-language lock); the
+  app may hide the prompt. If the turn does not start (the prompt cannot be
+  reserved, or a stop lands first), resolve the same trigger with `.declined`
+  to give the claim back: the Core offers the same messages again.
+- Between `.acquired` and the start of its turn, the observer that acquired a
+  trigger must not declare itself idle by calling
+  `setSharedChatConsumerBusy(false, observation:)`: an idle declaration by the
+  owner releases its claim and drops the batch it has not consumed (see
+  `setConsumerBusy(_:observation:)` in `AgentSharedChatCoordinator`). When the
+  turn does not start, resolve the trigger with `.declined` before it declares
+  itself idle. A turn that fails before it reaches the runner's `sendPrompt`
+  does not consume the batch, and a host that treats it as started drops that
+  batch with its next idle declaration (the terminal does the same): it gives
+  the claim back with `.declined` in that case too.
+- A trigger the app cannot answer, because it is busy, or because its room is
+  not the one observed now (a window that closed or moved to another session),
+  is not claimed: `declineSharedChatAutoTrigger(id:rootSessionID:)` returns it
+  to the queue without an observation, also after the app rebound to another
+  session. Declare the busy state first, so the Core does not offer the
+  trigger straight back.
+- `sendSharedChatMessage(text:destination:rootSessionID:messageID:)` publishes
+  a message as the operator, a trusted sender that takes no room slot, and
+  returns its `AgentSharedChat.Delivery`. It throws an `AgentSharedChat.Error`,
+  for example `.unavailable` while the runner has no backend. Take the
+  destination from `SharedChatMentionParser.parse(from:readableHandles:)`, and
+  send the destination and text of a `.route` at once, without queueing it
+  behind a running turn; a `.missingText` is input to refuse.
+- `sharedChatMentionRoster(rootSessionID:)` returns the participants and the
+  readable handles (`handleMap`) of one roster snapshot, so a join or leave
+  between two reads cannot mismatch them. Pass both to
+  `SharedChatMentionParser.suggestions(for:handleMap:)` for the mention list,
+  and the handle map to `parse(from:readableHandles:)`. Read it again when
+  `.participantsChanged` arrives.
+
 ## Observing the Host
 
 A shell of the app (its sidebar, its window list) renders the
@@ -877,8 +971,8 @@ it comprises:
   (`ChatTaskGraphOverview` and `ChatSubAgentOverview`); the sub-agent
   transcript (`ChatSubAgentTranscript`); `ChatModelCatalog`;
   `ChatCommandRegistry`, `ChatCommandDescriptor`, and `ChatCommandContext`;
-  `ChatPromptQueue` and `ChatQueuedPrompt`; `SharedChatMentionParser`; and
-  `ChatSessionRuntimeFactory`;
+  `ChatPromptQueue` and `ChatQueuedPrompt`; `SharedChatMentionParser` and
+  `SharedChatMessageLabel`; and `ChatSessionRuntimeFactory`;
 - the observable state: `ChatSessionStateReducer`, `ChatSessionSnapshot` with
   `ChatTurnState`, `ChatFileChangesState`, and `ChatSessionSummary`,
   `ChatTurnEntry` with `ChatTurnOrigin` and `ChatTurnPhase`,

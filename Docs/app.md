@@ -166,15 +166,17 @@ whose agent ZenCODE no longer tracks keeps what it showed last. A tab that
 never read a conversation (an agent that ended before you opened its tab)
 says that it is not available.
 
-The composer, the consent card, and the status bar are in the Chat tab only,
-which keeps its scroll position and your draft while another tab shows. When
-the session waits for an answer while another tab shows, the Chat tab shows a
-dot, and the window never switches to it by itself: a tool consent shows only
-in the Chat tab, while the menus and the requests for a line of text are
-sheets of the window, over any tab. The commands you launch (the toolbar
-buttons, the menu items, New and Save Session, loading or deleting a saved
-session) select the Chat tab before they start, so you see their result. Esc
-works in the Chat tab only: in a sub-agent tab it does nothing. ⌘. and the
+The chat panel (see [Shared chat](#shared-chat)), the composer, the consent
+card, and the status bar are in the Chat tab only, which keeps its scroll
+position and your draft while another tab shows. When the session waits for an
+answer while another tab shows, the Chat tab shows a dot, and the window never
+switches to it by itself: a tool consent shows only in the Chat tab, while the
+menus and the requests for a line of text are sheets of the window, over any
+tab. The commands you launch (the toolbar buttons, the menu items, New and
+Save Session, loading or deleting a saved session) select the Chat tab before
+they start, so you see their result; **Show Chat Reader** (⌃Y) selects it and
+opens the reader. Esc works in the Chat tab only: in a sub-agent tab it does
+nothing. ⌘. and the
 Stop button stop the turn from any tab, without changing tab. The toolbar and
 the artifacts sidebar belong to the window. The tabs are a state of the
 window: they are not saved, a new or loaded session closes the sub-agent tabs
@@ -186,14 +188,21 @@ The composer is at the bottom of the window.
 
 - Typing `/` suggests the slash commands you can run, and after a command
   and a space its arguments, as in the terminal.
-- ↑ and ↓ walk the prompts you sent in the window.
+- Typing `@` at the start of the draft suggests the live mentions of the
+  shared chat (`@coordinator`, `@all`, and one `@agent-name` for each active
+  agent). A line that starts with a mention is a message to the chat, not a
+  prompt: see [Shared chat](#shared-chat).
+- ↑ and ↓ walk the prompts you sent in the window. While the chat reader is
+  open, ↑ and ↓ scroll its message instead, and ←, →, Home, and End change
+  message, even in the composer.
 - A prompt sent while a turn runs waits as a `queued` chip above the field,
   which you can remove, and runs when the turn ends. At most 32 prompts wait:
   a full queue refuses the prompt with the terminal's message, keeping your
   draft. A command sent during a turn is never queued: `/help`, `/artifacts`,
   and `/tasks` (alone, or with `status`, `list`, or `ls`) run at once, beside
   the turn, and any other command, `/exit` included, is refused with the
-  terminal's message, keeping your draft.
+  terminal's message, keeping your draft. A message to the chat is never
+  queued either: it is sent at once.
 - The paperclip opens the attachment picker (images and movies), and files
   dropped on the composer are attached, one `/attach` each. `/attach list` and
   `/attach delete` work as in the terminal.
@@ -204,6 +213,94 @@ The composer is at the bottom of the window.
 The response language is locked on the first prompt you type in a session, as
 in the terminal: the configured language, else the system one. It is decided
 again after a new or loaded session and after an agent switch.
+
+## Shared chat
+
+While sub-agents work, the coordinator and the active agents share a live chat
+room (see [agents.md](agents.md#messages)), the same one that the terminal
+shows in its `Chat` reader. Each window follows the room of its own session:
+it shows the room's messages in a panel, sends your messages to it, and runs
+the coordinator turns that the messages for the coordinator ask for. The room
+is transient, as in the terminal: nothing of it is saved with the session, and
+a new or loaded session starts with an empty reader. For a reused session id
+the Core keeps the messages it has not delivered yet, and the reader gets them
+when it attaches. The window keeps the latest 512 messages.
+Telegram is not available in the app, so the relay of the room to a Telegram
+chat does not apply.
+
+### Writing to the chat
+
+A line that starts with `@coordinator`, `@all`, or `@agent-name`, followed by
+a message, goes to the room as the operator instead of to the model. The
+handle of an agent is the readable one that the terminal offers, derived from
+its display name. A mention elsewhere in the line is ordinary text.
+
+- The composer completes the leading mention, as the terminal editor does.
+  The list shows `@coordinator`, `@all`, and the active agents, read again
+  while the draft starts with `@`; ↑ and ↓ move the highlight, Esc hides the
+  list until the next edit, and Tab, Return, or a click completes the whole
+  word to `@handle` and a space. Accepting a mention only completes it, with
+  Return too: a mention needs a message, so a suggestion never sends the
+  draft. Only the first word of a single-line draft is completed.
+- Return sends the message at once, also while a turn runs. It is never
+  queued, and it is not a prompt of the turn.
+- A mention without a message is refused with `ZenCODE message: add a message
+  after the live mention.`, and the draft stays.
+- A mention that the room does not take shows the failure and puts the line
+  back in the field, if it is empty by then: `ZenCODE message: selected agent
+  is no longer active.` for an agent that left the room, and `ZenCODE
+  message:` followed by the reason for any other failure (for example, the
+  room is not ready yet).
+
+### Coordinator turns
+
+When a message for the coordinator arrives (from an agent, or yours with
+`@coordinator` or `@all`), the Core offers one coordinator turn on it, as it
+does in the terminal. The window takes the turn only while it is idle: no line
+runs and no prompt waits in the queue. The turn runs as a hidden coordinator
+turn. Its prompt, built by the Core, is hidden like the prompts a command
+builds, and the turn shows as any other: the response, the tool calls, the
+file-change summary, the status bar. Stop and Esc end it like any turn, and a
+prompt you send meanwhile waits in the queue. While the window is busy the
+messages wait, and the Core offers them again when it is idle; the same
+happens when the turn does not start, for example when you stop it first.
+
+### The chat panel
+
+The panel is titled `Chat` and sits in the Chat tab, above the consent card
+and the composer. It has four states:
+
+- Hidden, while the reader is closed and every message is read, as the
+  terminal's compact reader disappears once every message is read.
+- One row, while the reader is closed and messages are unread:
+  `Chat · N messages · U new` and `⌃Y read`. A click on the row, or ⌃Y, opens
+  the reader.
+- One row, `Chat · 0 messages`, while the reader is open on an empty history,
+  with a close button.
+- Expanded, while the reader is open on messages. It shows one message at a
+  time: the header `Chat · i/N · U new` with the ‹ and › buttons and a close
+  button, then `Author: <route>`, for example `Worker [18:05:09] →
+  Coordinator`, the label of the terminal reader (the recipient reads
+  `Coordinator`, `All`, `Operator`, the name of the agent, or `Agent`), and
+  the text. The text is plain, never Markdown, and selectable; it grows to 12
+  lines and then scrolls.
+
+Opening the reader selects the first unread message, else the newest, and
+reads it. Moving onto an unread message marks it and the messages before it
+as read, and moving back never makes one unread again. A message that arrives
+while the reader is open leaves the selection where it is and counts as new.
+Your own messages stay in the history and never count as new.
+
+While the reader is open in the Chat tab, the keys without modifiers belong to
+it, even when the composer has the focus: ← and → show the previous and the
+next message, Home and End the first and the last, ↑ and ↓ scroll the text by
+a line. They do not move the cursor, recall the history, or move the highlight
+of the suggestions. With Shift, Option, Command, or Control a key keeps its
+editing meaning, an input method that is composing keeps priority, and Esc is
+unchanged. **Show Chat Reader** (**Hide Chat Reader** while the reader is open
+in the Chat tab) in the Session menu, and ⌃Y, open and close the reader; ⌃Y
+works with the focus in the composer. From a sub-agent tab the item selects the
+Chat tab and opens the reader.
 
 ## Tool consent, menus, and requests
 
@@ -260,23 +357,29 @@ tools, the skills, the task graph, and a **Changes** menu (show changes, show
 changes with the diff, undo changes, show or hide the artifacts sidebar,
 review changes), **Stop** while a turn runs, and, always last, the
 **Artifacts** button, which shows and hides the artifacts sidebar. The
-**Session** menu has Stop (⌘.) and repeats the model, thinking, agent, tools,
-skills, tasks, changes, undo, and help items. Each item runs the slash
-command it names (the artifacts items toggle the sidebar, as `/artifacts`
-does), so everything is also available from the composer. An item that runs
-a command selects the Chat tab first, so its result shows; Stop and the
-artifacts items leave the tab as it is.
+**Session** menu has Stop (⌘.), then **Show Chat Reader** (**Hide Chat
+Reader**, ⌃Y) in a section of its own, and repeats the model, thinking, agent,
+tools, skills, tasks, changes, undo, and help items. Each of those items runs
+the slash command it names (the artifacts items toggle the sidebar, as
+`/artifacts` does), so everything is also available from the composer. An item
+that runs a command selects the Chat tab first, so its result shows; Stop and
+the artifacts items leave the tab as it is, and the chat reader item selects it
+only to open the reader (see [Shared chat](#shared-chat)).
 
 ## Keyboard shortcuts
 
 | Keys | Where | What it does |
 | --- | --- | --- |
-| Return | Composer | Sends the prompt, or queues it while a turn runs |
+| Return | Composer | Sends the prompt, or queues it while a turn runs; a line that starts with a mention goes to the shared chat at once |
 | Shift+Return, Option+Return | Composer | Inserts a new line |
-| ↑, ↓ | Composer | Recalls the previous or next prompt, from the first or last line of the field |
-| ↑, ↓, Tab | Command suggestions | Moves the highlight, completes the highlighted command |
+| ↑, ↓ | Composer | Recalls the previous or next prompt, from the first or last line of the field, unless the chat reader is open |
+| ↑, ↓, Tab | Command and mention suggestions | Moves the highlight, completes the highlighted command or mention |
 | Return | Command suggestions | Completes the highlighted command and sends it, unless it takes an argument |
-| Esc | Command suggestions | Hides the list until the next edit |
+| Return | Mention suggestions | Completes the highlighted mention, never sends |
+| Esc | Command and mention suggestions | Hides the list until the next edit |
+| ←, →, Home, End | Chat tab, reader open | Shows the previous, next, first, or last chat message, also from the composer |
+| ↑, ↓ | Chat tab, reader open | Scrolls the chat message shown, also from the composer, ahead of the history and the suggestions |
+| ⌃Y | Menu bar | Shows or hides the chat reader |
 | Esc | Chat tab | Denies the tool call while a consent card shows, otherwise stops the turn |
 | Esc | Sub-agent tab | Does nothing |
 | ⌘. | Window | Stops the turn, from any tab |
@@ -311,8 +414,8 @@ terminal:
 - `/setup`, `/voice` and dictation, `/telegram`, `/feature`, `/cron`, and
   `/ds4` are not offered, and answer as unknown commands. `/tools logs`
   answers that it is not available in the app.
-- The live `@` mentions of the shared chat and the full-access toggle
-  (Ctrl+G) do not exist in the app.
+- The full-access toggle (Ctrl+G) does not exist in the app.
+- The shared chat is not relayed to Telegram, which the app does not offer.
 - There is no `.app` bundle: the app runs as the bare executable that
   `zen --ui` installs in `~/.zencode/app/current`, from `swift run`, or from a
   release build.
@@ -331,10 +434,10 @@ the root graph already resolves. The root graph never depends on it.
 | --- | --- |
 | `ZenAppTheme` | The palette of the terminal UI as SwiftUI colors, in dark and light, and the glass helpers |
 | `ZenAppMarkdown` | The Markdown renderer on swift-markdown: blocks, tables, diffs, and the syntax highlighter |
-| `ZenAppSession` | The composition and the window model, without SwiftUI: one `ChatSessionHost` over the production runner, one slot per window, the transcript projection, the line routing, the prompt history, and the window's tabs with the model of each sub-agent tab |
+| `ZenAppSession` | The composition and the window model, without SwiftUI: one `ChatSessionHost` over the production runner, one slot per window, the transcript projection, the line routing, the prompt history, the window's tabs with the model of each sub-agent tab, and the window's shared chat (its observation of the room and the reader) |
 | `ZenAppTranscript` | The conversation views: prompts, tool calls, thinking, artifacts, summaries, notices, the task-graph and sub-agent cards, and the detail card of a sub-agent tab |
-| `ZenAppControls` | The composer, the status bar, the consent card, and the menu and request sheets |
-| `ZenCODEApp` | The app shell: the window group, the menu bar, the sessions sidebar, the artifacts sidebar, the toolbar, the tab bar and the sub-agent tabs, and the launch |
+| `ZenAppControls` | The composer (with the completion of slash commands and mentions), the status bar, the consent card, and the menu and request sheets |
+| `ZenCODEApp` | The app shell: the window group, the menu bar, the sessions sidebar, the artifacts sidebar, the toolbar, the tab bar and the sub-agent tabs, the shared-chat panel, and the launch |
 
 Every target has its tests in `Tests/<Target>Tests` (`ZenCODEAppTests` covers
 the pure logic of the shell), and they run on their own:
