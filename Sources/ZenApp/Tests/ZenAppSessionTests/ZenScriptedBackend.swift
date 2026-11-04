@@ -271,10 +271,37 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
         lifecycle.append(.backendShutDown)
     }
 
+    /// The error a scripted preload fails with.
+    struct PreloadFailed: Error, LocalizedError {
+        var errorDescription: String? { "Scripted preload failure" }
+    }
+
+    /// The gate the next preloads wait at, when set.
+    private var preloadGate: ZenGate?
+    /// How many of the next preloads fail.
+    private var preloadFailures = 0
+
+    /// Makes the next preloads wait at `gate`; `nil` lets them through.
+    func holdPreloads(at gate: ZenGate?) {
+        preloadGate = gate
+    }
+
+    /// Makes the next `count` preloads fail with ``PreloadFailed``.
+    func failNextPreloads(_ count: Int) {
+        preloadFailures = count
+    }
+
     func preloadModel(
         onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> String {
-        "zen-app-model"
+        if let preloadGate {
+            await preloadGate.pass()
+        }
+        if preloadFailures > 0 {
+            preloadFailures -= 1
+            throw PreloadFailed()
+        }
+        return "zen-app-model"
     }
 
     func activeToolDescriptors() async -> [DirectToolDescriptor] {

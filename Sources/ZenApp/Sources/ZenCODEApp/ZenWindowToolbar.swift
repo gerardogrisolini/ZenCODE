@@ -32,8 +32,8 @@ enum ZenSessionCommand {
 
 /// The toolbar items of a window. The labels that show the status read it in
 /// their own bodies. The agent comes first, with its name; the model and
-/// thinking buttons follow as icons only, then the tools, skills, tasks, and
-/// changes in one group. The artifacts sidebar toggle is always the trailing
+/// thinking buttons follow as icons only, with the tools, skills, tasks, and
+/// changes, in one group. The artifacts sidebar toggle is always the trailing
 /// item.
 struct ZenWindowToolbar: ToolbarContent {
     let session: ZenWindowSession
@@ -63,11 +63,7 @@ struct ZenWindowToolbar: ToolbarContent {
             } label: {
                 ZenThinkingToolbarLabel(session: session)
             }
-        }
 
-        ToolbarSpacer(.fixed, placement: .primaryAction)
-
-        ToolbarItemGroup(placement: .primaryAction) {
             Button {
                 session.run(ZenSessionCommand.tools)
             } label: {

@@ -160,6 +160,8 @@ struct ZenTranscriptItemView: View {
             ZenFileChangeSummaryView(summary: summary, includesDiff: false)
         case let .local(text, isFailure):
             ZenLocalMessageView(text: text, isFailure: isFailure)
+        case let .taskGraph(overview):
+            ZenTaskGraphCard(overview: overview)
         }
     }
 }

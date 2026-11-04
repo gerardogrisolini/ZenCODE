@@ -434,7 +434,11 @@ struct ZenDiffRowsView: View {
     }
 }
 
-/// The lines of a unified patch: hunk headers in `fileHunk`, file headers in
+/// The lines of a unified patch, numbered in one `codeGutter` column as the
+/// terminal's file artifacts number them
+/// (``ZenFileChangeFormatting/patchLineNumbers(_:)``: the old line of a removed
+/// line, the new line of an added or context line, none for headers, notes,
+/// and lines outside a hunk): hunk headers in `fileHunk`, file headers in
 /// `fileMetadata`, and `+`/`−` lines in the palette's diff colors. With a
 /// language, the environment's ``ZenCodeHighlighter`` colors the source after
 /// the marker of the lines that carry source, as the terminal does.
@@ -455,13 +459,14 @@ struct ZenPatchLinesView: View {
             : ZenFileChangeFormatting.patchPreviewLineLimit
         let visible = lines.prefix(limit)
         let hidden = lines.count - visible.count
+        // The numbering is sequential, so the visible prefix numbers as it
+        // does within the whole patch.
+        let numbers = ZenFileChangeFormatting.patchLineNumbers(Array(visible))
+        let width = Self.gutterWidth(numbers)
         VStack(alignment: .leading, spacing: 4) {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(visible.enumerated()), id: \.offset) { _, line in
-                    lineText(line)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 8)
-                        .background(background(line.kind))
+                ForEach(Array(visible.enumerated()), id: \.offset) { index, line in
+                    patchRow(line, number: numbers[index], width: width)
                 }
             }
             .zenCodeSurface()
@@ -469,6 +474,23 @@ struct ZenPatchLinesView: View {
                 ZenShowMoreButton(hiddenLineCount: hidden, isShowingAll: $isShowingAll)
             }
         }
+    }
+
+    private func patchRow(_ line: ZenPatchLine, number: Int?, width: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(zenGutter(number, width: width))
+                .foregroundStyle(palette.codeGutter)
+            lineText(line)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 8)
+        .background(background(line.kind))
+    }
+
+    /// The digits of the widest of `numbers` (at least one), as
+    /// ``ZenDiffRowsView/gutterWidth(_:lineNumbers:)`` sizes its gutter.
+    static nonisolated func gutterWidth(_ numbers: [Int?]) -> Int {
+        String(numbers.reduce(1) { max($0, $1 ?? 0) }).count
     }
 
     /// The line: the marker in the color of its kind and the source colored

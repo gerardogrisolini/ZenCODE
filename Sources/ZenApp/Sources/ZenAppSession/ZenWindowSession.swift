@@ -100,9 +100,6 @@ public final class ZenWindowSession: Identifiable {
     /// sessions (``ZenTranscriptProjection/liveBlockID(for:)``); `nil` when
     /// nothing streams.
     public private(set) var liveBlockID: String?
-    /// The task graph to show: the latest one when it is significant or the
-    /// operator asked for it with `/tasks`.
-    public private(set) var taskGraph: ChatTaskGraphOverview?
     /// The latest sub-agent overview.
     public private(set) var subAgents = ChatSubAgentOverview(snapshots: [])
     /// The oldest interaction the session waits for.
@@ -122,6 +119,15 @@ public final class ZenWindowSession: Identifiable {
     public private(set) var sessionTitle: String?
     /// The name of the saved session the session was saved to or loaded from.
     public private(set) var currentSavedSessionName: String?
+    /// The name of the saved session the sidebar loads
+    /// (``loadSavedSession(named:)``), while the conversation shows a loading
+    /// indicator in place of the welcome view; `nil` otherwise. Set when the
+    /// load starts (not when it is refused), and cleared once the window
+    /// applied the snapshot that shows how the load ended (the restored
+    /// conversation, or its failure), when the window follows another
+    /// session, or when it closes. A `/sessions load` line does not set it.
+    /// Transient state of the window: never saved.
+    public private(set) var loadingSavedSessionName: String?
     /// `/exit` ran: the window should close (call ``close()``).
     public private(set) var closeRequested = false
     /// ``close()`` ran, or the runtime shut down.
@@ -225,6 +231,9 @@ public final class ZenWindowSession: Identifiable {
     /// Awaited by the turn step right after it reserved the prompt, for
     /// tests.
     @ObservationIgnored var turnDidReserve: (@Sendable () async -> Void)?
+    /// Awaited before each snapshot is applied, for tests; when `nil`, a
+    /// snapshot is applied without suspending.
+    @ObservationIgnored var snapshotWillApply: (@Sendable () async -> Void)?
     /// The observation of the current session's shared-chat room.
     @ObservationIgnored let sharedChatObservation: ZenSharedChatObservation
     /// Awaited before an auto-trigger of the shared chat is answered, for
@@ -262,8 +271,19 @@ public final class ZenWindowSession: Identifiable {
     @ObservationIgnored private var statusFactsGeneration = 0
     /// The number of reads of the status facts, for tests.
     @ObservationIgnored private(set) var statusFactsReadCount = 0
+    /// The task graph of the last snapshot applied, to tell a change of the
+    /// graph.
     @ObservationIgnored private var lastSnapshotTaskGraph: ChatTaskGraphOverview?
-    @ObservationIgnored private var explicitTaskGraphID: String?
+    /// The task-graph card of the latest turn that showed one; `nil` before
+    /// one, and in a new or loaded session.
+    @ObservationIgnored private var turnTaskGraphCard: TurnTaskGraphCard?
+
+    /// The task-graph card of a turn: the local row the turn added, which
+    /// moves with the graph's changes while the turn generates.
+    private struct TurnTaskGraphCard {
+        let turnID: Int
+        let id: UUID
+    }
     /// The readable mention handles of ``mentionSuggestions`` (handle →
     /// participant id), for the parser.
     @ObservationIgnored private var mentionHandles: [String: String] = [:]
@@ -280,6 +300,13 @@ public final class ZenWindowSession: Identifiable {
     @ObservationIgnored private var sharedChatClaimsInFlight = 0
     /// The mentions being sent.
     @ObservationIgnored private var mentionTasks: [UUID: Task<Void, Never>] = [:]
+    /// The sidebar load ``loadingSavedSessionName`` belongs to; a later load
+    /// replaces it.
+    @ObservationIgnored private var savedSessionLoadGeneration = 0
+    /// The last log entry of the slot's reducer when the sidebar load ended:
+    /// ``loadingSavedSessionName`` clears once an applied snapshot of
+    /// ``current`` reaches it. `nil` while the load runs and once cleared.
+    @ObservationIgnored private var savedSessionLoadAnchor: ZenWindowSteps.Anchor?
 
     private init(
         id: UUID,
@@ -387,15 +414,18 @@ public final class ZenWindowSession: Identifiable {
         // A slot without session keeps showing the last one.
         guard !isClosed, let incarnation, incarnation.epoch != current.epoch else { return }
         current = incarnation
+        // A sidebar load that ended waits for its own incarnation only.
+        if let anchor = savedSessionLoadAnchor, anchor.epoch != incarnation.epoch {
+            clearSavedSessionLoad()
+        }
         // The sub-agents of the earlier session are not this one's.
         closeSubAgentTabs()
         // Nor are its shared-chat room and messages.
         resetSharedChat()
-        explicitTaskGraphID = nil
+        // No task-graph card: the local rows go with the epoch, and so does
+        // the card of the turn.
         lastSnapshotTaskGraph = nil
-        if taskGraph != nil {
-            taskGraph = nil
-        }
+        turnTaskGraphCard = nil
         await hooks.resetResponseLanguageLock(unlessLockedIn: incarnation.epoch)
         guard !isClosed, current.epoch == incarnation.epoch else { return }
         observeSnapshots(of: incarnation)
@@ -410,6 +440,10 @@ public final class ZenWindowSession: Identifiable {
             let snapshots = await reducer.snapshots()
             for await snapshot in snapshots {
                 guard let self, !Task.isCancelled else { return }
+                if let snapshotWillApply = self.snapshotWillApply {
+                    await snapshotWillApply()
+                    guard !Task.isCancelled else { return }
+                }
                 self.apply(snapshot)
             }
         }
@@ -426,6 +460,8 @@ public final class ZenWindowSession: Identifiable {
         if epoch != snapshot.epoch {
             epoch = snapshot.epoch
         }
+        // Before the projection, which composes once for both.
+        updateTaskGraphCard(from: snapshot)
         if projection.update(with: snapshot) {
             transcript = projection.items
             let groups = ZenArtifactTurnGroup.groups(in: transcript)
@@ -434,7 +470,6 @@ public final class ZenWindowSession: Identifiable {
             }
         }
         updateLiveBlock(from: snapshot)
-        updateTaskGraph(from: snapshot)
         if subAgents != snapshot.subAgents {
             subAgents = snapshot.subAgents
         }
@@ -465,6 +500,7 @@ public final class ZenWindowSession: Identifiable {
         if currentSavedSessionName != snapshot.savedSession.savedSessionName {
             currentSavedSessionName = snapshot.savedSession.savedSessionName
         }
+        settleSavedSessionLoad()
     }
 
     /// Publishes the block still streaming, each part on its own.
@@ -486,21 +522,38 @@ public final class ZenWindowSession: Identifiable {
         }
     }
 
-    /// Shows the latest graph when it is significant or when it is the graph
-    /// the operator asked for with `/tasks`.
-    private func updateTaskGraph(from snapshot: ChatSessionSnapshot) {
+    /// The card of a turn, as the terminal writes its `Tasks` section: a
+    /// change of the graph while a turn generates, when the graph is
+    /// significant (``ChatTaskGraphOverview/isSignificant``), shows the card
+    /// of the turn after the last log entry of `snapshot` (so before the
+    /// block still streaming), with the graph as it is now. The first such
+    /// change of a turn adds the card, a later one moves it
+    /// (``ZenTranscriptProjection/moveLocal(id:to:content:)``), keeping its
+    /// id. Once the turn ended the card stays where it is; a change outside
+    /// a turn, or to a graph that is not significant, shows nothing and
+    /// leaves every card as it is, and the next turn adds a card of its own.
+    /// An unchanged graph (every streamed token) costs one comparison; the
+    /// projection composes only when the card changed.
+    private func updateTaskGraphCard(from snapshot: ChatSessionSnapshot) {
         guard snapshot.taskGraph != lastSnapshotTaskGraph else { return }
         lastSnapshotTaskGraph = snapshot.taskGraph
-        let visible: ChatTaskGraphOverview?
-        if let graph = snapshot.taskGraph,
-           graph.isSignificant || graph.graph.id == explicitTaskGraphID {
-            visible = graph
-        } else {
-            visible = nil
+        guard snapshot.turn.isGenerating,
+              let turnID = snapshot.turn.turnID,
+              let overview = snapshot.taskGraph,
+              overview.isSignificant
+        else { return }
+        let anchorSequence = ZenLocalTranscriptItem.anchorSequence(in: snapshot)
+        if let card = turnTaskGraphCard, card.turnID == turnID,
+           projection.moveLocal(id: card.id, to: anchorSequence, content: .taskGraph(overview)) {
+            return
         }
-        if visible != taskGraph {
-            taskGraph = visible
-        }
+        let item = ZenLocalTranscriptItem(
+            epoch: snapshot.epoch,
+            anchorSequence: anchorSequence,
+            content: .taskGraph(overview)
+        )
+        turnTaskGraphCard = TurnTaskGraphCard(turnID: turnID, id: item.id)
+        projection.insertLocal(item)
     }
 
     // MARK: - Status
@@ -967,14 +1020,27 @@ public final class ZenWindowSession: Identifiable {
         return outcome
     }
 
-    /// `/tasks` shows the graph it published, significant or not.
+    /// The cards of the graphs a `/tasks` line published (explicit overviews),
+    /// significant or not, one per publication, after what the line showed
+    /// (its echo, its notices): each stays where it is, apart from the card of
+    /// a turn. A line that published none (another action, no graph) shows
+    /// its notices only.
     private func showRequestedTaskGraph() async {
-        let graph = await ZenWindowSteps.taskGraph(in: sessionHost, slotID: slotID)
+        guard let requested = await ZenWindowSteps.requestedTaskGraphs(
+            in: sessionHost,
+            slotID: slotID,
+            presenter: presenter
+        ) else { return }
         guard !isClosed else { return }
-        explicitTaskGraphID = graph?.graph.id
-        lastSnapshotTaskGraph = graph
-        if taskGraph != graph {
-            taskGraph = graph
+        for overview in requested.overviews {
+            projection.insertLocal(ZenLocalTranscriptItem(
+                epoch: requested.anchor.epoch,
+                anchorSequence: requested.anchor.sequence,
+                content: .taskGraph(overview)
+            ))
+        }
+        if projection.composeIfNeeded() {
+            transcript = projection.items
         }
     }
 
@@ -1073,7 +1139,8 @@ public final class ZenWindowSession: Identifiable {
     }
 
     /// Loads the saved session `name` of the workspace into a new
-    /// incarnation. Refused while a line runs.
+    /// incarnation, with the loading indicator (``loadingSavedSessionName``)
+    /// until the window shows how the load ended. Refused while a line runs.
     public func loadSavedSession(named name: String) {
         guard !isClosed else { return }
         selectTab(.chat)
@@ -1081,8 +1148,10 @@ public final class ZenWindowSession: Identifiable {
             refuseWhileBusy(command: "/sessions")
             return
         }
+        let generation = beginSavedSessionLoad(named: name)
         startExclusive { [weak self] _ in
             await self?.performLoad(named: name)
+            await self?.endSavedSessionLoad(generation)
         }
     }
 
@@ -1146,6 +1215,57 @@ public final class ZenWindowSession: Identifiable {
             await ZenWindowSteps.present(outcome.notices, in: sessionHost, slotID: slotID)
         } catch {
             await appendLocal(.local(text: error.localizedDescription, isFailure: true))
+        }
+    }
+
+    // MARK: - Loading indicator
+
+    /// Shows the loading indicator of the sidebar load of `name`, in place of
+    /// the one of an earlier load; returns the load's generation.
+    private func beginSavedSessionLoad(named name: String) -> Int {
+        savedSessionLoadGeneration &+= 1
+        savedSessionLoadAnchor = nil
+        loadingSavedSessionName = name
+        return savedSessionLoadGeneration
+    }
+
+    /// The sidebar load of `generation` ended, loaded or not. The restored
+    /// log reaches the window on the snapshot stream, maybe after the load
+    /// returned: the indicator stays until the window applied the slot's
+    /// reducer as it is now (the restored rows, or the failure anchored on
+    /// it), so the welcome view never shows in between. It clears at once
+    /// when the slot has no session or the window already applied it;
+    /// nothing waits here, so the line ends at once.
+    private func endSavedSessionLoad(_ generation: Int) async {
+        guard generation == savedSessionLoadGeneration, loadingSavedSessionName != nil else { return }
+        let anchor = await ZenWindowSteps.anchor(in: sessionHost, slotID: slotID)
+        guard generation == savedSessionLoadGeneration, loadingSavedSessionName != nil else { return }
+        guard !isClosed, let anchor else {
+            clearSavedSessionLoad()
+            return
+        }
+        savedSessionLoadAnchor = anchor
+        settleSavedSessionLoad()
+    }
+
+    /// Clears the indicator of a sidebar load that ended once the applied
+    /// snapshot of ``current`` reached its anchor. Until the window follows
+    /// the anchor's incarnation it waits: ``follow(_:)`` clears it when the
+    /// window follows another one.
+    private func settleSavedSessionLoad() {
+        guard let anchor = savedSessionLoadAnchor,
+              anchor.epoch == current.epoch,
+              let snapshot,
+              snapshot.epoch == anchor.epoch,
+              ZenLocalTranscriptItem.anchorSequence(in: snapshot) >= anchor.sequence
+        else { return }
+        clearSavedSessionLoad()
+    }
+
+    private func clearSavedSessionLoad() {
+        savedSessionLoadAnchor = nil
+        if loadingSavedSessionName != nil {
+            loadingSavedSessionName = nil
         }
     }
 
@@ -1563,6 +1683,7 @@ public final class ZenWindowSession: Identifiable {
         guard !isClosed else { return }
         isClosed = true
         queuedLines = []
+        clearSavedSessionLoad()
         let detach = sharedChatObservation.stop()
         await ZenWindowSteps.close(sessionHost, slotID: slotID)
         cancelWork()
@@ -1580,6 +1701,7 @@ public final class ZenWindowSession: Identifiable {
         guard !isClosed else { return }
         isClosed = true
         queuedLines = []
+        clearSavedSessionLoad()
         sharedChatObservation.stop()
     }
 
@@ -1611,6 +1733,7 @@ public final class ZenWindowSession: Identifiable {
         sharedChatObservation.stop()
         queuedLines = []
         isBusy = false
+        clearSavedSessionLoad()
         // The tabs stay as they are; their models stop.
         stopSubAgentTabs()
     }
@@ -1829,9 +1952,25 @@ enum ZenWindowSteps {
         }
     }
 
-    /// The task graph the current reducer holds.
-    static func taskGraph(in sessionHost: ChatSessionHost, slotID: ChatSlotID) -> ChatTaskGraphOverview? {
-        sessionHost.reducer(in: slotID)?.snapshot.taskGraph
+    /// The graphs `/tasks` published that belong to the session the slot
+    /// runs now, taken from `presenter` (those of an earlier session are
+    /// dropped), with the last log entry of its reducer, for their cards;
+    /// `nil` when there is none.
+    static func requestedTaskGraphs(
+        in sessionHost: ChatSessionHost,
+        slotID: ChatSlotID,
+        presenter: ZenWindowPresenter
+    ) -> RequestedTaskGraphs? {
+        let published = presenter.takeExplicitTaskGraphs()
+        guard !published.isEmpty, let anchor = anchor(in: sessionHost, slotID: slotID) else { return nil }
+        let overviews = published.filter { $0.epoch == anchor.epoch }.map(\.overview)
+        guard !overviews.isEmpty else { return nil }
+        return RequestedTaskGraphs(anchor: anchor, overviews: overviews)
+    }
+
+    struct RequestedTaskGraphs: Sendable {
+        let anchor: Anchor
+        let overviews: [ChatTaskGraphOverview]
     }
 
     /// Cancels the prompt reserved on the slot, if one is; `true` when it

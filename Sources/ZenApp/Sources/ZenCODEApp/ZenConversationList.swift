@@ -3,7 +3,8 @@
 //  ZenApp
 //
 //  The scrolling conversation of a window: the closed rows, the block still
-//  streaming after them, the welcome view of an empty session, the overview
+//  streaming after them, the welcome view of an empty session (or the
+//  loading indicator of a saved session the sidebar loads), the overview
 //  cards pinned after the rows, and the bottom-following scroll with its
 //  "jump to latest" button.
 //
@@ -229,30 +230,36 @@ struct ZenJumpToLatestButton: View {
     }
 }
 
-/// The welcome view of an empty session, until a block streams. Its own
-/// view, so only it reads the live block id and the status.
+/// The welcome view of an empty session, until a block streams; while the
+/// sidebar loads a saved session (``ZenWindowSession/loadingSavedSessionName``),
+/// the loading indicator in its place, with the same layout. Its own view, so
+/// only it reads the live block id, the loading state, and the status.
 struct ZenWelcomeSlot: View {
     let session: ZenWindowSession
 
     var body: some View {
         if session.liveBlockID == nil {
-            ZenWelcomeView(workspace: session.workspace, modelID: session.status.modelID)
-                .frame(maxWidth: .infinity)
-                .padding(.top, 72)
+            Group {
+                if let name = session.loadingSavedSessionName {
+                    ZenSessionLoadingView(name: name)
+                } else {
+                    ZenWelcomeView(workspace: session.workspace, modelID: session.status.modelID)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 72)
         }
     }
 }
 
-/// The overview cards after the rows: the task graph, the sub-agents in
-/// progress, whose rows open the sub-agent's tab. Their own view, so an
-/// overview update does not run the list's body.
+/// The overview card after the rows: the sub-agents in progress, whose rows
+/// open the sub-agent's tab. Its own view, so an overview update does not run
+/// the list's body. The task graph is not here: its cards are rows of the
+/// conversation (``ZenTranscriptItem/Content/taskGraph(_:)``).
 struct ZenOverviewCards: View {
     let session: ZenWindowSession
 
     var body: some View {
-        if let taskGraph = session.taskGraph {
-            ZenTaskGraphCard(overview: taskGraph)
-        }
         if session.subAgents.snapshots.contains(where: \.pending) {
             ZenSubAgentsCard(overview: session.subAgents) { agentID in
                 session.openSubAgentTab(agentID)

@@ -244,6 +244,40 @@ struct ZenFileArtifactDiffTests {
         #expect(ZenFileChangeFormatting.patchSource(of: ZenPatchLine(kind: .context, text: "loose")) == nil)
     }
 
+    @Test("a patch numbers its lines as the terminal's file artifacts do")
+    func patchLineNumbers() {
+        let lines = ZenFileChangeFormatting.patchLines("""
+        diff --git a/App.swift b/App.swift
+        index 1..2 100644
+        --- a/App.swift
+        +++ b/App.swift
+        @@ -3,3 +3,4 @@
+         let a = 1
+        -let b = 2
+        +let b = 3
+        +let c = 4
+         let d = 5
+        @@ -40 +41 @@
+        -old
+        \\ No newline at end of file
+        +new
+        \\ No newline at end of file
+        """)
+        let numbers = ZenFileChangeFormatting.patchLineNumbers(lines)
+        // Headers and notes carry none; a removal its old line, the others their new line.
+        #expect(numbers == [nil, nil, nil, nil, nil, 3, 4, 4, 5, 6, nil, 40, nil, 41, nil])
+        #expect(numbers == TerminalChat.artifactDiffSourceLineNumbers(lines.map(\.text)))
+        #expect(ZenFileChangeFormatting.patchLineNumbers([]) == [])
+    }
+
+    @Test("the patch gutter is as wide as the widest number it shows")
+    func patchGutterWidth() {
+        #expect(ZenPatchLinesView.gutterWidth([nil, 9, 120, nil]) == 3)
+        #expect(ZenPatchLinesView.gutterWidth([nil, 7]) == 1)
+        #expect(ZenPatchLinesView.gutterWidth([nil, nil]) == 1)
+        #expect(ZenPatchLinesView.gutterWidth([]) == 1)
+    }
+
     @Test("the default highlighter colors nothing")
     func plainHighlighter() {
         #expect(ZenCodeHighlighter.plain.highlight("let a = 1", language: "swift", palette: .dark) == nil)

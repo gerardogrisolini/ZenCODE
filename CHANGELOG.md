@@ -44,6 +44,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - `TerminalChat.codeLanguageHint(forPath:)` is public: it chooses the
   syntax-highlighting language of a file from its extension, as the terminal
   UI does, so a host app colors a file the same way.
+- `TerminalChat.artifactDiffSourceLineNumbers(_:)` is public: it numbers the
+  lines of a unified diff as the terminal's file artifacts do (the old line of
+  a removed line, the new line of the others, none for the headers and the
+  lines outside a hunk), so a host app numbers a patch the same way.
 - Observable session state for host apps: `ChatSessionStateReducer` records
   what a session shows in one ordered log, with a sequence number per entry,
   and publishes a `ChatSessionSnapshot` (transcript, tool activity, the turn in
@@ -191,8 +195,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   builds the app on first use and after each update, then starts it detached;
   File > Open Folder… opens another workspace in another window). It shows
   the transcript with Markdown (highlighted code, diffs, tables), thinking,
-  tool calls with details and durations, file-change summaries, the task-graph
-  card, and the card of the sub-agents in progress, whose rows open a
+  tool calls with details and durations, file-change summaries (whose patches
+  number the lines as the terminal's artifacts do), the task-graph
+  card (like the terminal's section, it shows in the conversation: one card
+  per turn, where the graph last changed while the turn ran, and one where
+  `/tasks` runs), and the card of the sub-agents in progress, whose rows open a
   read-only tab with the sub-agent's details and transcript in a tab bar under
   the toolbar. The selected tab updates live; a hidden one reads the
   transcript when its agent starts or ends a run, and catches up when it is
@@ -203,8 +210,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   session waits for an answer; the tabs are not saved, and a new or loaded
   session closes them. The file artifacts show in a sidebar on the right,
   grouped by turn, that the toolbar button or `/artifacts` shows and hides;
-  their diffs number the lines in one column and color the source by the
-  file's extension, as in the terminal.
+  their diffs, captured patches included, number the lines in one column and
+  color the source by the file's extension, as in the terminal.
   Tool consent (Allow once, Always allow, Deny, with the command in a code
   box that scrolls past eight lines), menus, and text requests are sheets of
   the window, over any tab. The composer completes
@@ -213,7 +220,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   a video plays in Quick Look), and queues the prompts sent while a turn runs; Esc stops the
   turn in the Chat tab and does nothing in a sub-agent tab, and ⌘. stops it
   from any tab. A status bar like the terminal's, a sidebar of the current
-  and saved sessions, and a toolbar and Session menu for `/models`, `/think`,
+  and saved sessions (a saved session loaded from it shows a loading
+  indicator in the chat until its restored conversation appears), and a
+  toolbar and Session menu for `/models`, `/think`,
   `/agents`, `/tools`, `/skills`, `/tasks`, `/changes`, `/undo`, `/review`,
   and `/help`, with the toggle of the artifacts sidebar, complete it.
   `/setup`, `/voice`, `/telegram`, `/feature`, `/cron`, `/ds4`, and

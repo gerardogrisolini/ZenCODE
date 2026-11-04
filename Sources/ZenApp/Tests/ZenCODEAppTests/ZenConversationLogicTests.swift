@@ -258,6 +258,19 @@ struct ZenTurnSeparatorTests {
         #expect(rows.map(\.showsSeparator) == [false, false, true, true])
     }
 
+    @Test("a task-graph card is a row of the conversation and moves no separator")
+    func taskGraphCardsAreRows() {
+        let graph = TaskGraphSnapshot(id: "g", source: .manual, state: .active, tasks: [])
+        let card = ZenTranscriptItem(
+            id: "local-card",
+            turnID: nil,
+            content: .taskGraph(ChatTaskGraphOverview(graph: graph, tasks: []))
+        )
+        let rows = ZenConversationRow.rows(for: [prompt("1-log-1"), card, assistant("1-log-2"), prompt("1-log-3")])
+        #expect(rows.map(\.id) == ["1-log-1", "local-card", "1-log-2", "1-log-3"])
+        #expect(rows.map(\.showsSeparator) == [false, false, false, true])
+    }
+
     @Test("the row cache computes the rows again only when the transcript changes")
     func rowCache() {
         let cache = ZenConversationRowCache()

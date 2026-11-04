@@ -116,6 +116,15 @@ public enum ZenFileChangeFormatting {
         return (String(marker), String(line.text.unicodeScalars.dropFirst()))
     }
 
+    /// The source line number of each patch line, as the terminal's file
+    /// artifacts number it (`TerminalChat.artifactDiffSourceLineNumbers(_:)`,
+    /// hunk-aware): the old line of a removal, the new line of an addition or
+    /// a context line, `nil` for file and hunk headers, notes, and any line
+    /// outside a valid hunk. One element per line.
+    public static func patchLineNumbers(_ lines: [ZenPatchLine]) -> [Int?] {
+        TerminalChat.artifactDiffSourceLineNumbers(lines.map(\.text))
+    }
+
     /// The diff of an artifact, when its evidence establishes one: the complete
     /// old and new texts (only an added or deleted status establishes the
     /// absent side), else the captured patch. `nil` without evidence.

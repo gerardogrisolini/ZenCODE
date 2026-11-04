@@ -130,13 +130,17 @@ final class ZenWindowHooks: ChatSessionChannelHooks {
 /// it publishes the sub-agent overview around the `agent.*` tool calls (and
 /// refreshes it while one runs), which reaches the reducer as an observer, and
 /// tells the window when a file-mutation tool settled so it refreshes the git
-/// summary. Every call returns quickly: the chat actor is shared.
+/// summary. It records the task graphs `/tasks` publishes, for their cards.
+/// Every call returns quickly: the chat actor is shared.
 @ChatSessionActor
 final class ZenWindowPresenter: ChatSessionPresenter {
     weak var sessionHost: ChatSessionHost?
     var slotID: ChatSlotID?
     /// Called after a file-mutation tool settled.
     var fileMutationHandler: (@Sendable () -> Void)?
+    /// The task graphs `/tasks` published (explicit overviews), oldest first,
+    /// until the window takes them (``takeExplicitTaskGraphs()``).
+    private(set) var explicitTaskGraphs: [ZenExplicitTaskGraph] = []
 
     nonisolated init() {}
 
@@ -165,6 +169,36 @@ final class ZenWindowPresenter: ChatSessionPresenter {
             await controller.stopSubAgentOverviewRefresh()
         }
     }
+
+    /// Records a graph `/tasks` published (an explicit overview), with the
+    /// epoch of the session the slot runs now. An automatic overview records
+    /// nothing, without work (the window follows it in the reducer's
+    /// snapshot), and neither does an explicit one without graph.
+    func presentTaskGraphOverview(
+        _ overview: ChatTaskGraphOverview?,
+        origin: ChatOverviewOrigin,
+        publication _: ChatOverviewPublication?
+    ) async {
+        guard origin == .explicit,
+              let overview,
+              let sessionHost,
+              let slotID,
+              let epoch = sessionHost.incarnation(in: slotID)?.epoch
+        else { return }
+        explicitTaskGraphs.append(ZenExplicitTaskGraph(epoch: epoch, overview: overview))
+    }
+
+    /// The graphs `/tasks` published since the last call, oldest first.
+    func takeExplicitTaskGraphs() -> [ZenExplicitTaskGraph] {
+        defer { explicitTaskGraphs.removeAll() }
+        return explicitTaskGraphs
+    }
+}
+
+/// A task graph `/tasks` published, in the session of `epoch`.
+struct ZenExplicitTaskGraph: Sendable, Equatable {
+    let epoch: UInt64
+    let overview: ChatTaskGraphOverview
 }
 
 /// The host of the shared consent authorizer: the session host routes the

@@ -107,18 +107,26 @@ extension TerminalCodeBlockRenderer {
         return language == "artifact-diff" || language.hasPrefix("artifact-diff-")
     }
 
+    /// One `DiffState` over the lines of a unified diff (without terminators):
+    /// per line, the source line number the artifact gutter shows, `nil` where
+    /// it shows none. The result has one element per input line.
+    static func sourceLineNumbers(_ lines: [String]) -> [Int?] {
+        var state = DiffState()
+        return lines.map { line in
+            _ = state.classify(line)
+            return state.sourceLineNumber
+        }
+    }
+
     static func numberedArtifactDiff(_ diff: String) -> String {
         let normalized = diff.replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
         let content = normalized.hasSuffix("\n") ? String(normalized.dropLast()) : normalized
-        var state = DiffState()
-        let rows = content.split(separator: "\n", omittingEmptySubsequences: false).map { line in
-            _ = state.classify(String(line))
-            return (source: String(line), number: state.sourceLineNumber.map(String.init) ?? "")
-        }
-        let digits = max(1, rows.map { $0.number.count }.max() ?? 0)
-        return rows.map { row in
-            String(repeating: " ", count: digits - row.number.count) + row.number + " │ " + row.source
+        let sources = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let numbers = sourceLineNumbers(sources).map { $0.map(String.init) ?? "" }
+        let digits = max(1, numbers.map(\.count).max() ?? 0)
+        return zip(sources, numbers).map { source, number in
+            String(repeating: " ", count: digits - number.count) + number + " │ " + source
         }.joined(separator: "\n")
     }
 

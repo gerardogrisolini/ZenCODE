@@ -43,6 +43,12 @@ public struct ZenTranscriptItem: Identifiable, Equatable, Sendable {
         case fileChangeSummary(TurnFileChangeSummary)
         /// A message of the window itself (a refusal, a failed turn).
         case local(text: String, isFailure: Bool)
+        /// The task graph as the window showed it, like the terminal's
+        /// `Tasks` section: the card of a turn, which follows the graph's
+        /// latest significant change while the turn generates, or the card of
+        /// a `/tasks` line. Only a local row (``ZenLocalTranscriptItem``) has
+        /// it; it is never saved.
+        case taskGraph(ChatTaskGraphOverview)
     }
 
     /// Stable identity, unique across the incarnations of a window:
@@ -67,15 +73,16 @@ public struct ZenTranscriptItem: Identifiable, Equatable, Sendable {
 }
 
 /// A row the window adds to its transcript (a command echo, the echo of a
-/// reply the operator typed, a refusal, the ending of a turn), anchored after
-/// the last log entry present when it was created. It belongs to one epoch
-/// and disappears when the epoch changes.
+/// reply the operator typed, a refusal, the ending of a turn, a task-graph
+/// card), anchored after the last log entry present when it was created (or
+/// last moved, see ``ZenTranscriptProjection/moveLocal(id:to:content:)``). It
+/// belongs to one epoch and disappears when the epoch changes.
 public struct ZenLocalTranscriptItem: Identifiable, Equatable, Sendable {
     public let id: UUID
     /// The epoch of the session log the row belongs to.
     public let epoch: UInt64
-    /// The last log sequence present when the row was created: the row
-    /// follows every log row with a sequence up to it.
+    /// The last log sequence present when the row was created or last
+    /// moved: the row follows every log row with a sequence up to it.
     public let anchorSequence: Int
     public let content: ZenTranscriptItem.Content
 

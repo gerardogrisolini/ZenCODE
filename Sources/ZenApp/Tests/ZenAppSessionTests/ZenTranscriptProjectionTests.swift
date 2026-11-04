@@ -419,7 +419,78 @@ struct ZenTranscriptProjectionTests {
         ])
     }
 
+    @Test("A moved local row keeps its id, follows the rows up to its new anchor and the local rows already there, and shows its new content")
+    func movesALocalRow() async throws {
+        let reducer = ChatSessionStateReducer(sessionID: "s", workingDirectory: workspace, defaultOrigin: .app)
+        var projection = ZenTranscriptProjection()
+        await reducer.turnWillStart(request("Hello"))
+        var snapshot = await reducer.snapshot
+        let card = ZenLocalTranscriptItem(anchoredIn: snapshot, content: .taskGraph(taskOverview(revision: 1)))
+        let echo = ZenLocalTranscriptItem(anchoredIn: snapshot, content: .commandLine("/tasks"))
+        projection.insertLocal(card)
+        projection.insertLocal(echo)
+        projection.update(with: snapshot)
+        let cardID = "local-\(card.id.uuidString.lowercased())"
+        #expect(projection.items.suffix(2).map(\.id) == [cardID, "local-\(echo.id.uuidString.lowercased())"])
+
+        // At the same anchor: it goes after the local row added after it,
+        // with its new content and its id.
+        let moved = projection.moveLocal(id: card.id, to: card.anchorSequence, content: .taskGraph(taskOverview(revision: 2)))
+        #expect(moved)
+        let changed1 = projection.composeIfNeeded()
+        #expect(changed1)
+        #expect(projection.items.suffix(2).map(\.content) == [echo.content, .taskGraph(taskOverview(revision: 2))])
+        #expect(projection.items.last?.id == cardID)
+
+        // Where it is, with the same content: the rows do not change.
+        projection.moveLocal(id: card.id, to: card.anchorSequence, content: .taskGraph(taskOverview(revision: 2)))
+        let changed2 = projection.composeIfNeeded()
+        #expect(!changed2)
+
+        // Log rows arrive: moved to the end, it follows them, still one row.
+        await reducer.presentSessionNotice(.help(commandHelp: []))
+        snapshot = await reducer.snapshot
+        projection.update(with: snapshot)
+        #expect(projection.items.last?.content == .notice(.help(commandHelp: [])))
+        projection.moveLocal(
+            id: card.id,
+            to: ZenLocalTranscriptItem.anchorSequence(in: snapshot),
+            content: .taskGraph(taskOverview(revision: 3))
+        )
+        let changed3 = projection.composeIfNeeded()
+        #expect(changed3)
+        let items = projection.items
+        #expect(items.filter { $0.id == cardID }.count == 1)
+        #expect(items.last?.id == cardID)
+        #expect(items.last?.content == .taskGraph(taskOverview(revision: 3)))
+        #expect(items == ZenTranscriptProjection.items(for: snapshot, localItems: projection.localItems))
+
+        // A row the projection does not hold does not move.
+        let unknown = projection.moveLocal(id: UUID(), to: 0, content: .commandLine("/x"))
+        #expect(!unknown)
+        let changed4 = projection.composeIfNeeded()
+        #expect(!changed4)
+        #expect(projection.items == items)
+    }
+
     // MARK: - Helpers
+
+    /// A task graph without tasks at `revision`, with fixed dates.
+    private func taskOverview(revision: Int) -> ChatTaskGraphOverview {
+        let date = Date(timeIntervalSinceReferenceDate: 0)
+        return ChatTaskGraphOverview(
+            graph: TaskGraphSnapshot(
+                id: "g",
+                source: .manual,
+                state: .active,
+                revision: revision,
+                tasks: [],
+                createdAt: date,
+                updatedAt: date
+            ),
+            tasks: []
+        )
+    }
 
     private func request(_ prompt: String) -> ChatTurnRequest {
         ChatTurnRequest(

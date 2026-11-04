@@ -171,6 +171,18 @@ extension TerminalChat {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    /// The source line numbers of a unified diff, as the terminal's file
+    /// artifacts show them. `lines` are the lines of the diff without their
+    /// terminators. The result has one element per line: the new line of an
+    /// addition or a context line, the old line of a removal, and `nil` where
+    /// the artifacts show no number (file headers, hunk headers,
+    /// `\ No newline at end of file`, and any line outside a valid,
+    /// unexhausted hunk). A host app uses it to number a patch as the
+    /// terminal does.
+    public nonisolated static func artifactDiffSourceLineNumbers(_ lines: [String]) -> [Int?] {
+        TerminalCodeBlockRenderer.sourceLineNumbers(lines)
+    }
+
     /// Presentation-only unified diff. Missing evidence is not an empty file:
     /// only an added/deleted status establishes the absent side. Captured patches
     /// remain authoritative when complete source snapshots are unavailable.

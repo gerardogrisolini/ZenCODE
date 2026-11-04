@@ -112,13 +112,20 @@ The transcript shows what the terminal shows:
   line for the details the tool declares (parameters, code, diff, list) and
   the bounded output of the result.
 - The file-change summary at the end of a turn, with the patch of each file
-  behind a disclosure and the `/undo` hint. The file artifacts of the turns
-  show in the artifacts sidebar instead.
+  behind a disclosure, its lines numbered like the artifacts' diffs, and the
+  `/undo` hint. The file artifacts of the turns show in the artifacts sidebar
+  instead.
 - The notices of the commands and of the session operations.
-- The task-graph card (`🫧 Tasks`) when the graph is significant or after
-  `/tasks`, and the sub-agent card (`👥 Sub-Agents`) while sub-agents are in
-  progress (queued or running). Click a sub-agent in it to open its tab (see
-  [Sub-agent tabs](#sub-agent-tabs)).
+- The task-graph card (`🫧 Tasks`), in the conversation like the terminal's
+  section: while a turn runs, each change of a significant graph moves the
+  turn's card after the latest rows, with the graph as it is now; once the turn
+  ends the card stays where it is, and a change outside a turn shows nothing
+  until the next turn adds a card of its own. `/tasks` adds a card where it
+  runs, significant or not. The cards are never saved, and a new or loaded
+  session starts without one.
+- The sub-agent card (`👥 Sub-Agents`), after the conversation while
+  sub-agents are in progress (queued or running). Click a sub-agent in it to
+  open its tab (see [Sub-agent tabs](#sub-agent-tabs)).
 
 The list follows the bottom while a response streams, and its end stays above
 the composer and the bars under it. Scroll up to stop following; once more
@@ -132,11 +139,12 @@ of the sub-agents included, grouped by turn (`Turn N · K files`), oldest
 first, one card per file operation with the status icon, the file name and
 its folder, the line counts, and the sub-agent that made the change, if any.
 A card starts collapsed; its disclosure reveals the explanation and the
-diff. As in the terminal, the diff numbers its lines in one column (the old
-line of a removed line, the new line of the others) and colors the source of
-each line in the language of the file, chosen from its extension (Swift,
-Python, TypeScript, and the other languages the terminal colors); text,
-documentation, and unknown files keep the diff colors. The sidebar updates
+diff. As in the terminal, the diff, a captured patch included, numbers its
+lines in one column (the old line of a removed line, the new line of the
+others) and colors the source of each line in the language of the file,
+chosen from its extension (Swift, Python, TypeScript, and the other
+languages the terminal colors); text, documentation, and unknown files keep
+the diff colors. The sidebar updates
 live while a turn runs. The **Artifacts** button at
 the end of the toolbar and `/artifacts` show and hide it; it never opens by
 itself. Whether it shows is a state of the window: it is not saved, and a new
@@ -354,7 +362,9 @@ its order and separated by ` · `:
 The sidebar lists the current session and the saved sessions of the
 workspace, the newest first, with the age, the number of messages, and the
 model. Click a saved session to load it, or use its context menu to load or
-delete it (a confirmation asks first). **New Session** (⇧⌘N) and **Save**
+delete it (a confirmation asks first). While a saved session loads from the
+sidebar, the chat shows a loading indicator in place of the welcome view until
+the restored conversation appears. **New Session** (⇧⌘N) and **Save**
 (⌘S) run `/sessions new` and `/sessions save`, and are refused while a line
 runs. They, and loading or deleting a saved session, select the Chat tab
 first. The rest of `/sessions` (a named snapshot, `compact`, `restore`) is
@@ -363,10 +373,10 @@ typed in the composer.
 ## Toolbar and menus
 
 The toolbar starts with the agent button, which shows the agent's name, then,
-apart, the model and thinking-level buttons, as icons only (the status bar
-shows the model and the level). Buttons for the tools, the skills, the task
-graph, and a **Changes** menu (show changes, show changes with the diff, undo
-changes, review changes) follow, in one group, and, always last, the
+apart, one group: the model and thinking-level buttons, as icons only (the
+status bar shows the model and the level), the buttons for the tools, the
+skills, and the task graph, and a **Changes** menu (show changes, show changes
+with the diff, undo changes, review changes). Always last comes the
 **Artifacts** button, which shows and hides the artifacts sidebar.
 The **Session** menu has Stop (⌘.), then **Show Chat Reader** (**Hide Chat
 Reader**, ⌃Y) in a section of its own, and repeats the agent, model, thinking,

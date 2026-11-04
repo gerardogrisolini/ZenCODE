@@ -25,7 +25,9 @@ import ZenCODECore
 /// - the file-change summary of a turn (`fileChanges.turnSummary`, when it is
 ///   not empty) is remembered per turn and follows the last row of its turn,
 ///   as `<epoch>-summary-<turnID>`;
-/// - each local row follows the log rows up to its anchor sequence;
+/// - each local row follows the log rows up to its anchor sequence; a row
+///   the window moves (``moveLocal(id:to:content:)``, the task-graph card of
+///   a turn) keeps its id;
 /// - the block still streaming is not a row: its id is
 ///   ``liveBlockID(for:)``.
 ///
@@ -103,6 +105,29 @@ public struct ZenTranscriptProjection: Sendable {
         if item.epoch == epoch {
             needsComposition = true
         }
+    }
+
+    /// Moves the local row `id` after the log rows up to `anchorSequence`,
+    /// with `content`, keeping its id and its epoch: it leaves its place and
+    /// goes where ``insertLocal(_:)`` puts a row inserted now, after every
+    /// local row with an anchor up to the new one. A row that does not move
+    /// and keeps its content changes nothing in ``items``. `false`, and
+    /// nothing changes, when no local row has that id (its epoch ended).
+    @discardableResult
+    public mutating func moveLocal(
+        id: UUID,
+        to anchorSequence: Int,
+        content: ZenTranscriptItem.Content
+    ) -> Bool {
+        guard let index = localItems.firstIndex(where: { $0.id == id }) else { return false }
+        let item = localItems.remove(at: index)
+        insertLocal(ZenLocalTranscriptItem(
+            id: id,
+            epoch: item.epoch,
+            anchorSequence: anchorSequence,
+            content: content
+        ))
+        return true
     }
 
     /// Projects `snapshot`; `true` when ``items`` changed.
