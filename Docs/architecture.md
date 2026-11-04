@@ -139,8 +139,11 @@ its first one in one synchronous step, and `newSession(in:sessionID:)` and
 previous controller is fenced (`cancelActiveTurn`), its reservation dropped,
 its pending requests refused, and its reducer detached before the new
 controller exists, so selection, plan, workflow, and transcript never carry
-over; the runner session of the previous incarnation is discarded, the new
-one is created by the channel. `adoptSessionID(_:in:)` gives the current
+over, except the selection of a new session in a slot opened with
+`keepsSelectionOnNewSession`, which starts from the selection of the session
+it replaces (a load still restores the saved selection); the runner session
+of the previous incarnation is discarded, the new one is created by the
+channel. `adoptSessionID(_:in:)` gives the current
 incarnation another id in place, keeping its controller and epoch, for a
 channel that continues persisted work under its id before the runtime session
 exists (the terminal resuming a task graph at startup). A controller the host

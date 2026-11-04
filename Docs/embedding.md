@@ -134,11 +134,18 @@ loaded or restored from a checkpoint, `newSession(in:sessionID:)`, and
 controller is fenced, its pending requests refused, and a new controller
 starts from the launch profile (a loaded session restores the selection saved
 with it), with the slot's presenter, host, hooks, and commands; selection,
-plan, workflow, and transcript never carry over. Follow the slot with
-`incarnations(in:)`, which yields the current incarnation at once and then
-each new one, or read it with `incarnation(in:)`. `closeSession(in:)` ends a
-slot's session, `closeSlot(_:)` ends the slot, and `shutdown()` ends every
-slot and the runner.
+plan, workflow, and transcript never carry over. A slot opened with
+`ChatSlotDescriptor.keepsSelectionOnNewSession` set to `true` is the
+exception for the selection: every new session (`/sessions new`,
+`newSession(in:sessionID:)`) starts from the selection of the session it
+replaces (agent, model, thinking level, tools, and skills) instead of the
+launch profile; a load still restores the selection saved with the session,
+and the first session of the slot and the one after `closeSession(in:)`
+start from the launch profile. The option is `false` by default; the macOS
+app sets it for its windows. Follow the slot with `incarnations(in:)`, which
+yields the current incarnation at once and then each new one, or read it with
+`incarnation(in:)`. `closeSession(in:)` ends a slot's session, `closeSlot(_:)`
+ends the slot, and `shutdown()` ends every slot and the runner.
 
 ## Isolation
 

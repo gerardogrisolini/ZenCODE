@@ -1152,6 +1152,46 @@ struct ZenWindowSessionTests {
         }
     }
 
+    @Test("A new session keeps the agent, tools, and skills the operator chose in the session it replaces")
+    func newSessionKeepsTheSelection() async throws {
+        try await withRuntime { runtime, _, workspace in
+            // An installed skill, in the temporary support directory.
+            let skill = AppStorageDirectory.appSupportDirectoryURL()
+                .appendingPathComponent("skills/kept-skill", isDirectory: true)
+            try FileManager.default.createDirectory(at: skill, withIntermediateDirectories: true)
+            try """
+            ---
+            name: kept-skill
+            description: The kept-skill test skill.
+            ---
+
+            # kept-skill
+            """.write(to: skill.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+
+            let window = try await runtime.openWindow(workspace: workspace)
+            #expect(await eventually { window.snapshot != nil && window.epoch == window.current.epoch })
+            for line in ["/agents minimal", "/tools shell", "/skills kept-skill"] {
+                window.draft = line
+                window.submitDraft()
+                #expect(await window.waitUntilIdle())
+            }
+            #expect(await eventually {
+                window.snapshot?.selection.agent?.id == "minimal"
+                    && window.snapshot?.selection.toolKeys == ["shell"]
+                    && window.snapshot?.selection.skillIDs.count == 1
+            })
+            let kept = try #require(window.snapshot?.selection)
+
+            let firstEpoch = window.current.epoch
+            window.startNewSession()
+            #expect(await window.waitUntilIdle())
+            #expect(await eventually { window.current.epoch != firstEpoch && window.snapshot?.epoch == window.current.epoch })
+            #expect(await eventually { window.transcript.contains { $0.content == .notice(.sessionStarted) } })
+            #expect(window.snapshot?.selection == kept)
+            await runtime.shutdown()
+        }
+    }
+
     @Test("Save, load, and delete a saved session; the response language locks per incarnation")
     func savedSessionsAndResponseLanguage() async throws {
         try await withRuntime { runtime, backend, workspace in

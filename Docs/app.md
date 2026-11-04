@@ -370,9 +370,10 @@ saved session, closing the current session, loading the model and tools,
 restoring the conversation), until the restored conversation, or the
 failure of the load, appears. **New Session** (⇧⌘N) and **Save**
 (⌘S) run `/sessions new` and `/sessions save`, and are refused while a line
-runs. They, and loading or deleting a saved session, select the Chat tab
-first. The rest of `/sessions` (a named snapshot, `compact`, `restore`) is
-typed in the composer.
+runs. A new session keeps the agent, model, thinking level, tools, and skills
+of the current session. They, and loading or deleting a saved session, select
+the Chat tab first. The rest of `/sessions` (a named snapshot, `compact`,
+`restore`) is typed in the composer.
 
 ## Toolbar and menus
 

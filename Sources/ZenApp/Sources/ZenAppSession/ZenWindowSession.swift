@@ -336,7 +336,8 @@ public final class ZenWindowSession: Identifiable {
 
     /// Opens a slot for `workspace` and starts its first session: the launch
     /// agent's tools and skills, the task-graph observer, then the slot's
-    /// incarnations.
+    /// incarnations. Every later new session keeps the selection of the one
+    /// it replaces (``ChatSlotDescriptor/keepsSelectionOnNewSession``).
     static func open(runtime: ZenAppRuntime, workspace: URL) async throws -> ZenWindowSession {
         let id = UUID()
         let hooks = ZenWindowHooks()
@@ -355,7 +356,8 @@ public final class ZenWindowSession: Identifiable {
             channelHooks: hooks,
             commandRegistry: ZenAppCommands.registry,
             defaultOrigin: .app,
-            publishesState: true
+            publishesState: true,
+            keepsSelectionOnNewSession: true
         )
         let slotID = try await sessionHost.openSlot(descriptor)
         await ZenWindowSteps.bind(hooks: hooks, presenter: presenter, to: sessionHost, slotID: slotID)

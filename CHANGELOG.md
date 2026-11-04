@@ -60,13 +60,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
   host apps and the channels alike. A channel opens a slot for each place it
   runs sessions in (`ChatSlotDescriptor`: identity, working directory,
   presenter, interaction, consent authorizer, channel hooks, commands,
-  whether a `ChatSessionStateReducer` is attached, and the prefix of the ids
-  of its new sessions), and the slot runs one session at a time
-  (`ChatSessionIncarnation`: id, controller, reducer, and an epoch that is
-  never reused). `newSession(in:sessionID:)` and
+  whether a `ChatSessionStateReducer` is attached, the prefix of the ids of
+  its new sessions, and whether a new session keeps the selection of the
+  session it replaces, `keepsSelectionOnNewSession`), and the slot runs one
+  session at a time (`ChatSessionIncarnation`: id, controller, reducer, and
+  an epoch that is never reused). `newSession(in:sessionID:)` and
   `loadSavedSession(in:name:checkpointEntryID:)` replace the session with a
-  new controller from the launch profile; `adoptSessionID(_:in:)` changes the
-  id in place before the runtime session exists; `reservePrompt(in:)`,
+  new controller from the launch profile (a new session of a slot that keeps
+  the selection starts from the selection it replaces, a load from the saved
+  one); `adoptSessionID(_:in:)` changes the id in place before the runtime
+  session exists; `reservePrompt(in:)`,
   `releasePrompt(_:)`, `holdsPrompt(_:)`, `cancelPrompt(in:)`,
   `withReservedIncarnation(_:_:)`, and `withLiveIncarnation(_:epoch:_:)` run
   one prompt per session and keep late work from writing into a replaced
@@ -226,6 +229,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   toolbar and Session menu for `/models`, `/think`,
   `/agents`, `/tools`, `/skills`, `/tasks`, `/changes`, `/undo`, `/review`,
   and `/help`, with the toggle of the artifacts sidebar, complete it.
+  **New Session** keeps the agent, model, thinking level, tools, and skills
+  of the session it replaces.
   `/setup`, `/voice`, `/telegram`, `/feature`, `/cron`, `/ds4`, and
   `/tools logs` stay in the terminal. See [Docs/app.md](Docs/app.md).
 - The shared chat in the macOS app. Each window follows the live chat room of

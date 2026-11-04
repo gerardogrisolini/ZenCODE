@@ -178,6 +178,16 @@ struct ZenConversationList: View {
         .onChange(of: session.epoch) { _, _ in
             jumpToLatest(animated: false)
         }
+        // A loaded session's rows may come after its epoch (a first load
+        // switches the incarnation before the model preload ends): its first
+        // rows jump to the latest one again, as when both come together.
+        // Following the content as it grows does not reach the end of a long
+        // list whose rows are not measured yet.
+        .onChange(of: transcript.isEmpty) { wasEmpty, isEmpty in
+            if wasEmpty, !isEmpty {
+                jumpToLatest(animated: false)
+            }
+        }
         .opacity(isLoadingSavedSession ? 0 : 1)
         .allowsHitTesting(!isLoadingSavedSession)
         .accessibilityHidden(isLoadingSavedSession)
