@@ -221,14 +221,15 @@ extension TelegramChannel {
     ///
     /// While the previous turn is still finishing (``finishTurn(ending:)``
     /// is running: its outcome and summary being sent, the task-graph
-    /// observer of an ACP slot quiesced or restarting), the turn waits for it
-    /// before it touches anything: the turn's Telegram side is still the
-    /// previous turn's, its closing touches only its own, and the chat
-    /// receives its outcome and summary before anything of this turn. A turn
-    /// moved onto the channel, which the channel runs no task for, is closed
-    /// by the channel that ran it: the terminal keeps the session reserved
-    /// until the closing ended (see `TerminalChat+Telegram.swift`), and the
-    /// wait keeps the closing whole for a channel that releases it earlier.
+    /// observer of an ACP or `zen --telegram` slot quiesced or restarting),
+    /// the turn waits for it before it touches anything: the turn's Telegram
+    /// side is still the previous turn's, its closing touches only its own,
+    /// and the chat receives its outcome and summary before anything of this
+    /// turn. A turn moved onto the channel, which the channel runs no task
+    /// for, is closed by the channel that ran it: the terminal keeps the
+    /// session reserved until the closing ended (see
+    /// `TerminalChat+Telegram.swift`), and the wait keeps the closing whole
+    /// for a channel that releases it earlier.
     ///
     /// The reporter of the previous turn is revoked, the root-response and
     /// reasoning state and the task-graph dedup are reset, the turn gets a
@@ -326,7 +327,8 @@ extension TelegramChannel {
     /// terminal releases it only after this), the prompt starts once it is
     /// released (``sessionReservationDidEnd()``).
     ///
-    /// On an ACP session's slot the task-graph observer the channel runs is
+    /// On an ACP session's slot, and on the slot of a session started by
+    /// `zen --telegram`, the task-graph observer the channel runs is
     /// quiesced first, as the terminal does at its turn boundaries: the
     /// latest graph reaches this turn before its outcome, and the observer
     /// runs again only once the turn's reporting ended, before the next

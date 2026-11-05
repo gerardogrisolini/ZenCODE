@@ -6,6 +6,8 @@
 
 ```bash
 zen                              # standalone chat TUI
+zen --tui                        # the same, chosen explicitly (the default)
+zen --telegram                   # no TUI: the session is driven from the linked Telegram chat
 zen -p "Summarize the changes"   # one headless turn; final text on stdout
 zen --jsonl -p "Summarize"       # one headless turn; JSON Lines events on stdout
 zen -f /path/to/prompt.md        # one headless turn; prompt read from a file
@@ -15,7 +17,8 @@ zen --ui                         # the ZenCODE macOS app (macOS only)
 
 Standalone `zen` uses providers/models from `~/.zencode/settings.json`.
 Headless JSONL mode is documented in the dedicated
-[protocol guide](jsonl.md).
+[protocol guide](jsonl.md). `zen --telegram` is described in
+[Telegram Mode](#telegram-mode).
 
 ## Session File Artifacts
 
@@ -42,7 +45,8 @@ project for task-graph checkpoints left incomplete by earlier sessions. If any
 are found, an orange, scrollable picker opens before the model session is
 created. Use `↑`/`↓` to move and `Enter` to select the graph marked with `(x)`.
 You can also choose **Start fresh** to leave every checkpoint unchanged.
-The startup scan and picker are disabled when `zen` runs in `--acp` mode.
+The startup scan and picker are disabled when `zen` runs in `--acp` or
+`--telegram` mode.
 
 Selecting **Delete old tasks…** opens a multi-selection list. Use `Space` to
 mark obsolete graphs with `[x]`, `A` to select all, `N` to select none, and
@@ -76,6 +80,10 @@ and restores the conversation without closing the app.
 In ACP mode (`--acp` or `ZENCODE_AGENT_MODE=acp`), setup never starts inside
 the ACP stream. See [ACP Mode](#acp-mode) for the authentication methods and
 the behavior before ZenCODE is configured.
+
+Like ACP, `--telegram` (or `ZENCODE_AGENT_MODE=telegram`) never starts setup:
+Telegram must be configured and paired beforehand, from `zen` with `/setup`.
+See [Telegram Mode](#telegram-mode).
 
 Creates files under `~/.zencode/`:
 
@@ -197,7 +205,7 @@ exact paths involved.
 ## Command Line Options
 
 ```text
-zen [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--ui] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N]
+zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--ui] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N]
 ```
 
 - `-p, --prompt PROMPT`: run one non-interactive turn. Redirected stdin, when
@@ -216,6 +224,12 @@ zen [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] [--install-features [
 - `--doctor`: print a redacted, read-only diagnostic report and exit. It never
   starts setup, accesses a provider, creates configuration, or writes a log.
 - `--acp`: run ACP JSON-RPC over stdio.
+- `--tui`: open the terminal chat (the TUI). It is the default without mode
+  options, so the option only makes the choice explicit.
+- `--telegram`: run the session without the TUI, driven only by the linked
+  Telegram chat, for a machine that stays on. Telegram must be set up and paired
+  first, from `zen` with `/setup`; this mode never starts setup. See
+  [Telegram Mode](#telegram-mode).
 - `--ui` (macOS only): open [ZenCODE for macOS](app.md), the SwiftUI app. On
   first use and after each ZenCODE update, `zen` builds the app (the package
   `Sources/ZenApp`) from the checkout it was built from, or from the installer
@@ -240,7 +254,20 @@ zen [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] [--install-features [
 - `--max-tool-rounds N`: maximum model/tool loop rounds per prompt.
 - `--max-output-tokens N`: maximum generated tokens per model call.
 
+The mode options exclude each other: `--tui`, `--telegram`, `--acp`, and the
+headless options (`-p`/`--prompt`, `-f`, and `--jsonl`) select four different
+modes and cannot be combined across them, in any order. `zen` refuses the
+combination with `Options X and Y cannot be combined.` (for example `zen
+--telegram -p hello` answers `Options --telegram and -p/--prompt cannot be
+combined.`). Repeating the same mode option is allowed. `zen --ui`, which has
+its own parser, also refuses `--tui` and `--telegram`.
+
 Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, `ZENCODE_AGENT_MODEL`, `ZENCODE_AGENT_CWD`, `ZENCODE_AGENT_SKILLS`, `ZENCODE_AGENT_MAX_TOOL_ROUNDS`, and `ZENCODE_AGENT_MAX_OUTPUT_TOKENS`.
+
+`ZENCODE_AGENT_MODE` accepts `tui`, `telegram`, `acp`, `headless`, and `auto`
+(or `automatic`), which resolves to `tui`; the value is trimmed and
+case-insensitive. The former value `chat` is no longer accepted and fails with
+`Invalid value for --mode: chat`: use `tui`.
 
 ## Optional Feature Packages
 
@@ -642,6 +669,9 @@ there as from the terminal, the task-graph card included (its last state
 reaches the turn that ends, never the next one); the editor receives none of it
 meanwhile. The link is not saved: after the
 client loads the session again, send `/telegram on` again.
+
+To run a session that is driven from Telegram from the start, without a
+terminal, use `zen --telegram`: see [Telegram Mode](#telegram-mode).
 
 Telegram pairs exactly one global owner through a private chat. That owner may route
 multiple terminal sessions through a default private route or distinct private
@@ -1500,6 +1530,140 @@ The configuration is not reloaded while the agent runs. After setup, the client
 must restart the agent; the `zencode-setup` flow does this by itself. If setup
 is cancelled, ZenCODE stays unconfigured and those requests keep returning
 `-32000`.
+
+## Telegram Mode
+
+```bash
+zen --telegram --agent <name> --working-directory ~/Projects
+```
+
+`zen --telegram` (or `ZENCODE_AGENT_MODE=telegram`) runs ZenCODE without the
+TUI, for a machine that stays on: a Raspberry Pi, a home server, a Mac started
+over ssh. It opens a session and hands it at once to the linked Telegram chat,
+which drives it as it does after `/telegram on`: prompts, voice notes, `/plan`,
+`/goal`, `/review`, the permission replies `/allow`, `/always`, and `/deny`,
+`/status`, `/changes`, `/diff`, `/chat`, and `/help`. The chat receives the same
+output as after `/telegram on`: responses, reasoning blocks, tool activity, the
+task-graph card, and the sub-agent status (see
+[Terminal TUI Commands](#terminal-tui-commands)). `/undo` answers `/undo is not
+available in a session started with zen --telegram.` The mode works on Linux and
+macOS, with any agent.
+
+Telegram must be configured and paired before you start it, from `zen` with
+`/setup` (over ssh too). The mode never starts setup, and it never reads
+standard input or the terminal: standard input is redirected from `/dev/null`.
+
+The agent, model, skills, working directory, and limits come from `--agent`,
+`--model`, `--skills`, `--working-directory`, `--max-tool-rounds`, and
+`--max-output-tokens` (or the matching `ZENCODE_AGENT_*` variables) and stay
+the same until the process restarts: the chat has no `/models`, `/agents`, or
+`/sessions`. With several models configured and none selected, pass `--model`.
+Incomplete task graphs of earlier sessions are not resumed at startup, and the
+conversation is neither saved nor resumed across restarts; project and global
+memory persist as usual. On macOS the process keeps the Mac awake while the
+session is open, like the other modes.
+
+### Startup
+
+The mode starts in this order:
+
+1. It checks that Telegram is configured; otherwise it logs `ZenCODE: Telegram
+   is not set up. Run zen and use /setup to configure and pair Telegram.`
+2. It resolves the agent and the model.
+3. It creates the session and preloads the model.
+4. It links Telegram.
+
+Any error during the startup ends the process with status `1`, and the mode
+does not retry: a missing pairing, an invalid configuration, Telegram that
+cannot be reached, a model that cannot be loaded. Restarting is left to
+whatever launches the process, for example systemd (see below).
+
+After the startup, long polling retries by itself, with waits that grow up to
+60 seconds. Only the problems that retrying does not fix are logged: an invalid
+bot token (HTTP 401 or 403), or another process using the same bot (HTTP 409),
+as `ZenCODE: Telegram is not receiving messages. …`. When polling works again,
+the log says `Telegram polling recovered; messages are being received again.`
+A bot can have one polling process only, so give every always-on machine a bot
+of its own instead of sharing one with `/telegram on` elsewhere.
+
+### Log
+
+The log goes to standard error, one line per event, as `<timestamp> <text>`: the
+local time in ISO 8601, to the second, with its offset. A text of several lines
+becomes one log line for each line that is not blank, each with its own
+timestamp. Standard output stays empty. Prompts and responses are never logged.
+
+```text
+2026-11-05T10:00:00+01:00 Starting ZenCODE <version> in Telegram mode: agent <name>, model <id>, working directory <path>.
+2026-11-05T10:00:02+01:00 Telegram remote control is active.
+2026-11-05T10:00:02+01:00 Linked chat: <title>
+```
+
+A fatal error is logged as `ZenCODE: <error>`, followed by `Run 'zen --doctor'
+for a redacted diagnostic report; set ZENCODE_LOG=debug to emit redacted
+diagnostics to the system log.` The exception is a configuration that is
+missing altogether (`settings.json` or `agents.json` missing or invalid): the
+error is then printed in the ordinary format, without a timestamp, before the
+mode starts, and the process exits with status `1`.
+
+### Stopping
+
+- SIGHUP is ignored, so closing the ssh session does not stop the process.
+- SIGTERM always stops it cleanly; so does SIGINT, unless the parent process
+  left it ignored (as a non-interactive shell does for the commands it starts
+  in the background).
+- A stop cancels the turn in progress, closes the link, logs `Stopping
+  (SIGTERM).` or `Stopping (SIGINT).` and then `Stopped.`, and exits with
+  status `0`. A signal that arrives during the startup is a clean stop too,
+  with status `0`.
+- A second signal during the stop logs `Forced stop.` and exits at once with
+  status `1`.
+- The chat cannot stop the process.
+
+### Example: start it over ssh and log out
+
+```bash
+zen --telegram --agent <name> --working-directory ~/Projects > ~/zen-telegram.log 2>&1 &
+exit
+```
+
+Redirect the output as shown: once ssh is closed the terminal no longer exists,
+and the log, which goes to standard error, would be lost. The process itself
+survives, since SIGHUP is ignored and the writes to a terminal that has gone
+are ignored. Read the log from the file, and stop the process with `kill`
+(SIGTERM).
+
+### Example: a systemd user unit
+
+Save this as `~/.config/systemd/user/zen-telegram.service`, and adjust the
+path of `zen` (`%h` is systemd's specifier for the home directory):
+
+```ini
+[Unit]
+Description=ZenCODE Telegram session
+
+[Service]
+ExecStart=/usr/local/bin/zen --telegram --agent <name> --working-directory %h/Projects
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
+```
+
+Then:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now zen-telegram
+loginctl enable-linger $USER      # start at boot and stay active without a login
+journalctl --user -u zen-telegram -f
+systemctl --user stop zen-telegram
+```
+
+`Restart=on-failure` restarts the process after a failed startup (status `1`,
+for example when the network is not up yet at boot), and after 30 seconds
+tries again. It does not restart it after an intentional stop (status `0`).
 
 ## Recommended Workflow
 

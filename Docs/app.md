@@ -52,7 +52,8 @@ it: `--agent NAME`, `--model MODEL_ID`, `--skills LIST`, and
 example, `zen --ui --agent Reviewer --working-directory ~/Projects/site` opens
 the first window on `~/Projects/site` with the Reviewer agent. An unknown
 agent is reported in the terminal, and the options of the other modes (`-p`,
-`-f`, `--jsonl`, `--acp`, and the limits of a turn) are refused. The app reads
+`-f`, `--jsonl`, `--acp`, `--tui`, `--telegram`, and the limits of a turn) are
+refused. The app reads
 the same four options from its own command line and ignores the others, such
 as the ones AppKit and Xcode add; a wrong one (an unknown agent, a missing
 value) is shown in the window, without the setup hint.
@@ -97,8 +98,10 @@ The transcript shows what the terminal shows:
 
 - Your prompts, with their attachments, and the slash commands you ran. An
   attached image shows small in the prompt (at most 320 × 200 points) and a
-  click opens it in its default application; a video shows as its name and a
-  click plays it in Quick Look. The
+  click shows it larger in Quick Look; a video shows as its name and a click
+  plays it in Quick Look. An attachment whose file is gone, or that has none
+  (an image sent from Telegram), opens from its bytes, through a private
+  temporary copy removed when Quick Look closes. The
   prompts a command builds (`/plan`, `/goal`, `/review`, an approved plan, a
   Planner continuation) are hidden, as in the terminal; a reply you type to
   one of them shows as your prompt.
@@ -132,7 +135,10 @@ The list follows the bottom while a response streams, and its end stays above
 the composer and the bars under it. Scroll up to stop following; once more
 than a screenful of chat (the height shown between the bars) is left under
 the view, a button scrolls back to the latest message. Scroll back to the
-bottom to follow it again. An empty session shows the workspace and the model.
+bottom to follow it again. An empty session shows, as the terminal's startup
+summary does, the version, the agent (when one is selected), the active tools,
+the active skills, and the working directory, then the commands the window
+runs.
 
 The artifacts sidebar, on the right of the window, shows the file artifacts
 of the session: the files each turn created, modified, or deleted, the ones
@@ -348,6 +354,8 @@ application.
 The line under the composer has the fragments of the terminal status bar, in
 its order and separated by ` · `:
 
+- a red dot (`●`) while **Full Access** is on (see
+  [Toolbar and menus](#toolbar-and-menus));
 - the model and the thinking level, with a spinner while a turn runs;
 - the context window, `used/max`, with a small gauge;
 - the elapsed time of the turn, live, then the duration of the last response;
@@ -384,7 +392,8 @@ skills, and the task graph, and a **Changes** menu (show changes, show changes
 with the diff, undo changes, review changes). Always last comes the
 **Artifacts** button, which shows and hides the artifacts sidebar.
 The **Session** menu has Stop (⌘.), then **Show Chat Reader** (**Hide Chat
-Reader**, ⌃Y) in a section of its own, and repeats the agent, model, thinking,
+Reader**, ⌃Y) in a section of its own, then **Full Access** (⌃G) in a section
+of its own, and repeats the agent, model, thinking,
 tools, skills, tasks, changes, undo, and help items, in the order of the
 toolbar. Each of those items runs
 the slash command it names, so everything is also available from the
@@ -392,6 +401,18 @@ composer. An item that runs a command selects the Chat tab first, so its
 result shows; Stop and the **Artifacts** button leave the tab as it is, and
 the chat reader item selects it only to open the reader (see
 [Shared chat](#shared-chat)).
+
+**Full Access** (⌃G) is the terminal's Ctrl+G: while it is checked,
+`local.exec` and the destructive tools run without the consent sheet. It
+bypasses the same approvals as the terminal (see [zen.md](zen.md)), and it
+does not enable disabled tools or bypass the permissions of macOS. The mode
+is app-wide: one switch applies to every session of every window, also to a
+turn that runs, from its next tool call. Every open window shows it, with a
+red dot as the first fragment of its status bar and the terminal's message in
+its conversation (`Mode: full access — local.exec commands run without
+approval.`, then `Mode: default — local.exec approvals restored.`); a window
+opened later starts in the current mode. It is never saved: every launch
+starts in the default mode.
 
 ## Keyboard shortcuts
 
@@ -407,6 +428,7 @@ the chat reader item selects it only to open the reader (see
 | ←, →, Home, End | Chat tab, reader open | Shows the previous, next, first, or last chat message, also from the composer |
 | ↑, ↓ | Chat tab, reader open | Scrolls the chat message shown, also from the composer, ahead of the history and the suggestions |
 | ⌃Y | Menu bar | Shows or hides the chat reader |
+| ⌃G | Menu bar | Turns Full Access on or off, for every window |
 | Esc | Chat tab | Denies the tool call while a tool consent waits, otherwise stops the turn |
 | Esc | Sub-agent tab | Does nothing |
 | ⌘. | Window | Stops the turn, from any tab |
@@ -441,7 +463,6 @@ terminal:
 - `/setup`, `/voice` and dictation, `/telegram`, `/feature`, `/cron`, and
   `/ds4` are not offered, and answer as unknown commands. `/tools logs`
   answers that it is not available in the app.
-- The full-access toggle (Ctrl+G) does not exist in the app.
 - The shared chat is not relayed to Telegram, which the app does not offer.
 - There is no `.app` bundle: the app runs as the bare executable that
   `zen --ui` installs in `~/.zencode/app/current`, from `swift run`, or from a

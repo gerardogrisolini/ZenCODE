@@ -924,6 +924,30 @@ What happens at the handover:
 - An *Always* given in the chat is recorded in the slot's consent authorizer
   and covers the session on every channel afterwards.
 
+## Full Access
+
+The terminal's Ctrl+G switches the runner between two access modes
+(`AgentLocalExecAccessMode`, `.standard` and `.fullAccess`); an app offers the
+same switch through the runner of its host (`sessionHost.runner`):
+
+- `localExecAccessMode()` returns the current mode, and
+  `toggleLocalExecAccessMode()` switches to the other one and returns it.
+- The mode is runner-wide: it applies to every session of every slot on that
+  runner, also to a turn that runs, from its next tool call. It is transient
+  and never persisted: a new runner starts in `.standard`.
+- While it is `.fullAccess`, the runner admits `local.exec` and the
+  destructive direct tools (`ChatToolConsentAuthorizer.gatedToolNames`)
+  without calling the tool authorization handler, so the host's consent is not
+  asked for them. It does not enable disabled tools.
+- `ChatSessionNoticeText.localExecAccessModeChangeText(_:)` is the message the
+  terminal writes after a switch, trailing newline included; show it wherever
+  the change applies.
+
+```swift
+let mode = await sessionHost.runner.toggleLocalExecAccessMode()
+let message = ChatSessionNoticeText.localExecAccessModeChangeText(mode)
+```
+
 ## Sandbox Contract
 
 A sandboxed app uses the existing API as follows; there is no separate sandbox

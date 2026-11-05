@@ -11,9 +11,10 @@ import ZenCODECore
 
 /// One styled run of a status-bar fragment.
 ///
-/// The terminal status bar mutes the `c:` / `p:` / `g:` / `d:` / `w:` labels
-/// and colors the git counters; every other run keeps the bar's neutral
-/// foreground. The view maps each ``Style`` to a `ZenPalette` color.
+/// The terminal status bar mutes the `c:` / `p:` / `g:` / `d:` / `w:` labels,
+/// colors the git counters, and draws the full-access dot red; every other
+/// run keeps the bar's neutral foreground. The view maps each ``Style`` to a
+/// `ZenPalette` color.
 public struct ZenStatusRun: Equatable, Sendable {
     /// The color role of a run.
     public enum Style: Equatable, Sendable {
@@ -27,6 +28,8 @@ public struct ZenStatusRun: Equatable, Sendable {
         case fileAddition
         /// The deleted-line count (`TerminalStyle.FileChange.deletion`).
         case fileDeletion
+        /// The full-access dot (`TerminalStyle.Status.failure`).
+        case fullAccess
     }
 
     public let text: String
@@ -43,6 +46,9 @@ public struct ZenStatusFragment: Equatable, Sendable, Identifiable {
     /// What the fragment shows; also its identity, since each kind appears at
     /// most once.
     public enum Kind: Hashable, Sendable {
+        /// The red dot shown in full access
+        /// (`TerminalStatusBar.accessModeStatusFragment`).
+        case accessMode
         /// The activity spinner shown while a prompt is generating.
         case activity
         /// Model display name and thinking selection.
@@ -89,6 +95,24 @@ public struct ZenStatusFragment: Equatable, Sendable, Identifiable {
 public enum ZenStatusFormatting {
     /// The separator between fragments.
     public static let separator = " · "
+
+    // MARK: - Access mode
+
+    /// The dot of the full-access fragment.
+    public static let fullAccessDot = "●"
+    /// What VoiceOver reads for the full-access dot.
+    public static let fullAccessAccessibilityLabel = "Full access"
+
+    /// The red dot in full access, `nil` in the default mode
+    /// (`TerminalStatusBar.accessModeStatusFragment`).
+    static func accessModeRuns(_ mode: AgentLocalExecAccessMode) -> [ZenStatusRun]? {
+        switch mode {
+        case .standard:
+            nil
+        case .fullAccess:
+            [ZenStatusRun(fullAccessDot, style: .fullAccess)]
+        }
+    }
 
     // MARK: - Model
 
@@ -344,9 +368,9 @@ public enum ZenStatusFormatting {
     // MARK: - Status line
 
     /// The fragments of the status line in the terminal UI's order
-    /// (`TerminalStatusBar.statusTextLocked`): spinner and model, context
-    /// window, elapsed time or last response duration, token counts,
-    /// throughput, subscription usage, git summary.
+    /// (`TerminalStatusBar.statusTextLocked`): the full-access dot, spinner
+    /// and model, context window, elapsed time or last response duration,
+    /// token counts, throughput, subscription usage, git summary.
     ///
     /// - Parameter now: The instant the live elapsed time is measured at.
     public static func fragments(
@@ -357,6 +381,9 @@ public enum ZenStatusFormatting {
             ?? state.metrics?.totalTokenCount
         var fragments: [ZenStatusFragment] = []
 
+        if let runs = accessModeRuns(state.localExecAccessMode) {
+            fragments.append(ZenStatusFragment(kind: .accessMode, runs: runs))
+        }
         if let modelID = state.modelID {
             if state.isGenerating {
                 fragments.append(ZenStatusFragment(kind: .activity, runs: []))

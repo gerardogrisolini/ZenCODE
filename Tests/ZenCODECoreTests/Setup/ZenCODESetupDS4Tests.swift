@@ -356,6 +356,7 @@ struct ZenCODESetupDS4Tests {
                 }
                 return defaults
             },
+            selectAction: { .reconfigure },
             engine: Self.engine(fixture)
         )
 
@@ -419,6 +420,7 @@ struct ZenCODESetupDS4Tests {
             selectBackend: { _, backend in backend },
             selectAuxiliaryFile: Self.keepAuxiliary,
             promptTuning: { _, tuning in tuning },
+            selectAction: { .reconfigure },
             engine: Self.engine(fixture)
         )
         let updated = try #require(second)
@@ -889,6 +891,7 @@ struct ZenCODESetupDS4Tests {
                 }
                 return defaults
             },
+            selectAction: { .reconfigure },
             engine: Self.engine(fixture)
         )
 
@@ -946,6 +949,7 @@ struct ZenCODESetupDS4Tests {
                 return current
             },
             promptTuning: { _, tuning in tuning },
+            selectAction: { .reconfigure },
             engine: Self.engine(fixture)
         )
         let updated = try #require(result)
@@ -1213,6 +1217,230 @@ struct ZenCODESetupDS4Tests {
 
         #expect(result == original)
         #expect(builder.requests.isEmpty)
+    }
+
+    // MARK: Engine rebuild
+
+    @Test
+    func rebuildChoiceRebuildsEveryDistinctTargetEvenWhenBuilt() async throws {
+        let otherPath = "other-DeepSeek-V4-Flash.gguf"
+        let fixture = try Fixture.make(files: [Self.qwenPath, Self.customPath, otherPath], ds4Header: true)
+        defer { fixture.remove() }
+        let root = try AgentDS4PathGuard.canonicalRootDirectory(fixture.root.path)
+        // Two models share the CPU library, one needs CUDA.
+        let cpu = try AgentDS4RuntimeManifest(rootDirectory: root, modelRelativePath: Self.qwenPath, backend: .cpu)
+        let sharedCPU = try AgentDS4RuntimeManifest(rootDirectory: root, modelRelativePath: otherPath, backend: .cpu)
+        let cuda = try AgentDS4RuntimeManifest(
+            rootDirectory: root, modelRelativePath: Self.customPath, backend: .cuda, cudaArch: "sm_120"
+        )
+        // Both libraries are up to date: the rebuild must not care.
+        try fixture.markEngineBuilt(for: cpu)
+        try fixture.markEngineBuilt(for: cuda)
+        for runtime in [cpu, cuda] {
+            let target = DS4EngineTarget(runtime: runtime)
+            #expect(ZenCODESetupRunner.ds4EngineStateDescription(for: target, supportDirectory: fixture.support) == "built")
+        }
+        let existing = Self.ds4Manifest(runtimes: [cpu, cuda, sharedCPU])
+        let builder = FakeEngineBuilder(logLines: ["compiling shim", "linking"])
+        let output = SetupLineCollector()
+        var questions = 0
+        var actionPrompts = 0
+
+        let result = try await ZenCODESetupRunner.configureDS4Runtime(
+            existingManifest: existing,
+            promptFolder: { _ in
+                Issue.record("The rebuild must not walk the reconfigure flow")
+                return nil
+            },
+            selectAction: {
+                actionPrompts += 1
+                return .rebuildEngine
+            },
+            engine: Self.engine(fixture, builder: builder, output: output) { _ in
+                questions += 1
+                return true
+            }
+        )
+
+        // The settings are returned untouched.
+        #expect(result == existing)
+        #expect(actionPrompts == 1)
+        // Choosing the entry is the confirmation: nothing is asked.
+        #expect(questions == 0)
+        #expect(builder.requests.count == 2)
+        for runtime in [cpu, cuda] {
+            #expect(builder.requests.contains(DS4EngineTarget(runtime: runtime).buildRequest(supportDirectory: fixture.support)))
+        }
+        #expect(output.lines.filter { $0 == "compiling shim" }.count == 2)
+        #expect(output.lines.contains("linking"))
+        #expect(output.lines.contains("==> Rebuilding the DS4 engine (cpu)"))
+        #expect(output.lines.contains("==> Rebuilding the DS4 engine (cuda sm_120)"))
+        #expect(output.lines.contains("DS4 engine rebuilt (cpu): /fake/libzencode-ds4.dylib"))
+        #expect(output.lines.contains("DS4 engine rebuilt (cuda sm_120): /fake/libzencode-ds4.dylib"))
+        #expect(!output.text.contains("already built"))
+        #expect(!output.text.contains("Building the DS4 engine"))
+    }
+
+    @Test
+    func rebuildChoiceFallsBackToTheProviderRuntimeWhenNoModelCarriesOne() async throws {
+        let fixture = try Fixture.make(files: [Self.qwenPath], ds4Header: true)
+        defer { fixture.remove() }
+        let root = try AgentDS4PathGuard.canonicalRootDirectory(fixture.root.path)
+        let runtime = try AgentDS4RuntimeManifest(rootDirectory: root, modelRelativePath: Self.qwenPath, backend: .cpu)
+        let existing = AgentSettingsManifest(
+            providers: Self.ds4Manifest(runtimes: [runtime]).providers,
+            models: []
+        )
+        let builder = FakeEngineBuilder()
+        let output = SetupLineCollector()
+
+        let result = try await ZenCODESetupRunner.configureDS4Runtime(
+            existingManifest: existing,
+            selectAction: { .rebuildEngine },
+            engine: Self.engine(fixture, builder: builder, output: output)
+        )
+
+        #expect(result == existing)
+        #expect(builder.requests.count == 1)
+        #expect(output.lines.contains("DS4 engine rebuilt (cpu): /fake/libzencode-ds4.dylib"))
+    }
+
+    @Test
+    func rebuildChoiceWithoutDS4HeaderReportsAndBuildsNothing() async throws {
+        let fixture = try Fixture.make(files: [Self.qwenPath])
+        defer { fixture.remove() }
+        let runtime = try AgentDS4RuntimeManifest(
+            rootDirectory: AgentDS4PathGuard.canonicalRootDirectory(fixture.root.path),
+            modelRelativePath: Self.qwenPath,
+            backend: .cpu
+        )
+        let existing = Self.ds4Manifest(runtimes: [runtime])
+        let builder = FakeEngineBuilder()
+        let output = SetupLineCollector()
+
+        let result = try await ZenCODESetupRunner.configureDS4Runtime(
+            existingManifest: existing,
+            selectAction: { .rebuildEngine },
+            engine: Self.engine(fixture, builder: builder, output: output)
+        )
+
+        #expect(result == existing)
+        #expect(builder.requests.isEmpty)
+        #expect(output.text.contains("DS4 engine (cpu) not built: "))
+        #expect(output.text.contains("ds4.h not found"))
+        #expect(!output.text.contains("Rebuilding"))
+    }
+
+    @Test
+    func failedRebuildPrintsErrorAndManualCommandAndKeepsTheManifest() async throws {
+        let fixture = try Fixture.make(files: [Self.qwenPath], ds4Header: true)
+        defer { fixture.remove() }
+        let runtime = try AgentDS4RuntimeManifest(
+            rootDirectory: AgentDS4PathGuard.canonicalRootDirectory(fixture.root.path),
+            modelRelativePath: Self.qwenPath,
+            backend: .cpu
+        )
+        let existing = Self.ds4Manifest(runtimes: [runtime])
+        let libraryPath = "/missing/libzencode-ds4.dylib"
+        let builder = FakeEngineBuilder(
+            result: .failure(.libraryNotProduced(path: libraryPath)),
+            logLines: ["make: *** error"]
+        )
+        let output = SetupLineCollector()
+
+        let result = try await ZenCODESetupRunner.configureDS4Runtime(
+            existingManifest: existing,
+            selectAction: { .rebuildEngine },
+            engine: Self.engine(fixture, builder: builder, output: output)
+        )
+
+        #expect(result == existing)
+        let request = try #require(builder.requests.first)
+        #expect(output.lines.contains("==> Rebuilding the DS4 engine (cpu)"))
+        #expect(output.lines.contains("make: *** error"))
+        #expect(output.text.contains("DS4 engine build failed (cpu)"))
+        #expect(output.text.contains(libraryPath))
+        #expect(output.text.contains(DS4EngineBuilder.manualCommand(for: request)))
+        #expect(!output.text.contains("DS4 engine rebuilt"))
+    }
+
+    @Test
+    func cancellingTheActionMenuLeavesManifestUnchangedWithoutBuilding() async throws {
+        let fixture = try Fixture.make(files: [Self.qwenPath], ds4Header: true)
+        defer { fixture.remove() }
+        let runtime = try AgentDS4RuntimeManifest(
+            rootDirectory: AgentDS4PathGuard.canonicalRootDirectory(fixture.root.path),
+            modelRelativePath: Self.qwenPath,
+            backend: .cpu
+        )
+        let existing = Self.ds4Manifest(runtimes: [runtime])
+        let builder = FakeEngineBuilder()
+        let output = SetupLineCollector()
+
+        let result = try await ZenCODESetupRunner.configureDS4Runtime(
+            existingManifest: existing,
+            promptFolder: { _ in
+                Issue.record("Cancelling the action menu must not start the reconfigure flow")
+                return nil
+            },
+            selectAction: { throw ZenCODESetupError.cancelled },
+            engine: Self.engine(fixture, builder: builder, output: output)
+        )
+
+        #expect(result == existing)
+        #expect(builder.requests.isEmpty)
+        #expect(output.lines.isEmpty)
+    }
+
+    @Test
+    func actionMenuIsNotShownUntilDS4IsConfigured() async throws {
+        let fixture = try Fixture.make(files: [Self.qwenPath], ds4Header: true)
+        defer { fixture.remove() }
+
+        for existing in [nil, Self.remoteManifest()] {
+            let result = try await ZenCODESetupRunner.configureDS4Runtime(
+                existingManifest: existing,
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
+                selectBackend: { _, _ in .cpu },
+                promptTuning: { _, tuning in tuning },
+                selectAction: {
+                    Issue.record("The action menu is only for an already configured DS4")
+                    return .rebuildEngine
+                },
+                engine: Self.engine(fixture) { _ in false }
+            )
+            #expect(try #require(result).models.contains { $0.ds4Runtime != nil })
+        }
+    }
+
+    /// A manifest with the DS4 provider and one DS4 model per runtime.
+    private static func ds4Manifest(runtimes: [AgentDS4RuntimeManifest]) -> AgentSettingsManifest {
+        let providerID = ZenCODESetupRunner.ds4SetupProviderID
+        let provider = AgentSettingsProviderManifest(
+            id: providerID,
+            name: ZenCODESetupRunner.ds4SetupProviderName,
+            baseURL: ZenCODESetupRunner.ds4SetupProviderBaseURL,
+            chatEndpoint: .chatCompletions,
+            providerProfileID: .ds4,
+            protocolProfileID: .openAIChatCompletions,
+            authPolicy: .noAuthentication,
+            ds4Runtime: runtimes.first
+        )
+        let models = runtimes.enumerated().map { index, runtime in
+            AgentSettingsModelManifest(
+                id: "ds4:model-\(index)",
+                kind: .remoteAPI,
+                modelID: "deepseek-v4.1-flash",
+                providerID: providerID,
+                ds4Runtime: runtime
+            )
+        }
+        return AgentSettingsManifest(
+            providers: [provider],
+            models: models,
+            selectedModelID: models.first?.id
+        )
     }
 
     private static func remoteManifest() -> AgentSettingsManifest {

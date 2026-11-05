@@ -56,6 +56,12 @@ import ZenCODECore
 /// closing the window stops them. The tabs are transient state of the
 /// window: never saved.
 ///
+/// The access mode of the app's runner (``ZenAppRuntime/localExecAccessMode``,
+/// the terminal's Ctrl+G) is app-wide: ``toggleFullAccess()`` changes it for
+/// every window, and each open window shows the change in its status bar
+/// (``ZenWindowStatus/localExecAccessMode``) and in a message row. A window
+/// opened later starts with the current mode, without the row.
+///
 /// Every action returns at once; the work runs in tasks that hop to the chat
 /// actor.
 @MainActor
@@ -113,6 +119,10 @@ public final class ZenWindowSession: Identifiable {
     public private(set) var queuedLines: [ZenQueuedLine] = []
     /// The status bar.
     public private(set) var status: ZenWindowStatus
+    /// What the welcome view shows about the next turn, as the terminal's
+    /// startup summary (agent, active tools, active skills), read with the
+    /// status bar; `nil` until it is first read.
+    public private(set) var startupSummary: ZenStartupSummary?
     /// The session's title: the saved name, else one derived from the first
     /// prompt the operator typed in the session
     /// (``ZenTranscriptProjection/title(fromPrompt:limit:)``), else `nil`.
@@ -330,7 +340,10 @@ public final class ZenWindowSession: Identifiable {
         self.hooks = hooks
         self.presenter = presenter
         self.current = incarnation
-        self.status = ZenWindowStatus(workspace: workspace)
+        self.status = ZenWindowStatus(
+            workspace: workspace,
+            localExecAccessMode: runtime.localExecAccessMode
+        )
         self.sharedChatObservation = ZenSharedChatObservation(environment: .runner(runtime.sessionHost.runner))
     }
 
@@ -569,8 +582,8 @@ public final class ZenWindowSession: Identifiable {
 
     // MARK: - Status
 
-    /// Reads the model, thinking level, agent, and command context of the
-    /// next turn from the controller the slot runs now.
+    /// Reads the model, thinking level, agent, command context, and startup
+    /// summary of the next turn from the controller the slot runs now.
     private func refreshStatus() async {
         statusFactsAreStale = false
         statusFactsGeneration &+= 1
@@ -584,6 +597,9 @@ public final class ZenWindowSession: Identifiable {
         newStatus.agentName = facts.agentName
         if newStatus != status {
             status = newStatus
+        }
+        if startupSummary != facts.startupSummary {
+            startupSummary = facts.startupSummary
         }
         if commandContext != facts.commandContext {
             commandContext = facts.commandContext
@@ -1293,6 +1309,39 @@ public final class ZenWindowSession: Identifiable {
         if loadingSavedSessionStep != nil {
             loadingSavedSessionStep = nil
         }
+    }
+
+    // MARK: - Full access
+
+    /// The app's runner runs `local.exec` and the destructive direct tools
+    /// without asking for consent (``ZenAppRuntime/localExecAccessMode``).
+    public var isFullAccess: Bool {
+        runtime?.localExecAccessMode == .fullAccess
+    }
+
+    /// Switches the app's access mode, for every window, as the terminal's
+    /// Ctrl+G does (``ZenAppRuntime/toggleLocalExecAccessMode()``); also
+    /// while a turn runs. Does nothing once the window closed.
+    public func toggleFullAccess() {
+        guard !isClosed else { return }
+        runtime?.toggleLocalExecAccessMode()
+    }
+
+    /// The runtime's access mode changed to `mode`: the status bar shows it
+    /// and the transcript gets the terminal's message.
+    func localExecAccessModeDidChange(_ mode: AgentLocalExecAccessMode) {
+        guard !isClosed else { return }
+        adoptLocalExecAccessMode(mode)
+        appendLocalNow(.local(
+            text: ChatSessionNoticeText.localExecAccessModeChangeText(mode),
+            isFailure: false
+        ))
+    }
+
+    /// Shows `mode` in the status bar, without a message row.
+    func adoptLocalExecAccessMode(_ mode: AgentLocalExecAccessMode) {
+        guard !isClosed, status.localExecAccessMode != mode else { return }
+        status.localExecAccessMode = mode
     }
 
     // MARK: - Shared chat

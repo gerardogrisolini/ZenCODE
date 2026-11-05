@@ -1192,6 +1192,48 @@ struct ZenWindowSessionTests {
         }
     }
 
+    @Test("The welcome view's startup summary is read with the status bar and follows the agent, tools, and skills")
+    func startupSummaryFollowsTheSelection() async throws {
+        try await withRuntime { runtime, _, workspace in
+            // An installed skill, in the temporary support directory.
+            let skill = AppStorageDirectory.appSupportDirectoryURL()
+                .appendingPathComponent("skills/summary-skill", isDirectory: true)
+            try FileManager.default.createDirectory(at: skill, withIntermediateDirectories: true)
+            try """
+            ---
+            name: summary-skill
+            description: The summary-skill test skill.
+            ---
+
+            # summary-skill
+            """.write(to: skill.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+
+            let window = try await runtime.openWindow(workspace: workspace)
+            // Read when the window opens, from the controller the slot runs.
+            let controller = window.current.controller
+            let opened = try #require(window.startupSummary)
+            #expect(opened.agentName != nil)
+            #expect(opened.agentName == (await controller.selection.agent?.displayName))
+            #expect(opened.activeTools == (await controller.activeToolsSummary()))
+            #expect(opened.activeSkills == (await controller.selectedPromptSkills()))
+
+            for line in ["/agents minimal", "/tools shell", "/skills summary-skill"] {
+                window.draft = line
+                window.submitDraft()
+                #expect(await window.waitUntilIdle())
+            }
+            let minimal = AgentProfileStore.defaultProfiles().first { $0.id == "minimal" }?.displayName
+            #expect(minimal != nil)
+            #expect(await eventually {
+                window.startupSummary?.agentName == minimal
+                    && window.startupSummary?.activeTools.groups.first?.title == "Shell"
+                    && window.startupSummary?.activeSkills.map(\.canonicalName) == ["summary-skill"]
+            })
+            #expect(window.startupSummary?.activeTools == (await controller.activeToolsSummary()))
+            await runtime.shutdown()
+        }
+    }
+
     @Test("Save, load, and delete a saved session; the response language locks per incarnation")
     func savedSessionsAndResponseLanguage() async throws {
         try await withRuntime { runtime, backend, workspace in

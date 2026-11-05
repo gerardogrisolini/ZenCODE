@@ -163,7 +163,14 @@ struct ZenTranscriptViewRenderTests {
             // Reasoning in progress, then the placeholder of a queued agent.
             AnyView(ZenSubAgentLiveActivityView(snapshot: Self.reasoningSubAgent)),
             AnyView(ZenSubAgentLiveActivityView(snapshot: Self.subAgentOverview.snapshots[1])),
-            AnyView(ZenWelcomeView(workspace: URL(fileURLWithPath: "/tmp"), modelID: "model")),
+            AnyView(ZenWelcomeView(workspace: URL(fileURLWithPath: "/tmp"))),
+            AnyView(ZenWelcomeView(
+                workspace: URL(fileURLWithPath: "/tmp"),
+                agentName: "Developer",
+                activeTools: ChatActiveToolsSummary(groups: [.init(title: "Shell", toolCount: 2)]),
+                activeSkills: [],
+                commands: ["/help", "/exit"]
+            )),
             AnyView(ZenSessionLoadingView(name: "session")),
             AnyView(ZenSessionLoadingView(name: "session", step: "Loading the model and tools…")),
             AnyView(ZenDiffRowsView(rows: ZenToolCallFormatting.lineDiff(old: "a\nb", new: "a\nc"))),

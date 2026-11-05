@@ -3,7 +3,8 @@
 //  ZenApp
 //
 //  The sidebar of a window, the native rendition of `/sessions`: the current
-//  session and the saved sessions of the workspace, with New and Save.
+//  session and the saved sessions of the workspace, with New and Save in the
+//  sidebar's part of the toolbar.
 //
 
 import Foundation
@@ -39,8 +40,8 @@ struct ZenSessionSidebar: View {
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom) {
-            footer
+        .toolbar {
+            actions
         }
         .confirmationDialog(
             deletionTitle,
@@ -129,8 +130,13 @@ struct ZenSessionSidebar: View {
         }
     }
 
-    private var footer: some View {
-        HStack(spacing: 8) {
+    // MARK: - Toolbar
+
+    /// New Session and Save, as icons in the sidebar's part of the toolbar:
+    /// they hide with the sidebar.
+    @ToolbarContentBuilder
+    private var actions: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
             Button {
                 session.startNewSession()
             } label: {
@@ -144,11 +150,6 @@ struct ZenSessionSidebar: View {
             }
             .help("Save the current session (/sessions save)")
         }
-        .buttonStyle(.glass)
-        .controlSize(.regular)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Deletion

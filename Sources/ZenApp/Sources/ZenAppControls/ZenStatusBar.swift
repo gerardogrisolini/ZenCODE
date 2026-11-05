@@ -30,6 +30,8 @@ public struct ZenStatusBarState: Equatable, Sendable {
     public var subscriptionUsage: DirectAgentSubscriptionUsageStatus?
     /// The git working-tree summary of the workspace.
     public var gitStatus: TerminalGitStatusSummary?
+    /// The runner's access mode: full access shows a red dot first.
+    public var localExecAccessMode: AgentLocalExecAccessMode
 
     public init(
         isGenerating: Bool = false,
@@ -39,7 +41,8 @@ public struct ZenStatusBarState: Equatable, Sendable {
         metrics: DirectAgentGenerationMetrics? = nil,
         contextWindow: DirectAgentContextWindowStatus? = nil,
         subscriptionUsage: DirectAgentSubscriptionUsageStatus? = nil,
-        gitStatus: TerminalGitStatusSummary? = nil
+        gitStatus: TerminalGitStatusSummary? = nil,
+        localExecAccessMode: AgentLocalExecAccessMode = .standard
     ) {
         self.isGenerating = isGenerating
         self.turnStartedAt = turnStartedAt
@@ -49,16 +52,18 @@ public struct ZenStatusBarState: Equatable, Sendable {
         self.contextWindow = contextWindow
         self.subscriptionUsage = subscriptionUsage
         self.gitStatus = gitStatus
+        self.localExecAccessMode = localExecAccessMode
     }
 }
 
 /// The status line under the composer.
 ///
 /// The leading side lists the terminal UI's fragments joined by `" · "`
-/// (formatted by ``ZenStatusFormatting``): a spinner while generating, model
-/// and thinking, the context window with a small gauge, the live elapsed time
-/// (refreshed every second) or the last response duration, token counts,
-/// throughput, subscription usage, and the git summary.
+/// (formatted by ``ZenStatusFormatting``): a red dot in full access, a
+/// spinner while generating, model and thinking, the context window with a
+/// small gauge, the live elapsed time (refreshed every second) or the last
+/// response duration, token counts, throughput, subscription usage, and the
+/// git summary.
 public struct ZenStatusBar: View {
     @Environment(\.zenPalette) private var palette
     private let state: ZenStatusBarState
@@ -102,6 +107,9 @@ public struct ZenStatusBar: View {
     @ViewBuilder
     private func fragmentView(_ fragment: ZenStatusFragment) -> some View {
         switch fragment.kind {
+        case .accessMode:
+            styledText(fragment.runs)
+                .accessibilityLabel(ZenStatusFormatting.fullAccessAccessibilityLabel)
         case .activity:
             ProgressView()
                 .progressViewStyle(.circular)
@@ -138,6 +146,7 @@ public struct ZenStatusBar: View {
         case .fileCount: palette.fileCount
         case .fileAddition: palette.fileAddition
         case .fileDeletion: palette.fileDeletion
+        case .fullAccess: palette.statusFailure
         }
     }
 }

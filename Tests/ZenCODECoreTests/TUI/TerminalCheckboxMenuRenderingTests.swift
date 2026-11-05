@@ -11,12 +11,12 @@ import Testing
 @Suite(.serialized)
 struct TerminalCheckboxMenuRenderingTests {
     @Test
-    func resumableTaskGraphSelectionRequiresInteractiveChatMode() throws {
+    func resumableTaskGraphSelectionRequiresInteractiveTUIMode() throws {
         let workingDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let chatConfiguration = try AgentConfiguration(
+        let tuiConfiguration = try AgentConfiguration(
             hostedModelID: "remote-community/test",
-            runMode: .chat,
+            runMode: .tui,
             workingDirectory: workingDirectory
         )
         let acpConfiguration = try AgentConfiguration(
@@ -24,17 +24,26 @@ struct TerminalCheckboxMenuRenderingTests {
             runMode: .acp,
             workingDirectory: workingDirectory
         )
+        let telegramConfiguration = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            runMode: .telegram,
+            workingDirectory: workingDirectory
+        )
 
         #expect(TerminalChat.shouldOfferResumableTaskGraphSelection(
-            configuration: chatConfiguration,
+            configuration: tuiConfiguration,
             stdinIsTerminal: true
         ))
         #expect(!TerminalChat.shouldOfferResumableTaskGraphSelection(
-            configuration: chatConfiguration,
+            configuration: tuiConfiguration,
             stdinIsTerminal: false
         ))
         #expect(!TerminalChat.shouldOfferResumableTaskGraphSelection(
             configuration: acpConfiguration,
+            stdinIsTerminal: true
+        ))
+        #expect(!TerminalChat.shouldOfferResumableTaskGraphSelection(
+            configuration: telegramConfiguration,
             stdinIsTerminal: true
         ))
     }

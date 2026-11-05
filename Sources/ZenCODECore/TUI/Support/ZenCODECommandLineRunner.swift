@@ -134,7 +134,7 @@ public enum ZenCODECommandLineRunner {
                     permissionAuthorizer: permissionAuthorizer,
                     backendFactory: backendFactory
                 )
-            case .chat:
+            case .tui:
                 AgentOutput.silenceInheritedProcessOutput()
                 let permissionAuthorizer = LocalExecPermissionAuthorizer()
                 let sessionRunner = ChatSessionRuntimeFactory.makeSessionRunner(
@@ -198,6 +198,19 @@ public enum ZenCODECommandLineRunner {
                     }
                     throw error
                 }
+            case .telegram:
+                // The session driven only by the linked Telegram chat, without
+                // the TUI. The runner logs on stderr with timestamps, its fatal
+                // errors included, so it never reaches the catch below: it
+                // returns the exit status instead (see `ZenCODETelegramRunner`).
+                // Inherited stdout/stderr are silenced for the child processes;
+                // the log goes to the preserved stderr.
+                AgentOutput.silenceInheritedProcessOutput()
+                let status = await AgentRuntimeLauncher.runTelegram(
+                    configuration: configuration,
+                    backendFactory: backendFactory
+                )
+                Foundation.exit(status)
             case .acp:
                 AgentOutput.silenceInheritedProcessError()
                 await AgentRuntimeLauncher.runACP(
@@ -384,6 +397,8 @@ public enum ZenCODECommandLineRunner {
             || argument == "--model"
             || argument == "--agent"
             || argument == "--acp"
+            || argument == "--tui"
+            || argument == "--telegram"
             || argument == "-p"
             || argument == "-f"
             || argument == "--prompt"

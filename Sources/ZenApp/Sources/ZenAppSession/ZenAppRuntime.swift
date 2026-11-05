@@ -14,6 +14,12 @@ import ZenCODECore
 /// The app's runtime, one per process: the `ChatSessionHost` over one runner,
 /// one consent authorizer for every window (the host routes each request to
 /// the slot that runs its session), and the shell of the host.
+///
+/// The access mode of the runner (``localExecAccessMode``, the terminal's
+/// Ctrl+G) is app-wide: one toggle
+/// (``toggleLocalExecAccessMode()``) changes it for every session of every
+/// window, and every open window shows it. It is never persisted: each launch
+/// starts in the default mode.
 @MainActor
 @Observable
 public final class ZenAppRuntime {
@@ -25,6 +31,11 @@ public final class ZenAppRuntime {
     public private(set) var shell: ChatShellSnapshot
     /// ``shutdown()`` ran.
     public private(set) var isShutDown = false
+    /// The runner's access mode for `local.exec` and the destructive direct
+    /// tools, as of the last toggle that finished: in
+    /// ``AgentLocalExecAccessMode/fullAccess`` they run without asking for
+    /// consent.
+    public private(set) var localExecAccessMode: AgentLocalExecAccessMode
 
     @ObservationIgnored let authorizer: ChatToolConsentAuthorizer
     @ObservationIgnored let openExternal: @Sendable (ChatOpenTarget) async throws -> Void
@@ -33,6 +44,9 @@ public final class ZenAppRuntime {
     /// The open windows, in the order they opened.
     @ObservationIgnored private(set) var windows: [ZenWindowSession] = []
     @ObservationIgnored private var shellObservation: Task<Void, Never>?
+    /// The latest toggle of the access mode; each one waits for the one
+    /// before it, so they reach the runner in order.
+    @ObservationIgnored private var accessModeToggle: Task<Void, Never>?
 
     /// `true` once the provider-key migration ran in this process.
     private static var didMigrateProviderKeys = false
@@ -135,12 +149,14 @@ public final class ZenAppRuntime {
             sleepAssertionReason: "ZenCODE app session active"
         )
         let shell = await sessionHost.shellSnapshot
+        let accessMode = await runner.localExecAccessMode()
         self.launchWorkspace = configuration.workingDirectory
         self.sessionHost = sessionHost
         self.authorizer = authorizer
         self.openExternal = openExternal
         self.runner = runner
         self.shell = shell
+        self.localExecAccessMode = accessMode
         observeShell()
     }
 
@@ -167,11 +183,50 @@ public final class ZenAppRuntime {
             throw ChatSessionHostError.shutDown
         }
         windows.append(window)
+        // A toggle that finished while the window was opening.
+        window.adoptLocalExecAccessMode(localExecAccessMode)
         return window
     }
 
     func windowDidClose(_ window: ZenWindowSession) {
         windows.removeAll { $0 === window }
+    }
+
+    // MARK: - Access mode
+
+    /// Switches the runner's access mode to the other value, as the
+    /// terminal's Ctrl+G does, for every session of the app, also while a turn
+    /// runs. Returns at once; the toggles run in order, each after the one
+    /// before it ended, so ``localExecAccessMode`` is the runner's mode once
+    /// the last one ended. Each one shows the new mode in the status bar of
+    /// every open window and adds its message
+    /// (``ChatSessionNoticeText/localExecAccessModeChangeText(_:)``) to each
+    /// transcript. Does nothing after ``shutdown()``.
+    public func toggleLocalExecAccessMode() {
+        guard !isShutDown else { return }
+        let previous = accessModeToggle
+        let runner = runner
+        accessModeToggle = Task { [weak self] in
+            await previous?.value
+            guard let self, !self.isShutDown else { return }
+            let mode = await runner.toggleLocalExecAccessMode()
+            self.publishLocalExecAccessMode(mode)
+        }
+    }
+
+    /// Shows `mode`, the runner's new access mode, in every open window.
+    private func publishLocalExecAccessMode(_ mode: AgentLocalExecAccessMode) {
+        if localExecAccessMode != mode {
+            localExecAccessMode = mode
+        }
+        for window in windows {
+            window.localExecAccessModeDidChange(mode)
+        }
+    }
+
+    /// Waits for the toggles of the access mode asked so far, for tests.
+    func waitForAccessModeToggles() async {
+        await accessModeToggle?.value
     }
 
     /// Ends every window at once, then shuts the host and its runner down:

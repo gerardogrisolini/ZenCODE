@@ -78,7 +78,7 @@ struct ZenCODEMain {
 
         // Settings v15 identify providers by stable keys. Migrate older
         // settings.json/agents.json pairs here, once, before the setup gate
-        // and every mode (chat, headless, JSONL, ACP) load or save them. The
+        // and every mode (TUI, Telegram, headless, JSONL, ACP) load or save them. The
         // meta-commands above stay read-only. A failure is reported and the
         // legacy files keep loading; the migration is retried at next start.
         AgentProviderKeyMigration.migrateIfNeededReportingFailures()
@@ -86,7 +86,9 @@ struct ZenCODEMain {
         // ACP is exempt too: `--acp` must answer `initialize` even without a
         // configuration, so the client can offer the terminal setup method. The
         // setup then runs in its own terminal, never inside the ACP stream.
-        if requiresInteractiveSetup(), !runsHeadless(arguments), !runsACP(arguments) {
+        // So is `--telegram`: the session has no terminal to run a setup in, and
+        // without a configuration it fails in the runner with the ordinary error.
+        if requiresInteractiveSetup(), !runsHeadless(arguments), !runsACP(arguments), !runsTelegram(arguments) {
             await completeInteractiveSetupOrExit()
         }
 
@@ -119,6 +121,13 @@ struct ZenCODEMain {
             || ProcessInfo.processInfo.environment["ZENCODE_AGENT_MODE"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased() == AgentRunMode.acp.rawValue
+    }
+
+    private static func runsTelegram(_ arguments: [String]) -> Bool {
+        arguments.dropFirst().contains("--telegram")
+            || ProcessInfo.processInfo.environment["ZENCODE_AGENT_MODE"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() == AgentRunMode.telegram.rawValue
     }
 
     private static func requiresInteractiveSetup() -> Bool {
@@ -173,12 +182,16 @@ struct ZenCODEMain {
 
 private enum ZenCODEStandaloneHelp {
     static var text: String {
-        let usage = "zen [--doctor] [--install-features [id,id,...]] [--jsonl] [-p PROMPT] [-f PATH] [--acp]"
+        let usage = "zen [--doctor] [--install-features [id,id,...]] [--tui] [--telegram] [--jsonl] [-p PROMPT] [-f PATH] [--acp]"
+        let telegramOption = "  --telegram             Run the session from the linked Telegram chat, without the TUI (Telegram must be set up and paired with /setup)."
+        // The `--telegram` line follows `--acp` and carries its own indentation,
+        // hence the interpolation at the margin of the literal.
         let options = """
           -p, --prompt PROMPT    Run one headless text prompt.
           -f PATH                Run one headless prompt read from a file (absolute path). With -p, the file is added as context.
           --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt or -f).
           --acp                  ACP JSON-RPC over stdio for compatible clients.
+        \(telegramOption)
           --doctor               Print a redacted diagnostic report (environment, configuration, permissions) and exit. Non-interactive; never starts setup or reveals secrets.
           --install-features [id,id,...]
                                  Select and install optional Swift feature packages. Repeat the option or separate ids with commas for a non-interactive install.
@@ -188,21 +201,20 @@ private enum ZenCODEStandaloneHelp {
 
         let help = AgentConfiguration.helpText
             .replacingOccurrences(
-                of: "zen [-p PROMPT] [-f PATH] [--jsonl] [--acp]",
+                of: "zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--acp]",
                 with: usage
             )
             .replacingOccurrences(
-                of: "  -p, --prompt PROMPT    Run one headless text prompt.\n  -f PATH                Run one headless prompt read from a file (absolute path). With -p, the file is added as context.\n  --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt or -f).\n  --acp                  ACP JSON-RPC over stdio for compatible clients.",
+                of: "  -p, --prompt PROMPT    Run one headless text prompt.\n  -f PATH                Run one headless prompt read from a file (absolute path). With -p, the file is added as context.\n  --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt or -f).\n  --acp                  ACP JSON-RPC over stdio for compatible clients.\n\(telegramOption)",
                 with: options
             )
 
         #if os(macOS)
         // `--ui` exists only on macOS: elsewhere the help stays as above.
-        let acpOption = "  --acp                  ACP JSON-RPC over stdio for compatible clients."
         let uiOption = "  --ui                   Open the ZenCODE macOS app (built on first use). Accepts --agent, --model, --skills, --working-directory."
         return help
             .replacingOccurrences(of: usage, with: "\(usage) [--ui]")
-            .replacingOccurrences(of: acpOption, with: "\(acpOption)\n\(uiOption)")
+            .replacingOccurrences(of: telegramOption, with: "\(telegramOption)\n\(uiOption)")
         #else
         return help
         #endif

@@ -830,8 +830,9 @@ extension ChatSessionController {
         )
     }
 
-    /// The tool groups the session exposes now.
-    func activeToolsSummary() async -> ChatActiveToolsSummary {
+    /// The tool groups the session exposes now, as the terminal's startup
+    /// summary and `/tools` list them.
+    public func activeToolsSummary() async -> ChatActiveToolsSummary {
         let allowedToolNames = await selectedAllowedToolNames(
             discoverExternalTools: false
         )

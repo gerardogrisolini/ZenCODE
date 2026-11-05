@@ -18,13 +18,15 @@ import ToolCore
 public enum AgentRunMode: String, Sendable {
     case automatic
     case acp
-    case chat
+    case tui
+    case telegram
     case headless
 }
 
 public enum AgentResolvedRunMode: Sendable {
     case acp
-    case chat
+    case tui
+    case telegram
     case headless
 }
 
@@ -35,38 +37,39 @@ public struct AgentConfiguration: Sendable {
     Autonomous ZenCODE CLI and ACP agent.
 
     Usage:
-      zen [-p PROMPT] [-f PATH] [--jsonl] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
+      zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
 
     Modes:
-      default                Human terminal chat.
+      --tui                  Human terminal chat (default).
       -p, --prompt PROMPT    Run one headless text prompt.
       -f PATH                Run one headless prompt read from a file (absolute path). With -p, the file is added as context.
       --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt or -f).
       --acp                  ACP JSON-RPC over stdio for compatible clients.
+      --telegram             Run the session from the linked Telegram chat, without the TUI (Telegram must be set up and paired with /setup).
 
     Agent runtime:
       --agent NAME           Agent profile from ~/.zencode/agents.json. Default is used when omitted.
       --model MODEL_ID        Configured model id <provider>:<model> (for example openrouter:openrouter/auto or chatgpt:gpt-5) or its model name. Overrides the agent-selected model for this run.
       --working-directory PATH
                               Working directory for local tools. Default: current directory, or home when launched from the executable directory.
-      --skills LIST           Initial chat skill selection by name/number, all, or none. In chat mode use /skills to change or install skills.
+      --skills LIST           Initial skill selection by name/number, all, or none. In the TUI use /skills to change or install skills.
       --max-tool-rounds N     Maximum model/tool loop rounds per prompt. Default: \(AgentToolRoundPolicy.defaultMaxToolRounds).
       --max-output-tokens N   Maximum generated tokens per model call. Default: model default.
 
     Tool discovery:
-      In chat mode, use /setup to reconfigure ZenCODE and restore the current session without restarting the app.
-      In chat mode, use /agents to switch agent profiles without restarting the TUI.
-      In chat mode, use /tools to enable local, shell, search, git, memory, sub-agent, or optional feature tools.
-      In chat mode, use the Builder agent to create and manage generated Swift feature packages with /feature.
-      In chat mode, use /skills to select prompt skills installed by the app or install a skill from GitHub or a local folder.
-      In chat mode, use /attach to add image or video files to the next prompt.
-      In chat mode, use /changes to review tracked file changes and /undo to revert the latest tracked changes.
-      In chat mode, delegated sub-agent status is shown automatically in the chat flow.
+      In the TUI, use /setup to reconfigure ZenCODE and restore the current session without restarting the app.
+      In the TUI, use /agents to switch agent profiles without restarting the TUI.
+      In the TUI, use /tools to enable local, shell, search, git, memory, sub-agent, or optional feature tools.
+      In the TUI, use the Builder agent to create and manage generated Swift feature packages with /feature.
+      In the TUI, use /skills to select prompt skills installed by the app or install a skill from GitHub or a local folder.
+      In the TUI, use /attach to add image or video files to the next prompt.
+      In the TUI, use /changes to review tracked file changes and /undo to revert the latest tracked changes.
+      In the TUI, delegated sub-agent status is shown automatically in the chat flow.
       In ACP mode, clients pass the enabled tools to the agent runtime.
       Figma MCP tools are added when the local Figma desktop MCP server exposes tools.
 
     Environment:
-      ZENCODE_AGENT_MODE           chat, acp, headless, or auto. Auto resolves to chat.
+      ZENCODE_AGENT_MODE           tui, telegram, acp, headless, or auto. Auto resolves to tui.
       ZENCODE_AGENT_NAME           Agent profile from ~/.zencode/agents.json. Default is used when omitted.
       ZENCODE_AGENT_MODEL          Configured model id <provider>:<model> or its model name. Overrides the agent-selected model for this run.
       ZENCODE_AGENT_CWD            Working directory for local tools.
@@ -176,7 +179,7 @@ public struct AgentConfiguration: Sendable {
         var shouldPrintHelp = false
         var shouldPrintVersion = false
         var shouldPrintDoctor = false
-        var explicitlyRequestedACP = false
+        var requestedModeFlag: String?
         var explicitlyRequestedInlinePrompt = false
 
         var index = 1
@@ -201,27 +204,40 @@ public struct AgentConfiguration: Sendable {
                     throw AgentConfigurationError.missingValue(argument)
                 }
                 rawAgentName = arguments[index]
-            case "--acp":
+            case "--tui", "--telegram", "--acp":
+                // The mode flags exclude each other and every headless option.
+                // Repeating the same flag is harmless.
+                if let seenModeFlag = requestedModeFlag, seenModeFlag != argument {
+                    throw AgentConfigurationError.conflictingOptions(argument, seenModeFlag)
+                }
                 guard !explicitlyRequestedInlinePrompt else {
-                    throw AgentConfigurationError.conflictingOptions("--acp", "-p/--prompt")
+                    throw AgentConfigurationError.conflictingOptions(argument, "-p/--prompt")
                 }
                 guard rawHeadlessPromptFile == nil else {
-                    throw AgentConfigurationError.conflictingOptions("--acp", "-f")
+                    throw AgentConfigurationError.conflictingOptions(argument, "-f")
                 }
                 guard !rawJSONL else {
-                    throw AgentConfigurationError.conflictingOptions("--acp", "--jsonl")
+                    throw AgentConfigurationError.conflictingOptions(argument, "--jsonl")
                 }
-                explicitlyRequestedACP = true
-                rawRunMode = AgentRunMode.acp.rawValue
+                requestedModeFlag = argument
+                switch argument {
+                case "--tui": rawRunMode = AgentRunMode.tui.rawValue
+                case "--telegram": rawRunMode = AgentRunMode.telegram.rawValue
+                default: rawRunMode = AgentRunMode.acp.rawValue  // --acp
+                }
             case "--jsonl":
-                guard !explicitlyRequestedACP else {
-                    throw AgentConfigurationError.conflictingOptions("--jsonl", "--acp")
+                if let modeFlag = requestedModeFlag {
+                    // `--acp` keeps its original wording; the other mode flags
+                    // are named first, like with `-p` and `-f`.
+                    throw modeFlag == "--acp"
+                        ? AgentConfigurationError.conflictingOptions(argument, modeFlag)
+                        : AgentConfigurationError.conflictingOptions(modeFlag, argument)
                 }
                 rawJSONL = true
                 rawRunMode = AgentRunMode.headless.rawValue
             case "-p", "--prompt":
-                guard !explicitlyRequestedACP else {
-                    throw AgentConfigurationError.conflictingOptions("--acp", "-p/--prompt")
+                if let modeFlag = requestedModeFlag {
+                    throw AgentConfigurationError.conflictingOptions(modeFlag, "-p/--prompt")
                 }
                 guard !explicitlyRequestedInlinePrompt else {
                     throw AgentConfigurationError.conflictingOptions(argument, "-p/--prompt")
@@ -241,8 +257,8 @@ public struct AgentConfiguration: Sendable {
                 }
                 rawHeadlessPrompt = prompt
             case "-f":
-                guard !explicitlyRequestedACP else {
-                    throw AgentConfigurationError.conflictingOptions("--acp", argument)
+                if let modeFlag = requestedModeFlag {
+                    throw AgentConfigurationError.conflictingOptions(modeFlag, argument)
                 }
                 guard rawHeadlessPromptFile == nil else {
                     throw AgentConfigurationError.conflictingOptions(argument, argument)
@@ -374,7 +390,7 @@ public struct AgentConfiguration: Sendable {
         availableAgents: [AgentProfile] = AgentProfileStore.defaultProfiles(),
         availableModels: [AgentSettingsModelManifest] = [],
         cacheAgentProfiles: Bool = true,
-        runMode: AgentRunMode = .chat,
+        runMode: AgentRunMode = .tui,
         jsonl: Bool = false,
         workingDirectory: URL,
         initialSkillSelection: String? = nil,
@@ -425,12 +441,14 @@ public struct AgentConfiguration: Sendable {
         switch runMode {
         case .acp:
             return .acp
-        case .chat:
-            return .chat
+        case .tui:
+            return .tui
+        case .telegram:
+            return .telegram
         case .headless:
             return .headless
         case .automatic:
-            return appMode ? .acp : .chat
+            return appMode ? .acp : .tui
         }
     }
 

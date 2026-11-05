@@ -30,6 +30,9 @@ public struct ZenWindowStatus: Equatable, Sendable {
     public var gitStatus: TerminalGitStatusSummary?
     /// The window's workspace.
     public var workspace: URL
+    /// The runner's access mode, the same in every window
+    /// (``ZenAppRuntime/localExecAccessMode``).
+    public var localExecAccessMode: AgentLocalExecAccessMode
 
     public init(
         isGenerating: Bool = false,
@@ -41,7 +44,8 @@ public struct ZenWindowStatus: Equatable, Sendable {
         contextWindow: DirectAgentContextWindowStatus? = nil,
         subscriptionUsage: DirectAgentSubscriptionUsageStatus? = nil,
         gitStatus: TerminalGitStatusSummary? = nil,
-        workspace: URL
+        workspace: URL,
+        localExecAccessMode: AgentLocalExecAccessMode = .standard
     ) {
         self.isGenerating = isGenerating
         self.turnStartedAt = turnStartedAt
@@ -53,6 +57,29 @@ public struct ZenWindowStatus: Equatable, Sendable {
         self.subscriptionUsage = subscriptionUsage
         self.gitStatus = gitStatus
         self.workspace = workspace
+        self.localExecAccessMode = localExecAccessMode
+    }
+}
+
+/// What the welcome view of an empty session shows about the next turn, as
+/// the terminal's startup summary: the selected agent, the active tools, and
+/// the active skills. Read with the status bar.
+public struct ZenStartupSummary: Equatable, Sendable {
+    /// The selected agent's display name; `nil` without an agent.
+    public var agentName: String?
+    /// The tool groups the session exposes.
+    public var activeTools: ChatActiveToolsSummary
+    /// The skills the session selected.
+    public var activeSkills: [PromptSkill]
+
+    public init(
+        agentName: String? = nil,
+        activeTools: ChatActiveToolsSummary = ChatActiveToolsSummary(groups: []),
+        activeSkills: [PromptSkill] = []
+    ) {
+        self.agentName = agentName
+        self.activeTools = activeTools
+        self.activeSkills = activeSkills
     }
 }
 

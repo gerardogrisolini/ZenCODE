@@ -46,6 +46,13 @@ struct ZenAttachmentPreviewTests {
         return directory
     }
 
+    /// The permission bits of the file or directory at `url`.
+    private static func permissions(of url: URL) throws -> Int {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false))
+        let permissions = try #require(attributes[.posixPermissions] as? NSNumber)
+        return permissions.intValue & 0o777
+    }
+
     @Test("an image shows from its bytes, or else from its file")
     func imageOfAttachment() throws {
         let png = try ZenTestImages.png(width: 300, height: 150)
@@ -80,19 +87,145 @@ struct ZenAttachmentPreviewTests {
         )) == nil)
     }
 
-    @Test("only a local file is clickable")
-    func fileURL() throws {
-        let local = URL(filePath: "/tmp/zen-preview/shot.png")
+    @Test("Quick Look shows the file when it exists, else the bytes")
+    func quickLookSource() throws {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let bytes = Data([1, 2, 3])
+        let file = directory.appending(path: "shot.png")
+        try bytes.write(to: file)
+        let video = directory.appending(path: "clip.mov")
+        try bytes.write(to: video)
+        let missing = directory.appending(path: "missing.png")
         let remote = try #require(URL(string: "https://example.com/shot.png"))
-        #expect(ZenAttachmentPreviewView.fileURL(of: AgentRuntimeAttachment(
-            kind: .image, fileURL: local, originalFilename: "shot.png"
-        )) == local)
-        #expect(ZenAttachmentPreviewView.fileURL(of: AgentRuntimeAttachment(
+
+        // An existing local file, for an image and for a video.
+        #expect(ZenAttachmentPreviewView.quickLookSource(of: AgentRuntimeAttachment(
+            kind: .image, fileURL: file, data: Data([9]), originalFilename: "shot.png"
+        )) == .file(file))
+        #expect(ZenAttachmentPreviewView.quickLookSource(of: AgentRuntimeAttachment(
+            kind: .video, fileURL: video, originalFilename: "clip.mov"
+        )) == .file(video))
+        // A file that is gone falls back to the bytes, if any.
+        #expect(ZenAttachmentPreviewView.quickLookSource(of: AgentRuntimeAttachment(
+            kind: .image, fileURL: missing, data: bytes, originalFilename: "missing.png"
+        )) == .bytes(bytes))
+        #expect(ZenAttachmentPreviewView.quickLookSource(of: AgentRuntimeAttachment(
+            kind: .image, fileURL: missing, originalFilename: "missing.png"
+        )) == nil)
+        // A directory is not a file to show.
+        #expect(ZenAttachmentPreviewView.quickLookSource(of: AgentRuntimeAttachment(
+            kind: .image, fileURL: directory, data: bytes, originalFilename: "shot.png"
+        )) == .bytes(bytes))
+        #expect(ZenAttachmentPreviewView.quickLookSource(of: AgentRuntimeAttachment(
+            kind: .image, fileURL: directory, originalFilename: "shot.png"
+        )) == nil)
+        // A remote URL is not a local file.
+        #expect(ZenAttachmentPreviewView.quickLookSource(of: AgentRuntimeAttachment(
+            kind: .image, fileURL: remote, data: bytes, originalFilename: "shot.png"
+        )) == .bytes(bytes))
+        #expect(ZenAttachmentPreviewView.quickLookSource(of: AgentRuntimeAttachment(
             kind: .image, fileURL: remote, originalFilename: "shot.png"
         )) == nil)
-        #expect(ZenAttachmentPreviewView.fileURL(of: AgentRuntimeAttachment(
+        // Neither a file nor bytes: not clickable.
+        #expect(ZenAttachmentPreviewView.quickLookSource(of: AgentRuntimeAttachment(
             kind: .video, originalFilename: "clip.mov"
         )) == nil)
+        #expect(ZenAttachmentPreviewView.quickLookSource(of: AgentRuntimeAttachment(
+            kind: .image, data: Data(), originalFilename: "empty.png"
+        )) == nil)
+        // Bytes alone, for an image and for a video.
+        #expect(ZenAttachmentPreviewView.quickLookSource(of: AgentRuntimeAttachment(
+            kind: .image, data: bytes, originalFilename: "telegram.png"
+        )) == .bytes(bytes))
+        #expect(ZenAttachmentPreviewView.quickLookSource(of: AgentRuntimeAttachment(
+            kind: .video, data: bytes, originalFilename: "clip.mov"
+        )) == .bytes(bytes))
+    }
+
+    @Test("a temporary file is private and kept in a directory of its own")
+    func temporaryFileWrite() throws {
+        let root = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bytes = try ZenTestImages.png(width: 4, height: 4)
+
+        let file = try ZenQuickLookTemporaryFile.write(bytes, filename: "shot.png", under: root)
+        let directory = file.deletingLastPathComponent()
+
+        #expect(try Data(contentsOf: file) == bytes)
+        #expect(file.lastPathComponent == "shot.png")
+        #expect(try Self.permissions(of: file) == 0o600)
+        #expect(try Self.permissions(of: directory) == 0o700)
+        #expect(directory.lastPathComponent.hasPrefix(ZenQuickLookTemporaryFile.directoryPrefix))
+        #expect(directory.deletingLastPathComponent().lastPathComponent == root.lastPathComponent)
+
+        // Each write has a directory of its own, so two files never collide.
+        let other = try ZenQuickLookTemporaryFile.write(bytes, filename: "shot.png", under: root)
+        #expect(other.deletingLastPathComponent() != directory)
+    }
+
+    @Test("a temporary file refuses a name that leaves its directory")
+    func temporaryFileInvalidName() throws {
+        let root = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for name in ["", ".", "..", "../escape.png", "a/b.png"] {
+            #expect(throws: CocoaError.self) {
+                try ZenQuickLookTemporaryFile.write(Data([1]), filename: name, under: root)
+            }
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: root.path(percentEncoded: false)).isEmpty)
+    }
+
+    @Test("removing a temporary file removes its directory")
+    func temporaryFileRemove() throws {
+        let root = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = try ZenQuickLookTemporaryFile.write(Data([1, 2, 3]), filename: "shot.png", under: root)
+        let directory = file.deletingLastPathComponent()
+
+        ZenQuickLookTemporaryFile.remove(file)
+
+        #expect(!FileManager.default.fileExists(atPath: file.path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: directory.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: root.path(percentEncoded: false)))
+    }
+
+    @Test("removing never touches a file outside a temporary directory")
+    func temporaryFileRemoveOther() throws {
+        let root = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appending(path: "shot.png")
+        try Data([1, 2, 3]).write(to: file)
+
+        ZenQuickLookTemporaryFile.remove(file)
+
+        #expect(FileManager.default.fileExists(atPath: file.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: root.path(percentEncoded: false)))
+    }
+
+    @Test("the name of a temporary file comes from the attachment")
+    func temporaryFilename() {
+        func filename(_ name: String, contentType: String? = nil) -> String {
+            ZenQuickLookTemporaryFile.filename(for: AgentRuntimeAttachment(
+                kind: .image, contentType: contentType, originalFilename: name
+            ))
+        }
+
+        #expect(filename("shot.png") == "shot.png")
+        // Quick Look chooses its viewer by the extension.
+        #expect(filename("image", contentType: "image/jpeg") == "image.jpg")
+        #expect(filename("photo", contentType: "public.png") == "photo.png")
+        #expect(filename("shot.png", contentType: "image/jpeg") == "shot.png")
+        #expect(filename("image") == "image")
+        // Only the last component is kept, and `/` and `:` never are.
+        #expect(filename("/Users/me/Desktop/shot.png") == "shot.png")
+        #expect(filename("shot: 1.png") == "shot- 1.png")
+        #expect(!filename("a:b:c.png").contains(":"))
+        #expect(!filename("a:b:c.png").contains("/"))
+        #expect(filename("  shot.png  ") == "shot.png")
+        #expect(filename("   ") == "attachment")
+        #expect(filename("", contentType: "image/png") == "attachment.png")
+        #expect(filename("..") == "attachment")
     }
 
     @Test("a preview is scaled down to fit, never up")

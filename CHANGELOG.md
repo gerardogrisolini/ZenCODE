@@ -48,6 +48,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
   lines of a unified diff as the terminal's file artifacts do (the old line of
   a removed line, the new line of the others, none for the headers and the
   lines outside a hunk), so a host app numbers a patch the same way.
+- `ChatSessionController.activeToolsSummary()` and `selectedPromptSkills()`
+  are public: they return the tool groups the session exposes and the skills
+  it selected, which the terminal's startup summary lists as `Active tools:`
+  and `Active skills:`, so a host app lists them the same way.
+- `AgentCoreSessionRunner.localExecAccessMode()` and
+  `toggleLocalExecAccessMode()` are public, with
+  `ChatSessionNoticeText.localExecAccessModeChangeText(_:)`: a host app reads
+  and switches the runner-wide access mode of the terminal's Ctrl+G (never
+  persisted; in full access `local.exec` and the destructive tools run without
+  asking the authorization handler) and shows the terminal's message for it
+  (see [Docs/embedding.md](Docs/embedding.md#full-access)).
 - Observable session state for host apps: `ChatSessionStateReducer` records
   what a session shows in one ordered log, with a sequence number per entry,
   and publishes a `ChatSessionSnapshot` (transcript, tool activity, the turn in
@@ -196,7 +207,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   and sessions that `zen` saves, so run `zen` once to configure ZenCODE, then
   start the app from the workspace folder with `zen --ui` (macOS only: it
   builds the app on first use and after each update, then starts it detached;
-  File > Open Folder… opens another workspace in another window). It shows
+  File > Open Folder… opens another workspace in another window). An empty
+  session shows, at the top left as the terminal's startup banner, the
+  ZenCODE wordmark and the lines of its startup summary, with their labels in
+  orange: the version, the agent, the active tools, the active skills, and
+  the working directory, then the commands the window runs, as the terminal's
+  `Commands:` line. It shows
   the transcript with Markdown (highlighted code, diffs, tables), thinking,
   tool calls with details and durations, file-change summaries (whose patches
   number the lines as the terminal's artifacts do), the task-graph
@@ -219,8 +235,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   box that scrolls past eight lines), menus, and text requests are sheets of
   the window, over any tab. The composer completes
   slash commands, recalls the prompt history, attaches files (picker, drop, or
-  `/attach`; an attached image shows small in the prompt and opens on a click,
-  a video plays in Quick Look), and queues the prompts sent while a turn runs; Esc stops the
+  `/attach`; an attached image shows small in the prompt and a click shows it
+  larger in Quick Look, where a video plays, from the attachment's bytes when
+  its file is gone), and queues the prompts sent while a turn runs; Esc stops the
   turn in the Chat tab and does nothing in a sub-agent tab, and ⌘. stops it
   from any tab. A status bar like the terminal's, a sidebar of the current
   and saved sessions (while a saved session loads from it, a large spinner
@@ -231,6 +248,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   and `/help`, with the toggle of the artifacts sidebar, complete it.
   **New Session** keeps the agent, model, thinking level, tools, and skills
   of the session it replaces.
+  **Session > Full Access** (⌃G) is the terminal's Ctrl+G for every window at
+  once (each shows a red dot first in its status bar and the terminal's
+  `Mode: …` message in its conversation), and is never saved.
   `/setup`, `/voice`, `/telegram`, `/feature`, `/cron`, `/ds4`, and
   `/tools logs` stay in the terminal. See [Docs/app.md](Docs/app.md).
 - The shared chat in the macOS app. Each window follows the live chat room of
@@ -263,6 +283,44 @@ Release tags follow the strict `vX.Y.Z` contract described in
   same label, and the terminal output is unchanged. The embedding guide also
   describes how a host app observes the shared chat: see
   [Docs/embedding.md](Docs/embedding.md#observing-the-shared-chat).
+- `zen --telegram` (or `ZENCODE_AGENT_MODE=telegram`), on Linux and macOS and
+  with any agent, runs ZenCODE without the TUI, for a machine that stays on,
+  such as a Raspberry Pi under systemd or a Mac started over ssh. The session
+  opens with no terminal and is handed at once to the linked Telegram chat,
+  which drives it as after `/telegram on`: prompts, voice notes, `/plan`,
+  `/goal`, `/review`, `/allow`, `/always`, `/deny`, `/status`, `/changes`,
+  `/diff`, `/chat`, and `/help`, with the same output (responses, reasoning
+  blocks, tool activity, the task-graph card, and the sub-agents). `/undo`
+  answers `/undo is not available in a session started with zen --telegram.`
+  Telegram must be set up and paired beforehand, from `zen` with `/setup`: the
+  mode never starts setup and never reads standard input or the terminal. The
+  agent, model, skills, working directory, and limits come from the options
+  (and the matching variables) and stay the same until the restart, so the
+  chat has no `/models`, `/agents`, or `/sessions`; incomplete task graphs are
+  not resumed at startup, and the conversation is not saved. Any error during
+  the startup ends the process with status 1, with no retry, so that a service
+  manager such as systemd restarts it; once the link is up, the long polling
+  retries by itself with waits of up to 60 seconds, and the persistent
+  problems (an invalid token, another process using the same bot) are logged.
+  The log goes to standard error, one line per event with an ISO 8601
+  timestamp; prompts and responses are never logged and standard output stays
+  empty. SIGHUP is ignored, so closing ssh does not stop the process; SIGTERM,
+  and SIGINT unless the parent left it ignored, stop it cleanly with status 0,
+  and a second signal forces the exit with status 1. See
+  [Docs/zen.md](Docs/zen.md#telegram-mode), which also gives an ssh example and
+  a systemd user unit.
+- `zen --tui` and `ZENCODE_AGENT_MODE=tui` open the terminal chat explicitly.
+  It stays the default, so `zen` without mode options is unchanged.
+- The `/setup` DS4 section, when DS4 is already configured, now first offers
+  **Reconfigure DS4 models** (the usual flow) and **Rebuild the DS4 engine**.
+  The rebuild recompiles `libzencode-ds4` for every configured model in place
+  (once per DS4 folder, backend, and architecture), without asking and
+  without changing any setting. Use it after you update your DS4 checkout:
+  setup reports a library as rebuild required only when `ds4.h`, the ZenCODE
+  shim, the folder, or the architecture change, so a change to `ds4.c` alone
+  was never offered for a rebuild.
+  A `zen` already using DS4 keeps the library it loaded until it restarts.
+  See [Docs/ds4.md](Docs/ds4.md#setup).
 
 ### Changed
 
@@ -361,6 +419,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
   plan 2, and so on. `/plan list` still shows the newest save first. Saving a
   plan that is already in the library again keeps its original place instead of
   moving it to the end.
+- **Breaking:** the run mode `chat` is renamed `tui`. `ZENCODE_AGENT_MODE=chat`
+  is no longer accepted and fails with `Invalid value for --mode: chat`: use
+  `ZENCODE_AGENT_MODE=tui` (`auto` still resolves to the terminal chat, now
+  `tui`). In the Swift API of `ZenCODECore`, `AgentRunMode.chat` and
+  `AgentResolvedRunMode.chat` become `.tui`, and `.telegram` is added to both
+  and to `ChatSlotIdentity` (the session of `zen --telegram`): update the
+  exhaustive `switch` statements over these enums. See
+  [Docs/zen.md](Docs/zen.md#command-line-options).
+- The mode options now exclude each other: `--tui`, `--telegram`, `--acp`, and
+  the headless options (`-p`/`--prompt`, `-f`, and `--jsonl`) cannot be
+  combined, and `zen` answers `Options X and Y cannot be combined.` Before,
+  only `--acp` and the headless options excluded each other. Repeating the same
+  mode option is allowed. `zen --ui` also refuses `--tui` and `--telegram`.
 
 ### Fixed
 

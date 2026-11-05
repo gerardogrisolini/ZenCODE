@@ -435,7 +435,9 @@ extension ChatSessionController {
         return skills
     }
 
-    func selectedPromptSkills() -> [PromptSkill] {
+    /// The installed skills the session selected, as the terminal's startup
+    /// summary and `/skills` list them.
+    public func selectedPromptSkills() -> [PromptSkill] {
         let skills = availableSkills()
         return Self.promptSkills(withIDs: selection.skillIDs, in: skills)
     }

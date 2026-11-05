@@ -119,7 +119,10 @@ files.
 
 1. Open `/setup` and select **DS4 local runtime (in-process engine)**, or
    reconfigure the DS4 provider from **Providers and models**. Both use the same
-   flow and never call `/models`, because setup never loads the engine.
+   flow and never call `/models`, because setup never loads the engine. When DS4
+   is already configured, the section first asks whether to reconfigure the
+   models or to rebuild the engine; see
+   [Rebuild the DS4 engine](#rebuild-the-ds4-engine).
 2. Enter the absolute path of the DS4 checkout. A previously configured folder
    is offered as the default.
 3. ZenCODE scans only `<folder>/*.gguf` and `<folder>/gguf/*.gguf`, read-only,
@@ -162,6 +165,29 @@ files.
 Setup never downloads a checkout or model weights, probes the hardware, loads a
 model, or calls `/models`. Each model keeps its own launch parameters. A new
 model starts from the defaults and never inherits the settings of another model.
+
+### Rebuild the DS4 engine
+
+When DS4 is already configured, the **DS4 local runtime (in-process engine)**
+section first shows a menu with two entries. Esc leaves the settings unchanged
+and builds nothing.
+
+- **Reconfigure DS4 models** runs the flow above.
+- **Rebuild the DS4 engine** recompiles the library of every configured model in
+  place. It rebuilds each library even when setup reports it as built, it does
+  not ask **Build the DS4 engine now?** (choosing the entry is the confirmation),
+  and it changes no setting. Libraries are deduplicated by folder, backend, and
+  architecture. For each one setup prints
+  `==> Rebuilding the DS4 engine (<target>)`, then
+  `DS4 engine rebuilt (<target>): <path>`. A folder without `ds4.h` is reported
+  as `DS4 engine (<target>) not built: <error>` and skipped. A failed build prints
+  the error and the manual command, like the build of the flow above.
+
+Use the rebuild after you update the DS4 checkout. Setup reports a library as
+**rebuild required** only when `ds4.h`, the ZenCODE shim, the folder, or the
+architecture change (see [above](#building-the-engine-library)), so a change to
+`ds4.c` alone is not offered as a rebuild. A `zen` that already uses DS4 keeps the library it loaded
+until it restarts.
 
 ### Runtime tuning asked by setup
 

@@ -654,3 +654,107 @@ struct ZenSubAgentsCardTests {
         #expect(ZenSubAgentLiveActivity(nil) == .none)
     }
 }
+
+@Suite("Welcome summary")
+struct ZenWelcomeSummaryTests {
+    private static let workspace = URL(fileURLWithPath: "/tmp/project")
+
+    private static func skill(_ title: String) -> PromptSkill {
+        PromptSkill(canonicalName: title.lowercased(), title: title, summary: "", promptBody: "", sourceHash: title)
+    }
+
+    @Test("the lines follow the terminal's startup summary: version, agent, tools, skills, working directory")
+    func terminalLines() {
+        let tools = ChatActiveToolsSummary(groups: [
+            .init(title: "Shell", toolCount: 2),
+            .init(title: "Files", toolCount: 14),
+        ])
+        let skills = [Self.skill("Skill Creator"), Self.skill("Swift Testing Pro")]
+        let lines = ZenWelcomeView.summaryLines(
+            version: "3.2.0",
+            agentName: "Developer",
+            activeTools: tools,
+            activeSkills: skills,
+            workspace: Self.workspace
+        )
+        #expect(lines.map(\.text) == [
+            "Version: 3.2.0",
+            "Agent: Developer",
+            "Active tools: Shell (2), Files (14)",
+            "Active skills: Skill Creator, Swift Testing Pro",
+            "Working directory: /tmp/project",
+        ])
+        #expect(lines.map(\.systemImage) == [
+            "info.circle", "person.crop.circle", "wrench.and.screwdriver", "sparkles", "folder",
+        ])
+        // The texts the terminal writes, without their line break.
+        #expect(lines[2].text + "\n" == ChatSessionNoticeText.text(for: .activeTools(tools)))
+        #expect(lines[3].text + "\n" == TerminalChat.renderActiveSkills(skills))
+    }
+
+    @Test("the working directory is abbreviated with ~ under the home directory")
+    func abbreviatedWorkingDirectory() {
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        let lines = ZenWelcomeView.summaryLines(
+            version: "3.2.0",
+            agentName: nil,
+            activeTools: nil,
+            activeSkills: nil,
+            workspace: home.appendingPathComponent("Projects/ZenCODE")
+        )
+        #expect(lines.last?.text == "Working directory: ~/Projects/ZenCODE")
+    }
+
+    @Test("a line splits at its first colon, as the terminal colors it: the label, then the value")
+    func labelAndValue() {
+        let line = ZenWelcomeView.SummaryLine(systemImage: "folder", text: "Working directory: /a:b")
+        #expect(line.label == "Working directory:")
+        #expect(line.value == " /a:b")
+        // No colon: no label, the whole text is the value.
+        let plain = ZenWelcomeView.SummaryLine(systemImage: "info.circle", text: "plain")
+        #expect(plain.label.isEmpty)
+        #expect(plain.value == "plain")
+    }
+
+    @Test("no agent leaves its line out; no tool or skill reads none, as in the terminal")
+    func emptySelections() {
+        let lines = ZenWelcomeView.summaryLines(
+            version: "3.2.0",
+            agentName: nil,
+            activeTools: ChatActiveToolsSummary(groups: []),
+            activeSkills: [],
+            workspace: Self.workspace
+        )
+        #expect(lines.map(\.text) == [
+            "Version: 3.2.0",
+            "Active tools: none",
+            "Active skills: none",
+            "Working directory: /tmp/project",
+        ])
+    }
+
+    @Test("before the session's facts are read, only the version and the working directory show")
+    func unreadFacts() {
+        let lines = ZenWelcomeView.summaryLines(
+            version: "3.2.0",
+            agentName: nil,
+            activeTools: nil,
+            activeSkills: nil,
+            workspace: Self.workspace
+        )
+        #expect(lines.map(\.text) == ["Version: 3.2.0", "Working directory: /tmp/project"])
+    }
+
+    @Test("the commands line lists the command names, as the terminal's Commands: line")
+    func commandsLine() {
+        let line = ZenWelcomeView.commandsLine(["/help", "/models", "/exit"])
+        #expect(line?.text == "Commands: /help, /models, /exit")
+        #expect(line?.systemImage == "terminal")
+        #expect(line?.label == "Commands:")
+    }
+
+    @Test("no commands leave the commands line out")
+    func noCommandsLine() {
+        #expect(ZenWelcomeView.commandsLine([]) == nil)
+    }
+}

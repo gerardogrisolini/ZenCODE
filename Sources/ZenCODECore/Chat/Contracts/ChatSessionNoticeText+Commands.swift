@@ -10,8 +10,8 @@ import ToolCore
 
 /// The wording of the shared slash commands (`/help`, `/plan`, `/goal`,
 /// `/review`, `/tasks`, `/changes`, `/undo`, `/artifacts`, `/open`,
-/// `/attach`), character for character what the terminal wrote before the
-/// commands moved here.
+/// `/attach`) and of the access-mode toggle (Ctrl+G), character for
+/// character what the terminal wrote before the commands moved here.
 ///
 /// The `/plan` and `/goal` constants, the task description, the `/attach`
 /// texts (usage, delete usage, attachment line), and the `/open` candidate
@@ -35,6 +35,23 @@ extension ChatSessionNoticeText {
                 + "Alt+←/→ (or ESC b / ESC f) word motion.",
         ])
         return lines.joined(separator: "\n") + "\n\n"
+    }
+
+    // MARK: - Access mode
+
+    /// The message written when the runner-wide access mode changes
+    /// (``AgentCoreSessionRunner/toggleLocalExecAccessMode()``), trailing
+    /// newline included: the line the terminal writes after Ctrl+G and the
+    /// app after Full Access (⌃G).
+    public static func localExecAccessModeChangeText(
+        _ mode: AgentLocalExecAccessMode
+    ) -> String {
+        switch mode {
+        case .standard:
+            "Mode: default — local.exec approvals restored.\n"
+        case .fullAccess:
+            "Mode: full access — local.exec commands run without approval.\n"
+        }
     }
 
     // MARK: - /plan

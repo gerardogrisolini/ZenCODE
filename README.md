@@ -56,6 +56,8 @@ ZenCODE supports several ways to run the model, all selected during automatic fi
 - `zen --jsonl -p "Summarize the current changes"` emits a versioned JSON Lines
   lifecycle stream for scripts and CI. See the [JSONL protocol guide](Docs/jsonl.md).
 - `zen --acp` runs the ACP stdio agent for compatible clients.
+- `zen --telegram` runs a session with no TUI, driven from the linked Telegram
+  chat, for a machine that stays on. See [Telegram Mode](Docs/zen.md#telegram-mode).
 - `zen --ui` (macOS only) opens [ZenCODE for macOS](Docs/app.md), the SwiftUI
   app, building it on first use and after each ZenCODE update.
 

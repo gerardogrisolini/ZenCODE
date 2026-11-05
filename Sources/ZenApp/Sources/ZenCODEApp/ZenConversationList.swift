@@ -255,15 +255,22 @@ struct ZenJumpToLatestButton: View {
 }
 
 /// The welcome view of an empty session, until a block streams. Its own
-/// view, so only it reads the live block id and the status.
+/// view, so only it reads the live block id and the startup summary.
 struct ZenWelcomeSlot: View {
     let session: ZenWindowSession
 
     var body: some View {
         if session.liveBlockID == nil {
-            ZenWelcomeView(workspace: session.workspace, modelID: session.status.modelID)
-                .frame(maxWidth: .infinity)
-                .padding(.top, 72)
+            let summary = session.startupSummary
+            // At the top left, where the rows start, as the terminal's banner.
+            ZenWelcomeView(
+                workspace: session.workspace,
+                agentName: summary?.agentName,
+                activeTools: summary?.activeTools,
+                activeSkills: summary?.activeSkills,
+                commands: session.commandDescriptors.map(\.command)
+            )
+                .padding(.top, 8)
         }
     }
 }

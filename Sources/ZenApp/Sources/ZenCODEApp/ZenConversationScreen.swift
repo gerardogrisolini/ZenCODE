@@ -284,7 +284,8 @@ extension ZenStatusBarState {
             metrics: status.metrics,
             contextWindow: status.contextWindow,
             subscriptionUsage: status.subscriptionUsage,
-            gitStatus: status.gitStatus
+            gitStatus: status.gitStatus,
+            localExecAccessMode: status.localExecAccessMode
         )
     }
 }

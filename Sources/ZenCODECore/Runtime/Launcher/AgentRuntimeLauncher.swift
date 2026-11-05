@@ -7,7 +7,7 @@
 
 import Foundation
 
-/// Shared entry points for launching ZenCODE terminal and ACP runtimes.
+/// Shared entry points for launching ZenCODE terminal, Telegram, and ACP runtimes.
 public enum AgentRuntimeLauncher {
     /// Runs one non-interactive turn. Legacy headless mode writes only the final
     /// assistant text; JSONL mode writes the approved lifecycle records. The
@@ -58,6 +58,22 @@ public enum AgentRuntimeLauncher {
             telegramTransportFactory: nil
         )
         return try await terminal.run()
+    }
+
+    /// Runs the session of `zen --telegram` in this process: no TUI, the slot
+    /// driven only by the linked Telegram chat, a timestamped log on the
+    /// preserved standard error, and nothing on standard output, until
+    /// SIGTERM or SIGINT stops it (see `ZenCODETelegramRunner`). Returns the
+    /// exit status: 0 after a stop, 1 when the startup or the link to
+    /// Telegram failed, which the log tells.
+    public static func runTelegram(
+        configuration: AgentConfiguration,
+        backendFactory: AgentRuntimeBackendFactory? = nil
+    ) async -> Int32 {
+        await ZenCODETelegramRunner.runProcess(
+            configuration: configuration,
+            backendFactory: backendFactory
+        )
     }
 
     /// Reads ACP requests from standard input and shuts down the bridge when input ends.

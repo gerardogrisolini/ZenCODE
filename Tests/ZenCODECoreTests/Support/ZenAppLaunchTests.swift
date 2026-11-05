@@ -54,7 +54,9 @@ struct ZenAppLaunchTests {
         #expect(try ZenAppLaunchCommand.forwardedArguments(from: ["zen", "--ui"]).isEmpty)
     }
 
-    @Test(arguments: ["-p", "--prompt", "-f", "--jsonl", "--acp", "--max-tool-rounds", "--max-output-tokens"])
+    @Test(arguments: [
+        "-p", "--prompt", "-f", "--jsonl", "--acp", "--tui", "--telegram", "--max-tool-rounds", "--max-output-tokens"
+    ])
     func theOptionsOfTheOtherModesConflict(option: String) {
         let expected = "Options --ui and \(option) cannot be combined."
         #expect(Self.parsingError(["zen", "--ui", option, "value"]) == expected)

@@ -7,8 +7,8 @@
 
 import Foundation
 
-/// The task-graph observer of an ACP session's slot while the channel drives
-/// it.
+/// The task-graph observer of an ACP session's slot, and of the slot of a
+/// session started by `zen --telegram`, while the channel drives it.
 ///
 /// The terminal runs the controller's observer (``ChatTaskGraphObserver``)
 /// on every session it has, and its publications reach the chat through the
@@ -16,11 +16,13 @@ import Foundation
 /// the channel starts nothing, so no second observer runs. The ACP bridge
 /// never starts it: the editor's prompts publish the graph through their own
 /// per-prompt observer, which does not run while Telegram drives the slot.
-/// So on an ACP slot the channel observes the graph from the moment it
-/// starts driving the slot (``startDriving()``, which sets
-/// ``observesTaskGraph``, also when the slot runs no session yet), binds the
-/// controller's observer to the session the slot runs and again to the
-/// controller of every later incarnation, and stops it when it stops driving
+/// The slot of `zen --telegram` (``ChatSlotIdentity/telegram``) has no other
+/// channel at all, so nobody else starts it there either. So on those two
+/// slots the channel observes the graph from the moment it starts driving
+/// the slot (``startDriving()``, which sets ``observesTaskGraph``, also when
+/// the slot runs no session yet), binds the controller's observer to the
+/// session the slot runs and again to the controller of every later
+/// incarnation, and stops it when it stops driving
 /// (``stopDriving(shuttingDown:)``, and so `/telegram off`, ``detach()``, and
 /// ``shutdown()``).
 ///
@@ -41,16 +43,23 @@ import Foundation
 /// ``stopTaskGraphObservation()`` awaits them all before it stops the
 /// observer, so none starts an observer after the stop. Its publications go
 /// through the slot's presenter: to the channel's presenter while the
-/// channel drives the slot, to the editor's silent presenter otherwise,
-/// which presents nothing, so the editor never receives them. A publication
-/// that arrives outside a turn, or after the turn's reporter retired, sends
-/// nothing (see ``enqueueOverview(_:taskGraphSignature:)``).
+/// channel drives the slot, to the primary channel's silent presenter
+/// otherwise (the editor's, or the one of `zen --telegram`), which presents
+/// nothing, so the editor never receives them. A publication that arrives
+/// outside a turn, or after the turn's reporter retired, sends nothing (see
+/// ``enqueueOverview(_:taskGraphSignature:)``).
 extension TelegramChannel {
     /// Whether the channel runs the controller's task-graph observer while it
-    /// drives the slot: only on the slot of an ACP session.
+    /// drives the slot: on the slot of an ACP session and on the slot of a
+    /// session started by `zen --telegram`, where no other channel runs it.
+    /// Never on the terminal's slot, which runs its own, nor on a window's.
     var runsTaskGraphObserver: Bool {
-        guard case .acpSession = host?.slotIdentity(slotID) else { return false }
-        return true
+        switch host?.slotIdentity(slotID) {
+        case .acpSession?, .telegram?:
+            return true
+        case .terminal?, .window?, nil:
+            return false
+        }
     }
 
     /// Starts observing the graph when the channel runs the observer: from

@@ -26,7 +26,8 @@ package enum ZenAppLaunchCommand {
 
     /// Options of the other modes, refused with `--ui`.
     static let conflictingOptions: Set<String> = [
-        "-p", "--prompt", "-f", "--jsonl", "--acp", "--max-tool-rounds", "--max-output-tokens"
+        "-p", "--prompt", "-f", "--jsonl", "--acp", "--tui", "--telegram",
+        "--max-tool-rounds", "--max-output-tokens"
     ]
 
     /// Whether `arguments` (with the executable at index 0) ask for the app.

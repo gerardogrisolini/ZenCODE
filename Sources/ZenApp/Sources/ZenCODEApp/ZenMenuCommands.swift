@@ -4,7 +4,8 @@
 //
 //  The menu bar of the app: Open Folder, New and Save Session in the File
 //  menu, and the Session menu, acting on the session of the key window; its
-//  Show/Hide Chat Reader item (⌃Y) opens and closes the shared-chat reader.
+//  Show/Hide Chat Reader item (⌃Y) opens and closes the shared-chat reader,
+//  and its Full Access item (⌃G) switches the app's access mode.
 //
 
 import AppKit
@@ -19,6 +20,12 @@ import ZenAppSession
 /// (``ZenSharedChatPanelLogic/menuTitle(isReaderOpen:selectedTab:)``). As a
 /// menu key equivalent, ⌃Y reaches it before the focused composer, whose text
 /// view would read it as the emacs yank.
+///
+/// Full Access (⌃G) is checked while the app's runner runs `local.exec` and
+/// the destructive tools without asking (``ZenWindowSession/isFullAccess``);
+/// it switches the mode for every window, as the terminal's Ctrl+G, also
+/// while a turn generates. As a menu key equivalent, ⌃G reaches it before
+/// the focused composer's text view, like ⌃Y.
 struct ZenMenuCommands: Commands {
     @FocusedValue(\.zenWindowSession) private var session
     @Environment(\.openWindow) private var openWindow
@@ -63,6 +70,15 @@ struct ZenMenuCommands: Commands {
                 session?.toggleSharedChatReader()
             }
             .keyboardShortcut("y", modifiers: .control)
+            .disabled(session == nil)
+
+            Divider()
+
+            Toggle("Full Access", isOn: Binding(
+                get: { session?.isFullAccess == true },
+                set: { _ in session?.toggleFullAccess() }
+            ))
+            .keyboardShortcut("g", modifiers: .control)
             .disabled(session == nil)
 
             Divider()

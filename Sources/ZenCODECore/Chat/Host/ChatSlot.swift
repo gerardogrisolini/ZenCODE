@@ -28,6 +28,10 @@ public enum ChatSlotIdentity: Hashable, Sendable {
     case acpSession(String)
     /// One window of a host app, by an identifier the app chooses.
     case window(String)
+    /// A session started by `zen --telegram`, driven only by the linked
+    /// Telegram chat: the slot is handed to its Telegram channel at startup
+    /// and never taken back, since no other channel exists to take it.
+    case telegram
 }
 
 /// How the operator is asked, in every incarnation of a slot, what the
@@ -135,7 +139,7 @@ public struct ChatSlotDescriptor: Sendable {
 }
 
 /// One place a channel runs sessions in: a terminal, an ACP session, a
-/// window. The slot outlives its incarnations
+/// window, the session of `zen --telegram`. The slot outlives its incarnations
 /// (``ChatSessionIncarnation``): the channel's bindings belong to it and are
 /// applied to each new controller, so a new or loaded session keeps the
 /// channel's presenter, interaction, hooks, and commands while selection,

@@ -59,6 +59,22 @@ struct AgentConfigurationTests {
     }
 
     @Test
+    func helpTextDocumentsTheTUIAndTelegramModes() {
+        let help = AgentConfiguration.helpText
+        #expect(help.contains("  zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--acp] [--agent NAME]"))
+        #expect(help.contains("Modes:\n  --tui                  Human terminal chat (default).\n  -p, --prompt PROMPT"))
+        #expect(help.contains(
+            "  --acp                  ACP JSON-RPC over stdio for compatible clients.\n"
+                + "  --telegram             Run the session from the linked Telegram chat, without the TUI "
+                + "(Telegram must be set up and paired with /setup).\n"
+        ))
+        #expect(help.contains("ZENCODE_AGENT_MODE           tui, telegram, acp, headless, or auto. Auto resolves to tui."))
+        #expect(help.contains("  In the TUI, use /setup to reconfigure ZenCODE"))
+        #expect(!help.contains("  default                Human terminal chat."))
+        #expect(!help.contains("In chat mode,"))
+    }
+
+    @Test
     func missingRemoteAPIKeyDirectsUsersToProviderSetup() {
         #expect(
             AgentCoreBackendError.missingRemoteAPIKey("Example provider")

@@ -387,6 +387,38 @@ struct ZenStatusFormattingTests {
         #expect(!ZenStatusFormatting.fragments(for: state).contains { $0.kind == .activity })
     }
 
+    @Test("full access shows a red dot first, before the spinner and the model")
+    func fullAccessDotComesFirst() throws {
+        var state = ZenStatusBarState(
+            isGenerating: true,
+            turnStartedAt: Date(),
+            modelID: "mlx/Qwen3-Coder",
+            gitStatus: TerminalGitStatusSummary(changedFileCount: 1, additions: 2, deletions: 0),
+            localExecAccessMode: .fullAccess
+        )
+        let fragments = ZenStatusFormatting.fragments(for: state)
+        #expect(fragments.map(\.kind) == [.accessMode, .activity, .model, .duration, .gitStatus])
+        let dot = try #require(fragments.first)
+        #expect(dot.runs == [ZenStatusRun("●", style: .fullAccess)])
+        #expect(ZenStatusFormatting.fullAccessAccessibilityLabel == "Full access")
+        // The terminal's text without its escapes: the dot, then the rest.
+        state.isGenerating = false
+        #expect(ZenStatusFormatting.statusText(for: state) == "● · Qwen3-Coder · 1 files +2 -0")
+        // Alone, with nothing else to show.
+        #expect(
+            ZenStatusFormatting.fragments(for: ZenStatusBarState(localExecAccessMode: .fullAccess)).map(\.kind)
+                == [.accessMode]
+        )
+    }
+
+    @Test("the default mode shows no access-mode fragment")
+    func defaultModeHasNoDot() {
+        let state = ZenStatusBarState(modelID: "gpt-5", localExecAccessMode: .standard)
+        #expect(ZenStatusFormatting.fragments(for: state).map(\.kind) == [.model])
+        #expect(ZenStatusFormatting.statusText(for: state) == "gpt-5")
+        #expect(ZenStatusBarState().localExecAccessMode == .standard)
+    }
+
     @Test("while generating without a start the last duration shows")
     func generatingWithoutStartShowsLastDuration() {
         let state = ZenStatusBarState(

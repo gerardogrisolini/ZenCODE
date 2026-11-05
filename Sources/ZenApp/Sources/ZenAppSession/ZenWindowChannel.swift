@@ -221,12 +221,14 @@ final class ZenRefusingInteractionHost: ChatInteractionHost {
     }
 }
 
-/// What the status bar reads from the controller, in one hop.
+/// What the status bar and the welcome view read from the controller, in one
+/// hop.
 struct ZenControllerFacts: Sendable {
     let modelID: String?
     let thinking: AgentThinkingSelection?
     let agentName: String?
     let commandContext: ChatCommandContext
+    let startupSummary: ZenStartupSummary
 
     /// The facts of the next turn of the incarnation `slotID` runs now; `nil`
     /// when it runs none.
@@ -241,12 +243,18 @@ struct ZenControllerFacts: Sendable {
             for: .normal,
             responseLanguageSection: hooks.responseLanguageSection()
         )
+        let activeTools = await controller.activeToolsSummary()
         let selection = controller.selection
         return ZenControllerFacts(
             modelID: configuration.modelID ?? controller.environment.launchModelID,
             thinking: configuration.thinkingSelection ?? selection.thinkingOverride,
             agentName: selection.agent?.name,
-            commandContext: ZenAppCommands.context(for: selection.agent)
+            commandContext: ZenAppCommands.context(for: selection.agent),
+            startupSummary: ZenStartupSummary(
+                agentName: selection.agent?.displayName,
+                activeTools: activeTools,
+                activeSkills: controller.selectedPromptSkills()
+            )
         )
     }
 }

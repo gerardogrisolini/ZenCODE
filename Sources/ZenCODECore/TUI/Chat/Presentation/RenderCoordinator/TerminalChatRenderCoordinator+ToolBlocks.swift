@@ -163,16 +163,9 @@ extension TerminalChatRenderCoordinator {
 
     func writeAccessModeChangeMessage(_ accessMode: AgentLocalExecAccessMode) {
         finishActiveToolOutputBeforeInterleavedMessage()
-        switch accessMode {
-        case .standard:
-            writeSystemMessageWithoutInterrupt(
-                "Mode: default — local.exec approvals restored.\n"
-            )
-        case .fullAccess:
-            writeSystemMessageWithoutInterrupt(
-                "Mode: full access — local.exec commands run without approval.\n"
-            )
-        }
+        writeSystemMessageWithoutInterrupt(
+            ChatSessionNoticeText.localExecAccessModeChangeText(accessMode)
+        )
         renderPendingOverviewsIfIdle()
     }
 
