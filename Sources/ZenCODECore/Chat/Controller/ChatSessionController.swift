@@ -105,7 +105,8 @@ public final class ChatSessionController {
 
     /// The agent, model, thinking, tool, and skill choices of the session. A
     /// new controller starts from the launch agent and the launch's explicit
-    /// model.
+    /// model, unless the host's slot keeps the selection of the session it
+    /// replaces (``ChatSlotDescriptor/keepsSelectionOnNewSession``).
     public internal(set) var selection: ChatSessionSelection
     /// The link to the saved session and the prompt it was restored with.
     public internal(set) var savedSessionState = ChatSavedSessionState()

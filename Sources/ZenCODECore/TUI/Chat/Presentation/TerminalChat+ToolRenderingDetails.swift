@@ -386,7 +386,12 @@ extension TerminalChat {
         return codeLanguageHint(forPath: path)
     }
 
-    nonisolated static func codeLanguageHint(forPath path: String) -> String? {
+    /// The syntax-highlighting language of a file, chosen strictly from its
+    /// extension (`swift`, `python`, `typescript`, …). Text, documentation,
+    /// configuration, and unknown extensions return `nil` and stay neutral.
+    /// The terminal's tool calls and file artifacts use it; a host app uses it
+    /// to color a file as the terminal does.
+    public nonisolated static func codeLanguageHint(forPath path: String) -> String? {
         switch URL(fileURLWithPath: path).pathExtension.lowercased() {
         case "swift": return "swift"
         case "c", "h": return "c"

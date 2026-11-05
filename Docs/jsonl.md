@@ -10,7 +10,7 @@ zen --jsonl -p "Summarize the current changes"
 ```
 
 JSONL mode requires `-p` or `--prompt`, or `-f` with a prompt file. It cannot be
-combined with `--acp`.
+combined with `--tui`, `--telegram`, or `--acp`.
 The ordinary `zen -p PROMPT` mode remains available when only the final text is
 needed.
 
@@ -249,5 +249,5 @@ one ordinary text prompt from the command line or from a file (`-f`), optionally
 augmented by piped stdin, then exits.
 
 ACP is a bidirectional JSON-RPC protocol over stdio for compatible interactive
-clients. Use `zen --acp` for ACP integrations; `--jsonl` and `--acp` are mutually
-exclusive.
+clients. Use `zen --acp` for ACP integrations; `--jsonl` cannot be combined with
+`--tui`, `--telegram`, or `--acp`.

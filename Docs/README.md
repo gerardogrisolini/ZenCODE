@@ -8,7 +8,7 @@ Guides for using, extending, and maintaining ZenCODE. Start with the
 | Guide | Read it for |
 | --- | --- |
 | [why-zen.md](why-zen.md) | Why the project exists and how it differs from other agents |
-| [zen.md](zen.md) | Modes, CLI options, TUI commands, scheduled prompts (`/cron`), sessions, task orchestration, and project memory |
+| [zen.md](zen.md) | Modes (TUI, Telegram, headless, ACP), CLI options, TUI commands, scheduled prompts (`/cron`), sessions, task orchestration, and project memory |
 | [jsonl.md](jsonl.md) | Versioned headless JSONL protocol, lifecycle records, errors, privacy, and consumer examples |
 
 ## Agents and delegation
@@ -28,6 +28,7 @@ Guides for using, extending, and maintaining ZenCODE. Start with the
 | Guide | Read it for |
 | --- | --- |
 | [xcode.md](xcode.md) | Running `zen` as an ACP coding agent in Xcode 27 |
+| [app.md](app.md) | The native SwiftUI macOS app (`Sources/ZenApp`): requirements, running it, windows and workspaces, the conversation, composer, tool consent, status bar, sessions, keyboard shortcuts, available commands, limits, and package layout |
 | [ds4.md](ds4.md) | DS4 in-process engine: toolchain requirements, building the engine library, setup, `/ds4`, KV checkpoints, and limits |
 | [voice.md](voice.md) | Voice mode (`/voice`) and Telegram voice messages on macOS and Linux: setup, language, privacy, troubleshooting |
 | [web.md](web.md) | The optional `web-tools` feature (`web.search`, `web.fetch`): installation, inputs, output format, content types, macOS and Linux differences, limits, network policy, troubleshooting |

@@ -852,6 +852,90 @@ struct ChatSessionHostTests {
         }
     }
 
+    /// A slot that keeps the selection starts every new session from the
+    /// selection of the session it replaces, controller and reducer alike,
+    /// whether the hosted controller runs `/sessions new` or the host starts
+    /// the session; a load still restores the selection the saved session
+    /// recorded, and the first session of the slot and the one after a
+    /// close start from the launch profile.
+    @Test
+    nonisolated func aSlotThatKeepsTheSelectionStartsEveryNewSessionFromTheSelectionItReplaces() async throws {
+        try await withEnvironment { environment in
+            let host = try environment.makeHost()
+            let interactionHost = ScriptedChatInteractionHost(capabilities: [], decisions: [])
+            let first = try host.openSlot(
+                ChatSlotDescriptor(
+                    identity: .window("keeps-selection"),
+                    workingDirectory: environment.workspace,
+                    presenter: RecordingChatPresenter(),
+                    interaction: .host(interactionHost),
+                    authorizer: ChatToolConsentAuthorizer(host: interactionHost),
+                    defaultOrigin: .app,
+                    publishesState: true,
+                    keepsSelectionOnNewSession: true
+                ),
+                sessionID: "first"
+            )
+            let slot = first.slotID
+            let launchSelection = ChatSessionController.initialSelection(for: host.environment)
+            #expect(first.controller.selection == launchSelection)
+            #expect(first.reducer?.snapshot.selection == launchSelection)
+
+            // A saved session that records a selection of its own.
+            try await first.controller.createSessionWithSelectedSkills(discoverExternalTools: false)
+            try await Self.runTurn("Remember me", on: first)
+            first.controller.selection.skillIDs = ["saved-skill"]
+            _ = await first.controller.saveSession(named: "kept", contextWindow: nil)
+            let saved = try #require(TerminalSessionStore.savedSessions(for: environment.workspace).first)
+
+            // The session changes every part of its selection.
+            let agent = try #require(
+                AgentProfileStore.defaultProfiles().first { $0.id != launchSelection.agent?.id }
+            )
+            first.controller.selection = ChatSessionSelection(
+                agent: agent,
+                modelIDOverride: "other-model",
+                thinkingOverride: .high,
+                toolKeys: ["shell"],
+                skillIDs: ["kept-skill"]
+            )
+            let keptSelection = first.controller.selection
+            #expect(keptSelection != launchSelection)
+
+            // `/sessions new` on the hosted controller: the next controller
+            // and its reducer start from the selection, and the runtime
+            // session is created with it.
+            let outcome = await first.controller.handleCommandLine("/sessions new", context: [])
+            #expect(outcome == ChatCommandOutcome(notices: [.sessionStarted]))
+            let second = try #require(host.incarnation(in: slot))
+            #expect(second.controller !== first.controller)
+            #expect(second.controller.selection == keptSelection)
+            #expect(second.reducer?.snapshot.selection == keptSelection)
+            #expect(await host.runner.snapshotSession(id: second.sessionID) != nil)
+
+            // The host's own new session keeps it too.
+            let third = try await host.newSession(in: slot, sessionID: "third")
+            #expect(third.controller !== second.controller)
+            #expect(third.controller.selection == keptSelection)
+            #expect(third.reducer?.snapshot.selection == keptSelection)
+
+            // A load restores the saved selection, not the current one.
+            _ = try await host.loadSavedSession(in: slot, name: "kept")
+            let loaded = try #require(host.incarnation(in: slot))
+            #expect(loaded.epoch > third.epoch)
+            #expect(loaded.controller.selection.skillIDs == Set(saved.selectedSkillIDs))
+            #expect(loaded.controller.selection != keptSelection)
+            #expect(loaded.reducer?.snapshot.selection == loaded.controller.selection)
+
+            // After a close, the next session starts from the launch profile.
+            await host.closeSession(in: slot)
+            let reopened = try await host.newSession(in: slot, sessionID: "reopened")
+            #expect(reopened.controller.selection == launchSelection)
+            #expect(reopened.reducer?.snapshot.selection == launchSelection)
+            await host.shutdown()
+        }
+    }
+
     // MARK: - Hosted session operations
 
     @Test

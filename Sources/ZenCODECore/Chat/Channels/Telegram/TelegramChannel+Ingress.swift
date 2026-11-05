@@ -56,17 +56,27 @@ extension TelegramChannel {
     }
 
     /// The answer to the remote `/undo`, naming the primary channel, which
-    /// runs `/undo` only once it drives the slot again.
+    /// runs `/undo` only once it drives the slot again. A session started by
+    /// `zen --telegram` has no primary channel to take the slot back with
+    /// `/telegram off`, so there `/undo` is simply not available.
     var undoText: String {
-        "Use /undo in the \(primaryChannelDescription) after /telegram off to revert file changes."
+        if case .telegram? = host?.slotIdentity(slotID) {
+            return Self.telegramSessionUndoText
+        }
+        return "Use /undo in the \(primaryChannelDescription) after /telegram off to revert file changes."
     }
+
+    /// ``undoText`` on the slot of a session started by `zen --telegram`.
+    static let telegramSessionUndoText =
+        "/undo is not available in a session started with zen --telegram."
 
     // MARK: - Driving
 
     /// Starts reading the chat: the control service's ingress, until
     /// ``stopDriving(shuttingDown:)``, and the session's shared-chat room,
     /// whose messages for the operator are forwarded to the chat (see
-    /// `TelegramChannel+SharedChatRelay.swift`). On an ACP session's slot the
+    /// `TelegramChannel+SharedChatRelay.swift`). On an ACP session's slot, and
+    /// on the slot of a session started by `zen --telegram`, the
     /// controller's task-graph observer starts too (see
     /// `TelegramChannel+TaskGraph.swift`), and the presenter applies its
     /// policy for the sub-agent responses already complete
@@ -92,12 +102,12 @@ extension TelegramChannel {
     /// hand, if any: the questions waiting for the next message are refused,
     /// the queued prompts dropped (what the message in hand queued too), and
     /// the shared-chat observation ended. The sub-agent refresh the presenter
-    /// started and the task-graph observer of an ACP slot stop as well, so
-    /// nothing keeps publishing on the channel's presenter once another
-    /// channel drives the slot. A task of the channel that holds no
-    /// reservation yet, such as a line still answered, is stopped and awaited
-    /// (``stopTurnTaskWithoutReservation()``), so nothing read from the chat
-    /// starts a turn afterwards; a turn already reserved goes on.
+    /// started and the task-graph observer of an ACP or `zen --telegram` slot
+    /// stop as well, so nothing keeps publishing on the channel's presenter
+    /// once another channel drives the slot. A task of the channel that holds
+    /// no reservation yet, such as a line still answered, is stopped and
+    /// awaited (``stopTurnTaskWithoutReservation()``), so nothing read from the
+    /// chat starts a turn afterwards; a turn already reserved goes on.
     /// `shuttingDown` also ends every voice transcription for good; a detach
     /// lets a later attach transcribe again.
     func stopDriving(shuttingDown: Bool = false) async {

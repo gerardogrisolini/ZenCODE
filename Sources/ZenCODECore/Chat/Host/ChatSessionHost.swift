@@ -276,7 +276,10 @@ public final class ChatSessionHost {
 
     /// Ends the session the slot runs, if any, and starts a new one with the
     /// id `sessionID`: a controller from the launch profile with the slot's
-    /// bindings, and its reducer when the slot publishes state. The runner
+    /// bindings, and its reducer when the slot publishes state. A slot that
+    /// keeps the selection (``ChatSlotDescriptor/keepsSelectionOnNewSession``)
+    /// starts the controller and its reducer from the selection of the
+    /// session it replaces instead, when there is one. The runner
     /// session of the previous incarnation is discarded, as `/sessions new`
     /// does; its runner session for `sessionID` is not created here: the
     /// channel composes and creates it as it needs.
@@ -290,8 +293,12 @@ public final class ChatSessionHost {
     ) async throws(ChatSessionHostError) -> ChatSessionIncarnation {
         let slot = try replaceableSlot(slotID)
         let (previous, incarnation) = holdingShellFacts(of: slot) {
+            // Read before the controller is fenced.
+            let keptSelection = slot.keepsSelectionOnNewSession
+                ? slot.incarnation?.controller.selection
+                : nil
             let previous = endIncarnation(of: slot)
-            let incarnation = makeIncarnation(in: slot, sessionID: sessionID)
+            let incarnation = makeIncarnation(in: slot, sessionID: sessionID, selection: keptSelection)
             slot.setIncarnation(incarnation)
             return (previous, incarnation)
         }
@@ -510,14 +517,19 @@ public final class ChatSessionHost {
     /// bindings, presenting through the slot's presenter and asking through
     /// the slot's host, the reducer observing it before anything can be
     /// presented, bound to this host so that its own session replacements
-    /// come back here.
-    private func makeIncarnation(in slot: ChatSlot, sessionID: String) -> ChatSessionIncarnation {
+    /// come back here. The controller starts from `selection`, or from the
+    /// launch profile without one.
+    private func makeIncarnation(
+        in slot: ChatSlot,
+        sessionID: String,
+        selection: ChatSessionSelection? = nil
+    ) -> ChatSessionIncarnation {
         let epoch = makeSessionEpoch()
-        // The controller starts from the launch profile; the reducer is seeded
-        // with the same state, as it is created first.
+        // The reducer is seeded with the selection the controller starts
+        // from, as it is created first.
         let reducerIsOnDemand = !slot.publishesState && slot.activeChannel == .telegram
         let reducer: ChatSessionStateReducer? = slot.publishesState || reducerIsOnDemand
-            ? makeReducer(for: slot, sessionID: sessionID, epoch: epoch)
+            ? makeReducer(for: slot, sessionID: sessionID, epoch: epoch, selection: selection)
             : nil
         slot.reducerIsOnDemand = reducerIsOnDemand
         let pendingRequestHost: ChatPendingRequestHost?
@@ -544,6 +556,9 @@ public final class ChatSessionHost {
             retainsTranscript: slot.retainsTranscript,
             retainsFileArtifactHistory: slot.retainsFileArtifactHistory
         )
+        if let selection {
+            controller.selection = selection
+        }
         controller.channelHooks = slot.channelHooks
         if let commandRegistry = slot.commandRegistry {
             controller.commandRegistry = commandRegistry
@@ -563,15 +578,21 @@ public final class ChatSessionHost {
         )
     }
 
-    /// A reducer for the incarnation `epoch` of `slot`, seeded with the
-    /// selection a new controller starts from.
-    func makeReducer(for slot: ChatSlot, sessionID: String, epoch: UInt64) -> ChatSessionStateReducer {
+    /// A reducer for the incarnation `epoch` of `slot`, seeded with
+    /// `selection`, or without one with the selection a new controller
+    /// starts from.
+    func makeReducer(
+        for slot: ChatSlot,
+        sessionID: String,
+        epoch: UInt64,
+        selection: ChatSessionSelection? = nil
+    ) -> ChatSessionStateReducer {
         ChatSessionStateReducer(
             sessionID: sessionID,
             workingDirectory: slot.workingDirectory,
             defaultOrigin: slot.defaultOrigin,
             state: ChatSessionState(
-                selection: ChatSessionController.initialSelection(for: environment)
+                selection: selection ?? ChatSessionController.initialSelection(for: environment)
             ),
             epoch: epoch,
             maximumLogBytes: ChatSessionController.maximumTranscriptBytes,

@@ -75,6 +75,15 @@ struct DS4SetupEngineOptions {
     }
 }
 
+/// What the DS4 setup section does when DS4 is already configured.
+enum DS4SetupAction: Hashable, Sendable {
+    /// The complete flow: folder, models, backend and tuning.
+    case reconfigure
+    /// Recompiles the engine library of the configured models and changes no
+    /// setting.
+    case rebuildEngine
+}
+
 extension ZenCODESetupRunner {
     /// Stable provider key of the optional local DS4 provider created by setup.
     /// The provider remains an OpenAI-compatible provider entry with the `ds4`
@@ -97,6 +106,12 @@ extension ZenCODESetupRunner {
     /// come from the GGUF files found in the DS4 folder. Missing GGUFs, invalid
     /// paths, an empty selection and cancellation all return the input
     /// manifest unchanged.
+    ///
+    /// When DS4 is already configured the section first asks what to do
+    /// (``DS4SetupAction``). Rebuilding the engine recompiles the libraries of
+    /// the configured models and returns the input manifest unchanged; Esc at
+    /// that question (or any error of `selectAction`) does the same without
+    /// building. Without a DS4 configuration the question is not asked.
     static func configureDS4Runtime(
         existingManifest: AgentSettingsManifest?,
         scanner: DS4InstallationScanner = DS4InstallationScanner(),
@@ -107,8 +122,30 @@ extension ZenCODESetupRunner {
         selectAPIModelID: ((DS4SetupModelCandidate) throws -> String)? = nil,
         selectAuxiliaryFile: DS4SetupAuxiliaryFileSelector? = nil,
         promptTuning: ((DS4SetupModelCandidate, AgentDS4RuntimeTuning) throws -> AgentDS4RuntimeTuning)? = nil,
+        selectAction: (() throws -> DS4SetupAction)? = nil,
         engine: DS4SetupEngineOptions = DS4SetupEngineOptions()
     ) async throws -> AgentSettingsManifest? {
+        if let existingManifest, let configured = existingDS4Runtime(in: existingManifest) {
+            let action: DS4SetupAction
+            do {
+                action = try selectDS4SetupAction(select: selectAction)
+            } catch {
+                return existingManifest
+            }
+            if action == .rebuildEngine {
+                let runtimes = existingManifest.models.compactMap {
+                    $0.ds4Runtime ?? $0.provider?.ds4Runtime
+                }
+                // Settings are never modified, and a failed or cancelled build
+                // must not make the setup throw.
+                try? await rebuildDS4Engines(
+                    runtimes: runtimes.isEmpty ? [configured] : runtimes,
+                    engine: engine
+                )
+                return existingManifest
+            }
+        }
+
         let previousProvider = existingManifest?.providers.first { $0.ds4Runtime != nil }
         let previousModels = previousProvider.map { provider in
             ds4Models(for: provider, in: existingManifest?.models ?? [])
@@ -140,6 +177,32 @@ extension ZenCODESetupRunner {
             existingManifest,
             input: input,
             replacingProviderID: providerID
+        )
+    }
+
+    /// Asks whether to reconfigure DS4 or to rebuild its engine. Esc throws
+    /// `ZenCODESetupError.cancelled`.
+    private static func selectDS4SetupAction(
+        select: (() throws -> DS4SetupAction)?
+    ) throws -> DS4SetupAction {
+        if let select {
+            return try select()
+        }
+        return try promptMenuChoice(
+            title: "DS4 local runtime",
+            items: [
+                TerminalCheckboxMenuItem(
+                    value: DS4SetupAction.reconfigure,
+                    title: "Reconfigure DS4 models",
+                    detail: "folder, models, backend and tuning"
+                ),
+                TerminalCheckboxMenuItem(
+                    value: DS4SetupAction.rebuildEngine,
+                    title: "Rebuild the DS4 engine",
+                    detail: "recompile libzencode-ds4 for the configured models, settings unchanged"
+                )
+            ],
+            selected: .reconfigure
         )
     }
 

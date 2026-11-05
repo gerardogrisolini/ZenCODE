@@ -18,12 +18,13 @@ import ToolCore
 /// on every session it creates, restores, or resets, quiesces it at every turn
 /// boundary, and stops it when its input loop ends. The ACP bridge keeps its
 /// own per-prompt observer for the editor and never starts this one; the
-/// Telegram channel of an ACP session's slot starts it while it drives the
-/// slot, on the session the slot runs, quiesces it at the end of every turn
-/// it presents as the terminal does, and stops it when it stops driving
+/// Telegram channel of an ACP session's slot, and of the slot of a session
+/// started by `zen --telegram`, starts it while it drives the slot, on the
+/// session the slot runs, quiesces it at the end of every turn it presents as
+/// the terminal does, and stops it when it stops driving
 /// (see `TelegramChannel+TaskGraph.swift`), so the chat receives the graph
-/// while the editor's silent presenter receives nothing. A channel that never
-/// starts it pays nothing.
+/// while the primary channel's silent presenter receives nothing. A channel
+/// that never starts it pays nothing.
 ///
 /// Every graph event reserves a publication at once (see
 /// ``ChatSessionPresenter/reserveTaskGraphOverviewPublication()``), then

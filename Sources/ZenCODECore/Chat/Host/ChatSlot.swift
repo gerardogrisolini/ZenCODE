@@ -28,6 +28,10 @@ public enum ChatSlotIdentity: Hashable, Sendable {
     case acpSession(String)
     /// One window of a host app, by an identifier the app chooses.
     case window(String)
+    /// A session started by `zen --telegram`, driven only by the linked
+    /// Telegram chat: the slot is handed to its Telegram channel at startup
+    /// and never taken back, since no other channel exists to take it.
+    case telegram
 }
 
 /// How the operator is asked, in every incarnation of a slot, what the
@@ -83,6 +87,15 @@ public struct ChatSlotDescriptor: Sendable {
     /// slot, followed by a dash and a new lowercased UUID: `terminal` for the
     /// terminal (`terminal-<uuid>`), ``defaultSessionIDPrefix`` otherwise.
     public var sessionIDPrefix: String
+    /// Whether every new session of the slot (`/sessions new`,
+    /// ``ChatSessionHost/newSession(in:sessionID:)``) starts from the
+    /// selection of the session it replaces (agent, model, thinking, tools,
+    /// and skills, see ``ChatSessionSelection``) instead of the launch
+    /// profile. A load still restores the selection the saved session
+    /// recorded; the first session of a slot, and the one after
+    /// ``ChatSessionHost/closeSession(in:runtimeSession:)``, start from the
+    /// launch profile either way. `false` by default.
+    public var keepsSelectionOnNewSession: Bool
     /// Presents the ending of a turn another channel of the slot ran, when
     /// the channel drives the slot as the turn ends, for a channel whose
     /// presenter does not conform to the slot's channel presenter (see
@@ -106,7 +119,8 @@ public struct ChatSlotDescriptor: Sendable {
         retainsFileArtifactHistory: Bool = true,
         defaultOrigin: ChatTurnOrigin = .local,
         publishesState: Bool = true,
-        sessionIDPrefix: String = ChatSlotDescriptor.defaultSessionIDPrefix
+        sessionIDPrefix: String = ChatSlotDescriptor.defaultSessionIDPrefix,
+        keepsSelectionOnNewSession: Bool = false
     ) {
         self.identity = identity
         self.workingDirectory = workingDirectory
@@ -120,17 +134,21 @@ public struct ChatSlotDescriptor: Sendable {
         self.defaultOrigin = defaultOrigin
         self.publishesState = publishesState
         self.sessionIDPrefix = sessionIDPrefix
+        self.keepsSelectionOnNewSession = keepsSelectionOnNewSession
     }
 }
 
 /// One place a channel runs sessions in: a terminal, an ACP session, a
-/// window. The slot outlives its incarnations
+/// window, the session of `zen --telegram`. The slot outlives its incarnations
 /// (``ChatSessionIncarnation``): the channel's bindings belong to it and are
 /// applied to each new controller, so a new or loaded session keeps the
 /// channel's presenter, interaction, hooks, and commands while selection,
-/// plan, workflow, and transcript start over. So does the slot's Telegram
-/// link: the channel that drives the slot (``activeChannel``) and the
-/// ``TelegramChannel`` behind it survive `/sessions new` and `/sessions load`.
+/// plan, workflow, and transcript start over (a new session keeps the
+/// selection when the slot asks for it, see
+/// ``ChatSlotDescriptor/keepsSelectionOnNewSession``). So does the slot's
+/// Telegram link: the channel that drives the slot (``activeChannel``) and
+/// the ``TelegramChannel`` behind it survive `/sessions new` and
+/// `/sessions load`.
 ///
 /// Every controller of the slot presents through the slot's
 /// ``ChatSlotPresenter`` and asks through its ``ChatSlotInteractionHost``,
@@ -155,6 +173,8 @@ final class ChatSlot {
     let publishesState: Bool
     /// See ``ChatSlotDescriptor/sessionIDPrefix``.
     let sessionIDPrefix: String
+    /// See ``ChatSlotDescriptor/keepsSelectionOnNewSession``.
+    let keepsSelectionOnNewSession: Bool
     /// See ``ChatSlotDescriptor/presentTurnEnding``.
     let presentTurnEndingHandler: (@ChatSessionActor (ChatTurnEnding) async -> Void)?
     /// The session the slot runs now; `nil` between sessions. Every change
@@ -233,6 +253,7 @@ final class ChatSlot {
         defaultOrigin = descriptor.defaultOrigin
         publishesState = descriptor.publishesState
         sessionIDPrefix = descriptor.sessionIDPrefix
+        keepsSelectionOnNewSession = descriptor.keepsSelectionOnNewSession
         presentTurnEndingHandler = descriptor.presentTurnEnding
         let primaryHost: any ChatInteractionHost
         switch descriptor.interaction {

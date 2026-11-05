@@ -36,7 +36,8 @@ import ToolCore
 /// (`+Artifacts`), voice notes (`+Voice`), the shared-chat relay and its
 /// replies (`+SharedChatRelay`), and the `/chat` mention picker
 /// (`+MentionPicker`). The ingress is in `TelegramChannel+Ingress.swift`; the
-/// task-graph observer the channel runs on an ACP session's slot is in
+/// task-graph observer the channel runs on an ACP session's slot, and on the
+/// slot of a session started by `zen --telegram`, is in
 /// `TelegramChannel+TaskGraph.swift`.
 ///
 /// ``attach()`` links the session, ``detach()`` unlinks it and keeps what a
@@ -70,7 +71,8 @@ public final class TelegramChannel: ChatInteractionHost {
     /// lifecycle.
     let controlService: TerminalTelegramControlService
     /// The primary channel's name in the texts sent to Telegram: "TUI" for
-    /// the terminal, "editor" for an ACP session.
+    /// the terminal, "editor" for an ACP session, "Telegram" for a session
+    /// started by `zen --telegram`, which has no other channel.
     let primaryChannelDescription: String
     /// Where the channel is registered while attached.
     let registry: TelegramChannelRegistry
@@ -202,12 +204,13 @@ public final class TelegramChannel: ChatInteractionHost {
     /// The room ``sharedChatObservationTask`` observes.
     var observedSharedChatRoomID: String?
 
-    // MARK: - Task graph (ACP slots)
+    // MARK: - Task graph (ACP and `zen --telegram` slots)
 
-    /// `true` while the channel observes the graph of an ACP session's slot:
-    /// set by ``startDriving()`` on such a slot, even when the slot runs no
-    /// session yet, and cleared by ``stopTaskGraphObservation()``. The
-    /// observer follows the slot's incarnations while it is `true` (see
+    /// `true` while the channel observes the graph of an ACP session's slot
+    /// or of a `zen --telegram` slot (see ``runsTaskGraphObserver``): set by
+    /// ``startDriving()`` on such a slot, even when the slot runs no session
+    /// yet, and cleared by ``stopTaskGraphObservation()``. The observer
+    /// follows the slot's incarnations while it is `true` (see
     /// `TelegramChannel+TaskGraph.swift`).
     var observesTaskGraph = false
     /// The last work on the controller's task-graph observer the channel

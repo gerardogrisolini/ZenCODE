@@ -56,6 +56,10 @@ ZenCODE supports several ways to run the model, all selected during automatic fi
 - `zen --jsonl -p "Summarize the current changes"` emits a versioned JSON Lines
   lifecycle stream for scripts and CI. See the [JSONL protocol guide](Docs/jsonl.md).
 - `zen --acp` runs the ACP stdio agent for compatible clients.
+- `zen --telegram` runs a session with no TUI, driven from the linked Telegram
+  chat, for a machine that stays on. See [Telegram Mode](Docs/zen.md#telegram-mode).
+- `zen --ui` (macOS only) opens [ZenCODE for macOS](Docs/app.md), the SwiftUI
+  app, building it on first use and after each ZenCODE update.
 
 ## Install
 
@@ -235,6 +239,7 @@ schedules, mail, and troubleshooting.
 - `Sources/ZenCODECore`: reusable agent runtime, interactive setup, TUI, tools, skills, ACP, config, memory, sessions, and feature management.
 - `Sources/zen`: the `zen` composition root and command-line dispatch.
 - `Sources/ZenCRON`: the standalone SwiftPM package of ZenCRON, the program that cron runs for scheduled prompts. It has no dependencies, is outside the root graph, and is built by `/setup`, not by the installers.
+- `Sources/ZenApp`: the standalone SwiftPM package of ZenCODE for macOS, a native SwiftUI app that replicates the terminal chat. It is outside the root graph and is not built by the installers; see [Docs/app.md](Docs/app.md).
 - `Sources/Features`: self-contained optional SwiftPM feature packages. They own their implementations and package-local tests, are excluded from the root graph, and are installed on demand into `~/.zencode/features/<id>/` as local Builder-compatible features. The macOS-only Xcode integration lives entirely in `Sources/Features/XcodeTools`.
 - `Tests`: SwiftPM test targets.
 - `Docs`: detailed guides and feature documentation.

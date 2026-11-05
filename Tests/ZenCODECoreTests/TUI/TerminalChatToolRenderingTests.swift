@@ -576,6 +576,12 @@ extension TerminalChatRenderingTests {
         #expect(TerminalChat.codeLanguageHint(for: markdown) == nil)
         #expect(TerminalChat.codeLanguageHint(for: unknown) == nil)
 
+        // The public form takes the path itself; the extension is case-insensitive.
+        #expect(TerminalChat.codeLanguageHint(forPath: "/tmp/project/Sources/App.swift") == "swift")
+        #expect(TerminalChat.codeLanguageHint(forPath: "Scripts/build.SH") == "shell")
+        #expect(TerminalChat.codeLanguageHint(forPath: "README.md") == nil)
+        #expect(TerminalChat.codeLanguageHint(forPath: "Makefile") == nil)
+
         let row = TerminalChat.DetailedToolRow.code(
             TerminalChat.DetailedToolCodeLine(
                 indentation: "  ",

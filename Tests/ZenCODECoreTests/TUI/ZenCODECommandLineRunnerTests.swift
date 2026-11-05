@@ -14,7 +14,10 @@ struct ZenCODECommandLineRunnerTests {
     @Test
     func recognizedCommandLineOptionsStillRouteToTheCommandLine() {
         let bundleExecutable = "/Applications/ZenCODE.app/Contents/MacOS/ZenCODE"
-        for option in ["--version", "--doctor", "--acp", "-p", "-f", "--prompt", "--jsonl", "--model", "--max-tool-rounds"] {
+        for option in [
+            "--version", "--doctor", "--acp", "--tui", "--telegram", "-p", "-f", "--prompt", "--jsonl",
+            "--model", "--max-tool-rounds"
+        ] {
             #expect(
                 ZenCODECommandLineRunner.shouldRunAsCommandLine(
                     arguments: [bundleExecutable, option]
@@ -230,6 +233,127 @@ struct ZenCODECommandLineRunnerTests {
         #expect(promptArgumentError(["--acp", "-p", "x"]) == "Options --acp and -p/--prompt cannot be combined.")
         #expect(promptArgumentError(["-p", "x", "--acp"]) == "Options --acp and -p/--prompt cannot be combined.")
         #expect(promptArgumentError(["--jsonl"]) == "Missing value for --prompt.")
+    }
+
+    @Test
+    func modeArgumentsSelectTheirRunMode() throws {
+        // `--help` keeps the parser from reading the persisted configuration.
+        let tui = try AgentConfiguration(arguments: ["zen", "--tui", "--help"])
+        #expect(tui.runMode == .tui)
+        #expect(tui.resolvedRunMode(stdinIsTerminal: true) == .tui)
+
+        let telegram = try AgentConfiguration(arguments: ["zen", "--telegram", "--help"])
+        #expect(telegram.runMode == .telegram)
+        #expect(telegram.resolvedRunMode(stdinIsTerminal: false) == .telegram)
+
+        let acp = try AgentConfiguration(arguments: ["zen", "--acp", "--help"])
+        #expect(acp.runMode == .acp)
+        #expect(acp.resolvedRunMode(stdinIsTerminal: false) == .acp)
+    }
+
+    @Test
+    func repeatingTheSameModeArgumentIsAllowed() throws {
+        let modes: [(flag: String, runMode: AgentRunMode)] = [
+            ("--tui", .tui), ("--telegram", .telegram), ("--acp", .acp)
+        ]
+        for (flag, runMode) in modes {
+            try AgentConfiguration.validateArguments(["zen", flag, flag])
+            let configuration = try AgentConfiguration(arguments: ["zen", flag, "--agent", "Developer", flag, "--help"])
+            #expect(configuration.runMode == runMode)
+        }
+    }
+
+    @Test
+    func automaticRunModeResolvesToTheTUIAndToACPInTheApp() throws {
+        let workingDirectory = FileManager.default.temporaryDirectory
+        let defaultMode = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            workingDirectory: workingDirectory
+        )
+        #expect(defaultMode.runMode == .tui)
+        #expect(defaultMode.resolvedRunMode(stdinIsTerminal: true) == .tui)
+
+        let automatic = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            runMode: .automatic,
+            workingDirectory: workingDirectory
+        )
+        #expect(automatic.resolvedRunMode(stdinIsTerminal: true) == .tui)
+
+        let automaticInTheApp = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            runMode: .automatic,
+            workingDirectory: workingDirectory,
+            appMode: true
+        )
+        #expect(automaticInTheApp.resolvedRunMode(stdinIsTerminal: true) == .acp)
+
+        let telegramInTheApp = try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            runMode: .telegram,
+            workingDirectory: workingDirectory,
+            appMode: true
+        )
+        #expect(telegramInTheApp.resolvedRunMode(stdinIsTerminal: false) == .telegram)
+    }
+
+    @Test
+    func theRunModeNamesAreTUITelegramACPHeadlessAndAutomatic() {
+        #expect(AgentRunMode(rawValue: "tui") == .tui)
+        #expect(AgentRunMode(rawValue: "telegram") == .telegram)
+        #expect(AgentRunMode(rawValue: "acp") == .acp)
+        #expect(AgentRunMode(rawValue: "headless") == .headless)
+        #expect(AgentRunMode(rawValue: "automatic") == .automatic)
+        // `chat` was renamed to `tui`, without an alias.
+        #expect(AgentRunMode(rawValue: "chat") == nil)
+    }
+
+    @Test(arguments: ["--tui", "--telegram"])
+    func aModeArgumentConflictsWithEveryHeadlessOptionInAnyOrder(flag: String) {
+        let promptConflict = "Options \(flag) and -p/--prompt cannot be combined."
+        #expect(promptArgumentError([flag, "-p", "x"]) == promptConflict)
+        #expect(promptArgumentError(["-p", "x", flag]) == promptConflict)
+        #expect(promptArgumentError([flag, "--prompt", "x"]) == promptConflict)
+        #expect(promptArgumentError(["--prompt", "x", flag]) == promptConflict)
+
+        let fileConflict = "Options \(flag) and -f cannot be combined."
+        #expect(promptArgumentError([flag, "-f", "/a"]) == fileConflict)
+        #expect(promptArgumentError(["-f", "/a", flag]) == fileConflict)
+
+        let jsonlConflict = "Options \(flag) and --jsonl cannot be combined."
+        #expect(promptArgumentError([flag, "--jsonl"]) == jsonlConflict)
+        #expect(promptArgumentError(["--jsonl", flag]) == jsonlConflict)
+        #expect(promptArgumentError([flag, "--jsonl", "-p", "x"]) == jsonlConflict)
+        #expect(promptArgumentError(["-p", "x", "--jsonl", flag]) == promptConflict)
+    }
+
+    @Test
+    func differentModeArgumentsConflictNamingTheOneThatArrivesFirst() {
+        let modes = ["--tui", "--telegram", "--acp"]
+        for seen in modes {
+            for arriving in modes where arriving != seen {
+                #expect(
+                    promptArgumentError([seen, arriving])
+                        == "Options \(arriving) and \(seen) cannot be combined."
+                )
+            }
+        }
+        // The conflict wins over a later repetition of the first flag.
+        #expect(
+            promptArgumentError(["--tui", "--telegram", "--tui"])
+                == "Options --telegram and --tui cannot be combined."
+        )
+    }
+
+    @Test
+    func headlessAndACPConflictMessagesAreUnchanged() {
+        #expect(promptArgumentError(["--acp", "-p", "x"]) == "Options --acp and -p/--prompt cannot be combined.")
+        #expect(promptArgumentError(["-p", "x", "--acp"]) == "Options --acp and -p/--prompt cannot be combined.")
+        #expect(promptArgumentError(["--acp", "-f", "/a"]) == "Options --acp and -f cannot be combined.")
+        #expect(promptArgumentError(["-f", "/a", "--acp"]) == "Options --acp and -f cannot be combined.")
+        #expect(promptArgumentError(["--acp", "--jsonl"]) == "Options --jsonl and --acp cannot be combined.")
+        #expect(promptArgumentError(["--jsonl", "--acp"]) == "Options --acp and --jsonl cannot be combined.")
+        #expect(promptArgumentError(["-p", "x", "--jsonl", "--acp"]) == "Options --acp and -p/--prompt cannot be combined.")
     }
 
     @Test
@@ -469,7 +593,7 @@ struct ZenCODECommandLineRunnerTests {
         #expect(result.exitCode == 0)
         let help = String(decoding: result.stdout, as: UTF8.self)
 
-        let standaloneUsage = "zen [--doctor] [--install-features [id,id,...]] [--jsonl] [-p PROMPT] [-f PATH] [--acp]"
+        let standaloneUsage = "zen [--doctor] [--install-features [id,id,...]] [--tui] [--telegram] [--jsonl] [-p PROMPT] [-f PATH] [--acp]"
         let promptFileLine = "  -f PATH                Run one headless prompt read from a file (absolute path). With -p, the file is added as context."
         #expect(help.components(separatedBy: standaloneUsage).count == 2)
         #expect(help.components(separatedBy: promptFileLine).count == 2)
@@ -477,7 +601,140 @@ struct ZenCODECommandLineRunnerTests {
         #expect(help.contains("  --doctor               Print a redacted diagnostic report"))
         #expect(help.contains("  --zen-package-path DIR Source ZenCODE checkout used to install optional features."))
         #expect(help.contains("With -p or -f, piped stdin is supplied as additional context."))
+        #if os(macOS)
+        // `zen --ui` opens the macOS app: in the usage line and in the options.
+        let appUsage = "\(standaloneUsage) [--ui] [--agent NAME]"
+        let appOptionLine = "  --ui                   Open the ZenCODE macOS app (built on first use). Accepts --agent, --model, --skills, --working-directory."
+        #expect(help.components(separatedBy: appUsage).count == 2)
+        #expect(help.components(separatedBy: appOptionLine).count == 2)
+        #expect(help.contains("  --telegram             Run the session from the linked Telegram chat, without the TUI (Telegram must be set up and paired with /setup).\n\(appOptionLine)\n"))
+        #else
+        // Elsewhere the option does not exist.
+        #expect(help.contains("\(standaloneUsage) [--agent NAME]"))
+        #expect(!help.contains("--ui"))
+        #endif
     }
+
+    @Test
+    func zenExecutableStandaloneHelpDocumentsTheTUIAndTelegramModes() throws {
+        let result = try runZen(zenExecutableURL(), arguments: ["--help"])
+        #expect(result.exitCode == 0)
+        let help = String(decoding: result.stdout, as: UTF8.self)
+
+        let tuiLine = "  --tui                  Human terminal chat (default)."
+        let acpLine = "  --acp                  ACP JSON-RPC over stdio for compatible clients."
+        let telegramLine = "  --telegram             Run the session from the linked Telegram chat, without the TUI (Telegram must be set up and paired with /setup)."
+        #expect(help.components(separatedBy: tuiLine).count == 2)
+        #expect(help.components(separatedBy: telegramLine).count == 2)
+        #expect(help.contains("\(acpLine)\n\(telegramLine)\n"))
+        #expect(help.contains("ZENCODE_AGENT_MODE           tui, telegram, acp, headless, or auto. Auto resolves to tui."))
+        #expect(help.contains("  In the TUI, use /setup to reconfigure ZenCODE"))
+        #expect(!help.contains("  default                Human terminal chat."))
+        #expect(!help.contains("In chat mode,"))
+    }
+
+    /// The run mode of the environment is validated before the other values,
+    /// so the error of an invalid `--max-tool-rounds` shows that it was accepted.
+    @Test(arguments: ["tui", "telegram", " TUI ", "Telegram", "acp", "headless", "auto", "automatic"])
+    func zenExecutableAcceptsTheRunModesOfTheEnvironment(mode: String) throws {
+        let result = try runZen(
+            zenExecutableURL(),
+            arguments: ["--max-tool-rounds", "abc"],
+            environment: makeEnvironment(runMode: mode)
+        )
+        #expect(result.exitCode == 1)
+        #expect(result.stdout.isEmpty)
+        #expect(
+            String(decoding: result.stderr, as: UTF8.self)
+                == "ZenCODE: Invalid value for --max-tool-rounds: abc\n"
+        )
+    }
+
+    @Test(arguments: ["chat", "Chat", " chat "])
+    func zenExecutableRejectsTheRemovedChatRunModeOfTheEnvironment(mode: String) throws {
+        let result = try runZen(
+            zenExecutableURL(),
+            arguments: ["--max-tool-rounds", "abc"],
+            environment: makeEnvironment(runMode: mode)
+        )
+        #expect(result.exitCode == 1)
+        #expect(result.stdout.isEmpty)
+        #expect(
+            String(decoding: result.stderr, as: UTF8.self)
+                == "ZenCODE: Invalid value for --mode: \(mode)\n"
+        )
+    }
+
+    @Test
+    func zenExecutableRefusesTelegramModeWithoutConfigurationInsteadOfStartingTheSetup() throws {
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-telegram-unconfigured-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: supportURL)
+        }
+        let invocations: [(arguments: [String], runMode: String?)] = [
+            (arguments: ["--telegram"], runMode: nil),
+            (arguments: [], runMode: "telegram")
+        ]
+        for invocation in invocations {
+            var environment = makeEnvironment(runMode: invocation.runMode)
+            environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
+
+            // No terminal: a setup that wrongly started could not wait for input.
+            let result = try runZen(
+                zenExecutableURL(),
+                arguments: invocation.arguments,
+                environment: environment,
+                standardInput: FileHandle.nullDevice
+            )
+
+            #expect(result.exitCode == 1)
+            #expect(result.stdout.isEmpty)
+            #expect(
+                String(decoding: result.stderr, as: UTF8.self)
+                    .hasPrefix("ZenCODE: Missing ZenCODE settings file: ")
+            )
+        }
+    }
+
+    #if os(macOS)
+    @Test
+    func zenExecutableRefusesAnOptionOfAnotherModeWithTheAppBeforeSetup() throws {
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-ui-conflict-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: supportURL)
+        }
+        var environment = ProcessInfo.processInfo.environment
+        environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
+
+        let result = try runZen(zenExecutableURL(), arguments: ["--ui", "-p", "x"], environment: environment)
+
+        #expect(result.exitCode == 1)
+        #expect(String(decoding: result.stderr, as: UTF8.self) == "ZenCODE: Options --ui and -p cannot be combined.\n")
+        #expect(result.stdout.isEmpty)
+        // Refused before the setup gate: nothing was written for setup or the app.
+        #expect(!FileManager.default.fileExists(atPath: supportURL.path))
+    }
+    #else
+    @Test
+    func zenExecutableTreatsTheAppOptionAsUnknownOutsideMacOS() throws {
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-ui-unknown-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: supportURL)
+        }
+        var environment = ProcessInfo.processInfo.environment
+        environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
+
+        let result = try runZen(zenExecutableURL(), arguments: ["--ui"], environment: environment)
+
+        #expect(result.exitCode == 1)
+        #expect(String(decoding: result.stderr, as: UTF8.self) == "ZenCODE: Unknown argument: --ui\n")
+        #expect(result.stdout.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: supportURL.path))
+    }
+    #endif
 
     @Test
     func jsonlIsIgnoredForEveryTextualMetaCommand() throws {
@@ -1000,7 +1257,8 @@ struct ZenCODECommandLineRunnerTests {
     private func runZen(
         _ executable: URL,
         arguments: [String],
-        environment: [String: String]? = nil
+        environment: [String: String]? = nil,
+        standardInput: FileHandle? = nil
     ) throws -> (exitCode: Int32, stdout: Data, stderr: Data) {
         let process = Process()
         let stdout = Pipe()
@@ -1008,6 +1266,9 @@ struct ZenCODECommandLineRunnerTests {
         process.executableURL = executable
         process.arguments = arguments
         process.environment = environment
+        if let standardInput {
+            process.standardInput = standardInput
+        }
         process.standardOutput = stdout
         process.standardError = stderr
         try process.run()
@@ -1017,6 +1278,15 @@ struct ZenCODECommandLineRunnerTests {
             stdout.fileHandleForReading.readDataToEndOfFile(),
             stderr.fileHandleForReading.readDataToEndOfFile()
         )
+    }
+
+    /// The environment of this process with `ZENCODE_AGENT_MODE` set to `runMode`,
+    /// or removed when it is `nil`. The process itself is never modified: other
+    /// suites run in parallel and read the same variable.
+    private func makeEnvironment(runMode: String?) -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        environment["ZENCODE_AGENT_MODE"] = runMode
+        return environment
     }
 
     private func promptArgumentError(_ arguments: [String]) -> String? {

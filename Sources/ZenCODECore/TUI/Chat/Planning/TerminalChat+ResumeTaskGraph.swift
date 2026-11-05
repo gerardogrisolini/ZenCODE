@@ -99,9 +99,11 @@ extension TerminalChat {
     ) -> Bool {
         guard stdinIsTerminal else { return false }
         switch configuration.resolvedRunMode(stdinIsTerminal: stdinIsTerminal) {
-        case .chat:
+        case .tui:
             return true
-        case .acp, .headless:
+        case .telegram, .acp, .headless:
+            // Telegram has no resumption prompt at startup: no terminal
+            // menu is shown.
             return false
         }
     }

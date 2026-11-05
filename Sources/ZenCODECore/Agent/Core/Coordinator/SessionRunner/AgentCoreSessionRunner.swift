@@ -159,12 +159,29 @@ public actor AgentCoreSessionRunner {
         self.ds4EngineRegistry = ds4EngineRegistry
     }
 
-    func localExecAccessMode() -> AgentLocalExecAccessMode {
+    /// The runner's current access mode for gated tools.
+    ///
+    /// The mode is runner-wide: it applies to every session this runner
+    /// serves. It is transient and never persisted, so a new runner starts in
+    /// ``AgentLocalExecAccessMode/standard``. While it is
+    /// ``AgentLocalExecAccessMode/fullAccess``, `local.exec` and the
+    /// destructive direct tools (``LocalExecPermissionAuthorizer/gatedToolNames``)
+    /// are admitted without asking the tool authorization handler.
+    public func localExecAccessMode() -> AgentLocalExecAccessMode {
         authorizationRouter.localExecAccessMode
     }
 
+    /// Switches the runner-wide access mode to the other value
+    /// (``AgentLocalExecAccessMode/next``) and returns the new mode.
+    ///
+    /// The change applies to every session of this runner, including a turn
+    /// that is running, from its next gated tool call. It is transient and
+    /// never persisted. In ``AgentLocalExecAccessMode/fullAccess`` the tool
+    /// authorization handler is not asked for `local.exec` or the destructive
+    /// direct tools; back in ``AgentLocalExecAccessMode/standard`` it is asked
+    /// again.
     @discardableResult
-    func toggleLocalExecAccessMode() -> AgentLocalExecAccessMode {
+    public func toggleLocalExecAccessMode() -> AgentLocalExecAccessMode {
         authorizationRouter.toggleLocalExecAccessMode()
     }
 

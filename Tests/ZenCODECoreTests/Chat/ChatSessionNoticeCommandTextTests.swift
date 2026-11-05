@@ -4,8 +4,8 @@
 //
 //  The texts of the shared slash-command notices (`/help`, `/plan`, `/goal`,
 //  `/review`, `/tasks`, `/changes`, `/undo`, `/artifacts`, `/open`,
-//  `/attach`), compared with what the terminal chat wrote before the wording
-//  moved to `ChatSessionNoticeText`.
+//  `/attach`) and of the access-mode toggle (Ctrl+G), compared with what the
+//  terminal chat wrote before the wording moved to `ChatSessionNoticeText`.
 //
 
 import Foundation
@@ -92,6 +92,20 @@ struct ChatSessionCommandTextTests {
             text(.agentRoleUnavailable(.reviewer))
                 == "ZenCODE: no agent profile with the reviewer role is available for this project. "
                 + "Tick one with /agents.\n"
+        )
+    }
+
+    // MARK: - Access mode
+
+    @Test
+    func accessModeChangeTextIsTheTerminalLine() {
+        #expect(
+            ChatSessionNoticeText.localExecAccessModeChangeText(.standard)
+                == "Mode: default — local.exec approvals restored.\n"
+        )
+        #expect(
+            ChatSessionNoticeText.localExecAccessModeChangeText(.fullAccess)
+                == "Mode: full access — local.exec commands run without approval.\n"
         )
     }
 

@@ -174,45 +174,23 @@ extension TerminalChat {
     }
 
     /// Formats the original send instant in the local time zone, independently
-    /// of the user's 12/24-hour clock preference. A value-style formatter avoids
-    /// shared mutable state when reader entries are rebuilt.
+    /// of the user's 12/24-hour clock preference (see
+    /// ``SharedChatMessageLabel/timestamp(_:timeZone:)``).
     nonisolated static func sharedChatTimestamp(
         _ sentAt: Date,
         timeZone: TimeZone = .current
     ) -> String {
-        sentAt.formatted(
-            Date.VerbatimFormatStyle(
-                format: "\(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased)):\(minute: .twoDigits):\(second: .twoDigits)",
-                locale: Locale(identifier: "en_US_POSIX"),
-                timeZone: timeZone,
-                calendar: Calendar(identifier: .gregorian)
-            )
-        )
+        SharedChatMessageLabel.timestamp(sentAt, timeZone: timeZone)
     }
 
     /// Builds the reader's author label from the sender, original send time and
-    /// resolved recipients. Participant identities and delivery stay unchanged.
+    /// resolved recipients. Participant identities and delivery stay unchanged
+    /// (see ``SharedChatMessageLabel/route(for:participantMap:timeZone:)``).
     nonisolated static func sharedChatIncomingCardRoute(
         for message: AgentSharedChat.Message,
         participantMap: [String: AgentSharedChat.Participant] = [:]
     ) -> String {
-        let senderName = "\(AgentSharedChat.displayName(for: message.sender)) [\(sharedChatTimestamp(message.sentAt))]"
-        let coordinatorID = AgentSharedChat.coordinatorID(for: message.roomID)
-        if message.recipientIDs.contains(coordinatorID) {
-            return "\(senderName) → Coordinator"
-        }
-        if message.recipientIDs.count > 1 {
-            return "\(senderName) → All"
-        }
-        if let recipientID = message.recipientIDs.first,
-           AgentSharedChat.isOperatorIdentifier(recipientID) {
-            return "\(senderName) → Operator"
-        }
-        if let recipientID = message.recipientIDs.first,
-           let recipient = participantMap[recipientID] {
-            return "\(senderName) → \(AgentSharedChat.displayName(for: recipient))"
-        }
-        return "\(senderName) → Agent"
+        SharedChatMessageLabel.route(for: message, participantMap: participantMap)
     }
 
     /// Replaces controls with visible inert text, preserving LF as the sole

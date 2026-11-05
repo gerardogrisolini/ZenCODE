@@ -29,6 +29,8 @@ Select it directly, launching from the folder that contains your projects. The r
 zen --agent Organizer --working-directory ~/Projects      # launch directly
 ```
 
+On a Mac that stays on, you can reach the `Organizer` from Telegram alone, with no terminal open: `zen --telegram --agent Organizer --working-directory ~/Projects` (see [Telegram Mode](zen.md#telegram-mode)).
+
 When the `Organizer` is selected (with `--agent`, with `/agents`, or by creating an ACP or app session with it), ZenCODE reads the folders directly inside its working directory, once, and lists them in the session context under `Projects in the launch folder`. Only first-level, non-hidden folders are listed, in alphabetical order, ignoring case; files and symbolic links (even to folders) are not listed. At most 100 names are listed, and the section says how many more were left out. The `Organizer` uses the list to find the `workingDirectory` of a project, and asks you only when the project is neither in the list nor in its memory.
 
 The list is a snapshot: it does not change while the session lasts, so a folder created later is not in it. Select the `Organizer` again (for example with `/agents Organizer`) to read the folder anew; the conversation is reset, as for any change of agent.

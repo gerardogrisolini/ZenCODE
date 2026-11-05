@@ -45,6 +45,39 @@ struct TerminalArtifactLineNumberTests {
         """)
     }
 
+    @Test
+    func publicSourceLineNumbersMatchTheArtifactGutter() {
+        let patch = """
+        diff --git a/File.swift b/File.swift
+        index 123..456 100644
+        --- a/File.swift
+        +++ b/File.swift
+        @@ -10,3 +20,4 @@ function
+         shared
+        -old
+        +new
+        +extra
+         tail
+        @@ -90 +200 @@
+        -last old
+        \\ No newline at end of file
+        +last new
+        \\ No newline at end of file
+        """
+        let lines = patch.components(separatedBy: "\n")
+        let numbers = TerminalChat.artifactDiffSourceLineNumbers(lines)
+        #expect(numbers == [nil, nil, nil, nil, nil, 20, 11, 21, 22, 23, nil, 90, nil, 200, nil])
+        let gutter = TerminalCodeBlockRenderer.numberedArtifactDiff(patch)
+            .components(separatedBy: "\n")
+            .map { row in Int(row.prefix { $0 != "│" }.trimmingCharacters(in: .whitespaces)) }
+        #expect(numbers == gutter)
+    }
+
+    @Test
+    func publicSourceLineNumbersOfNoLinesAreEmpty() {
+        #expect(TerminalChat.artifactDiffSourceLineNumbers([]) == [])
+    }
+
     @Test(arguments: ["context", "\u{0301}context"])
     func combiningSourceScalarsDoNotHideASCIIMarkersOrGutters(context: String) {
         let patch = "@@ -10,2 +20,2 @@\n-\u{0301}old\n+\u{0301}new\n \(context)"

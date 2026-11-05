@@ -29,6 +29,16 @@ public protocol ChatSessionRuntime: Actor {
 
     func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot]
 
+    /// The live transcript of the sub-agent `agentID` of the root session
+    /// `rootSessionID`, read from its backend without keeping any state;
+    /// `nil` when the agent is unknown, belongs to another root session, or
+    /// its backend was shut down. The default is `nil`: a runtime without
+    /// sub-agents has no transcript to read.
+    func subAgentTranscript(
+        agentID: String,
+        rootSessionID: String
+    ) async -> ChatSubAgentTranscript?
+
     @discardableResult
     func closeSubAgent(id: String) async -> Bool
 
@@ -52,6 +62,15 @@ public protocol ChatSessionRuntime: Actor {
         history: [AgentRuntimeMessage],
         expectedSessionGeneration: AgentCoreSessionRunner.SessionGeneration
     ) async -> Bool
+}
+
+extension ChatSessionRuntime {
+    public func subAgentTranscript(
+        agentID _: String,
+        rootSessionID _: String
+    ) async -> ChatSubAgentTranscript? {
+        nil
+    }
 }
 
 extension AgentCoreSessionConfiguration {

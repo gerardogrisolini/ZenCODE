@@ -326,16 +326,28 @@ backward compatibility but is never offered by the autocomplete list. A
 recognised mention without a message body is rejected as invalid input rather
 than queued behind a running generation.
 
+The operator also reaches the room from the macOS app, where the human at the
+window is the `operator` of the room's session (see
+[app.md](app.md#shared-chat)). The composer takes the same leading mentions
+and completes them from the same catalogue, and sends the message at once,
+also while a turn runs, never queued behind it; a mention without a message is
+rejected the same way, and a mention of an agent that is no longer active is
+refused. The window observes the room like the terminal does: the messages
+fill its transient `Chat` panel, and the synthetic coordinator turn that the
+Core authorises runs as a hidden turn of the window, only while it is idle.
+Telegram is not available in the app, so there is no relay of the room to a
+Telegram chat.
+
 Replies travel back through the same chat. Any message injected into a
 coordinator or agent turn instructs the recipient to answer through
 `agent.message`: ordinary model output is never part of the chat, so both the
 coordinator and a delegated agent must send their reply via `agent.message`,
 regardless of who the sender is. The operator sees every chat message in the
-terminal's transient `Chat` reader; a delegated agent sees only what its
-mailbox delivers. If a delegated agent's direct conversational turn was started
-by the operator and it ends without calling `agent.message`, the runtime
-delivers its final output once
-to `operator` as a fallback rather than routing it through the coordinator or
+terminal's transient `Chat` reader (in the macOS app, its `Chat` panel); a
+delegated agent sees only what its mailbox delivers. If a delegated agent's
+direct conversational turn was started by the operator and it ends without
+calling `agent.message`, the runtime delivers its final output once to
+`operator` as a fallback rather than routing it through the coordinator or
 duplicating an explicit chat reply.
 
 Delivery is priority-based for the coordinator and delegated agents alike. When
@@ -355,6 +367,12 @@ those events feed only the transient `Chat` reader: closed empty is invisible,
 closed with messages is compact with total and unread counts, open empty remains
 compact, and open with messages is expanded; message boxes are never appended to
 the main transcript.
+
+The macOS app feeds the same events to its own transient `Chat` panel instead
+of its transcript. The panel is invisible whenever it is closed and every
+message is read, compact with the counts when it is closed and some messages
+are unread (or when it is open and empty), and expanded, one message at a time,
+when it is open with messages.
 
 The coordinator authorises at most one synthetic turn from the chat at a time,
 never starting a second generation behind a running one. `agent.message` is a

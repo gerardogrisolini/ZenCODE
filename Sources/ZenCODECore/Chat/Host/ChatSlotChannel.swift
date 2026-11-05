@@ -19,7 +19,8 @@ import Foundation
 /// (``ChatSessionHost/admitLine(_:in:)``).
 public enum ChatSlotChannel: Sendable, Equatable {
     /// The channel that opened the slot: the terminal, an ACP session, a
-    /// window of a host app.
+    /// window of a host app, or the silent startup channel of
+    /// `zen --telegram`, which hands the slot to Telegram at once.
     case primary
     /// The linked Telegram chat, through the slot's ``TelegramChannel``.
     case telegram
