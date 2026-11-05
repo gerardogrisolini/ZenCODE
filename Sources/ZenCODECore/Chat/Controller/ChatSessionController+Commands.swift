@@ -248,26 +248,6 @@ extension ChatSessionController {
         }
     }
 
-    /// The project's agent menu answered by a channel that presents it
-    /// itself (``projectAgentChoices()``): the profiles `associatedIDs`
-    /// names become the project's association and `activeID` the active
-    /// agent (`nil` keeps it), applied as a confirmed `/agents` menu
-    /// (``selectProjectAgents(associatedIDs:activeID:)``), then the
-    /// channel's step for the selection.
-    public func applyProjectAgentsSelection(
-        associatedIDs: Set<String>,
-        activeID: String?
-    ) async -> ChatCommandOutcome {
-        do {
-            return await selectionCommandOutcome(
-                try await selectProjectAgents(associatedIDs: associatedIDs, activeID: activeID),
-                command: .agents
-            )
-        } catch {
-            return Self.failedCommand(error)
-        }
-    }
-
     /// The agent `agentID` (``agentChoiceID(_:)``) a channel picked from an
     /// agent menu it presents itself (``agentChoices()``), activated as
     /// `/agents <agent>` activates it (``selectAgent(_:)``), then the

@@ -113,7 +113,7 @@ public enum TerminalTelegramCommandRegistry {
         TerminalTelegramCommandSpecification(
             command: .agents,
             name: "agents",
-            description: "Choose the agent and the project agents"
+            description: "Choose the active agent"
         ),
         TerminalTelegramCommandSpecification(
             command: .changes,

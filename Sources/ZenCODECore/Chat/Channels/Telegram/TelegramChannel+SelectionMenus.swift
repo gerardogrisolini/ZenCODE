@@ -26,10 +26,7 @@ enum TelegramSelectionMenuApply: Sendable, Equatable {
     case model(id: String, title: String)
     /// `/think`: the level `id`, whose menu entry reads `title`.
     case thinking(id: String, title: String)
-    /// `/agents`: the project's association and the active agent (`nil`
-    /// keeps it).
-    case projectAgents(associatedIDs: Set<String>, activeID: String?)
-    /// `/agents` when the full menu does not fit: the active agent only.
+    /// `/agents`: the agent `id`, which becomes the active agent.
     case agent(id: String)
     /// `/sessions` Load: the saved session `name`.
     case loadSavedSession(name: String)
@@ -51,10 +48,10 @@ enum TelegramSelectionMenuApply: Sendable, Equatable {
 /// ``selectionMenuCallbackDataLimit`` bytes, names an entry by its index and
 /// carries the menu's token (``selectionMenuToken(itemIDs:context:)``), so a
 /// tap on a menu whose entries changed since it was sent is refused with
-/// ``selectionMenuOutOfDateText(command:)``. A multiple choice (the project
-/// agents, the sessions to delete) carries its ticks as a hex mask
-/// (``selectionMenuMask(_:)``): a toggle carries the flipped mask and edits
-/// the keyboard of its own message in place.
+/// ``selectionMenuOutOfDateText(command:)``. A multiple choice (the sessions
+/// to delete) carries its ticks as a hex mask (``selectionMenuMask(_:)``): a
+/// toggle carries the flipped mask and edits the keyboard of its own message
+/// in place.
 ///
 /// Nothing runs while the session generates: the ingress answers the commands
 /// and the taps with ``busyMessageText``. A tap that applies a choice runs as
@@ -330,68 +327,9 @@ extension TelegramChannel {
 
     // MARK: - /agents
 
-    /// The text of the full `/agents` menu under its title.
-    nonisolated static let projectAgentsMenuInstruction =
-        "☑ = associated with the project: the only profiles the sub-agents tool can delegate to. Tap a name to tick it, Use to make it the active agent and save, Save to keep the active agent."
-
-    /// The full `/agents` menu of `choices`
-    /// (``ChatSessionController/projectAgentChoices()``) with `ticks`: one
-    /// row per profile, its toggle (`☑`/`☐` and its name, carrying the
-    /// flipped mask) and `Use` (`● Active` for the active agent, carrying
-    /// the mask and its index), then `Save` (the mask) and `Cancel`; `nil`
-    /// when it does not fit Telegram's limits (more than
-    /// ``selectionMenuItemLimit`` buttons for the profiles, or callback data
-    /// longer than ``selectionMenuCallbackDataLimit``), and the agent picker
-    /// (``agentPickerMenu(_:)``) is sent instead.
-    nonisolated static func projectAgentsMenu(
-        _ choices: ChatChoiceList,
-        ticks: [Bool]
-    ) -> TelegramSelectionMenu? {
-        let items = choices.items
-        guard !items.isEmpty, ticks.count == items.count,
-              items.count * 2 <= selectionMenuItemLimit else { return nil }
-        let token = selectionMenuToken(itemIDs: items.map(\.id))
-        let prefix = agentsMenuCallbackPrefix
-        let mask = selectionMenuMask(ticks)
-        var keyboard: [[TerminalTelegramInlineKeyboardButton]] = items.indices.map { index in
-            var flipped = ticks
-            flipped[index].toggle()
-            let item = items[index]
-            return [
-                TerminalTelegramInlineKeyboardButton(
-                    text: (ticks[index] ? "☑ " : "☐ ") + item.title,
-                    callbackData: "\(prefix)t:\(token):\(selectionMenuMask(flipped))"
-                ),
-                TerminalTelegramInlineKeyboardButton(
-                    text: item.isCurrent ? "● Active" : "Use",
-                    callbackData: "\(prefix)u:\(token):\(mask):\(index)"
-                ),
-            ]
-        }
-        keyboard.append([
-            TerminalTelegramInlineKeyboardButton(text: "Save", callbackData: "\(prefix)s:\(token):\(mask)"),
-            TerminalTelegramInlineKeyboardButton(text: "Cancel", callbackData: "\(prefix)x"),
-        ])
-        guard keyboard.joined().allSatisfy({
-            $0.callbackData.utf8.count <= selectionMenuCallbackDataLimit
-        }) else { return nil }
-        return TelegramSelectionMenu(
-            text: selectionMenuText(
-                title: choices.title, instruction: projectAgentsMenuInstruction,
-                shown: items.count, total: items.count
-            ),
-            keyboard: keyboard
-        )
-    }
-
-    /// The ticks `choices` starts with: the profiles associated with the
-    /// project (the saved association, or the system profiles).
-    nonisolated static func projectAgentsInitialTicks(_ choices: ChatChoiceList) -> [Bool] {
-        choices.items.map { choices.selectedIDs.contains($0.id) }
-    }
-
-    /// The `/agents` menu when the full one does not fit: a single choice of
-    /// the active agent among `choices` (``ChatSessionController/agentChoices()``).
+    /// The `/agents` menu of `choices` (``ChatSessionController/agentChoices()``):
+    /// a single choice of the active agent among the available profiles. The
+    /// profiles associated with the project are chosen in the terminal.
     nonisolated static func agentPickerMenu(_ choices: ChatChoiceList) -> TelegramSelectionMenu {
         singleChoiceMenu(
             choices,
@@ -401,12 +339,12 @@ extension TelegramChannel {
         )
     }
 
-    /// `/agents`: sends the full menu, or the agent picker when it does not
-    /// fit, or the agent list when there is no profile.
+    /// `/agents`: sends the agent picker, or the agent list when there is no
+    /// profile.
     func handleAgentsMenuRequest(lease: TerminalTelegramRouteLease) async {
         guard let controller else { return }
         do {
-            let choices = try controller.projectAgentChoices()
+            let choices = try controller.agentChoices()
             guard !choices.items.isEmpty else {
                 await sendSystemMessageIfLinked(
                     Self.noticeText(.availableAgents(
@@ -418,11 +356,7 @@ extension TelegramChannel {
                 )
                 return
             }
-            if let menu = Self.projectAgentsMenu(choices, ticks: Self.projectAgentsInitialTicks(choices)) {
-                await sendSelectionMenu(menu, lease: lease)
-            } else {
-                await sendSelectionMenu(Self.agentPickerMenu(try controller.agentChoices()), lease: lease)
-            }
+            await sendSelectionMenu(Self.agentPickerMenu(choices), lease: lease)
         } catch {
             await sendSystemMessageIfLinked(
                 Self.noticeText(.operationFailed(description: error.localizedDescription)),
@@ -431,66 +365,21 @@ extension TelegramChannel {
         }
     }
 
-    /// An `/agents` tap: `t:<token>:<mask>` re-ticks the keyboard of its
-    /// message in place, `u:<token>:<mask>:<index>` and `s:<token>:<mask>`
-    /// apply the ticks with that agent or the active one, `x` cancels, and
-    /// `p:<token>:<index>` activates an agent of the picker.
-    private func handleAgentsMenuCallback(
-        _ fields: [String], chatID: Int64, messageID: Int, lease: TerminalTelegramRouteLease
-    ) async {
-        guard let controller, let action = fields.first else { return }
-        if action == "x", fields.count == 1 {
-            await editSelectionMenuKeyboard(nil, chatID: chatID, messageID: messageID, lease: lease)
-            await sendSystemMessageIfLinked(
-                Self.noticeText(.selectedAgent(controller.selection.agent)), lease: lease
-            )
-            return
-        }
-        if action == "p" {
-            guard let choices = try? controller.agentChoices(),
-                  let item = Self.singleChoiceTapItem(
-                      fields.dropFirst(), choices: choices,
-                      token: Self.selectionMenuToken(itemIDs: choices.items.map(\.id))
-                  ) else {
-                await sendSelectionMenuOutOfDate(command: "agents", lease: lease)
-                return
-            }
-            await startSelectionMenuApply(.agent(id: item.id), lease: lease)
-            return
-        }
-        guard let choices = try? controller.projectAgentChoices(),
-              fields.count >= 3,
-              fields[1] == Self.selectionMenuToken(itemIDs: choices.items.map(\.id)),
-              let ticks = Self.selectionMenuTicks(mask: fields[2], count: choices.items.count) else {
+    /// An `/agents` tap (`p:<token>:<index>`): activates the agent it names.
+    /// Any other data, the toggles of the former multiple-choice menu
+    /// included, is out of date.
+    private func handleAgentsMenuCallback(_ fields: [String], lease: TerminalTelegramRouteLease) async {
+        guard let controller else { return }
+        guard fields.first == "p",
+              let choices = try? controller.agentChoices(),
+              let item = Self.singleChoiceTapItem(
+                  fields.dropFirst(), choices: choices,
+                  token: Self.selectionMenuToken(itemIDs: choices.items.map(\.id))
+              ) else {
             await sendSelectionMenuOutOfDate(command: "agents", lease: lease)
             return
         }
-        let associatedIDs = Set(choices.items.indices.filter { ticks[$0] }.map { choices.items[$0].id })
-        switch (action, fields.count) {
-        case ("t", 3):
-            guard let menu = Self.projectAgentsMenu(choices, ticks: ticks) else {
-                await sendSelectionMenuOutOfDate(command: "agents", lease: lease)
-                return
-            }
-            await editSelectionMenuKeyboard(
-                menu.replyMarkup, chatID: chatID, messageID: messageID, lease: lease
-            )
-        case ("u", 4):
-            guard let index = Self.selectionMenuIndex(fields[3], count: choices.items.count) else {
-                await sendSelectionMenuOutOfDate(command: "agents", lease: lease)
-                return
-            }
-            await startSelectionMenuApply(
-                .projectAgents(associatedIDs: associatedIDs, activeID: choices.items[index].id),
-                lease: lease
-            )
-        case ("s", 3):
-            await startSelectionMenuApply(
-                .projectAgents(associatedIDs: associatedIDs, activeID: nil), lease: lease
-            )
-        default:
-            await sendSelectionMenuOutOfDate(command: "agents", lease: lease)
-        }
+        await startSelectionMenuApply(.agent(id: item.id), lease: lease)
     }
 
     // MARK: - Taps
@@ -510,7 +399,7 @@ extension TelegramChannel {
         } else if let fields = Self.selectionMenuFields(data, prefix: Self.thinkMenuCallbackPrefix) {
             await handleThinkMenuCallback(fields, lease: lease)
         } else if let fields = Self.selectionMenuFields(data, prefix: Self.agentsMenuCallbackPrefix) {
-            await handleAgentsMenuCallback(fields, chatID: chatID, messageID: messageID, lease: lease)
+            await handleAgentsMenuCallback(fields, lease: lease)
         } else if let fields = Self.selectionMenuFields(data, prefix: Self.sessionsMenuCallbackPrefix) {
             await handleSessionsMenuCallback(fields, chatID: chatID, messageID: messageID, lease: lease)
         }
@@ -554,10 +443,6 @@ extension TelegramChannel {
             outcome = await controller.applyModelSelection(id: id)
         case let .thinking(id, _):
             outcome = await controller.applyThinkingSelection(id: id)
-        case let .projectAgents(associatedIDs, activeID):
-            outcome = await controller.applyProjectAgentsSelection(
-                associatedIDs: associatedIDs, activeID: activeID
-            )
         case let .agent(id):
             outcome = await controller.applyAgentSelection(id: id)
         case let .loadSavedSession(name):
@@ -599,7 +484,7 @@ extension TelegramChannel {
             "ZenCODE: model set to \(title)."
         case let .thinking(_, title):
             "ZenCODE: thinking set to \(title)."
-        case .projectAgents, .agent:
+        case .agent:
             agentName.map { "ZenCODE: agent \($0) selected." }
         case .loadSavedSession, .deleteSavedSessions, .sessionsCommand:
             nil

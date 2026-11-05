@@ -612,42 +612,6 @@ extension ChatSessionController {
         )
     }
 
-    /// The project's agent menu answered by a channel that presents it
-    /// itself: the profiles `associatedIDs` names (``agentChoiceID(_:)``)
-    /// become the project's association and `activeID` the active agent;
-    /// `nil` keeps the active agent. The answer is applied exactly as a
-    /// confirmed ``chooseProjectAgents()`` menu, against the menu as it reads
-    /// now (``projectAgentChoices()``). IDs of no available profile are
-    /// ignored in `associatedIDs`; an `activeID` of no available profile is
-    /// refused with ``TerminalAgentSelectionError/unknownAgent(_:)``. Without
-    /// any profile the agent list is the answer, as for the menu.
-    func selectProjectAgents(
-        associatedIDs: Set<String>,
-        activeID: String?
-    ) async throws -> ChatSelectionOutcome {
-        let agents = try availableAgents()
-        guard !agents.isEmpty else {
-            return ChatSelectionOutcome(notices: [
-                .availableAgents(
-                    agents: agents,
-                    selected: selection.agent,
-                    manifestPath: agentsManifestPath
-                ),
-            ])
-        }
-        let knownIDs = Set(agents.map(Self.agentChoiceID))
-        if let activeID, !knownIDs.contains(activeID) {
-            throw TerminalAgentSelectionError.unknownAgent(activeID)
-        }
-        let menu = projectAgentMenu(agents: agents)
-        return try await applyProjectAgentChoice(
-            selectedIDs: associatedIDs.intersection(knownIDs),
-            focusedID: activeID ?? menu.activeAgent.map(Self.agentChoiceID),
-            agents: agents,
-            menu: menu
-        )
-    }
-
     /// Applies an answer to the project's agent menu `menu` of `agents`:
     /// the ticked profiles `selectedIDs` and the confirmed row `focusedID`.
     ///

@@ -175,12 +175,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Telegram: `/sessions`, `/models`, `/think`, and `/agents` open inline-button
   menus in the linked chat, stateless like the `/chat` picker: a tap applies
   the choice at once, and a tap on a menu whose entries changed since it was
-  sent asks to run the command again. `/agents` ticks the profiles associated
-  with the project in place on the same message and picks the active agent
-  (with too many profiles for one keyboard, it picks the active agent only).
-  `/sessions` opens a menu of actions: Load, New, Save, Compact, Delete (a
-  ticked list), and Restore checkpoint. As in the terminal, the commands and
-  their taps are refused while a response is generating.
+  sent asks to run the command again. `/agents` chooses the active agent, like
+  `/models` and `/think`; the profiles associated with the project are chosen
+  in the terminal. `/sessions` opens a menu of actions: Load, New, Save,
+  Compact, Delete (a ticked list), and Restore checkpoint. As in the terminal,
+  the commands and their taps are refused while a response is generating.
 - The Planner can author several plans to be executed in sequence when the work
   is too large for one coherent plan, which it decides on its own. Its final
   response has one section per plan, each starting with its own line

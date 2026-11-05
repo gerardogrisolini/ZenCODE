@@ -184,7 +184,7 @@ struct TelegramChannelIngressTests {
                 Self.ownerMessage("/think"),
                 Self.ownerMessage("/agents"),
                 Self.ownerMessage(nil, callbackData: "zencode:models:00000000:0"),
-                Self.ownerMessage(nil, callbackData: "zencode:agents:x"),
+                Self.ownerMessage(nil, callbackData: "zencode:agents:p:00000000:0"),
                 Self.ownerMessage(nil, callbackData: "zencode:sessions:a:new"),
             ]
             for message in messages {

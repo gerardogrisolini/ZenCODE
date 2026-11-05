@@ -4,13 +4,14 @@
 //
 //  The `/sessions`, `/models`, `/think` and `/agents` selection menus of a
 //  ``TelegramChannel``: the pure builders (token, tick mask, keyboards, the
-//  64-byte callback data, the 90-entry cap, the `/agents` fallback), the
-//  cards the commands send, the taps (stale menus, toggles edited in place,
-//  applies run as the channel's task and refused while it is busy), and the
-//  controller APIs the taps apply through, `chooseProjectAgents()`'s shared
-//  answer included. The channel is linked by hand to chat 42, as in the
-//  ingress tests: no control service is started, and the system messages,
-//  menu cards and keyboard edits are recorded through the seams.
+//  64-byte callback data, the 90-entry cap), the cards the commands send
+//  (`/agents` is a single choice of the active agent, like `/models` and
+//  `/think`), the taps (stale menus, the `/sessions` deletion list edited in
+//  place, applies run as the channel's task and refused while it is busy),
+//  and the controller APIs the taps apply through. The channel is linked by
+//  hand to chat 42, as in the ingress tests: no control service is started,
+//  and the system messages, menu cards and keyboard edits are recorded
+//  through the seams.
 //
 
 import Foundation
@@ -71,7 +72,7 @@ struct TelegramChannelSelectionMenuTests {
     }
 
     @Test
-    func everyCallbackDataFitsTelegramsLimitAndListsShowAtMostNinetyEntries() throws {
+    func everyCallbackDataFitsTelegramsLimitAndListsShowAtMostNinetyEntries() {
         let longID = String(repeating: "x", count: 120)
         let many = ChatChoiceList(
             title: "Many",
@@ -80,14 +81,10 @@ struct TelegramChannelSelectionMenuTests {
             },
             selectedIDs: ["\(longID)-3"]
         )
-        let agents = Self.agentChoices(count: 45, idSuffix: longID)
         let menus: [TelegramSelectionMenu] = [
             TelegramChannel.modelsMenu(many),
             TelegramChannel.thinkMenu(many, modelID: longID),
             TelegramChannel.agentPickerMenu(many),
-            try #require(TelegramChannel.projectAgentsMenu(
-                agents, ticks: Array(repeating: true, count: 45)
-            )),
             TelegramChannel.sessionsActionMenu(),
             TelegramChannel.savedSessionsLoadMenu(many),
             TelegramChannel.savedSessionsDeleteMenu(many, ticks: Array(repeating: true, count: 90)),
@@ -121,45 +118,32 @@ struct TelegramChannelSelectionMenuTests {
         #expect(restore.text.hasSuffix("Showing 90 of 250."))
     }
 
+    /// `/agents` is a single choice of the active agent, whatever the number
+    /// of profiles: the callback data stays `zencode:agents:p:<token>:<index>`.
     @Test
-    func theAgentsMenuFallsBackToThePickerBeyondTheLimit() throws {
+    func theAgentsMenuIsASingleChoiceOfTheActiveAgent() {
         let three = Self.agentChoices(count: 3, idSuffix: "p")
-        let menu = try #require(TelegramChannel.projectAgentsMenu(three, ticks: [true, false, false]))
         let token = TelegramChannel.selectionMenuToken(itemIDs: three.items.map(\.id))
-        #expect(menu.keyboard == [
-            [
-                Button(text: "☑ Agent 0", callbackData: "zencode:agents:t:\(token):0"),
-                Button(text: "● Active", callbackData: "zencode:agents:u:\(token):1:0"),
-            ],
-            [
-                Button(text: "☐ Agent 1", callbackData: "zencode:agents:t:\(token):3"),
-                Button(text: "Use", callbackData: "zencode:agents:u:\(token):1:1"),
-            ],
-            [
-                Button(text: "☐ Agent 2", callbackData: "zencode:agents:t:\(token):5"),
-                Button(text: "Use", callbackData: "zencode:agents:u:\(token):1:2"),
-            ],
-            [
-                Button(text: "Save", callbackData: "zencode:agents:s:\(token):1"),
-                Button(text: "Cancel", callbackData: "zencode:agents:x"),
-            ],
-        ])
-        #expect(menu.text.hasPrefix("Agents\n☑ = associated with the project"))
+        #expect(TelegramChannel.agentPickerMenu(three) == TelegramSelectionMenu(
+            text: "Agents\nTap the agent to make active.",
+            keyboard: [
+                [Button(text: "✓ Agent 0", callbackData: "zencode:agents:p:\(token):0")],
+                [Button(text: "Agent 1", callbackData: "zencode:agents:p:\(token):1")],
+                [Button(text: "Agent 2", callbackData: "zencode:agents:p:\(token):2")],
+            ]
+        ))
 
-        // 45 profiles take 90 buttons, the most a menu shows; 46 do not fit.
-        #expect(TelegramChannel.projectAgentsMenu(
-            Self.agentChoices(count: 45, idSuffix: "p"), ticks: Array(repeating: false, count: 45)
-        )?.keyboard.count == 46)
-        let crowd = Self.agentChoices(count: 46, idSuffix: "p")
-        #expect(TelegramChannel.projectAgentsMenu(crowd, ticks: Array(repeating: false, count: 46)) == nil)
-        // Ticks for another number of profiles are no menu either.
-        #expect(TelegramChannel.projectAgentsMenu(three, ticks: [true]) == nil)
+        // A crowd of profiles shows the first 90 and says so.
+        let crowd = Self.agentChoices(count: 120, idSuffix: String(repeating: "x", count: 120))
         let picker = TelegramChannel.agentPickerMenu(crowd)
-        #expect(picker.keyboard.count == 46)
+        #expect(picker.keyboard.count == 90)
+        #expect(picker.text == "Agents\nTap the agent to make active.\nShowing 90 of 120.")
         #expect(picker.keyboard.allSatisfy {
             $0.count == 1 && $0[0].callbackData.hasPrefix("zencode:agents:p:")
+                && $0[0].callbackData.utf8.count <= 64
         })
         #expect(picker.keyboard[0][0].text == "✓ Agent 0")
+        #expect(picker.keyboard[89][0].callbackData.hasSuffix(":89"))
     }
 
     @Test
@@ -199,15 +183,13 @@ struct TelegramChannelSelectionMenuTests {
             #expect(pair.texts.values.isEmpty)
 
             let thinking = try #require(try controller.thinkingChoices())
-            let projectAgents = try controller.projectAgentChoices()
+            let agentsMenu = TelegramChannel.agentPickerMenu(try controller.agentChoices())
             let modelsMenu = TelegramChannel.modelsMenu(controller.modelChoices())
             #expect(pair.cards.values == [
                 TelegramChannel.sessionsActionMenu(),
                 modelsMenu,
                 TelegramChannel.thinkMenu(thinking, modelID: Fixtures.beta.id),
-                try #require(TelegramChannel.projectAgentsMenu(
-                    projectAgents, ticks: TelegramChannel.projectAgentsInitialTicks(projectAgents)
-                )),
+                agentsMenu,
                 modelsMenu,
             ].map { MenuCard(text: $0.text, markup: $0.replyMarkup) })
             #expect(Self.keyboard(of: pair.cards.values[0]).joined().map(\.text) == [
@@ -217,6 +199,12 @@ struct TelegramChannelSelectionMenuTests {
             #expect(Self.keyboard(of: pair.cards.values[2]).joined().map(\.text) == [
                 "✓ \(AgentThinkingSelection.low.menuTitle)", AgentThinkingSelection.high.menuTitle,
             ])
+            // `/agents` is a single choice of the active agent, one per profile.
+            let agentButtons = Self.keyboard(of: pair.cards.values[3]).joined()
+            let activeName = try #require(controller.selection.agent?.displayName)
+            #expect(agentButtons.count == (try controller.agentChoices()).items.count)
+            #expect(agentButtons.filter { $0.text.hasPrefix("✓ ") }.map(\.text) == ["✓ \(activeName)"])
+            #expect(agentButtons.allSatisfy { $0.callbackData.hasPrefix("zencode:agents:p:") })
 
             #expect(await channel.lineAction(for: "/models x", lease: pair.lease) == .handled)
             #expect(await channel.lineAction(for: "/agents list", lease: pair.lease) == .handled)
@@ -243,7 +231,7 @@ struct TelegramChannelSelectionMenuTests {
             let channel = pair.channel
             let controller = try #require(channel.controller)
             let agentsToken = TelegramChannel.selectionMenuToken(
-                itemIDs: try controller.projectAgentChoices().items.map(\.id)
+                itemIDs: try controller.agentChoices().items.map(\.id)
             )
             let modelsToken = TelegramChannel.selectionMenuToken(
                 itemIDs: controller.modelChoices().items.map(\.id)
@@ -252,10 +240,17 @@ struct TelegramChannelSelectionMenuTests {
                 ("zencode:models:00000000:0", "models"),
                 ("zencode:models:\(modelsToken):99", "models"),
                 ("zencode:think:00000000:0", "think"),
-                ("zencode:agents:t:00000000:0", "agents"),
-                ("zencode:agents:u:\(agentsToken):zz:0", "agents"),
+                // The data of the former multiple-choice menu, whose token is
+                // the current one, is out of date too.
+                ("zencode:agents:t:\(agentsToken):0", "agents"),
+                ("zencode:agents:u:\(agentsToken):1:0", "agents"),
+                ("zencode:agents:s:\(agentsToken):1", "agents"),
+                ("zencode:agents:x", "agents"),
                 ("zencode:agents:p:00000000:0", "agents"),
+                ("zencode:agents:p:\(agentsToken):99", "agents"),
+                ("zencode:agents:p:\(agentsToken)", "agents"),
                 ("zencode:agents:q", "agents"),
+                ("zencode:agents:", "agents"),
                 ("zencode:sessions:l:00000000:0", "sessions"),
                 ("zencode:sessions:a:bogus", "sessions"),
                 ("zencode:sessions:r:00000000:0", "sessions"),
@@ -274,61 +269,46 @@ struct TelegramChannelSelectionMenuTests {
         }
     }
 
-    /// A toggle re-ticks the keyboard of its own message and applies
-    /// nothing; Save then applies the ticks, and Cancel removes the keyboard
-    /// and names the selected agent, as the terminal's cancel.
+    /// A tap on the `/agents` picker makes the agent it names the active one,
+    /// as the channel's task: the keyboard is left alone, the association of
+    /// the profiles with the project is not written, and the chat gets the
+    /// switch notice, as for `/agents <name>`.
     @Test
-    func anAgentsToggleEditsItsKeyboardInPlaceAndSaveAppliesTheTicks() async throws {
+    func anAgentsTapActivatesTheAgentAsTheChannelsTask() async throws {
         try await Support.withSupport {
-            let pair = try await Self.linked(room: "menus-agents-\(UUID().uuidString)")
+            let runner = AgentCoreSessionRunner(
+                backendFactory: { _, _ in MenuAgentStubBackend() },
+                taskGraphStore: nil
+            )
+            let pair = try await Self.linked(
+                room: "menus-agents-\(UUID().uuidString)", sessionRunner: runner, stdinIsTerminal: false
+            )
             defer { pair.remove() }
             let channel = pair.channel
             let controller = try #require(channel.controller)
+            try await pair.terminal.createCurrentSession(discoverExternalTools: false)
             _ = await channel.lineAction(for: "/agents", lease: pair.lease)
-            let card = try #require(pair.cards.values.first)
-            let rows = Self.keyboard(of: card)
-            let choices = try controller.projectAgentChoices()
-            #expect(choices.items.count >= 2)
+            let rows = Self.keyboard(of: try #require(pair.cards.values.first))
+            let activeName = try #require(controller.selection.agent?.displayName)
+            let other = try #require(rows.joined().first { !$0.text.hasPrefix("✓ ") })
+            #expect(other.text != activeName)
 
-            var ticks = TelegramChannel.projectAgentsInitialTicks(choices)
-            ticks[1].toggle()
-            #expect(!(await channel.handleIncomingMessage(Self.ownerMessage(callbackData: rows[1][0].callbackData))))
-            let edited = try #require(TelegramChannel.projectAgentsMenu(choices, ticks: ticks))
-            #expect(pair.edits.values == [
-                KeyboardEdit(markup: edited.replyMarkup, chatID: 42, messageID: Self.tappedMessageID),
-            ])
-            #expect(edited.keyboard[1][0].text != rows[1][0].text)
-            #expect(pair.texts.values.isEmpty)
-            #expect(channel.activeTurnTask == nil)
-            #expect(ProjectAgentSelectionStore.load(workspaceRootURL: pair.workspace) == nil)
-
-            // Save, from the edited keyboard, applies the ticks as the
-            // channel's task and keeps the active agent.
-            let saveData = try #require(edited.keyboard.last?.first?.callbackData)
-            #expect(!(await channel.handleIncomingMessage(Self.ownerMessage(callbackData: saveData))))
+            #expect(!(await channel.handleIncomingMessage(Self.ownerMessage(callbackData: other.callbackData))))
             let task = try #require(channel.activeTurnTask)
             await task.value
-            let associated = choices.items.indices.filter { ticks[$0] }.map { choices.items[$0].id }
-            let expectedKeys = Set(try controller.availableAgents()
-                .filter { associated.contains(ChatSessionController.agentChoiceID($0)) }
-                .map(ProjectAgentSelectionStore.selectionKey(for:)))
-            #expect(ProjectAgentSelectionStore.load(workspaceRootURL: pair.workspace) == expectedKeys)
-            let agentName = try #require(controller.selection.agent?.displayName)
-            #expect(pair.texts.values == ["ZenCODE: agent \(agentName) selected."])
-            #expect(channel.activeTurnTask == nil)
-
-            // Cancel removes the keyboard and names the selected agent.
-            #expect(!(await channel.handleIncomingMessage(Self.ownerMessage(callbackData: "zencode:agents:x"))))
-            #expect(pair.edits.values.last == KeyboardEdit(markup: nil, chatID: 42, messageID: Self.tappedMessageID))
-            #expect(pair.texts.values.last == TelegramChannel.noticeText(.selectedAgent(controller.selection.agent)))
+            let switched = try #require(controller.selection.agent)
+            #expect(switched.displayName == other.text)
+            #expect(pair.texts.values == [TelegramChannel.noticeText(.agentSwitched(switched))])
+            #expect(ProjectAgentSelectionStore.load(workspaceRootURL: pair.workspace) == nil)
+            #expect(pair.edits.values.isEmpty)
             #expect(channel.activeTurnTask == nil)
             await pair.terminal.sessionHost.shutdown()
         }
     }
 
     /// A tap that applies a choice is refused with the busy text while a
-    /// task of the channel runs or a prompt waits in its queue; a toggle and
-    /// a tap that opens a list are not.
+    /// task of the channel runs or a prompt waits in its queue; a toggle of
+    /// the `/sessions` deletion list and a tap that opens a list are not.
     @Test
     func anApplyingTapIsRefusedWhileTheChannelIsBusy() async throws {
         try await Support.withSupport {
@@ -336,17 +316,21 @@ struct TelegramChannelSelectionMenuTests {
             defer { pair.remove() }
             let channel = pair.channel
             let controller = try #require(channel.controller)
-            let choices = try controller.projectAgentChoices()
-            let menu = try #require(TelegramChannel.projectAgentsMenu(
-                choices, ticks: TelegramChannel.projectAgentsInitialTicks(choices)
-            ))
+            let agentData = TelegramChannel.agentPickerMenu(try controller.agentChoices())
+                .keyboard[0][0].callbackData
             let modelData = TelegramChannel.modelsMenu(controller.modelChoices()).keyboard[0][0].callbackData
+            try Self.saveSession(named: "first", in: pair.workspace, savedAt: 1_000)
+            let deletion = TelegramChannel.savedSessionChoices(
+                try controller.savedSessions(), title: "Delete saved sessions", activeName: nil
+            )
+            let toggle = TelegramChannel.savedSessionsDeleteMenu(deletion, ticks: [false])
+            let deleteTicked = TelegramChannel.savedSessionsDeleteMenu(deletion, ticks: [true])
 
             // A task of the channel runs.
             let hold = Self.holdQueue(of: channel)
             for data in [
-                try #require(menu.keyboard.last?.first?.callbackData),
-                menu.keyboard[0][1].callbackData,
+                agentData,
+                try #require(deleteTicked.keyboard.last?.first?.callbackData),
                 modelData,
                 "zencode:sessions:a:new",
             ] {
@@ -354,8 +338,10 @@ struct TelegramChannelSelectionMenuTests {
             }
             #expect(pair.texts.values == Array(repeating: TelegramChannel.busyMessageText, count: 4))
             #expect(channel.activeTurnTask == hold)
-            _ = await channel.handleIncomingMessage(Self.ownerMessage(callbackData: menu.keyboard[0][0].callbackData))
-            #expect(pair.edits.values.count == 1)
+            _ = await channel.handleIncomingMessage(Self.ownerMessage(callbackData: toggle.keyboard[0][0].callbackData))
+            #expect(pair.edits.values == [
+                KeyboardEdit(markup: deleteTicked.replyMarkup, chatID: 42, messageID: Self.tappedMessageID),
+            ])
             hold.cancel()
             channel.activeTurnTask = nil
 
@@ -368,7 +354,8 @@ struct TelegramChannelSelectionMenuTests {
             #expect(channel.activeTurnTask == nil)
             // Opening a list is not a change.
             _ = await channel.handleIncomingMessage(Self.ownerMessage(callbackData: "zencode:sessions:a:load"))
-            #expect(pair.texts.values.last == TelegramChannel.noticeText(.noSavedSessions))
+            #expect(pair.texts.values.count == 5)
+            #expect(Self.keyboard(of: try #require(pair.cards.values.last)).joined().map(\.text) == ["first"])
             await pair.terminal.sessionHost.shutdown()
         }
     }
@@ -389,7 +376,7 @@ struct TelegramChannelSelectionMenuTests {
             let messages = ["/sessions", "/models", "/think", "/agents"].map { Self.ownerMessage($0) }
                 + [
                     "zencode:models:00000000:0", "zencode:think:00000000:0",
-                    "zencode:agents:t:00000000:0", "zencode:agents:x",
+                    "zencode:agents:p:00000000:0", "zencode:sessions:dt:00000000:0",
                     "zencode:sessions:a:load", "zencode:sessions:dx",
                 ].map { Self.ownerMessage(callbackData: $0) }
             for message in messages {
@@ -522,16 +509,25 @@ struct TelegramChannelSelectionMenuTests {
     /// the default agent profiles, linked by hand to chat 42 on the route of
     /// `room`: no control service is started, and the system messages, the
     /// menu cards, and the keyboard edits are recorded through the seams.
-    private static func linked(room: String) async throws -> Linked {
+    /// A test that switches the agent gives the `sessionRunner` that recreates
+    /// the session and a terminal without `stdinIsTerminal`, which asks no
+    /// question about the folder.
+    private static func linked(
+        room: String,
+        sessionRunner: AgentCoreSessionRunner? = nil,
+        stdinIsTerminal: Bool = true
+    ) async throws -> Linked {
         let workspace = FileManager.default.temporaryDirectory.appendingPathComponent(
             "zencode-telegram-menus-\(UUID().uuidString)", isDirectory: true
         )
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         let terminal = try Support.makeTerminal(
             transport: TelegramChannelTestTransport(botID: 1),
+            sessionRunner: sessionRunner,
             workingDirectory: workspace,
             hostedModelID: Fixtures.beta.id,
-            availableModels: Fixtures.hostedModels
+            availableModels: Fixtures.hostedModels,
+            stdinIsTerminal: stdinIsTerminal
         )
         terminal.sessionID = room
         let channel = terminal.telegramChannel
@@ -639,61 +635,6 @@ struct TelegramChannelSelectionMenuTests {
 struct ChatSessionChannelSelectionTests {
     private typealias Fixtures = ChatTestFixtures
 
-    private var projectAgents: ChatTestCatalog {
-        .hosted(agents: [Fixtures.developer, Fixtures.reviewer, Fixtures.reporter])
-    }
-
-    @Test
-    func projectAgentsAnsweredByTheChannelApplyAsAConfirmedMenu() async throws {
-        try await withChatHarness(catalog: projectAgents) { harness in
-            let controller = harness.controller
-            let hooks = RecordingChannelHooks(runtime: harness.runtime)
-            controller.channelHooks = hooks
-            try await harness.startSession(conversation: Fixtures.conversation)
-            let developerID = ChatSessionController.agentChoiceID(Fixtures.developer)
-            let reviewerID = ChatSessionController.agentChoiceID(Fixtures.reviewer)
-
-            // An unchanged association with the active agent kept names it.
-            #expect(await controller.applyProjectAgentsSelection(associatedIDs: [developerID], activeID: nil)
-                == ChatCommandOutcome(notices: [.selectedAgent(Fixtures.developer)]))
-            #expect(hooks.steps.isEmpty)
-            #expect(ProjectAgentSelectionStore.load(workspaceRootURL: harness.workspace) == nil)
-
-            // A changed association is saved, presented, and the prompt is
-            // rebuilt in place; the channel's step follows.
-            let changed = await controller.applyProjectAgentsSelection(
-                associatedIDs: [developerID, reviewerID, "no-such-agent"], activeID: nil
-            )
-            #expect(changed == ChatCommandOutcome())
-            #expect(ProjectAgentSelectionStore.load(workspaceRootURL: harness.workspace)
-                == Set([Fixtures.developer, Fixtures.reviewer]
-                    .map(ProjectAgentSelectionStore.selectionKey(for:))))
-            #expect(await harness.presenter.notices == [
-                .projectAgentsAssociated(
-                    agents: [Fixtures.developer, Fixtures.reviewer],
-                    projectName: harness.workspace.lastPathComponent
-                ),
-            ])
-            #expect(await harness.callNames() == ["updateSessionOptions"])
-            #expect(hooks.steps.count == 1)
-            #expect(hooks.steps.first?.hasPrefix("selectionDidApply(") == true)
-            #expect(hooks.steps.first?.contains(", agents) after ") == true)
-            await harness.clearRecords()
-
-            // Another active agent switches, keeping the saved association.
-            #expect(await controller.applyProjectAgentsSelection(
-                associatedIDs: [developerID, reviewerID], activeID: reviewerID
-            ) == ChatCommandOutcome(notices: [.agentSwitched(Fixtures.reviewer)]))
-            #expect(controller.selection.agent == Fixtures.reviewer)
-            #expect(await harness.presenter.notices.isEmpty)
-
-            // An unknown active agent is refused and changes nothing.
-            #expect(await controller.applyProjectAgentsSelection(associatedIDs: [], activeID: "ghost")
-                == ChatCommandOutcome(notices: [.operationFailed(description: "Unknown agent 'ghost'.")]))
-            #expect(controller.selection.agent == Fixtures.reviewer)
-        }
-    }
-
     @Test
     func modelThinkingAgentAndSavedSessionSelectionsApplyThroughTheController() async throws {
         try await withChatHarness { harness in
@@ -725,5 +666,64 @@ struct ChatSessionChannelSelectionTests {
                 == ChatCommandOutcome(notices: [.savedSessionNotFound(name: "missing")]))
             #expect(try controller.checkpointEntryMenu() == .unavailable(.noActiveSavedSession))
         }
+    }
+}
+
+// MARK: - Backend
+
+/// A backend that accepts every session: an agent switch recreates the session
+/// without a model.
+private actor MenuAgentStubBackend: AgentRuntimeBackend {
+    func createSession(
+        id _: String,
+        cwd _: String,
+        systemPrompt _: String?,
+        history _: [AgentRuntimeMessage],
+        cacheKey _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func createSessionIfNeeded(
+        id _: String,
+        cwd _: String,
+        systemPrompt _: String?,
+        history _: [AgentRuntimeMessage],
+        cacheKey _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func updateSessionOptions(
+        id _: String,
+        systemPrompt _: String?,
+        allowedToolNames _: Set<String>?,
+        thinkingSelection _: AgentThinkingSelection?,
+        preserveThinking _: Bool
+    ) {}
+
+    func closeSession(id _: String) {}
+
+    func shutdown() async {}
+
+    func preloadModel(
+        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> String {
+        "test-model"
+    }
+
+    func activeToolDescriptors() async -> [DirectToolDescriptor] {
+        []
+    }
+
+    func sendPrompt(
+        sessionID _: String,
+        prompt _: String,
+        attachments _: [AgentRuntimeAttachment],
+        onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
+    ) async throws -> DirectAgentResponse {
+        DirectAgentResponse(text: "", stopReason: "end_turn", modelID: "test-model")
     }
 }
