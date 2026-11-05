@@ -212,16 +212,14 @@ extension TerminalTelegramControlService {
         }
     }
 
-    /// Sends one reasoning block as a rich message whose only block is a
-    /// closed, expandable `details` (``TerminalTelegramTurnActivity/thoughtDocument(_:)``),
-    /// degrading only after a definite Rich Messages rejection to plain text
-    /// with the reasoning in italic by entity
-    /// (``TerminalTelegramTurnActivity/thoughtFallback(_:)``). The reasoning
-    /// is model output: it is never parsed as Markdown or HTML on either
-    /// path. Like ``sendRichMessageWithFallback(_:to:topicID:replyMarkup:fence:)``,
-    /// a transport failure is not retried, so an ambiguous send never
-    /// becomes a duplicate.
-    func sendThoughtMessageWithFallback(
+    /// Sends one reasoning block as a single plain-text message, all of it
+    /// in an expandable blockquote and the reasoning in italic by entity
+    /// (``TerminalTelegramTurnActivity/thoughtMessage(_:)``). It never goes
+    /// through Rich Messages, and the reasoning is model output: it is never
+    /// parsed as Markdown or HTML, so no parse mode travels with it. Any
+    /// failure, a cancellation included, propagates without a retry, so an
+    /// ambiguous send never becomes a duplicate.
+    func sendThoughtMessage(
         _ thought: String,
         to chatID: Int64,
         topicID: Int?,
@@ -238,26 +236,10 @@ extension TerminalTelegramControlService {
             token: token, generation: wireGeneration, fence: fence,
             chatID: chatID, topicID: topicID
         )
-        let fallback = TerminalTelegramTurnActivity.thoughtFallback(thought)
-        do {
-            let messageID = try await client.sendRichMessage(
-                TerminalTelegramTurnActivity.thoughtDocument(thought),
-                to: chatID, messageThreadID: topicID, governor: rateGovernor
-            )
-            try ensureCurrentWireGeneration(wireGeneration)
-            clearSendDiagnostics()
-            return messageID
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch is TerminalTelegramRichMessageError {
-            // Not rendered at all: nothing reached the wire.
-        } catch let error as TerminalTelegramControlError {
-            guard Self.isRichMessageCompatibilityError(error) else { throw error }
-        }
-        try ensureCurrentWireGeneration(wireGeneration)
+        let message = TerminalTelegramTurnActivity.thoughtMessage(thought)
         let messageID = try await client.sendMessage(
-            fallback.text, to: chatID, messageThreadID: topicID,
-            entities: fallback.entities.isEmpty ? nil : fallback.entities, governor: rateGovernor
+            message.text, to: chatID, messageThreadID: topicID,
+            entities: message.entities.isEmpty ? nil : message.entities, governor: rateGovernor
         )
         try ensureCurrentWireGeneration(wireGeneration)
         clearSendDiagnostics()

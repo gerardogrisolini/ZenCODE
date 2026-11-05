@@ -301,9 +301,10 @@ starts again once the reservation is released
 the session's output to the chat through the turn's ordered reporter
 (`TerminalTelegramTurnProgressReporter`, whose closed payload surface is
 `TerminalTelegramTurnPayload`): each completed reasoning block as a thinking
-message (`.thought`: a rich message with one closed `details` block titled
-`💭 Thinking`, cut at 3,900 characters, or plain text with the reasoning in
-italic by entity after a definite Rich Messages rejection); a root response
+message (`.thought`: a plain-text `sendMessage` of `💭` and the reasoning,
+which one `expandable_blockquote` entity covers whole and an `italic` entity
+covers from the reasoning on, cut at 3,900 characters, never a rich message
+and never parsed as Markdown or HTML); a root response
 buffered by the reporter and published at the next tool boundary, or at the
 reasoning block that the next content closes, so content, reasoning, and
 content reach the chat in the order they were written; each root tool call as
@@ -573,11 +574,12 @@ notification is unchanged, and so are the headless output and the JSONL wire
   ForceReply card or a tap on a `/diff` button gets an error or a refusal
   from the other sessions.
 - Telegram: while the chat drives a session, a turn reaches it as the terminal
-  shows it, with no setting: each completed reasoning block as a message with
-  a `💭 Thinking` `details` block (cut at 3,900 characters), each root tool
-  call as a row (`⏳`, then `✅` or `❌`) of an activity message edited in
-  place, with the call's title and no argument or result, and the sub-agent
-  overview as one `🤖 Sub-agent` status message per turn, edited in place.
+  shows it, with no setting: each completed reasoning block as one
+  expandable blockquote of `💭` and the reasoning (cut at
+  3,900 characters), each root tool call as a row (`⏳`, then `✅` or `❌`) of
+  an activity message edited in place, with the call's title and no argument
+  or result, and the sub-agent overview as one `🤖 Sub-agent` status message
+  per turn, edited in place.
 
 *Corrections found on the way.*
 
@@ -762,16 +764,15 @@ Presentation content crosses frontend boundaries through the transient,
 backend-neutral `PresentationDocument` tree under `Presentation`.
 Domain presentation nodes contain only visible text, semantic blocks and opaque
 already-uploaded document references; they contain no Telegram types, local file
-paths, reasoning records or tool payloads. Reasoning enters the tree only as the
-plain-text paragraphs of a thinking message's closed `details` block
-(`TerminalTelegramTurnActivity.thoughtDocument(_:)`), never parsed as Markdown.
+paths, reasoning records or tool payloads. Reasoning has no place in the tree:
+the thinking message is a plain text with entities
+(`TerminalTelegramTurnActivity.thoughtMessage(_:)`), never parsed as Markdown.
 Transport adapters depend inward on
 that tree: the Telegram adapter renders the supported subset to Bot API 10.3
 `InputRichMessage` wire values, while the presentation layer never imports or
 names Telegram. Rich draft, thinking, and final delivery share the Telegram outbound
 governor. An explicit 400/404 compatibility rejection may degrade to the tree's
-deterministic plain-text projection (a thinking message degrades to plain text
-with the reasoning in italic by entity); ambiguous transport/server outcomes never
+deterministic plain-text projection; ambiguous transport/server outcomes never
 trigger a second final send. The tree is not persisted, so settings, session,
 checkpoint and transcript formats remain unchanged.
 

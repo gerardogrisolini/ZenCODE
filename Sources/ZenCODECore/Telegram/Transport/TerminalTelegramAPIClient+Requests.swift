@@ -58,6 +58,12 @@ struct TerminalTelegramMessageEntity: Encodable, Sendable, Equatable {
     static func italic(offset: Int, length: Int) -> TerminalTelegramMessageEntity {
         TerminalTelegramMessageEntity(type: "italic", offset: offset, length: length)
     }
+
+    /// An expandable blockquote over `length` UTF-16 code units from
+    /// `offset`: shown collapsed to its first lines, expanded with a tap.
+    static func expandableBlockquote(offset: Int, length: Int) -> TerminalTelegramMessageEntity {
+        TerminalTelegramMessageEntity(type: "expandable_blockquote", offset: offset, length: length)
+    }
 }
 
 /// `messageThreadID` is the route's topic (Bot API 9.3 private-chat topics).

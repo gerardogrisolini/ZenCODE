@@ -22,8 +22,9 @@ enum TerminalTelegramTurnActivity {
     static let maximumToolTitleLength = 200
     /// The longest row of the sub-agent status message, in characters.
     static let maximumStatusRowLength = 160
-    /// The summary of the thinking message's expandable block.
-    static let thinkingHeading = "💭 Thinking"
+    /// The marker that opens the thinking message, inside the quotation of
+    /// the reasoning and followed by a space.
+    static let thinkingMarker = "💭"
     /// The first line of the sub-agent status message.
     static let subAgentStatusHeading = "🤖 Sub-agent"
 
@@ -68,33 +69,19 @@ enum TerminalTelegramTurnActivity {
         )
     }
 
-    /// The most paragraphs the thinking message's block holds; the rest of
-    /// the text joins the last one.
-    static let maximumThoughtParagraphs = 50
-
-    /// The thinking message as a rich document: one closed, expandable
-    /// details block titled ``thinkingHeading`` whose paragraphs are the
-    /// reasoning as plain text runs (never parsed as Markdown).
-    static func thoughtDocument(_ thought: String) -> PresentationDocument {
-        let paragraphs = thoughtParagraphs(thought).map {
-            PresentationBlock.paragraph(PresentationText($0))
-        }
-        return PresentationDocument(blocks: [
-            .details(
-                summary: PresentationText(thinkingHeading),
-                blocks: paragraphs,
-                isOpen: false
-            ),
-        ])
-    }
-
-    /// The thinking message without rich messages: the heading, a blank
-    /// line, and the reasoning in italic through an entity that covers it,
-    /// offsets in UTF-16 code units of the text as the wire bounds it.
-    static func thoughtFallback(
+    /// The thinking message: a plain text made of ``thinkingMarker``, a
+    /// space, and the reasoning reduced to visible characters. One
+    /// expandable blockquote covers the whole text (collapsed to its first
+    /// lines, expanded with a tap), so no heading or blank line sits outside
+    /// it and the collapsed message is only those lines; an italic covers
+    /// the reasoning. Both are entities, offsets in UTF-16 code units of the
+    /// text as the wire bounds it. It is never a rich message and never
+    /// parsed as Markdown or HTML: the reasoning is model output, so any
+    /// markup in it stays literal.
+    static func thoughtMessage(
         _ thought: String
     ) -> (text: String, entities: [TerminalTelegramMessageEntity]) {
-        let prefix = "\(thinkingHeading)\n\n"
+        let prefix = "\(thinkingMarker) "
         let body = PresentationSanitizer.visibleText(thought)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let text = TerminalTelegramAPIClient.boundedMessageText(prefix + body)
@@ -103,25 +90,10 @@ enum TerminalTelegramTurnActivity {
         guard !body.isEmpty, length > 0 else {
             return (text, [])
         }
-        return (text, [.italic(offset: offset, length: length)])
-    }
-
-    /// The paragraphs of a reasoning block: the text between blank lines,
-    /// trimmed, at most ``maximumThoughtParagraphs``.
-    private static func thoughtParagraphs(_ thought: String) -> [String] {
-        let normalized = thought
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-        let paragraphs = normalized
-            .components(separatedBy: "\n\n")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        guard paragraphs.count > maximumThoughtParagraphs else {
-            return paragraphs
-        }
-        let kept = paragraphs.prefix(maximumThoughtParagraphs - 1)
-        let rest = paragraphs.dropFirst(maximumThoughtParagraphs - 1).joined(separator: "\n\n")
-        return Array(kept) + [rest]
+        return (text, [
+            .expandableBlockquote(offset: 0, length: text.utf16.count),
+            .italic(offset: offset, length: length),
+        ])
     }
 
     // MARK: - Sub-agent status

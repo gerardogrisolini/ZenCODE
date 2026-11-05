@@ -571,7 +571,8 @@ struct TelegramChannelTurnActivityTests {
     // MARK: - Turns from the chat
 
     /// A turn from the chat, end to end over the production wire: the
-    /// reasoning as an expandable details block, the response, the
+    /// reasoning as a `💭` message that an expandable blockquote covers
+    /// by entity, the response, the
     /// sub-agent call's row (created, then its outcome written after the
     /// status that closed it), the `🤖 Sub-agent` status created at the
     /// call's start and edited at its settle, the response of the agent once,
@@ -598,10 +599,9 @@ struct TelegramChannelTurnActivityTests {
             let sends = requests.filter { $0.method != "editMessageText" }
             #expect(sends.count == 7, "\(sends)")
             guard sends.count == 7 else { return }
-            #expect(sends[0].method == "sendRichMessage")
-            #expect(sends[0].isDetails)
-            #expect(sends[0].text.contains("💭 Thinking"))
-            #expect(sends[0].text.contains("Plan: wait for the worker."))
+            #expect(sends[0].method == "sendMessage")
+            #expect(sends[0].isThinkingShape)
+            #expect(sends[0].text == "💭 Plan: wait for the worker.")
             #expect(sends[1].text == "Waiting for the worker.")
             #expect(sends[2].method == "sendMessage")
             #expect(sends[3].method == "sendMessage")
@@ -1631,13 +1631,14 @@ private actor TurnActivityBackend: AgentRuntimeBackend {
 actor TurnActivityTransport: TelegramHTTPTransport {
     /// One message effect: the method, the text (for a rich message every
     /// text of the document, joined by a newline), the message (the receipt
-    /// of a send, the target of an edit or a deletion), and whether the rich
-    /// message is one `details` block.
+    /// of a send, the target of an edit or a deletion), and whether the
+    /// message has the thinking message's shape: a `sendMessage` whose
+    /// entities are exactly an `expandable_blockquote` and an `italic`.
     struct Request: Equatable, Sendable {
         let method: String
         let text: String
         let messageID: Int
-        let isDetails: Bool
+        let isThinkingShape: Bool
     }
 
     let botID: Int64
@@ -1685,26 +1686,31 @@ actor TurnActivityTransport: TelegramHTTPTransport {
             pendingUpdates = []
             return (200, Data(#"{"ok":true,"result":[\#(updates.joined(separator: ","))]}"#.utf8))
         case "sendMessage":
-            return record(method: "sendMessage", text: object?["text"] as? String ?? "", isDetails: false)
+            let entities = object?["entities"] as? [Any] ?? []
+            let types = entities.map { ($0 as? [String: Any])?["type"] as? String }
+            return record(
+                method: "sendMessage", text: object?["text"] as? String ?? "",
+                isThinkingShape: types == ["expandable_blockquote", "italic"]
+            )
         case "sendRichMessage":
             let richMessage = object?["rich_message"] as? [String: Any]
             let blocks = richMessage?["blocks"] as? [Any] ?? []
-            let isDetails = blocks.count == 1 && (blocks.first as? [String: Any])?["type"] as? String == "details"
             return record(
                 method: "sendRichMessage",
                 text: blocks.map { Self.text(of: $0) }.joined(separator: "\n\n"),
-                isDetails: isDetails
+                isThinkingShape: false
             )
         case "editMessageText":
             let messageID = object?["message_id"] as? Int ?? 0
             requests.append(Request(
                 method: "editMessageText", text: object?["text"] as? String ?? "",
-                messageID: messageID, isDetails: false
+                messageID: messageID, isThinkingShape: false
             ))
             return (200, Self.messageBody(id: messageID))
         case "deleteMessage":
             requests.append(Request(
-                method: "deleteMessage", text: "", messageID: object?["message_id"] as? Int ?? 0, isDetails: false
+                method: "deleteMessage", text: "", messageID: object?["message_id"] as? Int ?? 0,
+                isThinkingShape: false
             ))
             return (200, Data(#"{"ok":true,"result":true}"#.utf8))
         default:
@@ -1712,10 +1718,12 @@ actor TurnActivityTransport: TelegramHTTPTransport {
         }
     }
 
-    private func record(method: String, text: String, isDetails: Bool) -> (status: Int, body: Data) {
+    private func record(method: String, text: String, isThinkingShape: Bool) -> (status: Int, body: Data) {
         let messageID = nextMessageID
         nextMessageID += 1
-        requests.append(Request(method: method, text: text, messageID: messageID, isDetails: isDetails))
+        requests.append(Request(
+            method: method, text: text, messageID: messageID, isThinkingShape: isThinkingShape
+        ))
         return (200, Self.messageBody(id: messageID))
     }
 

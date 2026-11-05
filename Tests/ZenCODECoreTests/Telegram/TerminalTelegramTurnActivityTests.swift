@@ -7,8 +7,9 @@
 //  new message or by a creation whose outcome is unknown, an outcome written
 //  where the call started, bursts coalesced, a full message continued in a
 //  new one), the thinking messages
-//  (an expandable details block of plain text, cut to the message limit,
-//  with an italic entity fallback on a definite rejection only), the
+//  (a plain text in an expandable blockquote with the reasoning in italic
+//  by entity, cut to the message limit, always one `sendMessage` and never
+//  retried), the
 //  sub-agent status, the queue order, and nothing after the retire. Nothing
 //  reaches the network; the wire tests run in a UUID support directory.
 //
@@ -361,33 +362,6 @@ struct TerminalTelegramTurnActivityTests {
         #expect(TerminalTelegramTurnActivity.toolRow(title: "A", outcome: .failed) == "❌ A")
     }
 
-    /// The thinking message is one closed details block titled
-    /// `💭 Thinking`, whose paragraphs are the reasoning as plain text: the
-    /// markup it carries is not parsed.
-    @Test
-    func theThinkingMessageIsAClosedDetailsBlockOfPlainParagraphs() throws {
-        let thought = "Use **bold** and <b>tags</b>.\n\nThen `run` it."
-        let document = TerminalTelegramTurnActivity.thoughtDocument(thought)
-        #expect(document == PresentationDocument(blocks: [
-            .details(
-                summary: PresentationText("💭 Thinking"),
-                blocks: [
-                    .paragraph(PresentationText("Use **bold** and <b>tags</b>.")),
-                    .paragraph(PresentationText("Then `run` it.")),
-                ],
-                isOpen: false
-            ),
-        ]))
-        let encoded = try JSONEncoder().encode(TerminalTelegramRichMessageRenderer.render(document))
-        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        let blocks = try #require(object["blocks"] as? [[String: Any]])
-        #expect(blocks.count == 1)
-        #expect(blocks[0]["type"] as? String == "details")
-        #expect(blocks[0]["is_open"] == nil)
-        let texts = Self.texts(in: blocks[0])
-        #expect(texts.joined(separator: "|") == "💭 Thinking|Use **bold** and <b>tags</b>.|Then `run` it.")
-    }
-
     /// A long reasoning block is cut to 3 900 characters with an ellipsis; a
     /// blank one is no message.
     @Test
@@ -399,16 +373,31 @@ struct TerminalTelegramTurnActivityTests {
         #expect(TerminalTelegramTurnActivity.boundedThought("  short  ") == "short")
     }
 
-    /// The fallback is the heading over the reasoning, which an italic entity
-    /// covers in UTF-16 units: nothing of the text is parsed.
+    /// The thinking message is the marker and the reasoning in one
+    /// expandable blockquote entity, with no heading or blank line outside
+    /// it, and an italic entity over the reasoning, in UTF-16 units: nothing
+    /// of the text is parsed, so the markup it carries stays literal, and a
+    /// blank reasoning carries no entity.
     @Test
-    func theFallbackStylesTheThoughtInItalicByEntity() {
+    func theThinkingMessageQuotesTheThoughtInItalicByEntities() {
         let thought = "Use *stars*, _lines_ and <i>tags</i> 👍"
-        let fallback = TerminalTelegramTurnActivity.thoughtFallback(thought)
-        #expect(fallback.text == "💭 Thinking\n\n\(thought)")
-        #expect(fallback.entities == [
-            .italic(offset: "💭 Thinking\n\n".utf16.count, length: thought.utf16.count),
+        let message = TerminalTelegramTurnActivity.thoughtMessage(thought)
+        #expect(message.text == "💭 \(thought)")
+        let offset = "💭 ".utf16.count
+        #expect(message.entities == [
+            .expandableBlockquote(offset: 0, length: message.text.utf16.count),
+            .italic(offset: offset, length: thought.utf16.count),
         ])
+
+        let markup = "**bold**, <b>tags</b> and `code`"
+        let literal = TerminalTelegramTurnActivity.thoughtMessage("  \(markup)\n")
+        #expect(literal.text == "💭 \(markup)")
+        #expect(literal.entities == [
+            .expandableBlockquote(offset: 0, length: literal.text.utf16.count),
+            .italic(offset: offset, length: markup.utf16.count),
+        ])
+
+        #expect(TerminalTelegramTurnActivity.thoughtMessage(" \n ").entities.isEmpty)
     }
 
     /// The sub-agent status is the heading over single lines of at most 160
@@ -431,54 +420,57 @@ struct TerminalTelegramTurnActivityTests {
 
     // MARK: - Wire
 
-    /// The thinking message goes out as `sendRichMessage` with the details
-    /// block; only a definite rejection (400) falls back, once, to a plain
-    /// `sendMessage` styled by an italic entity and without a parse mode; an
-    /// ambiguous failure (500) never falls back.
-    @Test(arguments: [200, 400, 500])
-    func theThinkingMessageFallsBackToItalicEntitiesOnlyOnADefiniteRejection(richStatus: Int) async throws {
-        let transport = ThoughtWireTransport(richStatus: richStatus)
+    /// The thinking message goes out as exactly one `sendMessage` and never
+    /// as a rich message: the marker and the reasoning as plain text, without
+    /// a parse mode, all of it covered by an `expandable_blockquote` and the
+    /// reasoning by an `italic` entity, in UTF-16 units.
+    @Test
+    func theThinkingMessageIsOneSendMessageWithQuoteAndItalicEntities() async throws {
+        let transport = ThoughtWireTransport()
         let support = try Self.makeSupportDirectory()
         defer { try? FileManager.default.removeItem(at: support) }
-        let thought = "Check *this* <b>first</b>."
+        let thought = "Check *this* <b>first</b> 👍"
         try await AppStorageDirectory.withSupportDirectoryURL(support) {
             let service = TerminalTelegramControlService(transportFactory: { transport })
             let epoch = try #require(try await service.start().wireLifecycleEpoch)
-            if richStatus == 500 {
-                await #expect(throws: TerminalTelegramControlError.self) {
-                    _ = try await service.sendThoughtMessageWithFallback(
-                        thought, to: 42, topicID: nil, fence: Self.makeFence(epoch: epoch)
-                    )
-                }
-            } else {
-                _ = try await service.sendThoughtMessageWithFallback(
-                    thought, to: 42, topicID: nil, fence: Self.makeFence(epoch: epoch)
+            let messageID = try await service.sendThoughtMessage(
+                thought, to: 42, topicID: nil, fence: Self.makeFence(epoch: epoch)
+            )
+            #expect(messageID == 8)
+            _ = await service.stop()
+        }
+        let requests = transport.requests
+        #expect(requests.map(\.method) == ["sendMessage"])
+        let body = try Self.jsonObject(try #require(requests.first).body)
+        #expect(body["text"] as? String == "💭 \(thought)")
+        #expect(body["parse_mode"] == nil)
+        let entities = try #require(body["entities"] as? [[String: Any]])
+        #expect(entities.map { $0["type"] as? String } == ["expandable_blockquote", "italic"])
+        #expect(entities.map { $0["offset"] as? Int } == [0, "💭 ".utf16.count])
+        #expect(entities.map { $0["length"] as? Int } == [
+            "💭 \(thought)".utf16.count, thought.utf16.count,
+        ])
+    }
+
+    /// A thinking message the Bot API rejects (400) or fails on (500) throws
+    /// after exactly one request: it is not retried, so an ambiguous send
+    /// never becomes a duplicate, and it is never resent as a rich message.
+    @Test(arguments: [400, 500])
+    func aFailedThinkingMessageIsNeverRetried(status: Int) async throws {
+        let transport = ThoughtWireTransport(sendMessageStatus: status)
+        let support = try Self.makeSupportDirectory()
+        defer { try? FileManager.default.removeItem(at: support) }
+        try await AppStorageDirectory.withSupportDirectoryURL(support) {
+            let service = TerminalTelegramControlService(transportFactory: { transport })
+            let epoch = try #require(try await service.start().wireLifecycleEpoch)
+            await #expect(throws: TerminalTelegramControlError.self) {
+                _ = try await service.sendThoughtMessage(
+                    "Check this first.", to: 42, topicID: nil, fence: Self.makeFence(epoch: epoch)
                 )
             }
             _ = await service.stop()
         }
-        let requests = transport.requests
-        let rich = try #require(requests.first)
-        #expect(rich.method == "sendRichMessage")
-        let richBody = try Self.jsonObject(rich.body)
-        let richMessage = try #require(richBody["rich_message"] as? [String: Any])
-        let blocks = try #require(richMessage["blocks"] as? [[String: Any]])
-        #expect(blocks.first?["type"] as? String == "details")
-        #expect(richBody["parse_mode"] == nil)
-        switch richStatus {
-        case 400:
-            #expect(requests.map(\.method) == ["sendRichMessage", "sendMessage"])
-            let fallback = try Self.jsonObject(requests[1].body)
-            #expect(fallback["text"] as? String == "💭 Thinking\n\n\(thought)")
-            #expect(fallback["parse_mode"] == nil)
-            let entities = try #require(fallback["entities"] as? [[String: Any]])
-            #expect(entities.count == 1)
-            #expect(entities.first?["type"] as? String == "italic")
-            #expect(entities.first?["offset"] as? Int == "💭 Thinking\n\n".utf16.count)
-            #expect(entities.first?["length"] as? Int == thought.utf16.count)
-        default:
-            #expect(requests.map(\.method) == ["sendRichMessage"])
-        }
+        #expect(transport.requests.map(\.method) == ["sendMessage"])
     }
 
     /// A message without entities keeps its wire content, the JSON of the
@@ -538,21 +530,6 @@ struct TerminalTelegramTurnActivityTests {
 
     // MARK: - Helpers
 
-    /// Every string held under a `text` key of a decoded rich block, in
-    /// document order.
-    private static func texts(in value: Any) -> [String] {
-        if let text = value as? String {
-            return [text]
-        }
-        if let array = value as? [Any] {
-            return array.flatMap { texts(in: $0) }
-        }
-        guard let object = value as? [String: Any] else { return [] }
-        return ["summary", "text", "blocks"].flatMap { key in
-            object[key].map { texts(in: $0) } ?? []
-        }
-    }
-
     private static func makeSupportDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("telegram-turn-activity-\(UUID().uuidString)", isDirectory: true)
@@ -578,14 +555,14 @@ struct TerminalTelegramTurnActivityTests {
     }
 }
 
-/// Records every request after the lifecycle calls, rejecting
-/// `sendRichMessage` with `richStatus` unless it is 200.
+/// Records every request after the lifecycle calls, rejecting `sendMessage`
+/// with `sendMessageStatus` unless it is 200.
 private final class ThoughtWireTransport: TelegramHTTPTransport, @unchecked Sendable {
     struct Request: Sendable { let method: String; let body: Data }
     private let storage = Mutex<[Request]>([])
-    private let richStatus: Int
+    private let sendMessageStatus: Int
 
-    init(richStatus: Int = 200) { self.richStatus = richStatus }
+    init(sendMessageStatus: Int = 200) { self.sendMessageStatus = sendMessageStatus }
 
     func send(
         url: URL, method: String, headers: [RemoteHTTPHeader], body: Data?, timeout: Duration?
@@ -603,10 +580,10 @@ private final class ThoughtWireTransport: TelegramHTTPTransport, @unchecked Send
             break
         }
         storage.withLock { $0.append(Request(method: apiMethod, body: body ?? Data())) }
-        if apiMethod == "sendRichMessage", richStatus != 200 {
+        if apiMethod == "sendMessage", sendMessageStatus != 200 {
             return (
-                richStatus,
-                Data("{\"ok\":false,\"error_code\":\(richStatus),\"description\":\"rich messages unsupported\"}".utf8)
+                sendMessageStatus,
+                Data("{\"ok\":false,\"error_code\":\(sendMessageStatus),\"description\":\"message rejected\"}".utf8)
             )
         }
         return (200, Data(#"{"ok":true,"result":{"message_id":8,"chat":{"id":42,"type":"private"},"text":"ok"}}"#.utf8))

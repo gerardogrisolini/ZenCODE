@@ -812,7 +812,7 @@ extension TelegramChannel {
             return false
         }
         do {
-            _ = try await controlService.sendThoughtMessageWithFallback(
+            _ = try await controlService.sendThoughtMessage(
                 thought, to: chatID, topicID: topicID, fence: fence
             )
             return true

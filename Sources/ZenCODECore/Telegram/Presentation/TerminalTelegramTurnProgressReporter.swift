@@ -21,8 +21,9 @@ enum TerminalTelegramTurnPayload: Sendable {
     case tasks(String)
     case authorization(String)
     case summary(String)
-    /// One completed reasoning block, sent as an expandable details block
-    /// (see ``TerminalTelegramTurnActivity/thoughtDocument(_:)``).
+    /// One completed reasoning block, sent as a plain-text message that an
+    /// expandable blockquote covers by entity
+    /// (see ``TerminalTelegramTurnActivity/thoughtMessage(_:)``).
     case thought(String)
     /// The turn's sub-agent status, one message edited in place.
     case subAgentStatus(String)

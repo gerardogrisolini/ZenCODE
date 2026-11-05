@@ -637,8 +637,9 @@ follows the catch-up. An *Always* given in the chat covers the session in the
 terminal too.
 
 During a turn driven from Telegram the chat receives, in order and with no
-setting to turn on: each completed reasoning block, as a message with an
-expandable `💭 Thinking` section (cut at 3,900 characters), after the response
+setting to turn on: each completed reasoning block, as one collapsed quotation
+that starts with `💭` and the reasoning, shows only its first lines and expands
+with a tap (cut at 3,900 characters), after the response
 written before it; each response the agent wrote before a reasoning block or a
 tool call, as a message of its own; the agent's tool calls, as lines of one
 activity message edited in place, `⏳ <tool and target>`, which becomes `✅`, or

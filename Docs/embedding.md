@@ -876,7 +876,7 @@ What happens at the handover:
   presented to the app.
 - During a turn the chat drives, the slot's presenter hands the channel what
   the controller presents, and the channel sends the chat, with no setting:
-  each response, each completed reasoning block as a `💭 Thinking` message,
+  each response, each completed reasoning block as a `💭` expandable quotation,
   the root tool calls as the lines of one activity message edited in place
   (the call's title and its outcome, never its arguments or result), the
   task-graph card, and the sub-agent overview as one `🤖 Sub-agent` message

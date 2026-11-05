@@ -160,8 +160,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   message and the next call opens a new one below it; editing the task-graph
   card or the sub-agent message in place does not. Updates in quick
   succession are merged into fewer edits, and the message stays in the chat.
-  Each completed reasoning block arrives as a message with an expandable
-  `💭 Thinking` section, cut at 3,900 characters, after the response written
+  Each completed reasoning block arrives as one collapsed quotation that
+  starts with `💭` and the reasoning, shows only its first lines and expands
+  with a tap, cut at 3,900 characters, after the response written
   before it. While sub-agents work, a `🤖 Sub-agent` message, one per turn and
   edited in place, shows their summary and one line per agent; it is created
   only when the overview changed since Telegram began to drive the session.
