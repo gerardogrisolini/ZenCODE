@@ -223,9 +223,10 @@ The composer is at the bottom of the window.
   which you can remove, and runs when the turn ends. At most 32 prompts wait:
   a full queue refuses the prompt with the terminal's message, keeping your
   draft. A command sent during a turn is never queued: `/help`, `/artifacts`,
-  and `/tasks` (alone, or with `status`, `list`, or `ls`) run at once, beside
-  the turn, and any other command, `/exit` included, is refused with the
-  terminal's message, keeping your draft. A message to the chat is never
+  `/tasks` (alone, or with `status`, `list`, or `ls`), `/telegram`, and
+  `/telegram off` run at once, beside the turn, and any other command, `/exit`
+  included, is refused with the terminal's message, keeping your draft. So is
+  `/telegram on` (see [Telegram](#telegram)). A message to the chat is never
   queued either: it is sent at once.
 - The paperclip opens the attachment picker (images and movies), and files
   dropped on the composer are attached, one `/attach` each. `/attach list` and
@@ -258,8 +259,9 @@ is transient, as in the terminal: nothing of it is saved with the session, and
 a new or loaded session starts with an empty reader. For a reused session id
 the Core keeps the messages it has not delivered yet, and the reader gets them
 when it attaches. The window keeps the latest 512 messages.
-Telegram is not available in the app, so the relay of the room to a Telegram
-chat does not apply.
+While Telegram drives the window's session, the room is relayed to the linked
+chat, as for the terminal, and the coordinator turns that the room asks for run
+from Telegram: see [Telegram](#telegram).
 
 ### Writing to the chat
 
@@ -297,6 +299,7 @@ file-change summary, the status bar. Stop and Esc end it like any turn, and a
 prompt you send meanwhile waits in the queue. While the window is busy the
 messages wait, and the Core offers them again when it is idle; the same
 happens when the turn does not start, for example when you stop it first.
+While Telegram drives the session the window takes none: Telegram runs them.
 
 ### The chat panel
 
@@ -392,6 +395,74 @@ of the current session. They, and loading or deleting a saved session, select
 the Chat tab first. The rest of `/sessions` (a named snapshot, `compact`,
 `restore`) is typed in the composer.
 
+## Telegram
+
+The window can hand its session to the linked Telegram chat, as `/telegram`
+does in the terminal. The chat side (what it runs and what it receives) is
+described in [zen.md](zen.md); this section is what the window does.
+`/telegram` is offered only when Telegram is set up and paired (from `zen` with
+`/setup`); the setting is read again whenever the window refreshes its status
+bar. Otherwise every `/telegram` line answers `ZenCODE: unknown command
+'/telegram'.`, as in the terminal.
+
+- `/telegram` alone shows the link status.
+- `/telegram on` hands the window's session to the linked Telegram chat.
+- `/telegram off` takes it back.
+- Any other argument answers `Usage: /telegram [on|off]`.
+
+The app names itself `app` in the texts sent to the chat: for example, `/undo`
+in the chat answers to use it in the app after `/telegram off`.
+
+The notices of the channel show as message rows in the conversation: the
+activation text `Telegram remote control is active.` with the linked chat, a
+topic that could not be created, the poll-health notices, and the failures.
+After the first activation the window adds the row `Session driven from
+Telegram. Type /telegram off to take it back.`
+
+`/telegram` and `/telegram off` run also while a turn runs, beside it.
+`/telegram on` is refused while the window runs a line (a turn, or a command
+waiting for an answer) with `ZenCODE: command '/telegram' is unavailable while
+a prompt is running.` In the terminal `/telegram on` moves a running turn to
+the chat; in the app, wait for the turn to end, or stop it, then send
+`/telegram on`.
+
+### While Telegram drives the session
+
+The chat runs prompts, voice notes, `/plan`, `/goal`, `/review`, the replies to
+pending questions, and `/allow`, `/always`, and `/deny`, as described for the
+terminal in [zen.md](zen.md). The window keeps showing the conversation live
+(the prompts from Telegram, the responses, the tool calls), but it is dormant:
+it accepts only `/telegram`, `/telegram off`, and `/exit`. It refuses these
+with `ZenCODE: this session is driven from Telegram. Use /telegram off to take
+it back.`:
+
+- any other line, and a live `@mention` to the shared chat;
+- the Full Access toggle (⌃G, **Session > Full Access**);
+- attaching files;
+- loading or deleting a saved session from the sidebar.
+
+The prompts already queued wait, whole, and run after `/telegram off`. Stop has
+no effect on a turn the chat runs: stop it from the chat. A question the
+session had open in the window is asked again in the chat. The coordinator
+turns that the shared chat asks for run from Telegram, which also relays the
+room to the chat, as for the terminal (see [Shared chat](#shared-chat)). An
+*Always* given in the chat covers the session in the window afterwards.
+
+### Taking the session back
+
+`/telegram off` shows only `Telegram remote control stopped.` Unlike the
+terminal, it shows no `Catch-up from Telegram:` block, because the window
+already showed everything live. A turn still running from Telegram goes on in
+the window as its own: the prompts sent meanwhile are queued, the commands that
+run during a turn run beside it, and Stop stops it.
+
+### The link and the sessions
+
+A new or loaded session keeps the link, and the session's Telegram topic moves
+to it, named after the saved session or, for a session never saved,
+`<folder> · <last 8 characters of the session id>`, like the terminal. The link
+is never saved: closing the window ends it.
+
 ## Toolbar and menus
 
 The toolbar starts with the agent button, which shows the agent's name, then,
@@ -449,8 +520,8 @@ starts in the default mode.
 
 ## Commands
 
-The app runs the shared slash commands of the Chat API, with a `/artifacts`
-of its own, and `/exit`:
+The app runs the shared slash commands of the Chat API, with its own
+`/artifacts`, `/telegram`, and `/exit`:
 
 | Commands | Notes |
 | --- | --- |
@@ -462,6 +533,7 @@ of its own, and `/exit`:
 | `/artifacts` | Shows or hides the artifacts sidebar; runs while a turn runs |
 | `/changes`, `/undo`, `/review` | Changes (`/changes diff`), undo, review |
 | `/tasks`, `/plan`, `/goal` | Task graph, planning, and goals |
+| `/telegram` | Status, `on`, `off` of the Telegram remote control; offered once Telegram is set up; `/telegram` and `/telegram off` run while a turn runs; see [Telegram](#telegram) |
 | `/exit` | Closes the window; refused while a turn runs |
 
 ## Limits
@@ -469,10 +541,12 @@ of its own, and `/exit`:
 Some features of the terminal chat are not in the app. They stay in the
 terminal:
 
-- `/setup`, `/voice` and dictation, `/telegram`, `/feature`, `/cron`, and
-  `/ds4` are not offered, and answer as unknown commands. `/tools logs`
-  answers that it is not available in the app.
-- The shared chat is not relayed to Telegram, which the app does not offer.
+- `/setup`, `/voice` and dictation, `/feature`, `/cron`, and `/ds4` are not
+  offered, and answer as unknown commands. `/tools logs` answers that it is
+  not available in the app.
+- Telegram differs from the terminal in two points: `/telegram on` is refused
+  while the window runs a line, and `/telegram off` shows no `Catch-up from
+  Telegram:` block (see [Telegram](#telegram)).
 - There is no `.app` bundle: the app runs as the bare executable that
   `zen --ui` installs in `~/.zencode/app/current`, from `swift run`, or from a
   release build.

@@ -62,6 +62,20 @@ import ZenCODECore
 /// (``ZenWindowStatus/localExecAccessMode``) and in a message row. A window
 /// opened later starts with the current mode, without the row.
 ///
+/// `/telegram on` hands the window's slot to the Telegram chat that setup
+/// linked, as in the terminal: the chat drives the session, and the window is
+/// dormant (``isDrivenFromTelegram``). It still shows the session live
+/// through the reducer, but runs only `/telegram`, `/telegram off`, and
+/// `/exit` (the host refuses every other line), refuses a live mention, the
+/// access-mode switch, attachments, and the sidebar's loads and deletes with
+/// `ChatSlotAdmission.dormantRefusalText`, keeps its queue whole, stops
+/// nothing, and leaves the room's coordinator turns to the chat. The texts
+/// the channel has for the window arrive as message rows. `/telegram off`
+/// takes the slot back, with no catch-up (the window showed it all live); a
+/// turn from Telegram still running then is adopted: it counts as the
+/// window's line until its reservation is released
+/// (``adoptedTelegramPromptID``), and Stop stops it.
+///
 /// Every action returns at once; the work runs in tasks that hop to the chat
 /// actor.
 @MainActor
@@ -264,6 +278,25 @@ public final class ZenWindowSession: Identifiable {
     /// wait on itself.
     @ObservationIgnored var sharedChatClaimWillResolve:
         (@Sendable (AgentSharedChatAutoTriggerResolution) async -> Void)?
+
+    // MARK: Telegram
+
+    /// Telegram drives the window's slot: the window is dormant. Read from the
+    /// host after each `/telegram on` and `/telegram off`, the only lines that
+    /// change it. No view reads it; a test sets it to make a window dormant
+    /// without a link.
+    @ObservationIgnored var isDrivenFromTelegram = false
+    /// The prompt of the turn from Telegram that `/telegram off` adopted,
+    /// while it is still reserved: the window treats the turn as its line
+    /// meanwhile (``watchAdoptedTelegramTurn(_:)``).
+    @ObservationIgnored private(set) var adoptedTelegramPromptID: UUID?
+    /// Waits between two reads of the adopted turn's reservation; throws when
+    /// the task is cancelled. Replaced by tests.
+    @ObservationIgnored var adoptedTelegramTurnSleep: @Sendable (Duration) async throws -> Void = {
+        try await Task.sleep(for: $0)
+    }
+    /// Follows ``adoptedTelegramPromptID`` until its reservation is released.
+    @ObservationIgnored private var adoptedTelegramTurnTask: Task<Void, Never>?
 
     // MARK: Private state
 
@@ -712,15 +745,17 @@ public final class ZenWindowSession: Identifiable {
     /// Submits ``draft``: records it in the prompt history and routes it as
     /// the terminal does: a leading live `@mention` is sent to the shared
     /// chat at once, even while a line runs, and never queued (one without a
-    /// message is refused); any other line goes through ``ZenLineRoute``. The
-    /// draft is cleared unless the line is refused. A blank draft does
-    /// nothing.
+    /// message is refused, and so is every one while Telegram drives the
+    /// slot); any other line goes through ``ZenLineRoute``. The draft is
+    /// cleared unless the line is refused. A blank draft does nothing.
     public func submitDraft() {
         let line = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !line.isEmpty, !isClosed else { return }
         history.record(line)
         switch SharedChatMentionParser.parse(from: line, readableHandles: mentionHandles) {
         case let .route(mention):
+            // A refused line: the draft is kept.
+            guard !refusedWhileDormant() else { return }
             draft = ""
             sendMention(mention, line: line)
         case .missingText:
@@ -748,8 +783,13 @@ public final class ZenWindowSession: Identifiable {
     private func route(_ line: String) -> Bool {
         let route = ZenLineRoute.route(
             for: line,
-            isLineRunning: isBusy,
-            hasQueuedLines: !queuedLines.isEmpty,
+            // A turn adopted from Telegram runs as the window's line.
+            isLineRunning: isBusy || adoptedTelegramPromptID != nil,
+            // While Telegram drives the slot the queue waits, whole, for
+            // `/telegram off`, which must run now rather than wait behind it:
+            // every line runs, and `perform` refuses all but the lines that
+            // take the slot back.
+            hasQueuedLines: !isDrivenFromTelegram && !queuedLines.isEmpty,
             registry: ZenAppCommands.registry,
             context: commandContext
         )
@@ -805,8 +845,12 @@ public final class ZenWindowSession: Identifiable {
         sharedChatConsumerStateDidChange()
     }
 
+    /// Starts the oldest queued line once nothing runs: not while Telegram
+    /// drives the slot (the queue waits, whole, for `/telegram off`, as in the
+    /// terminal) nor while a turn adopted from Telegram runs.
     private func drainQueueIfIdle() {
-        guard !isBusy, !isClosed, !queuedLines.isEmpty else { return }
+        guard !isBusy, !isClosed, !isDrivenFromTelegram, adoptedTelegramPromptID == nil,
+              !queuedLines.isEmpty else { return }
         let next = queuedLines.removeFirst()
         startLine(next.text)
     }
@@ -902,9 +946,10 @@ public final class ZenWindowSession: Identifiable {
         )
     }
 
-    /// The commands only the window runs: `/exit`, and `/artifacts`, which
+    /// The commands only the window runs: `/exit`, `/artifacts`, which
     /// toggles the artifacts sidebar (with arguments it answers the core's
-    /// notice and toggles nothing); every other channel command of the
+    /// notice and toggles nothing), and `/telegram`
+    /// (``runTelegramCommand(_:)``); every other channel command of the
     /// shared layer is not offered by the app.
     private func runChannelCommand(_ line: String) async {
         switch ZenAppCommands.registry.descriptor(forLine: line)?.command {
@@ -917,6 +962,8 @@ public final class ZenWindowSession: Identifiable {
             } else {
                 await ZenWindowSteps.present([.artifactsTakeNoArguments], in: sessionHost, slotID: slotID)
             }
+        case ZenAppCommands.telegram.command:
+            await runTelegramCommand(line)
         default:
             await appendLocal(.local(text: "`\(line)` is not available in the app.", isFailure: true))
         }
@@ -1078,7 +1125,9 @@ public final class ZenWindowSession: Identifiable {
     /// refuses the open requests, so a command waiting for an answer unwinds.
     /// The line's stop is set at once, before anything suspends, so a turn
     /// the line has not started yet never starts, reserved or not. The queue
-    /// is kept.
+    /// is kept. A turn adopted from Telegram is stopped by the slot's
+    /// Telegram channel; while Telegram drives the slot nothing is stopped,
+    /// as the terminal's Esc does not stop a turn the chat runs.
     public func stop() {
         guard !isClosed else { return }
         lineStop?.request()
@@ -1127,9 +1176,11 @@ public final class ZenWindowSession: Identifiable {
     // MARK: - Attachments
 
     /// Stages `urls` for the next prompt, one `/attach` command per file, as
-    /// one line of the executor. Refused while a line runs.
+    /// one line of the executor. Refused while a line runs, and, with one
+    /// row, while Telegram drives the slot.
     public func attach(_ urls: [URL]) {
         guard !isClosed, !urls.isEmpty else { return }
+        guard !refusedWhileDormant() else { return }
         let lines = urls.map(Self.attachCommandLine(for:))
         guard !isBusy else {
             refuseWhileBusy(command: "/attach")
@@ -1168,10 +1219,12 @@ public final class ZenWindowSession: Identifiable {
     /// Loads the saved session `name` of the workspace into a new
     /// incarnation, with the loading indicator (``loadingSavedSessionName``,
     /// ``loadingSavedSessionStep``) until the window shows how the load
-    /// ended. Refused while a line runs.
+    /// ended. Refused while a line runs, and while Telegram drives the slot
+    /// (the load does not pass through the host's admission of a line).
     public func loadSavedSession(named name: String) {
         guard !isClosed else { return }
         selectTab(.chat)
+        guard !refusedWhileDormant() else { return }
         guard !isBusy else {
             refuseWhileBusy(command: "/sessions")
             return
@@ -1184,10 +1237,12 @@ public final class ZenWindowSession: Identifiable {
     }
 
     /// Deletes the saved session `name` of the workspace. Refused while a
-    /// line runs.
+    /// line runs, and while Telegram drives the slot (the delete does not
+    /// pass through the host's admission of a line).
     public func deleteSavedSession(named name: String) {
         guard !isClosed else { return }
         selectTab(.chat)
+        guard !refusedWhileDormant() else { return }
         guard !isBusy else {
             refuseWhileBusy(command: "/sessions")
             return
@@ -1321,9 +1376,12 @@ public final class ZenWindowSession: Identifiable {
 
     /// Switches the app's access mode, for every window, as the terminal's
     /// Ctrl+G does (``ZenAppRuntime/toggleLocalExecAccessMode()``); also
-    /// while a turn runs. Does nothing once the window closed.
+    /// while a turn runs. Refused while Telegram drives the slot: the session
+    /// the chat drives keeps its access mode. Does nothing once the window
+    /// closed.
     public func toggleFullAccess() {
         guard !isClosed else { return }
+        guard !refusedWhileDormant() else { return }
         runtime?.toggleLocalExecAccessMode()
     }
 
@@ -1401,9 +1459,10 @@ public final class ZenWindowSession: Identifiable {
         }
     }
 
-    /// A line of the window runs or waits.
+    /// A line of the window runs or waits; a turn adopted from Telegram runs
+    /// as its line.
     private var isLineRunningOrWaiting: Bool {
-        isBusy || !queuedLines.isEmpty
+        isBusy || adoptedTelegramPromptID != nil || !queuedLines.isEmpty
     }
 
     /// A claim of the window is on its way to the Core
@@ -1426,7 +1485,8 @@ public final class ZenWindowSession: Identifiable {
     /// Declares the window's busy state on its observation, so the Core never
     /// offers a coordinator turn while a line of the window runs or waits, or
     /// while a claim of the window is on its way. Called whenever ``isBusy``,
-    /// ``queuedLines``, or ``sharedChatClaimsInFlight`` change.
+    /// ``queuedLines``, ``adoptedTelegramPromptID``, or
+    /// ``sharedChatClaimsInFlight`` change.
     private func sharedChatConsumerStateDidChange() {
         guard !isClosed else { return }
         sharedChatObservation.declareConsumerBusy(isSharedChatConsumerBusy)
@@ -1527,7 +1587,10 @@ public final class ZenWindowSession: Identifiable {
     /// While the claim is on its way, the window declares itself busy
     /// (``sharedChatClaimsInFlight``), so no idle declaration made meanwhile
     /// can land behind the claim and release it; once the window decided
-    /// what to do with the result, its real state is declared again.
+    /// what to do with the result, its real state is declared again. While
+    /// Telegram drives the slot the window neither claims nor declines a
+    /// trigger of its room: the slot's Telegram channel observes the room and
+    /// claims it, as in the terminal.
     private func answerSharedChatTrigger(
         _ trigger: AgentSharedChatAutoTrigger,
         observation: ZenSharedChatObservation.Observation
@@ -1540,6 +1603,7 @@ public final class ZenWindowSession: Identifiable {
             await runner.declineSharedChatAutoTrigger(id: triggerID, rootSessionID: triggerRoomID)
             return
         }
+        guard !isDrivenFromTelegram else { return }
         guard !isLineRunningOrWaiting else {
             // Ownerless on purpose: this may be a re-offered duplicate of a
             // trigger the window claimed, whose turn must not be released.
@@ -1747,6 +1811,139 @@ public final class ZenWindowSession: Identifiable {
         return nil
     }
 
+    // MARK: - Telegram
+
+    /// `/telegram`, `/telegram on`, and `/telegram off`, as the terminal runs
+    /// them: the argument, in lowercase, asks for the link's status, hands
+    /// the slot to Telegram, or takes it back; any other argument answers the
+    /// usage.
+    private func runTelegramCommand(_ line: String) async {
+        let argument = ChatCommandRegistry.arguments(
+            from: line.trimmingCharacters(in: .whitespacesAndNewlines),
+            commandPrefix: ZenAppCommands.telegram.command
+        ).lowercased()
+        switch argument {
+        case "":
+            let status = await sessionHost.telegramStatusText(in: slotID)
+            await appendLocal(.local(text: Self.withoutTrailingNewlines(status), isFailure: false))
+        case "on":
+            await startTelegramControl()
+        case "off":
+            await stopTelegramControl()
+        default:
+            await appendLocal(.local(text: Self.telegramUsageText, isFailure: false))
+        }
+    }
+
+    /// `/telegram on`: hands the slot to Telegram
+    /// (``ZenWindowSteps/activateTelegram(in:slotID:notice:)``). The channel
+    /// tells the window the link is active through its notice sink, installed
+    /// before the first attach so the activation text is not lost; each notice
+    /// lands as a row before the activation goes on, so the window's status
+    /// line follows it. ``ZenLineRoute`` refuses it while the window runs a
+    /// line, and a `/telegram on` while Telegram drives the slot never gets
+    /// here: the host refuses it as a line of a dormant channel.
+    private func startTelegramControl() async {
+        let activation = await ZenWindowSteps.activateTelegram(
+            in: sessionHost,
+            slotID: slotID,
+            notice: { [weak self] text, isFailure in
+                await self?.presentTelegramNotice(text, isFailure: isFailure)
+            }
+        )
+        guard !isClosed else { return }
+        isDrivenFromTelegram = activation.isDriving
+        if let failureText = activation.failureText {
+            await appendLocal(.local(text: failureText, isFailure: true))
+        }
+        if !activation.wasDriving, activation.isDriving {
+            await appendLocal(.local(text: Self.telegramDrivingStatusText, isFailure: false))
+        }
+    }
+
+    /// `/telegram off`: takes the slot back
+    /// (``ZenWindowSteps/deactivateTelegram(in:slotID:)``), with no catch-up:
+    /// the window showed what the chat did, live. The channel tells the link
+    /// stopped through its notice sink; without a Telegram channel (no
+    /// `/telegram on` ever ran) the window tells it itself, as the channel
+    /// does when it detaches. A turn from Telegram still running is adopted
+    /// (``watchAdoptedTelegramTurn(_:)``); otherwise the queue drains once the
+    /// line ends.
+    private func stopTelegramControl() async {
+        let deactivation = await ZenWindowSteps.deactivateTelegram(in: sessionHost, slotID: slotID)
+        guard !isClosed else { return }
+        isDrivenFromTelegram = deactivation.isDriving
+        guard deactivation.hadChannel else {
+            await appendLocal(.local(
+                text: Self.withoutTrailingNewlines(TelegramChannel.stoppedNoticeText),
+                isFailure: false
+            ))
+            return
+        }
+        if let promptID = deactivation.adoptedPromptID {
+            watchAdoptedTelegramTurn(promptID)
+        }
+    }
+
+    /// A text the slot's Telegram channel has for the window (the activation
+    /// text, a poll-health notice, a failure, the stop text), as a row after
+    /// what the window shows now: a failure row for the failure channel, a
+    /// message row otherwise.
+    private func presentTelegramNotice(_ text: String, isFailure: Bool) async {
+        await appendLocal(.local(text: Self.withoutTrailingNewlines(text), isFailure: isFailure))
+    }
+
+    /// Refuses an action of the operator while Telegram drives the slot, with
+    /// the dormant text, as the terminal refuses its input then; `true` when
+    /// it refused.
+    private func refusedWhileDormant() -> Bool {
+        guard isDrivenFromTelegram else { return false }
+        appendLocalNow(.local(text: Self.dormantRefusalText, isFailure: true))
+        return true
+    }
+
+    /// Adopts the turn from Telegram that reserved `promptID`, still running
+    /// when `/telegram off` took the slot back: until its reservation is
+    /// released the window treats it as its line (prompts queue, the commands
+    /// that run while a prompt is generating run beside it, the shared chat
+    /// sees the window busy), and Stop stops it through the channel. No event
+    /// tells the release, and the snapshot may stop generating before the
+    /// channel releases the prompt, so a task reads the reservation on the
+    /// chat actor every ``adoptedTelegramTurnPollInterval``; once it is gone
+    /// (released, cancelled, another session, a closed slot) the turn ends
+    /// for the window (``adoptedTelegramTurnDidEnd(_:)``).
+    func watchAdoptedTelegramTurn(_ promptID: UUID) {
+        guard !isClosed else { return }
+        adoptedTelegramTurnTask?.cancel()
+        adoptedTelegramPromptID = promptID
+        sharedChatConsumerStateDidChange()
+        let sessionHost = sessionHost
+        let slotID = slotID
+        let sleep = adoptedTelegramTurnSleep
+        adoptedTelegramTurnTask = Task { [weak self] in
+            while await ZenWindowSteps.isReserved(promptID, in: sessionHost, slotID: slotID) {
+                do {
+                    try await sleep(Self.adoptedTelegramTurnPollInterval)
+                } catch {
+                    return
+                }
+            }
+            guard !Task.isCancelled else { return }
+            self?.adoptedTelegramTurnDidEnd(promptID)
+        }
+    }
+
+    /// The adopted turn of `promptID` ended: the window is idle again unless
+    /// a line runs, the queue drains, and its busy state is declared.
+    private func adoptedTelegramTurnDidEnd(_ promptID: UUID) {
+        guard adoptedTelegramPromptID == promptID else { return }
+        adoptedTelegramPromptID = nil
+        adoptedTelegramTurnTask = nil
+        guard !isClosed else { return }
+        drainQueueIfIdle()
+        sharedChatConsumerStateDidChange()
+    }
+
     // MARK: - Close
 
     /// Ends the window. It writes nothing from now on; its shared-chat
@@ -1805,6 +2002,9 @@ public final class ZenWindowSession: Identifiable {
         mentionTasks = [:]
         rosterTask?.cancel()
         rosterTask = nil
+        adoptedTelegramTurnTask?.cancel()
+        adoptedTelegramTurnTask = nil
+        adoptedTelegramPromptID = nil
         sharedChatObservation.stop()
         queuedLines = []
         isBusy = false
@@ -1815,12 +2015,14 @@ public final class ZenWindowSession: Identifiable {
 
     // MARK: - Testing
 
-    /// Waits until no line runs, beside or queued, no mention is being sent,
-    /// and no status read is scheduled; `false` when `timeout` passed first.
+    /// Waits until no line runs, beside or queued, no turn adopted from
+    /// Telegram runs, no mention is being sent, and no status read is
+    /// scheduled; `false` when `timeout` passed first.
     func waitUntilIdle(timeout: Duration = .seconds(10)) async -> Bool {
         let deadline = ContinuousClock.now + timeout
         while ContinuousClock.now < deadline {
-            if lineTask == nil, besideTasks.isEmpty, mentionTasks.isEmpty, queuedLines.isEmpty, statusTask == nil {
+            if lineTask == nil, besideTasks.isEmpty, mentionTasks.isEmpty, queuedLines.isEmpty,
+               adoptedTelegramPromptID == nil, statusTask == nil {
                 return true
             }
             try? await Task.sleep(for: .milliseconds(5))
@@ -1844,7 +2046,26 @@ public final class ZenWindowSession: Identifiable {
         "ZenCODE message: \(SharedChatMentionParser.inlineTerminalSafeText(error.localizedDescription))"
     }
 
-    static func text(for error: ChatSessionHostError) -> String {
+    /// The row once Telegram drives the slot, the terminal's status line.
+    static let telegramDrivingStatusText = "Session driven from Telegram. Type /telegram off to take it back."
+    /// The answer to `/telegram` with any other argument, the terminal's.
+    static let telegramUsageText = "Usage: /telegram [on|off]"
+    /// The answer of a dormant window, the host's.
+    static let dormantRefusalText = withoutTrailingNewlines(ChatSlotAdmission.dormantRefusalText)
+    /// The time between two reads of an adopted turn's reservation.
+    static let adoptedTelegramTurnPollInterval: Duration = .milliseconds(100)
+
+    /// `text` without the trailing newlines of the terminal's messages, which
+    /// the core's texts keep.
+    nonisolated static func withoutTrailingNewlines(_ text: String) -> String {
+        var text = text
+        while text.last?.isNewline == true {
+            text.removeLast()
+        }
+        return text
+    }
+
+    nonisolated static func text(for error: ChatSessionHostError) -> String {
         switch error {
         case .sessionBusy:
             "ZenCODE: a prompt is already running in this session."
@@ -1908,6 +2129,27 @@ enum ZenTurnOutcome: Sendable {
     case cancelledBeforeStart
     /// The turn failed or was cancelled while it ran.
     case failed(any Error)
+}
+
+/// How a `/telegram on` ended, read in the step that ran it.
+struct ZenTelegramActivation: Sendable {
+    /// Telegram drove the slot before the activation.
+    let wasDriving: Bool
+    /// Telegram drives the slot after it.
+    let isDriving: Bool
+    /// The failure row of an activation that threw; `nil` otherwise.
+    let failureText: String?
+}
+
+/// How a `/telegram off` ended, read in the step that ran it.
+struct ZenTelegramDeactivation: Sendable {
+    /// The slot had a Telegram channel: a `/telegram on` created it.
+    let hadChannel: Bool
+    /// Telegram drives the slot after it.
+    let isDriving: Bool
+    /// The prompt of the turn from Telegram still running, which the window
+    /// adopts; `nil` when none runs.
+    let adoptedPromptID: UUID?
 }
 
 /// The window's steps that read and write the host in one hop.
@@ -2050,20 +2292,28 @@ enum ZenWindowSteps {
         let overviews: [ChatTaskGraphOverview]
     }
 
-    /// Cancels the prompt reserved on the slot, if one is; `true` when it
-    /// cancelled one.
-    static func cancelPrompt(in sessionHost: ChatSessionHost, slotID: ChatSlotID) -> Bool {
-        guard sessionHost.incarnation(in: slotID)?.activePromptID != nil else { return false }
-        return sessionHost.cancelPrompt(in: slotID) != nil
+    /// Cancels the prompt reserved on the slot, if one is; the id of the
+    /// prompt it cancelled. Nothing is fenced when no prompt is reserved.
+    static func cancelPrompt(in sessionHost: ChatSessionHost, slotID: ChatSlotID) -> UUID? {
+        guard sessionHost.incarnation(in: slotID)?.activePromptID != nil else { return nil }
+        return sessionHost.cancelPrompt(in: slotID)
     }
 
-    /// The stop of a window, in one step: cancels the prompt reserved on the
-    /// slot and refuses the open requests of the session it runs now; `true`
-    /// when it cancelled a prompt.
-    static func stop(in sessionHost: ChatSessionHost, slotID: ChatSlotID) -> Bool {
+    /// The stop of a window: in one step, cancels the prompt reserved on the
+    /// slot and refuses the open requests of the session it runs now; then,
+    /// when the cancelled prompt is a turn of the slot's Telegram channel (one
+    /// the window adopted at `/telegram off`), the channel stops it (nothing
+    /// happens for the window's own prompts). `true` when it cancelled a
+    /// prompt. While Telegram drives the slot it does nothing and returns
+    /// `false`: a dormant window stops no turn the chat runs, as the
+    /// terminal's Esc does not.
+    static func stop(in sessionHost: ChatSessionHost, slotID: ChatSlotID) async -> Bool {
+        guard sessionHost.activeChannel(in: slotID) == .primary else { return false }
         let cancelled = cancelPrompt(in: sessionHost, slotID: slotID)
         sessionHost.incarnation(in: slotID)?.pendingRequestHost?.cancelPendingRequests()
-        return cancelled
+        guard let cancelled else { return false }
+        await sessionHost.stopTelegramTurnIfReserved(cancelled, in: slotID)
+        return true
     }
 
     /// Answers the request `id` of the session the slot runs now.
@@ -2074,6 +2324,79 @@ enum ZenWindowSteps {
         slotID: ChatSlotID
     ) {
         _ = sessionHost.incarnation(in: slotID)?.pendingRequestHost?.resolve(id, answer: answer)
+    }
+
+    /// `/telegram on`: the slot's Telegram channel, created now when the slot
+    /// has none, receives the window's notice sink once (the channel lives as
+    /// long as the slot, across its sessions), before its first attach; then
+    /// the slot is handed to Telegram, the window named `app` in the texts
+    /// sent to the chat. The sink awaits `notice` (`isFailure` for the
+    /// failure channel; the system and Markdown channels are message rows),
+    /// so each notice lands before what the window writes after the
+    /// activation.
+    static func activateTelegram(
+        in sessionHost: ChatSessionHost,
+        slotID: ChatSlotID,
+        notice: @escaping @Sendable (_ text: String, _ isFailure: Bool) async -> Void
+    ) async -> ZenTelegramActivation {
+        if let channel = sessionHost.telegramChannelCreatingIfNeeded(in: slotID, primaryChannelDescription: "app"),
+           channel.noticeSink == nil {
+            channel.noticeSink = { text, noticeChannel in
+                await notice(text, noticeChannel == .failure)
+            }
+        }
+        let wasDriving = sessionHost.activeChannel(in: slotID) == .telegram
+        var failureText: String?
+        do {
+            try await sessionHost.activateTelegram(in: slotID, primaryChannelDescription: "app")
+        } catch let error as TelegramChannelAttachError {
+            failureText = ZenWindowSession.withoutTrailingNewlines(error.failureText)
+        } catch let error as ChatSessionHostError {
+            failureText = ZenWindowSession.text(for: error)
+        } catch {
+            failureText = "ZenCODE: \(error.localizedDescription)"
+        }
+        return ZenTelegramActivation(
+            wasDriving: wasDriving,
+            isDriving: sessionHost.activeChannel(in: slotID) == .telegram,
+            failureText: failureText
+        )
+    }
+
+    /// `/telegram off`: without a Telegram channel nothing happens; otherwise
+    /// the slot is taken back with no catch-up, and the channel's detach
+    /// presents the stop text through its sink. The prompt reserved while
+    /// Telegram drove the slot is a turn from Telegram (the dormant window
+    /// reserves none): when it is still reserved afterwards, the window adopts
+    /// it.
+    static func deactivateTelegram(in sessionHost: ChatSessionHost, slotID: ChatSlotID) async -> ZenTelegramDeactivation {
+        guard sessionHost.telegramChannel(in: slotID) != nil else {
+            return ZenTelegramDeactivation(
+                hadChannel: false,
+                isDriving: sessionHost.activeChannel(in: slotID) == .telegram,
+                adoptedPromptID: nil
+            )
+        }
+        let wasDriving = sessionHost.activeChannel(in: slotID) == .telegram
+        let promptID = wasDriving ? sessionHost.incarnation(in: slotID)?.activePromptID : nil
+        _ = await sessionHost.deactivateTelegram(in: slotID)
+        var adoptedPromptID: UUID?
+        if let promptID, isReserved(promptID, in: sessionHost, slotID: slotID) {
+            adoptedPromptID = promptID
+        }
+        return ZenTelegramDeactivation(
+            hadChannel: true,
+            isDriving: sessionHost.activeChannel(in: slotID) == .telegram,
+            adoptedPromptID: adoptedPromptID
+        )
+    }
+
+    /// Whether `promptID` is still the prompt reserved on the session the
+    /// slot runs now: `false` once it was released or cancelled, in another
+    /// session (a prompt id belongs to one incarnation), and once the slot
+    /// closed.
+    static func isReserved(_ promptID: UUID, in sessionHost: ChatSessionHost, slotID: ChatSlotID) -> Bool {
+        sessionHost.incarnation(in: slotID)?.activePromptID == promptID
     }
 
     /// The close of a window: closing the slot fences the turn that runs,

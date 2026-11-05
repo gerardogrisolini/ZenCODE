@@ -335,8 +335,9 @@ rejected the same way, and a mention of an agent that is no longer active is
 refused. The window observes the room like the terminal does: the messages
 fill its transient `Chat` panel, and the synthetic coordinator turn that the
 Core authorises runs as a hidden turn of the window, only while it is idle.
-Telegram is not available in the app, so there is no relay of the room to a
-Telegram chat.
+While the window's session is driven from Telegram (`/telegram on` in the
+window, see [app.md](app.md#telegram)), the window leaves those turns to
+Telegram, which relays the room to the linked chat as for the terminal.
 
 Replies travel back through the same chat. Any message injected into a
 coordinator or agent turn instructs the recipient to answer through

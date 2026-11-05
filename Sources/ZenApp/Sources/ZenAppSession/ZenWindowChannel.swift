@@ -30,6 +30,12 @@ import ZenCODECore
 /// what the status bar shows (a selection, an agent, a session created anew, a
 /// new or loaded session) call ``statusFactsHandler``; the steps of a
 /// saved-session load call ``savedSessionLoadStepHandler``.
+///
+/// The session's Telegram topic follows the session as in the terminal: once
+/// a new or loaded session runs (`.newSessionDidStart`,
+/// `.savedSessionDidRestore`), the slot's Telegram channel, when a
+/// `/telegram on` created one, moves its topic to it
+/// (``rebindTelegramTopicToCurrentSession()``).
 @ChatSessionActor
 final class ZenWindowHooks: ChatSessionChannelHooks {
     weak var sessionHost: ChatSessionHost?
@@ -125,10 +131,28 @@ final class ZenWindowHooks: ChatSessionChannelHooks {
         case .newSessionDidStart, .savedSessionDidRestore:
             // On the new controller, which the slot already runs.
             await currentController?.startTaskGraphObserver()
+            await rebindTelegramTopicToCurrentSession()
             statusFactsHandler?()
         default:
             break
         }
+    }
+
+    /// Moves the session's Telegram topic to the session the slot runs now
+    /// (`/sessions new`, a load), named after the saved session or, for a
+    /// session never saved, as the channel names a new topic. The saved name
+    /// is already the restored session's when `.savedSessionDidRestore`
+    /// arrives. Nothing happens without a channel (no `/telegram on` ran in
+    /// the slot) or outside topic mode.
+    private func rebindTelegramTopicToCurrentSession() async {
+        guard let sessionHost, let slotID,
+              let channel = sessionHost.telegramChannel(in: slotID),
+              let controller = currentController else { return }
+        // The name of `TelegramChannel.defaultTopicName(workingDirectory:sessionID:)`,
+        // which is internal to the core; `rebind` bounds it as Telegram stores it.
+        let displayName = controller.savedSessionState.savedSessionName?.nilIfBlank
+            ?? "\(controller.workingDirectory.lastPathComponent) · \(controller.sessionID.suffix(8))"
+        await channel.rebind(sessionID: controller.sessionID, displayName: displayName)
     }
 }
 
@@ -249,7 +273,12 @@ struct ZenControllerFacts: Sendable {
             modelID: configuration.modelID ?? controller.environment.launchModelID,
             thinking: configuration.thinkingSelection ?? selection.thinkingOverride,
             agentName: selection.agent?.name,
-            commandContext: ZenAppCommands.context(for: selection.agent),
+            // Read at every refresh, as the terminal and ACP read it at each
+            // use: `/telegram` shows once the settings enable Telegram.
+            commandContext: ZenAppCommands.context(
+                for: selection.agent,
+                telegramConfigured: ZenAppCommands.isTelegramConfigured()
+            ),
             startupSummary: ZenStartupSummary(
                 agentName: selection.agent?.displayName,
                 activeTools: activeTools,

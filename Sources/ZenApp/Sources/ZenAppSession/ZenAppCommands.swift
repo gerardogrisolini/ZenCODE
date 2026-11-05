@@ -3,7 +3,7 @@
 //  ZenApp
 //
 //  The slash commands of an app window: the shared ones, with `/artifacts`
-//  run by the window, and `/exit`.
+//  run by the window, then `/telegram` and `/exit`.
 //
 
 import Foundation
@@ -11,6 +11,11 @@ import ZenCODECore
 
 /// The slash commands of a window.
 public enum ZenAppCommands {
+    /// The settings enable Telegram (`telegram.isEnabled` of the settings
+    /// manifest): the operator sees ``telegram``. A fact of the app, from bit
+    /// 16 up, as ``ChatCommandContext`` asks of a channel's facts.
+    public static let telegramEnabled = ChatCommandContext(rawValue: 1 << 16)
+
     /// `/exit`, which the window runs itself: it closes the window. Like the
     /// terminal's, it does not run while a prompt is generating.
     public static let exit = ChatCommandDescriptor(
@@ -31,6 +36,22 @@ public enum ZenAppCommands {
         availableDuringGeneration: true
     )
 
+    /// `/telegram`, which the window runs itself, as the terminal does: the
+    /// status of the link, `on` hands the window's slot to the linked chat,
+    /// `off` takes it back. Visible only while the settings enable Telegram
+    /// (``telegramEnabled``); hidden, it answers as an unknown command. The
+    /// status and `off` run while a prompt is generating; `on` does not, since
+    /// the window cannot hand the ending of its own running turn to Telegram.
+    public static let telegram = ChatCommandDescriptor(
+        command: "/telegram",
+        summary: "turn Telegram on/off",
+        help: "/telegram shows Telegram status. Use /telegram on or /telegram off for this window's session.",
+        scope: .channel,
+        availability: telegramEnabled,
+        availableDuringGeneration: true,
+        generationActions: ["off"]
+    )
+
     /// The shared commands of a window, in their order, with the shared
     /// `/artifacts` replaced in place by ``artifacts``.
     static let sharedDescriptors: [ChatCommandDescriptor] = ChatCommandRegistry.sharedDescriptors.map { descriptor in
@@ -38,14 +59,14 @@ public enum ZenAppCommands {
     }
 
     /// The registry of every window: the shared commands (``artifacts`` in
-    /// place of the shared `/artifacts`), then `/exit`.
+    /// place of the shared `/artifacts`), then `/telegram` and `/exit`.
     public static let registry = ChatCommandRegistry(
         shared: sharedDescriptors,
-        channel: [(after: "", descriptors: [exit])]
+        channel: [(after: "", descriptors: [telegram, exit])]
     )
 
     /// Every command of ``registry``, in display order, hidden ones included.
-    public static let descriptors: [ChatCommandDescriptor] = sharedDescriptors + [exit]
+    public static let descriptors: [ChatCommandDescriptor] = sharedDescriptors + [telegram, exit]
 
     /// The commands the operator sees in `context`, in display order.
     public static func visibleDescriptors(in context: ChatCommandContext) -> [ChatCommandDescriptor] {
@@ -53,9 +74,20 @@ public enum ZenAppCommands {
     }
 
     /// The context of a session whose selected agent is `agent`:
-    /// `.builderAgent` for the Builder, otherwise empty.
-    public static func context(for agent: AgentProfile?) -> ChatCommandContext {
-        AgentProfileStore.isBuilderAgent(agent) ? .builderAgent : []
+    /// `.builderAgent` for the Builder, and ``telegramEnabled`` when
+    /// `telegramConfigured`; otherwise empty.
+    public static func context(for agent: AgentProfile?, telegramConfigured: Bool = false) -> ChatCommandContext {
+        var context: ChatCommandContext = AgentProfileStore.isBuilderAgent(agent) ? .builderAgent : []
+        if telegramConfigured {
+            context.insert(telegramEnabled)
+        }
+        return context
+    }
+
+    /// Whether the settings enable Telegram, read from the settings manifest
+    /// at each call, as the terminal and ACP read it.
+    static func isTelegramConfigured() -> Bool {
+        AgentSettingsManifestStore.load()?.telegram?.isEnabled == true
     }
 
     /// The commands after which the model, thinking level, agent, and command

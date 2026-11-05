@@ -264,8 +264,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   terminal's input panel (`Enter send · Ctrl+G access · Ctrl+Y chat`, with
   `Enter queue` and `Esc stop` while a turn runs, and the suggestion keys
   while suggestions show).
-  `/setup`, `/voice`, `/telegram`, `/feature`, `/cron`, `/ds4`, and
-  `/tools logs` stay in the terminal. See [Docs/app.md](Docs/app.md).
+  `/setup`, `/voice`, `/feature`, `/cron`, `/ds4`, and `/tools logs` stay in
+  the terminal. See [Docs/app.md](Docs/app.md).
 - The shared chat in the macOS app. Each window follows the live chat room of
   its session. A `Chat` panel in the Chat tab, above the composer, shows the
   room's messages one at a time: `Chat · i/N · U new`, the
@@ -286,8 +286,30 @@ Release tags follow the strict `vX.Y.Z` contract described in
   window: the prompt is hidden, like the ones a command builds, and the window
   takes the turn only when it is idle and gives it back when the turn does not
   start. The chat is never saved, and a new or loaded session resets it.
-  Telegram is not available in the app, so its relay does not apply. See
+  While Telegram drives the window's session, the room is relayed to the chat
+  and the coordinator turns run from Telegram. See
   [Docs/app.md](Docs/app.md#shared-chat).
+- Telegram in the macOS app: once Telegram is set up and paired, the app
+  handles `/telegram`, `/telegram on`, and `/telegram off` as the terminal
+  does. `/telegram on` hands the window's session to the linked chat, which
+  runs prompts, voice notes, `/plan`, `/goal`, `/review`, and the permission
+  replies, while the window shows the conversation live but accepts only
+  `/telegram`, `/telegram off`, and `/exit`: any other line, Full Access,
+  attaching files, and loading or deleting a saved session answer `ZenCODE:
+  this session is driven from Telegram. Use /telegram off to take it back.`
+  The channel's notices show as rows of the conversation, and a new or loaded
+  session keeps the link. Two differences from the terminal: `/telegram on` is
+  refused while the window runs a line (a turn, or a command waiting for an
+  answer) with `ZenCODE: command '/telegram' is unavailable while a prompt is
+  running.`, and `/telegram off` shows only `Telegram remote control
+  stopped.`, with no `Catch-up from Telegram:` block, because the window
+  already showed everything live. See [Docs/app.md](Docs/app.md#telegram).
+  For apps that embed the host,
+  `ChatSessionHost.telegramChannelCreatingIfNeeded(in:primaryChannelDescription:)`
+  and `stopTelegramTurnIfReserved(_:in:)` are now public: the first creates
+  the slot's `TelegramChannel` without attaching it, so the app installs its
+  `noticeSink` before the first `/telegram on`, and the second stops the turn
+  from Telegram that the app adopted at `/telegram off`.
 - `SharedChatMessageLabel`, a public type of `Chat/Contracts` that builds the
   route label of a live shared-chat message: `timestamp(_:timeZone:)` formats
   the send time as `HH:mm:ss`, and `route(for:participantMap:timeZone:)`

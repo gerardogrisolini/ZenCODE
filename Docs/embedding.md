@@ -821,9 +821,10 @@ Notes:
 Telegram is a channel of the slot, not a mirror of it: `/telegram on` hands
 the slot to the Telegram chat that setup linked, which drives the session from
 then on, and `/telegram off` takes it back. The host owns the slot's
-`TelegramChannel`, created on the first activation on the router and poller
-every slot shares and kept, attached or not, for the life of the slot; the app
-never builds it. The router and the poller are one per `ChatSessionHost`, so an
+`TelegramChannel`, created on the first activation (or earlier, unattached, by
+`telegramChannelCreatingIfNeeded(in:primaryChannelDescription:)`) on the router
+and poller every slot shares and kept, attached or not, for the life of the
+slot; the app never builds it. The router and the poller are one per `ChatSessionHost`, so an
 app runs one host per process: two hosts on the same bot would run two long
 polls, and Telegram would answer the second with HTTP 409.
 
@@ -912,10 +913,17 @@ What happens at the handover:
   the returned catch-up itself, after what the turn presented meanwhile. A
   slot that publishes no state gets a reducer for the handover, detached once
   the catch-up is read; the log is transient either way.
+- A turn still running from Telegram that the app adopted at `/telegram off` is
+  stopped with `stopTelegramTurnIfReserved(_:in:)`, once `cancelPrompt(in:)` has
+  returned its prompt id: the channel cancels the turn, which ends as a cancelled
+  one, and the chat is told it stopped. A prompt the app reserves after the cancel
+  keeps its own turn; an id that is not the channel's is ignored.
 - The texts the channel has for the app (the activation text, a poll-health
   notice, a failure) arrive through `telegramChannel(in:)?.noticeSink`, with
   their `ChatSessionNoticeChannel`; without a sink they are dropped. Install
-  it before the first activation to receive the activation text.
+  it before the first activation to receive the activation text:
+  `telegramChannelCreatingIfNeeded(in:primaryChannelDescription:)` returns the
+  slot's channel, created without attaching it, for that purpose.
 - `telegramStatusText(in:)` is the `/telegram` status; `isActive`,
   `linkedChatTitle`, and `sessionTopic` of the channel report the link.
 - The link belongs to the slot: a new or loaded session keeps the channel and
@@ -1013,7 +1021,9 @@ it comprises:
   `ChatTelegramCatchUp`, with the host's
   `activateTelegram(in:primaryChannelDescription:)`,
   `deactivateTelegram(in:presentingCatchUp:)`, `telegramStatusText(in:)`,
-  `activeChannel(in:)`, `telegramChannel(in:)`, and `admitLine(_:in:)`; the
+  `activeChannel(in:)`, `telegramChannel(in:)`,
+  `telegramChannelCreatingIfNeeded(in:primaryChannelDescription:)`,
+  `stopTelegramTurnIfReserved(_:in:)`, and `admitLine(_:in:)`; the
   channel's `stoppedNoticeText`.
 
 The rules:

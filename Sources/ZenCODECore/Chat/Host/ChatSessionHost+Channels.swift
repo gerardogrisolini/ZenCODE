@@ -52,9 +52,11 @@ extension ChatSessionHost {
     /// The Telegram channel of `slotID`, created now when the slot has none,
     /// without attaching it: for a channel that binds the channel before the
     /// first `/telegram on` attaches it (ACP collects the notices of the
-    /// attach into its reply), and for a test that drives the channel
+    /// attach into its reply), for an app that embeds the host (it installs
+    /// its `noticeSink` on the channel before the first `/telegram on`, so the
+    /// activation text is not lost), and for a test that drives the channel
     /// directly, as the slot's channel. `nil` for an unknown slot.
-    func telegramChannelCreatingIfNeeded(
+    public func telegramChannelCreatingIfNeeded(
         in slotID: ChatSlotID,
         primaryChannelDescription: String = "TUI"
     ) -> TelegramChannel? {
@@ -359,8 +361,10 @@ extension ChatSessionHost {
     /// cancelled one and the chat is told it stopped. A prompt reserved
     /// after the cancel (an editor's `session/prompt` served in between)
     /// keeps its reservation and its turn. Nothing happens when `promptID`
-    /// was not the channel's.
-    func stopTelegramTurnIfReserved(_ promptID: UUID, in slotID: ChatSlotID) async {
+    /// was not the channel's. A primary channel that took the slot back
+    /// (`/telegram off`) calls it after ``cancelPrompt(in:armingWorkflowRecovery:)``
+    /// to stop a turn from Telegram it adopted (the terminal's Esc, an app's Stop).
+    public func stopTelegramTurnIfReserved(_ promptID: UUID, in slotID: ChatSlotID) async {
         guard let slot = slots[slotID], slot.telegramTurnPromptID == promptID,
               let channel = slot.telegramChannel else { return }
         await channel.stopActiveTurn(promptID: promptID)

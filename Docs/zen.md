@@ -674,6 +674,17 @@ reaches the turn that ends, never the next one); the editor receives none of it
 meanwhile. The link is not saved: after the
 client loads the session again, send `/telegram on` again.
 
+In the macOS app (`zen --ui`; see [app.md](app.md#telegram)) the same commands
+exist (`/telegram`, `/telegram on`, `/telegram off`) once Telegram is set up,
+and the chat runs and receives the same as for the terminal. The differences
+from the terminal: `/telegram on` is refused while the window runs a line, a
+turn included, instead of moving the turn to the chat; `/telegram off` shows
+only `Telegram remote control stopped.`, with no `Catch-up from Telegram:`
+block, as the window showed everything live; and while Telegram drives the
+session the window stays dormant, accepting only `/telegram`, `/telegram off`,
+and `/exit`, and its Stop does not stop a turn the chat runs. The link is not
+saved: closing the window ends it.
+
 To run a session that is driven from Telegram from the start, without a
 terminal, use `zen --telegram`: see [Telegram Mode](#telegram-mode).
 
