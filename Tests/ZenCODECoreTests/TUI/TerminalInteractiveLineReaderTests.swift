@@ -364,11 +364,18 @@ struct TerminalInteractiveLineReaderTests {
                 modifierIndex: 1
             ) == .enter
         )
-        // Alt+Enter (bits 0b10) also inserts a newline, consistent with the
-        // legacy ESC+CR (Option+Enter) fallback.
+        // Alt+Enter (bits 0b10) submits like Enter; only Shift inserts a
+        // newline, also together with Alt.
         #expect(
             TerminalInteractiveLineReader.shiftReturnKey(
                 components: ["13", "3"],
+                keyCodeIndex: 0,
+                modifierIndex: 1
+            ) == .enter
+        )
+        #expect(
+            TerminalInteractiveLineReader.shiftReturnKey(
+                components: ["13", "4"],
                 keyCodeIndex: 0,
                 modifierIndex: 1
             ) == .newline
@@ -389,6 +396,14 @@ struct TerminalInteractiveLineReaderTests {
         #expect(
             TerminalInteractiveLineReader.shiftReturnKey(
                 components: ["27", "1", "13"],
+                keyCodeIndex: 2,
+                modifierIndex: 1
+            ) == .enter
+        )
+        // CSI 27;3;13~ (Alt+Enter) submits like Enter.
+        #expect(
+            TerminalInteractiveLineReader.shiftReturnKey(
+                components: ["27", "3", "13"],
                 keyCodeIndex: 2,
                 modifierIndex: 1
             ) == .enter
@@ -432,11 +447,12 @@ struct TerminalInteractiveLineReaderTests {
         #expect(reader.keyFromCSI(Array("116;5u".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("27;5;116~".utf8)) == .unknown)
 
-        // Readline motion shortcuts distinguish Control from Alt.
+        // Readline motion shortcuts distinguish Control from Alt; Alt+B and
+        // Alt+F are not shortcuts.
         #expect(reader.keyFromCSI(Array("98;5u".utf8)) == .left)
-        #expect(reader.keyFromCSI(Array("98;3u".utf8)) == .wordLeft)
+        #expect(reader.keyFromCSI(Array("98;3u".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("102;5u".utf8)) == .right)
-        #expect(reader.keyFromCSI(Array("102;3u".utf8)) == .wordRight)
+        #expect(reader.keyFromCSI(Array("102;3u".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("112;5u".utf8)) == .up)
         #expect(reader.keyFromCSI(Array("110;5u".utf8)) == .down)
         #expect(reader.keyFromCSI(Array("60;3u".utf8)) == .bufferStart)
@@ -504,7 +520,8 @@ struct TerminalInteractiveLineReaderTests {
         #expect(decode([0x1B, 0x1B, 0x5B, 0x43]) == .wordRight)
         #expect(decode([0x1B, 0x1B, 0x4F, 0x48]) == .bufferStart)
         #expect(decode([0x1B, 0x1B, 0x4F, 0x46]) == .bufferEnd)
-        #expect(decode([0x1B, 0x1B, 0x5B, 0x33, 0x7E]) == .deleteWordAfter)
+        // Option+Delete is a plain Delete, not a word deletion.
+        #expect(decode([0x1B, 0x1B, 0x5B, 0x33, 0x7E]) == .delete)
 
         // Readline draft-wide motion, reachable without Home/End keys.
         #expect(decode([0x1B, 0x3C]) == .bufferStart)

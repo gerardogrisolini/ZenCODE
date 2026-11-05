@@ -359,6 +359,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Terminal prompt: Option+Enter (Alt+Enter) no longer inserts a line break
+  in terminals that report the modifier with an extended keyboard protocol,
+  and sends the prompt like Enter; Shift+Enter is the line-break key. Where
+  Option+Enter arrives as Esc followed by Enter (Option used as Meta), it
+  still inserts a line break, because Terminal.app sends Shift+Enter the same
+  way.
+  Option+D and Option+Delete no longer delete the next word (Ctrl+W and
+  Ctrl+Delete still delete a word), and Option+B/Option+F are no longer word
+  motions in terminals that report them distinctly; Option+←/→ still move by
+  word.
 - The `ZenCODE` logo in the startup banner now uses a fixed darker orange
   instead of the dimmed one, so it looks the same in every terminal rather
   than depending on how the terminal renders dimmed text; the prompt and menu
@@ -562,6 +572,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Terminal: resizing the terminal window, even when the terminal answers the
   cursor position query slowly or several resizes follow one another, no longer
   loses the prompt box to the plain-text fallback ("Terminal layout disabled").
+- Terminal on macOS: Shift+Enter now inserts a line break in the prompt also
+  in terminals that send it as a plain Enter, such as Terminal.app, without
+  configuring the terminal. Likewise, Option+Delete now clears the whole
+  draft there instead of deleting one character, and Option+< / Option+>
+  move to the start or end of the draft instead of typing `¯`/`˘` (U.S.
+  layout) or `≤`/`≥` (Italian, German, French). When one of these keys
+  arrives, zen reads the Shift and Option state from macOS, so this
+  also works inside tmux. Over SSH and on Linux, Enter keeps sending the
+  prompt, Backspace keeps deleting one character and those characters are
+  typed. Terminals with an extended keyboard protocol (iTerm2, Ghostty,
+  kitty) are unchanged.
 
 ## [3.2.0] - 2026-10-30
 

@@ -723,16 +723,20 @@ These bindings follow the Emacs/readline conventions, so they work on every term
 | Motion | Keys |
 | --- | --- |
 | Character left/right | `←`/`→`, `Ctrl+B`/`Ctrl+F` |
-| Word left/right | `Alt+←`/`Alt+→`, `Ctrl+←`/`Ctrl+→`, `ESC b`/`ESC f` |
+| Word left/right | `Alt+←`/`Alt+→`, `Ctrl+←`/`Ctrl+→` |
 | Line start/end | `Ctrl+A`/`Ctrl+E`, `Home`/`End` |
 | Draft start/end | `Alt+<`/`Alt+>`, `Ctrl+Home`/`Ctrl+End` |
 | Previous/next line or history entry | `↑`/`↓`, `Ctrl+P`/`Ctrl+N` |
-| Delete word before/after | `Ctrl+W` / `Alt+D` |
+| Delete word before/after | `Ctrl+W` / `Ctrl+Delete` |
 | Clear before/after cursor | `Ctrl+U`/`Ctrl+K` |
 | Clear the whole draft | `Alt+Backspace` (macOS `Option+Delete`) |
-| Newline without sending | `Shift+Enter` or `Option+Enter` |
+| Newline without sending | `Shift+Enter` |
 
-On macOS, `Option+←/→` only reaches the prompt when the terminal sends the `Option` key as `Meta`: in Terminal.app enable *Settings → Profiles → Keyboard → Use Option as Meta key*, and in iTerm2 set *Settings → Profiles → Keys → Left Option key → Esc+*. `Ctrl+←/→` is captured by macOS Mission Control unless that system shortcut is disabled. `Ctrl+A`/`Ctrl+E` and `Alt+<`/`Alt+>` need no terminal configuration.
+On macOS, Terminal.app sends `Option+←/→` as word motions out of the box; in iTerm2 set *Settings → Profiles → Keys → Left Option key → Esc+*. `Ctrl+←/→` is captured by macOS Mission Control unless that system shortcut is disabled. `Ctrl+A`/`Ctrl+E` and `Alt+<`/`Alt+>` need no terminal configuration.
+
+Terminal.app sends `Shift+Enter` as `Esc` followed by `Enter`, which zen always reads as a newline; terminals that send `Option` as `Meta` produce the same sequence for `Option+Enter`, so there it inserts a newline too.
+
+In a local macOS session, when a plain `Enter` or `Backspace` arrives, or the character a layout types for `Option+<`/`Option+>` (`¯`/`˘` on U.S., `≤`/`≥` on Italian, German and French), zen reads the `Shift` and `Option` state from macOS, so `Shift+Enter`, `Option+Delete` and `Option+<`/`Option+>` work without configuration also in terminals that cannot encode them, such as Terminal.app, including inside tmux. Over SSH and on Linux they need a terminal that reports the modifier.
 
 Full access bypasses the `local.exec` and destructive-tool approval checks, including `desktop.run` consent. It does not expose disabled tools or bypass OS permissions. The status bar shows a red dot while active.
 

@@ -39,7 +39,7 @@ public final class TerminalInteractiveLineReader: Sendable {
         /// Word-wise motion (`Alt+←/→`, `Ctrl+←/→`, `ESC b`/`ESC f`).
         case wordLeft
         case wordRight
-        /// Word-wise deletion (`Ctrl+W`, `Alt+D`).
+        /// Word-wise deletion (`Ctrl+W`, `Ctrl+Delete`).
         case deleteWordBefore
         case deleteWordAfter
         /// Whole-draft deletion (`Alt+Backspace`, macOS `Option+Delete`).
@@ -241,19 +241,26 @@ public final class TerminalInteractiveLineReader: Sendable {
 
     let rawInput: TerminalRawInput
     let consentInputOwnership: TerminalConsentInputOwnership
+    /// Resolves a plain `CR` to Shift+Enter, a plain `DEL`/`BS` to
+    /// Option+Backspace and the layout's Option+</> characters to draft-wide
+    /// motion where the terminal cannot encode the modifier.
+    let modifierKeyState: TerminalModifierKeyState
     let state = Mutex(State())
 
     public init() {
         rawInput = TerminalRawInput()
         consentInputOwnership = .shared
+        modifierKeyState = .system()
     }
 
     init(
         rawInput: TerminalRawInput,
-        consentInputOwnership: TerminalConsentInputOwnership = .shared
+        consentInputOwnership: TerminalConsentInputOwnership = .shared,
+        modifierKeyState: TerminalModifierKeyState = .system()
     ) {
         self.rawInput = rawInput
         self.consentInputOwnership = consentInputOwnership
+        self.modifierKeyState = modifierKeyState
     }
 
     func withPanelLock<T: Sendable>(

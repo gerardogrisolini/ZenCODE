@@ -60,7 +60,8 @@ struct TerminalPromptInputPanelTests {
         #expect(reader.keyFromCSI(Array("8;5~".utf8)) == .bufferEnd)
         #expect(reader.keyFromCSI(Array("3~".utf8)) == .delete)
         #expect(reader.keyFromCSI(Array("3;5~".utf8)) == .deleteWordAfter)
-        #expect(reader.keyFromCSI(Array("3;3~".utf8)) == .deleteWordAfter)
+        // Only Ctrl deletes the next word: Option+Delete is a plain Delete.
+        #expect(reader.keyFromCSI(Array("3;3~".utf8)) == .delete)
     }
 
     @Test
@@ -105,9 +106,10 @@ struct TerminalPromptInputPanelTests {
 
         #expect(reader.keyFromCSI(Array("119;5u".utf8)) == .deleteWordBefore)
         #expect(reader.keyFromCSI(Array("101;5u".utf8)) == .end)
-        #expect(reader.keyFromCSI(Array("98;3u".utf8)) == .wordLeft)
-        #expect(reader.keyFromCSI(Array("102;3u".utf8)) == .wordRight)
-        #expect(reader.keyFromCSI(Array("100;3u".utf8)) == .deleteWordAfter)
+        // Alt+B, Alt+F and Alt+D are not shortcuts.
+        #expect(reader.keyFromCSI(Array("98;3u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("102;3u".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("100;3u".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("127;3u".utf8)) == .clearDraft)
         #expect(reader.keyFromCSI(Array("27;3;127~".utf8)) == .clearDraft)
 
@@ -116,7 +118,7 @@ struct TerminalPromptInputPanelTests {
         #expect(reader.keyFromCSI(Array("114;3u".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("97;3u".utf8)) == .unknown)
         #expect(reader.keyFromCSI(Array("98;5u".utf8)) == .left)
-        #expect(reader.keyFromCSI(Array("100;3u".utf8)) == .deleteWordAfter)
+        #expect(reader.keyFromCSI(Array("100;5u".utf8)) == .endOfInput)
     }
 
     @Test
@@ -136,9 +138,18 @@ struct TerminalPromptInputPanelTests {
             return key
         }
 
+        // `ESC b` / `ESC f` are Terminal.app's default Option+←/→.
         #expect(key(for: [0x1B, 0x62]) == .wordLeft)
         #expect(key(for: [0x1B, 0x66]) == .wordRight)
-        #expect(key(for: [0x1B, 0x64]) == .deleteWordAfter)
+        // Option+B/F with Shift and Option+D are not shortcuts.
+        #expect(key(for: [0x1B, 0x42]) == .unknown)
+        #expect(key(for: [0x1B, 0x46]) == .unknown)
+        #expect(key(for: [0x1B, 0x64]) == .unknown)
+        #expect(key(for: [0x1B, 0x44]) == .unknown)
+        // `ESC CR` (Terminal.app Shift+Enter, Meta Option+Enter) and `ESC LF`
+        // insert a newline.
+        #expect(key(for: [0x1B, 0x0D]) == .newline)
+        #expect(key(for: [0x1B, 0x0A]) == .newline)
         #expect(key(for: [0x1B, 0x7F]) == .clearDraft)
         #expect(key(for: [0x1B, 0x08]) == .clearDraft)
         // Meta-prefixed CSI-u backspace (Option configured as Esc+).

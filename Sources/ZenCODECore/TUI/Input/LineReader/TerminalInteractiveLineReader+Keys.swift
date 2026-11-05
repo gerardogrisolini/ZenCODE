@@ -41,6 +41,19 @@ extension TerminalInteractiveLineReader {
         }
 
         if let key = Self.controlKey(for: byte) {
+            // Terminal.app and other terminals without an extended keyboard
+            // protocol send the same CR for Enter and Shift+Enter, so only a
+            // plain CR asks macOS whether Shift is held. Over SSH and on Linux
+            // the probe always answers false and CR keeps submitting.
+            if byte == 0x0D, key == .enter, modifierKeyState.isShiftPressed() {
+                return .key(.newline)
+            }
+            // The same terminals send Option+Backspace as a plain DEL (or BS
+            // with "Delete sends Ctrl-H"), so the macOS Option state turns it
+            // into the whole-draft deletion that `ESC DEL` encodes elsewhere.
+            if key == .backspace, modifierKeyState.isOptionPressed() {
+                return .key(.clearDraft)
+            }
             return .key(key)
         }
 
@@ -48,7 +61,32 @@ extension TerminalInteractiveLineReader {
         case 0x1B:
             return readEscapeKeyResult(pickerEscapeBaseByte: pickerEscapeBaseByte)
         default:
-            return .key(decodeCharacter(startingWith: byte).map(Key.character) ?? .unknown)
+            guard let character = decodeCharacter(startingWith: byte) else {
+                return .key(.unknown)
+            }
+            // Without "Use Option as Meta key" Terminal.app types the layout's
+            // Option character for Option+< and Option+>, so the macOS Option
+            // state turns those characters into the draft-wide motions.
+            if let key = Self.optionDraftMotionKey(for: character),
+               modifierKeyState.isOptionPressed() {
+                return .key(key)
+            }
+            return .key(.character(character))
+        }
+    }
+
+    /// Characters macOS layouts type for Option+< and Option+>: `¯`/`˘` on
+    /// U.S., British and ABC, `≤`/`≥` on Italian, German and French. Layouts
+    /// whose Option variant is an ordinary character (Spanish `[`/`{`) are
+    /// left out, so typing them never moves the cursor.
+    static func optionDraftMotionKey(for character: String) -> Key? {
+        switch character {
+        case "\u{AF}", "\u{2264}":
+            return .bufferStart
+        case "\u{2D8}", "\u{2265}":
+            return .bufferEnd
+        default:
+            return nil
         }
     }
 
@@ -104,8 +142,10 @@ extension TerminalInteractiveLineReader {
     func readEscapeKey(secondByte: UInt8) -> Key {
         switch secondByte {
         case 0x0A, 0x0D:
-            // Legacy Option+Enter (ESC+CR) fallback for terminals without an
-            // extended keyboard protocol, where Shift+Enter is not detectable.
+            // `ESC CR` is how Terminal.app sends Shift+Enter, and how terminals
+            // with Option as Meta send Option+Enter, so it always inserts a
+            // newline. Terminals that send Shift+Enter as a plain CR are
+            // resolved through the macOS Shift state in `readKeyResult`.
             return .newline
         case 0x5B:
             return readCSIKey()
@@ -120,15 +160,12 @@ extension TerminalInteractiveLineReader {
             // as Meta/"Esc+", where Option+← arrives as ESC before the plain
             // cursor sequence instead of as a CSI modifier parameter.
             return readMetaPrefixedEscapeKey()
-        // Legacy Meta encodings: terminals that send Alt as an ESC prefix
-        // rather than a CSI modifier, which is still the default on macOS
-        // Terminal.app and many `xterm` configurations.
-        case 0x62, 0x42:
+        // `ESC b` / `ESC f` are how Terminal.app sends Option+←/→ out of the
+        // box, so they stay word motions.
+        case 0x62:
             return .wordLeft
-        case 0x66, 0x46:
+        case 0x66:
             return .wordRight
-        case 0x64, 0x44:
-            return .deleteWordAfter
         // `ESC <` / `ESC >` are the readline draft-wide motions. They are the
         // only start/end-of-draft bindings reachable on keyboards without
         // Home/End keys, where Ctrl+Home/Ctrl+End cannot be typed.
@@ -178,8 +215,6 @@ extension TerminalInteractiveLineReader {
             return .bufferStart
         case .end:
             return .bufferEnd
-        case .delete:
-            return .deleteWordAfter
         case .backspace:
             return .clearDraft
         default:
@@ -338,7 +373,6 @@ extension TerminalInteractiveLineReader {
         let modifierBits = components.count >= 2
             ? max(0, (Self.integerPrefix(in: components[1]) ?? 1) - 1)
             : 0
-        let isJumpModified = (modifierBits & 0b110) != 0
         let isControlModified = (modifierBits & 0b100) != 0
 
         switch numericPrefix {
@@ -349,7 +383,8 @@ extension TerminalInteractiveLineReader {
         case "1", "7":
             return isControlModified ? .bufferStart : .home
         case "3":
-            return isJumpModified ? .deleteWordAfter : .delete
+            // Only Ctrl+Delete deletes the next word; Option+Delete is Delete.
+            return isControlModified ? .deleteWordAfter : .delete
         case "4", "8":
             return isControlModified ? .bufferEnd : .end
         default:
@@ -428,9 +463,8 @@ extension TerminalInteractiveLineReader {
             return .enter
         }
         let modifierBits = modifier - 1
-        // Shift (0b01) or Alt (0b10): both are newline shortcuts, matching
-        // the legacy ESC+CR (Option+Enter) fallback path.
-        return (modifierBits & 0b11) != 0 ? .newline : .enter
+        // Only Shift (0b01) inserts a newline; Alt+Enter submits like Enter.
+        return (modifierBits & 0b01) != 0 ? .newline : .enter
     }
 
     static func isReturnKeyCode(_ keyCode: Int?) -> Bool {
@@ -535,7 +569,7 @@ extension TerminalInteractiveLineReader {
     /// xterm's `modifyOtherKeys`.
     ///
     /// Each shortcut demands its own modifier: Ctrl+B moves one character left
-    /// while Alt+B moves one word left, and accepting either modifier would
+    /// while Alt+B is not a shortcut, and accepting either modifier would
     /// swallow a key the operator meant for something else.
     static func controlShortcutKey(
         components: [String],
@@ -570,7 +604,6 @@ extension TerminalInteractiveLineReader {
         case 110 where isControlModified:
             return .down
         case 100 where isControlModified:
-            // Ctrl+D is end-of-input, never the Alt+D delete-word binding.
             return .endOfInput
         case 107 where isControlModified:
             return .clearAfterCursor
@@ -580,12 +613,6 @@ extension TerminalInteractiveLineReader {
             return .end
         case 119 where isControlModified:
             return .deleteWordBefore
-        case 98 where isAltModified:
-            return .wordLeft
-        case 102 where isAltModified:
-            return .wordRight
-        case 100 where isAltModified:
-            return .deleteWordAfter
         case 127 where isAltModified, 8 where isAltModified:
             return .clearDraft
         // `Alt+<` / `Alt+>`; the base key is reported unshifted by terminals
