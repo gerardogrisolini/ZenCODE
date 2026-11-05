@@ -42,11 +42,15 @@ public struct ChatSelectionOutcome: Sendable, Equatable {
 public enum ChatSelectionError: LocalizedError, Equatable {
     /// No available model has this ID.
     case unknownModel(String)
+    /// The current model offers no thinking level with this ID.
+    case unknownThinkingLevel(String)
 
     public var errorDescription: String? {
         switch self {
         case let .unknownModel(modelID):
             return "Unknown model '\(modelID)'."
+        case let .unknownThinkingLevel(thinkingID):
+            return "Unknown thinking level '\(thinkingID)'."
         }
     }
 }

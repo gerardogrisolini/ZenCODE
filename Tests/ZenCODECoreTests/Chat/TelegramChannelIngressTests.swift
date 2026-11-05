@@ -139,8 +139,9 @@ struct TelegramChannelIngressTests {
 
     /// While the session generates, only permission replies, `/status`,
     /// `/chat`, the slash forms of `/help` and `/changes`, the picker
-    /// taps, and the live `@mention` lines are answered; everything else is
-    /// told the session is busy, before any work starts.
+    /// taps, and the live `@mention` lines are answered; everything else,
+    /// the selection menus and their taps included, is told the session is
+    /// busy, before any work starts.
     @Test
     func busyGateAnswersOnlyWhatMayRunWhileTheSessionGenerates() async throws {
         try await Support.withSupport {
@@ -177,6 +178,14 @@ struct TelegramChannelIngressTests {
                 Self.ownerMessage("@coordinator do work"),
                 Self.ownerMessage(nil, callbackData: "zencode:mention:coordinator"),
                 Self.ownerMessage(nil, callbackData: "unrelated"),
+                // The selection menus and their taps, as in the terminal.
+                Self.ownerMessage("/sessions"),
+                Self.ownerMessage("/models"),
+                Self.ownerMessage("/think"),
+                Self.ownerMessage("/agents"),
+                Self.ownerMessage(nil, callbackData: "zencode:models:00000000:0"),
+                Self.ownerMessage(nil, callbackData: "zencode:agents:x"),
+                Self.ownerMessage(nil, callbackData: "zencode:sessions:a:new"),
             ]
             for message in messages {
                 #expect(!(await channel.handleIncomingMessage(message)), "\(message.text ?? "media")")
@@ -187,7 +196,7 @@ struct TelegramChannelIngressTests {
             // The live mention is published, as the terminal publishes one
             // typed while it generates.
             #expect(effects.values == [.sharedChatPublication])
-            #expect(pair.texts.values.filter { $0 == TelegramChannel.busyMessageText }.count == 12)
+            #expect(pair.texts.values.filter { $0 == TelegramChannel.busyMessageText }.count == 19)
             #expect(pair.texts.values.filter { $0 == channel.remoteStatusText() }.count == 2)
             #expect(pair.texts.values.contains(channel.remoteHelpText()))
             #expect(pair.texts.values.contains(channel.remoteChangesText()))

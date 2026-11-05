@@ -34,8 +34,10 @@ import ToolCore
 /// What Telegram asks of the session beyond prompts is answered here too:
 /// `/diff`, the artifact consent buttons and inbound attachments
 /// (`+Artifacts`), voice notes (`+Voice`), the shared-chat relay and its
-/// replies (`+SharedChatRelay`), and the `/chat` mention picker
-/// (`+MentionPicker`). The ingress is in `TelegramChannel+Ingress.swift`; the
+/// replies (`+SharedChatRelay`), the `/chat` mention picker
+/// (`+MentionPicker`), and the `/models` `/think` `/agents` selection menus
+/// (`+SelectionMenus`) and the `/sessions` menus (`+SessionsMenu`). The
+/// ingress is in `TelegramChannel+Ingress.swift`; the
 /// task-graph observer the channel runs on an ACP session's slot, and on the
 /// slot of a session started by `zen --telegram`, is in
 /// `TelegramChannel+TaskGraph.swift`.
@@ -264,6 +266,10 @@ public final class TelegramChannel: ChatInteractionHost {
     var onTelegramRoutedSystemMessage: (@Sendable (String, Int64, Int?) async -> Bool)?
     /// Mention picker cards. Production uses the service.
     var onTelegramMentionPickerMessage: (@Sendable (String, Int64, TerminalTelegramReplyMarkup) async -> Int?)?
+    /// Keyboard edits of a selection menu's message, with the new markup
+    /// (`nil` removes the keyboard), the chat, and the message; `nil` in
+    /// production, which edits through the service.
+    var onTelegramReplyMarkupEditForTesting: (@Sendable (TerminalTelegramReplyMarkup?, Int64, Int) async -> Void)?
     /// Stands in for the turn the channel would run through the host, with
     /// the prompt, its route, and its purpose; `nil` in production.
     var onRunTurnForTesting: (@Sendable (String, TerminalTelegramRouteLease, ChatTurnPurpose) async -> Void)?

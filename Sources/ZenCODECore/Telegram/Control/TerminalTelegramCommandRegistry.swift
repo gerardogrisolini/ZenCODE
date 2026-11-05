@@ -93,6 +93,28 @@ public enum TerminalTelegramCommandRegistry {
             name: "chat",
             description: "Choose an active participant to message"
         ),
+        // The selection menus have no plain-word alias: "models" or "agents"
+        // typed alone stays an ordinary prompt.
+        TerminalTelegramCommandSpecification(
+            command: .sessions,
+            name: "sessions",
+            description: "Manage saved sessions"
+        ),
+        TerminalTelegramCommandSpecification(
+            command: .models,
+            name: "models",
+            description: "Choose the session model"
+        ),
+        TerminalTelegramCommandSpecification(
+            command: .think,
+            name: "think",
+            description: "Choose the thinking level"
+        ),
+        TerminalTelegramCommandSpecification(
+            command: .agents,
+            name: "agents",
+            description: "Choose the agent and the project agents"
+        ),
         TerminalTelegramCommandSpecification(
             command: .changes,
             name: "changes",
@@ -195,6 +217,10 @@ public enum TerminalTelegramRemoteCommand: Equatable, Sendable {
     case help
     case status
     case chat
+    case sessions
+    case models
+    case think
+    case agents
     case changes
     case undo
     case diff

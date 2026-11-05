@@ -8,6 +8,14 @@
 import Foundation
 import ToolCore
 
+/// A menu of the controller as a channel that presents it itself reads it:
+/// its entries, or the notice that says why there is none (no current model,
+/// no active saved session, ...).
+enum ChatChoiceMenuState: Sendable, Equatable {
+    case available(ChatChoiceList)
+    case unavailable(ChatSessionNotice)
+}
+
 /// The selection commands shared by every channel: model, thinking level,
 /// agent (with the project's agent association), tools, and prompt skills.
 ///
@@ -338,10 +346,32 @@ extension ChatSessionController {
     /// The thinking menu of the current model; `nil` without a current model
     /// or when its thinking is not configurable.
     func thinkingChoices() throws -> ChatChoiceList? {
-        guard case let .available(model, options, selected) = try thinkingMenuState() else {
+        guard case let .available(choices) = try thinkingMenu() else {
             return nil
         }
-        return thinkingChoices(for: model, options: options, selected: selected)
+        return choices
+    }
+
+    /// The thinking menu of the current model, or the notice that says why
+    /// there is none (``ChatSessionNotice/noCurrentModel``,
+    /// ``ChatSessionNotice/thinkingNotSupported(model:)``), as `/think`
+    /// answers. Throws when no model is configured.
+    func thinkingMenu() throws -> ChatChoiceMenuState {
+        switch try thinkingMenuState() {
+        case let .unavailable(notice):
+            return .unavailable(notice)
+        case let .available(model, options, selected):
+            return .available(thinkingChoices(for: model, options: options, selected: selected))
+        }
+    }
+
+    /// The ID of the model whose levels ``thinkingMenu()`` lists; `nil` when
+    /// it lists none. Throws when no model is configured.
+    func thinkingMenuModelID() throws -> String? {
+        guard case let .available(model, _, _) = try thinkingMenuState() else {
+            return nil
+        }
+        return model.id
     }
 
     private func thinkingChoices(
@@ -574,11 +604,68 @@ extension ChatSessionController {
         ) else {
             return ChatSelectionOutcome(notices: [.selectedAgent(selection.agent)])
         }
+        return try await applyProjectAgentChoice(
+            selectedIDs: choice.selectedIDs,
+            focusedID: choice.focusedID,
+            agents: agents,
+            menu: menu
+        )
+    }
 
-        let associatedAgents = agents.filter {
-            choice.selectedIDs.contains(Self.agentChoiceID($0))
+    /// The project's agent menu answered by a channel that presents it
+    /// itself: the profiles `associatedIDs` names (``agentChoiceID(_:)``)
+    /// become the project's association and `activeID` the active agent;
+    /// `nil` keeps the active agent. The answer is applied exactly as a
+    /// confirmed ``chooseProjectAgents()`` menu, against the menu as it reads
+    /// now (``projectAgentChoices()``). IDs of no available profile are
+    /// ignored in `associatedIDs`; an `activeID` of no available profile is
+    /// refused with ``TerminalAgentSelectionError/unknownAgent(_:)``. Without
+    /// any profile the agent list is the answer, as for the menu.
+    func selectProjectAgents(
+        associatedIDs: Set<String>,
+        activeID: String?
+    ) async throws -> ChatSelectionOutcome {
+        let agents = try availableAgents()
+        guard !agents.isEmpty else {
+            return ChatSelectionOutcome(notices: [
+                .availableAgents(
+                    agents: agents,
+                    selected: selection.agent,
+                    manifestPath: agentsManifestPath
+                ),
+            ])
         }
-        let associationChanged = choice.selectedIDs != menu.choices.selectedIDs
+        let knownIDs = Set(agents.map(Self.agentChoiceID))
+        if let activeID, !knownIDs.contains(activeID) {
+            throw TerminalAgentSelectionError.unknownAgent(activeID)
+        }
+        let menu = projectAgentMenu(agents: agents)
+        return try await applyProjectAgentChoice(
+            selectedIDs: associatedIDs.intersection(knownIDs),
+            focusedID: activeID ?? menu.activeAgent.map(Self.agentChoiceID),
+            agents: agents,
+            menu: menu
+        )
+    }
+
+    /// Applies an answer to the project's agent menu `menu` of `agents`:
+    /// the ticked profiles `selectedIDs` and the confirmed row `focusedID`.
+    ///
+    /// An association that differs from the one the menu started with is
+    /// saved and presented; a focused profile other than the active agent is
+    /// activated (its new session builds its prompt from the saved
+    /// association); otherwise a changed association rebuilds the prompt in
+    /// place, and an unchanged one only names the selected agent.
+    private func applyProjectAgentChoice(
+        selectedIDs: Set<String>,
+        focusedID: String?,
+        agents: [AgentProfile],
+        menu: ProjectAgentMenu
+    ) async throws -> ChatSelectionOutcome {
+        let associatedAgents = agents.filter {
+            selectedIDs.contains(Self.agentChoiceID($0))
+        }
+        let associationChanged = selectedIDs != menu.choices.selectedIDs
         if associationChanged {
             do {
                 try ProjectAgentSelectionStore.save(
@@ -595,7 +682,7 @@ extension ChatSessionController {
             )
         }
 
-        let focusedAgent = agents.first { Self.agentChoiceID($0) == choice.focusedID }
+        let focusedAgent = agents.first { Self.agentChoiceID($0) == focusedID }
         if let focusedAgent,
            ProjectAgentSelectionStore.selectionKey(for: focusedAgent) != menu.activeKey {
             // The new session builds its prompt from the saved association.

@@ -76,17 +76,21 @@ enum TelegramChannelTestSupport {
     /// A terminal chat whose Telegram channels use `transport` on the host's
     /// dispatcher, whose writes are captured instead of reaching the real
     /// terminal, and which reads its interactive-only Telegram commands.
+    /// `hostedModelID` and `availableModels` are the models the host supplies.
     @ChatSessionActor
     static func makeTerminal(
         transport: any TelegramHTTPTransport,
         permissionAuthorizer: LocalExecPermissionAuthorizer? = nil,
         sessionRunner: AgentCoreSessionRunner? = nil,
-        workingDirectory: URL = URL(fileURLWithPath: "/tmp/project", isDirectory: true)
+        workingDirectory: URL = URL(fileURLWithPath: "/tmp/project", isDirectory: true),
+        hostedModelID: String = "remote-community/test",
+        availableModels: [AgentSettingsModelManifest] = []
     ) throws -> TerminalChat {
         TerminalChat(
             configuration: try AgentConfiguration(
-                hostedModelID: "remote-community/test",
+                hostedModelID: hostedModelID,
                 availableAgents: AgentProfileStore.defaultProfiles(),
+                availableModels: availableModels,
                 workingDirectory: workingDirectory
             ),
             stdinIsTerminal: true,

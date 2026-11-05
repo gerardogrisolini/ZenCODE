@@ -622,7 +622,10 @@ guessing a task breakdown from prose.
 session from then on: prompts, voice notes, `/plan`, `/goal`, `/review`,
 replies to pending questions, and the permission replies `/allow`, `/always`,
 and `/deny` come from the chat, which also answers `/start`, `/help`,
-`/status`, `/changes`, `/diff`, and `/chat`; `/undo` stays in the terminal. The
+`/status`, `/changes`, `/diff`, and `/chat`, and opens the selection menus
+`/sessions`, `/models`, `/think`, and `/agents` (inline buttons; like in the
+terminal, they are refused while a response is generating); `/undo` stays in
+the terminal. The
 chat first receives the last six prompts and responses of the session as
 context. Meanwhile the terminal shows `Session driven from Telegram. Type
 /telegram off to take it back.` and accepts only `/telegram`, `/telegram off`,
@@ -1543,7 +1546,8 @@ TUI, for a machine that stays on: a Raspberry Pi, a home server, a Mac started
 over ssh. It opens a session and hands it at once to the linked Telegram chat,
 which drives it as it does after `/telegram on`: prompts, voice notes, `/plan`,
 `/goal`, `/review`, the permission replies `/allow`, `/always`, and `/deny`,
-`/status`, `/changes`, `/diff`, `/chat`, and `/help`. The chat receives the same
+`/status`, `/changes`, `/diff`, `/chat`, the selection menus `/sessions`,
+`/models`, `/think`, and `/agents`, and `/help`. The chat receives the same
 output as after `/telegram on`: responses, reasoning blocks, tool activity, the
 task-graph card, and the sub-agent status (see
 [Terminal TUI Commands](#terminal-tui-commands)). `/undo` answers `/undo is not

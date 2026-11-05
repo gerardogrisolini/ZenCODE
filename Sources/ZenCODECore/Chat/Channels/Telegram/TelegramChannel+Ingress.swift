@@ -171,8 +171,12 @@ extension TelegramChannel {
     /// artifact consent taps, and the live shared-chat text lines (a live
     /// `@mention`, a reply to an answerable card such as the picker's; see
     /// ``handleLiveSharedChatLineWhileBusy(_:message:lease:)``) are
-    /// answered; everything else is told the session is busy. Permission
-    /// replies go through
+    /// answered; everything else, `/sessions` `/models` `/think` `/agents`
+    /// and the taps of their menus included, is told the session is busy.
+    /// Otherwise a tap of a selection menu goes to
+    /// ``handleSelectionMenuCallback(_:chatID:messageID:lease:)``
+    /// (`TelegramChannel+SelectionMenus.swift`). Permission replies go
+    /// through
     /// ``handlePermissionReplyIfNeeded(_:lease:)``, which refuses one
     /// without a request ID on a route several sessions share. A prompt,
     /// and a menu command completed through its ForceReply, are admitted to
@@ -220,6 +224,13 @@ extension TelegramChannel {
             guard !isSessionGenerating
                 || callbackData.hasPrefix(Self.mentionPickerCallbackPrefix) else {
                 await sendBusyMessage(lease: routeLease)
+                return false
+            }
+            if Self.isSelectionMenuCallback(callbackData) {
+                await handleSelectionMenuCallback(
+                    callbackData, chatID: message.chatID,
+                    messageID: message.messageID, lease: routeLease
+                )
                 return false
             }
             await handleMentionPickerCallback(
@@ -411,8 +422,11 @@ extension TelegramChannel {
     ///
     /// Remote commands (`/help`, `/status`, `/chat`, `/changes`, `/undo`,
     /// `/diff`, `/start`) and live `@mention` messages are answered in the
-    /// linked chat; a remote command with an argument and an unknown slash
-    /// command are told so. `/plan`, `/goal` and `/review` run through
+    /// linked chat, and `/sessions`, `/models`, `/think` and `/agents` send
+    /// their selection menu (`TelegramChannel+SelectionMenus.swift`,
+    /// `TelegramChannel+SessionsMenu.swift`); a remote command with an
+    /// argument and an unknown slash command are told so. `/plan`, `/goal`
+    /// and `/review` run through
     /// ``ChatSessionController/handleCommandLine(_:context:)`` with the
     /// context of the slot's primary channel, and a plain line goes first to
     /// the conversation waiting for the operator
@@ -460,6 +474,18 @@ extension TelegramChannel {
             return .handled
         case .chat:
             await handleMentionPickerRequest(chatID: lease.key.chatID, lease: lease)
+            return .handled
+        case .sessions:
+            await handleSessionsMenuRequest(lease: lease)
+            return .handled
+        case .models:
+            await handleModelsMenuRequest(lease: lease)
+            return .handled
+        case .think:
+            await handleThinkMenuRequest(lease: lease)
+            return .handled
+        case .agents:
+            await handleAgentsMenuRequest(lease: lease)
             return .handled
         case .changes:
             await sendSystemMessageIfLinked(remoteChangesText(), lease: lease)
@@ -572,7 +598,7 @@ extension TelegramChannel {
     /// Sends to the chat on `lease`, when the command starts no turn, the
     /// notices it presented while it ran (`captured`) and its closing
     /// notices, in order, joined by newlines; a blank result sends nothing.
-    private func sendCommandNotices(
+    func sendCommandNotices(
         of outcome: ChatCommandOutcome,
         captured: [String],
         lease: TerminalTelegramRouteLease
@@ -694,7 +720,9 @@ extension TelegramChannel {
         return "\(binding.command) \(argument)"
     }
 
-    private func sendBusyMessage(lease: TerminalTelegramRouteLease) async {
+    /// Tells the chat on `lease` that the session is busy
+    /// (``busyMessageText``).
+    func sendBusyMessage(lease: TerminalTelegramRouteLease) async {
         await sendSystemMessageIfLinked(Self.busyMessageText, lease: lease)
     }
 }

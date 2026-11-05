@@ -166,6 +166,47 @@ extension ChatSessionController {
         }
     }
 
+    /// The model `modelID` a channel picked from a model menu it presents
+    /// itself (``modelChoices()``), applied as a confirmed `/models` menu:
+    /// ``selectModel(id:)``, then the channel's step for the selection.
+    public func applyModelSelection(id modelID: String) async -> ChatCommandOutcome {
+        do {
+            return await selectionCommandOutcome(
+                try await selectModel(id: modelID),
+                command: .models
+            )
+        } catch {
+            return Self.failedCommand(error)
+        }
+    }
+
+    /// The thinking level `thinkingID` a channel picked from a thinking menu
+    /// it presents itself (``thinkingMenu()``), applied as a confirmed
+    /// `/think` menu: ``selectThinking(_:)``, then the channel's step for the
+    /// selection. The level must be one of the current model's options
+    /// (otherwise ``ChatSelectionError/unknownThinkingLevel(_:)``); without a
+    /// configurable current model the notice `/think` answers with is the
+    /// answer.
+    public func applyThinkingSelection(id thinkingID: String) async -> ChatCommandOutcome {
+        do {
+            switch try thinkingMenu() {
+            case let .unavailable(notice):
+                return ChatCommandOutcome(notices: [notice])
+            case let .available(choices):
+                guard choices.items.contains(where: { $0.id == thinkingID }),
+                      let thinkingSelection = AgentThinkingSelection(rawValue: thinkingID) else {
+                    throw ChatSelectionError.unknownThinkingLevel(thinkingID)
+                }
+                return await selectionCommandOutcome(
+                    try await selectThinking(thinkingSelection),
+                    command: .thinking
+                )
+            }
+        } catch {
+            return Self.failedCommand(error)
+        }
+    }
+
     // MARK: - /agents
 
     /// `/agents`: the project's agent menu without arguments
@@ -202,6 +243,44 @@ extension ChatSessionController {
                     command: .agents
                 )
             }
+        } catch {
+            return Self.failedCommand(error)
+        }
+    }
+
+    /// The project's agent menu answered by a channel that presents it
+    /// itself (``projectAgentChoices()``): the profiles `associatedIDs`
+    /// names become the project's association and `activeID` the active
+    /// agent (`nil` keeps it), applied as a confirmed `/agents` menu
+    /// (``selectProjectAgents(associatedIDs:activeID:)``), then the
+    /// channel's step for the selection.
+    public func applyProjectAgentsSelection(
+        associatedIDs: Set<String>,
+        activeID: String?
+    ) async -> ChatCommandOutcome {
+        do {
+            return await selectionCommandOutcome(
+                try await selectProjectAgents(associatedIDs: associatedIDs, activeID: activeID),
+                command: .agents
+            )
+        } catch {
+            return Self.failedCommand(error)
+        }
+    }
+
+    /// The agent `agentID` (``agentChoiceID(_:)``) a channel picked from an
+    /// agent menu it presents itself (``agentChoices()``), activated as
+    /// `/agents <agent>` activates it (``selectAgent(_:)``), then the
+    /// channel's step for the selection. An ID of no available profile is
+    /// ``TerminalAgentSelectionError/unknownAgent(_:)``.
+    public func applyAgentSelection(id agentID: String) async -> ChatCommandOutcome {
+        do {
+            guard let agent = try availableAgents().first(where: {
+                Self.agentChoiceID($0) == agentID
+            }) else {
+                throw TerminalAgentSelectionError.unknownAgent(agentID)
+            }
+            return await selectionCommandOutcome(try await selectAgent(agent), command: .agents)
         } catch {
             return Self.failedCommand(error)
         }
@@ -378,6 +457,22 @@ extension ChatSessionController {
     func savedSessionListCommand() async -> ChatCommandOutcome {
         do {
             return ChatCommandOutcome(notices: try await chooseSavedSession().notices)
+        } catch {
+            return Self.failedCommand(error)
+        }
+    }
+
+    /// Loads the saved session `name` a channel picked from a saved-session
+    /// menu it presents itself (``savedSessions()``), as a confirmed
+    /// `/sessions` menu loads it (``loadSavedSession(_:checkpointEntryID:)``).
+    /// A name of no saved session of the project is
+    /// ``ChatSessionNotice/savedSessionNotFound(name:)``.
+    public func loadSavedSessionSelection(named name: String) async -> ChatCommandOutcome {
+        do {
+            guard let session = try savedSessions().first(where: { $0.name == name }) else {
+                return ChatCommandOutcome(notices: [.savedSessionNotFound(name: name)])
+            }
+            return ChatCommandOutcome(notices: try await loadSavedSession(session).notices)
         } catch {
             return Self.failedCommand(error)
         }
