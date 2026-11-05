@@ -233,6 +233,15 @@ The composer is at the bottom of the window.
 - **Stop** (Esc in the Chat tab, ⌘., or the stop button) cancels the turn and
   refuses the open requests. The queue is kept. While a consent sheet shows,
   Esc denies the call instead.
+- Under the field, a line names the keys that do something now, in the
+  words of the terminal's input panel: `Enter send · Ctrl+G access · Ctrl+Y
+  chat` while idle, `Enter queue · Ctrl+G access · Ctrl+Y chat · Esc stop`
+  while a turn runs, and `↑/↓ select · Tab complete · Enter choose · Esc
+  dismiss` while suggestions show. Ctrl+G is **Session > Full Access** and
+  Ctrl+Y shows or hides the chat reader (see
+  [Toolbar and menus](#toolbar-and-menus)). When the line does not fit while
+  a turn runs, `Esc stop` moves ahead of Ctrl+G and Ctrl+Y, as in the
+  terminal.
 
 The response language is locked on the first prompt you type in a session, as
 in the terminal: the configured language, else the system one. It is decided

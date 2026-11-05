@@ -251,6 +251,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   **Session > Full Access** (⌃G) is the terminal's Ctrl+G for every window at
   once (each shows a red dot first in its status bar and the terminal's
   `Mode: …` message in its conversation), and is never saved.
+  Under its field, the composer names the keys that do something now, as the
+  terminal's input panel (`Enter send · Ctrl+G access · Ctrl+Y chat`, with
+  `Enter queue` and `Esc stop` while a turn runs, and the suggestion keys
+  while suggestions show).
   `/setup`, `/voice`, `/telegram`, `/feature`, `/cron`, `/ds4`, and
   `/tools logs` stay in the terminal. See [Docs/app.md](Docs/app.md).
 - The shared chat in the macOS app. Each window follows the live chat room of

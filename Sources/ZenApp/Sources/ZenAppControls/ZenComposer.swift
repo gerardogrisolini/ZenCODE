@@ -4,8 +4,8 @@
 //
 //  The floating Liquid Glass prompt composer of the app: the terminal UI's
 //  input panel (multi-line draft, history keys, slash-command and @mention
-//  completion, the shared-chat reader keys) plus attachments, file drops,
-//  Send/Stop and the queued prompts.
+//  completion, the shared-chat reader keys, the key hint under the field)
+//  plus attachments, file drops, Send/Stop and the queued prompts.
 //
 
 import AppKit
@@ -128,6 +128,10 @@ public struct ZenComposerActions {
 ///   not consume keeps its ordinary meaning, and so does any key with Shift,
 ///   Option, Command or Control. An input method composing keeps priority.
 ///
+/// Under the field, inside the container, a line names the keys that do
+/// something now, as the terminal's input panel does
+/// (``ZenComposerLogic/keyHint(isBusy:hasSuggestions:)``).
+///
 /// Prompts submitted while busy are queued by the owner, so Send stays
 /// available next to Stop when the draft is not empty.
 ///
@@ -154,6 +158,13 @@ public struct ZenComposer: View {
     /// The draft a history recall left, while it is unchanged.
     @State private var recalledDraft: String?
     @State private var isDropTargeted = false
+    /// The width of the attach button, so the key hint starts under the
+    /// field's text.
+    @State private var attachButtonWidth: CGFloat = 0
+
+    /// The spacing between the attach button, the field and the trailing
+    /// buttons.
+    private static let rowSpacing: CGFloat = 8
 
     /// The placeholder of the empty field.
     public static let placeholder = "Message ZenCODE — / for commands"
@@ -254,19 +265,27 @@ public struct ZenComposer: View {
                     }
                 )
             }
-            container
+            container(hasSuggestions: !matches.isEmpty)
         }
     }
 
-    private var container: some View {
+    private func container(hasSuggestions: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if !queued.isEmpty {
                 queuedChips
             }
-            HStack(alignment: .bottom, spacing: 8) {
-                attachButton
-                field
-                trailingButtons
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .bottom, spacing: Self.rowSpacing) {
+                    attachButton
+                        .onGeometryChange(for: CGFloat.self) { geometry in
+                            geometry.size.width
+                        } action: { width in
+                            attachButtonWidth = width
+                        }
+                    field
+                    trailingButtons
+                }
+                keyHint(ZenComposerLogic.keyHint(isBusy: isBusy, hasSuggestions: hasSuggestions))
             }
         }
         .padding(.horizontal, 10)
@@ -348,6 +367,30 @@ public struct ZenComposer: View {
         .disabled(!isEnabled)
         .help("Attach an image or a movie")
         .accessibilityLabel("Attach")
+    }
+
+    /// The key hint, under the field's text, on one line: its compact form
+    /// when the full one does not fit, as in the terminal.
+    private func keyHint(_ hint: ZenComposerLogic.KeyHint) -> some View {
+        keyHintText(hint)
+            .font(.caption)
+            .foregroundStyle(palette.textMuted)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.leading, attachButtonWidth + Self.rowSpacing)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func keyHintText(_ hint: ZenComposerLogic.KeyHint) -> some View {
+        if let compact = hint.compact {
+            ViewThatFits(in: .horizontal) {
+                Text(hint.full)
+                Text(compact)
+            }
+        } else {
+            Text(hint.full)
+        }
     }
 
     @ViewBuilder
@@ -612,6 +655,39 @@ public enum ZenComposerLogic {
             return ButtonVisibility(showsSend: true, showsStop: false)
         }
         return ButtonVisibility(showsSend: canSend(draft: draft), showsStop: true)
+    }
+
+    /// The key hint under the field, in the terminal's words: its input-panel
+    /// help (`TerminalInteractiveLineReader.panelHelpTextLocked`) for the
+    /// keys of the composer and its window, listing, like the terminal, only
+    /// the keys that do something now. Ctrl+G is Session > Full Access and
+    /// Ctrl+Y the chat reader, both menu key equivalents that also work from
+    /// the field.
+    struct KeyHint: Equatable {
+        /// The whole hint.
+        let full: String
+        /// The hint when the whole one does not fit (`Esc stop` ahead of the
+        /// other keys, as the terminal's compact help); `nil` when the whole
+        /// one is the only form.
+        let compact: String?
+    }
+
+    /// The hint for the composer's state:
+    /// - with suggestions on screen, their keys (Esc hides them, busy or not);
+    /// - while busy, Return queues and Esc stops the turn;
+    /// - otherwise Return sends, and Esc, which has nothing to stop and does
+    ///   not clear the draft, is not listed.
+    static func keyHint(isBusy: Bool, hasSuggestions: Bool) -> KeyHint {
+        if hasSuggestions {
+            return KeyHint(full: "↑/↓ select · Tab complete · Enter choose · Esc dismiss", compact: nil)
+        }
+        if isBusy {
+            return KeyHint(
+                full: "Enter queue · Ctrl+G access · Ctrl+Y chat · Esc stop",
+                compact: "Enter queue · Esc stop · Ctrl+G access · Ctrl+Y chat"
+            )
+        }
+        return KeyHint(full: "Enter send · Ctrl+G access · Ctrl+Y chat", compact: nil)
     }
 
     /// A draft with something other than whitespace.
