@@ -174,12 +174,20 @@ extension AgentRuntimeSessionSnapshot {
 }
 
 extension AgentCoreSessionConfiguration {
+    /// The configuration with the session state of `snapshot` (history,
+    /// prompts, tools, thinking, working directory). The model, like the
+    /// profile and the model settings, stays the configuration's own: a
+    /// backend reports the id it speaks on the wire (DS4 reports
+    /// `deepseek-v4.1-flash` for the manifest model `ds4:ds41f-q2`), and
+    /// adopting it would make the next turn's configuration fail
+    /// `matchesRuntime`, so the session would be recreated every turn and
+    /// lose its provider state (the DS4 KV prefix).
     func replacingRuntimeState(
         with snapshot: AgentRuntimeSessionSnapshot
     ) -> AgentCoreSessionConfiguration {
         AgentCoreSessionConfiguration(
             sessionID: snapshot.sessionID,
-            modelID: snapshot.modelID ?? modelID,
+            modelID: modelID,
             agentID: agentID,
             agentName: agentName,
             agentRole: agentRole,

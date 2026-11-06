@@ -10,6 +10,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- With the local DS4 provider in the terminal UI, the prompts after the first
+  one of a session reuse the KV cache again and prefill only the new text.
+  Before, each prompt prefilled the whole conversation again (the status bar
+  showed `p:0/…`): after every turn the session took the model id the engine
+  reports (for example `deepseek-v4.1-flash`) in place of the configured one
+  (`ds4:ds41f-q2`), so the next prompt rebuilt the session without the exact
+  token ids of the earlier answers.
+
 ## [4.0.1] - 2026-11-06
 
 ### Fixed

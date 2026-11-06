@@ -208,4 +208,60 @@ struct AgentCoreSessionRunnerDS4LifecycleTests {
         #expect(harness.mock.isClosed)
         #expect(await harness.registry.currentIdentity == nil)
     }
+
+    /// The terminal sends the manifest model id (`ds4:…`) while the DS4
+    /// client reports its wire id (`deepseek-v4-flash`) in the snapshot. The
+    /// stored configuration must keep the manifest id: otherwise the next turn
+    /// fails `matchesRuntime`, the session is recreated without its `ds4_`
+    /// keys and the whole prompt is prefilled again.
+    @Test
+    func aSecondPromptReusesTheKVWhenTheManifestIDDiffersFromTheWireID() async throws {
+        let harness = try DS4ClientHarness()
+        let client = try await harness.makeClient(sessionID: "root")
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in client },
+            taskGraphStore: nil,
+            sessionTurnLease: AgentSessionTurnLease(),
+            memoryGraphStoreRegistry: MemoryGraphStoreRegistry(),
+            ds4EngineRegistry: harness.registry
+        )
+        let configuration = AgentCoreSessionConfiguration(
+            sessionID: "root",
+            modelID: "ds4:mock-q2",
+            workingDirectory: harness.base,
+            systemPrompt: DS4ClientHarness.systemPrompt,
+            cacheKey: "root",
+            history: [],
+            allowedToolNames: [DS4ClientHarness.toolName]
+        )
+        #expect(configuration.modelID != harness.provider.modelID)
+
+        _ = try await runner.sendPrompt(configuration: configuration, prompt: "hi", attachments: [], onEvent: { _ in })
+        let snapshot = try #require(await runner.snapshotSession(id: "root"))
+        #expect(snapshot.modelID == harness.provider.modelID)
+        // The next turn, as the terminal composes it: same selection, history
+        // from the snapshot of the turn that ended.
+        let next = AgentCoreSessionConfiguration(
+            sessionID: "root",
+            modelID: "ds4:mock-q2",
+            workingDirectory: harness.base,
+            systemPrompt: DS4ClientHarness.systemPrompt,
+            cacheKey: "root",
+            history: snapshot.history,
+            allowedToolNames: [DS4ClientHarness.toolName]
+        )
+        _ = try await runner.sendPrompt(configuration: next, prompt: "again", attachments: [], onEvent: { _ in })
+
+        let syncs = harness.engine.syncs
+        try #require(syncs.count == 2)
+        let generated = try #require(harness.engine.results.first).tokens.count
+        #expect(generated > 0)
+        // Round 2 reuses the whole first prompt and the tokens round 1 generated.
+        #expect(syncs[0].cached == 0)
+        #expect(syncs[1].cached == syncs[0].suffix + generated)
+        #expect(harness.mock.liveSessionIDs == ["root"])
+        #expect(!harness.mock.calls.contains(.releaseSession("root")))
+
+        await runner.shutdown()
+    }
 }

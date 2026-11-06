@@ -93,7 +93,10 @@ struct AgentCoreSessionIdentityTests {
         #expect(restored.maxToolRounds == configuration.maxToolRounds)
         #expect(restored.maxOutputTokens == configuration.maxOutputTokens)
         #expect(restored.appMode == configuration.appMode)
-        #expect(restored.modelID == (snapshot.modelID ?? configuration.modelID))
+        // The model stays the configuration's: the snapshot reports the id the
+        // backend speaks on the wire, and adopting it would make the next turn
+        // fail `matchesRuntime` and recreate the session.
+        #expect(restored.modelID == configuration.modelID)
         #expect(restored.workingDirectoryPath == snapshot.workingDirectoryPath)
         #expect(restored.systemPrompt == snapshot.systemPrompt)
         #expect(restored.dynamicContext == snapshot.dynamicContext)
