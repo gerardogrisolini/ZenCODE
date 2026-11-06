@@ -10,6 +10,21 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- With the local DS4 provider, tool calls now carry the descriptor title and
+  presentation like those of the other providers. Tool rows in the terminal
+  UI show their target (file path, command, …) instead of the bare tool name,
+  ACP clients receive the proper tool kind instead of `other`, and the
+  summaries of delegated agents show the tool they are currently running.
+- With the local DS4 provider, `/think` now works. Setup assigns each DS4 model
+  the thinking levels of its family, without asking anything, with `high` as the
+  default: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` for
+  DeepSeek V4.1, and `off`, `low`, `medium`, `high`, and `max` for the other
+  models (DeepSeek V4, GLM, and Qwen). Models configured earlier get the levels
+  when the DS4 setup is run again, and levels already saved for a model are
+  kept.
+
 ## [4.0.0] - 2026-11-06
 
 > **Breaking release:** compared with v3.2.0, v4.0.0 renames the run mode

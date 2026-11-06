@@ -160,7 +160,11 @@ files.
    Non-DS4 providers, models, API keys, and unrelated settings are kept.
    Re-running the flow replaces the DS4 models with the new selection and keeps
    the id, title, parameter overrides, and thinking options of the models whose
-   file is still selected.
+   file is still selected. Setup also assigns each DS4 model the `/think`
+   levels of its family, without asking anything (see
+   [Thinking](#thinking-think)); a model that already has saved levels keeps
+   them, and a model configured earlier without levels gets them when you run
+   the DS4 setup again.
 
 Setup never downloads a checkout or model weights, probes the hardware, loads a
 model, or calls `/models`. Each model keeps its own launch parameters. A new
@@ -302,6 +306,22 @@ last for the session and are never saved.
 | `/ds4 hints on` or `/ds4 hints off` | Turns brief programming hints on or off, with the texts of ds4-agent. They start off and take effect from the next conversation boundary. |
 
 ### Thinking (`/think`)
+
+Setup assigns each DS4 model the thinking levels of its family, with `high` as
+the default level, so `/think` and the model picker offer them:
+
+| API model id | Levels |
+| --- | --- |
+| `deepseek-v4.1-flash` (DeepSeek V4.1) | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
+| Every other id (DeepSeek V4, GLM, Qwen) | `off`, `low`, `medium`, `high`, `max` |
+
+Only the levels that select a different DS4 mode are offered: for the other
+families `minimal` is the same as `low`, `xhigh` the same as `high`, and `ultra`
+the same as `max`. Levels already saved for a model are kept as they are. A
+model configured before setup assigned the levels gets them when the DS4 setup
+is run again.
+
+The selected level maps to the DS4 think mode as follows:
 
 | ZenCODE level | DeepSeek V4.1 (effort level) | Other models (DS4 mode) |
 | --- | --- | --- |

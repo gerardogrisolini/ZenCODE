@@ -289,6 +289,10 @@ extension ZenCODESetupRunner {
     /// model gets its own launch parameters; defaults come from that model's
     /// previously saved runtime, never from another model.
     ///
+    /// Each model also gets the `/think` levels of its family (no question is
+    /// asked, see ``ds4ThinkingOptions(forAPIModelID:)``); the levels already
+    /// saved for the same GGUF are kept unchanged.
+    ///
     /// The engine library is built last (when the user agrees), still before
     /// the caller commits anything: a failed build prints the error and the
     /// manual command but does not discard the staged configuration.
@@ -474,6 +478,10 @@ extension ZenCODESetupRunner {
                 previousModel: previousModel,
                 selectAPIModelID: selectAPIModelID
             )
+            let thinking = ds4ThinkingConfiguration(
+                forAPIModelID: apiModelID,
+                previousModel: previousModel
+            )
             let modelID: String
             if let previousModel {
                 modelID = previousModel.id
@@ -502,8 +510,8 @@ extension ZenCODESetupRunner {
                     provider: provider.remoteProvider(modelID: apiModelID),
                     configuredContextWindowLimit: runtime.contextWindow,
                     generationParameterOverrides: previousModel?.generationParameterOverrides,
-                    thinkingOptions: previousModel?.thinkingOptions,
-                    defaultThinkingSelection: previousModel?.defaultThinkingSelection,
+                    thinkingOptions: thinking.options,
+                    defaultThinkingSelection: thinking.defaultSelection,
                     ds4Runtime: runtime
                 )
             )
@@ -587,6 +595,41 @@ extension ZenCODESetupRunner {
             catalogAPIModelID: entry?.apiModelID,
             diskBytes: artifact.diskBytes
         )
+    }
+
+    /// API id of DeepSeek V4.1 (DSML41 tool syntax), the only family whose
+    /// effort levels `DS4ThinkModeMapping` keeps distinct.
+    private static let ds4DeepSeek41APIModelID = "deepseek-v4.1-flash"
+
+    /// Level `/think` starts on for a DS4 model that has no saved default: the
+    /// default think mode of ds4-agent (HIGH).
+    static let ds4DefaultThinkingSelection: AgentThinkingSelection = .high
+
+    /// Thinking levels setup assigns to a DS4 model, by the family of its API
+    /// model id, without asking. Only levels that `DS4ThinkModeMapping` maps to
+    /// distinct think modes are offered: DeepSeek V4.1 has explicit effort levels
+    /// for all of them, while the other families (DeepSeek V4, GLM, Qwen) have
+    /// the named modes LOW, MEDIUM, HIGH and MAX only (`minimal` is `low`,
+    /// `xhigh` is `high`, `ultra` is `max`).
+    static func ds4ThinkingOptions(forAPIModelID apiModelID: String) -> [AgentThinkingSelection] {
+        if apiModelID == ds4DeepSeek41APIModelID {
+            return [.off, .minimal, .low, .medium, .high, .xhigh, .max]
+        }
+        return [.off, .low, .medium, .high, .max]
+    }
+
+    /// Thinking levels and default of a DS4 model. The saved levels of the model
+    /// for the same GGUF are kept as they are; a model without any (never
+    /// configured, or configured before setup assigned them) gets the levels of
+    /// its family with the default ``ds4DefaultThinkingSelection``.
+    private static func ds4ThinkingConfiguration(
+        forAPIModelID apiModelID: String,
+        previousModel: AgentSettingsModelManifest?
+    ) -> (options: [AgentThinkingSelection], defaultSelection: AgentThinkingSelection?) {
+        if let saved = previousModel?.thinkingOptions, !saved.isEmpty {
+            return (saved, previousModel?.defaultThinkingSelection)
+        }
+        return (ds4ThinkingOptions(forAPIModelID: apiModelID), ds4DefaultThinkingSelection)
     }
 
     private static func ds4APIModelID(

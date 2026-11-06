@@ -73,6 +73,9 @@ struct DS4PreparedRound: Sendable {
     /// `DS4EngineInfo.tokenIdentity` of the engine that prepared the round:
     /// stored with the token ids the round generates.
     let tokenIdentity: String
+    /// Resolves parsed tool calls to their descriptor title and presentation,
+    /// like every other provider.
+    let toolCatalog: RemoteToolWireCatalog
 
     var operations: [DS4TranscriptOperation] {
         transcript.operations
@@ -401,7 +404,7 @@ extension RemoteGenerationClient {
             text: parsed.visibleText,
             reasoningText: parsed.reasoningText,
             stopReason: stopReason,
-            toolCalls: parsed.toolCalls,
+            toolCalls: parsed.toolCalls.map { prepared.toolCatalog.localToolCall(from: $0) },
             stats: stats
         )
         result.ds4Turn = DS4AssistantTurn(
@@ -596,7 +599,8 @@ extension RemoteGenerationClient {
                 ),
                 parameterTypes: DS4ToolParameterKind.map(from: descriptors),
                 contextSize: contextSize,
-                tokenIdentity: info.tokenIdentity
+                tokenIdentity: info.tokenIdentity,
+                toolCatalog: RemoteToolWireCatalog(descriptors: descriptors)
             )
         } catch {
             tokenized.prepared.release()

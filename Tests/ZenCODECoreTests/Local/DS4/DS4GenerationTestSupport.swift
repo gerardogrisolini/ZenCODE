@@ -340,7 +340,9 @@ final class DS4ClientHarness: Sendable {
         overrides: AgentGenerationParameterOverrides? = nil,
         history: [AgentRuntimeMessage] = [],
         thinkingSelection: AgentThinkingSelection? = .off,
-        preserveThinking: Bool = false
+        preserveThinking: Bool = false,
+        toolTitle: String? = nil,
+        toolPresentation: ToolPresentationDefinition? = nil
     ) async throws -> RemoteGenerationClient {
         let backend = try AgentRemoteBackendFactory.makeRemoteBackend(
             configuration: runtimeConfiguration(maxToolRounds: maxToolRounds, maxOutputTokens: maxOutputTokens),
@@ -349,7 +351,7 @@ final class DS4ClientHarness: Sendable {
             ds4Environment: environment
         )
         let client = try #require(backend as? RemoteGenerationClient)
-        await installTool(on: client)
+        await installTool(on: client, title: toolTitle, presentation: toolPresentation)
         await client.createSession(
             id: sessionID,
             cwd: base.path,
@@ -362,15 +364,21 @@ final class DS4ClientHarness: Sendable {
         return client
     }
 
-    func installTool(on client: RemoteGenerationClient) async {
+    func installTool(
+        on client: RemoteGenerationClient,
+        title: String? = nil,
+        presentation: ToolPresentationDefinition? = nil
+    ) async {
         let arguments = toolArguments
         await client.updateToolProviders([
             AgentToolProvider(
                 tools: [
                     ToolDescriptor(
                         name: Self.toolName,
+                        title: title,
                         description: "Echoes its text.",
-                        inputSchema: #"{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}"#
+                        inputSchema: #"{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}"#,
+                        presentation: presentation
                     )
                 ],
                 executor: { call in

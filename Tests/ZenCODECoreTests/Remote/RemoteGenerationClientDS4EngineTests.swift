@@ -109,6 +109,52 @@ struct RemoteGenerationClientDS4EngineTests {
     }
 
     @Test
+    func toolCallEventsCarryTheDescriptorTitleAndPresentation() async throws {
+        let harness = try DS4ClientHarness()
+        let presentation = ToolPresentationDefinition(
+            title: "Echo text",
+            action: "Echo",
+            kind: .inspect,
+            target: .argument(["text"], format: .text)
+        )
+        harness.mock.enqueueGeneration(["Let me check.", DS4ClientHarness.dsml41EchoCall("hi")])
+        harness.mock.enqueueGeneration(["Done: ", "hi"])
+        let client = try await harness.makeClient(
+            toolTitle: "Echo",
+            toolPresentation: presentation
+        )
+        let recorder = DS4EventRecorder()
+
+        _ = try await client.sendPrompt(
+            sessionID: "session",
+            prompt: "Echo hi",
+            attachments: [],
+            onEvent: recorder.handler
+        )
+
+        // Parsed DS4 tool calls are resolved against the descriptors, like the
+        // other providers do, so the UI can show the tool target.
+        let started = recorder.events.compactMap { event -> DirectAgentToolCall? in
+            if case let .toolCallStarted(call) = event { call } else { nil }
+        }
+        let completed = recorder.events.compactMap { event -> DirectAgentToolCall? in
+            if case let .toolCallCompleted(call, _) = event { call } else { nil }
+        }
+        let startedCall = try #require(started.first)
+        let completedCall = try #require(completed.first)
+        #expect(started.count == 1)
+        #expect(completed.count == 1)
+        for call in [startedCall, completedCall] {
+            #expect(call.name == DS4ClientHarness.toolName)
+            #expect(call.descriptorTitle == "Echo")
+            #expect(call.presentation == presentation)
+            #expect(call.argumentsJSON == #"{"text":"hi"}"#)
+        }
+        #expect(harness.echoedArguments == [#"{"text":"hi"}"#])
+        await client.shutdown()
+    }
+
+    @Test
     func nextTurnReusesTheKVAndKeepsTheFrozenCurrentTurnMemory() async throws {
         let harness = try DS4ClientHarness()
         harness.mock.enqueueGeneration(["First answer."])
