@@ -145,7 +145,7 @@ struct ACPResumeTaskGraphOfferTests {
         }
 
         /// Answers the client's side of the request `message` with `outcome`.
-        func answer(_ message: [String: JSONValue], outcome: [String: Any]) async throws {
+        func answer(_ message: [String: JSONValue], outcome: sending [String: Any]) async throws {
             guard case let .number(requestID)? = message["id"] else {
                 Issue.record("The permission request has no numeric id: \(message)")
                 return
