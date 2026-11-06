@@ -294,8 +294,8 @@ extension ZenCODESetupRunner {
 
     /// Lets the operator pick a graph and clean it, or delete another
     /// project's memory folder, until they leave. Cancelling any prompt past
-    /// the graph and action menus (`ZenCODESetupError.cancelled`) propagates
-    /// with the data untouched.
+    /// the graph and action menus (`ZenCODESetupError.cancelled`) returns to
+    /// Data management with the data untouched, instead of leaving setup.
     static func runMemoryCleanupMenu(
         fileManager: FileManager = .default
     ) async throws {
@@ -339,13 +339,20 @@ extension ZenCODESetupRunner {
                 continue
             }
 
-            switch action {
-            case .back:
-                continue
-            case .clean:
-                try await runMemoryGraphCleanup(item)
-            case .deleteFolder:
-                try await runMemoryFolderDeletion(item, fileManager: fileManager)
+            do {
+                switch action {
+                case .back:
+                    continue
+                case .clean:
+                    try await runMemoryGraphCleanup(item)
+                case .deleteFolder:
+                    try await runMemoryFolderDeletion(item, fileManager: fileManager)
+                }
+            } catch ZenCODESetupError.cancelled {
+                AgentOutput.standardError.writeString(
+                    action == .deleteFolder ? "Deletion cancelled.\n\n" : "Cleanup cancelled.\n\n"
+                )
+                return
             }
         }
     }

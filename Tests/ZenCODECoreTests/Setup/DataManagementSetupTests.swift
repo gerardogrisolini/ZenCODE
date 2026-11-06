@@ -43,25 +43,32 @@ struct DataManagementSetupTests {
     }
 
     @Test
-    func dataManagementMenuItemsContainExportImportCleanMemoryRebuildResetAndBack() throws {
+    func dataManagementMenuItemsContainExportImportCleanupRebuildResetAndBack() throws {
         let items = ZenCODESetupRunner.dataManagementMenuItems()
         let titles = items.map(\.title)
 
         #expect(titles.contains("Export backup"))
         #expect(titles.contains("Import backup"))
         #expect(titles.contains("Clean memory"))
+        #expect(titles.contains("Clean support directory"))
         #expect(titles.contains("Rebuild memory embeddings"))
         #expect(titles.contains("Reset remote configuration"))
         #expect(titles.contains("Back"))
         #expect(titles.last == "Back")
-        #expect(titles.count == 6)
-        // Clean memory and Rebuild memory embeddings sit between Import backup and Reset.
+        #expect(titles.count == 7)
+        // Clean memory, Clean support directory and Rebuild memory embeddings
+        // sit between Import backup and Reset.
         let importIndex = try #require(titles.firstIndex(of: "Import backup"))
         #expect(titles[importIndex + 1] == "Clean memory")
-        #expect(titles[importIndex + 2] == "Rebuild memory embeddings")
-        #expect(titles[importIndex + 3] == "Reset remote configuration")
-        #expect(items.map(\.value) == [.export, .importBackup, .cleanMemory, .rebuildEmbeddings, .reset, .back])
+        #expect(titles[importIndex + 2] == "Clean support directory")
+        #expect(titles[importIndex + 3] == "Rebuild memory embeddings")
+        #expect(titles[importIndex + 4] == "Reset remote configuration")
+        #expect(items.map(\.value) == [
+            .export, .importBackup, .cleanMemory, .cleanSupportDirectory, .rebuildEmbeddings, .reset, .back
+        ])
         #expect(items[importIndex + 2].detail
+            == "free disk space: delete browser caches and build files that are regenerated")
+        #expect(items[importIndex + 3].detail
             == "embed entries missing a vector from the configured model, in every memory graph")
     }
 
@@ -132,5 +139,52 @@ struct DataManagementSetupTests {
                 ) == Data("{\"models\":[]}".utf8)
             )
         }
+    }
+
+    // MARK: - Esc inside an action
+
+    @Test
+    func cancelledActionPromptReturnsToDataManagementWithItsMessage() throws {
+        var written: [String] = []
+        let value: Bool? = try ZenCODESetupRunner.returningToDataManagementOnCancel(
+            "Import cancelled.",
+            write: { written.append($0) }
+        ) {
+            throw ZenCODESetupError.cancelled
+        }
+
+        #expect(value == nil)
+        #expect(written == ["Import cancelled.\n\n"])
+    }
+
+    @Test
+    func completedActionReturnsItsValueWithoutAMessage() throws {
+        var written: [String] = []
+        let value = try ZenCODESetupRunner.returningToDataManagementOnCancel(
+            "Reset cancelled.",
+            write: { written.append($0) }
+        ) {
+            false
+        }
+
+        #expect(value == false)
+        #expect(written.isEmpty)
+    }
+
+    @Test
+    func otherActionErrorsStillPropagate() {
+        var written: [String] = []
+        let error = #expect(throws: ZenCODESetupError.self) {
+            try ZenCODESetupRunner.returningToDataManagementOnCancel(
+                "Export cancelled.",
+                write: { written.append($0) }
+            ) {
+                throw ZenCODESetupError.invalidChoice("archive")
+            }
+        }
+        if case .invalidChoice("archive")? = error {} else {
+            Issue.record("Expected invalidChoice(\"archive\"), got \(String(describing: error))")
+        }
+        #expect(written.isEmpty)
     }
 }

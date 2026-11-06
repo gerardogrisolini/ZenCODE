@@ -218,6 +218,45 @@ directory between machines in one step:
   another project only (not the current project and not the global graph),
   removes that project's whole memory directory after a confirmation that shows
   the exact path. No copy is kept: export a backup first if you may need it.
+- **Clean support directory** frees disk space in the support directory
+  (`~/.zencode/`, or `ZENCODE_SUPPORT_DIRECTORY`) by deleting only data that is
+  regenerated when needed. It measures six groups (this can take a few
+  seconds) and offers those that have something to delete, all preselected,
+  each with its size:
+  - *Browser on-device AI model*: `browser/OptGuideOnDeviceModel`,
+    `OptGuideOnDeviceClassifierModel`, `OptGuidePredictionModels` and
+    `optimization_guide_model_store`; Chrome downloads the model (Gemini Nano,
+    about 4 GB) again when it needs it.
+  - *Browser caches*: `browser/Default/Cache`, `Code Cache`, `GPUCache`,
+    `browser/Default/Service Worker/CacheStorage` and `ScriptCache`, and
+    `browser/GrShaderCache`, `GraphiteDawnCache`, `ShaderCache` and
+    `GPUPersistentCache`. Nothing else of the profile is touched: cookies,
+    logins, `Local State`, `snapshot-authorizations.json` and
+    `viewport-presets.json` are kept.
+  - *Feature dependency downloads*: `.build/repositories` and
+    `.build/checkouts` of every installed feature under `features/` (the
+    hidden install, staging and backup directories are skipped).
+  - *Feature intermediate build files*: when a feature has the Swift Build
+    layout (`.build/out/Products`, macOS), every entry of `.build/out` except
+    `Products`. `.build/release`, `.build/artifacts` and the rest of `.build`
+    are kept, so the installed feature keeps working; on the Linux layout this
+    group finds nothing.
+  - *App build directory* (macOS): `app/build`; the installed app in
+    `app/current` is kept.
+  - *ZenCRON build directory*: `zencron/package/.build`; the installed
+    `bin/ZenCRON` is kept.
+
+  The two browser groups are skipped, with a message, while Chrome is using
+  the profile (`browser/SingletonLock` names a live process), checked both when
+  measuring and again right before deleting. The app build directory is
+  skipped, with a message, while a `zen --ui` is installing the app (it holds
+  `app/.install.lock`); otherwise that lock is held during the deletion.
+  Symbolic links are never followed: a path that is, or goes through, a link
+  is left in place. A report lists the exact paths and sizes of the chosen
+  groups and their total; nothing is deleted until you confirm (default No).
+  No copy is kept: the features, the app and ZenCRON rebuild from scratch on
+  their next update. A path that cannot be deleted is reported without
+  stopping the others, and the summary shows the space freed.
 - **Rebuild memory embeddings** gives a vector from the configured embedding
   model to every active entry that lacks one, in every memory graph under
   `~/.zencode/memory/`, and deletes the vectors of archived entries. It uses
@@ -232,8 +271,10 @@ directory between machines in one step:
   [Docs/memory.md](memory.md#memory-re-embedding).
 - **Reset remote configuration** is the same reset previously found in the
   main setup menu, now grouped here with the other data operations.
-- **Back** returns to the main setup menu. Cancelling any prompt leaves
-  the data untouched.
+- **Back** returns to the main setup menu. Esc on any prompt of an action
+  (Export, Import, Clean memory, Clean support directory, Reset) returns to
+  Data management with the data untouched: it does not leave setup, so the
+  setup changes not yet saved are kept.
 
 Backups are **not encrypted**: they contain provider API keys, OAuth
 tokens, and permissions in plain text, exactly as stored on disk. Keep the

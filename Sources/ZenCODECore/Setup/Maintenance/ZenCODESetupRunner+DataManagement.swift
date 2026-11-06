@@ -21,6 +21,7 @@ extension ZenCODESetupRunner {
         case export
         case importBackup
         case cleanMemory
+        case cleanSupportDirectory
         case rebuildEmbeddings
         case reset
         case back
@@ -56,6 +57,11 @@ extension ZenCODESetupRunner {
                 value: .cleanMemory,
                 title: "Clean memory",
                 detail: "preview and clean a memory graph, or delete an old project's memory"
+            ),
+            TerminalCheckboxMenuItem(
+                value: .cleanSupportDirectory,
+                title: "Clean support directory",
+                detail: "free disk space: delete browser caches and build files that are regenerated"
             ),
             TerminalCheckboxMenuItem(
                 value: .rebuildEmbeddings,
@@ -94,9 +100,14 @@ extension ZenCODESetupRunner {
             }
             switch action {
             case .export:
-                try runDataExport()
+                try returningToDataManagementOnCancel("Export cancelled.") {
+                    try runDataExport()
+                }
             case .importBackup:
-                if try runDataImport() {
+                let imported = try returningToDataManagementOnCancel("Import cancelled.") {
+                    try runDataImport()
+                }
+                if imported == true {
                     // An imported backup may predate settings v15: migrate it
                     // to provider keys before setup reads it again.
                     AgentProviderKeyMigration.migrateIfNeededReportingFailures()
@@ -106,11 +117,17 @@ extension ZenCODESetupRunner {
             case .cleanMemory:
                 try await runMemoryCleanupMenu()
                 continue
+            case .cleanSupportDirectory:
+                try runSupportDirectoryCleanup()
+                continue
             case .rebuildEmbeddings:
                 await runMemoryReembeddingFromDataManagement()
                 continue
             case .reset:
-                guard try confirmRemoteConfigurationReset() else {
+                let confirmed = try returningToDataManagementOnCancel("Reset cancelled.") {
+                    try confirmRemoteConfigurationReset()
+                }
+                guard confirmed == true else {
                     continue
                 }
                 try resetRemoteConfiguration()
@@ -119,6 +136,25 @@ extension ZenCODESetupRunner {
             case .back:
                 return .back
             }
+        }
+    }
+
+    /// Runs the prompts of one Data management action. Esc on one of them
+    /// (`ZenCODESetupError.cancelled`) writes `cancellationMessage` and returns
+    /// `nil`, so the submenu opens again with the data untouched instead of
+    /// leaving setup and dropping its unsaved changes. Any other error
+    /// propagates.
+    @discardableResult
+    static func returningToDataManagementOnCancel<Value>(
+        _ cancellationMessage: String,
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) },
+        _ body: () throws -> Value
+    ) throws -> Value? {
+        do {
+            return try body()
+        } catch ZenCODESetupError.cancelled {
+            write("\(cancellationMessage)\n\n")
+            return nil
         }
     }
 

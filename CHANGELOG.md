@@ -10,6 +10,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- `/setup` › Data management › **Clean support directory** frees disk space
+  in the support directory by deleting only regenerable data: the browser's
+  on-device AI model and caches, the dependency downloads and intermediate
+  build files of the installed features, and the build directories of the
+  macOS app and of ZenCRON. Cookies, logins and the other browser profile
+  data, the built feature executables, the installed app and `bin/ZenCRON`
+  are kept. It lists the exact paths and sizes and deletes nothing until you
+  confirm (default No); no copy is kept. The browser groups are skipped while
+  Chrome is using the profile, and the app build directory while a
+  `zen --ui` is installing the app.
+
 ### Fixed
 
 - With the local DS4 provider in the terminal UI, the prompts after the first
@@ -19,6 +32,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   reports (for example `deepseek-v4.1-flash`) in place of the configured one
   (`ds4:ds41f-q2`), so the next prompt rebuilt the session without the exact
   token ids of the earlier answers.
+- In `/setup` › Data management, Esc on a prompt of Export backup, Import
+  backup, Reset remote configuration or Clean memory (the days, the
+  confirmation, a project memory folder deletion) returns to Data management
+  with nothing changed. Before, it left setup and the setup changes not yet
+  saved were lost.
 
 ## [4.0.1] - 2026-11-06
 
