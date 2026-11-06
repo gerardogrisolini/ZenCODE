@@ -10,9 +10,23 @@ import Foundation
 import ToolCore
 
 extension ZenCODEAgentProfileSetupRunner {
-    static func promptInstructions(defaultValue: String?) throws -> String? {
+    /// The instructions of the agent being added or edited. With existing
+    /// instructions it first asks whether to keep or edit them; Esc there
+    /// throws `ZenCODESetupError.cancelled`, so the agent is left as it was.
+    /// `selectChoice` and `write` replace the terminal in tests.
+    static func promptInstructions(
+        defaultValue: String?,
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) },
+        selectChoice: (
+            String,
+            [TerminalCheckboxMenuItem<AgentInstructionsEditChoice>],
+            AgentInstructionsEditChoice
+        ) -> AgentInstructionsEditChoice? = {
+            TerminalCheckboxMenu.selectOne(title: $0, items: $1, selected: $2)
+        }
+    ) throws -> String? {
         if let currentInstructions = defaultValue?.nilIfBlank {
-            AgentOutput.standardError.writeString(
+            write(
                 """
 
                 Current agent instructions:
@@ -23,11 +37,13 @@ extension ZenCODEAgentProfileSetupRunner {
                 """
             )
 
-            let choice = TerminalCheckboxMenu.selectOne(
-                title: "Agent instructions",
-                items: instructionEditChoiceItems(hasExistingInstructions: true),
-                selected: AgentInstructionsEditChoice.keep
-            ) ?? .keep
+            guard let choice = selectChoice(
+                "Agent instructions",
+                instructionEditChoiceItems(hasExistingInstructions: true),
+                AgentInstructionsEditChoice.keep
+            ) else {
+                throw ZenCODESetupError.cancelled
+            }
 
             switch choice {
             case .keep:

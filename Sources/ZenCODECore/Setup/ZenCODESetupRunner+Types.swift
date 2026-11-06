@@ -173,7 +173,7 @@ enum SetupSection: Equatable, Hashable {
     case voiceMode
     case scheduledPrompts
     case dataManagement
-    case resetRemoteConfiguration, finish, cancel
+    case finish, cancel
 
     /// Short compatibility spelling used by callers that refer to the local
     /// runtime simply as "DS4".
@@ -198,7 +198,6 @@ enum SetupSection: Equatable, Hashable {
         .voiceMode: .init(title: "Voice mode", category: .optional, requiresConfiguredModels: false, aliases: ["voice", "voice mode", "speech", "dictation", "sherpa", "sherpa-onnx"]),
         .scheduledPrompts: .init(title: "Scheduled prompts (ZenCRON)", category: .optional, requiresConfiguredModels: false, aliases: ["scheduled prompts", "scheduled", "cron", "zencron", "crontab"]),
         .dataManagement: .init(title: "Data management", category: .optional, requiresConfiguredModels: false, aliases: ["data", "data management", "backup", "backups", "export", "import", "transfer", "manage data"]),
-        .resetRemoteConfiguration: .init(title: "Reset remote configuration", category: .optional, requiresConfiguredModels: false, aliases: ["reset", "reset remote configuration", "reset configuration"]),
         .finish: .init(title: "Finish setup", category: .finish, requiresConfiguredModels: false, aliases: ["finish", "done", "exit", "quit", "end", "stop"]),
         .cancel: .init(title: "Cancel without saving", category: .finish, requiresConfiguredModels: false, aliases: ["cancel", "abort", "discard", "quit without saving"])
     ]
@@ -208,6 +207,21 @@ enum SetupSection: Equatable, Hashable {
     var category: SetupSectionCategory { descriptor.category }
     var requiresConfiguredModels: Bool { descriptor.requiresConfiguredModels }
     func matches(_ value: String) -> Bool { descriptor.aliases.contains(value) }
+
+    /// Whether the section only stages its changes in the setup session, so
+    /// that an error inside it discards all of them. Features and Scheduled
+    /// prompts act as soon as an action is chosen (a feature installed or
+    /// toggled, ZenCRON built and installed): an error there may come after
+    /// some of those actions, which stay applied.
+    var stagesSettings: Bool {
+        switch self {
+        case .features, .scheduledPrompts:
+            return false
+        case .providersAndModels, .telegram, .agents, .agentModels, .responseLanguage,
+             .memoryEmbedding, .ds4Runtime, .voiceMode, .dataManagement, .finish, .cancel:
+            return true
+        }
+    }
 }
 
 struct SetupProviderInput {

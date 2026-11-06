@@ -102,7 +102,7 @@ extension RemoteSessionSnapshotTests {
             default: break
             }
         }
-        #expect(response.text == retryText + "Done")
+        #expect(response.text == retryText + "\nDone")
         #expect(content.withLock { $0 } == (divergent ? "HellopDone" : "HelloDone"))
         #expect(thought.withLock { $0 } == (divergent ? "Thinking againNext" : "ThinkingNext"))
         #expect(calls.withLock { $0 } == ["call_valid"])

@@ -155,7 +155,7 @@ extension AnthropicSubscriptionGenerationClient {
                     continue
                 }
 
-                accumulatedText.append(streamResult.text)
+                RemoteGenerationClient.appendRoundText(streamResult.text, to: &accumulatedText)
                 generationStats.append(streamResult.stats)
                 guard mutateSession(for: lease, { session in
                     appendAssistantMessage(streamResult: streamResult, to: &session.messages)

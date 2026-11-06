@@ -64,25 +64,35 @@ extension ZenCODEAgentProfileSetupRunner {
         name.agentSetupKey
     }
 
+    /// Text prompt of the agents setup. Esc, Ctrl-C or the end of input throws
+    /// `ZenCODESetupError.cancelled`, like every setup prompt, so the step
+    /// that asked goes back to the menu that opened it. `promptLine` replaces
+    /// the terminal in tests.
     static func promptString(
         _ prompt: String,
         defaultValue: String?,
-        allowEmpty: Bool
+        allowEmpty: Bool,
+        promptLine: (String, String?, Bool) -> String? = {
+            TerminalCheckboxMenu.promptLine(
+                title: "ZenCODE agents setup",
+                prompt: $0,
+                defaultValue: $1,
+                allowEmpty: $2
+            )
+        }
     ) throws -> String {
-        guard let value = TerminalCheckboxMenu.promptLine(
-            title: "ZenCODE agents setup",
-            prompt: prompt,
-            defaultValue: defaultValue,
-            allowEmpty: allowEmpty
-        ) else {
-            throw ZenCODEAgentProfileSetupError.inputClosed
+        guard let value = promptLine(prompt, defaultValue, allowEmpty) else {
+            throw ZenCODESetupError.cancelled
         }
         return value
     }
 
     static func promptYesNo(
         _ prompt: String,
-        defaultValue: Bool
+        defaultValue: Bool,
+        selectOne: (String, [TerminalCheckboxMenuItem<Bool>], Bool) -> Bool? = {
+            TerminalCheckboxMenu.selectOne(title: $0, items: $1, selected: $2)
+        }
     ) throws -> Bool {
         let items = [
             TerminalCheckboxMenuItem(value: true, title: "Yes", detail: nil),
@@ -90,27 +100,28 @@ extension ZenCODEAgentProfileSetupRunner {
         ]
         // Esc/EOF must never be silently folded into the highlighted default:
         // the "Rewrite it?" prompt used default == true, so cancelling would
-        // confirm a destructive overwrite. Treat a closed input as an error.
-        guard let value = TerminalCheckboxMenu.selectOne(
-            title: prompt,
-            items: items,
-            selected: defaultValue
-        ) else {
-            throw ZenCODEAgentProfileSetupError.inputClosed
+        // confirm a destructive overwrite. Treat it as a cancel instead.
+        guard let value = selectOne(prompt, items, defaultValue) else {
+            throw ZenCODESetupError.cancelled
         }
         return value
     }
 
     /// Required single choice of the profile's role among every role. The
     /// highlighted default is only a preselection the operator confirms; as
-    /// in ``promptYesNo``, a closed or cancelled input is an error.
-    static func promptRole(defaultValue: AgentProfileRole) throws -> AgentProfileRole {
-        guard let value = TerminalCheckboxMenu.selectOne(
-            title: "Role",
-            items: roleSelectionItems(),
-            selected: defaultValue
-        ) else {
-            throw ZenCODEAgentProfileSetupError.inputClosed
+    /// in ``promptYesNo(_:defaultValue:selectOne:)``, Esc is a cancel.
+    static func promptRole(
+        defaultValue: AgentProfileRole,
+        selectOne: (
+            String,
+            [TerminalCheckboxMenuItem<AgentProfileRole>],
+            AgentProfileRole
+        ) -> AgentProfileRole? = {
+            TerminalCheckboxMenu.selectOne(title: $0, items: $1, selected: $2)
+        }
+    ) throws -> AgentProfileRole {
+        guard let value = selectOne("Role", roleSelectionItems(), defaultValue) else {
+            throw ZenCODESetupError.cancelled
         }
         return value
     }
@@ -144,7 +155,6 @@ extension ZenCODEAgentProfileSetupRunner {
 
 enum ZenCODEAgentProfileSetupError: LocalizedError {
     case nonInteractiveTerminal
-    case inputClosed
     case unableToCreateGlobalAgents(URL)
     case instructionEditorLaunchFailed(String, String)
     case instructionEditorFailed(String, Int32)
@@ -153,8 +163,6 @@ enum ZenCODEAgentProfileSetupError: LocalizedError {
         switch self {
         case .nonInteractiveTerminal:
             return "ZenCODE agents setup requires an interactive terminal."
-        case .inputClosed:
-            return "Input closed during ZenCODE agents setup."
         case let .unableToCreateGlobalAgents(url):
             return "Unable to create global AGENTS.md at \(url.path)."
         case let .instructionEditorLaunchFailed(editor, reason):

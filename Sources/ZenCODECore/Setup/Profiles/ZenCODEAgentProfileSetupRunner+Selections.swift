@@ -9,10 +9,12 @@ import Foundation
 import ToolCore
 
 extension ZenCODEAgentProfileSetupRunner {
+    /// The tools of the agent being added or edited. Esc throws
+    /// `ZenCODESetupError.cancelled`, so the agent is left as it was.
     static func promptToolSelection(
         title: String,
         defaultTools: [String]
-    ) -> [String] {
+    ) throws -> [String] {
         let items = toolSelectionItems(existingTools: defaultTools)
         guard !items.isEmpty else {
             return defaultTools
@@ -21,11 +23,11 @@ extension ZenCODEAgentProfileSetupRunner {
             from: defaultTools,
             items: items
         )
-        let selection = TerminalCheckboxMenu.select(
+        let selection = try ZenCODESetupRunner.promptMenuSelection(
             title: title,
             items: TerminalChat.toolCheckboxItems(items: items),
             selected: selectedKeys
-        ) ?? selectedKeys
+        )
         return TerminalToolSelectionCatalog.selectedKeyNames(
             selection,
             items: items
@@ -40,10 +42,12 @@ extension ZenCODEAgentProfileSetupRunner {
         )
     }
 
+    /// The prompt skills of the agent being added or edited. Esc throws
+    /// `ZenCODESetupError.cancelled`, so the agent is left as it was.
     static func promptSkillSelection(
         title: String,
         defaultSkills: [AgentProfileSkill]
-    ) -> [AgentProfileSkill] {
+    ) throws -> [AgentProfileSkill] {
         let selectedSkillIDs = Set(defaultSkills.compactMap { $0.id.nilIfBlank })
         let items = skillCheckboxItems(
             availableSkills: PromptSkillCatalog.discoverSkills(
@@ -55,11 +59,11 @@ extension ZenCODEAgentProfileSetupRunner {
             AgentOutput.standardError.writeString("No prompt skills installed by the app.\n")
             return defaultSkills
         }
-        let selection = TerminalCheckboxMenu.select(
+        let selection = try ZenCODESetupRunner.promptMenuSelection(
             title: title,
             items: items,
             selected: selectedSkillIDs
-        ) ?? selectedSkillIDs
+        )
         return selection.sorted().map { AgentProfileSkill(id: $0) }
     }
 
@@ -151,19 +155,25 @@ extension ZenCODEAgentProfileSetupRunner {
             ?? AgentModelCatalogPresentation.providerGroupTitle(for: model).nilIfBlank
     }
 
+    /// The thinking selection of a model binding being added or edited, or
+    /// `nil` when the model does not think. Esc throws
+    /// `ZenCODESetupError.cancelled`, so the binding is left as it was.
     static func promptThinkingSelection(
         for model: AgentSettingsModelManifest,
         defaultSelection: AgentThinkingSelection?
-    ) -> AgentThinkingSelection? {
+    ) throws -> AgentThinkingSelection? {
         guard model.supportsThinking else {
             return nil
         }
         let resolvedDefaultSelection = model.thinkingSelection(for: defaultSelection)
-        return TerminalCheckboxMenu.selectOne(
+        guard let selection = TerminalCheckboxMenu.selectOne(
             title: "Thinking for \(AgentModelCatalogPresentation.modelTitle(for: model))",
             items: thinkingSelectionItems(model.availableThinkingSelections),
             selected: resolvedDefaultSelection
-        ) ?? resolvedDefaultSelection
+        ) else {
+            throw ZenCODESetupError.cancelled
+        }
+        return selection
     }
 
     static func thinkingSelectionItems(

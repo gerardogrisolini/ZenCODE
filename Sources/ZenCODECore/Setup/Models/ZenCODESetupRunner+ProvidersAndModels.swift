@@ -159,7 +159,7 @@ extension ZenCODESetupRunner {
             }
         }
 
-        let selectedProviderIndexes = promptProviderInputIndexes(
+        let selectedProviderIndexes = try promptProviderInputIndexes(
             title: "Reconfigure providers",
             providers: providerInputs
         )
@@ -195,7 +195,7 @@ extension ZenCODESetupRunner {
             }
         }
 
-        let deletedProviderIndexes = promptProviderInputIndexes(
+        let deletedProviderIndexes = try promptProviderInputIndexes(
             title: "Delete configured providers",
             providers: providerInputs
         )
@@ -227,7 +227,7 @@ extension ZenCODESetupRunner {
     static func promptProviderInputIndexes(
         title: String,
         providers: [SetupProviderInput]
-    ) -> Set<Int> {
+    ) throws -> Set<Int> {
         let items = providers.enumerated().map { index, provider in
             TerminalCheckboxMenuItem(
                 value: index,
@@ -235,24 +235,31 @@ extension ZenCODESetupRunner {
                 detail: "\(provider.models.count) models"
             )
         }
-        return promptSelectionIndexes(title: title, items: items)
+        return try promptSelectionIndexes(title: title, items: items)
     }
 
 
-    /// Presents an interactive multi-select menu and returns the chosen item
-    /// indexes. An empty selection (or cancel) means "nothing selected".
+    /// Presents an interactive multi-select menu, with nothing checked, and
+    /// returns the chosen item indexes. Enter with nothing checked means
+    /// "nothing selected"; Esc throws `ZenCODESetupError.cancelled`, so the
+    /// step that asked is cancelled instead of going on as if nothing had
+    /// been chosen.
     static func promptSelectionIndexes(
         title: String,
-        items: [TerminalCheckboxMenuItem<Int>]
-    ) -> Set<Int> {
+        items: [TerminalCheckboxMenuItem<Int>],
+        select: (String, [TerminalCheckboxMenuItem<Int>], Set<Int>) -> Set<Int>? = {
+            TerminalCheckboxMenu.select(title: $0, items: $1, selected: $2)
+        }
+    ) throws -> Set<Int> {
         guard !items.isEmpty else {
             return []
         }
-        return TerminalCheckboxMenu.select(
+        return try promptMenuSelection(
             title: title,
             items: items,
-            selected: []
-        ) ?? []
+            selected: [],
+            select: select
+        )
     }
 
     static func models(

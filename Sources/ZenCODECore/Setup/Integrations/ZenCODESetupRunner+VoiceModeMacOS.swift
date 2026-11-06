@@ -109,8 +109,9 @@ extension ZenCODESetupRunner {
     }
 
     /// Chooses the reading voice and returns the manifest with the choice
-    /// staged; Back or Esc returns it unchanged. The option items stage their
-    /// value and show the menu again, so a voice can still be chosen.
+    /// staged. The option items stage their value and show the menu again, so
+    /// a voice can still be chosen; Back keeps the options changed in this
+    /// visit, while Esc returns `initialManifest`, discarding them.
     static func configureSpeechVoice(
         manifest initialManifest: AgentSettingsManifest?,
         installedVoices: [SystemSpeechVoice] = SystemSpeechVoiceCatalog.installedVoices(),
@@ -163,7 +164,7 @@ extension ZenCODESetupRunner {
                 ),
                 selected
             ) else {
-                return manifest
+                return initialManifest
             }
 
             switch action {

@@ -438,7 +438,7 @@ extension ChatGPTSubscriptionGenerationClient {
                         generatedCharacterCount: streamResult.text.count
                     )
                 )
-                accumulatedText.append(streamResult.text)
+                RemoteGenerationClient.appendRoundText(streamResult.text, to: &accumulatedText)
 
                 if let cacheWarning = RemoteGenerationClient.promptCacheWarning(
                     provider: "ChatGPT",

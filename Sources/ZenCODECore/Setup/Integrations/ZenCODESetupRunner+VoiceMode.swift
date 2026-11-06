@@ -103,10 +103,35 @@ extension ZenCODESetupRunner {
     }
 
     /// Downloads a voice or removes the files, and stages the voice mode
-    /// options; returns the manifest with the options staged.
+    /// options; returns the manifest with the options staged. Back keeps the
+    /// options changed in this visit; Esc on the menu returns
+    /// `initialManifest`, discarding them (downloads and removals are
+    /// immediate and stay). Esc on the removal or download confirmation
+    /// returns to the menu. `selectAction`, `configureSendMode`,
+    /// `confirmRemoval` and `installVoice` replace the terminal in tests.
     static func configureVoiceMode(
         manifest initialManifest: AgentSettingsManifest?,
-        installation: SherpaOnnxVoiceInstallation = .standard()
+        installation: SherpaOnnxVoiceInstallation = .standard(),
+        selectAction: (
+            String,
+            [TerminalCheckboxMenuItem<VoiceModeAction>],
+            VoiceModeAction
+        ) -> VoiceModeAction? = {
+            TerminalCheckboxMenu.selectOne(title: $0, items: $1, selected: $2)
+        },
+        configureSendMode: (AgentSettingsManifest?) -> AgentSettingsManifest? = {
+            configureSendMode(manifest: $0)
+        },
+        confirmRemoval: (SherpaOnnxVoiceInstallation) throws -> Bool = {
+            try promptYesNo(
+                "Remove the voice mode files?",
+                defaultValue: false,
+                help: "Deletes \($0.directoryURL.path). Voice mode needs them again before /voice on works."
+            )
+        },
+        installVoice: (SherpaOnnxVoice, SherpaOnnxVoiceInstallation) async throws -> Void = {
+            try await installVoiceMode(voice: $0, installation: $1)
+        }
     ) async throws -> AgentSettingsManifest? {
         var manifest = initialManifest
         AgentOutput.standardError.writeString(
@@ -139,28 +164,30 @@ extension ZenCODESetupRunner {
                 installation: installation,
                 manifest: manifest
             )
-            guard let action = TerminalCheckboxMenu.selectOne(
-                title: choices.matchesLanguage
+            guard let action = selectAction(
+                choices.matchesLanguage
                     ? "Voice mode (\(languageCode)): options and the voice that reads answers aloud"
                     : "Voice mode: options and the voice that reads answers aloud",
-                items: items,
-                selected: selected
+                items,
+                selected
             ) else {
-                return manifest
+                return initialManifest
             }
 
             switch action {
             case .back:
                 return manifest
             case .sendMode:
-                manifest = configureSendMode(manifest: manifest)
+                manifest = configureSendMode(manifest)
                 selected = action
             case .remove:
-                guard try promptYesNo(
-                    "Remove the voice mode files?",
-                    defaultValue: false,
-                    help: "Deletes \(installation.directoryURL.path). Voice mode needs them again before /voice on works."
-                ) else {
+                guard let confirmed = try returningToMenuOnCancel(nil, {
+                    try confirmRemoval(installation)
+                }) else {
+                    selected = action
+                    continue
+                }
+                guard confirmed else {
                     return manifest
                 }
                 do {
@@ -176,7 +203,13 @@ extension ZenCODESetupRunner {
                 guard let voice = SherpaOnnxVoiceCatalog.voice(id: id) else {
                     return manifest
                 }
-                try await installVoiceMode(voice: voice, installation: installation)
+                // Esc on the download confirmation returns to this menu.
+                guard try await returningToMenuOnCancel(nil, {
+                    try await installVoice(voice, installation)
+                }) != nil else {
+                    selected = action
+                    continue
+                }
                 return manifest
             }
         }

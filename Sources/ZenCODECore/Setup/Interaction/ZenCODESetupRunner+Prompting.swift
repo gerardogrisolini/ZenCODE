@@ -121,6 +121,79 @@ extension ZenCODESetupRunner {
         return values
     }
 
+    // MARK: - Esc returns to the parent menu
+
+    /// Runs the prompts of one step opened from a setup menu. Esc on one of
+    /// them (`ZenCODESetupError.cancelled`) writes `cancellationMessage`, when
+    /// there is one, and returns `nil`, so the caller opens its menu again
+    /// with the step discarded. Every other error propagates.
+    ///
+    /// The caller must go back to a menu whose own Esc leads further up, never
+    /// to the prompt that was cancelled: the terminal menus report Esc, Ctrl-C,
+    /// `q` and the end of input alike, so repeating that prompt would loop
+    /// forever on a closed input.
+    @discardableResult
+    static func returningToMenuOnCancel<Value>(
+        _ cancellationMessage: String?,
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) },
+        _ body: () throws -> Value
+    ) throws -> Value? {
+        do {
+            return try body()
+        } catch ZenCODESetupError.cancelled {
+            if let cancellationMessage {
+                write("\(cancellationMessage)\n\n")
+            }
+            return nil
+        }
+    }
+
+    /// The asynchronous form of the overload above, for steps that await.
+    @discardableResult
+    static func returningToMenuOnCancel<Value>(
+        _ cancellationMessage: String?,
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) },
+        _ body: () async throws -> Value
+    ) async throws -> Value? {
+        do {
+            return try await body()
+        } catch ZenCODESetupError.cancelled {
+            if let cancellationMessage {
+                write("\(cancellationMessage)\n\n")
+            }
+            return nil
+        }
+    }
+
+    /// Reports a setup section, or a quick setup step, that ended before
+    /// completing, so setup can go back to the menu above with the changes of
+    /// that pass discarded. Esc (`ZenCODESetupError.cancelled`) prints
+    /// "<title> cancelled; changes not saved."; any other error prints
+    /// "<title> failed: <description>" and "Changes not saved.", or, when the
+    /// section acts immediately instead of staging its settings
+    /// (`stagesSettings` is `false`), "Changes already applied are kept.". A
+    /// `CancellationError`, or any error once the task is cancelled, is
+    /// rethrown: the surrounding task is being torn down and setup must not
+    /// go on.
+    static func reportInterruptedSetupStep(
+        _ error: any Error,
+        title: String,
+        stagesSettings: Bool = true,
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) }
+    ) throws {
+        if error is CancellationError || Task.isCancelled {
+            throw error
+        }
+        if case ZenCODESetupError.cancelled? = error as? ZenCODESetupError {
+            write("\n\(title) cancelled; changes not saved.\n\n")
+        } else {
+            let outcome = stagesSettings
+                ? "Changes not saved."
+                : "Changes already applied are kept."
+            write("\n\(title) failed: \(error.localizedDescription)\n\(outcome)\n\n")
+        }
+    }
+
 
     static func printSetupSummary(
         manifest: AgentSettingsManifest,

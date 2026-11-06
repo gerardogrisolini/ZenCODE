@@ -11,13 +11,13 @@ import Foundation
 import ToolCore
 
 extension ZenCODEAgentProfileSetupRunner {
-    private enum AgentModelBindingMenuAction: Hashable {
+    enum AgentModelBindingMenuAction: Hashable {
         case done
         case add
         case edit(String)
     }
 
-    private enum AgentModelBindingEditAction: Hashable {
+    enum AgentModelBindingEditAction: Hashable {
         case edit
         case makeDefault
         case remove
@@ -258,9 +258,36 @@ extension ZenCODEAgentProfileSetupRunner {
 
     // MARK: - Per-agent binding configuration
 
-    private static func configureModelBindingsForAgent(
+    /// The "Model bindings for <agent>" menu. Done returns the agent with the
+    /// changes of this visit; Esc discards them and returns the agent as it
+    /// was, back in the "Agent model bindings" menu. Esc while adding or
+    /// editing a binding returns to this menu with that binding unchanged.
+    /// `selectAction`, `promptBinding` (Add model binding) and `editBinding`
+    /// (the action menu of a binding) replace the terminal in tests.
+    static func configureModelBindingsForAgent(
         _ initialAgent: AgentProfile,
-        models: [AgentSettingsModelManifest]
+        models: [AgentSettingsModelManifest],
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) },
+        selectAction: (
+            String,
+            [TerminalCheckboxMenuItem<AgentModelBindingMenuAction>],
+            AgentModelBindingMenuAction
+        ) -> AgentModelBindingMenuAction? = {
+            TerminalCheckboxMenu.selectOne(title: $0, items: $1, selected: $2)
+        },
+        promptBinding: (
+            AgentProfile,
+            [AgentSettingsModelManifest]
+        ) throws -> AgentModelBinding? = {
+            try promptModelBinding(for: $0, existingBinding: nil, models: $1)
+        },
+        editBinding: (
+            AgentModelBinding,
+            AgentProfile,
+            [AgentSettingsModelManifest]
+        ) throws -> AgentProfile? = {
+            try editModelBinding($0, for: $1, models: $2)
+        }
     ) throws -> AgentProfile {
         var agent = initialAgent
 
@@ -287,22 +314,28 @@ extension ZenCODEAgentProfileSetupRunner {
                 )
             })
 
-            let action = TerminalCheckboxMenu.selectOne(
-                title: "Model bindings for \(agent.displayName)",
-                items: items,
-                selected: .done
-            ) ?? .done
+            guard let action = selectAction(
+                "Model bindings for \(agent.displayName)",
+                items,
+                .done
+            ) else {
+                write("\nModel bindings for \(initialAgent.displayName) cancelled; changes not saved.\n\n")
+                return initialAgent
+            }
 
             switch action {
             case .done:
                 return agent
 
             case .add:
-                guard let binding = try promptModelBinding(
-                    for: agent,
-                    existingBinding: nil,
-                    models: models
-                ) else {
+                let currentAgent = agent
+                let prompted = try ZenCODESetupRunner.returningToMenuOnCancel(
+                    "Add model binding cancelled.",
+                    write: write,
+                    { try promptBinding(currentAgent, models) }
+                )
+                // `nil` (Esc) or `.some(nil)` ("No dedicated model"): nothing to add.
+                guard let binding = prompted ?? nil else {
                     continue
                 }
                 var bindings = agent.modelBindings
@@ -318,20 +351,46 @@ extension ZenCODEAgentProfileSetupRunner {
                 guard let binding = agent.modelBindings.first(where: { $0.id == bindingID }) else {
                     continue
                 }
-                agent = try editModelBinding(
-                    binding,
-                    for: agent,
-                    models: models
+                let currentAgent = agent
+                let edited = try ZenCODESetupRunner.returningToMenuOnCancel(
+                    "Edit binding cancelled.",
+                    write: write,
+                    { try editBinding(binding, currentAgent, models) }
                 )
+                // `nil` (Esc in Edit binding) or `.some(nil)` (Esc on the
+                // action menu): the binding stays as it was.
+                if let updatedAgent = edited ?? nil {
+                    agent = updatedAgent
+                }
             }
         }
     }
 
-    private static func editModelBinding(
+    /// The action menu of one binding: Edit binding, Make default, Remove
+    /// binding. Returns the agent with the action applied, or `nil` when the
+    /// operator leaves the menu with Esc: the binding is then unchanged.
+    /// Esc inside Edit binding throws `ZenCODESetupError.cancelled`, again
+    /// with the binding unchanged; choosing "No dedicated model" there removes
+    /// it. `selectAction` and `promptBinding` replace the terminal in tests.
+    static func editModelBinding(
         _ binding: AgentModelBinding,
         for agent: AgentProfile,
-        models: [AgentSettingsModelManifest]
-    ) throws -> AgentProfile {
+        models: [AgentSettingsModelManifest],
+        selectAction: (
+            String,
+            [TerminalCheckboxMenuItem<AgentModelBindingEditAction>],
+            AgentModelBindingEditAction
+        ) -> AgentModelBindingEditAction? = {
+            TerminalCheckboxMenu.selectOne(title: $0, items: $1, selected: $2)
+        },
+        promptBinding: (
+            AgentProfile,
+            AgentModelBinding,
+            [AgentSettingsModelManifest]
+        ) throws -> AgentModelBinding? = {
+            try promptModelBinding(for: $0, existingBinding: $1, models: $2)
+        }
+    ) throws -> AgentProfile? {
         let actions: [TerminalCheckboxMenuItem<AgentModelBindingEditAction>] = [
             TerminalCheckboxMenuItem(
                 value: .edit,
@@ -351,19 +410,17 @@ extension ZenCODEAgentProfileSetupRunner {
                 detail: "the model will no longer be available to this agent"
             )
         ]
-        let action = TerminalCheckboxMenu.selectOne(
-            title: bindingDisplayTitle(binding),
-            items: actions,
-            selected: .edit
-        ) ?? .edit
+        guard let action = selectAction(
+            bindingDisplayTitle(binding),
+            actions,
+            .edit
+        ) else {
+            return nil
+        }
 
         switch action {
         case .edit:
-            guard let updatedBinding = try promptModelBinding(
-                for: agent,
-                existingBinding: binding,
-                models: models
-            ) else {
+            guard let updatedBinding = try promptBinding(agent, binding, models) else {
                 let remainingBindings = agent.modelBindings.filter { $0.id != binding.id }
                 return profile(
                     basedOn: agent,
@@ -401,7 +458,11 @@ extension ZenCODEAgentProfileSetupRunner {
         }
     }
 
-    private static func promptModelBinding(
+    /// Model, thinking and capability of a new or edited binding. Returns
+    /// `nil` when the operator chooses "No dedicated model". Esc on any of the
+    /// three prompts throws `ZenCODESetupError.cancelled`: unlike `nil`, it
+    /// never removes an edited binding.
+    static func promptModelBinding(
         for agent: AgentProfile,
         existingBinding: AgentModelBinding?,
         models: [AgentSettingsModelManifest]
@@ -422,13 +483,15 @@ extension ZenCODEAgentProfileSetupRunner {
                 .map { AgentSetupModelChoice.configuredModel($0.id) }
                 ?? .configuredModel(modelID)
         } ?? .noDedicatedModel
-        let choice = TerminalCheckboxMenu.selectOne(
+        guard let choice = TerminalCheckboxMenu.selectOne(
             title: existingBinding == nil
                 ? "Model for \(agent.displayName)"
                 : "Model for \(bindingDisplayTitle(existingBinding!))",
             items: modelChoiceItems(models: selectableModels, existingModelID: existingModelID),
             selected: initialChoice
-        ) ?? initialChoice
+        ) else {
+            throw ZenCODESetupError.cancelled
+        }
 
         switch choice {
         case .noDedicatedModel:
@@ -438,7 +501,7 @@ extension ZenCODEAgentProfileSetupRunner {
             guard let model = models.first(where: { $0.matches(modelID) }) else {
                 return existingBinding
             }
-            let thinkingSelection = promptThinkingSelection(
+            let thinkingSelection = try promptThinkingSelection(
                 for: model,
                 defaultSelection: existingBinding?.thinkingSelection
             )
@@ -491,12 +554,14 @@ extension ZenCODEAgentProfileSetupRunner {
 
             """
         )
-        let value = TerminalCheckboxMenu.promptLine(
+        guard let value = TerminalCheckboxMenu.promptLine(
             title: "Agent model bindings",
             prompt: "Capability",
             defaultValue: "\(defaultValue)",
             allowEmpty: false
-        ) ?? "\(defaultValue)"
+        ) else {
+            throw ZenCODESetupError.cancelled
+        }
         let parsed = Int(value) ?? defaultValue
         return min(max(parsed, 1), 10)
     }

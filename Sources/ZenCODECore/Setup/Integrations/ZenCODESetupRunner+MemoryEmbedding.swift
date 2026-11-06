@@ -142,20 +142,60 @@ extension ZenCODESetupRunner {
         return (choices, defaultChoice)
     }
 
+    /// The "Memory embeddings" menu and its follow-up prompts. Esc on the menu
+    /// throws `ZenCODESetupError.cancelled` (the section ends with nothing
+    /// staged); Esc on the OpenRouter model submenu or on the endpoint URL
+    /// prompt returns to the menu. `selectChoice` and `followUp` replace the
+    /// menu and the prompts after a choice in tests.
     static func promptMemoryEmbeddingSettings(
         existingSettings: AgentMemoryEmbeddingSettingsManifest?,
-        openRouterProposal: MemoryEmbeddingOpenRouterProposal?
+        openRouterProposal: MemoryEmbeddingOpenRouterProposal?,
+        selectChoice: (
+            String,
+            [TerminalCheckboxMenuItem<MemoryEmbeddingSetupChoice>],
+            MemoryEmbeddingSetupChoice
+        ) -> MemoryEmbeddingSetupChoice? = {
+            TerminalCheckboxMenu.selectOne(title: $0, items: $1, selected: $2)
+        },
+        followUp: ((MemoryEmbeddingSetupChoice) async throws -> MemoryEmbeddingSetupSelection)? = nil
     ) async throws -> MemoryEmbeddingSetupSelection {
         let menu = memoryEmbeddingSetupMenu(
             existingSettings: existingSettings,
             openRouterProposal: openRouterProposal
         )
         AgentOutput.standardError.writeString(memoryEmbeddingDisclosureNotice)
-        let choice = try promptMenuChoice(
-            title: "Memory embeddings",
-            items: menu.items,
-            selected: menu.defaultChoice
-        )
+        var selectedChoice = menu.defaultChoice
+        while true {
+            guard let choice = selectChoice(
+                "Memory embeddings",
+                menu.items,
+                selectedChoice
+            ) else {
+                throw ZenCODESetupError.cancelled
+            }
+            selectedChoice = choice
+            let selection = try await returningToMenuOnCancel(nil) { () async throws -> MemoryEmbeddingSetupSelection in
+                if let followUp {
+                    return try await followUp(choice)
+                }
+                return try await memoryEmbeddingSelection(
+                    for: choice,
+                    existingSettings: existingSettings,
+                    openRouterProposal: openRouterProposal
+                )
+            }
+            if let selection {
+                return selection
+            }
+        }
+    }
+
+    /// The prompts that follow one choice of the "Memory embeddings" menu.
+    private static func memoryEmbeddingSelection(
+        for choice: MemoryEmbeddingSetupChoice,
+        existingSettings: AgentMemoryEmbeddingSettingsManifest?,
+        openRouterProposal: MemoryEmbeddingOpenRouterProposal?
+    ) async throws -> MemoryEmbeddingSetupSelection {
         switch choice {
         case .bm25Only, .removeConfiguration:
             return MemoryEmbeddingSetupSelection(endpoint: nil)

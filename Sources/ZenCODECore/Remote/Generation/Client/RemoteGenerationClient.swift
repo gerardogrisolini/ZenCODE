@@ -477,7 +477,7 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
             guard currentSession(for: lease) != nil else {
                 throw RemoteGenerationClientError.missingSession
             }
-            accumulatedText.append(streamResult.text)
+            Self.appendRoundText(streamResult.text, to: &accumulatedText)
             generationStats.append(streamResult.stats)
             if let cacheWarning = Self.promptCacheWarning(
                 provider: provider.displayTitle,

@@ -27,9 +27,10 @@ struct DataManagementSetupTests {
     func resetIsNotDuplicatedInTheMainMenu() {
         let options = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
 
-        let resetCount = options.filter { $0.section == .resetRemoteConfiguration }
+        let resetCount = options.filter { $0.section.title == "Reset remote configuration" }
             .count
         #expect(resetCount == 0, "Reset must live only in the data management submenu")
+        #expect(ZenCODESetupRunner.dataManagementMenuItems().filter { $0.value == .reset }.count == 1)
     }
 
     @Test
@@ -141,50 +142,135 @@ struct DataManagementSetupTests {
         }
     }
 
-    // MARK: - Esc inside an action
+    // MARK: - Esc on the Data management menu, failed actions
 
     @Test
-    func cancelledActionPromptReturnsToDataManagementWithItsMessage() throws {
+    func escOnTheDataManagementMenuGoesBackToTheMainMenu() async throws {
+        // The terminal menu reports Esc as nil: the prompt passes it on
+        // instead of throwing, so the `.back` branch is reached.
+        var offered: [ZenCODESetupRunner.DataManagementAction] = []
+        let action = ZenCODESetupRunner.promptDataManagementAction { title, items, selected in
+            #expect(title == "Data management")
+            #expect(selected == .export)
+            offered = items.map(\.value)
+            return nil
+        }
+        #expect(action == nil)
+        #expect(offered.last == .back)
+
         var written: [String] = []
-        let value: Bool? = try ZenCODESetupRunner.returningToDataManagementOnCancel(
-            "Import cancelled.",
+        let outcome = try await ZenCODESetupRunner.runDataManagementMenu(
+            write: { written.append($0) },
+            promptAction: { nil },
+            importBackup: {
+                Issue.record("Esc on the menu must not start an action")
+                return false
+            }
+        )
+        #expect(outcome == .back)
+        #expect(written.isEmpty)
+    }
+
+    @Test
+    func failedImportValidationStaysInDataManagement() async throws {
+        let fileManager = FileManager.default
+        let directoryURL = fileManager.temporaryDirectory
+            .appendingPathComponent("ZenCODE-datamgmt-import-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: directoryURL) }
+        let archiveURL = directoryURL.appendingPathComponent("not-a-backup.tar.gz")
+        try Data("not an archive".utf8).write(to: archiveURL)
+
+        var answers: [ZenCODESetupRunner.DataManagementAction?] = [.importBackup, nil]
+        var prompts = 0
+        var written: [String] = []
+        let outcome = try await ZenCODESetupRunner.runDataManagementMenu(
+            write: { written.append($0) },
+            promptAction: {
+                prompts += 1
+                return answers.isEmpty ? nil : answers.removeFirst()
+            },
+            importBackup: {
+                _ = try SupportDirectoryArchive.validate(archiveURL: archiveURL)
+                Issue.record("A malformed archive must not validate")
+                return true
+            }
+        )
+
+        // The submenu opened again after the failure; its Esc then went back.
+        #expect(prompts == 2)
+        #expect(outcome == .back)
+        #expect(written.count == 1)
+        #expect(written.first?.hasPrefix("Import failed: ") == true)
+    }
+
+    @Test
+    func dataManagementActionReportsEscAndFailuresAndRethrowsTaskCancellation() async throws {
+        var written: [String] = []
+        let cancelled: Int? = try await ZenCODESetupRunner.runningDataManagementAction(
+            "Export",
             write: { written.append($0) }
         ) {
             throw ZenCODESetupError.cancelled
         }
+        #expect(cancelled == nil)
+        #expect(written == ["Export cancelled.\n\n"])
 
-        #expect(value == nil)
-        #expect(written == ["Import cancelled.\n\n"])
-    }
-
-    @Test
-    func completedActionReturnsItsValueWithoutAMessage() throws {
-        var written: [String] = []
-        let value = try ZenCODESetupRunner.returningToDataManagementOnCancel(
-            "Reset cancelled.",
+        written = []
+        let failed: Int? = try await ZenCODESetupRunner.runningDataManagementAction(
+            "Export",
             write: { written.append($0) }
         ) {
-            false
+            throw ZenCODESetupError.noRemoteModelsReturned
         }
+        #expect(failed == nil)
+        #expect(written == [
+            "Export failed: \(ZenCODESetupError.noRemoteModelsReturned.localizedDescription)\n\n"
+        ])
 
-        #expect(value == false)
+        written = []
+        let completed = try await ZenCODESetupRunner.runningDataManagementAction(
+            "Export",
+            write: { written.append($0) }
+        ) {
+            42
+        }
+        #expect(completed == 42)
         #expect(written.isEmpty)
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await ZenCODESetupRunner.runningDataManagementAction(
+                "Export",
+                write: { _ in Issue.record("A task cancellation is not reported") }
+            ) { () async throws -> Int in
+                throw CancellationError()
+            }
+        }
     }
 
     @Test
-    func otherActionErrorsStillPropagate() {
-        var written: [String] = []
-        let error = #expect(throws: ZenCODESetupError.self) {
-            try ZenCODESetupRunner.returningToDataManagementOnCancel(
-                "Export cancelled.",
-                write: { written.append($0) }
-            ) {
-                throw ZenCODESetupError.invalidChoice("archive")
-            }
+    func dataManagementActionRethrowsEveryErrorOfACancelledTask() async {
+        // Esc and failures alike, once the surrounding task has been
+        // cancelled: Data management must not report them and open again.
+        let errors: [any Error] = [ZenCODESetupError.cancelled, ZenCODESetupError.noRemoteModelsReturned]
+        for error in errors {
+            let outcome = await Task { () -> (rethrown: Bool, written: [String]) in
+                withUnsafeCurrentTask { $0?.cancel() }
+                var written: [String] = []
+                do {
+                    _ = try await ZenCODESetupRunner.runningDataManagementAction(
+                        "Clean memory",
+                        write: { written.append($0) }
+                    ) { () async throws -> Int in
+                        throw error
+                    }
+                    return (false, written)
+                } catch {
+                    return (true, written)
+                }
+            }.value
+            #expect(outcome.rethrown, "\(error)")
+            #expect(outcome.written.isEmpty, "\(error)")
         }
-        if case .invalidChoice("archive")? = error {} else {
-            Issue.record("Expected invalidChoice(\"archive\"), got \(String(describing: error))")
-        }
-        #expect(written.isEmpty)
     }
 }

@@ -82,30 +82,52 @@ extension ZenCODESetupRunner {
     }
 
     /// The single-select submenu presented when the operator chooses
-    /// "Data management". Returns `nil` when the operator goes back.
-    static func promptDataManagementAction() throws -> DataManagementAction? {
-        try promptMenuChoice(
-            title: "Data management",
-            items: dataManagementMenuItems(),
-            selected: .export
-        )
+    /// "Data management". Returns `nil` when the operator goes back with Esc.
+    static func promptDataManagementAction(
+        selectOne: (
+            String,
+            [TerminalCheckboxMenuItem<DataManagementAction>],
+            DataManagementAction
+        ) -> DataManagementAction? = {
+            TerminalCheckboxMenu.selectOne(title: $0, items: $1, selected: $2)
+        }
+    ) -> DataManagementAction? {
+        selectOne("Data management", dataManagementMenuItems(), .export)
     }
 
     /// Runs the data management submenu until the operator leaves it.
+    ///
+    /// Esc on the submenu, like Back, returns to the main setup menu. Esc
+    /// inside an action prints a message and opens the submenu again with the
+    /// data untouched. Another error the action raises is printed and the
+    /// submenu opens again as well, but the action may have been partly
+    /// applied, for example a memory folder deletion that stopped half way
+    /// (see ``runningDataManagementAction(_:write:_:)``). Only a
+    /// `CancellationError` (or any error once the task is cancelled) and a
+    /// failure of the reset itself propagate: a failed reset may leave a
+    /// partially removed configuration, so setup must not go on to a Finish
+    /// that rewrites the settings.
+    ///
+    /// `promptAction` and `importBackup` replace the terminal menu and the
+    /// import prompts in tests.
     @discardableResult
-    static func runDataManagementMenu() async throws -> DataManagementOutcome {
+    static func runDataManagementMenu(
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) },
+        promptAction: () -> DataManagementAction? = { promptDataManagementAction() },
+        importBackup: () throws -> Bool = { try runDataImport() }
+    ) async throws -> DataManagementOutcome {
         while true {
-            guard let action = try promptDataManagementAction() else {
+            guard let action = promptAction() else {
                 return .back
             }
             switch action {
             case .export:
-                try returningToDataManagementOnCancel("Export cancelled.") {
+                try await runningDataManagementAction("Export", write: write) {
                     try runDataExport()
                 }
             case .importBackup:
-                let imported = try returningToDataManagementOnCancel("Import cancelled.") {
-                    try runDataImport()
+                let imported = try await runningDataManagementAction("Import", write: write) {
+                    try importBackup()
                 }
                 if imported == true {
                     // An imported backup may predate settings v15: migrate it
@@ -115,21 +137,24 @@ extension ZenCODESetupRunner {
                     return .dataReplaced
                 }
             case .cleanMemory:
-                try await runMemoryCleanupMenu()
-                continue
+                try await runningDataManagementAction("Clean memory", write: write) {
+                    try await runMemoryCleanupMenu()
+                }
             case .cleanSupportDirectory:
-                try runSupportDirectoryCleanup()
-                continue
+                try await runningDataManagementAction("Clean support directory", write: write) {
+                    try runSupportDirectoryCleanup()
+                }
             case .rebuildEmbeddings:
                 await runMemoryReembeddingFromDataManagement()
-                continue
             case .reset:
-                let confirmed = try returningToDataManagementOnCancel("Reset cancelled.") {
+                let confirmed = try await runningDataManagementAction("Reset", write: write) {
                     try confirmRemoteConfigurationReset()
                 }
                 guard confirmed == true else {
                     continue
                 }
+                // Deliberately outside `runningDataManagementAction`: see the
+                // note on the reset failure above.
                 try resetRemoteConfiguration()
                 await MemoryGraphStoreRegistry.shared.reset()
                 return .reset
@@ -139,21 +164,31 @@ extension ZenCODESetupRunner {
         }
     }
 
-    /// Runs the prompts of one Data management action. Esc on one of them
-    /// (`ZenCODESetupError.cancelled`) writes `cancellationMessage` and returns
-    /// `nil`, so the submenu opens again with the data untouched instead of
-    /// leaving setup and dropping its unsaved changes. Any other error
-    /// propagates.
+    /// Runs one Data management action. Esc on one of its prompts
+    /// (`ZenCODESetupError.cancelled`) writes "<action> cancelled." and any
+    /// other error "<action> failed: <description>"; both return `nil`, so
+    /// the submenu opens again instead of leaving setup and dropping its
+    /// unsaved changes. After Esc the data is untouched; after a failure the
+    /// action may have been partly applied (for example a memory folder
+    /// deletion that stopped half way). A `CancellationError`, or any error
+    /// once the task is cancelled, propagates.
     @discardableResult
-    static func returningToDataManagementOnCancel<Value>(
-        _ cancellationMessage: String,
+    static func runningDataManagementAction<Value>(
+        _ actionTitle: String,
         write: (String) -> Void = { AgentOutput.standardError.writeString($0) },
-        _ body: () throws -> Value
-    ) throws -> Value? {
+        _ body: () async throws -> Value
+    ) async throws -> Value? {
         do {
-            return try body()
-        } catch ZenCODESetupError.cancelled {
-            write("\(cancellationMessage)\n\n")
+            return try await body()
+        } catch {
+            if error is CancellationError || Task.isCancelled {
+                throw error
+            }
+            if case ZenCODESetupError.cancelled? = error as? ZenCODESetupError {
+                write("\(actionTitle) cancelled.\n\n")
+            } else {
+                write("\(actionTitle) failed: \(error.localizedDescription)\n\n")
+            }
             return nil
         }
     }

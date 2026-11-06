@@ -160,7 +160,25 @@ public enum ZenCODEAgentProfileSetupRunner {
         return agents
     }
 
-    private static func editAgents(_ initialAgents: [AgentProfile]) throws -> [AgentProfile] {
+    /// The "Agents" menu. Done returns the edited list. Esc throws
+    /// `ZenCODESetupError.cancelled`, which discards every change of this
+    /// visit (the section ends without staging anything). Esc inside Add
+    /// agent, an agent's edit or Delete configured agents returns to this
+    /// menu with that step discarded. `selectChoice`, `readAgent` and
+    /// `promptDeletion` replace the terminal in tests.
+    static func editAgents(
+        _ initialAgents: [AgentProfile],
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) },
+        selectChoice: (String, [TerminalCheckboxMenuItem<Int>], Int) -> Int? = {
+            TerminalCheckboxMenu.selectOne(title: $0, items: $1, selected: $2)
+        },
+        readAgent: (AgentProfile?) throws -> AgentProfile = {
+            try readAgent(defaultAgent: $0)
+        },
+        promptDeletion: ([AgentProfile]) throws -> Set<Int> = {
+            try promptAgentIndexes($0)
+        }
+    ) throws -> [AgentProfile] {
         var agents = initialAgents
         while true {
             var items = [
@@ -189,20 +207,32 @@ public enum ZenCODEAgentProfileSetupRunner {
                 )
             })
 
-            let choice = TerminalCheckboxMenu.selectOne(
-                title: "Agents",
-                items: items,
-                selected: 0
-            ) ?? 0
+            guard let choice = selectChoice(
+                "Agents",
+                items,
+                0
+            ) else {
+                throw ZenCODESetupError.cancelled
+            }
             if choice == 0 {
                 return agents
             }
             if choice == 1 {
-                agents.append(try readAgent(defaultAgent: nil))
+                if let agent = try ZenCODESetupRunner.returningToMenuOnCancel(
+                    "Add agent cancelled.",
+                    write: write,
+                    { try readAgent(nil) }
+                ) {
+                    agents.append(agent)
+                }
                 continue
             }
             if choice == 2 {
-                let deletedAgentIndexes = promptAgentIndexes(agents)
+                let deletedAgentIndexes = try ZenCODESetupRunner.returningToMenuOnCancel(
+                    "Deletion cancelled.",
+                    write: write,
+                    { try promptDeletion(agents) }
+                ) ?? []
                 if !deletedAgentIndexes.isEmpty {
                     agents = agents.enumerated()
                         .filter { !deletedAgentIndexes.contains($0.offset) }
@@ -214,12 +244,19 @@ public enum ZenCODEAgentProfileSetupRunner {
             guard agents.indices.contains(index) else {
                 continue
             }
-            agents[index] = try readAgent(defaultAgent: agents[index])
+            let editedAgent = agents[index]
+            if let agent = try ZenCODESetupRunner.returningToMenuOnCancel(
+                "Edit \(editedAgent.displayName) cancelled.",
+                write: write,
+                { try readAgent(editedAgent) }
+            ) {
+                agents[index] = agent
+            }
         }
     }
 
-    static func promptAgentIndexes(_ agents: [AgentProfile]) -> Set<Int> {
-        ZenCODESetupRunner.promptSelectionIndexes(
+    static func promptAgentIndexes(_ agents: [AgentProfile]) throws -> Set<Int> {
+        try ZenCODESetupRunner.promptSelectionIndexes(
             title: "Delete configured agents",
             items: agentDeletionItems(agents)
         )
@@ -254,11 +291,11 @@ public enum ZenCODEAgentProfileSetupRunner {
             defaultValue: defaultAgent?.readOnly ?? false
         )
         let role = try promptRole(defaultValue: defaultAgent?.role ?? .developer)
-        let tools = promptToolSelection(
+        let tools = try promptToolSelection(
             title: "Tools for \(name)",
             defaultTools: defaultAgent?.tools ?? AgentProfileStore.developerToolNames
         )
-        let skills = promptSkillSelection(
+        let skills = try promptSkillSelection(
             title: "Prompt skills for \(name)",
             defaultSkills: defaultAgent?.skills ?? []
         )

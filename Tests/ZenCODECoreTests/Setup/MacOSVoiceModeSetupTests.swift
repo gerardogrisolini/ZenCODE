@@ -180,6 +180,39 @@ struct MacOSVoiceModeSetupTests {
     }
 
     @Test
+    func escapeDiscardsTheSendModeChangedInThisVisitWhileBackKeepsIt() throws {
+        let saved = Self.manifest(voice: AgentVoiceSettingsManifest(
+            enabled: true,
+            macOSVoiceIdentifier: Voices.luca.identifier
+        ))
+        func visit(leavingWith exit: Action?) -> (manifest: AgentSettingsManifest?, output: String) {
+            var round = 0
+            return Self.configure(
+                saved,
+                option: { _, _ in .value(8) },
+                sendMode: { _, _ in .pause },
+                answer: { _, _ in
+                    round += 1
+                    return round == 1 ? .sendMode : exit
+                }
+            )
+        }
+
+        // The pause was staged and the menu came back: Esc there discards it.
+        let escaped = visit(leavingWith: nil)
+        #expect(escaped.output.contains("Send mode: after 8 s of silence."))
+        #expect(escaped.manifest == saved)
+
+        // Back keeps it.
+        let kept = visit(leavingWith: .back)
+        #expect(try #require(kept.manifest).voice == AgentVoiceSettingsManifest(
+            enabled: true,
+            macOSVoiceIdentifier: Voices.luca.identifier,
+            utteranceSilenceSeconds: 8
+        ))
+    }
+
+    @Test
     func savedVoiceOfAnotherLanguageIsNotPreselected() {
         let saved = Self.manifest(voice: AgentVoiceSettingsManifest(
             enabled: false,

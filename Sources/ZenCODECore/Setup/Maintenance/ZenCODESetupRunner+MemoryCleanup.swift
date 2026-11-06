@@ -293,11 +293,30 @@ extension ZenCODESetupRunner {
     // MARK: - Interactive flow
 
     /// Lets the operator pick a graph and clean it, or delete another
-    /// project's memory folder, until they leave. Cancelling any prompt past
-    /// the graph and action menus (`ZenCODESetupError.cancelled`) returns to
-    /// Data management with the data untouched, instead of leaving setup.
+    /// project's memory folder, until they leave. Esc on the graph list
+    /// returns to Data management. Esc on the action menu, or on a prompt of
+    /// an action (`ZenCODESetupError.cancelled`), returns to the graph list
+    /// with the data untouched; a graph list closed by the end of input then
+    /// returns to Data management as well. `selectGraph`, `selectAction`,
+    /// `runAction` and `write` replace the terminal in tests.
     static func runMemoryCleanupMenu(
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) },
+        selectGraph: (
+            String,
+            [TerminalCheckboxMenuItem<MemoryGraphInventoryItem>],
+            MemoryGraphInventoryItem
+        ) -> MemoryGraphInventoryItem? = {
+            TerminalCheckboxMenu.selectOne(title: $0, items: $1, selected: $2)
+        },
+        selectAction: (
+            String,
+            [TerminalCheckboxMenuItem<MemoryCleanupAction>],
+            MemoryCleanupAction
+        ) -> MemoryCleanupAction? = {
+            TerminalCheckboxMenu.selectOne(title: $0, items: $1, selected: $2)
+        },
+        runAction: ((MemoryCleanupAction, MemoryGraphInventoryItem) async throws -> Void)? = nil
     ) async throws {
         let supportDirectoryURL = ZenFileService.supportDirectoryURL(fileManager: fileManager)
         let workspaceURL = AgentConfiguration.launchWorkingDirectoryURL(
@@ -311,31 +330,25 @@ extension ZenCODESetupRunner {
                 fileManager: fileManager
             )
             guard let first = inventory.first else {
-                AgentOutput.standardError.writeString(
+                write(
                     "No memory graphs found under \(memoryDirectoryURL(supportDirectoryURL: supportDirectoryURL).path).\n\n"
                 )
                 return
             }
 
-            let item: MemoryGraphInventoryItem
-            do {
-                item = try promptMenuChoice(
-                    title: "Clean memory: graph",
-                    items: memoryGraphMenuItems(inventory),
-                    selected: first
-                )
-            } catch ZenCODESetupError.cancelled {
+            guard let item = selectGraph(
+                "Clean memory: graph",
+                memoryGraphMenuItems(inventory),
+                first
+            ) else {
                 return
             }
 
-            let action: MemoryCleanupAction
-            do {
-                action = try promptMenuChoice(
-                    title: "Clean memory: \(item.isGlobal ? "Global graph" : item.directoryName)",
-                    items: memoryCleanupActionItems(for: item),
-                    selected: .clean
-                )
-            } catch ZenCODESetupError.cancelled {
+            guard let action = selectAction(
+                "Clean memory: \(item.isGlobal ? "Global graph" : item.directoryName)",
+                memoryCleanupActionItems(for: item),
+                .clean
+            ) else {
                 continue
             }
 
@@ -344,15 +357,23 @@ extension ZenCODESetupRunner {
                 case .back:
                     continue
                 case .clean:
-                    try await runMemoryGraphCleanup(item)
+                    if let runAction {
+                        try await runAction(action, item)
+                    } else {
+                        try await runMemoryGraphCleanup(item)
+                    }
                 case .deleteFolder:
-                    try await runMemoryFolderDeletion(item, fileManager: fileManager)
+                    if let runAction {
+                        try await runAction(action, item)
+                    } else {
+                        try await runMemoryFolderDeletion(item, fileManager: fileManager)
+                    }
                 }
             } catch ZenCODESetupError.cancelled {
-                AgentOutput.standardError.writeString(
+                write(
                     action == .deleteFolder ? "Deletion cancelled.\n\n" : "Cleanup cancelled.\n\n"
                 )
-                return
+                continue
             }
         }
     }

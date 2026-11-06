@@ -32,11 +32,47 @@ Release tags follow the strict `vX.Y.Z` contract described in
   reports (for example `deepseek-v4.1-flash`) in place of the configured one
   (`ds4:ds41f-q2`), so the next prompt rebuilt the session without the exact
   token ids of the earlier answers.
-- In `/setup` › Data management, Esc on a prompt of Export backup, Import
-  backup, Reset remote configuration or Clean memory (the days, the
-  confirmation, a project memory folder deletion) returns to Data management
-  with nothing changed. Before, it left setup and the setup changes not yet
-  saved were lost.
+- Esc behaves the same way in the whole interactive setup (`zen` first setup
+  and `/setup`): it goes back one level.
+  - Esc on a prompt returns to the menu that opened that step: the step is
+    discarded and what other sections staged is kept.
+  - Esc on a menu with Done or Back (Agents, Model bindings for an agent,
+    Voice mode) discards the changes made in that menu during the visit;
+    Done and Back keep them.
+  - Only Esc on the first menu leaves setup: the main setup menu, the
+    Quick/Custom setup choice, or the question to rewrite an invalid
+    `settings.json`. From `/setup` the chat then resumes.
+  - Nested menus return to their parent: the provider family submenus to
+    Provider family, the OpenRouter embedding model and the endpoint URL to
+    Memory embeddings, the Linux voice file confirmations to Voice mode.
+  - An error inside a section (a failed `/models` request, a Telegram pairing
+    timeout, an instructions editor that fails) prints `<section> failed: …`
+    and returns to the main setup menu without applying that section.
+    Features and Scheduled prompts, which act at once, say instead that the
+    changes already applied are kept.
+  - In Quick setup, Esc in Providers and models returns to the Quick/Custom
+    choice; Esc in the response language or the agents keeps the steps
+    already completed and opens the main setup menu.
+  - In Data management, Esc on the menu returns to the main setup menu. Esc
+    inside an action returns to Data management with nothing changed, and a
+    failed action, such as an archive rejected by Import, prints its error and
+    returns there too; in Clean memory, Esc inside an action returns to the
+    graph list.
+  - Before, Esc inside a `/setup` section left setup with an error that closed
+    ZenCODE, and the setup changes not yet saved were lost.
+  - Before, Esc on the action menu of a model binding opened Edit binding, and
+    Esc on the model prompt of a binding was ignored: setup went on to its
+    thinking and capability with the current model.
+  - Before, Esc in the agent tools, skills or instructions, in a binding's
+    thinking or capability, and in the checkbox menus of Providers and models
+    was taken as a confirmation of the current choice or of none.
+- The final response of a turn with tool calls now separates the text of
+  consecutive rounds with a line break. Before, the last comment sentence of a
+  round and the beginning of the next one stayed on the same line (for example
+  `…transcript.## Specifiche concordate`), so `/plan` could reject a valid
+  Planner plan with "The Planner produced text but did not register a valid
+  structured task list", and `agent.get` / `agent.wait` showed sentences glued
+  together. The streamed output does not change.
 
 ## [4.0.1] - 2026-11-06
 

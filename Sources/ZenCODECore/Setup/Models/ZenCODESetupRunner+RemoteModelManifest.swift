@@ -411,8 +411,22 @@ extension ZenCODESetupRunner {
     /// Asks for the kind of provider to add. Choices whose provider key is in
     /// `configuredProviderIDs` stay visible but are marked as already
     /// configured; the caller refuses them (see `readProvider`).
+    ///
+    /// Esc on a family submenu (OpenAI, Anthropic, API provider preset)
+    /// returns to "Provider family"; Esc there throws
+    /// `ZenCODESetupError.cancelled`. `selectFamily` and `promptKind` (the
+    /// submenu of a family; `nil` for the terminal ones) replace the menus in
+    /// tests.
     static func promptProviderKind(
-        configuredProviderIDs: Set<String> = []
+        configuredProviderIDs: Set<String> = [],
+        selectFamily: (
+            String,
+            [TerminalCheckboxMenuItem<SetupProviderFamily>],
+            SetupProviderFamily
+        ) -> SetupProviderFamily? = {
+            TerminalCheckboxMenu.selectOne(title: $0, items: $1, selected: $2)
+        },
+        promptKind promptKindInFamily: ((SetupProviderFamily) throws -> SetupProviderKind)? = nil
     ) throws -> SetupProviderKind {
         func detail(_ kind: SetupProviderKind, _ text: String) -> String {
             configuredProviderIDs.contains(kind.providerID)
@@ -423,89 +437,112 @@ extension ZenCODESetupRunner {
             kinds.first { !configuredProviderIDs.contains($0.providerID) } ?? kinds[0]
         }
 
-        let family = try promptMenuChoice(
-            title: "Provider family",
-            items: [
-                TerminalCheckboxMenuItem(
-                    value: SetupProviderFamily.openAI,
-                    title: "OpenAI",
-                    detail: "OpenAI API or ChatGPT Subscription"
-                ),
-                TerminalCheckboxMenuItem(
-                    value: SetupProviderFamily.anthropic,
-                    title: "Anthropic",
-                    detail: "Anthropic API status or Claude Subscription"
-                ),
-                TerminalCheckboxMenuItem(
-                    value: SetupProviderFamily.otherAPI,
-                    title: "Other API providers",
-                    detail: "hosted presets and advanced Custom setup"
-                )
-            ],
-            selected: .openAI
-        )
+        func promptFamily() throws -> SetupProviderFamily {
+            let selected = selectFamily(
+                "Provider family",
+                [
+                    TerminalCheckboxMenuItem(
+                        value: SetupProviderFamily.openAI,
+                        title: "OpenAI",
+                        detail: "OpenAI API or ChatGPT Subscription"
+                    ),
+                    TerminalCheckboxMenuItem(
+                        value: SetupProviderFamily.anthropic,
+                        title: "Anthropic",
+                        detail: "Anthropic API status or Claude Subscription"
+                    ),
+                    TerminalCheckboxMenuItem(
+                        value: SetupProviderFamily.otherAPI,
+                        title: "Other API providers",
+                        detail: "hosted presets and advanced Custom setup"
+                    )
+                ],
+                .openAI
+            )
+            guard let selected else {
+                throw ZenCODESetupError.cancelled
+            }
+            return selected
+        }
 
-        switch family {
-        case .openAI:
-            let kinds: [SetupProviderKind] = [.remoteAPI(.openAIAPI), .chatGPTSubscription]
-            return try promptMenuChoice(
-                title: "OpenAI",
-                items: [
-                    TerminalCheckboxMenuItem(
-                        value: SetupProviderKind.remoteAPI(.openAIAPI),
-                        title: SetupProviderPreset.openAIAPI.title,
-                        detail: detail(.remoteAPI(.openAIAPI), "API key; OpenAI Responses protocol")
-                    ),
-                    TerminalCheckboxMenuItem(
-                        value: SetupProviderKind.chatGPTSubscription,
-                        title: "ChatGPT Subscription",
-                        detail: detail(.chatGPTSubscription, "browser sign-in; separate credentials and provider key")
-                    )
-                ],
-                selected: preferred(kinds)
-            )
-        case .anthropic:
-            let option = try promptMenuChoice(
-                title: "Anthropic",
-                items: [
-                    TerminalCheckboxMenuItem(
-                        value: SetupAnthropicProviderOption.api,
-                        title: "Anthropic API",
-                        detail: detail(.remoteAPI(.anthropicAPI), "API key; native Messages protocol")
-                    ),
-                    TerminalCheckboxMenuItem(
-                        value: SetupAnthropicProviderOption.subscription,
-                        title: "Claude Subscription",
-                        detail: detail(.anthropicSubscription, "browser sign-in; separate credentials and provider key")
-                    )
-                ],
-                selected: preferred([.remoteAPI(.anthropicAPI), .anthropicSubscription]) == .anthropicSubscription
-                    ? .subscription
-                    : .api
-            )
-            return option == .api ? .remoteAPI(.anthropicAPI) : .anthropicSubscription
-        case .otherAPI:
-            let presets = SetupProviderPreset.allCases.filter {
-                $0 != .openAIAPI && $0 != .anthropicAPI
+        func promptKind(in family: SetupProviderFamily) throws -> SetupProviderKind {
+            if let promptKindInFamily {
+                return try promptKindInFamily(family)
             }
-            let items = presets.map { preset in
-                TerminalCheckboxMenuItem(
-                    value: preset,
-                    title: preset.title,
-                    detail: detail(
-                        .remoteAPI(preset),
-                        preset.isAdvanced
-                            ? "advanced OpenAI-compatible setup; optional auth, fail-closed protocol selection"
-                            : "hosted API preset; API key required"
-                    )
+            switch family {
+            case .openAI:
+                let kinds: [SetupProviderKind] = [.remoteAPI(.openAIAPI), .chatGPTSubscription]
+                return try promptMenuChoice(
+                    title: "OpenAI",
+                    items: [
+                        TerminalCheckboxMenuItem(
+                            value: SetupProviderKind.remoteAPI(.openAIAPI),
+                            title: SetupProviderPreset.openAIAPI.title,
+                            detail: detail(.remoteAPI(.openAIAPI), "API key; OpenAI Responses protocol")
+                        ),
+                        TerminalCheckboxMenuItem(
+                            value: SetupProviderKind.chatGPTSubscription,
+                            title: "ChatGPT Subscription",
+                            detail: detail(.chatGPTSubscription, "browser sign-in; separate credentials and provider key")
+                        )
+                    ],
+                    selected: preferred(kinds)
                 )
+            case .anthropic:
+                let option = try promptMenuChoice(
+                    title: "Anthropic",
+                    items: [
+                        TerminalCheckboxMenuItem(
+                            value: SetupAnthropicProviderOption.api,
+                            title: "Anthropic API",
+                            detail: detail(.remoteAPI(.anthropicAPI), "API key; native Messages protocol")
+                        ),
+                        TerminalCheckboxMenuItem(
+                            value: SetupAnthropicProviderOption.subscription,
+                            title: "Claude Subscription",
+                            detail: detail(.anthropicSubscription, "browser sign-in; separate credentials and provider key")
+                        )
+                    ],
+                    selected: preferred([.remoteAPI(.anthropicAPI), .anthropicSubscription]) == .anthropicSubscription
+                        ? .subscription
+                        : .api
+                )
+                return option == .api ? .remoteAPI(.anthropicAPI) : .anthropicSubscription
+            case .otherAPI:
+                let presets = SetupProviderPreset.allCases.filter {
+                    $0 != .openAIAPI && $0 != .anthropicAPI
+                }
+                let items = presets.map { preset in
+                    TerminalCheckboxMenuItem(
+                        value: preset,
+                        title: preset.title,
+                        detail: detail(
+                            .remoteAPI(preset),
+                            preset.isAdvanced
+                                ? "advanced OpenAI-compatible setup; optional auth, fail-closed protocol selection"
+                                : "hosted API preset; API key required"
+                        )
+                    )
+                }
+                let preset = try promptMenuChoice(
+                    title: "API provider preset",
+                    items: items,
+                    selected: presets.first { !configuredProviderIDs.contains($0.providerID) } ?? .openRouter
+                )
+                return .remoteAPI(preset)
             }
-            let preset = try promptMenuChoice(
-                title: "API provider preset",
-                items: items,
-                selected: presets.first { !configuredProviderIDs.contains($0.providerID) } ?? .openRouter
-            )
-            return .remoteAPI(preset)
+        }
+
+        // Esc on a family submenu comes back here, never to the submenu
+        // itself, so a closed input still reaches the Esc of this menu.
+        while true {
+            let family = try promptFamily()
+            let kind = try returningToMenuOnCancel(nil) { () throws -> SetupProviderKind in
+                try promptKind(in: family)
+            }
+            if let kind {
+                return kind
+            }
         }
     }
 

@@ -120,6 +120,60 @@ When required configuration is missing or invalid (`settings.json` or
 reconfigure ZenCODE; the TUI saves the current session, rebuilds the runtime,
 and restores the conversation without closing the app.
 
+### Esc in Setup
+
+Esc goes back one level, in the first setup of `zen` and in `/setup` alike.
+From `/setup` it never closes ZenCODE: leaving setup with Esc resumes the
+chat. In the first setup, which `zen` opens because nothing valid is
+configured yet, Esc on the first menu leaves setup and `zen` ends with exit
+status 0. A failed reset of the remote configuration, or an error after
+**Finish setup** (for example settings that cannot be written), still ends the
+process with an error, from `/setup` too.
+
+- Esc on a prompt returns to the menu that opened that step. The step in
+  progress is discarded; what other sections staged is kept until **Finish
+  setup** saves it or **Cancel without saving** drops it.
+- Esc on a menu that has **Done** or **Back** discards the changes made in that
+  menu during this visit, while Done and Back keep them. Esc on **Agents**
+  drops the agent edits of the visit; Esc on **Model bindings for <agent>**
+  drops that agent's binding changes and returns to **Agent model bindings**,
+  whose own Esc drops every binding change; Esc on the action menu of a
+  binding returns to the agent's bindings with the binding unchanged; Esc on
+  **Voice mode** drops a send mode chosen in that visit, while a voice download
+  or the removal of the voice files is immediate and stays.
+- In a section that is a sequence of prompts (**Providers and models**,
+  **Telegram remote control**, **Response language**, **Memory embeddings**,
+  …), Esc anywhere discards that pass of the section and returns to the main
+  setup menu, in general with `<section> cancelled; changes not saved.` Some
+  sections return without that line: **DS4 local runtime**, **Features**,
+  **Scheduled prompts (ZenCRON)**, and **Voice mode** go back silently or with
+  their own note, and **Agent model bindings** prints
+  `Agent model bindings not saved.` Nested menus return to their parent
+  instead: the OpenAI, Anthropic, and API provider preset menus to **Provider
+  family**, the OpenRouter embedding model and the endpoint URL to **Memory
+  embeddings**, and the confirmations to remove or download the Linux voice
+  files to **Voice mode**. Inside **Agents**, Esc while adding, editing, or
+  deleting agents returns to the **Agents** menu with the agents unchanged.
+- In the checkbox menus of **Providers and models** (Reconfigure providers,
+  Delete configured providers, Configure context window / thinking, Delete
+  configured models) Esc cancels as well; Enter with nothing checked means none.
+- An error inside a section, such as a failed `/models` request, a Telegram
+  pairing that times out, or an instructions editor that fails, prints
+  `<section> failed: …` and `Changes not saved.` and returns to the main setup
+  menu without applying that section. **Features** and **Scheduled prompts
+  (ZenCRON)** act as soon as an action is chosen, so their error prints
+  `Changes already applied are kept.` instead: a feature already installed or
+  toggled, or ZenCRON already installed, stays.
+- In **Quick setup**, Esc in Providers and models returns to the choice between
+  Quick and Custom setup with nothing staged; Esc in the response language or
+  the agents keeps the steps already completed and opens the main setup menu.
+- Only Esc on the first menu leaves setup, with nothing saved: the main setup
+  menu, the choice between Quick and Custom setup, and the question to rewrite
+  an invalid `settings.json`, which is then left untouched.
+
+**Data management** follows the same rule; see
+[Data Management](#data-management-backup-exportimport).
+
 In ACP mode (`--acp` or `ZENCODE_AGENT_MODE=acp`), setup never starts inside
 the ACP stream. See [ACP Mode](#acp-mode) for the authentication methods and
 the behavior before ZenCODE is configured.
@@ -271,10 +325,18 @@ directory between machines in one step:
   [Docs/memory.md](memory.md#memory-re-embedding).
 - **Reset remote configuration** is the same reset previously found in the
   main setup menu, now grouped here with the other data operations.
-- **Back** returns to the main setup menu. Esc on any prompt of an action
-  (Export, Import, Clean memory, Clean support directory, Reset) returns to
-  Data management with the data untouched: it does not leave setup, so the
-  setup changes not yet saved are kept.
+- **Back**, or Esc on the Data management menu, returns to the main setup
+  menu. Esc on a prompt of an action (Export, Import, Clean support directory,
+  Reset) returns to Data management with the data untouched; in **Clean
+  memory**, Esc on the action menu of a graph or on a prompt of its cleanup or
+  deletion (the days, "Apply this cleanup?", the folder deletion) returns to
+  the graph list, and Esc on the graph list returns to Data management. An
+  action that fails, such as an archive rejected by Import (`Import failed: …`)
+  or an export that cannot be written, prints the error and returns to Data
+  management as well. None of this leaves setup, so the setup changes not yet
+  saved are kept (see [Esc in Setup](#esc-in-setup)). A failure of the reset
+  itself is the exception: it ends setup, because the configuration may be
+  partly removed.
 
 Backups are **not encrypted**: they contain provider API keys, OAuth
 tokens, and permissions in plain text, exactly as stored on disk. Keep the

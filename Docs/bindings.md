@@ -223,6 +223,14 @@ Setup asks for, per binding:
 A binding with no capability at all is only possible in a hand-edited or legacy
 `agents.json`; it is excluded by both the delegation roster and runtime.
 
+`Esc` goes back one level (see [Esc in Setup](zen.md#esc-in-setup)). On
+**Model bindings for <profile>** it discards the changes made to that profile in
+this visit and returns to the Agent model bindings menu, with the changes made
+to the other profiles still pending until **Done**. On the action menu of a binding (Edit
+binding, Make default, Remove binding), or on its model, thinking, or capability
+prompt, it returns to the profile's bindings with that binding unchanged.
+Choosing *No dedicated model* while editing a binding removes it.
+
 When setup persists provider/model changes, it reconciles `agents.json` against
 the same provider-safe catalog. Orphaned and ambiguous bindings are removed,
 surviving legacy slug references are upgraded to canonical provider-qualified

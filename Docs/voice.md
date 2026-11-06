@@ -249,7 +249,11 @@ The **Send mode** item of `/setup` > **Voice mode**, on macOS and Linux alike,
 tunes how voice mode listens. The pause opens a list of presets with the
 current value preselected and the default marked; **Back** or `Esc` keeps the
 current value, and after a choice the Voice mode menu comes back so the voice
-can still be chosen.
+can still be chosen. A send mode chosen there is kept by every way out of the
+Voice mode menu except `Esc`: **Back**, choosing the voice (on macOS,
+Automatic or **Use this voice**), and on Linux answering the confirmation to
+download a voice or to remove the voice mode files. `Esc` on the Voice mode
+menu discards it (see [Esc in Setup](zen.md#esc-in-setup)).
 
 - **Send mode** — how voice mode decides that you finished speaking:
   - **After a pause** (default): the silence after you stop speaking ends the
@@ -357,7 +361,9 @@ Download the files from `/setup` > **Voice mode**:
    installs nothing incomplete, and choosing the voice again retries.
 
 Exactly one voice is kept: choosing another one replaces it without downloading
-the shared files again. **Remove voice mode files** deletes everything. The
+the shared files again. **Remove voice mode files** deletes everything. `Esc` on
+the download or the removal confirmation returns to the Voice mode menu with
+nothing downloaded or removed. The
 section acts immediately: downloads are not part of the settings that **Finish
 setup** saves, and cancelling setup does not undo them. The Send mode option,
 on the other hand, is a setting: it is saved by **Finish setup** like on macOS.

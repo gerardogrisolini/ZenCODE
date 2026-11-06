@@ -120,7 +120,7 @@ extension ZenCODESetupRunner {
             #endif
         case .scheduledPrompts:
             return setupStatusMarker(zenCRON.isReady, optional: true)
-        case .dataManagement, .resetRemoteConfiguration, .finish, .cancel, .responseLanguage:
+        case .dataManagement, .finish, .cancel, .responseLanguage:
             return nil
         }
     }

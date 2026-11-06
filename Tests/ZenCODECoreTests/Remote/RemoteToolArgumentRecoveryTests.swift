@@ -197,7 +197,7 @@ extension RemoteSessionSnapshotTests {
             events.append(event)
             if case .toolCallStarted = event { calls.withLock { $0 += 1 } }
         }
-        #expect(result.text == "HelloDone")
+        #expect(result.text == "Hello\nDone")
         #expect(events.contentText() == "HelloDone")
         #expect(calls.withLock { $0 } == 1)
         #expect(fixture.capturedRequests().count == 3)

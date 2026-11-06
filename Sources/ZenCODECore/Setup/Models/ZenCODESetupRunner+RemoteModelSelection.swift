@@ -61,7 +61,7 @@ extension ZenCODESetupRunner {
             models.append(contentsOf: selectedModels)
         }
 
-        let deletedModelIndexes = promptModelIndexes(
+        let deletedModelIndexes = try promptModelIndexes(
             providerName: providerName,
             models: models
         )
@@ -96,7 +96,7 @@ extension ZenCODESetupRunner {
         providerName: String,
         models: [AgentSettingsModelManifest]
     ) throws -> [AgentSettingsModelManifest] {
-        let selectedModelIndexes = promptModelMetadataIndexes(
+        let selectedModelIndexes = try promptModelMetadataIndexes(
             providerName: providerName,
             models: models
         )
@@ -111,10 +111,16 @@ extension ZenCODESetupRunner {
         return updatedModels
     }
 
+    /// The models whose context window and thinking options the operator
+    /// configures next; the incomplete ones start checked. Enter with nothing
+    /// checked configures none; Esc throws `ZenCODESetupError.cancelled`.
     static func promptModelMetadataIndexes(
         providerName: String,
-        models: [AgentSettingsModelManifest]
-    ) -> Set<Int> {
+        models: [AgentSettingsModelManifest],
+        select: (String, [TerminalCheckboxMenuItem<Int>], Set<Int>) -> Set<Int>? = {
+            TerminalCheckboxMenu.select(title: $0, items: $1, selected: $2)
+        }
+    ) throws -> Set<Int> {
         guard !models.isEmpty else {
             return []
         }
@@ -126,11 +132,12 @@ extension ZenCODESetupRunner {
                 detail: modelMetadataDetail(model)
             )
         }
-        return TerminalCheckboxMenu.select(
+        return try promptMenuSelection(
             title: "Configure context window / thinking for \(providerName)",
             items: items,
-            selected: defaultModelMetadataIndexes(models)
-        ) ?? []
+            selected: defaultModelMetadataIndexes(models),
+            select: select
+        )
     }
 
     static func defaultModelMetadataIndexes(
@@ -173,7 +180,7 @@ extension ZenCODESetupRunner {
     static func promptModelIndexes(
         providerName: String,
         models: [AgentSettingsModelManifest]
-    ) -> Set<Int> {
+    ) throws -> Set<Int> {
         let items = models.enumerated().map { index, model in
             TerminalCheckboxMenuItem(
                 value: index,
@@ -181,7 +188,7 @@ extension ZenCODESetupRunner {
                 detail: model.modelID
             )
         }
-        return promptSelectionIndexes(
+        return try promptSelectionIndexes(
             title: "Delete configured models for \(providerName)",
             items: items
         )

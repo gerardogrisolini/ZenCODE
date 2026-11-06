@@ -40,7 +40,7 @@ struct ScheduledPromptsSetupTests {
     func noOtherSectionClaimsTheAliasesOfTheSection() {
         let others: [SetupSection] = [
             .providersAndModels, .telegram, .features, .agents, .agentModels, .responseLanguage,
-            .memoryEmbedding, .ds4Runtime, .voiceMode, .dataManagement, .resetRemoteConfiguration,
+            .memoryEmbedding, .ds4Runtime, .voiceMode, .dataManagement,
             .finish, .cancel
         ]
         for alias in ["scheduled prompts", "scheduled", "cron", "zencron", "crontab"] {

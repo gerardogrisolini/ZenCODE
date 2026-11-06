@@ -166,16 +166,14 @@ struct ZenCODESetupSessionTests {
     func remoteResetIsAvailableWithoutConfiguredModels() {
         let options = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
 
-        // Reset now lives inside the Data management submenu; the main menu
+        // Reset lives only inside the Data management submenu; the main menu
         // must not duplicate it.
-        #expect(!options.contains { $0.section == .resetRemoteConfiguration })
+        #expect(!options.contains { $0.section.title == "Reset remote configuration" })
+        #expect(!options.contains { $0.section.matches("reset") })
         #expect(options.contains { $0.section == .dataManagement })
         #expect(!SetupSection.dataManagement.requiresConfiguredModels)
-        let submenuTitles = ZenCODESetupRunner.dataManagementMenuItems()
-            .map(\.title)
-        #expect(submenuTitles.contains("Reset remote configuration"))
-        #expect(!SetupSection.resetRemoteConfiguration.requiresConfiguredModels)
-        #expect(SetupSection.resetRemoteConfiguration.title == "Reset remote configuration")
+        let submenu = ZenCODESetupRunner.dataManagementMenuItems()
+        #expect(submenu.contains { $0.value == .reset && $0.title == "Reset remote configuration" })
     }
 
     @Test
