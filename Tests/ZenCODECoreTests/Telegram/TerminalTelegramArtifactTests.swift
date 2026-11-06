@@ -1077,6 +1077,8 @@ final class ScriptedTelegramTransport: TelegramHTTPTransport, @unchecked Sendabl
 }
 
 /// Transport whose requests never complete, so cancellation is the only exit.
+/// A cancellation that lands before the request registers, when `onCancel`
+/// already found no waiter, resumes the request at once.
 final class NeverCompletingTelegramTransport: TelegramHTTPTransport, @unchecked Sendable {
     private let continuation = Mutex<[CheckedContinuation<(status: Int, body: Data), any Error>]>([])
 
@@ -1089,8 +1091,17 @@ final class NeverCompletingTelegramTransport: TelegramHTTPTransport, @unchecked 
     ) async throws -> (status: Int, body: Data) {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                self.continuation.withLock { waiters in
+                // Check cancellation under the same lock `onCancel` takes, so a cancel that
+                // arrived earlier is not lost: the continuation is resumed instead of registered.
+                let cancelled = self.continuation.withLock { waiters -> Bool in
+                    if Task.isCancelled {
+                        return true
+                    }
                     waiters.append(continuation)
+                    return false
+                }
+                if cancelled {
+                    continuation.resume(throwing: CancellationError())
                 }
             }
         } onCancel: {

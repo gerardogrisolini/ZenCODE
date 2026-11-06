@@ -759,7 +759,7 @@ extension TurnFileChangeCoordinatorTests {
         #expect(artifact.explanation?.hasPrefix("Diff truncated: showing the first ") == true)
         #expect(artifact.explanation?.hasSuffix(" of 3200 diff lines; file or operation evidence exceeds the byte limit.") == true)
 
-        _ = try await coordinator.publishSummaryIfNeeded()
+        _ = await coordinator.publishSummaryIfNeeded()
         _ = try await coordinator.undoLatestChanges()
         #expect(try Data(contentsOf: file) == original)
     }

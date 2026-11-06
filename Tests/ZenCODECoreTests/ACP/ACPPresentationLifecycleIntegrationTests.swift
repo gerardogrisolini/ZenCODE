@@ -10,20 +10,33 @@ private func taskOverview(_ graph: TaskGraphSnapshot?) -> ChatTaskGraphOverview?
     graph.map { ChatTaskGraphOverview(graph: $0, tasks: []) }
 }
 
+/// Task graphs are keyed by the last component of the working directory, so a
+/// directory shared between tests (such as `/tmp`) would hand the incomplete
+/// graphs of one test to the next and trigger the ACP resume offer, which no
+/// test answers. Every bridge test therefore runs in a workspace of its own.
+private func makeIsolatedWorkspace() throws -> URL {
+    let workspace = FileManager.default.temporaryDirectory
+        .appendingPathComponent("acp-presentation-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    return workspace
+}
+
 @Suite(.timeLimit(.minutes(1)))
 struct ACPPresentationLifecycleIntegrationTests {
     @Test func textOnlySecondPromptReattachesPersistentTasklessAgent() async throws {
+        let workspace = try makeIsolatedWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
         let (wire, messages) = AsyncStream<JSONValue>.makeStream()
         let backend = PresentationLifecycleBackend()
         let configuration = try AgentConfiguration(
             hostedModelID: "test-model",
             availableModels: [.init(id: "test-model", kind: .remoteAPI, modelID: "local/test-model")],
-            runMode: .acp, workingDirectory: FileManager.default.temporaryDirectory, appMode: false
+            runMode: .acp, workingDirectory: workspace, appMode: false
         )
         let bridge = ZenCODEACPBridge(configuration: configuration, writer: ACPWriter { data in
             if let value = try? JSONDecoder().decode(JSONValue.self, from: data) { messages.yield(value) }
         }, backendFactory: { _, _ in backend })
-        try await bridge.newSession(id: .number(1), params: ["cwd": "/tmp", "allowedTools": [String]()])
+        try await bridge.newSession(id: .number(1), params: ["cwd": workspace.path, "allowedTools": [String]()])
         let sessionID = try #require(await bridge.testAnySessionID())
         var iterator = wire.makeAsyncIterator()
         func nextWork(_ iterator: inout AsyncStream<JSONValue>.Iterator, id: String, status: String) async -> JSONValue? {
@@ -59,13 +72,15 @@ struct ACPPresentationLifecycleIntegrationTests {
 
     @Test(arguments: [false, true])
     func textOnlyPromptsHandleTaskAttemptCompletionAcrossTeardown(completionBeforeTeardown: Bool) async throws {
+        let workspace = try makeIsolatedWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
         let (wire, messages) = AsyncStream<JSONValue>.makeStream()
         let output = Mutex<[JSONValue]>([])
         let backend = PresentationLifecycleBackend()
         let configuration = try AgentConfiguration(
             hostedModelID: "test-model",
             availableModels: [.init(id: "test-model", kind: .remoteAPI, modelID: "local/test-model")],
-            runMode: .acp, workingDirectory: FileManager.default.temporaryDirectory, appMode: false
+            runMode: .acp, workingDirectory: workspace, appMode: false
         )
         let bridge = ZenCODEACPBridge(configuration: configuration, writer: ACPWriter { data in
             if let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
@@ -73,7 +88,7 @@ struct ACPPresentationLifecycleIntegrationTests {
                 messages.yield(value)
             }
         }, backendFactory: { _, _ in backend })
-        try await bridge.newSession(id: .number(1), params: ["cwd": "/tmp", "allowedTools": [String]()])
+        try await bridge.newSession(id: .number(1), params: ["cwd": workspace.path, "allowedTools": [String]()])
         let sessionID = try #require(await bridge.testAnySessionID())
         let epoch = await bridge.presentationEpoch(sessionID: sessionID)
         let orchestrator = await bridge.sessionRunner.taskOrchestrator
@@ -157,18 +172,20 @@ struct ACPPresentationLifecycleIntegrationTests {
     }
 
     @Test func replacedIncarnationRejectsBufferedAndSuspendedOldProducer() async throws {
+        let workspace = try makeIsolatedWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
         let output = Mutex<[JSONValue]>([])
         let configuration = try AgentConfiguration(
             hostedModelID: "test-model",
             availableModels: [.init(id: "test-model", kind: .remoteAPI, modelID: "local/test-model")],
-            runMode: .acp, workingDirectory: FileManager.default.temporaryDirectory
+            runMode: .acp, workingDirectory: workspace
         )
         let writer = ACPWriter { data in
             if let value = try? JSONDecoder().decode(JSONValue.self, from: data) { output.withLock { $0.append(value) } }
         }
         let bridge = ZenCODEACPBridge(configuration: configuration, writer: writer,
                                      backendFactory: { _, _ in PresentationLifecycleBackend() })
-        try await bridge.newSession(id: .number(1), params: ["cwd": "/tmp", "allowedTools": [String]()])
+        try await bridge.newSession(id: .number(1), params: ["cwd": workspace.path, "allowedTools": [String]()])
         let sessionID = try #require(await bridge.testAnySessionID())
         let (epoch, promptID) = await bridge.installPresentationTestPrompt(sessionID: sessionID)
         let gate = PresentationSuspensionGate()
@@ -390,13 +407,15 @@ private actor PresentationSuspensionGate {
 
 extension ACPPresentationLifecycleIntegrationTests {
     @Test func cancelledPreparedTerminalReplaysOnceInNextPromptOfSameEpoch() async throws {
+        let workspace = try makeIsolatedWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
         let (wire, messages) = AsyncStream<JSONValue>.makeStream()
         let output = Mutex<[JSONValue]>([])
         let backend = PresentationLifecycleBackend(preservesExecutionAcrossPrompts: true)
         let configuration = try AgentConfiguration(
             hostedModelID: "test-model",
             availableModels: [.init(id: "test-model", kind: .remoteAPI, modelID: "local/test-model")],
-            runMode: .acp, workingDirectory: FileManager.default.temporaryDirectory, appMode: false
+            runMode: .acp, workingDirectory: workspace, appMode: false
         )
         let bridge = ZenCODEACPBridge(configuration: configuration, writer: ACPWriter { data in
             if let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
@@ -404,7 +423,7 @@ extension ACPPresentationLifecycleIntegrationTests {
                 messages.yield(value)
             }
         }, backendFactory: { _, _ in backend })
-        try await bridge.newSession(id: .number(1), params: ["cwd": "/tmp", "allowedTools": [String]()])
+        try await bridge.newSession(id: .number(1), params: ["cwd": workspace.path, "allowedTools": [String]()])
         let sessionID = try #require(await bridge.testAnySessionID())
         let epoch = await bridge.presentationEpoch(sessionID: sessionID)
         let gate = PresentationSuspensionGate()
