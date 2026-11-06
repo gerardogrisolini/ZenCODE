@@ -53,6 +53,9 @@ struct ZenLineRouteTests {
         #expect(route("/tasks", running: true) == .runBeside)
         #expect(route("/tasks list", running: true) == .runBeside)
         #expect(route("/artifacts", running: true) == .runBeside)
+        #expect(route("/voice", running: true) == .runBeside)
+        #expect(route("/voice pause", running: true) == .runBeside)
+        #expect(route("/voice off", running: true) == .runBeside)
     }
 
     @Test("A line runs: any other command is refused with the terminal's message")
@@ -92,11 +95,11 @@ struct ZenLineRouteTests {
             == .refuse("ZenCODE: command '/secret' is unavailable while a prompt is running."))
     }
 
-    @Test("The window's commands: the shared ones, /artifacts run by the window, then /telegram and /exit")
+    @Test("The window's commands: the shared ones, /artifacts run by the window, then /telegram, /voice, and /exit")
     func windowCommands() throws {
         // The window's /artifacts takes the place of the shared one: the order is unchanged.
         #expect(ZenAppCommands.descriptors.map(\.command)
-            == ChatCommandRegistry.sharedDescriptors.map(\.command) + ["/telegram", "/exit"])
+            == ChatCommandRegistry.sharedDescriptors.map(\.command) + ["/telegram", "/voice", "/exit"])
         #expect(registry.descriptor(forLine: "/exit")?.scope == .channel)
         #expect(!registry.isAvailableDuringGeneration("/exit"))
         #expect(ZenAppCommands.exit.summary == "close this window")
@@ -108,7 +111,7 @@ struct ZenLineRouteTests {
         #expect(ZenAppCommands.descriptors.filter { $0.command == "/artifacts" } == [ZenAppCommands.artifacts])
         // Every other shared command is the shared descriptor itself.
         #expect(ZenAppCommands.descriptors.filter {
-            $0.command != "/artifacts" && $0.command != "/telegram" && $0.command != "/exit"
+            $0.command != "/artifacts" && $0.command != "/telegram" && $0.command != "/voice" && $0.command != "/exit"
         } == ChatCommandRegistry.sharedDescriptors.filter { $0.command != "/artifacts" })
         let visible = ZenAppCommands.visibleDescriptors(in: [])
         #expect(visible.allSatisfy { $0.availability.isEmpty })
@@ -123,7 +126,7 @@ struct ZenLineRouteTests {
         #expect(!ZenAppCommands.visibleDescriptors(in: []).contains { $0.command == "/telegram" })
         #expect(!ZenAppCommands.visibleDescriptors(in: .builderAgent).contains { $0.command == "/telegram" })
         let visible = ZenAppCommands.visibleDescriptors(in: ZenAppCommands.telegramEnabled).map(\.command)
-        #expect(visible.suffix(2) == ["/telegram", "/exit"])
+        #expect(visible.suffix(3) == ["/telegram", "/voice", "/exit"])
         #expect(visible.filter { $0 == "/telegram" }.count == 1)
 
         let telegram = try #require(registry.descriptor(forLine: "/telegram off"))

@@ -1,5 +1,5 @@
 //
-//  TerminalVoiceChatPhrasesTests.swift
+//  VoiceChatPhrasesTests.swift
 //  ZenCODECoreTests
 //
 //  The spoken words of the live chat in voice mode: yes/no in six languages,
@@ -11,7 +11,7 @@ import Testing
 @testable import ZenCODECore
 
 @Suite("Voice chat phrases")
-struct TerminalVoiceChatPhrasesTests {
+struct VoiceChatPhrasesTests {
     private func participant(
         _ name: String,
         id: String? = nil,
@@ -38,7 +38,7 @@ struct TerminalVoiceChatPhrasesTests {
             "ja", "Jawohl", "klar", "lies vor",
             "sim", "Pode ler"
         ] {
-            #expect(TerminalVoiceChatPhrases.affirmation(in: utterance) == true, "\(utterance)")
+            #expect(VoiceChatPhrases.affirmation(in: utterance) == true, "\(utterance)")
         }
     }
 
@@ -52,7 +52,7 @@ struct TerminalVoiceChatPhrasesTests {
             "nein", "Nicht jetzt", "später", "spater",
             "não", "nao", "Agora não", "depois"
         ] {
-            #expect(TerminalVoiceChatPhrases.affirmation(in: utterance) == false, "\(utterance)")
+            #expect(VoiceChatPhrases.affirmation(in: utterance) == false, "\(utterance)")
         }
     }
 
@@ -62,7 +62,7 @@ struct TerminalVoiceChatPhrasesTests {
             "", "  ", "sì ma prima leggi il file", "yes and then stop", "no grazie, poi",
             "Che ore sono?", "leggi il file", "okay okay"
         ] {
-            #expect(TerminalVoiceChatPhrases.affirmation(in: utterance) == nil, "\(utterance)")
+            #expect(VoiceChatPhrases.affirmation(in: utterance) == nil, "\(utterance)")
         }
     }
 
@@ -85,7 +85,7 @@ struct TerminalVoiceChatPhrasesTests {
             "mensagem ao coordenador: fermati",
             "envia uma mensagem para o coordenador, fermati"
         ] {
-            let request = try #require(TerminalVoiceChatPhrases.sendRequest(in: utterance), "\(utterance)")
+            let request = try #require(VoiceChatPhrases.sendRequest(in: utterance), "\(utterance)")
             #expect(request.target == .coordinator, "\(utterance)")
             #expect(request.text == "fermati", "\(utterance)")
         }
@@ -104,7 +104,7 @@ struct TerminalVoiceChatPhrasesTests {
             "mensagem a todos: pausa",
             "mensagem para todos, pausa"
         ] {
-            let request = try #require(TerminalVoiceChatPhrases.sendRequest(in: utterance), "\(utterance)")
+            let request = try #require(VoiceChatPhrases.sendRequest(in: utterance), "\(utterance)")
             #expect(request.target == .all, "\(utterance)")
             #expect(request.text == "pausa", "\(utterance)")
         }
@@ -116,14 +116,14 @@ struct TerminalVoiceChatPhrasesTests {
             "messaggio al coordinatore", "messaggio al coordinatore.", "messaggio a tutti:",
             "message to the coordinator", "message to all", "Nachricht an alle", "mensagem ao coordenador"
         ] {
-            let request = try #require(TerminalVoiceChatPhrases.sendRequest(in: utterance), "\(utterance)")
+            let request = try #require(VoiceChatPhrases.sendRequest(in: utterance), "\(utterance)")
             #expect(request.text == nil, "\(utterance)")
         }
     }
 
     @Test
     func sendPhrasesKeepTheSpokenTextAsItWas() throws {
-        let request = try #require(TerminalVoiceChatPhrases.sendRequest(
+        let request = try #require(VoiceChatPhrases.sendRequest(
             in: "MESSAGGIO al Coordinatore: Perché è così? Fermati."
         ))
         #expect(request.target == .coordinator)
@@ -131,15 +131,15 @@ struct TerminalVoiceChatPhrasesTests {
 
         // Folding may change the number of scalars inside the matched prefix
         // (İ → i, ß → ss); the text still starts where it was spoken.
-        let turkish = try #require(TerminalVoiceChatPhrases.sendRequest(in: "İnvia un messaggio al coordinatore: x"))
+        let turkish = try #require(VoiceChatPhrases.sendRequest(in: "İnvia un messaggio al coordinatore: x"))
         #expect(turkish.target == .coordinator)
         #expect(turkish.text == "x")
-        let german = try #require(TerminalVoiceChatPhrases.sendRequest(in: "Nachricht an alle: Straße"))
+        let german = try #require(VoiceChatPhrases.sendRequest(in: "Nachricht an alle: Straße"))
         #expect(german.target == .all)
         #expect(german.text == "Straße")
         let strasse = participant("Straße")
         #expect(
-            TerminalVoiceChatPhrases.resolveNamedRecipient(remainder: "Straße: Grüße", participants: [strasse])
+            VoiceChatPhrases.resolveNamedRecipient(remainder: "Straße: Grüße", participants: [strasse])
                 == .agent(strasse, text: "Grüße")
         )
     }
@@ -155,7 +155,7 @@ struct TerminalVoiceChatPhrasesTests {
             ("mensagem para Reviewer: verifica", "Reviewer: verifica"),
             ("mensagem a Reviewer", "Reviewer")
         ] {
-            let request = try #require(TerminalVoiceChatPhrases.sendRequest(in: utterance), "\(utterance)")
+            let request = try #require(VoiceChatPhrases.sendRequest(in: utterance), "\(utterance)")
             #expect(request.target == .named(remainder: remainder), "\(utterance)")
             #expect(request.text == nil, "\(utterance)")
         }
@@ -163,11 +163,11 @@ struct TerminalVoiceChatPhrasesTests {
 
     @Test
     func reservedWordsWinOverAnAgentWithTheSameName() throws {
-        let request = try #require(TerminalVoiceChatPhrases.sendRequest(in: "messaggio a tutti: ciao"))
+        let request = try #require(VoiceChatPhrases.sendRequest(in: "messaggio a tutti: ciao"))
         #expect(request.target == .all)
         // Only reachable when the grammar did not claim the word first.
         let everyone = participant("tutti")
-        let recipient = TerminalVoiceChatPhrases.resolveNamedRecipient(
+        let recipient = VoiceChatPhrases.resolveNamedRecipient(
             remainder: "tutti: ciao",
             participants: [everyone]
         )
@@ -180,7 +180,7 @@ struct TerminalVoiceChatPhrasesTests {
             "", "messaggio", "messaggio a", "message", "message to", "il messaggio al coordinatore era chiaro",
             "manda il file", "Che tempo fa?", "messaggio per Anna: ciao"
         ] {
-            #expect(TerminalVoiceChatPhrases.sendRequest(in: utterance) == nil, "\(utterance)")
+            #expect(VoiceChatPhrases.sendRequest(in: utterance) == nil, "\(utterance)")
         }
     }
 
@@ -190,13 +190,13 @@ struct TerminalVoiceChatPhrasesTests {
     func theLongestActiveAgentNameWins() {
         let review = participant("Review")
         let reviewer = participant("Reviewer")
-        let recipient = TerminalVoiceChatPhrases.resolveNamedRecipient(
+        let recipient = VoiceChatPhrases.resolveNamedRecipient(
             remainder: "Reviewer: controlla il diff",
             participants: [review, reviewer]
         )
         #expect(recipient == .agent(reviewer, text: "controlla il diff"))
 
-        let shorter = TerminalVoiceChatPhrases.resolveNamedRecipient(
+        let shorter = VoiceChatPhrases.resolveNamedRecipient(
             remainder: "review, controlla",
             participants: [reviewer, review]
         )
@@ -207,15 +207,15 @@ struct TerminalVoiceChatPhrasesTests {
     func namesMatchWithoutCaseOrAccentsOnWordBoundaries() {
         let coder = participant("Códe Writer")
         #expect(
-            TerminalVoiceChatPhrases.resolveNamedRecipient(remainder: "code writer scrivi", participants: [coder])
+            VoiceChatPhrases.resolveNamedRecipient(remainder: "code writer scrivi", participants: [coder])
                 == .agent(coder, text: "scrivi")
         )
         #expect(
-            TerminalVoiceChatPhrases.resolveNamedRecipient(remainder: "Code Writer", participants: [coder])
+            VoiceChatPhrases.resolveNamedRecipient(remainder: "Code Writer", participants: [coder])
                 == .agent(coder, text: nil)
         )
         #expect(
-            TerminalVoiceChatPhrases.resolveNamedRecipient(remainder: "Code Writers: ciao", participants: [coder])
+            VoiceChatPhrases.resolveNamedRecipient(remainder: "Code Writers: ciao", participants: [coder])
                 == .unknown(spokenName: "Code Writers")
         )
     }
@@ -227,25 +227,25 @@ struct TerminalVoiceChatPhrasesTests {
         let reviewer = participant("parser-reviewer")
         for remainder in ["parser-reviewer: controlla", "parser reviewer, controlla", "Parser Reviewer controlla"] {
             #expect(
-                TerminalVoiceChatPhrases.resolveNamedRecipient(remainder: remainder, participants: [reviewer])
+                VoiceChatPhrases.resolveNamedRecipient(remainder: remainder, participants: [reviewer])
                     == .agent(reviewer, text: "controlla"),
                 "\(remainder)"
             )
         }
         #expect(
-            TerminalVoiceChatPhrases.resolveNamedRecipient(remainder: "parser-reviewers: ciao", participants: [reviewer])
+            VoiceChatPhrases.resolveNamedRecipient(remainder: "parser-reviewers: ciao", participants: [reviewer])
                 == .unknown(spokenName: "parser-reviewers")
         )
         #expect(
-            TerminalVoiceChatPhrases.resolveNamedRecipient(remainder: "build v1.2 - ciao", participants: [])
+            VoiceChatPhrases.resolveNamedRecipient(remainder: "build v1.2 - ciao", participants: [])
                 == .unknown(spokenName: "build v1.2")
         )
         #expect(
-            TerminalVoiceChatPhrases.resolveNamedRecipient(remainder: "Anna. ciao", participants: [])
+            VoiceChatPhrases.resolveNamedRecipient(remainder: "Anna. ciao", participants: [])
                 == .unknown(spokenName: "Anna")
         )
         #expect(
-            TerminalVoiceChatPhrases.resolveNamedRecipient(remainder: ": ciao", participants: [])
+            VoiceChatPhrases.resolveNamedRecipient(remainder: ": ciao", participants: [])
                 == .unknown(spokenName: "")
         )
     }
@@ -255,19 +255,19 @@ struct TerminalVoiceChatPhrasesTests {
         let gone = participant("Builder", isActive: false)
         let coordinator = participant("Anna", id: "coordinator:room", kind: .coordinator)
         #expect(
-            TerminalVoiceChatPhrases.resolveNamedRecipient(
+            VoiceChatPhrases.resolveNamedRecipient(
                 remainder: "Builder: ciao",
                 participants: [gone, coordinator]
             ) == .unknown(spokenName: "Builder")
         )
         #expect(
-            TerminalVoiceChatPhrases.resolveNamedRecipient(remainder: "Anna, ciao", participants: [coordinator])
+            VoiceChatPhrases.resolveNamedRecipient(remainder: "Anna, ciao", participants: [coordinator])
                 == .unknown(spokenName: "Anna")
         )
         let long = String(repeating: "a", count: 80)
         #expect(
-            TerminalVoiceChatPhrases.resolveNamedRecipient(remainder: long, participants: [])
-                == .unknown(spokenName: String(repeating: "a", count: TerminalVoiceChatPhrases.maximumSpokenNameLength))
+            VoiceChatPhrases.resolveNamedRecipient(remainder: long, participants: [])
+                == .unknown(spokenName: String(repeating: "a", count: VoiceChatPhrases.maximumSpokenNameLength))
         )
     }
 
@@ -276,35 +276,35 @@ struct TerminalVoiceChatPhrasesTests {
     @Test
     func announcementsFollowTheLanguageAndFallBackToEnglish() {
         #expect(
-            TerminalVoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: false, remaining: 0, languageCode: "it")
+            VoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: false, remaining: 0, languageCode: "it")
                 == "Nuovo messaggio da Reviewer. Vuoi che lo legga?"
         )
         #expect(
-            TerminalVoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: true, remaining: 2, languageCode: "it-IT")
+            VoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: true, remaining: 2, languageCode: "it-IT")
                 == "Nuovo messaggio da Reviewer a tutti, altri 2 in attesa. Vuoi che lo legga?"
         )
         #expect(
-            TerminalVoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: false, remaining: 1, languageCode: "it")
+            VoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: false, remaining: 1, languageCode: "it")
                 == "Nuovo messaggio da Reviewer, un altro in attesa. Vuoi che lo legga?"
         )
         #expect(
-            TerminalVoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: false, remaining: 1, languageCode: "de")
+            VoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: false, remaining: 1, languageCode: "de")
                 == "Neue Nachricht von Reviewer, 1 weitere wartet. Soll ich sie vorlesen?"
         )
         #expect(
-            TerminalVoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: false, remaining: 3, languageCode: "fr")
+            VoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: false, remaining: 3, languageCode: "fr")
                 == "Nouveau message de Reviewer, 3 autres en attente. Voulez-vous que je le lise ?"
         )
         #expect(
-            TerminalVoiceChatPhrases.announcement(sender: "coordinator", isBroadcast: false, remaining: 1, languageCode: "en")
+            VoiceChatPhrases.announcement(sender: "coordinator", isBroadcast: false, remaining: 1, languageCode: "en")
                 == "New message from coordinator, 1 more waiting. Do you want me to read it?"
         )
         #expect(
-            TerminalVoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: true, remaining: 0, languageCode: "ja")
+            VoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: true, remaining: 0, languageCode: "ja")
                 == "New message from Reviewer to all. Do you want me to read it?"
         )
         #expect(
-            TerminalVoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: false, remaining: 0, languageCode: nil)
+            VoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: false, remaining: 0, languageCode: nil)
                 == "New message from Reviewer. Do you want me to read it?"
         )
     }
@@ -312,37 +312,37 @@ struct TerminalVoiceChatPhrasesTests {
     @Test
     func readingEndsWithTheReplyQuestion() {
         #expect(
-            TerminalVoiceChatPhrases.readAloud(text: "Ho finito", languageCode: "it")
+            VoiceChatPhrases.readAloud(text: "Ho finito", languageCode: "it")
                 == "Ho finito. Vuoi rispondere?"
         )
         #expect(
-            TerminalVoiceChatPhrases.readAloud(text: "Posso procedere?", languageCode: "it")
+            VoiceChatPhrases.readAloud(text: "Posso procedere?", languageCode: "it")
                 == "Posso procedere? Vuoi rispondere?"
         )
         #expect(
-            TerminalVoiceChatPhrases.readAloud(text: "Done!", languageCode: "en")
+            VoiceChatPhrases.readAloud(text: "Done!", languageCode: "en")
                 == "Done! Do you want to reply?"
         )
-        #expect(TerminalVoiceChatPhrases.readAloud(text: "  ", languageCode: "en") == "Do you want to reply?")
+        #expect(VoiceChatPhrases.readAloud(text: "  ", languageCode: "en") == "Do you want to reply?")
     }
 
     @Test
     func shortTextsFollowTheLanguageAndFallBackToEnglish() {
-        #expect(TerminalVoiceChatPhrases.replyPrompt(languageCode: "it") == "Dimmi la risposta.")
-        #expect(TerminalVoiceChatPhrases.replyPrompt(languageCode: "xx") == "Tell me your reply.")
-        #expect(TerminalVoiceChatPhrases.messagePrompt(languageCode: "it") == "Dimmi il messaggio.")
-        #expect(TerminalVoiceChatPhrases.messagePrompt(languageCode: nil) == "Tell me the message.")
-        #expect(TerminalVoiceChatPhrases.sent(languageCode: "it") == "Inviato.")
-        #expect(TerminalVoiceChatPhrases.sent(languageCode: "de") == "Gesendet.")
-        #expect(TerminalVoiceChatPhrases.sent(languageCode: "ja") == "Sent.")
-        #expect(TerminalVoiceChatPhrases.sendFailed(languageCode: "it") == "Invio non riuscito.")
-        #expect(TerminalVoiceChatPhrases.sendFailed(languageCode: "en") == "Sending failed.")
-        #expect(TerminalVoiceChatPhrases.agentInactive(name: "Builder", languageCode: "it") == "Builder non è più attivo.")
-        #expect(TerminalVoiceChatPhrases.agentInactive(name: "Builder", languageCode: "fr") == "Builder n'est plus actif.")
-        #expect(TerminalVoiceChatPhrases.agentInactive(name: "Builder", languageCode: nil) == "Builder is no longer active.")
-        #expect(TerminalVoiceChatPhrases.unknownAgent(name: "Anna", languageCode: "it") == "Nessun agente attivo si chiama Anna.")
-        #expect(TerminalVoiceChatPhrases.unknownAgent(name: "Anna", languageCode: "es") == "Ningún agente activo se llama Anna.")
-        #expect(TerminalVoiceChatPhrases.unknownAgent(name: "Anna", languageCode: "pt-BR") == "Nenhum agente ativo se chama Anna.")
-        #expect(TerminalVoiceChatPhrases.unknownAgent(name: "Anna", languageCode: "ko") == "No active agent is named Anna.")
+        #expect(VoiceChatPhrases.replyPrompt(languageCode: "it") == "Dimmi la risposta.")
+        #expect(VoiceChatPhrases.replyPrompt(languageCode: "xx") == "Tell me your reply.")
+        #expect(VoiceChatPhrases.messagePrompt(languageCode: "it") == "Dimmi il messaggio.")
+        #expect(VoiceChatPhrases.messagePrompt(languageCode: nil) == "Tell me the message.")
+        #expect(VoiceChatPhrases.sent(languageCode: "it") == "Inviato.")
+        #expect(VoiceChatPhrases.sent(languageCode: "de") == "Gesendet.")
+        #expect(VoiceChatPhrases.sent(languageCode: "ja") == "Sent.")
+        #expect(VoiceChatPhrases.sendFailed(languageCode: "it") == "Invio non riuscito.")
+        #expect(VoiceChatPhrases.sendFailed(languageCode: "en") == "Sending failed.")
+        #expect(VoiceChatPhrases.agentInactive(name: "Builder", languageCode: "it") == "Builder non è più attivo.")
+        #expect(VoiceChatPhrases.agentInactive(name: "Builder", languageCode: "fr") == "Builder n'est plus actif.")
+        #expect(VoiceChatPhrases.agentInactive(name: "Builder", languageCode: nil) == "Builder is no longer active.")
+        #expect(VoiceChatPhrases.unknownAgent(name: "Anna", languageCode: "it") == "Nessun agente attivo si chiama Anna.")
+        #expect(VoiceChatPhrases.unknownAgent(name: "Anna", languageCode: "es") == "Ningún agente activo se llama Anna.")
+        #expect(VoiceChatPhrases.unknownAgent(name: "Anna", languageCode: "pt-BR") == "Nenhum agente ativo se chama Anna.")
+        #expect(VoiceChatPhrases.unknownAgent(name: "Anna", languageCode: "ko") == "No active agent is named Anna.")
     }
 }

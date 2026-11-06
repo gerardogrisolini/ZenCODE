@@ -11,9 +11,12 @@ import ToolCore
 /// A lightweight summary of an incomplete task graph persisted by a previous
 /// session, suitable for offering the user a choice at startup.
 public struct ResumableTaskGraph: Equatable, Sendable, Identifiable {
-    /// The session whose checkpoint owns the incomplete graph. Resuming
-    /// reuses this identifier so the existing `restoreIfAvailable` path loads
-    /// the graph naturally.
+    /// The session whose checkpoint owns the incomplete graph. Adopting the
+    /// graph (``SessionTaskOrchestrator/adoptResumableTaskGraph(_:intoSessionID:workingDirectory:)``)
+    /// moves it from there into the session running now; resuming it in
+    /// place (``SessionTaskOrchestrator/resumeTaskGraph(_:workingDirectory:)``)
+    /// continues under this identifier, which the `restoreIfAvailable` path
+    /// loads naturally.
     public let sessionID: String
     /// The incomplete graph that can be resumed.
     public let graphID: String
@@ -403,6 +406,122 @@ extension SessionTaskOrchestrator {
             eventKind: .restored,
             graphID: graph.id
         )
+        return graph
+    }
+
+    /// Moves the exact incomplete graph the user chose out of the checkpoint
+    /// of the session that left it (`selectedGraph.sessionID`) into the
+    /// session `rawTargetSessionID`, the one running now, and makes it that
+    /// session's current graph. The current session keeps its own id, so
+    /// every channel resumes the same way: before its runtime session exists
+    /// (the terminal at startup, whose later `createSession` registers the id
+    /// again and finds the adopted graph) or after (an app window or an ACP
+    /// session that is already open). When the graph already belongs to the
+    /// target this is ``resumeTaskGraph(_:workingDirectory:)``.
+    ///
+    /// Only the chosen graph moves: the other graphs of the old checkpoint
+    /// stay there, still resumable, and the target's other active graphs are
+    /// archived exactly as ``resumeTaskGraph(_:workingDirectory:)`` archives
+    /// them. Restoring the old session first interrupts its persisted active
+    /// attempts (they become `interrupted`, their tasks `blocked`), so no
+    /// attempt of a dead process is carried over as live.
+    ///
+    /// The write order guarantees the graph is never lost: the target's
+    /// checkpoint is committed first, and only then is the graph removed from
+    /// the source, whose checkpoint ``persist(sessionID:state:)`` deletes when
+    /// nothing resumable remains. When that second write fails the adoption
+    /// still succeeds and the failure is only logged: the graph lives in the
+    /// target, and at worst the old checkpoint offers it again at the next
+    /// startup.
+    ///
+    /// Throws `graphNotFound` when the old checkpoint no longer holds the
+    /// graph, `graphNotMutable` when it is terminal, still has an active
+    /// attempt, or a target graph to archive has one, `graphAlreadyExists`
+    /// when the target already holds a graph with the same id, and
+    /// `activeGraphBlockedByTasklessDelegation` while the target runs a
+    /// taskless sub-agent. After a throw both checkpoints still hold what
+    /// they held, apart from the attempts the restore interrupted.
+    @discardableResult
+    public func adoptResumableTaskGraph(
+        _ selectedGraph: ResumableTaskGraph,
+        intoSessionID rawTargetSessionID: String,
+        workingDirectory: URL
+    ) throws -> TaskGraphSnapshot {
+        let targetSessionID = try requireRootAccess(rawTargetSessionID)
+        let sourceSessionID = selectedGraph.sessionID
+        guard sourceSessionID != targetSessionID else {
+            return try resumeTaskGraph(selectedGraph, workingDirectory: workingDirectory)
+        }
+
+        try registerSession(
+            id: sourceSessionID,
+            workingDirectory: workingDirectory,
+            restoreIfAvailable: true
+        )
+        guard let sourceGraph = sessionStates[sourceSessionID]?.graphs[selectedGraph.graphID] else {
+            throw SessionTaskOrchestratorError.graphNotFound(selectedGraph.graphID)
+        }
+        guard sourceGraph.state == .draft || sourceGraph.state == .active,
+              !sourceGraph.hasActiveAttempt else {
+            throw SessionTaskOrchestratorError.graphNotMutable(selectedGraph.graphID)
+        }
+
+        try registerSession(
+            id: targetSessionID,
+            workingDirectory: workingDirectory,
+            restoreIfAvailable: true
+        )
+        try requireNoTasklessDelegations(sessionID: targetSessionID)
+        var targetState = sessionStates[targetSessionID] ?? .empty
+        guard targetState.graphs[sourceGraph.id] == nil else {
+            throw SessionTaskOrchestratorError.graphAlreadyExists(sourceGraph.id)
+        }
+
+        let now = Date()
+        for otherID in targetState.graphs.keys {
+            guard var other = targetState.graphs[otherID],
+                  other.state == .active else { continue }
+            guard !other.hasActiveAttempt else {
+                throw SessionTaskOrchestratorError.graphNotMutable(otherID)
+            }
+            other.state = .archived
+            touchGraph(&other, at: now)
+            targetState.graphs[otherID] = other
+        }
+        var graph = sourceGraph
+        graph.state = .active
+        touchGraph(&graph, at: now)
+        targetState.currentGraphID = graph.id
+        targetState.graphs[graph.id] = graph
+        // The target first: from here on the graph is safe in the current
+        // session whatever happens to the old checkpoint.
+        try commit(
+            sessionID: targetSessionID,
+            state: targetState,
+            eventKind: .restored,
+            graphID: graph.id
+        )
+
+        guard var sourceState = sessionStates[sourceSessionID] else {
+            return graph
+        }
+        sourceState.graphs[graph.id] = nil
+        if sourceState.currentGraphID == graph.id {
+            sourceState.currentGraphID = nil
+        }
+        do {
+            try commit(
+                sessionID: sourceSessionID,
+                state: sourceState,
+                eventKind: .archived,
+                graphID: graph.id
+            )
+        } catch {
+            ZenLogger.warning(
+                .taskLifecycle,
+                "Adopted task graph \(graph.id) into session \(targetSessionID) but could not remove it from the checkpoint of session \(sourceSessionID): \(error.localizedDescription)"
+            )
+        }
         return graph
     }
 

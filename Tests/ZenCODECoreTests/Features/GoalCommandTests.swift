@@ -460,15 +460,11 @@ struct GoalCommandTests {
             ]
         )
 
-        await terminal.writeResumedTaskGraphNotice(
-            ResumableTaskGraph(
+        // Startup recovery arms the projection from the adopted graph.
+        terminal.chatSession.restoreWorkflowProjection(
+            from: try await terminal.sessionRunner.taskGraphSnapshot(
                 sessionID: terminal.sessionID,
-                graphID: graphID,
-                state: .active,
-                source: .workflow,
-                totalTaskCount: 1,
-                pendingTaskCount: 1,
-                updatedAt: Date(timeIntervalSince1970: 1)
+                graphID: graphID
             )
         )
 
@@ -584,10 +580,12 @@ struct GoalCommandTests {
 
         // Reconstruct the frontend projection exactly as startup recovery does.
         terminal.activeWorkflow = nil
-        await terminal.writeResumedTaskGraphNotice(ResumableTaskGraph(
-            sessionID: terminal.sessionID, graphID: initial.id, state: .active, source: .workflow,
-            totalTaskCount: 0, pendingTaskCount: 0, updatedAt: blocked.updatedAt
-        ))
+        terminal.chatSession.restoreWorkflowProjection(
+            from: try await terminal.sessionRunner.taskGraphSnapshot(
+                sessionID: terminal.sessionID,
+                graphID: initial.id
+            )
+        )
         #expect(terminal.activeWorkflow?.goal == "Complete the entire approved change")
         guard case let .runHiddenPrompt(prompt, purpose) = await terminal.submittedLineAction("Access restored") else {
             Issue.record("The user reply must resume the same workflow")

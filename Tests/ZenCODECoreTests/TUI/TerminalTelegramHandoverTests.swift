@@ -1041,7 +1041,7 @@ private actor TerminalHandoverBackend: AgentRuntimeBackend {
 
 /// A voice controller that listens forever, never speaks for real, and
 /// records every text handed to it.
-private actor TerminalHandoverVoiceController: TerminalVoiceController {
+private actor TerminalHandoverVoiceController: VoiceModeController {
     nonisolated let languageCode = "it"
     private(set) var isPaused = false
     private(set) var isSpeaking = false
@@ -1058,7 +1058,7 @@ private actor TerminalHandoverVoiceController: TerminalVoiceController {
         isStopped = true
     }
 
-    func speak(_ text: String, rendering _: TerminalVoiceSpeechRendering) async -> Bool {
+    func speak(_ text: String, rendering _: VoiceModeSpeechRendering) async -> Bool {
         guard !isStopped, !isPaused, !text.isEmpty else { return false }
         spoken.append(text)
         return true

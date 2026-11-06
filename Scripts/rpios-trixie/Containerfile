@@ -4,8 +4,24 @@
 # Usage:
 #   container build -t local/rpios-trixie-swift:latest Scripts/rpios-trixie/
 #   container machine create local/rpios-trixie-swift:latest --name zencode-rpios --cpus 4 --memory 8G --set-default
+#
+# The base image is flattened and stripped of POSIX ACLs (see "Base image" below).
 
-FROM oclabsnl/raspbian:trixie-lite
+# --- Base image: flattened, without POSIX ACL xattrs ---
+# container 1.6.x (apple/containerization EXT4 unpacker) rejects POSIX ACL
+# xattrs with "invalid extended attribute". The upstream image ships ACLs
+# (system.posix_acl_access/default) on /var/log/journal, so unpacking its
+# layer fails in both `container machine create` and `container run`.
+# Strip only those xattrs in a throwaway stage, then copy the whole root
+# filesystem into scratch: the ACL-carrying layer never reaches the final
+# image. The base image config is empty (no Env/Cmd/Entrypoint/WorkingDir/
+# User), so starting from scratch loses nothing.
+FROM oclabsnl/raspbian:trixie-lite AS rpios-base
+RUN find / -xdev \( -type d -o -type f \) -print0 | \
+    xargs -0 python3 -c 'import os, sys; [os.removexattr(p, a) for p in sys.argv[1:] for a in os.listxattr(p) if a.startswith("system.posix_acl_")]'
+
+FROM scratch
+COPY --from=rpios-base / /
 
 # --- systemd / container-machine requirements ---
 # container machine requires /sbin/init (systemd) and the standard

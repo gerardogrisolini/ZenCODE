@@ -413,10 +413,12 @@ public final class ChatSessionHost {
     /// which keeps the epoch). Nothing happens for the id the session has.
     ///
     /// For a channel that continues persisted work under the id it was
-    /// persisted with before the runtime session exists (the terminal
-    /// resuming a task graph at startup): the runner is not told, so a
-    /// session it already created keeps its id there, and from then on a new
-    /// session is the way. Throws `.sessionBusy` while a prompt or a
+    /// persisted with before the runtime session exists: the runner is not
+    /// told, so a session it already created keeps its id there, and from
+    /// then on a new session is the way. Startup task-graph recovery does not
+    /// need it: it moves the graph into the session instead
+    /// (``ChatSessionController/offerResumableTaskGraphs(choiceHost:)``).
+    /// Throws `.sessionBusy` while a prompt or a
     /// reconfiguration is reserved, and `.noSession`, `.unknownSlot`, and
     /// `.shutDown` as ``reservePrompt(in:)`` does.
     public func adoptSessionID(
@@ -649,6 +651,15 @@ public final class ChatSessionHost {
     /// `sessionID` now.
     func isSessionRunning(_ sessionID: String, outside excludedSlotID: ChatSlotID) -> Bool {
         slots.values.contains { $0.id != excludedSlotID && $0.incarnation?.sessionID == sessionID }
+    }
+
+    /// The ids of the sessions the open slots run now, one per slot with a
+    /// session. Startup recovery leaves their task graphs out of its offer
+    /// (``ChatSessionController/offerResumableTaskGraphs(choiceHost:)``): a
+    /// graph another window or channel of this process is running is not
+    /// left over by an earlier session, and two slots must never adopt it.
+    func liveSessionIDs() -> Set<String> {
+        Set(slots.values.compactMap { $0.incarnation?.sessionID })
     }
 
     // MARK: - Sleep assertion

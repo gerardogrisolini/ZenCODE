@@ -32,6 +32,9 @@ public struct ZenStatusBarState: Equatable, Sendable {
     public var gitStatus: TerminalGitStatusSummary?
     /// The runner's access mode: full access shows a red dot first.
     public var localExecAccessMode: AgentLocalExecAccessMode
+    /// The app's voice mode, one for every window: while it is on, its
+    /// indicator follows the red dot.
+    public var voice: VoiceModeSessionState
 
     public init(
         isGenerating: Bool = false,
@@ -42,7 +45,8 @@ public struct ZenStatusBarState: Equatable, Sendable {
         contextWindow: DirectAgentContextWindowStatus? = nil,
         subscriptionUsage: DirectAgentSubscriptionUsageStatus? = nil,
         gitStatus: TerminalGitStatusSummary? = nil,
-        localExecAccessMode: AgentLocalExecAccessMode = .standard
+        localExecAccessMode: AgentLocalExecAccessMode = .standard,
+        voice: VoiceModeSessionState = .off
     ) {
         self.isGenerating = isGenerating
         self.turnStartedAt = turnStartedAt
@@ -53,13 +57,16 @@ public struct ZenStatusBarState: Equatable, Sendable {
         self.subscriptionUsage = subscriptionUsage
         self.gitStatus = gitStatus
         self.localExecAccessMode = localExecAccessMode
+        self.voice = voice
     }
 }
 
 /// The status line under the composer.
 ///
 /// The leading side lists the terminal UI's fragments joined by `" · "`
-/// (formatted by ``ZenStatusFormatting``): a red dot in full access, a
+/// (formatted by ``ZenStatusFormatting``): a red dot in full access, the
+/// app's voice indicator while voice mode is on (`mic.fill` listening,
+/// `mic.slash` paused, `waveform` reading aloud, with its tooltip), a
 /// spinner while generating, model and thinking, the context window with a
 /// small gauge, the live elapsed time (refreshed every second) or the last
 /// response duration, token counts, throughput, subscription usage, and the
@@ -110,6 +117,13 @@ public struct ZenStatusBar: View {
         case .accessMode:
             styledText(fragment.runs)
                 .accessibilityLabel(ZenStatusFormatting.fullAccessAccessibilityLabel)
+        case .voice:
+            if let indicator = fragment.voiceIndicator {
+                Image(systemName: indicator.symbolName)
+                    .foregroundStyle(color(for: indicator.style))
+                    .help(indicator.label)
+                    .accessibilityLabel(indicator.label)
+            }
         case .activity:
             ProgressView()
                 .progressViewStyle(.circular)
@@ -147,6 +161,8 @@ public struct ZenStatusBar: View {
         case .fileAddition: palette.fileAddition
         case .fileDeletion: palette.fileDeletion
         case .fullAccess: palette.statusFailure
+        case .voiceActive: palette.statusActive
+        case .voicePaused: palette.statusInactive
         }
     }
 }
@@ -197,7 +213,8 @@ struct ZenContextGauge: View {
             dailyUsedPercent: 12,
             weeklyUsedPercent: 4.5
         ),
-        gitStatus: TerminalGitStatusSummary(changedFileCount: 3, additions: 12, deletions: 4)
+        gitStatus: TerminalGitStatusSummary(changedFileCount: 3, additions: 12, deletions: 4),
+        voice: VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false)
     ))
     .padding()
     .frame(width: 900)

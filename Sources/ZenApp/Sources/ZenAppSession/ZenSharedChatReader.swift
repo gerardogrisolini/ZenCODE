@@ -154,4 +154,11 @@ public struct ZenSharedChatReader: Sendable, Equatable {
     public mutating func reset() {
         self = ZenSharedChatReader()
     }
+
+    /// Reads the message `id` alone, as voice mode does once it read it
+    /// aloud; an unknown or already read message changes nothing, and a
+    /// message is never made unread again.
+    public mutating func markRead(_ id: UUID) {
+        unreadMessageIDs.remove(id)
+    }
 }

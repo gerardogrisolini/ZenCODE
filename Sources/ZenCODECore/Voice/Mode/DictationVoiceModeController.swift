@@ -1,5 +1,5 @@
 //
-//  TerminalDictationVoice.swift
+//  DictationVoiceModeController.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 23/10/26.
@@ -14,7 +14,7 @@ import AVFoundation
 import Speech
 #endif
 
-enum TerminalDictationEvent: Sendable, Equatable {
+enum VoiceDictationEvent: Sendable, Equatable {
     /// A recognition result. `endsSegment` marks a final one, which closes
     /// the speech segment recognized since the previous final result: the
     /// next results hold only what is said after it, so the earlier words
@@ -23,7 +23,7 @@ enum TerminalDictationEvent: Sendable, Equatable {
     case ended(generation: UInt64)
 }
 
-enum TerminalDictationError: LocalizedError, Equatable {
+enum VoiceDictationError: LocalizedError, Equatable {
     case unsupportedPlatform
     case unsupportedLanguage(String)
     /// The language's speech model could not be downloaded: the locale and
@@ -49,7 +49,7 @@ enum TerminalDictationError: LocalizedError, Equatable {
 /// recognisable as stale. `append` runs on the audio thread; it and the
 /// controller's `restart` and `stop` touch the current session only under the
 /// lock.
-final class TerminalDictationRecognizer: @unchecked Sendable {
+final class VoiceDictationRecognizer: @unchecked Sendable {
     static let isSupported = true
 
     /// The input of one analyzer, fed with the samples received while its
@@ -69,7 +69,7 @@ final class TerminalDictationRecognizer: @unchecked Sendable {
     private let analyzerFormat: AVAudioFormat
     private var session: Session?
     private var generation: UInt64 = 0
-    private var onEvent: (@Sendable (TerminalDictationEvent) -> Void)?
+    private var onEvent: (@Sendable (VoiceDictationEvent) -> Void)?
     /// The recognized locale in ICU form, e.g. `it_IT`.
     let localeIdentifier: String
 
@@ -94,9 +94,9 @@ final class TerminalDictationRecognizer: @unchecked Sendable {
     static func make(
         locale: Locale,
         onDownload: @escaping @Sendable (_ localeIdentifier: String) async -> Void
-    ) async throws -> TerminalDictationRecognizer {
+    ) async throws -> VoiceDictationRecognizer {
         guard let model = await AppleSpeechModel.resolve(for: locale) else {
-            throw TerminalDictationError.unsupportedLanguage(locale.identifier)
+            throw VoiceDictationError.unsupportedLanguage(locale.identifier)
         }
         let localeIdentifier = model.locale.identifier(.icu)
         let module = model.makeModule(for: .live).module
@@ -107,14 +107,14 @@ final class TerminalDictationRecognizer: @unchecked Sendable {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            throw TerminalDictationError.speechModelDownloadFailed(localeIdentifier, error.localizedDescription)
+            throw VoiceDictationError.speechModelDownloadFailed(localeIdentifier, error.localizedDescription)
         }
-        let deviceFormat = TerminalVoiceAudioDevice.sampleFormat
+        let deviceFormat = VoiceAudioDevice.sampleFormat
         let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(
             compatibleWith: [module],
             considering: deviceFormat
         ) ?? deviceFormat
-        return TerminalDictationRecognizer(
+        return VoiceDictationRecognizer(
             model: model,
             analyzerFormat: analyzerFormat,
             localeIdentifier: localeIdentifier
@@ -127,7 +127,7 @@ final class TerminalDictationRecognizer: @unchecked Sendable {
         self.localeIdentifier = localeIdentifier
     }
 
-    func setEventHandler(_ handler: @escaping @Sendable (TerminalDictationEvent) -> Void) {
+    func setEventHandler(_ handler: @escaping @Sendable (VoiceDictationEvent) -> Void) {
         lock.withLock { onEvent = handler }
     }
 
@@ -143,7 +143,7 @@ final class TerminalDictationRecognizer: @unchecked Sendable {
         let (retirement, retirementContinuation) = AsyncStream.makeStream(of: Void.self)
         let converter = Self.makeConverter(to: analyzerFormat)
         let (retired, generation, handler) = lock.withLock {
-            () -> (Session?, UInt64, (@Sendable (TerminalDictationEvent) -> Void)?) in
+            () -> (Session?, UInt64, (@Sendable (VoiceDictationEvent) -> Void)?) in
             let retired = session
             generation &+= 1
             session = Session(
@@ -156,9 +156,9 @@ final class TerminalDictationRecognizer: @unchecked Sendable {
         }
         Self.retire(retired)
 
-        let events = TerminalDictationSessionEvents(generation: generation, handler: handler)
+        let events = VoiceDictationSessionEvents(generation: generation, handler: handler)
         let results = module.results()
-        let consumer = Task(name: "ZenCODE.TUI.dictation-results") {
+        let consumer = Task(name: "ZenCODE.dictation-results") {
             do {
                 for try await result in results {
                     events.deliver(result)
@@ -169,7 +169,7 @@ final class TerminalDictationRecognizer: @unchecked Sendable {
             events.end()
         }
         let format = analyzerFormat
-        Task(name: "ZenCODE.TUI.dictation-analyzer") {
+        Task(name: "ZenCODE.dictation-analyzer") {
             do {
                 // Prepared even when already retired: only an analyzer that
                 // got ready ends its results when cancelled.
@@ -191,7 +191,7 @@ final class TerminalDictationRecognizer: @unchecked Sendable {
     func append(_ samples: [Float]) {
         guard !samples.isEmpty,
               let buffer = AVAudioPCMBuffer(
-                  pcmFormat: TerminalVoiceAudioDevice.sampleFormat,
+                  pcmFormat: VoiceAudioDevice.sampleFormat,
                   frameCapacity: AVAudioFrameCount(samples.count)
               ),
               let channel = buffer.floatChannelData?[0] else {
@@ -242,7 +242,7 @@ final class TerminalDictationRecognizer: @unchecked Sendable {
     }
 
     private static func makeConverter(to format: AVAudioFormat) -> AVAudioConverter? {
-        let deviceFormat = TerminalVoiceAudioDevice.sampleFormat
+        let deviceFormat = VoiceAudioDevice.sampleFormat
         guard format != deviceFormat else {
             return nil
         }
@@ -261,7 +261,7 @@ final class TerminalDictationRecognizer: @unchecked Sendable {
         guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else {
             return nil
         }
-        let feed = TerminalVoiceConverterFeed(buffer)
+        let feed = VoiceConverterFeed(buffer)
         var conversionError: NSError?
         let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
             feed.next(inputStatus)
@@ -275,11 +275,11 @@ final class TerminalDictationRecognizer: @unchecked Sendable {
 
 /// Delivers the events of one recognition session in order and ends it
 /// exactly once: nothing is delivered after `.ended`.
-private final class TerminalDictationSessionEvents: Sendable {
+private final class VoiceDictationSessionEvents: Sendable {
     private let generation: UInt64
-    private let handler: Mutex<(@Sendable (TerminalDictationEvent) -> Void)?>
+    private let handler: Mutex<(@Sendable (VoiceDictationEvent) -> Void)?>
 
-    init(generation: UInt64, handler: (@Sendable (TerminalDictationEvent) -> Void)?) {
+    init(generation: UInt64, handler: (@Sendable (VoiceDictationEvent) -> Void)?) {
         self.generation = generation
         self.handler = Mutex(handler)
     }
@@ -299,19 +299,19 @@ private final class TerminalDictationSessionEvents: Sendable {
 }
 
 /// Reuses one converter while consecutive buffers share a format.
-private final class TerminalVoiceSampleConverter: @unchecked Sendable {
+private final class VoiceSampleConverter: @unchecked Sendable {
     private var converter: AVAudioConverter?
     private var sourceFormat: AVAudioFormat?
 
     func convert(_ buffer: AVAudioPCMBuffer) -> [Float] {
         if sourceFormat != buffer.format {
             sourceFormat = buffer.format
-            converter = TerminalVoiceAudioDevice.makeConverter(from: buffer.format)
+            converter = VoiceAudioDevice.makeConverter(from: buffer.format)
         }
         guard let converter else {
             return []
         }
-        return TerminalVoiceAudioDevice.monoSamples(from: buffer, converter: converter)
+        return VoiceAudioDevice.monoSamples(from: buffer, converter: converter)
     }
 }
 
@@ -319,13 +319,13 @@ private final class TerminalVoiceSampleConverter: @unchecked Sendable {
 /// buffers and played through the voice device, so the engine's echo
 /// cancellation hears it as its own output and the user can talk over it.
 @MainActor
-final class TerminalVoiceSpeaker {
-    nonisolated let state = TerminalVoiceSpeechState()
-    private let device: TerminalVoiceAudioDevice
+final class VoiceSpeaker {
+    nonisolated let state = VoiceSpeechState()
+    private let device: VoiceAudioDevice
     private let synthesizer = AVSpeechSynthesizer()
     private let voice: AVSpeechSynthesisVoice?
 
-    init(localeIdentifier: String, readingVoiceIdentifier: String?, device: TerminalVoiceAudioDevice) {
+    init(localeIdentifier: String, readingVoiceIdentifier: String?, device: VoiceAudioDevice) {
         self.device = device
         voice = Self.preferredVoice(
             localeIdentifier: localeIdentifier,
@@ -354,10 +354,10 @@ final class TerminalVoiceSpeaker {
     /// Built outside the main actor: the synthesizer calls it on its own queue.
     private nonisolated static func bufferCallback(
         generation: UInt64,
-        state: TerminalVoiceSpeechState,
-        device: TerminalVoiceAudioDevice
+        state: VoiceSpeechState,
+        device: VoiceAudioDevice
     ) -> @Sendable (AVAudioBuffer) -> Void {
-        let converter = TerminalVoiceSampleConverter()
+        let converter = VoiceSampleConverter()
         return { buffer in
             guard let pcm = buffer as? AVAudioPCMBuffer, pcm.frameLength > 0 else {
                 state.synthesisFinished(generation: generation)
@@ -396,7 +396,7 @@ final class TerminalVoiceSpeaker {
 }
 #else
 /// Dictation needs the Speech framework; elsewhere it never starts.
-final class TerminalDictationRecognizer: Sendable {
+final class VoiceDictationRecognizer: Sendable {
     static let isSupported = false
     let localeIdentifier = ""
 
@@ -407,11 +407,11 @@ final class TerminalDictationRecognizer: Sendable {
     static func make(
         locale: Locale,
         onDownload: @escaping @Sendable (_ localeIdentifier: String) async -> Void
-    ) async throws -> TerminalDictationRecognizer {
-        throw TerminalDictationError.unsupportedPlatform
+    ) async throws -> VoiceDictationRecognizer {
+        throw VoiceDictationError.unsupportedPlatform
     }
 
-    func setEventHandler(_ handler: @escaping @Sendable (TerminalDictationEvent) -> Void) {}
+    func setEventHandler(_ handler: @escaping @Sendable (VoiceDictationEvent) -> Void) {}
 
     @discardableResult
     func restart() -> UInt64 {
@@ -424,10 +424,10 @@ final class TerminalDictationRecognizer: Sendable {
 }
 
 @MainActor
-final class TerminalVoiceSpeaker {
-    nonisolated let state = TerminalVoiceSpeechState()
+final class VoiceSpeaker {
+    nonisolated let state = VoiceSpeechState()
 
-    init(localeIdentifier: String, readingVoiceIdentifier: String?, device: TerminalVoiceAudioDevice) {}
+    init(localeIdentifier: String, readingVoiceIdentifier: String?, device: VoiceAudioDevice) {}
 
     func speak(_ text: String) {}
 
@@ -441,8 +441,8 @@ final class TerminalVoiceSpeaker {
 /// microphone and speech permissions, continuous recognition split into
 /// utterances, barge-in and spoken answers. Recognized utterances become
 /// ordinary prompts; audio is never persisted.
-actor TerminalDictationVoiceController: TerminalVoiceController {
-    typealias Callbacks = TerminalVoiceCallbacks
+actor DictationVoiceModeController: VoiceModeController {
+    typealias Callbacks = VoiceModeCallbacks
 
     enum Phase: Sendable, Equatable {
         case idle
@@ -454,7 +454,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
 
     /// Whether this platform can run dictation at all.
     static var isSupported: Bool {
-        TerminalVoiceAudioDevice.isSupported && TerminalDictationRecognizer.isSupported
+        VoiceAudioDevice.isSupported && VoiceDictationRecognizer.isSupported
     }
 
     static let microphoneDeniedMessage = "ZenCODE: microphone access is not granted. Allow your terminal app under System Settings > Privacy & Security > Microphone, then run /voice on.\n"
@@ -486,13 +486,13 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
     /// The reading voice chosen in `/setup` > Voice mode, if any.
     private let readingVoiceIdentifier: String?
     /// The options chosen in `/setup` > Voice mode.
-    private let options: TerminalVoiceOptions
-    private let device = TerminalVoiceAudioDevice()
-    private var recognizer: TerminalDictationRecognizer?
-    private var speaker: TerminalVoiceSpeaker?
-    private var segmenter: TerminalDictationSegmenter
+    private let options: VoiceModeOptions
+    private let device = VoiceAudioDevice()
+    private var recognizer: VoiceDictationRecognizer?
+    private var speaker: VoiceSpeaker?
+    private var segmenter: VoiceDictationSegmenter
     /// Set in keyword send mode: speech waiting for the keyword.
-    private var keywordCollector: TerminalVoiceKeywordCollector?
+    private var keywordCollector: VoiceKeywordCollector?
     /// The live-chat dialogue awaits a yes or no.
     private var isAwaitingShortAnswer = false
     /// The dictation previewed in the prompt draft. Advances after every
@@ -519,15 +519,15 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         languageCode: String,
         locale: Locale,
         readingVoiceIdentifier: String? = nil,
-        options: TerminalVoiceOptions = TerminalVoiceOptions(),
+        options: VoiceModeOptions = VoiceModeOptions(),
         callbacks: Callbacks
     ) {
         self.languageCode = languageCode
         self.locale = locale
         self.readingVoiceIdentifier = readingVoiceIdentifier
         self.options = options
-        self.segmenter = TerminalDictationSegmenter(silence: options.utteranceSilence)
-        self.keywordCollector = options.sendKeyword.map(TerminalVoiceKeywordCollector.init)
+        self.segmenter = VoiceDictationSegmenter(silence: options.utteranceSilence)
+        self.keywordCollector = options.sendKeyword.map(VoiceKeywordCollector.init)
         self.callbacks = callbacks
     }
 
@@ -536,15 +536,15 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             return
         }
         phase = .starting
-        guard TerminalVoiceAudioDevice.isSupported, TerminalDictationRecognizer.isSupported else {
-            await fail("ZenCODE: \(TerminalDictationError.unsupportedPlatform.localizedDescription)\n")
+        guard VoiceAudioDevice.isSupported, VoiceDictationRecognizer.isSupported else {
+            await fail("ZenCODE: \(VoiceDictationError.unsupportedPlatform.localizedDescription)\n")
             return
         }
-        guard await TerminalVoiceAudioDevice.requestMicrophoneAccess() else {
+        guard await VoiceAudioDevice.requestMicrophoneAccess() else {
             await fail(Self.microphoneDeniedMessage)
             return
         }
-        guard await TerminalDictationRecognizer.requestAuthorization() else {
+        guard await VoiceDictationRecognizer.requestAuthorization() else {
             await fail(Self.speechRecognitionDeniedMessage)
             return
         }
@@ -552,10 +552,10 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             return
         }
 
-        let recognizer: TerminalDictationRecognizer
+        let recognizer: VoiceDictationRecognizer
         do {
             let callbacks = callbacks
-            recognizer = try await TerminalDictationRecognizer.make(locale: locale) { localeIdentifier in
+            recognizer = try await VoiceDictationRecognizer.make(locale: locale) { localeIdentifier in
                 await callbacks.systemMessage(Self.downloadingMessage(localeIdentifier: localeIdentifier))
             }
         } catch {
@@ -572,7 +572,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             return
         }
         let (events, continuation) = AsyncStream.makeStream(
-            of: TerminalDictationEvent.self,
+            of: VoiceDictationEvent.self,
             bufferingPolicy: .unbounded
         )
         recognizer.setEventHandler { event in
@@ -582,7 +582,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         let localeIdentifier = recognizer.localeIdentifier
         let readingVoiceIdentifier = readingVoiceIdentifier
         let speaker = await MainActor.run {
-            TerminalVoiceSpeaker(
+            VoiceSpeaker(
                 localeIdentifier: localeIdentifier,
                 readingVoiceIdentifier: readingVoiceIdentifier,
                 device: device
@@ -615,12 +615,12 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         if !isPaused {
             restartRecognition()
         }
-        eventTask = Task(name: "ZenCODE.TUI.dictation-events") { [weak self] in
+        eventTask = Task(name: "ZenCODE.dictation-events") { [weak self] in
             for await event in events {
                 await self?.handle(event)
             }
         }
-        silenceTask = Task(name: "ZenCODE.TUI.dictation-silence") { [weak self] in
+        silenceTask = Task(name: "ZenCODE.dictation-silence") { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.silencePollInterval)
                 await self?.tick()
@@ -639,14 +639,14 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
     /// still being spoken. Answers completed while paused are never read
     /// later.
     @discardableResult
-    func speak(_ text: String, rendering: TerminalVoiceSpeechRendering) async -> Bool {
+    func speak(_ text: String, rendering: VoiceModeSpeechRendering) async -> Bool {
         guard phase == .listening, !isPaused, let speaker else {
             return false
         }
         let spoken: String
         switch rendering {
         case .answer:
-            spoken = TerminalVoiceSpeechText.speakable(
+            spoken = VoiceSpeechText.speakable(
                 fromMarkdown: text,
                 languageCode: languageCode
             )
@@ -749,7 +749,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
 
     // MARK: - Recognition
 
-    private func handle(_ event: TerminalDictationEvent) async {
+    private func handle(_ event: VoiceDictationEvent) async {
         guard phase == .listening, !isPaused else {
             return
         }
@@ -848,7 +848,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
 
     /// A finished utterance in pause send mode.
     private func sendPauseUtterance(_ utterance: String, at now: ContinuousClock.Instant) async {
-        if TerminalVoiceUtterance.isAwaitedAnswer(utterance, awaitingShortAnswer: isAwaitingShortAnswer) {
+        if VoiceModeUtterance.isAwaitedAnswer(utterance, awaitingShortAnswer: isAwaitingShortAnswer) {
             await sendAnswer(utterance, at: now)
         } else {
             await sendDictation(utterance, at: now)
@@ -894,7 +894,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
             isPublishingDictation = false
         }
         while true {
-            let text = keywordCollector.map { TerminalVoiceSendKeyword.joined($0.pending, segmenter.text) }
+            let text = keywordCollector.map { VoiceModeSendKeyword.joined($0.pending, segmenter.text) }
                 ?? segmenter.text
             guard text != publishedDictation else {
                 return
@@ -910,7 +910,7 @@ actor TerminalDictationVoiceController: TerminalVoiceController {
         guard let state = speaker?.state, let reference = state.echoReference(at: now) else {
             return false
         }
-        return TerminalVoiceEchoGuard.shouldDrop(
+        return VoiceEchoGuard.shouldDrop(
             text,
             spokenReference: reference,
             isSpeaking: state.isSpeaking(at: now)

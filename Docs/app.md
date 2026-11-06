@@ -223,8 +223,9 @@ The composer is at the bottom of the window.
   which you can remove, and runs when the turn ends. At most 32 prompts wait:
   a full queue refuses the prompt with the terminal's message, keeping your
   draft. A command sent during a turn is never queued: `/help`, `/artifacts`,
-  `/tasks` (alone, or with `status`, `list`, or `ls`), `/telegram`, and
-  `/telegram off` run at once, beside the turn, and any other command, `/exit`
+  `/tasks` (alone, or with `status`, `list`, or `ls`), `/telegram`,
+  `/telegram off`, and `/voice` (with any argument) run at once, beside the
+  turn, and any other command, `/exit`
   included, is refused with the terminal's message, keeping your draft. So is
   `/telegram on` (see [Telegram](#telegram)). A message to the chat is never
   queued either: it is sent at once.
@@ -233,16 +234,20 @@ The composer is at the bottom of the window.
   `/attach delete` work as in the terminal.
 - **Stop** (Esc in the Chat tab, ⌘., or the stop button) cancels the turn and
   refuses the open requests. The queue is kept. While a consent sheet shows,
-  Esc denies the call instead.
+  Esc denies the call instead. While voice mode is on, Esc also stops the
+  reading aloud (see [Voice](#voice)); it never clears the draft.
 - Under the field, a line names the keys that do something now, in the
   words of the terminal's input panel: `Enter send · Ctrl+G access · Ctrl+Y
   chat` while idle, `Enter queue · Ctrl+G access · Ctrl+Y chat · Esc stop`
-  while a turn runs, and `↑/↓ select · Tab complete · Enter choose · Esc
-  dismiss` while suggestions show. Ctrl+G is **Session > Full Access** and
+  while a turn runs, `Enter send · Ctrl+G access · Ctrl+Y chat · Esc stop
+  reading` while voice mode reads aloud in the window it follows (while a
+  turn runs too, the turn's line shows, and Esc stops both), and `↑/↓ select
+  · Tab complete · Enter choose · Esc dismiss` while suggestions show.
+  Ctrl+G is **Session > Full Access** and
   Ctrl+Y shows or hides the chat reader (see
   [Toolbar and menus](#toolbar-and-menus)). When the line does not fit while
-  a turn runs, `Esc stop` moves ahead of Ctrl+G and Ctrl+Y, as in the
-  terminal.
+  a turn runs or voice mode reads, `Esc stop` or `Esc stop reading` moves
+  ahead of Ctrl+G and Ctrl+Y, as in the terminal.
 
 The response language is locked on the first prompt you type in a session, as
 in the terminal: the configured language, else the system one. It is decided
@@ -338,6 +343,135 @@ in the Chat tab) in the Session menu, and ⌃Y, open and close the reader; ⌃Y
 works with the focus in the composer. From a sub-agent tab the item selects the
 Chat tab and opens the reader.
 
+## Voice
+
+Voice mode (`/voice`) works in the app as in the terminal (see
+[voice.md](voice.md#voice-mode-in-the-terminal)): you speak your prompts to
+any agent and hear the answers read aloud. Speech recognition and speech
+synthesis run on the Mac, with the system speech frameworks, and the model
+provider receives only the recognized text. The commands and their texts are
+the terminal's: `/voice on` starts voice mode, `/voice off` stops it,
+`/voice pause` stops listening and reading aloud, `/voice resume` starts both
+again, and `/voice` alone pauses or resumes. The send mode, the pause, the
+word, and the reading voice are the ones chosen in `zen` with `/setup` >
+**Voice mode**, read at each `/voice on`. The texts of voice mode, such as
+`Voice: listening (…)`, show as message rows in the window it follows.
+
+### One voice mode for the app
+
+There is one voice mode for the whole app, with one microphone. Every window
+shows its state in the status bar, and `/voice` in any window turns it on or
+off, pauses it, or resumes it for all of them. Voice mode follows the active
+window: the window you last brought to the front, or the last one that ran
+`/voice`. Only that window gets the dictation, reads aloud its answers and the
+comments of its main agent, announces the messages of its shared chat, and
+sends voice mode's instruction (short sentences, brief comments while it
+works) with its prompts; the other windows get none of these.
+
+When another window becomes active:
+
+- The words already dictated in the previous window stay in its draft as
+  ordinary text, and voice mode forgets them. An utterance that voice mode
+  was sending from that draft at the moment of the switch goes back there,
+  unsent.
+- Dictation goes on in the new window, and its answers are read aloud from
+  then on.
+- The reading in progress stops, and the pending live-chat question and the
+  announcements waiting are dropped.
+
+Closing the active window moves voice mode to the most recently active window
+left. A new or loaded session in the active window counts as a new target, as
+in the terminal: the reading stops, the live-chat question and the
+announcements waiting are dropped, and only the messages that the new room
+receives from then on are announced. Voice mode stays on.
+
+### Dictation in the draft
+
+While voice mode listens, the speech recognized but not sent yet shows live at
+the end of the active window's draft, after the text you typed, with a space
+between them. It is ordinary text in the field, without a highlight. While the
+cursor is in the dictation, it follows its end; a cursor you moved back into
+the typed text stays where it is.
+
+- Typing or editing the draft, a completed suggestion included, turns the
+  dictation into ordinary text: voice mode forgets it, and later speech goes
+  after it. A prompt recalled with ↑ or ↓ replaces the draft and ends the
+  dictation too: voice mode forgets it. Moving the cursor alone is not an
+  edit.
+- `/voice pause` and `/voice off` remove the dictation from the draft; the
+  typed text stays.
+- When voice sends, the whole draft you see goes out, typed text and dictation
+  together, and the draft is cleared. It is not added to the prompt history
+  that ↑ and ↓ recall. Return sends the draft by the keyboard rules instead,
+  dictation included.
+
+What voice sends runs as a line you typed: a leading `@mention` sends a live
+message to the shared chat, a reply can answer a pending `/plan` or `/goal`
+question, and a prompt waits in the queue while a turn runs (a full queue
+refuses it with `ZenCODE: prompt queue is full; wait for the current prompt to
+finish.`). Text that would read as a slash command is sent as a plain prompt,
+also from the queue, so voice never runs `/exit` or any other command; a full
+queue refuses it with `ZenCODE: prompt queue is full; voice prompt was not
+queued.`
+
+### Reading aloud
+
+The final answer of every turn of the active window is read aloud as in the
+terminal: your prompts, the coordinator turns that the shared chat asks for,
+and a turn from Telegram still running when `/telegram off` takes the session
+back. The comments that the main agent writes before a tool call are read
+while its turn runs. Answers that complete while voice mode is paused are not
+read later.
+
+Esc in the Chat tab stops the reading; while a turn runs, it stops the turn
+and the reading. The reading shows in the status bar of every window, since
+voice mode is one for the app, but Esc stops it only in the window voice mode
+follows, which is the one in front: bringing a window to the front moves voice
+mode there, and the switch already stops the reading. Unlike the terminal, Esc
+never clears the draft. The other
+meanings of Esc stay: a consent sheet's Esc denies the call, Esc hides the
+suggestion list, and in a sub-agent tab Esc does nothing. ⌘. and the stop
+button stop the turn only. While a reading can be stopped, the line under the
+composer names `Esc stop reading` (see [Composer](#composer)).
+
+### Shared chat by voice
+
+While voice mode listens, the new messages of the active window's room that
+are addressed to you (`→ Operator` or `→ All`) are announced, and you can have
+them read and answer them by voice, with the terminal's dialogue, phrases, and
+languages (see [voice.md](voice.md#live-chat-by-voice)). A message read aloud
+is marked as read in the chat panel, as if you opened it there. A live message
+by voice ("message to the coordinator: …") is sent like a typed `@mention`, and
+a failure shows in the conversation as for a typed one.
+
+### Menu and status bar
+
+**Session > Voice Mode**, checked while voice mode is on, runs `/voice on` or
+`/voice off`. **Pause Voice** (**Resume Voice** while voice mode is paused),
+enabled while voice mode is on, runs `/voice pause` or `/voice resume`. Like
+the other items that run a command, they run in the key window, which becomes
+the one voice mode follows, and select its Chat tab first; they have no
+shortcut. While voice mode is on, the status bar of every window shows its
+state after the full-access dot (see [Status bar](#status-bar)).
+
+While Telegram drives a window's session, the window refuses `/voice` and what
+voice mode would send from it with the dormant text (see
+[Telegram](#while-telegram-drives-the-session)).
+
+### Permissions and privacy
+
+The first `/voice on` asks macOS for the **Microphone** and **Speech
+Recognition** permissions. The app runs without an `.app` bundle of its own,
+so macOS usually asks, and lists the permissions, on behalf of the app that
+started ZenCODE: your terminal app for `zen --ui`, and Xcode or the terminal
+for `swift run`. If you denied them, allow that app under *System Settings >
+Privacy & Security > Microphone* and *Speech Recognition*, then run
+`/voice on` again.
+
+Voice mode never writes audio to disk (see
+[voice.md](voice.md#privacy-and-storage)), and it is never saved itself: it
+stops when the app quits, and every launch starts with voice mode off.
+
 ## Tool consent, menus, and requests
 
 A tool that needs consent opens a sheet over the window, whichever tab shows,
@@ -364,10 +498,16 @@ application.
 ## Status bar
 
 The line under the composer has the fragments of the terminal status bar, in
-its order and separated by ` · `:
+its order and separated by ` · `, with the app's voice indicator after the
+first one:
 
 - a red dot (`●`) while **Full Access** is on (see
   [Toolbar and menus](#toolbar-and-menus));
+- while voice mode is on, its state, in every window, since it is one for the
+  whole app (see [Voice](#voice)): a microphone while it listens, a
+  crossed-out microphone while it is paused, and a waveform while it reads
+  aloud, which wins over the pause; the tooltip says `Voice mode: listening`,
+  `Voice mode: paused`, or `Voice mode: reading aloud`;
 - the model and the thinking level, with a spinner while a turn runs;
 - the context window, `used/max`, with a small gauge;
 - the elapsed time of the turn, live, then the duration of the last response;
@@ -436,7 +576,9 @@ it accepts only `/telegram`, `/telegram off`, and `/exit`. It refuses these
 with `ZenCODE: this session is driven from Telegram. Use /telegram off to take
 it back.`:
 
-- any other line, and a live `@mention` to the shared chat;
+- any other line, `/voice` included, and a live `@mention` to the shared chat;
+- what voice mode sends from the window: a dictated prompt or line, and a live
+  message by voice (see [Voice](#voice));
 - the Full Access toggle (⌃G, **Session > Full Access**);
 - attaching files;
 - loading or deleting a saved session from the sidebar.
@@ -473,14 +615,18 @@ with the diff, undo changes, review changes). Always last comes the
 **Artifacts** button, which shows and hides the artifacts sidebar.
 The **Session** menu has Stop (⌘.), then **Show Chat Reader** (**Hide Chat
 Reader**, ⌃Y) in a section of its own, then **Full Access** (⌃G) in a section
-of its own, and repeats the agent, model, thinking,
+of its own, then **Voice Mode** and **Pause Voice** (**Resume Voice**) in a
+section of its own, and repeats the agent, model, thinking,
 tools, skills, tasks, changes, undo, and help items, in the order of the
 toolbar. Each of those items runs
 the slash command it names, so everything is also available from the
 composer. An item that runs a command selects the Chat tab first, so its
 result shows; Stop and the **Artifacts** button leave the tab as it is, and
 the chat reader item selects it only to open the reader (see
-[Shared chat](#shared-chat)).
+[Shared chat](#shared-chat)). **Voice Mode**, checked while voice mode is on,
+runs `/voice on` or `/voice off`, and **Pause Voice** (**Resume Voice** while
+voice mode is paused), enabled while voice mode is on, runs `/voice pause` or
+`/voice resume`; they have no shortcut (see [Voice](#voice)).
 
 **Full Access** (⌃G) is the terminal's Ctrl+G: while it is checked,
 `local.exec` and the destructive tools run without the consent sheet. It
@@ -509,7 +655,7 @@ starts in the default mode.
 | ↑, ↓ | Chat tab, reader open | Scrolls the chat message shown, also from the composer, ahead of the history and the suggestions |
 | ⌃Y | Menu bar | Shows or hides the chat reader |
 | ⌃G | Menu bar | Turns Full Access on or off, for every window |
-| Esc | Chat tab | Denies the tool call while a tool consent waits, otherwise stops the turn |
+| Esc | Chat tab | Denies the tool call while a tool consent waits, otherwise stops the turn and, in the window voice mode follows (the one in front), voice mode's reading aloud; never clears the draft |
 | Esc | Sub-agent tab | Does nothing |
 | ⌘. | Window | Stops the turn, from any tab |
 | ←, →, Return, Esc | Consent sheet | Moves the focus, chooses the focused button, denies |
@@ -521,7 +667,7 @@ starts in the default mode.
 ## Commands
 
 The app runs the shared slash commands of the Chat API, with its own
-`/artifacts`, `/telegram`, and `/exit`:
+`/artifacts`, `/telegram`, `/voice`, and `/exit`:
 
 | Commands | Notes |
 | --- | --- |
@@ -534,6 +680,7 @@ The app runs the shared slash commands of the Chat API, with its own
 | `/changes`, `/undo`, `/review` | Changes (`/changes diff`), undo, review |
 | `/tasks`, `/plan`, `/goal` | Task graph, planning, and goals |
 | `/telegram` | Status, `on`, `off` of the Telegram remote control; offered once Telegram is set up; `/telegram` and `/telegram off` run while a turn runs; see [Telegram](#telegram) |
+| `/voice` | `on`, `off`, `pause`, `resume`, and alone to pause or resume voice mode, one for the whole app; runs while a turn runs; see [Voice](#voice) |
 | `/exit` | Closes the window; refused while a turn runs |
 
 ## Limits
@@ -541,9 +688,9 @@ The app runs the shared slash commands of the Chat API, with its own
 Some features of the terminal chat are not in the app. They stay in the
 terminal:
 
-- `/setup`, `/voice` and dictation, `/feature`, `/cron`, and `/ds4` are not
-  offered, and answer as unknown commands. `/tools logs` answers that it is
-  not available in the app.
+- `/setup`, `/feature`, `/cron`, and `/ds4` are not offered, and answer as
+  unknown commands. `/tools logs` answers that it is not available in the
+  app.
 - Telegram differs from the terminal in two points: `/telegram on` is refused
   while the window runs a line, and `/telegram off` shows no `Catch-up from
   Telegram:` block (see [Telegram](#telegram)).

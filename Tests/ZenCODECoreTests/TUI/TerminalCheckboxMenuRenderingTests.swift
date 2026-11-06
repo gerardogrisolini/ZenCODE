@@ -11,44 +11,6 @@ import Testing
 @Suite(.serialized)
 struct TerminalCheckboxMenuRenderingTests {
     @Test
-    func resumableTaskGraphSelectionRequiresInteractiveTUIMode() throws {
-        let workingDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let tuiConfiguration = try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            runMode: .tui,
-            workingDirectory: workingDirectory
-        )
-        let acpConfiguration = try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            runMode: .acp,
-            workingDirectory: workingDirectory
-        )
-        let telegramConfiguration = try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            runMode: .telegram,
-            workingDirectory: workingDirectory
-        )
-
-        #expect(TerminalChat.shouldOfferResumableTaskGraphSelection(
-            configuration: tuiConfiguration,
-            stdinIsTerminal: true
-        ))
-        #expect(!TerminalChat.shouldOfferResumableTaskGraphSelection(
-            configuration: tuiConfiguration,
-            stdinIsTerminal: false
-        ))
-        #expect(!TerminalChat.shouldOfferResumableTaskGraphSelection(
-            configuration: acpConfiguration,
-            stdinIsTerminal: true
-        ))
-        #expect(!TerminalChat.shouldOfferResumableTaskGraphSelection(
-            configuration: telegramConfiguration,
-            stdinIsTerminal: true
-        ))
-    }
-
-    @Test
     func clearFrameSequenceClearsOnlyMenuRowsAndKeepsCursorInsideFrame() {
         let frame = TerminalCheckboxMenu.RenderedFrame(row: 10, height: 3)
 
@@ -298,16 +260,28 @@ struct TerminalCheckboxMenuRenderingTests {
             pendingTaskCount: 2,
             updatedAt: Date(timeIntervalSince1970: 0)
         )
+        let timestamp = TerminalChat.savedSessionTimestamp(graph.updatedAt)
 
-        let choices = TerminalChat.resumableTaskGraphChoiceItems([graph])
-        #expect(choices.count == 3)
-        #expect(choices[0].value == .resume(graph.id))
-        #expect(choices[0].groupTitle == "Resume")
-        #expect(choices[1].value == .deleteOld)
-        #expect(choices[2].value == .startFresh)
+        let choices = ChatSessionController.resumableTaskGraphChoiceItems([graph], deletesAll: false)
+        #expect(choices.map(\.id) == ["resume:session/unfinished", "delete", "fresh"])
+        // The terminal draws the rows it drew before: same titles, details,
+        // and headings, no current-item marker. Only the delete detail is new.
+        let rows = TerminalInteractionHost.menuItems(choices)
+        #expect(rows.map(\.value) == choices.map(\.id))
+        #expect(rows.map(\.title) == ["unfinished", "Delete old tasks…", "Start fresh"])
+        #expect(rows.map(\.detail) == [
+            "2 of 3 tasks pending · updated \(timestamp)",
+            "choose the obsolete task graphs to delete",
+            "leave saved tasks unchanged",
+        ])
+        #expect(rows.map(\.groupTitle) == ["Resume", "Other actions", "Other actions"])
 
-        let deletionItems = TerminalChat.resumableTaskGraphDeletionItems([graph])
-        #expect(deletionItems.map(\.value) == [graph.id])
-        #expect(deletionItems.map(\.title) == ["unfinished"])
+        let deletionRows = TerminalInteractionHost.menuItems(
+            ChatSessionController.resumableTaskGraphDeletionItems([graph])
+        )
+        #expect(deletionRows.map(\.value) == [graph.id])
+        #expect(deletionRows.map(\.title) == ["unfinished"])
+        #expect(deletionRows.map(\.detail) == ["2 pending · updated \(timestamp)"])
+        #expect(deletionRows.map(\.groupTitle) == [nil])
     }
 }

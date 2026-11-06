@@ -1,5 +1,5 @@
 //
-//  TerminalVoiceChatPhrases.swift
+//  VoiceChatPhrases.swift
 //  ZenCODE
 //
 //  The spoken side of the live shared chat in voice mode: the yes/no words
@@ -10,7 +10,7 @@
 import Foundation
 import ToolCore
 
-enum TerminalVoiceChatPhrases {
+enum VoiceChatPhrases {
     // MARK: - Yes / no
 
     /// `true` for a spoken yes, `false` for a spoken no, `nil` for anything
@@ -33,7 +33,7 @@ enum TerminalVoiceChatPhrases {
     /// Letters and digits folded without case or accents, one space between
     /// words: `"D'accordo!"` becomes `"d accordo"`.
     static func normalizedPhrase(_ text: String) -> String {
-        TerminalVoiceEchoGuard.words(in: text).joined(separator: " ")
+        VoiceEchoGuard.words(in: text).joined(separator: " ")
     }
 
     private static let affirmativePhrases = Set([
@@ -113,7 +113,7 @@ enum TerminalVoiceChatPhrases {
         let folded = FoldedText(remainder[...])
         var best: (participant: AgentSharedChat.Participant, rest: FoldedText, length: Int)?
         for participant in participants where participant.kind == .agent && participant.isActive {
-            let words = TerminalVoiceEchoGuard.words(in: AgentSharedChat.displayName(for: participant))
+            let words = VoiceEchoGuard.words(in: AgentSharedChat.displayName(for: participant))
             guard !words.isEmpty else {
                 continue
             }
@@ -304,23 +304,23 @@ enum TerminalVoiceChatPhrases {
         remaining: Int,
         languageCode: String?
     ) -> String {
-        var text = TerminalVoiceSpeechText.localized(announcementFrom, languageCode: languageCode)
+        var text = VoiceSpeechText.localized(announcementFrom, languageCode: languageCode)
             .replacingOccurrences(of: "{sender}", with: sender)
         if isBroadcast {
-            text += TerminalVoiceSpeechText.localized(announcementToAll, languageCode: languageCode)
+            text += VoiceSpeechText.localized(announcementToAll, languageCode: languageCode)
         }
         if remaining == 1 {
-            text += TerminalVoiceSpeechText.localized(announcementOneWaiting, languageCode: languageCode)
+            text += VoiceSpeechText.localized(announcementOneWaiting, languageCode: languageCode)
         } else if remaining > 1 {
-            text += TerminalVoiceSpeechText.localized(announcementWaiting, languageCode: languageCode)
+            text += VoiceSpeechText.localized(announcementWaiting, languageCode: languageCode)
                 .replacingOccurrences(of: "{n}", with: String(remaining))
         }
-        return text + TerminalVoiceSpeechText.localized(announcementQuestion, languageCode: languageCode)
+        return text + VoiceSpeechText.localized(announcementQuestion, languageCode: languageCode)
     }
 
     /// The whole message followed by "Do you want to reply?".
     static func readAloud(text: String, languageCode: String?) -> String {
-        let question = TerminalVoiceSpeechText.localized(replyQuestions, languageCode: languageCode)
+        let question = VoiceSpeechText.localized(replyQuestions, languageCode: languageCode)
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let last = text.last else {
             return question
@@ -329,28 +329,28 @@ enum TerminalVoiceChatPhrases {
     }
 
     static func replyPrompt(languageCode: String?) -> String {
-        TerminalVoiceSpeechText.localized(replyPrompts, languageCode: languageCode)
+        VoiceSpeechText.localized(replyPrompts, languageCode: languageCode)
     }
 
     static func messagePrompt(languageCode: String?) -> String {
-        TerminalVoiceSpeechText.localized(messagePrompts, languageCode: languageCode)
+        VoiceSpeechText.localized(messagePrompts, languageCode: languageCode)
     }
 
     static func sent(languageCode: String?) -> String {
-        TerminalVoiceSpeechText.localized(sentNotices, languageCode: languageCode)
+        VoiceSpeechText.localized(sentNotices, languageCode: languageCode)
     }
 
     static func sendFailed(languageCode: String?) -> String {
-        TerminalVoiceSpeechText.localized(sendFailedNotices, languageCode: languageCode)
+        VoiceSpeechText.localized(sendFailedNotices, languageCode: languageCode)
     }
 
     static func agentInactive(name: String, languageCode: String?) -> String {
-        TerminalVoiceSpeechText.localized(agentInactiveNotices, languageCode: languageCode)
+        VoiceSpeechText.localized(agentInactiveNotices, languageCode: languageCode)
             .replacingOccurrences(of: "{name}", with: name)
     }
 
     static func unknownAgent(name: String, languageCode: String?) -> String {
-        TerminalVoiceSpeechText.localized(unknownAgentNotices, languageCode: languageCode)
+        VoiceSpeechText.localized(unknownAgentNotices, languageCode: languageCode)
             .replacingOccurrences(of: "{name}", with: name)
     }
 

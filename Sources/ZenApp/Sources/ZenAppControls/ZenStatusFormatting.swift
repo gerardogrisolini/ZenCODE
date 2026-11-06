@@ -14,7 +14,8 @@ import ZenCODECore
 /// The terminal status bar mutes the `c:` / `p:` / `g:` / `d:` / `w:` labels,
 /// colors the git counters, and draws the full-access dot red; every other
 /// run keeps the bar's neutral foreground. The view maps each ``Style`` to a
-/// `ZenPalette` color.
+/// `ZenPalette` color, and draws the voice indicator, an SF Symbol, in the
+/// color of its style.
 public struct ZenStatusRun: Equatable, Sendable {
     /// The color role of a run.
     public enum Style: Equatable, Sendable {
@@ -30,6 +31,12 @@ public struct ZenStatusRun: Equatable, Sendable {
         case fileDeletion
         /// The full-access dot (`TerminalStyle.Status.failure`).
         case fullAccess
+        /// The voice indicator while voice mode listens or reads aloud
+        /// (`TerminalStyle.Status.active`).
+        case voiceActive
+        /// The voice indicator while voice mode is paused
+        /// (`TerminalStyle.Status.inactive`).
+        case voicePaused
     }
 
     public let text: String
@@ -41,6 +48,59 @@ public struct ZenStatusRun: Equatable, Sendable {
     }
 }
 
+/// What the voice fragment shows: the state of the app's voice mode, one for
+/// every window, as an SF Symbol with its tooltip and VoiceOver label. The
+/// terminal has no counterpart: its panel names the reading in the key help
+/// only.
+public enum ZenVoiceIndicator: Equatable, Sendable {
+    /// Voice mode is on and listens.
+    case listening
+    /// Voice mode is on but neither listens nor reads aloud.
+    case paused
+    /// Voice mode reads aloud.
+    case readingAloud
+
+    /// The indicator of `state`; `nil` while voice mode is off. Reading
+    /// aloud wins over the other states.
+    public init?(_ state: VoiceModeSessionState) {
+        guard state.isOn else { return nil }
+        if state.isSpeaking {
+            self = .readingAloud
+        } else if state.isPaused {
+            self = .paused
+        } else {
+            self = .listening
+        }
+    }
+
+    /// The SF Symbol.
+    public var symbolName: String {
+        switch self {
+        case .listening: "mic.fill"
+        case .paused: "mic.slash"
+        case .readingAloud: "waveform"
+        }
+    }
+
+    /// The tooltip, also what VoiceOver reads.
+    public var label: String {
+        switch self {
+        case .listening: "Voice mode: listening"
+        case .paused: "Voice mode: paused"
+        case .readingAloud: "Voice mode: reading aloud"
+        }
+    }
+
+    /// The color role of the symbol: the terminal's active status while voice
+    /// mode works, its inactive one while it is paused.
+    public var style: ZenStatusRun.Style {
+        switch self {
+        case .listening, .readingAloud: .voiceActive
+        case .paused: .voicePaused
+        }
+    }
+}
+
 /// One fragment of the status line, in the terminal UI's order.
 public struct ZenStatusFragment: Equatable, Sendable, Identifiable {
     /// What the fragment shows; also its identity, since each kind appears at
@@ -49,6 +109,9 @@ public struct ZenStatusFragment: Equatable, Sendable, Identifiable {
         /// The red dot shown in full access
         /// (`TerminalStatusBar.accessModeStatusFragment`).
         case accessMode
+        /// The state of the app's voice mode, an SF Symbol
+        /// (``ZenVoiceIndicator``); the app's own, the terminal has none.
+        case voice
         /// The activity spinner shown while a prompt is generating.
         case activity
         /// Model display name and thinking selection.
@@ -69,11 +132,14 @@ public struct ZenStatusFragment: Equatable, Sendable, Identifiable {
 
     public let kind: Kind
     /// The styled text; empty for ``Kind/activity``, which the view draws as a
-    /// spinner.
+    /// spinner, and for ``Kind/voice``, which it draws as
+    /// ``voiceIndicator``'s symbol.
     public let runs: [ZenStatusRun]
     /// Fill fraction (0...1) of the context-window gauge; `nil` when the
     /// window size is unknown or for other kinds.
     public let gaugeFraction: Double?
+    /// What the voice fragment shows; `nil` for other kinds.
+    public let voiceIndicator: ZenVoiceIndicator?
 
     public var id: Kind { kind }
 
@@ -82,10 +148,16 @@ public struct ZenStatusFragment: Equatable, Sendable, Identifiable {
         runs.map(\.text).joined()
     }
 
-    public init(kind: Kind, runs: [ZenStatusRun], gaugeFraction: Double? = nil) {
+    public init(
+        kind: Kind,
+        runs: [ZenStatusRun],
+        gaugeFraction: Double? = nil,
+        voiceIndicator: ZenVoiceIndicator? = nil
+    ) {
         self.kind = kind
         self.runs = runs
         self.gaugeFraction = gaugeFraction
+        self.voiceIndicator = voiceIndicator
     }
 }
 
@@ -368,9 +440,10 @@ public enum ZenStatusFormatting {
     // MARK: - Status line
 
     /// The fragments of the status line in the terminal UI's order
-    /// (`TerminalStatusBar.statusTextLocked`): the full-access dot, spinner
-    /// and model, context window, elapsed time or last response duration,
-    /// token counts, throughput, subscription usage, git summary.
+    /// (`TerminalStatusBar.statusTextLocked`): the full-access dot, the
+    /// app's voice indicator, spinner and model, context window, elapsed
+    /// time or last response duration, token counts, throughput,
+    /// subscription usage, git summary.
     ///
     /// - Parameter now: The instant the live elapsed time is measured at.
     public static func fragments(
@@ -383,6 +456,9 @@ public enum ZenStatusFormatting {
 
         if let runs = accessModeRuns(state.localExecAccessMode) {
             fragments.append(ZenStatusFragment(kind: .accessMode, runs: runs))
+        }
+        if let indicator = ZenVoiceIndicator(state.voice) {
+            fragments.append(ZenStatusFragment(kind: .voice, runs: [], voiceIndicator: indicator))
         }
         if let modelID = state.modelID {
             if state.isGenerating {
@@ -439,13 +515,14 @@ public enum ZenStatusFormatting {
     }
 
     /// The plain status line: the terminal UI's status text without its
-    /// spinner frame, fragments joined by `" · "`.
+    /// spinner frame, fragments joined by `" · "`. The app's voice indicator,
+    /// a symbol without text, is left out too.
     public static func statusText(
         for state: ZenStatusBarState,
         now: Date = Date()
     ) -> String {
         fragments(for: state, now: now)
-            .filter { $0.kind != .activity }
+            .filter { $0.kind != .activity && $0.kind != .voice }
             .map(\.text)
             .joined(separator: separator)
     }

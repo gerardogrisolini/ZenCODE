@@ -1,5 +1,5 @@
 //
-//  TerminalSherpaVoiceControllerTests.swift
+//  SherpaVoiceModeControllerTests.swift
 //  ZenCODECoreTests
 //
 //  Drives the Linux voice controller with shell scripts that mimic the two
@@ -12,17 +12,17 @@ import Testing
 @testable import ZenCODECore
 
 @Suite("Sherpa-onnx voice controller")
-struct TerminalSherpaVoiceControllerTests {
+struct SherpaVoiceModeControllerTests {
     // MARK: - Pure helpers
 
     @Test
     func recognizerResultLinesAreParsed() {
-        #expect(TerminalSherpaVoiceController.recognizedText(fromLine: " 0: Ciao zen") == "Ciao zen")
-        #expect(TerminalSherpaVoiceController.recognizedText(fromLine: "12: Che ore sono?") == "Che ore sono?")
-        #expect(TerminalSherpaVoiceController.recognizedText(fromLine: " 3: ") == nil)
-        #expect(TerminalSherpaVoiceController.recognizedText(fromLine: "XRUN.") == nil)
-        #expect(TerminalSherpaVoiceController.recognizedText(fromLine: "Started. Please speak") == nil)
-        #expect(TerminalSherpaVoiceController.recognizedText(fromLine: "sample rate: 16000") == nil)
+        #expect(SherpaVoiceModeController.recognizedText(fromLine: " 0: Ciao zen") == "Ciao zen")
+        #expect(SherpaVoiceModeController.recognizedText(fromLine: "12: Che ore sono?") == "Che ore sono?")
+        #expect(SherpaVoiceModeController.recognizedText(fromLine: " 3: ") == nil)
+        #expect(SherpaVoiceModeController.recognizedText(fromLine: "XRUN.") == nil)
+        #expect(SherpaVoiceModeController.recognizedText(fromLine: "Started. Please speak") == nil)
+        #expect(SherpaVoiceModeController.recognizedText(fromLine: "sample rate: 16000") == nil)
     }
 
     @Test
@@ -38,18 +38,18 @@ struct TerminalSherpaVoiceControllerTests {
             "plughw:3,0"
         ]
         #expect(
-            TerminalSherpaVoiceController.reason(status: 255, diagnostics: diagnostics)
+            SherpaVoiceModeController.reason(status: 255, diagnostics: diagnostics)
                 == "Unable to open: default. No such file or directory."
         )
-        #expect(TerminalSherpaVoiceController.reason(status: 3, diagnostics: ["bad model"]) == "bad model.")
-        #expect(TerminalSherpaVoiceController.reason(status: 3, diagnostics: []) == "the program exited with status 3.")
+        #expect(SherpaVoiceModeController.reason(status: 3, diagnostics: ["bad model"]) == "bad model.")
+        #expect(SherpaVoiceModeController.reason(status: 3, diagnostics: []) == "the program exited with status 3.")
     }
 
     @Test
     func longAnswersAreCappedOnACharacterBoundary() {
-        let limit = TerminalSherpaVoiceController.maximumSpokenBytes
-        #expect(TerminalSherpaVoiceController.cappedForArgument("breve") == "breve")
-        let capped = TerminalSherpaVoiceController.cappedForArgument(String(repeating: "è", count: limit))
+        let limit = SherpaVoiceModeController.maximumSpokenBytes
+        #expect(SherpaVoiceModeController.cappedForArgument("breve") == "breve")
+        let capped = SherpaVoiceModeController.cappedForArgument(String(repeating: "è", count: limit))
         #expect(capped.utf8.count <= limit)
         #expect(capped.utf8.count > limit - 2)
         #expect(capped.allSatisfy { $0 == "è" })
@@ -72,12 +72,12 @@ struct TerminalSherpaVoiceControllerTests {
             voiceTokens: root.appendingPathComponent("v/tokens.txt"),
             voiceDataDirectory: root.appendingPathComponent("v/espeak-ng-data")
         )
-        let invocation = TerminalSherpaVoiceController.invocation(for: paths)
+        let invocation = SherpaVoiceModeController.invocation(for: paths)
         #expect(invocation.recognizerArguments.contains("--silero-vad-min-silence-duration=5"))
         // The pause chosen in /setup > Voice mode replaces the default.
-        let options = TerminalVoiceOptions(voice: AgentVoiceSettingsManifest(utteranceSilenceSeconds: 8))
+        let options = VoiceModeOptions(voice: AgentVoiceSettingsManifest(utteranceSilenceSeconds: 8))
         #expect(
-            TerminalSherpaVoiceController.invocation(
+            SherpaVoiceModeController.invocation(
                 for: paths,
                 utteranceSilenceSeconds: String(options.utteranceSilenceSeconds)
             ).recognizerArguments.contains("--silero-vad-min-silence-duration=8")
@@ -349,14 +349,14 @@ private struct Preview: Sendable, Equatable {
 private actor VoiceEventRecorder {
     var systemMessages: [String] = []
     var failures: [String] = []
-    var utterances: [TerminalVoiceUtterance] = []
+    var utterances: [VoiceModeUtterance] = []
     var previews: [Preview] = []
     var speaking: [Bool] = []
     private var speakingHook: (@Sendable (Bool) async -> Void)?
 
     func system(_ text: String) { systemMessages.append(text) }
     func failure(_ text: String) { failures.append(text) }
-    func utterance(_ utterance: TerminalVoiceUtterance) { utterances.append(utterance) }
+    func utterance(_ utterance: VoiceModeUtterance) { utterances.append(utterance) }
     func preview(_ id: UInt64, _ text: String) { previews.append(Preview(id: id, text: text)) }
 
     func speakingChanged(_ value: Bool) async {
@@ -429,9 +429,9 @@ private struct Fixture {
         }
     }
 
-    func makeController(sendKeyword: String? = nil) -> TerminalSherpaVoiceController {
+    func makeController(sendKeyword: String? = nil) -> SherpaVoiceModeController {
         let events = events
-        return TerminalSherpaVoiceController(
+        return SherpaVoiceModeController(
             invocation: .init(
                 recognizerProgram: recognizer,
                 recognizerArguments: ["default"],
@@ -440,8 +440,8 @@ private struct Fixture {
             ),
             voiceName: "paola (it_IT)",
             languageCode: "it",
-            sendKeyword: sendKeyword.flatMap(TerminalVoiceSendKeyword.init),
-            callbacks: TerminalVoiceCallbacks(
+            sendKeyword: sendKeyword.flatMap(VoiceModeSendKeyword.init),
+            callbacks: VoiceModeCallbacks(
                 systemMessage: { await events.system($0) },
                 failureMessage: { await events.failure($0) },
                 utteranceRecognized: { await events.utterance($0) },
@@ -464,7 +464,7 @@ private struct Fixture {
     /// Makes the recognizer print `texts`: a short reading turns the
     /// microphone off and launches a new recognizer when it ends, without
     /// touching the speech collected for the keyword (pausing would).
-    func relaunchRecognizer(of controller: TerminalSherpaVoiceController, hearing texts: [String]) async throws {
+    func relaunchRecognizer(of controller: SherpaVoiceModeController, hearing texts: [String]) async throws {
         let launches = recognizerLaunches
         try queueUtterances(texts)
         #expect(await controller.speak("Ok", rendering: .plainText))

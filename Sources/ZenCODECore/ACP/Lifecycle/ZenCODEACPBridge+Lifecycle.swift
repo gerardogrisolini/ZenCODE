@@ -162,6 +162,7 @@ extension ZenCODEACPBridge {
         // `throw` from here on means this incarnation never became (or did not
         // stay) live, so the catch releases its registrations before
         // propagating; a successful exit keeps them bound to the live session.
+        let offersResumableTaskGraphs: Bool
         do {
             try ensureLifecycleOperationLive(operation)
             let acpMCPDescriptors = await registerACPProvidedMCPServers(
@@ -250,8 +251,15 @@ extension ZenCODEACPBridge {
                 await discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
                 throw error
             }
-            // `createSession` suspends: if shutdown landed during it, drop the
-            // session we just created instead of announcing it to a closing host.
+            // Whether earlier sessions left task graphs to offer: only then
+            // is the startup offer registered below.
+            offersResumableTaskGraphs = await hasOfferableResumableTaskGraphs(
+                sessionID: sessionID,
+                workingDirectory: workingDirectoryURL
+            )
+            // `createSession` and the scan suspend: if shutdown landed during
+            // them, drop the session we just created instead of announcing it
+            // to a closing host.
             guard isLifecycleOperationLive(operation) else {
                 await discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
                 throw ACPShutdownFenceError()
@@ -269,6 +277,14 @@ extension ZenCODEACPBridge {
             throw error
         }
 
+        // The startup offer of the task graphs earlier sessions left
+        // incomplete, when there are any, is registered before the reply, so
+        // a prompt sent right after it waits for the offer, and asks only
+        // once the session is announced (see
+        // `ZenCODEACPBridge+ResumeTaskGraph.swift`).
+        let resumableTaskGraphOfferGate = offersResumableTaskGraphs
+            ? registerResumableTaskGraphOffer(sessionID: sessionID, epoch: sessionEpoch)
+            : nil
         await writer.sendResultIfRequest(
             id: id,
             result: JSONValue.acpValue(from: sessionLifecycleResult(sessionID: sessionID))
@@ -278,6 +294,7 @@ extension ZenCODEACPBridge {
             title: URL(fileURLWithPath: cwd).lastPathComponent
         )
         await publishAvailableCommands(sessionID: sessionID, epoch: sessionEpoch)
+        resumableTaskGraphOfferGate?.finish()
     }
 
     public func resolvedAllowedToolNames(

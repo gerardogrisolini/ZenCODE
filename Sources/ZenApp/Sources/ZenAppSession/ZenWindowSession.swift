@@ -76,6 +76,18 @@ import ZenCODECore
 /// window's line until its reservation is released
 /// (``adoptedTelegramPromptID``), and Stop stops it.
 ///
+/// Voice mode (`/voice`, ``ZenAppRuntime/voiceState``) is the app's, one for
+/// every window, and follows the active window
+/// (``ZenAppRuntime/activeVoiceWindowID``); the window is its host there
+/// (``ZenWindowVoiceHost``). While it is the active one, the speech
+/// recognized but not sent yet shows live at the end of ``draft``
+/// (``voiceDictation``), voice sends the whole draft by the voice rules, the
+/// final answers of its turns and the comments of its main agent are read
+/// aloud, the messages of its room for the operator are announced, and its
+/// prompts carry voice mode's instruction. An edit of the draft turns the
+/// dictation shown into ordinary text. Esc (``handleEscape()``) stops a
+/// reading and leaves the draft alone.
+///
 /// Every action returns at once; the work runs in tasks that hop to the chat
 /// actor.
 @MainActor
@@ -166,8 +178,22 @@ public final class ZenWindowSession: Identifiable {
     public private(set) var commandContext: ChatCommandContext = []
     /// The commands the operator sees now, in display order.
     public private(set) var commandDescriptors: [ChatCommandDescriptor] = ZenAppCommands.visibleDescriptors(in: [])
-    /// The text of the input field.
-    public var draft = ""
+    /// The text of the input field. A change that is not the dictation's own
+    /// (the operator typed or edited, a recall of the history, a submit)
+    /// turns the dictation shown into ordinary text: voice forgets it.
+    public var draft = "" {
+        didSet {
+            draftDidChange(from: oldValue)
+        }
+    }
+    /// The voice dictation shown at the end of ``draft``, while this window
+    /// is the one voice mode follows; its preview's range is
+    /// ``ZenVoiceDictationDraft/previewRange(in:)`` of ``draft``.
+    public private(set) var voiceDictation = ZenVoiceDictationDraft()
+    /// The latest change the dictation made to ``draft``, for the composer's
+    /// cursor (``ZenVoiceDictationDraft/cursor(_:after:draftCount:)``);
+    /// `nil` before the first.
+    public private(set) var voiceDictationUpdate: ZenVoiceDictationUpdate?
     /// The file artifacts of the transcript's `.fileArtifacts` rows, grouped
     /// by artifact turn (``ZenArtifactTurnGroup/groups(in:)``), for the
     /// artifacts sidebar; reassigned only when they change.
@@ -248,6 +274,23 @@ public final class ZenWindowSession: Identifiable {
         ZenWindowTab.tabs(subAgentIDs: subAgentTabs.map(\.agentID))
     }
 
+    /// What voice mode does now, app-wide (``ZenAppRuntime/voiceState``):
+    /// every window shows it, the active one or not.
+    public var voiceState: VoiceModeSessionState {
+        runtime?.voiceState ?? .off
+    }
+
+    /// Voice mode follows this window (``ZenAppRuntime/activeVoiceWindowID``).
+    public var isVoiceWindow: Bool {
+        runtime?.activeVoiceWindowID == id
+    }
+
+    /// The characters of ``draft`` the voice dictation previews; `nil` when
+    /// none is shown. For tests.
+    var voiceDictationPreviewRange: Range<Int>? {
+        voiceDictation.previewRange(in: draft)
+    }
+
     // MARK: Composition
 
     @ObservationIgnored let sessionHost: ChatSessionHost
@@ -266,6 +309,10 @@ public final class ZenWindowSession: Identifiable {
     @ObservationIgnored var snapshotWillApply: (@Sendable () async -> Void)?
     /// The observation of the current session's shared-chat room.
     @ObservationIgnored let sharedChatObservation: ZenSharedChatObservation
+    /// The window as the host of the app's voice session.
+    @ObservationIgnored let voiceHost: ZenWindowVoiceHost
+    /// The dictation itself is changing ``draft``: not an edit.
+    @ObservationIgnored private var isApplyingVoiceDictation = false
     /// Awaited before an auto-trigger of the shared chat is answered, for
     /// tests.
     @ObservationIgnored var sharedChatTriggerWillResolve: (@Sendable () async -> Void)?
@@ -378,6 +425,8 @@ public final class ZenWindowSession: Identifiable {
             localExecAccessMode: runtime.localExecAccessMode
         )
         self.sharedChatObservation = ZenSharedChatObservation(environment: .runner(runtime.sessionHost.runner))
+        self.voiceHost = ZenWindowVoiceHost(windowID: id, voice: runtime.voice)
+        voiceHost.window.set(self)
     }
 
     /// Opens a slot for `workspace` and starts its first session: the launch
@@ -427,6 +476,16 @@ public final class ZenWindowSession: Identifiable {
                 incarnation: incarnation
             )
             await window.start()
+            // The startup offer of the task graphs earlier sessions left
+            // incomplete, as the window's line, only when there is something
+            // to offer (ZenWindowSession+ResumeTaskGraph.swift). The window
+            // is not returned yet, so only a line of its new room could start
+            // during the pre-check; the window then offers nothing.
+            if await window.hasOfferableResumableTaskGraphs(), !window.isBusy {
+                window.startExclusive { [weak window] _ in
+                    await window?.runResumableTaskGraphOffer()
+                }
+            }
             return window
         } catch {
             await sessionHost.closeSlot(slotID)
@@ -435,6 +494,7 @@ public final class ZenWindowSession: Identifiable {
     }
 
     private func start() async {
+        let voiceHost = voiceHost
         await ZenWindowSteps.setHandlers(
             presenter: presenter,
             hooks: hooks,
@@ -446,6 +506,10 @@ public final class ZenWindowSession: Identifiable {
             },
             savedSessionLoadStep: { [weak self] step in
                 Task { @MainActor in self?.savedSessionLoadDidReach(step) }
+            },
+            voiceCommentary: { [weak voiceHost] commentary in
+                guard let voiceHost else { return }
+                voiceHost.post(.commentary(commentary, host: voiceHost))
             }
         )
         observeSnapshots(of: current)
@@ -479,6 +543,12 @@ public final class ZenWindowSession: Identifiable {
         closeSubAgentTabs()
         // Nor are its shared-chat room and messages.
         resetSharedChat()
+        // Voice mode, when it follows this window, treats the new session as
+        // a new target, as the terminal does on `/sessions`: the reading
+        // stops, the live-chat question and the queued announcements are
+        // dropped, and only what the new room sends from now on is
+        // announced, taken before its observation starts.
+        voiceHost.post(.targetDidChange(since: Date.now, host: voiceHost))
         // No task-graph card: the local rows go with the epoch, and so does
         // the card of the turn.
         lastSnapshotTaskGraph = nil
@@ -852,7 +922,11 @@ public final class ZenWindowSession: Identifiable {
         guard !isBusy, !isClosed, !isDrivenFromTelegram, adoptedTelegramPromptID == nil,
               !queuedLines.isEmpty else { return }
         let next = queuedLines.removeFirst()
-        startLine(next.text)
+        if next.isPlainPrompt {
+            startPlainPrompt(next.text)
+        } else {
+            startLine(next.text)
+        }
     }
 
     private func startBeside(_ line: String) {
@@ -948,9 +1022,14 @@ public final class ZenWindowSession: Identifiable {
 
     /// The commands only the window runs: `/exit`, `/artifacts`, which
     /// toggles the artifacts sidebar (with arguments it answers the core's
-    /// notice and toggles nothing), and `/telegram`
-    /// (``runTelegramCommand(_:)``); every other channel command of the
-    /// shared layer is not offered by the app.
+    /// notice and toggles nothing), `/telegram`
+    /// (``runTelegramCommand(_:)``), and `/voice`, which the app's voice
+    /// session runs once this window became the one it follows
+    /// (``ZenAppRuntime/runVoiceCommand(_:from:)``); every other channel
+    /// command of the shared layer is not offered by the app. While Telegram
+    /// drives the slot, `/voice` never gets here: the host refuses it, as
+    /// every line but `/telegram`, `/telegram off`, and `/exit`, before it
+    /// runs (``perform(_:stop:)``).
     private func runChannelCommand(_ line: String) async {
         switch ZenAppCommands.registry.descriptor(forLine: line)?.command {
         case ZenAppCommands.exit.command:
@@ -964,6 +1043,8 @@ public final class ZenWindowSession: Identifiable {
             }
         case ZenAppCommands.telegram.command:
             await runTelegramCommand(line)
+        case ZenAppCommands.voice.command:
+            await runtime?.runVoiceCommand(line, from: self)
         default:
             await appendLocal(.local(text: "`\(line)` is not available in the app.", isFailure: true))
         }
@@ -1051,7 +1132,7 @@ public final class ZenWindowSession: Identifiable {
     }
 
     /// Runs one turn in one chat-actor step (see
-    /// ``ZenWindowSteps/runTurn(_:controller:in:slotID:hooks:hiddenPrompts:didReserve:)``),
+    /// ``ZenWindowSteps/runTurn(_:controller:in:slotID:hooks:presenter:voiceHost:hiddenPrompts:didReserve:)``),
     /// then shows how it ended, and returns it.
     @discardableResult
     private func runTurn(
@@ -1067,6 +1148,8 @@ public final class ZenWindowSession: Identifiable {
             in: sessionHost,
             slotID: slotID,
             hooks: hooks,
+            presenter: presenter,
+            voiceHost: voiceHost,
             hiddenPrompts: hiddenPrompts,
             didReserve: turnDidReserve
         )
@@ -1542,7 +1625,14 @@ public final class ZenWindowSession: Identifiable {
         switch event {
         case let .messages(messages):
             guard !isClosed, sharedChatObservation.isCurrent(observation) else { return }
-            updateSharedChat { _ = $0.append(messages) }
+            var appended: [AgentSharedChat.Message] = []
+            updateSharedChat { appended = $0.append(messages) }
+            // Voice mode, when it follows this window, announces the new
+            // ones for the operator; the reader deduplicates, so a replay
+            // is never new.
+            if !appended.isEmpty {
+                voiceHost.post(.sharedChatMessages(appended, host: voiceHost))
+            }
         case .participantsChanged:
             guard !isClosed, sharedChatObservation.isCurrent(observation) else { return }
             await refreshSharedChatRoster()
@@ -1769,7 +1859,7 @@ public final class ZenWindowSession: Identifiable {
         let token = UUID()
         mentionTasks[token] = Task { [weak self] in
             guard let self else { return }
-            let failure = await self.deliver(mention)
+            let failure = await self.deliver(mention.text, to: mention.destination)
             self.mentionTasks[token] = nil
             guard let failure, !self.isClosed else { return }
             self.appendLocalNow(.local(text: failure, isFailure: true))
@@ -1779,28 +1869,22 @@ public final class ZenWindowSession: Identifiable {
         }
     }
 
-    /// Publishes `mention` in the room of the session the slot runs now, as
-    /// the operator; the failure text when it was not published.
-    private func deliver(_ mention: SharedChatMentionParser.Route) async -> String? {
+    /// Publishes `text` to `destination` in the room of the session the slot
+    /// runs now, as the operator; the failure text when it was not
+    /// published.
+    private func deliver(_ text: String, to destination: AgentSharedChat.Destination) async -> String? {
         let runner = sessionHost.runner
         guard let roomID = await ZenSharedChatSteps.currentRoomID(in: sessionHost, slotID: slotID) else {
             return Self.mentionFailureMessage(for: AgentSharedChat.Error.unavailable)
         }
-        if case let .direct(identifiers) = mention.destination,
-           identifiers.count == 1,
-           let identifier = identifiers.first {
-            // The room also takes a display name as a direct identifier; a
-            // mention must name one active agent by its id.
-            let participants = await runner.sharedChatParticipants(rootSessionID: roomID)
-            guard participants.contains(where: { $0.kind == .agent && $0.isActive && $0.id == identifier }) else {
-                await refreshSharedChatRoster()
-                return Self.mentionInactiveAgentMessage
-            }
+        guard await Self.isActiveDestination(destination, in: roomID, runner: runner) else {
+            await refreshSharedChatRoster()
+            return Self.mentionInactiveAgentMessage
         }
         do {
             _ = try await runner.sendSharedChatMessage(
-                text: mention.text,
-                destination: mention.destination,
+                text: text,
+                destination: destination,
                 rootSessionID: roomID,
                 messageID: UUID()
             )
@@ -1809,6 +1893,24 @@ public final class ZenWindowSession: Identifiable {
         }
         await refreshSharedChatRoster()
         return nil
+    }
+
+    /// Whether `destination` still names an active recipient of `roomID`:
+    /// the room also takes a display name as a direct identifier, but a
+    /// mention must name one active agent by its id; the coordinator and the
+    /// broadcast always do.
+    private static func isActiveDestination(
+        _ destination: AgentSharedChat.Destination,
+        in roomID: String,
+        runner: AgentCoreSessionRunner
+    ) async -> Bool {
+        guard case let .direct(identifiers) = destination,
+              identifiers.count == 1,
+              let identifier = identifiers.first else {
+            return true
+        }
+        let participants = await runner.sharedChatParticipants(rootSessionID: roomID)
+        return participants.contains { $0.kind == .agent && $0.isActive && $0.id == identifier }
     }
 
     // MARK: - Telegram
@@ -1870,7 +1972,7 @@ public final class ZenWindowSession: Identifiable {
     /// (``watchAdoptedTelegramTurn(_:)``); otherwise the queue drains once the
     /// line ends.
     private func stopTelegramControl() async {
-        let deactivation = await ZenWindowSteps.deactivateTelegram(in: sessionHost, slotID: slotID)
+        let deactivation = await ZenWindowSteps.deactivateTelegram(in: sessionHost, slotID: slotID, presenter: presenter)
         guard !isClosed else { return }
         isDrivenFromTelegram = deactivation.isDriving
         guard deactivation.hadChannel else {
@@ -1911,7 +2013,10 @@ public final class ZenWindowSession: Identifiable {
     /// channel releases the prompt, so a task reads the reservation on the
     /// chat actor every ``adoptedTelegramTurnPollInterval``; once it is gone
     /// (released, cancelled, another session, a closed slot) the turn ends
-    /// for the window (``adoptedTelegramTurnDidEnd(_:)``).
+    /// for the window (``adoptedTelegramTurnDidEnd(_:)``). For voice mode it
+    /// is a turn of the window: its comments are read while it runs, and its
+    /// final answer, presented to this window once the slot came back, when
+    /// it ends.
     func watchAdoptedTelegramTurn(_ promptID: UUID) {
         guard !isClosed else { return }
         adoptedTelegramTurnTask?.cancel()
@@ -1920,14 +2025,20 @@ public final class ZenWindowSession: Identifiable {
         let sessionHost = sessionHost
         let slotID = slotID
         let sleep = adoptedTelegramTurnSleep
+        let presenter = presenter
+        let voiceHost = voiceHost
+        voiceHost.post(.turnStarted(host: voiceHost))
         adoptedTelegramTurnTask = Task { [weak self] in
             while await ZenWindowSteps.isReserved(promptID, in: sessionHost, slotID: slotID) {
                 do {
                     try await sleep(Self.adoptedTelegramTurnPollInterval)
                 } catch {
+                    voiceHost.post(.turnEnded(finalAnswer: nil, host: voiceHost))
                     return
                 }
             }
+            let finalAnswer = await ZenWindowSteps.takeAdoptedFinalAnswer(from: presenter)
+            voiceHost.post(.turnEnded(finalAnswer: Task.isCancelled ? nil : finalAnswer, host: voiceHost))
             guard !Task.isCancelled else { return }
             self?.adoptedTelegramTurnDidEnd(promptID)
         }
@@ -1942,6 +2053,247 @@ public final class ZenWindowSession: Identifiable {
         guard !isClosed else { return }
         drainQueueIfIdle()
         sharedChatConsumerStateDidChange()
+    }
+
+    // MARK: - Voice mode
+
+    /// Esc of the window in the conversation, as the terminal's: it stops
+    /// the line that runs, as ``stop()`` does, and, while voice mode follows
+    /// this window, a reading aloud (an answer, a comment, a live-chat
+    /// announcement) when voice reads or a line runs, dropping the live-chat
+    /// question and the queued announcements. It never touches ``draft``.
+    /// A consent sheet keeps its own Esc, which denies.
+    public func handleEscape() {
+        guard !isClosed else { return }
+        let lineRuns = isBusy || adoptedTelegramPromptID != nil
+        stop()
+        if lineRuns || voiceState.isSpeaking {
+            voiceHost.post(.interruptPlayback(host: voiceHost))
+        }
+    }
+
+    /// A change of ``draft`` that the dictation did not make is an edit: the
+    /// dictation shown becomes ordinary text and voice forgets what it
+    /// collected for it, through the app's voice context, in the order of
+    /// the switches of the active window (``ZenAppVoice/dictationFloor``).
+    /// Moving the cursor changes nothing here.
+    private func draftDidChange(from oldValue: String) {
+        guard !isApplyingVoiceDictation, draft != oldValue, let id = voiceDictation.end() else { return }
+        voiceHost.post(.dictationEnded(through: id))
+    }
+
+    /// Applies `change` to ``draft`` and ``voiceDictation`` as the
+    /// dictation's own change, not an edit, and records it for the cursor.
+    private func applyVoiceDictation(
+        _ change: (inout ZenVoiceDictationDraft, inout String) -> ZenVoiceDictationDraft.Change?
+    ) {
+        var dictation = voiceDictation
+        var text = draft
+        let applied = change(&dictation, &text)
+        if dictation != voiceDictation {
+            voiceDictation = dictation
+        }
+        guard let applied else { return }
+        isApplyingVoiceDictation = true
+        draft = text
+        isApplyingVoiceDictation = false
+        voiceDictationUpdate = ZenVoiceDictationUpdate(
+            revision: (voiceDictationUpdate?.revision ?? 0) + 1,
+            change: applied
+        )
+    }
+
+    /// Voice mode started, or moved to this window: a fresh dictation,
+    /// ignoring the ones up to `floor`, which a switch ended in the previous
+    /// window and whose previews may still be on their way. (The window
+    /// shows no dictation by then: a stop removed it, a switch ended it.)
+    func voiceModeDidStart(ignoringDictationsThrough floor: UInt64) {
+        guard !isClosed else { return }
+        let fresh = ZenVoiceDictationDraft(endedThrough: floor)
+        if voiceDictation != fresh {
+            voiceDictation = fresh
+        }
+    }
+
+    /// Voice mode stopped, or moved to another window: the preview leaves
+    /// the draft, the typed text stays.
+    func voiceModeDidStop() {
+        guard !isClosed else { return }
+        applyVoiceDictation { dictation, draft in
+            dictation.remove(from: &draft) ? .removed : nil
+        }
+    }
+
+    /// Shows `text` as the preview of dictation `id` (an empty text removes
+    /// it).
+    func showVoiceDictation(id: UInt64, text: String) {
+        guard !isClosed else { return }
+        applyVoiceDictation { dictation, draft in
+            dictation.show(id: id, text: text, in: &draft)
+        }
+    }
+
+    /// Voice sends dictation `id`: the whole draft, typed text then `text`,
+    /// and the draft is cleared; `nil` once an edit or a switch ended the
+    /// dictation. The prompt history does not record it.
+    func takeVoiceDictation(id: UInt64, text: String) -> String? {
+        guard !isClosed else { return nil }
+        var taken: String?
+        applyVoiceDictation { dictation, draft in
+            let before = draft
+            taken = dictation.take(id: id, text: text, from: &draft)
+            return taken != nil && draft != before ? .taken : nil
+        }
+        return taken
+    }
+
+    /// Voice mode moves to another window: the dictation shown stays in the
+    /// draft as ordinary text, as after an edit. Its id, for voice to forget
+    /// it; `nil` when none was shown.
+    func endVoiceDictationForSwitch() -> UInt64? {
+        voiceDictation.end()
+    }
+
+    /// `text`, an utterance taken from this draft that voice mode could not
+    /// send here any more (it moved to another window meanwhile), goes back
+    /// to the draft as ordinary text, before what was typed since.
+    func restoreVoiceUtterance(_ text: String) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isClosed, !text.isEmpty else { return }
+        if draft.isEmpty {
+            draft = text
+        } else {
+            draft = text + (draft.first?.isWhitespace == true ? "" : " ") + draft
+        }
+    }
+
+    /// A text of voice mode, as a message row: a failure row for its
+    /// failures.
+    func showVoiceMessage(_ text: String, isFailure: Bool) async {
+        await appendLocal(.local(text: Self.withoutTrailingNewlines(text), isFailure: isFailure))
+    }
+
+    /// Sends a dictated utterance by the voice rules: a line as if typed,
+    /// without touching the draft or the history (a leading `@mention`
+    /// sends a live message, a reply answers a pending `/plan` or `/goal`
+    /// question, a prompt queues while a line runs, and a full queue refuses
+    /// it with the typed text); text that would read as a command as a plain
+    /// prompt, never as a command. While Telegram drives the slot both are
+    /// refused with the dormant text.
+    func submitVoiceDictation(_ input: VoiceModeDictatedInput) {
+        guard !isClosed, !refusedWhileDormant() else { return }
+        switch input {
+        case let .line(text):
+            let line = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { return }
+            switch SharedChatMentionParser.parse(from: line, readableHandles: mentionHandles) {
+            case let .route(mention):
+                sendMention(mention, line: line)
+            case .missingText:
+                appendLocalNow(.local(text: Self.mentionMissingTextMessage, isFailure: true))
+            case .none:
+                route(line)
+            }
+        case let .plainPrompt(text):
+            submitVoicePrompt(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+
+    /// A dictated plain prompt: it runs now, or waits in the queue while a
+    /// line runs or lines wait; a full queue refuses it with the terminal's
+    /// voice text.
+    private func submitVoicePrompt(_ prompt: String) {
+        guard !prompt.isEmpty else { return }
+        guard isBusy || adoptedTelegramPromptID != nil || !queuedLines.isEmpty else {
+            startPlainPrompt(prompt)
+            return
+        }
+        guard queuedLines.count < Self.queueCapacity else {
+            appendLocalNow(.local(text: Self.voiceQueueFullMessage, isFailure: true))
+            return
+        }
+        queuedLines.append(ZenQueuedLine(text: prompt, isPlainPrompt: true))
+        drainQueueIfIdle()
+        sharedChatConsumerStateDidChange()
+    }
+
+    private func startPlainPrompt(_ prompt: String) {
+        startExclusive { [weak self] stop in
+            await self?.executePlainPrompt(prompt, stop: stop)
+        }
+    }
+
+    /// The line of a plain prompt: a turn the operator typed, through the
+    /// turn path alone (no command, no pending reply), as the terminal runs
+    /// a dictated text that reads as a command. Refused while Telegram drives
+    /// the slot: the host's admission would let a `/exit` or `/telegram off`
+    /// through, so it is not asked.
+    private func executePlainPrompt(_ prompt: String, stop: ZenLineStop) async {
+        guard !isClosed else { return }
+        guard !isDrivenFromTelegram, await !ZenWindowSteps.isDrivenFromTelegram(in: sessionHost, slotID: slotID) else {
+            await appendLocal(.local(text: Self.dormantRefusalText, isFailure: true))
+            return
+        }
+        guard let incarnation = await sessionHost.incarnation(in: slotID) else {
+            await appendLocal(.local(text: Self.text(for: ChatSessionHostError.noSession), isFailure: true))
+            return
+        }
+        guard !isClosed else { return }
+        await runTurn(
+            prompt: prompt,
+            purpose: .normal,
+            typedByOperator: true,
+            stop: stop,
+            controller: incarnation.controller
+        )
+        guard !isClosed else { return }
+        if statusFactsAreStale {
+            await refreshStatus()
+        }
+        refreshGitStatus()
+    }
+
+    /// The participants of the room the window observes, read now.
+    func voiceSharedChatParticipants() async -> [AgentSharedChat.Participant] {
+        guard !isClosed, let roomID = sharedChatObservation.roomID else { return [] }
+        return await sessionHost.runner.sharedChatParticipants(rootSessionID: roomID)
+    }
+
+    /// Whether the message `id` is still unread in the reader.
+    func isSharedChatMessageUnread(_ id: UUID) -> Bool {
+        sharedChat.isUnread(id)
+    }
+
+    /// Voice mode read the message `id` aloud: it is read in the reader too,
+    /// as if opened there.
+    func markSharedChatMessageRead(_ id: UUID) {
+        guard !isClosed else { return }
+        updateSharedChat { $0.markRead(id) }
+    }
+
+    /// Whether voice input that is not a dictated line (a live message by
+    /// voice) may act now: not while Telegram drives the slot, which is
+    /// answered with the dormant text.
+    func admitsVoiceInput() -> Bool {
+        !isClosed && !refusedWhileDormant()
+    }
+
+    /// Whether `destination` still names an active recipient of the room of
+    /// the session the slot runs now.
+    func isActiveSharedChatDestination(_ destination: AgentSharedChat.Destination) async -> Bool {
+        guard !isClosed, let roomID = await ZenSharedChatSteps.currentRoomID(in: sessionHost, slotID: slotID) else {
+            return false
+        }
+        return await Self.isActiveDestination(destination, in: roomID, runner: sessionHost.runner)
+    }
+
+    /// A live message by voice, published as a typed mention is; the window
+    /// shows why when the room did not take it. Returns whether it did.
+    func sendVoiceSharedChatMessage(_ text: String, to destination: AgentSharedChat.Destination) async -> Bool {
+        guard !isClosed else { return false }
+        guard let failure = await deliver(text, to: destination) else { return true }
+        appendLocalNow(.local(text: failure, isFailure: true))
+        return false
     }
 
     // MARK: - Close
@@ -2052,6 +2404,9 @@ public final class ZenWindowSession: Identifiable {
     static let telegramUsageText = "Usage: /telegram [on|off]"
     /// The answer of a dormant window, the host's.
     static let dormantRefusalText = withoutTrailingNewlines(ChatSlotAdmission.dormantRefusalText)
+    /// The answer to a dictated plain prompt the full queue refuses, the
+    /// terminal's (a dictated line gets ``queueFullMessage``, as typed).
+    static let voiceQueueFullMessage = "ZenCODE: prompt queue is full; voice prompt was not queued."
     /// The time between two reads of an adopted turn's reservation.
     static let adoptedTelegramTurnPollInterval: Duration = .milliseconds(100)
 
@@ -2177,9 +2532,11 @@ enum ZenWindowSteps {
         hooks: ZenWindowHooks,
         fileMutation: @escaping @Sendable () -> Void,
         statusFacts: @escaping @Sendable () -> Void,
-        savedSessionLoadStep: @escaping @Sendable (ZenSavedSessionLoadStep) -> Void
+        savedSessionLoadStep: @escaping @Sendable (ZenSavedSessionLoadStep) -> Void,
+        voiceCommentary: @escaping @Sendable (String) -> Void
     ) {
         presenter.fileMutationHandler = fileMutation
+        presenter.voiceCommentaryHandler = voiceCommentary
         hooks.statusFactsHandler = statusFacts
         hooks.savedSessionLoadStepHandler = savedSessionLoadStep
     }
@@ -2202,12 +2559,21 @@ enum ZenWindowSteps {
     /// the check and `runTurn(_:)`; the reservation is released after it. A
     /// stop that lands before the check, even before the reservation, leaves
     /// the turn unstarted, never unfenced.
+    ///
+    /// For voice mode the turn starts right before `runTurn(_:)` and ends
+    /// right after it, with the final answer the presenter read
+    /// (``ZenWindowPresenter/finalAnswer(of:purpose:)``), or none when it
+    /// failed. Each of its requests asks for voice mode's instruction, which
+    /// it gets only while the window is the one voice mode follows
+    /// (``ZenWindowVoiceHost/turnInstruction()``).
     static func runTurn(
         _ start: ZenTurnStart,
         controller: ChatSessionController,
         in sessionHost: ChatSessionHost,
         slotID: ChatSlotID,
         hooks: ZenWindowHooks,
+        presenter: ZenWindowPresenter,
+        voiceHost: ZenWindowVoiceHost,
         hiddenPrompts: ZenHiddenPromptMailbox,
         didReserve: (@Sendable () async -> Void)?
     ) async -> ZenTurnOutcome {
@@ -2243,18 +2609,27 @@ enum ZenWindowSteps {
             ))
         }
         let outcome: ZenTurnOutcome
+        var finalAnswer: String?
+        voiceHost.post(.turnStarted(host: voiceHost))
         do {
-            _ = try await controller.runTurn(ChatTurnRequest(
+            let result = try await controller.runTurn(ChatTurnRequest(
                 prompt: start.prompt,
                 attachments: attachments,
                 purpose: start.purpose,
                 sessionConfiguration: configuration,
+                // Asked for every request, so `/voice pause`, `/voice off`,
+                // and a switch to another window apply from the next one.
+                turnInstructionProvider: { @ChatSessionActor [weak voiceHost] in
+                    await voiceHost?.turnInstruction()
+                },
                 origin: .app
             ))
+            finalAnswer = presenter.finalAnswer(of: result, purpose: start.purpose)
             outcome = .finished
         } catch {
             outcome = .failed(error)
         }
+        voiceHost.post(.turnEnded(finalAnswer: finalAnswer, host: voiceHost))
         sessionHost.releasePrompt(reservation)
         return outcome
     }
@@ -2368,8 +2743,13 @@ enum ZenWindowSteps {
     /// presents the stop text through its sink. The prompt reserved while
     /// Telegram drove the slot is a turn from Telegram (the dormant window
     /// reserves none): when it is still reserved afterwards, the window adopts
-    /// it.
-    static func deactivateTelegram(in sessionHost: ChatSessionHost, slotID: ChatSlotID) async -> ZenTelegramDeactivation {
+    /// it. Before the slot comes back, `presenter` starts that turn afresh,
+    /// so what the turn presents to the window from then on is its own.
+    static func deactivateTelegram(
+        in sessionHost: ChatSessionHost,
+        slotID: ChatSlotID,
+        presenter: ZenWindowPresenter
+    ) async -> ZenTelegramDeactivation {
         guard sessionHost.telegramChannel(in: slotID) != nil else {
             return ZenTelegramDeactivation(
                 hadChannel: false,
@@ -2379,6 +2759,9 @@ enum ZenWindowSteps {
         }
         let wasDriving = sessionHost.activeChannel(in: slotID) == .telegram
         let promptID = wasDriving ? sessionHost.incarnation(in: slotID)?.activePromptID : nil
+        if promptID != nil {
+            presenter.beginAdoptedTurn()
+        }
         _ = await sessionHost.deactivateTelegram(in: slotID)
         var adoptedPromptID: UUID?
         if let promptID, isReserved(promptID, in: sessionHost, slotID: slotID) {
@@ -2397,6 +2780,19 @@ enum ZenWindowSteps {
     /// closed.
     static func isReserved(_ promptID: UUID, in sessionHost: ChatSessionHost, slotID: ChatSlotID) -> Bool {
         sessionHost.incarnation(in: slotID)?.activePromptID == promptID
+    }
+
+    /// The final answer of the turn adopted from Telegram, which the
+    /// presenter read once the turn presented it to the window; `nil` when
+    /// it presented none (it failed, was stopped, or ended before the slot
+    /// came back).
+    static func takeAdoptedFinalAnswer(from presenter: ZenWindowPresenter) -> String? {
+        presenter.takeAdoptedFinalAnswer()
+    }
+
+    /// Telegram drives the slot.
+    static func isDrivenFromTelegram(in sessionHost: ChatSessionHost, slotID: ChatSlotID) -> Bool {
+        sessionHost.activeChannel(in: slotID) == .telegram
     }
 
     /// The close of a window: closing the slot fences the turn that runs,

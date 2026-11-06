@@ -213,6 +213,18 @@ public enum ChatSessionNoticeText {
             return "Cancelled task \(taskID).\n"
         case .taskGraphsCleared:
             return "Cleared the session task graphs.\n"
+        case let .taskGraphResumed(graphID, pendingTaskCount, isWorkflow):
+            return resumedTaskGraphText(
+                graphID: graphID,
+                pendingTaskCount: pendingTaskCount,
+                isWorkflow: isWorkflow
+            )
+        case let .taskGraphResumeFailed(graphID, description):
+            return "Could not resume \(graphID): \(description)\n"
+        case let .oldTaskGraphsDeleted(count):
+            return "Deleted \(count) old task graph\(count == 1 ? "" : "s").\n"
+        case let .oldTaskGraphsDeleteFailed(description):
+            return "Could not delete old tasks: \(description)\n"
         case .noTrackedFileChanges:
             return "No tracked file changes.\n"
         case let .fileChangeSummary(summary, _):
@@ -483,6 +495,27 @@ public enum ChatSessionNoticeText {
             return String(format: "%.1fk", Double(value) / 1_000)
         }
         return "\(value)"
+    }
+
+    // MARK: - Task graphs from previous sessions
+
+    /// The notice of a graph adopted at startup: a `/goal` workflow says the
+    /// next message continues it, any other graph points to `/tasks`.
+    private static func resumedTaskGraphText(
+        graphID: String,
+        pendingTaskCount: Int,
+        isWorkflow: Bool
+    ) -> String {
+        let pending = "\(pendingTaskCount) task\(pendingTaskCount == 1 ? "" : "s") pending"
+        guard isWorkflow else {
+            return "Resumed task graph \"\(graphID)\" from a previous session "
+                + "(\(pending)). "
+                + "Use /tasks to review it.\n"
+        }
+        return "Resumed workflow \"\(graphID)\" from a previous session "
+            + "(\(pending)). "
+            + "Your next message continues it on the same task graph; "
+            + "use /tasks to review or /tasks clear to stop it.\n"
     }
 
     // MARK: - Checkpoints

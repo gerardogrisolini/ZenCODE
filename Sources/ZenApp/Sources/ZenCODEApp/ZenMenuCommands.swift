@@ -5,13 +5,15 @@
 //  The menu bar of the app: Open Folder, New and Save Session in the File
 //  menu, and the Session menu, acting on the session of the key window; its
 //  Show/Hide Chat Reader item (⌃Y) opens and closes the shared-chat reader,
-//  and its Full Access item (⌃G) switches the app's access mode.
+//  its Full Access item (⌃G) switches the app's access mode, and its Voice
+//  Mode and Pause/Resume Voice items run `/voice`.
 //
 
 import AppKit
 import Foundation
 import SwiftUI
 import ZenAppSession
+import ZenCODECore
 
 /// The menu bar commands. They act on the session the key window publishes
 /// (``FocusedValues/zenWindowSession``) and are disabled without one.
@@ -26,6 +28,14 @@ import ZenAppSession
 /// it switches the mode for every window, as the terminal's Ctrl+G, also
 /// while a turn generates. As a menu key equivalent, ⌃G reaches it before
 /// the focused composer's text view, like ⌃Y.
+///
+/// Voice Mode is checked while the app's voice mode is on
+/// (``ZenWindowSession/voiceState``, one for every window) and runs
+/// `/voice on` or `/voice off`; Pause Voice / Resume Voice, titled after
+/// what a click does and enabled only while voice mode is on, runs
+/// `/voice pause` or `/voice resume`. Like the items below them they run
+/// the command in the key window, with its conversation selected first
+/// (``ZenWindowSession/run(_:)``), and have no shortcut.
 struct ZenMenuCommands: Commands {
     @FocusedValue(\.zenWindowSession) private var session
     @Environment(\.openWindow) private var openWindow
@@ -80,6 +90,24 @@ struct ZenMenuCommands: Commands {
             ))
             .keyboardShortcut("g", modifiers: .control)
             .disabled(session == nil)
+
+            Divider()
+
+            Toggle("Voice Mode", isOn: Binding(
+                get: { session?.voiceState.isOn == true },
+                set: { isOn in
+                    session?.run(isOn ? ZenSessionCommand.voiceOn : ZenSessionCommand.voiceOff)
+                }
+            ))
+            .disabled(session == nil)
+
+            Button(session?.voiceState.isPaused == true ? "Resume Voice" : "Pause Voice") {
+                guard let session else { return }
+                session.run(
+                    session.voiceState.isPaused ? ZenSessionCommand.voiceResume : ZenSessionCommand.voicePause
+                )
+            }
+            .disabled(session?.voiceState.isOn != true)
 
             Divider()
 

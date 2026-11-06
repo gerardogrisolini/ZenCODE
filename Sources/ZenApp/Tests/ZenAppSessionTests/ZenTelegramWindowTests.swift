@@ -72,7 +72,7 @@ struct ZenTelegramWindowTests {
             #expect(await window.waitUntilIdle())
             #expect(await eventually { window.commandDescriptors.contains { $0.command == "/telegram" } })
             #expect(window.commandContext.contains(ZenAppCommands.telegramEnabled))
-            #expect(window.commandDescriptors.map(\.command).suffix(2) == ["/telegram", "/exit"])
+            #expect(window.commandDescriptors.map(\.command).suffix(3) == ["/telegram", "/voice", "/exit"])
 
             // The status: the host's inactive status, since no channel exists.
             let inactive = await runtime.sessionHost.telegramStatusText(in: window.slotID)

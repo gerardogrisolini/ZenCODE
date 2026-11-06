@@ -2,8 +2,9 @@
 
 ZenCODE has two voice features, both on macOS and Linux:
 
-- **Voice mode** (`/voice`) in the interactive terminal: speak your prompts to
-  any agent and hear the answers read aloud.
+- **Voice mode** (`/voice`) in the interactive terminal and in the macOS app
+  (see [app.md](app.md#voice)): speak your prompts to any agent and hear the
+  answers read aloud.
 - **Telegram voice messages**: a voice note sent to the paired Telegram chat is
   transcribed and runs as an ordinary prompt.
 
@@ -39,8 +40,10 @@ The architecture and persistence contract behind this guide is in
 | `/voice` | Pauses a listening voice mode, or resumes a paused one. |
 
 `/voice` works with every agent profile and is available while a prompt is
-running. It exists only in the interactive terminal: it is not a Telegram
-command, and `zen -p`, `--jsonl` and ACP do not have it.
+running. It exists only in the interactive terminal and in the macOS app,
+where one voice mode follows the active window (see
+[app.md](app.md#voice)): it is not a Telegram command, and `zen -p`,
+`--jsonl` and ACP do not have it.
 
 ### A conversation
 
@@ -460,7 +463,7 @@ open the Telegram section of `/setup` again; you can keep the current pairing.
 | `the answer could not be read aloud: …` | Linux: the voice could not play; check the ALSA playback device, or reinstall the voice. |
 | Telegram: `Voice-message transcription is off` | Open the Telegram section of `/setup` again; you can keep the current pairing. |
 | Telegram: `Transcribing voice messages needs opusdec (package opus-tools) or ffmpeg` | Linux: install one, for example `sudo apt install opus-tools`. |
-| `/voice is available only in the interactive terminal` | Run `/voice` from the `zen` terminal UI. |
+| `/voice is available only in the interactive terminal` | Run `/voice` from the `zen` terminal UI, or from the macOS app (see [app.md](app.md#voice)). |
 | An utterance is never sent | Pause for about 5 seconds after speaking (or the pause chosen with the Send mode "After a pause" in `/setup` > Voice mode), and reduce background noise. With the Send mode "On a word", say your word at the end. |
 | An utterance is sent before you finish | Choose the Send mode "After a pause" with a longer pause in `/setup` > Voice mode, or "On a word" so that only your word sends. |
 | Answers are read in the wrong language | Set the Response language in `/setup`; on Linux, also choose a voice of that language in `/setup` > Voice mode. |

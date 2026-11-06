@@ -6,10 +6,11 @@
 //  bottom chrome (shared-chat panel, composer, status bar) and the open
 //  sub-agent tabs, the artifacts sidebar on their right, the toolbar, and
 //  Esc, which in the conversation denies a waiting tool consent (its sheet
-//  answers Esc itself) and otherwise stops the turn, and in a sub-agent tab
-//  does nothing. While the shared-chat reader is open in the conversation,
-//  the unmodified ← → Home End move between its messages and ↑ ↓ scroll the
-//  one shown, even from the composer, as in the terminal.
+//  answers Esc itself) and otherwise stops the turn and voice mode's reading
+//  aloud, and in a sub-agent tab does nothing. While the shared-chat reader
+//  is open in the conversation, the unmodified ← → Home End move between its
+//  messages and ↑ ↓ scroll the one shown, even from the composer, as in the
+//  terminal.
 //
 
 import Foundation
@@ -21,13 +22,15 @@ import ZenCODECore
 
 /// What Esc does in a window, as in the terminal: while a tool consent waits,
 /// it denies the call (the answer of the consent sheet's own Esc, which
-/// handles the key while it shows); otherwise it stops the turn. ⌘. and the
-/// stop buttons always stop. Esc acts only in the conversation: a sub-agent
-/// tab consumes it and does nothing.
+/// handles the key while it shows); otherwise it stops the turn and the
+/// reading aloud of voice mode, and never clears the draft. ⌘. and the stop
+/// buttons always stop the turn only. Esc acts only in the conversation: a
+/// sub-agent tab consumes it and does nothing.
 enum ZenEscapeAction: Equatable {
     /// Answer the consent request `requestID` with ``consentAnswer``.
     case denyConsent(requestID: UUID)
-    /// Stop the turn (``ZenWindowSession/stop()``).
+    /// Stop the turn and, in the window voice mode follows, the reading
+    /// aloud (``ZenWindowSession/handleEscape()``).
     case stop
     /// Do nothing, and keep Esc from other responders (the system beep
     /// included): a sub-agent tab.
@@ -151,7 +154,7 @@ struct ZenConversationScreen: View {
         case let .denyConsent(requestID):
             session.answer(requestID, with: ZenEscapeAction.consentAnswer)
         case .stop:
-            session.stop()
+            session.handleEscape()
         case .consume:
             break
         }
@@ -210,7 +213,9 @@ struct ZenBottomChrome: View {
 
 /// The composer of a window, inside the chrome's glass container, with the
 /// live `@mentions` of the session's shared chat and the window's reader
-/// keys.
+/// keys. Voice mode's reading aloud shows in its key hint only in the window
+/// voice mode follows, the one where Esc stops it, and its cursor follows the
+/// voice dictation (``ZenDictationCursor``).
 struct ZenWindowComposer: View {
     @Bindable var session: ZenWindowSession
     let focus: FocusState<Bool>.Binding
@@ -221,9 +226,11 @@ struct ZenWindowComposer: View {
         ZenComposer(
             draft: $session.draft,
             isBusy: session.isBusy,
+            isSpeaking: session.voiceState.isSpeaking && session.isVoiceWindow,
             commands: session.commandDescriptors,
             mentions: session.mentionSuggestions,
             queued: session.queuedLines.map { ZenComposerQueuedItem(id: $0.id, text: $0.text) },
+            draftUpdate: ZenDictationCursor.draftUpdate(of: session),
             focus: focus,
             usesGlassContainer: false,
             actions: actions
@@ -245,18 +252,28 @@ struct ZenWindowComposer: View {
             historyNext: { session.recallNextPrompt() },
             removeQueued: { id in session.removeQueuedLine(id) },
             refreshMentions: { session.refreshMentionSuggestions() },
-            readerKey: readerKey
+            readerKey: readerKey,
+            cursorAfterDraftUpdate: { cursor, previous, current, draftCount in
+                ZenDictationCursor.cursor(
+                    cursor,
+                    from: previous,
+                    to: current,
+                    latest: session.voiceDictationUpdate?.change,
+                    draftCount: draftCount
+                )
+            }
         )
     }
 }
 
 /// The status bar of a window: the only view of the chrome that reads the
-/// status, which changes with every snapshot of a turn.
+/// status, which changes with every snapshot of a turn, and voice mode's
+/// state, the app's, which every window shows.
 struct ZenWindowStatusBar: View {
     let session: ZenWindowSession
 
     var body: some View {
-        ZenStatusBar(state: ZenStatusBarState(session.status))
+        ZenStatusBar(state: ZenStatusBarState(session.status, voice: session.voiceState))
     }
 }
 
@@ -274,8 +291,8 @@ struct ZenWindowToolbarModifier: ViewModifier {
 }
 
 extension ZenStatusBarState {
-    /// The status bar of a window, field by field.
-    init(_ status: ZenWindowStatus) {
+    /// The status bar of a window, field by field, with the app's voice mode.
+    init(_ status: ZenWindowStatus, voice: VoiceModeSessionState) {
         self.init(
             isGenerating: status.isGenerating,
             turnStartedAt: status.turnStartedAt,
@@ -285,7 +302,8 @@ extension ZenStatusBarState {
             contextWindow: status.contextWindow,
             subscriptionUsage: status.subscriptionUsage,
             gitStatus: status.gitStatus,
-            localExecAccessMode: status.localExecAccessMode
+            localExecAccessMode: status.localExecAccessMode,
+            voice: voice
         )
     }
 }

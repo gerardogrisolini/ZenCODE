@@ -87,10 +87,14 @@ public struct ZenStartupSummary: Equatable, Sendable {
 public struct ZenQueuedLine: Identifiable, Equatable, Sendable {
     public let id: UUID
     public let text: String
+    /// Dictated text that reads as a command: it runs as a prompt, never as
+    /// a command (voice mode's rule).
+    public let isPlainPrompt: Bool
 
-    public init(id: UUID = UUID(), text: String) {
+    public init(id: UUID = UUID(), text: String, isPlainPrompt: Bool = false) {
         self.id = id
         self.text = text
+        self.isPlainPrompt = isPlainPrompt
     }
 }
 

@@ -44,18 +44,18 @@ struct TerminalVoiceModeTests {
             await output(of: "/voice on", in: chat)
                 == TerminalChat.voiceRequiresInteractiveTerminalMessage
         )
-        #expect(await output(of: "/voice loud", in: chat) == TerminalVoiceCommandAction.usageMessage)
+        #expect(await output(of: "/voice loud", in: chat) == VoiceModeCommandAction.usageMessage)
         #expect(chat.voiceController == nil)
     }
 
     @Test
     func echoCancellationWarningNamesTheCurrentOutput() {
         #expect(
-            TerminalDictationVoiceController.echoCancellationUnavailableMessage(outputDeviceName: "AirPlay")
+            DictationVoiceModeController.echoCancellationUnavailableMessage(outputDeviceName: "AirPlay")
                 == "Voice: echo cancellation is unavailable with the current audio output (AirPlay); switch to a local output or use headphones so you can talk over the assistant without it hearing itself.\n"
         )
         #expect(
-            TerminalDictationVoiceController.echoCancellationUnavailableMessage(outputDeviceName: nil)
+            DictationVoiceModeController.echoCancellationUnavailableMessage(outputDeviceName: nil)
                 == "Voice: echo cancellation is unavailable with the current audio output; switch to a local output or use headphones so you can talk over the assistant without it hearing itself.\n"
         )
     }
@@ -63,7 +63,7 @@ struct TerminalVoiceModeTests {
     @Test
     func listeningMessageNamesTheVoiceCommands() {
         #expect(
-            TerminalDictationVoiceController.listeningMessage(localeIdentifier: "it_IT")
+            DictationVoiceModeController.listeningMessage(localeIdentifier: "it_IT")
                 == "Voice: listening (dictation, it_IT, on-device). Speak or type; answers are read aloud. /voice pauses or resumes, /voice off stops.\n"
         )
     }
@@ -71,7 +71,7 @@ struct TerminalVoiceModeTests {
     @Test
     func downloadingMessageNamesTheLanguage() {
         #expect(
-            TerminalDictationVoiceController.downloadingMessage(localeIdentifier: "it_IT")
+            DictationVoiceModeController.downloadingMessage(localeIdentifier: "it_IT")
                 == "Voice: downloading the speech recognition model for it_IT; macOS does this only the first time.\n"
         )
     }

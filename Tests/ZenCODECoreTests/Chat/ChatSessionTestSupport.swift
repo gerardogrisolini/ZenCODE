@@ -566,10 +566,13 @@ actor ScriptedChatInteractionHost: ChatInteractionHost {
 ///
 /// - ``calls`` holds the operations that act on the runtime (create, restore,
 ///   update, reset, rebuild, shutdown, compact, preload, skills, checkpoints,
-///   task graphs, saved plans, tasks). Nothing in it means the controller left
+///   task graphs, saved plans, tasks, and the adoption and deletion of
+///   resumable task graphs). Nothing in it means the controller left
 ///   the runtime alone.
 /// - ``queries`` holds the read-only lookups (snapshots, task graphs, tool
-///   descriptors), which the controller makes to compute what it presents.
+///   descriptors), which the controller makes to compute what it presents;
+///   ``resumableTaskGraphCheckpointReadCount`` counts the listings of the
+///   resumable task graphs.
 actor ScriptedChatRuntime: ChatSessionManagementRuntime {
     struct Call: Sendable {
         let index: Int
@@ -624,6 +627,8 @@ actor ScriptedChatRuntime: ChatSessionManagementRuntime {
         case archiveTaskGraph(graphID: String, sessionID: String)
         case retryTask(taskID: String, sessionID: String, expectedRevision: Int?)
         case cancelTask(taskID: String, sessionID: String, reason: String?)
+        case removeResumableTaskGraphs(ids: [String])
+        case adoptResumableTaskGraph(id: String, intoSessionID: String)
 
         /// The operation's name, for asserting the order of a sequence.
         var name: String {
@@ -646,6 +651,8 @@ actor ScriptedChatRuntime: ChatSessionManagementRuntime {
             case .archiveTaskGraph: "archiveTaskGraph"
             case .retryTask: "retryTask"
             case .cancelTask: "cancelTask"
+            case .removeResumableTaskGraphs: "removeResumableTaskGraphs"
+            case .adoptResumableTaskGraph: "adoptResumableTaskGraph"
             }
         }
 
@@ -703,6 +710,11 @@ actor ScriptedChatRuntime: ChatSessionManagementRuntime {
     private var taskGraphReadHook: (@Sendable (Int) async -> Void)?
     private var taskGraphReadCount = 0
     private var taskGraphActivationHook: (@Sendable (String) async -> Void)?
+    /// How many times the controller listed the resumable task graphs.
+    private(set) var resumableTaskGraphCheckpointReadCount = 0
+    /// The error the next adoptions of a resumable task graph throw, one
+    /// per adoption, before reaching the orchestrator.
+    private var adoptResumableTaskGraphErrors: [Error] = []
     /// How many times the controller read the sub-agent snapshots.
     private(set) var subAgentSnapshotReadCount = 0
     private var subAgentSnapshotReadHook: (@Sendable (Int) async -> Void)?
@@ -796,6 +808,12 @@ actor ScriptedChatRuntime: ChatSessionManagementRuntime {
     /// there, between two steps of an approval.
     func setTaskGraphActivationHook(_ hook: (@Sendable (String) async -> Void)?) {
         taskGraphActivationHook = hook
+    }
+
+    /// Makes the next adoption of a resumable task graph throw `error`
+    /// without changing any checkpoint.
+    func failNextAdoptResumableTaskGraph(_ error: Error) {
+        adoptResumableTaskGraphErrors.append(error)
     }
 
     /// Gives the runtime session a conversation of its own, as if turns had
@@ -1101,6 +1119,40 @@ actor ScriptedChatRuntime: ChatSessionManagementRuntime {
     /// the model had planned it during a turn.
     func seedTaskGraph(_ snapshot: TaskGraphSnapshot, sessionID: String) async throws {
         try await taskOrchestrator.restoreTaskGraph(snapshot, sessionID: sessionID)
+    }
+
+    func resumableTaskGraphCheckpoints(workingDirectory: URL) async -> [ResumableTaskGraph] {
+        resumableTaskGraphCheckpointReadCount += 1
+        return await taskOrchestrator.resumableTaskGraphCheckpoints(
+            workingDirectory: workingDirectory
+        )
+    }
+
+    func removeResumableTaskGraphs(
+        _ graphs: [ResumableTaskGraph],
+        workingDirectory: URL
+    ) async throws {
+        calls.append(.removeResumableTaskGraphs(ids: graphs.map(\.id)))
+        try await taskOrchestrator.removeResumableTaskGraphs(
+            graphs,
+            workingDirectory: workingDirectory
+        )
+    }
+
+    func adoptResumableTaskGraph(
+        _ graph: ResumableTaskGraph,
+        intoSessionID sessionID: String,
+        workingDirectory: URL
+    ) async throws -> TaskGraphSnapshot {
+        calls.append(.adoptResumableTaskGraph(id: graph.id, intoSessionID: sessionID))
+        if !adoptResumableTaskGraphErrors.isEmpty {
+            throw adoptResumableTaskGraphErrors.removeFirst()
+        }
+        return try await taskOrchestrator.adoptResumableTaskGraph(
+            graph,
+            intoSessionID: sessionID,
+            workingDirectory: workingDirectory
+        )
     }
 
     func activeToolDescriptors(sessionID: String) async -> [DirectToolDescriptor] {

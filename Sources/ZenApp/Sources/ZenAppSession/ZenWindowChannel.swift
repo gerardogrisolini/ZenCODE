@@ -162,6 +162,11 @@ final class ZenWindowHooks: ChatSessionChannelHooks {
 /// refreshes it while one runs), which reaches the reducer as an observer, and
 /// tells the window when a file-mutation tool settled so it refreshes the git
 /// summary. It records the task graphs `/tasks` publishes, for their cards.
+/// For voice mode, as the terminal's presenter, it follows the text of the main
+/// agent: the comment it writes before a tool call goes to
+/// ``voiceCommentaryHandler``, and the final answer of a turn is read from it
+/// (``finalAnswer(of:purpose:)``). The thinking is not part of it, and the
+/// delegated agents never reach this presenter.
 /// Every call returns quickly: the chat actor is shared.
 @ChatSessionActor
 final class ZenWindowPresenter: ChatSessionPresenter {
@@ -169,9 +174,23 @@ final class ZenWindowPresenter: ChatSessionPresenter {
     var slotID: ChatSlotID?
     /// Called after a file-mutation tool settled.
     var fileMutationHandler: (@Sendable () -> Void)?
+    /// Called with the comment the main agent wrote before a tool call,
+    /// never blank.
+    var voiceCommentaryHandler: (@Sendable (String) -> Void)?
     /// The task graphs `/tasks` published (explicit overviews), oldest first,
     /// until the window takes them (``takeExplicitTaskGraphs()``).
     private(set) var explicitTaskGraphs: [ZenExplicitTaskGraph] = []
+    /// The text the main agent wrote since the last tool call, the automatic
+    /// continuation of a `/goal` workflow, or the start of the turn: the
+    /// terminal's pending assistant output.
+    private var assistantBlock = ""
+    /// The turn presented assistant text.
+    private var receivedAssistantContent = false
+    /// The purpose of the turn presented now; `nil` for a turn adopted from
+    /// Telegram.
+    private var turnPurpose: ChatTurnPurpose?
+    /// The final response the turn presented, until it is taken.
+    private var finalResponse: DirectAgentResponse?
 
     nonisolated init() {}
 
@@ -183,6 +202,13 @@ final class ZenWindowPresenter: ChatSessionPresenter {
     }
 
     func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {
+        // The text written before a tool call is a comment on what is about
+        // to happen: voice mode reads it aloud when it can.
+        let commentary = assistantBlock
+        assistantBlock = ""
+        if !commentary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            voiceCommentaryHandler?(commentary)
+        }
         guard let controller else { return }
         await controller.publishSubAgentOverviewIfChanged(relatedToolName: toolCall.name)
         if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
@@ -223,6 +249,68 @@ final class ZenWindowPresenter: ChatSessionPresenter {
     func takeExplicitTaskGraphs() -> [ZenExplicitTaskGraph] {
         defer { explicitTaskGraphs.removeAll() }
         return explicitTaskGraphs
+    }
+
+    // MARK: Voice mode
+
+    func turnWillStart(_ request: ChatTurnRequest) async {
+        resetTurnText()
+        turnPurpose = request.purpose
+    }
+
+    func presentAssistantContent(_ content: String) async {
+        guard !content.isEmpty else { return }
+        receivedAssistantContent = true
+        assistantBlock += content
+    }
+
+    func turnWillContinueAutomatically() async {
+        assistantBlock = ""
+    }
+
+    func presentFinalResponse(_ response: DirectAgentResponse) async {
+        finalResponse = response
+    }
+
+    func sessionDidChange(sessionID _: String) async {
+        resetTurnText()
+    }
+
+    /// The answer voice mode reads at the end of the turn that returned
+    /// `result`, as the terminal reads it: the Planner response of a `/plan`
+    /// turn; otherwise the text written after the last tool call, or the
+    /// response's text when the turn presented no text at all.
+    func finalAnswer(of result: ChatTurnResult, purpose: ChatTurnPurpose) -> String {
+        defer { resetTurnText() }
+        if case .plan = purpose {
+            return result.response.text
+        }
+        return receivedAssistantContent ? assistantBlock : result.response.text
+    }
+
+    /// A turn from Telegram is about to be adopted: what it presents to the
+    /// window from now on is its own.
+    func beginAdoptedTurn() {
+        resetTurnText()
+    }
+
+    /// The answer of the adopted turn, once it presented its final response
+    /// to the window: the text written after its last tool call, or the
+    /// response's text; `nil` when it presented none.
+    func takeAdoptedFinalAnswer() -> String? {
+        defer { resetTurnText() }
+        guard let finalResponse else { return nil }
+        if case .plan = turnPurpose {
+            return finalResponse.text
+        }
+        return receivedAssistantContent ? assistantBlock : finalResponse.text
+    }
+
+    private func resetTurnText() {
+        assistantBlock = ""
+        receivedAssistantContent = false
+        turnPurpose = nil
+        finalResponse = nil
     }
 }
 

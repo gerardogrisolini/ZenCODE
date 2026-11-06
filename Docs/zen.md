@@ -40,27 +40,70 @@ presentation renderer differs.
 
 ## Recovering Incomplete Tasks at Startup
 
-When standalone `zen` starts in an interactive terminal, it scans the current
-project for task-graph checkpoints left incomplete by earlier sessions. If any
-are found, an orange, scrollable picker opens before the model session is
-created. Use `↑`/`↓` to move and `Enter` to select the graph marked with `(x)`.
-You can also choose **Start fresh** to leave every checkpoint unchanged.
-The startup scan and picker are disabled when `zen` runs in `--acp` or
-`--telegram` mode.
+At startup, ZenCODE scans the current project for task-graph checkpoints left
+incomplete by earlier sessions. If any are found, it offers the menu **Open
+tasks from previous sessions**: one entry per incomplete graph under
+**Resume** (`<pending> of <total> tasks pending · updated <date>`), then, under
+**Other actions**, **Delete old tasks…** and **Start fresh**. Choosing a graph
+resumes it; **Start fresh** leaves every checkpoint unchanged. The graphs of the
+current session, and of any session that another window or ACP session of the
+same process is running, are never offered. The terminal, Telegram, ACP, and the
+macOS app offer the same menu, each in its own way:
 
-Selecting **Delete old tasks…** opens a multi-selection list. Use `Space` to
-mark obsolete graphs with `[x]`, `A` to select all, `N` to select none, and
-`Enter` to delete the selected graphs. Deletion is graph-specific: other graphs
+- **Terminal (`zen`)**: in an interactive terminal, an orange, scrollable picker
+  opens before the model session is created. Use `↑`/`↓` to move and `Enter` to
+  select the entry marked with `(x)`. The notices of the result (the graph
+  resumed, the graphs deleted) are written after the startup summary. Without an
+  interactive terminal (for example, with piped standard input) nothing is
+  offered.
+- **`zen --telegram`**: once the session is created, the model preloaded, and
+  Telegram linked, the linked chat receives the menu as a message with inline
+  buttons, plus **Cancel**. Tap a graph to resume it. The notices of the result
+  are sent to the chat. While the menu is open, any other message is answered
+  `Choose an option from the menu above.` and does not run. A stop signal
+  (SIGINT or SIGTERM) while the menu is open cancels it and stops the process as
+  usual. See [Telegram Mode](#telegram-mode).
+- **`zen --acp`**: after each `session/new` reply, when incomplete graphs exist,
+  the client receives a `session/request_permission` request for a synthetic
+  tool call titled "Open tasks from previous sessions", with one option per
+  graph, **Delete all old tasks**, and **Start fresh**. Cancelling the request,
+  or a request that fails, counts as **Start fresh**. A `session/prompt` sent
+  meanwhile waits for the answer (a `session/cancel` meanwhile ends that prompt
+  as `cancelled` without a turn), and `session/close` cancels the question. The
+  notices of the result reach the editor as agent messages. Sessions opened with
+  `session/load` or `session/resume` are not asked.
+- **macOS app (`zen --ui`)**: every new window offers the menu, as a choice
+  sheet, after it opens. A graph already resumed in another open window (any
+  session that a window of the app currently runs) is not offered. While the
+  sheet is open, a prompt (typed or dictated) waits and runs once the menu is
+  closed, and `Esc` dismisses the menu as **Start fresh**.
+
+Selecting **Delete old tasks…** lets you choose the obsolete graphs to delete. In
+the terminal it opens a multi-selection list: use `Space` to mark graphs with
+`[x]`, `A` to select all, `N` to select none, and `Enter` to delete the selected
+graphs. In Telegram it sends a list of toggles (☑/☐) with **Done** and
+**Cancel**. ACP has no multiple selection, so there the option **Delete all old
+tasks** deletes every listed graph. Deletion is graph-specific: other graphs
 stored in the same previous session are preserved.
 
 > **Exact-graph recovery guarantee:** a recovery choice identifies both the
-> previous logical session and the selected graph. ZenCODE restores the
-> checkpoint, makes that exact graph active and current, persists the new
-> `currentGraphID`, and only then creates the model/backend session. It never
-> substitutes another graph merely because that graph was current when the old
-> checkpoint was written. Any active execution attempt found in the checkpoint
-> is marked `interrupted`, and its task becomes `blocked`; external work is not
-> assumed to still be running after a process restart.
+> previous logical session and the selected graph. ZenCODE restores the old
+> checkpoint and **moves** that exact graph into the current session, which keeps
+> its own session id: the old id is never reused. The graph becomes active and
+> current there, and the current session's checkpoint is written first. Only then
+> is the graph removed from the old checkpoint, which is deleted when nothing
+> resumable remains in it; its other graphs stay. If that second write fails the
+> graph is still resumed and, at worst, offered again at the next startup: it is
+> never lost. In the terminal all of this happens before the model/backend
+> session is created; in the other modes, after the session exists. Other active
+> graphs of the current session are archived. ZenCODE never substitutes another
+> graph merely because that graph was current when the old checkpoint was
+> written. Any active execution attempt found in the old checkpoint is marked
+> `interrupted`, and its task becomes `blocked`; external work is not assumed to
+> still be running after a process restart.
+
+A resumed `/goal` workflow that is not finished arms its continuation, so the
+next message continues it on the same graph.
 
 This startup recovery concerns the authoritative task graph. It is separate
 from `/sessions restore`, which navigates the saved conversation checkpoint
@@ -240,10 +283,12 @@ zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] 
   a new instance. Only `--agent`, `--model`, `--skills`, and
   `--working-directory` are accepted, and they are forwarded to the app; the
   options of the other modes are refused, and an unknown agent is reported in
-  the terminal. When ZenCODE is not configured, setup runs first. The output
-  of the app goes to `~/.zencode/app/ZenCODE.log`; an app that exits within
-  about 1.5 seconds of starting is reported in the terminal with the end of
-  that log. On Linux, `--ui` is an unknown argument.
+  the terminal. When ZenCODE is not configured, setup runs first. Every new
+  window offers the task graphs that earlier sessions left incomplete (see
+  [Recovering Incomplete Tasks at Startup](#recovering-incomplete-tasks-at-startup)).
+  The output of the app goes to `~/.zencode/app/ZenCODE.log`; an app that exits
+  within about 1.5 seconds of starting is reported in the terminal with the end
+  of that log. On Linux, `--ui` is an unknown argument.
 - `--install-features [id,id,...]`: copy the requested optional feature package(s), build their release products, and enable them. With no IDs in an interactive terminal, opens the optional-feature picker.
 - `--no-features`: skip optional-feature installation when used with `--install-features`.
 - `--zen-package-path DIR`: use this ZenCODE checkout as the feature source and rewritten local package dependency. This is useful after a manual installation; platform installers preserve their checkout under `~/.zencode/source/` automatically.
@@ -1397,14 +1442,16 @@ metadata carries the full goal and plan text needed by `/plan load`.
 save) only when no plan is active, adds its handoff to the current model
 context, and does not activate its source session or resume old execution
 state. Saved drafts are excluded from the interrupted-work startup picker.
-At interactive startup, ZenCODE enumerates every incomplete graph for the
+At startup, in every mode, ZenCODE enumerates every incomplete graph for the
 current project and lets the operator resume one or delete obsolete graphs. A
 selection is keyed by `sessionID + graphID`: the orchestrator restores the
-owning session, makes the selected graph current, and persists that choice
-before the backend session starts. Other active graphs from the same checkpoint
-are archived when the selected graph takes ownership. Active attempts found
-during restore are marked `interrupted` and their tasks become `blocked` rather
-than being silently resumed. See
+owning session, moves the selected graph into the current session (which keeps
+its id), makes it current, and persists it there before removing it from the
+old checkpoint, so it is never lost. The other graphs of the old checkpoint stay
+where they were, and the other active graphs of the current session are
+archived when the selected graph takes ownership. Active attempts found during
+restore are marked `interrupted` and their tasks become `blocked` rather than
+being silently resumed. See
 [Recovering Incomplete Tasks at Startup](#recovering-incomplete-tasks-at-startup).
 
 ## Skills
@@ -1504,7 +1551,10 @@ zen --acp --working-directory /path/to/project
 
 stdout contains only ACP JSON-RPC messages. Clients provide prompts, sessions,
 and tool exposure. `--agent`, `--model`, `--working-directory`, `--skills`, and
-token environment variables still apply.
+token environment variables still apply. After a `session/new` reply, the client
+may be asked through `session/request_permission` whether to resume the task
+graphs that earlier sessions left incomplete (see [Recovering Incomplete Tasks at
+Startup](#recovering-incomplete-tasks-at-startup)).
 
 ### Authentication Methods
 
@@ -1578,10 +1628,11 @@ The agent, model, skills, working directory, and limits come from `--agent`,
 `--max-output-tokens` (or the matching `ZENCODE_AGENT_*` variables) and stay
 the same until the process restarts: the chat has no `/models`, `/agents`, or
 `/sessions`. With several models configured and none selected, pass `--model`.
-Incomplete task graphs of earlier sessions are not resumed at startup, and the
-conversation is neither saved nor resumed across restarts; project and global
-memory persist as usual. On macOS the process keeps the Mac awake while the
-session is open, like the other modes.
+The conversation is neither saved nor resumed across restarts, but the
+incomplete task graphs of earlier sessions are offered to the linked chat at
+startup (see [Startup](#startup)); project and global memory persist as usual.
+On macOS the process keeps the Mac awake while the session is open, like the
+other modes.
 
 ### Startup
 
@@ -1592,6 +1643,20 @@ The mode starts in this order:
 2. It resolves the agent and the model.
 3. It creates the session and preloads the model.
 4. It links Telegram.
+5. If earlier sessions of the project left incomplete task graphs, it sends the
+   linked chat the menu **Open tasks from previous sessions**.
+
+The menu in the chat is the one described in [Recovering Incomplete Tasks at
+Startup](#recovering-incomplete-tasks-at-startup): the message lists the entries
+with their details (`<pending> of <total> tasks pending · updated <date>`), and
+the inline buttons are one per graph, **Delete old tasks…**, **Start fresh**,
+and **Cancel**. Tapping a graph resumes it; a resumed
+`/goal` workflow continues with the next message. **Delete old tasks…** sends a
+list of toggles (☑/☐) with **Done** and **Cancel**; only the graphs you select
+are deleted. While the menu is open, any other message gets `Choose an option
+from the menu above.` and does not run. The notices of the result are sent to
+the chat. A SIGINT or SIGTERM while the menu is open cancels it and stops the
+process as described under [Stopping](#stopping).
 
 Any error during the startup ends the process with status `1`, and the mode
 does not retry: a missing pairing, an invalid configuration, Telegram that

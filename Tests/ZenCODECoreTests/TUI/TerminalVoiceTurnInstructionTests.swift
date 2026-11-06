@@ -97,7 +97,7 @@ struct TerminalVoiceTurnInstructionTests {
 
 /// A voice controller that listens until paused or stopped. It never records or
 /// speaks.
-private actor ListeningVoiceController: TerminalVoiceController {
+private actor ListeningVoiceController: VoiceModeController {
     nonisolated let languageCode = "it"
     private(set) var isActive = true
     private(set) var isPaused = false
@@ -109,7 +109,7 @@ private actor ListeningVoiceController: TerminalVoiceController {
         isActive = false
     }
 
-    func speak(_ text: String, rendering: TerminalVoiceSpeechRendering) async -> Bool {
+    func speak(_ text: String, rendering: VoiceModeSpeechRendering) async -> Bool {
         false
     }
 

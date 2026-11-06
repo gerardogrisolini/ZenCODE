@@ -1,5 +1,5 @@
 //
-//  TerminalVoiceChatDialogue.swift
+//  VoiceChatDialogue.swift
 //  ZenCODE
 //
 //  The spoken dialogue over live shared-chat messages in voice mode: new
@@ -11,7 +11,7 @@
 
 import Foundation
 
-struct TerminalVoiceChatDialogue: Sendable {
+struct VoiceChatDialogue: Sendable {
     /// Older unannounced messages are dropped past this many.
     static let maximumPendingAnnouncements = 32
 
@@ -217,7 +217,7 @@ struct TerminalVoiceChatDialogue: Sendable {
                 label: label
             )
         case let .askingToRead(message):
-            switch TerminalVoiceChatPhrases.affirmation(in: utterance) {
+            switch VoiceChatPhrases.affirmation(in: utterance) {
             case true:
                 phase = .reading(message)
                 return .read(message)
@@ -228,7 +228,7 @@ struct TerminalVoiceChatDialogue: Sendable {
                 phase = .idle
             }
         case let .reading(message), let .askingToReply(message):
-            switch TerminalVoiceChatPhrases.affirmation(in: utterance) {
+            switch VoiceChatPhrases.affirmation(in: utterance) {
             case true:
                 phase = .awaitingReplyText(message)
                 return .askReplyText(message)
@@ -248,7 +248,7 @@ struct TerminalVoiceChatDialogue: Sendable {
         _ utterance: String,
         participants: [AgentSharedChat.Participant]
     ) -> Action {
-        guard let request = TerminalVoiceChatPhrases.sendRequest(in: utterance) else {
+        guard let request = VoiceChatPhrases.sendRequest(in: utterance) else {
             return .prompt
         }
         switch request.target {
@@ -257,7 +257,7 @@ struct TerminalVoiceChatDialogue: Sendable {
         case .all:
             return send(to: .all, label: "all", text: request.text)
         case let .named(remainder):
-            switch TerminalVoiceChatPhrases.resolveNamedRecipient(
+            switch VoiceChatPhrases.resolveNamedRecipient(
                 remainder: remainder,
                 participants: participants
             ) {

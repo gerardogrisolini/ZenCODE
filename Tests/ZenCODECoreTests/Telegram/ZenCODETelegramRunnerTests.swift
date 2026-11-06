@@ -10,7 +10,10 @@
 //  before anything is built; a link that cannot start fails with status 1; a
 //  prompt from the chat runs a turn whose answer reaches the Bot API, and a
 //  gated tool is decided with `/allow` in the chat; a stop during the startup
-//  is a clean stop, and cancels a turn in progress. The log format, the safe
+//  is a clean stop, and cancels a turn in progress. Once linked, the task
+//  graph an earlier session left incomplete is offered in the chat, and
+//  Resume moves it into the session; a stop while that menu waits is clean.
+//  The log format, the safe
 //  writes, the stop-signal latch and monitor (on SIGUSR1 and SIGUSR2, which the
 //  test process does not otherwise use), and the channel's behavior on the
 //  `.telegram` slot (the task-graph observer, `/undo`) are covered on their
@@ -112,15 +115,22 @@ struct ZenCODETelegramRunnerTests {
     private static let hintMessage = String(ZenCODEDoctorRunner.troubleshootingHint.dropLast())
 
     private struct Environment: Sendable {
+        let root: URL
         let workspace: URL
         let backend = ACPTelegramScriptedBackend()
         let transport = ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
         let log = TelegramRunnerLogRecorder()
         let runnerCreations = CallCounter()
         let transportCreations = CallCounter()
+        /// The store of the runner's task graphs, in the support directory,
+        /// where a test seeds the checkpoints of earlier sessions; `nil`, the
+        /// default, keeps no task graph.
+        let taskGraphStore: SessionTaskGraphStore?
 
-        init(root: URL) throws {
+        init(root: URL, persistsTaskGraphs: Bool = false) throws {
+            self.root = root
             workspace = root.appendingPathComponent("workspace", isDirectory: true)
+            taskGraphStore = persistsTaskGraphs ? SessionTaskGraphStore(supportDirectoryURL: root) : nil
             try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         }
 
@@ -136,17 +146,18 @@ struct ZenCODETelegramRunnerTests {
             )
         }
 
-        /// A runner on ``backend`` with the mode's default consent, and no
-        /// task-graph store.
+        /// A runner on ``backend`` with the mode's default consent, and the
+        /// task-graph store ``taskGraphStore``.
         var makeSessionRunner: @Sendable (@escaping AgentToolAuthorizationHandler) -> AgentCoreSessionRunner {
             let backend = backend
             let runnerCreations = runnerCreations
+            let taskGraphStore = taskGraphStore
             return { toolAuthorizationHandler in
                 runnerCreations.increment()
                 return AgentCoreSessionRunner(
                     defaultToolAuthorizationHandler: toolAuthorizationHandler,
                     backendFactory: backend.factory,
-                    taskGraphStore: nil
+                    taskGraphStore: taskGraphStore
                 )
             }
         }
@@ -170,13 +181,15 @@ struct ZenCODETelegramRunnerTests {
     }
 
     /// Runs `body` on the chat actor in a UUID support directory holding
-    /// `telegram` (none when `nil`), with a fresh environment.
+    /// `telegram` (none when `nil`), with a fresh environment whose runner
+    /// keeps its task graphs there when `persistsTaskGraphs`.
     private nonisolated func withEnvironment(
         telegram: AgentTelegramSettingsManifest? = ACPTelegramTestSupport.pairedSettings(),
+        persistsTaskGraphs: Bool = false,
         _ body: @escaping @Sendable @ChatSessionActor (Environment) async throws -> Void
     ) async throws {
         try await ACPTelegramTestSupport.withSupportDirectory(telegram: telegram) { root in
-            let environment = try Environment(root: root)
+            let environment = try Environment(root: root, persistsTaskGraphs: persistsTaskGraphs)
             try await Task(name: "ZenCODE.Tests.telegram-runner") { @ChatSessionActor in
                 try await body(environment)
             }.value
@@ -403,6 +416,128 @@ struct ZenCODETelegramRunnerTests {
 
             mode.stop.yield(.terminate)
             #expect(await mode.task.value == 0)
+        }
+    }
+
+    // MARK: - Task graphs of earlier sessions
+
+    /// The title of the startup offer's menu.
+    private nonisolated static let resumeMenuTitle = "Open tasks from previous sessions"
+
+    /// Writes in `environment` the checkpoint of an earlier session
+    /// `old-session` that left the graph `old-work` with 2 of its 3 tasks
+    /// pending, as that process would have persisted it.
+    private static func seedEarlierSessionCheckpoint(in environment: Environment) throws {
+        let date = Date(timeIntervalSince1970: 1_000)
+        let tasks = (0 ..< 3).map { index in
+            TaskRecord(
+                id: "old-work-task-\(index)",
+                title: "Task \(index)",
+                order: index + 1,
+                status: index == 0 ? .completed : .pending,
+                execution: TaskExecutionSpec(executor: .coordinator)
+            )
+        }
+        try #require(environment.taskGraphStore).save(
+            SessionTaskGraphCheckpoint(
+                sessionID: "old-session",
+                currentGraphID: "old-work",
+                graphs: [TaskGraphSnapshot(
+                    id: "old-work", source: .manual, state: .active, tasks: tasks,
+                    createdAt: date, updatedAt: date
+                )]
+            ),
+            workingDirectory: environment.workspace
+        )
+    }
+
+    /// The callback data of the buttons of a sent message, as its request
+    /// body carries them, in order.
+    private static func callbackData(of message: ACPTelegramSentMessage) -> [String] {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(message.rawBody.utf8)) else {
+            return []
+        }
+        return strings(in: object).filter { $0.hasPrefix(TelegramChannel.choiceMenuCallbackPrefix) }
+    }
+
+    /// Every string of a decoded JSON value, in document order (the keys of
+    /// an object sorted).
+    private static func strings(in value: Any) -> [String] {
+        if let string = value as? String {
+            return [string]
+        }
+        if let array = value as? [Any] {
+            return array.flatMap { strings(in: $0) }
+        }
+        if let object = value as? [String: Any] {
+            return object.keys.sorted().flatMap { strings(in: object[$0] as Any) }
+        }
+        return []
+    }
+
+    /// Once Telegram is linked, the task graph an earlier session left
+    /// incomplete is offered in the chat, without holding `didStart`; a tap
+    /// on Resume moves it into the Telegram session, which keeps its id, the
+    /// chat gets the notice, and the log says which graph was resumed.
+    @Test
+    func theStartupOffersInTheChatTheGraphsOfEarlierSessionsAndResumeMovesOneIn() async throws {
+        try await withEnvironment(persistsTaskGraphs: true) { environment in
+            try Self.seedEarlierSessionCheckpoint(in: environment)
+            guard let (mode, session) = try await Self.startedMode(in: environment) else { return }
+            let store = try #require(environment.taskGraphStore)
+            let sessionID = try #require(session.host.incarnation(in: session.slotID)?.sessionID)
+            let menu = try #require(await environment.transport.waitForSentMessage {
+                $0.text.hasPrefix(Self.resumeMenuTitle)
+            })
+            #expect(menu.text.contains("Resume\nold-work — 2 of 3 tasks pending · updated "))
+            #expect(menu.text.contains("Other actions\nDelete old tasks… — "))
+            #expect(menu.text.hasSuffix("Tap an option."))
+            // Linked first: the activation was logged before the menu waits.
+            #expect(environment.log.messages.contains("Telegram remote control is active."))
+            let buttons = Self.callbackData(of: menu)
+            #expect(buttons.count == 4)
+            let resume = try #require(buttons.first)
+            #expect(resume.hasPrefix("zencode:choice:s:"))
+            #expect(resume.hasSuffix(":0"))
+
+            try await environment.transport.deliverCallbackQuery(resume)
+            #expect(await environment.transport.waitForSentMessage {
+                $0.text.contains("Resumed task graph") && $0.text.contains("old-work")
+            } != nil)
+            #expect(await Self.waitUntil {
+                environment.log.messages.contains("Resumed task graph old-work from a previous session.")
+            })
+            #expect(session.host.incarnation(in: session.slotID)?.sessionID == sessionID)
+            #expect(try store.load(sessionID: sessionID, workingDirectory: environment.workspace)?
+                .currentGraphID == "old-work")
+            #expect(try store.load(sessionID: "old-session", workingDirectory: environment.workspace) == nil)
+
+            mode.stop.yield(.terminate)
+            #expect(await mode.task.value == 0)
+        }
+    }
+
+    /// A stop while the startup menu waits withdraws it and ends the mode
+    /// cleanly: the graph stays where it was and nothing is resumed.
+    @Test
+    func aStopWhileTheStartupMenuWaitsIsACleanStop() async throws {
+        try await withEnvironment(persistsTaskGraphs: true) { environment in
+            try Self.seedEarlierSessionCheckpoint(in: environment)
+            guard let (mode, session) = try await Self.startedMode(in: environment) else { return }
+            #expect(await environment.transport.waitForSentMessage {
+                $0.text.hasPrefix(Self.resumeMenuTitle)
+            } != nil)
+            let channel = try #require(session.telegramChannel)
+            #expect(channel.pendingChoiceReader != nil)
+
+            mode.stop.yield(.interrupt)
+            #expect(await mode.task.value == 0)
+            #expect(Array(environment.log.messages.suffix(2)) == ["Stopping (SIGINT).", "Stopped."])
+            #expect(!environment.log.messages.contains { $0.hasPrefix("Resumed task graph") })
+            #expect(channel.pendingChoiceReader == nil)
+            let store = try #require(environment.taskGraphStore)
+            #expect(try store.load(sessionID: "old-session", workingDirectory: environment.workspace)?
+                .graphs.map(\.id) == ["old-work"])
         }
     }
 

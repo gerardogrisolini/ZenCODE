@@ -3,7 +3,7 @@
 //  ZenApp
 //
 //  The slash commands of an app window: the shared ones, with `/artifacts`
-//  run by the window, then `/telegram` and `/exit`.
+//  run by the window, then `/telegram`, `/voice`, and `/exit`.
 //
 
 import Foundation
@@ -52,6 +52,20 @@ public enum ZenAppCommands {
         generationActions: ["off"]
     )
 
+    /// `/voice`, which the window runs through the app's voice session, as
+    /// the terminal runs it: `on`, `off`, `pause`, `resume`, and bare
+    /// `/voice`, which pauses or resumes. Voice mode is one for the whole
+    /// app and follows the active window; the window that runs the command
+    /// becomes that window first. Always visible, and it runs while a prompt
+    /// is generating.
+    public static let voice = ChatCommandDescriptor(
+        command: "/voice",
+        summary: "voice mode on/off/pause/resume",
+        help: "/voice on starts voice mode with any agent in the app: utterances become prompts through local speech recognition and answers are read aloud (the app uses the system speech frameworks). Esc stops the reading. /voice off stops voice mode; /voice pause stops listening and reading aloud, /voice resume restarts both, and /voice alone toggles pause/resume. Voice mode lasts until the app quits.",
+        scope: .channel,
+        availableDuringGeneration: true
+    )
+
     /// The shared commands of a window, in their order, with the shared
     /// `/artifacts` replaced in place by ``artifacts``.
     static let sharedDescriptors: [ChatCommandDescriptor] = ChatCommandRegistry.sharedDescriptors.map { descriptor in
@@ -59,14 +73,15 @@ public enum ZenAppCommands {
     }
 
     /// The registry of every window: the shared commands (``artifacts`` in
-    /// place of the shared `/artifacts`), then `/telegram` and `/exit`.
+    /// place of the shared `/artifacts`), then `/telegram`, `/voice`, and
+    /// `/exit`.
     public static let registry = ChatCommandRegistry(
         shared: sharedDescriptors,
-        channel: [(after: "", descriptors: [telegram, exit])]
+        channel: [(after: "", descriptors: [telegram, voice, exit])]
     )
 
     /// Every command of ``registry``, in display order, hidden ones included.
-    public static let descriptors: [ChatCommandDescriptor] = sharedDescriptors + [telegram, exit]
+    public static let descriptors: [ChatCommandDescriptor] = sharedDescriptors + [telegram, voice, exit]
 
     /// The commands the operator sees in `context`, in display order.
     public static func visibleDescriptors(in context: ChatCommandContext) -> [ChatCommandDescriptor] {

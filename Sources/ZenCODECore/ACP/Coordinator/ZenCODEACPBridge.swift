@@ -169,6 +169,17 @@ public actor ZenCODEACPBridge {
     /// captured when the close starts, so a session re-created with the same
     /// id mid-drain cannot extend the close's wait with an unrelated prompt.
     private var promptHandlerDrainWaiters: [String: [(tokens: Set<UUID>, continuation: CheckedContinuation<Void, Never>)]] = [:]
+    /// The startup offers of the task graphs earlier sessions left
+    /// incomplete, by session id: at most one per `session/new`
+    /// incarnation, registered only when there is something to offer, and
+    /// removed when its task ends, when `session/close` cancels it, or by
+    /// `shutdown()`. Transient: nothing of it is persisted (see
+    /// `ZenCODEACPBridge+ResumeTaskGraph.swift`).
+    var resumableTaskGraphOffers: [String: ResumableTaskGraphOffer] = [:]
+    /// The `session/prompt` handlers waiting for their session's offer to
+    /// end, by prompt-handler token: a `session/cancel` of that incarnation
+    /// marks them, so they end as `cancelled` without starting a turn.
+    var promptsAwaitingResumableTaskGraphOffer: [UUID: ResumableTaskGraphOfferWait] = [:]
 
     public init(
         configuration: AgentConfiguration,
@@ -224,6 +235,10 @@ public actor ZenCODEACPBridge {
         // unwind instead of parking on a drain that will never resume it.
         let drainWaiters = promptHandlerDrainWaiters
         promptHandlerDrainWaiters.removeAll()
+        // Withdraw every startup offer of old task graphs: its pending
+        // `session/request_permission` returns (cancelled), so the offer ends
+        // as Start fresh and the prompts waiting for it wake up fenced.
+        let taskGraphOffers = cancelAllResumableTaskGraphOffers()
         let sessionIDs = Array(sessions.keys)
         let tasklessObservers = sessions.values.compactMap(\.tasklessObserver)
         for observer in tasklessObservers { observer.cancel() }
@@ -250,6 +265,7 @@ public actor ZenCODEACPBridge {
         // shutdown" true regardless of where in-flight work was parked.
         await writer.close()
         for observer in tasklessObservers { await observer.value }
+        for offer in taskGraphOffers { await offer.value }
         await permissionBroker.removeAllCachedDecisions()
         // The host ends every incarnation (its reservations are dead already:
         // no bridge entry names them) and shuts the runner down. Every

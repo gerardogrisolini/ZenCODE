@@ -29,7 +29,9 @@ import ToolCore
 /// moved onto it included, and its interaction host
 /// (`TelegramChannel+Consent.swift`) answers the controller's questions in the
 /// chat: tool consent with `/allow`, `/always` and `/deny`, a line of text
-/// with the next message, an attachment with the next document or image.
+/// with the next message, an attachment with the next document or image, and
+/// a single or multiple choice with an inline menu (`+ChoiceMenus`), during
+/// which any other message is answered with ``choicePendingText``.
 ///
 /// What Telegram asks of the session beyond prompts is answered here too:
 /// `/diff`, the artifact consent buttons and inbound attachments
@@ -236,6 +238,9 @@ public final class TelegramChannel: ChatInteractionHost {
     /// The question waiting for the next document or image of the chat, when
     /// the controller asked for an attachment.
     var pendingAttachmentReader: PendingReader<URL>?
+    /// The menu waiting for a tap, when the controller asked for a choice
+    /// (see `TelegramChannel+ChoiceMenus.swift`).
+    var pendingChoiceReader: PendingChoiceReader?
 
     /// A controller question answered by the next message of the chat.
     struct PendingReader<Answer: Sendable> {

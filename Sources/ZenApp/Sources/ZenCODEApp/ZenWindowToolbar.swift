@@ -28,6 +28,10 @@ enum ZenSessionCommand {
     static let undo = "/undo"
     static let review = "/review"
     static let help = "/help"
+    static let voiceOn = "/voice on"
+    static let voiceOff = "/voice off"
+    static let voicePause = "/voice pause"
+    static let voiceResume = "/voice resume"
 }
 
 /// The toolbar items of a window. The labels that show the status read it in

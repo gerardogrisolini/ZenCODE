@@ -651,10 +651,10 @@ struct TerminalVoiceChatLoopTests {
 
 /// A voice controller that listens forever, never speaks for real and records
 /// every text handed to it.
-private actor FakeVoiceController: TerminalVoiceController {
+private actor FakeVoiceController: VoiceModeController {
     struct Spoken: Sendable, Equatable {
         let text: String
-        let rendering: TerminalVoiceSpeechRendering
+        let rendering: VoiceModeSpeechRendering
     }
 
     nonisolated let languageCode = "it"
@@ -678,7 +678,7 @@ private actor FakeVoiceController: TerminalVoiceController {
         isStopped = true
     }
 
-    func speak(_ text: String, rendering: TerminalVoiceSpeechRendering) async -> Bool {
+    func speak(_ text: String, rendering: VoiceModeSpeechRendering) async -> Bool {
         guard !isStopped, !isPaused, !text.isEmpty else {
             return false
         }

@@ -87,9 +87,15 @@ enum ZenCODETelegramRunner {
     ///
     /// Telegram must be set up (paired) before anything else starts. The
     /// startup (``ZenCODETelegramSession/start()``) runs while the stop is
-    /// awaited: a stop that arrives first cancels it. A stop logs `Stopping
-    /// (<signal>).`, ends the session (``ZenCODETelegramSession/stop()``), and
-    /// logs `Stopped.`; a failed startup logs its error and ends the session.
+    /// awaited: a stop that arrives first cancels it. Once Telegram drives
+    /// the slot, the startup reports it (`didStart`) and then, in the same
+    /// task, offers in the chat the task graphs earlier sessions left
+    /// incomplete (``ZenCODETelegramSession/offerResumableTaskGraphs()``), so
+    /// neither `didStart` nor the stop waits for the operator's answer: a
+    /// stop cancels the startup task, which withdraws the menu. A stop logs
+    /// `Stopping (<signal>).`, ends the session
+    /// (``ZenCODETelegramSession/stop()``), and logs `Stopped.`; a failed
+    /// startup logs its error and ends the session.
     ///
     /// - Parameters:
     ///   - makeSessionRunner: Builds the runner with the default consent of
@@ -130,7 +136,9 @@ enum ZenCODETelegramRunner {
                 continuation.yield(.started)
             } catch {
                 continuation.yield(.startupFailed(error))
+                return
             }
+            await session.offerResumableTaskGraphs()
         }
         let stopForwarding = Task(name: "ZenCODE.Telegram.stop-signals") {
             for await signal in stopSignals {
@@ -288,11 +296,12 @@ final class ZenCODETelegramSession {
     /// menu, a missing choice is `modelSelectionRequired`), the `--skills`
     /// selection applied, the startup logged, the runtime session created
     /// with the selected skills, and the model preloaded, so a model that
-    /// cannot load fails here. No incomplete task graph is resumed and no
-    /// workspace access is asked: the primary host has no folder gate, so the
-    /// tools stay as the agent selected them. Then the slot's Telegram
-    /// channel is created with its notices going to the log, and attached;
-    /// the slot must end up driven by Telegram.
+    /// cannot load fails here. No workspace access is asked: the primary host
+    /// has no folder gate, so the tools stay as the agent selected them. Then
+    /// the slot's Telegram channel is created with its notices going to the
+    /// log, and attached; the slot must end up driven by Telegram. The task
+    /// graphs left incomplete by earlier sessions are offered afterwards, in
+    /// the chat (``offerResumableTaskGraphs()``).
     func start() async throws {
         guard let controller = host.incarnation(in: slotID)?.controller else {
             throw ChatSessionHostError.noSession
@@ -343,6 +352,27 @@ final class ZenCODETelegramSession {
         guard host.activeChannel(in: slotID) == .telegram, channel.isActive else {
             throw ZenCODETelegramRunnerError.notDrivenByTelegram
         }
+    }
+
+    /// Offers in the linked chat the task graphs that earlier sessions of the
+    /// project left incomplete, once Telegram drives the slot: the shared
+    /// offer of the controller (``ChatSessionController/offerResumableTaskGraphs(choiceHost:)``)
+    /// asks through the slot's interaction host, which is the Telegram
+    /// channel now, and a graph the operator resumes is moved into this
+    /// session, which keeps its id. Its notices then reach the chat through
+    /// the slot's presenter; the log only says which graph was resumed. A
+    /// stop withdraws the menu (the startup task is cancelled) and presents
+    /// nothing more.
+    func offerResumableTaskGraphs() async {
+        guard !isStopping, let controller = host.incarnation(in: slotID)?.controller else {
+            return
+        }
+        let outcome = await controller.offerResumableTaskGraphs()
+        guard !isStopping, !Task.isCancelled else { return }
+        if let graph = outcome.resumedGraph {
+            log.log("Resumed task graph \(graph.graphID) from a previous session.")
+        }
+        await controller.presentSessionNotices(outcome.notices)
     }
 
     /// Ends the session: from now on the channel's notices are no longer

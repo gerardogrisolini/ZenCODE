@@ -74,6 +74,22 @@ public extension AgentCoreSessionRunner {
         )
     }
 
+    /// Moves `graph` out of the checkpoint of the session that left it into
+    /// the session `sessionID` and makes it current there; see
+    /// ``SessionTaskOrchestrator/adoptResumableTaskGraph(_:intoSessionID:workingDirectory:)``.
+    @discardableResult
+    func adoptResumableTaskGraph(
+        _ graph: ResumableTaskGraph,
+        intoSessionID sessionID: String,
+        workingDirectory: URL
+    ) async throws -> TaskGraphSnapshot {
+        try await taskOrchestrator.adoptResumableTaskGraph(
+            graph,
+            intoSessionID: sessionID,
+            workingDirectory: workingDirectory
+        )
+    }
+
     @discardableResult
     func restoreTaskGraph(
         _ snapshot: TaskGraphSnapshot,

@@ -59,6 +59,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
   persisted; in full access `local.exec` and the destructive tools run without
   asking the authorization handler) and shows the terminal's message for it
   (see [Docs/embedding.md](Docs/embedding.md#full-access)).
+- `VoiceModeSession` is public, with `VoiceModeSessionHost`: it is the
+  terminal's voice mode for a host app, the `/voice` command with the
+  terminal's texts, the instruction sent with each prompt, the final answers
+  and comments read aloud, and the live shared-chat messages announced and
+  answered by voice. The terminal UI now runs on it, and its voice mode
+  behaves as before. One session serves the whole app, one microphone, and
+  follows the active window (`setHost(_:announcingMessagesSince:)`);
+  `VoiceModeSessionState` (on, paused, reading aloud) is published for a
+  status bar, and `init(makeController:)` runs a test `VoiceModeController`
+  that records nothing and asks for no permission (see
+  [Docs/embedding.md](Docs/embedding.md#voice-mode)).
 - Observable session state for host apps: `ChatSessionStateReducer` records
   what a session shows in one ordered log, with a sequence number per entry,
   and publishes a `ChatSessionSnapshot` (transcript, tool activity, the turn in
@@ -264,7 +275,7 @@ Release tags follow the strict `vX.Y.Z` contract described in
   terminal's input panel (`Enter send · Ctrl+G access · Ctrl+Y chat`, with
   `Enter queue` and `Esc stop` while a turn runs, and the suggestion keys
   while suggestions show).
-  `/setup`, `/voice`, `/feature`, `/cron`, `/ds4`, and `/tools logs` stay in
+  `/setup`, `/feature`, `/cron`, `/ds4`, and `/tools logs` stay in
   the terminal. See [Docs/app.md](Docs/app.md).
 - The shared chat in the macOS app. Each window follows the live chat room of
   its session. A `Chat` panel in the Chat tab, above the composer, shows the
@@ -310,6 +321,26 @@ Release tags follow the strict `vX.Y.Z` contract described in
   the slot's `TelegramChannel` without attaching it, so the app installs its
   `noticeSink` before the first `/telegram on`, and the second stops the turn
   from Telegram that the app adopted at `/telegram off`.
+- Voice mode in the macOS app: `/voice on`, `off`, `pause`, `resume`, and
+  bare `/voice` work as in the terminal, with its texts and the Voice mode
+  settings of `/setup`, also while a turn runs. One voice mode serves the
+  whole app and follows the active window: only that window gets the
+  dictation, shown live at the end of its draft after the typed text (an edit
+  turns it into ordinary text), reads its answers and its main agent's
+  comments aloud, announces its shared-chat messages for you, and sends voice
+  mode's instruction with its prompts. Switching windows keeps the words
+  already dictated as text in the previous draft, stops the reading, and drops
+  the live-chat question. Voice sends the whole draft as a typed line, and
+  text that reads as a command as a plain prompt. Esc in the Chat tab stops
+  the reading and never clears the draft, and the composer names `Esc stop
+  reading`; **Session > Voice Mode** and **Pause Voice** (**Resume Voice**)
+  run the commands, and every window's status bar shows a microphone, a
+  crossed-out microphone, or a waveform while voice mode listens, is paused,
+  or reads aloud. While Telegram drives a window, it refuses `/voice` and what
+  voice sends. macOS usually asks for the Microphone and Speech Recognition
+  permissions on behalf of the app that started ZenCODE, such as the terminal
+  for `zen --ui`. Voice mode is never saved and stops when the app quits. See
+  [Docs/app.md](Docs/app.md#voice).
 - `SharedChatMessageLabel`, a public type of `Chat/Contracts` that builds the
   route label of a live shared-chat message: `timestamp(_:timeZone:)` formats
   the send time as `HH:mm:ss`, and `route(for:participantMap:timeZone:)`
@@ -331,9 +362,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   mode never starts setup and never reads standard input or the terminal. The
   agent, model, skills, working directory, and limits come from the options
   (and the matching variables) and stay the same until the restart, so the
-  chat has no `/models`, `/agents`, or `/sessions`; incomplete task graphs are
-  not resumed at startup, and the conversation is not saved. Any error during
-  the startup ends the process with status 1, with no retry, so that a service
+  chat has no `/models`, `/agents`, or `/sessions`; the conversation is not
+  saved, and incomplete task graphs of earlier sessions are offered to the
+  linked chat at startup. Any error during the startup ends the process with
+  status 1, with no retry, so that a service
   manager such as systemd restarts it; once the link is up, the long polling
   retries by itself with waits of up to 60 seconds, and the persistent
   problems (an invalid token, another process using the same bot) are logged.
@@ -477,6 +509,30 @@ Release tags follow the strict `vX.Y.Z` contract described in
   combined, and `zen` answers `Options X and Y cannot be combined.` Before,
   only `--acp` and the headless options excluded each other. Repeating the same
   mode option is allowed. `zen --ui` also refuses `--tui` and `--telegram`.
+- Incomplete task graphs from earlier sessions are now offered at startup in
+  every mode, not only in the terminal UI, as the menu **Open tasks from
+  previous sessions** (one entry per graph, then **Delete old tasks…** and
+  **Start fresh**). `zen --telegram` sends the linked chat the menu with inline
+  buttons once Telegram is linked: a tap on a graph resumes it, **Delete old
+  tasks…** lists toggles with **Done**, and any other message is answered
+  `Choose an option from the menu above.` while the menu is open. `zen --acp`
+  asks after each `session/new` reply, through `session/request_permission`,
+  with one option per graph, **Delete all old tasks** (ACP has no multiple
+  selection, so it deletes every listed graph), and **Start fresh**; a
+  `session/prompt` sent meanwhile waits for the answer. Every new window of the
+  macOS app offers the menu, leaving out a graph that another open window
+  already resumed. The terminal menu looks and behaves as before, apart from
+  the reworded detail of **Delete old tasks…**. Resuming no longer reuses the id
+  of the old session: the chosen graph is moved into the current session, which
+  keeps its id, and is removed from the old checkpoint only after the current
+  session's checkpoint holds it, so it is never lost (at worst it is offered
+  again at the next startup); the old session's other graphs stay. A resumed
+  `/goal` workflow continues on the same graph with the next message. The
+  Telegram channel now implements generic single and multiple choice menus, so
+  the menus of shared commands that answered in Telegram with a non-interactive
+  notice now show inline menus. For code that integrates `ZenCODECore`, the
+  shared flow is `ChatSessionController.offerResumableTaskGraphs(choiceHost:)`.
+  See [Docs/zen.md](Docs/zen.md#recovering-incomplete-tasks-at-startup).
 
 ### Fixed
 

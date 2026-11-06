@@ -25,9 +25,9 @@ enum TelegramLineAction: Sendable, Equatable {
 
 /// The Telegram ingress: owner authorization, callbacks, the busy gate,
 /// ForceReply for a bare menu command, replies to forwarded cards, the
-/// questions of the controller waiting for the next message, admission to the
-/// channel's prompt queue, and the remote commands a line carries when it
-/// runs.
+/// questions of the controller waiting for the next message or for a tap on
+/// its menu, admission to the channel's prompt queue, and the remote commands
+/// a line carries when it runs.
 extension TelegramChannel {
     // MARK: - Texts
 
@@ -165,10 +165,18 @@ extension TelegramChannel {
     ///
     /// A question of the controller waiting for the next message takes a
     /// text message (``readLine(prompt:)``) or a document or image
-    /// (``pickAttachment(startingAt:)``) before anything else. While the
-    /// session generates, only permission replies, `/status`, `/chat`, the
-    /// slash forms of `/help` and `/changes`, the mention picker taps, the
-    /// artifact consent taps, and the live shared-chat text lines (a live
+    /// (``pickAttachment(startingAt:)``) before anything else. A menu of the
+    /// controller (``chooseOne(title:items:selectedID:)``,
+    /// ``chooseMany(title:items:selectedIDs:)``) takes its taps, which go to
+    /// ``handleChoiceMenuCallback(_:chatID:messageID:lease:)``
+    /// (`TelegramChannel+ChoiceMenus.swift`) after the artifact consent taps
+    /// and before the busy gate; while it waits, every other text, command,
+    /// attachment, or voice note that is not a permission reply is answered
+    /// with ``choicePendingText`` and does not run. While the session
+    /// generates, only permission replies, `/status`, `/chat`, the slash
+    /// forms of `/help` and `/changes`, the mention picker taps, the artifact
+    /// consent taps, the controller menu taps, and the live shared-chat text
+    /// lines (a live
     /// `@mention`, a reply to an answerable card such as the picker's; see
     /// ``handleLiveSharedChatLineWhileBusy(_:message:lease:)``) are
     /// answered; everything else, `/sessions` `/models` `/think` `/agents`
@@ -221,6 +229,15 @@ extension TelegramChannel {
             ) {
                 return false
             }
+            // A controller menu may wait while a turn runs: its taps pass the
+            // busy gate.
+            if callbackData.hasPrefix(Self.choiceMenuCallbackPrefix) {
+                await handleChoiceMenuCallback(
+                    callbackData, chatID: message.chatID,
+                    messageID: message.messageID, lease: routeLease
+                )
+                return false
+            }
             guard !isSessionGenerating
                 || callbackData.hasPrefix(Self.mentionPickerCallbackPrefix) else {
                 await sendBusyMessage(lease: routeLease)
@@ -250,6 +267,22 @@ extension TelegramChannel {
            !text.isEmpty,
            TerminalTelegramPermissionBroker.permissionCommand(from: text) != nil,
            await handlePermissionReplyIfNeeded(text, lease: routeLease) {
+            return false
+        }
+        // A controller menu waiting for a tap takes precedence over every
+        // other message, a permission reply excepted: nothing else runs
+        // until it is answered.
+        if pendingChoiceReader != nil {
+            let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !text.isEmpty || message.attachment != nil || message.voice != nil else {
+                return false
+            }
+            if !isSessionGenerating, message.attachment == nil, message.voice == nil,
+               TerminalTelegramPermissionBroker.permissionCommand(from: text) != nil,
+               await handlePermissionReplyIfNeeded(text, lease: routeLease) {
+                return false
+            }
+            await sendSystemMessageIfLinked(Self.choicePendingText, lease: routeLease)
             return false
         }
         // A question of the controller takes the next message before the

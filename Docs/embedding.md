@@ -932,6 +932,80 @@ What happens at the handover:
 - An *Always* given in the chat is recorded in the slot's consent authorizer
   and covers the session on every channel afterwards.
 
+## Voice Mode
+
+`VoiceModeSession` (in `Voice/Mode`) is the terminal's voice mode for an app
+(see [Docs/voice.md](voice.md#voice-mode-in-the-terminal)): the `/voice`
+command with the terminal's texts, dictation into prompts, the final answers
+and the main agent's comments read aloud, and the live shared-chat messages
+for the operator announced, read, and answered by voice. It is
+`@ChatSessionActor`, like the host, and its initializers are `nonisolated`.
+`VoiceModeSession()` runs this platform's controller, created from the
+settings at each `/voice on`; `init(makeController:)` takes a factory instead,
+so the app's tests run a `VoiceModeController` of their own that records
+nothing and asks for no permission: the factory receives the session's
+`VoiceModeCallbacks` and returns `.ready(controller)` (or `.unavailable` with
+the text to show).
+
+One session drives one microphone: create one for the whole app and point it
+at the active window with `setHost(_:announcingMessagesSince:)`. A new host
+stops the reading, drops the live-chat question and the queued
+announcements, announces only messages sent from the given instant on, and,
+while voice mode runs, tells the previous host `voiceModeDidStop()` and the
+new one `voiceModeDidStart()`. For another session or room in the same
+window, call `targetDidChange(announcingMessagesSince:)`: it stops the
+reading, drops the live-chat question and the queued announcements, and
+announces only messages sent from the given instant on, without changing the
+host and without calling `voiceModeDidStop()` or `voiceModeDidStart()`. The
+session holds its host weakly.
+
+```swift
+@ChatSessionActor
+final class AppVoice {
+    let session = VoiceModeSession()
+
+    /// The window that became active, its observation started at `since`.
+    func activate(_ window: some VoiceModeSessionHost, observingSince since: Date) async {
+        await session.setHost(window, announcingMessagesSince: since)
+    }
+}
+```
+
+The host, `VoiceModeSessionHost`, is the window. Its isolated requirements
+run on the chat actor and return quickly: the texts (`Voice: off.` and the
+others, each ending with a newline), the dictation it sends by its own rules
+(`VoiceModeDictatedInput`: `.line` as if typed, `.plainPrompt` for text that
+starts with `/`, never run as a command; admission and the prompt queue are
+the window's), and its shared chat (participants, unread state, marking a
+message read, whether a destination is still active, the publication of a
+live message). Its `nonisolated` requirements are called from the
+controller's context, also while the window awaits the session: the preview
+of a dictation and its take from the draft, and the three deliveries, which
+put an utterance, a speaking change, or an answer-deadline token into the
+window's serialized context. From there, one at a time and in order, the
+window hands them back:
+
+- `handleUtterance(_:)`, `speakingChanged(_:)`, and
+  `answerDeadlineElapsed(_:)` for what it delivered;
+- `handleSharedChatMessages(_:)` with the new messages of its room;
+- `speakCommentary(_:duringTurn:)` with the text presented before a tool call
+  (`presentToolCallStarted(_:)`), read only while the turn runs, nothing else
+  is read, and no question is pending;
+- `turnDidEnd(finalAnswer:)` when a turn ends, with the answer the window
+  presented, or `nil`;
+- `interruptPlayback()` for `Esc`.
+
+`handleCommand(_:)` runs a whole `/voice …` line. Pass `turnInstruction()` as
+the `turnInstructionProvider` of each `ChatTurnRequest`: it is the voice
+instruction while voice mode listens, `nil` otherwise. Call
+`dictationEnded(through:)` (from any context) when an edit, or the switch to
+another window, turns a dictation preview into ordinary text. `state`
+(`VoiceModeSessionState`: `isOn`, `isPaused`, `isSpeaking`) is what a status
+bar shows and what `Esc` stops; `stateUpdates()` returns a stream that starts
+with it and keeps only the newest change not yet delivered. A spoken question
+waits `answerTimeout` (60 seconds) for its answer. Nothing of voice mode is
+persisted.
+
 ## Full Access
 
 The terminal's Ctrl+G switches the runner between two access modes
@@ -980,10 +1054,11 @@ switch.
   destructive direct tools) with a diagnostic.
 - **Channel commands.** `/setup`, `/voice`, `/ds4`, the optional features
   (`/feature`), ZenCRON, and `/cron` are commands of the terminal channel,
-  outside the API. With the default `commandRegistry`
-  (`ChatCommandRegistry.sharedDescriptors`) those lines answer as unknown
-  commands, and `/tools logs` answers `.channelCommand`. The Chat layer
-  starts no process.
+  outside the API; an app runs `/voice` lines through its own
+  `VoiceModeSession` (see [Voice Mode](#voice-mode)). With the default
+  `commandRegistry` (`ChatCommandRegistry.sharedDescriptors`) those lines
+  answer as unknown commands, and `/tools logs` answers `.channelCommand`.
+  The Chat layer starts no process.
 
 ## Compatibility
 
@@ -1024,7 +1099,12 @@ it comprises:
   `activeChannel(in:)`, `telegramChannel(in:)`,
   `telegramChannelCreatingIfNeeded(in:primaryChannelDescription:)`,
   `stopTelegramTurnIfReserved(_:in:)`, and `admitLine(_:in:)`; the
-  channel's `stoppedNoticeText`.
+  channel's `stoppedNoticeText`;
+- voice mode, in `Voice/Mode`: `VoiceModeSession` with
+  `VoiceModeSessionHost`, `VoiceModeSessionState`, and
+  `VoiceModeDictatedInput`, and the controller contract its factory uses
+  (`VoiceModeController`, `VoiceModeCallbacks`, `VoiceModeUtterance`,
+  `VoiceModeSpeechRendering`, and `VoiceModeControllerCreation`).
 
 The rules:
 

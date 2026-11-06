@@ -25,6 +25,26 @@ public struct ZenComposerQueuedItem: Identifiable, Equatable, Sendable {
     }
 }
 
+/// The latest change the owner made to the draft itself, not typed in the
+/// field (in the app, the voice dictation previewed at the end of the
+/// draft). After each new one the composer moves its cursor where the
+/// owner says (``ZenComposerActions/cursorAfterDraftUpdate``).
+public struct ZenComposerDraftUpdate: Equatable, Sendable {
+    /// Grows with every change; 0 before the first.
+    public let revision: Int
+    /// The identity of the text the owner shows at the end of the draft
+    /// now (the dictation's preview); `nil` without one.
+    public let regionID: UInt64?
+
+    /// No change yet.
+    public static let none = ZenComposerDraftUpdate(revision: 0, regionID: nil)
+
+    public init(revision: Int, regionID: UInt64?) {
+        self.revision = revision
+        self.regionID = regionID
+    }
+}
+
 /// A key of the shared-chat reader, as the terminal maps it while its reader
 /// is open: ← and → move between messages, Home and End go to the first and
 /// the last one, ↑ and ↓ scroll the message shown.
@@ -74,6 +94,18 @@ public struct ZenComposerActions {
     /// history nor moves the suggestion highlight; `false` (the default)
     /// leaves the key its ordinary meaning.
     public var readerKey: @MainActor (ZenReaderKey) -> Bool
+    /// Where the cursor goes, in characters, once the owner changed the
+    /// draft itself (``ZenComposer``'s `draftUpdate` went from the first
+    /// update to the second, maybe skipping some in one render): from the
+    /// cursor before the change and the number of characters of the draft
+    /// after it, both in characters. The default keeps the cursor, clamped
+    /// to the draft.
+    public var cursorAfterDraftUpdate: @MainActor (
+        _ cursor: Int,
+        _ from: ZenComposerDraftUpdate,
+        _ to: ZenComposerDraftUpdate,
+        _ draftCount: Int
+    ) -> Int
 
     public init(
         submit: @escaping @MainActor () -> Void = {},
@@ -84,7 +116,10 @@ public struct ZenComposerActions {
         historyNext: @escaping @MainActor () -> Bool = { false },
         removeQueued: @escaping @MainActor (UUID) -> Void = { _ in },
         refreshMentions: @escaping @MainActor () -> Void = {},
-        readerKey: @escaping @MainActor (ZenReaderKey) -> Bool = { _ in false }
+        readerKey: @escaping @MainActor (ZenReaderKey) -> Bool = { _ in false },
+        cursorAfterDraftUpdate: @escaping @MainActor (
+            Int, ZenComposerDraftUpdate, ZenComposerDraftUpdate, Int
+        ) -> Int = { cursor, _, _, draftCount in min(cursor, draftCount) }
     ) {
         self.submit = submit
         self.stop = stop
@@ -95,6 +130,7 @@ public struct ZenComposerActions {
         self.removeQueued = removeQueued
         self.refreshMentions = refreshMentions
         self.readerKey = readerKey
+        self.cursorAfterDraftUpdate = cursorAfterDraftUpdate
     }
 }
 
@@ -128,9 +164,14 @@ public struct ZenComposerActions {
 ///   not consume keeps its ordinary meaning, and so does any key with Shift,
 ///   Option, Command or Control. An input method composing keeps priority.
 ///
+/// When the owner changes the draft itself (`draftUpdate`, the app's voice
+/// dictation), the cursor goes where the owner says
+/// (``ZenComposerActions/cursorAfterDraftUpdate``); a selection the move
+/// leaves in place stays whole.
+///
 /// Under the field, inside the container, a line names the keys that do
 /// something now, as the terminal's input panel does
-/// (``ZenComposerLogic/keyHint(isBusy:hasSuggestions:)``).
+/// (``ZenComposerLogic/keyHint(isBusy:isSpeaking:hasSuggestions:)``).
 ///
 /// Prompts submitted while busy are queued by the owner, so Send stays
 /// available next to Stop when the draft is not empty.
@@ -143,10 +184,12 @@ public struct ZenComposer: View {
 
     @Binding private var draft: String
     private let isBusy: Bool
+    private let isSpeaking: Bool
     private let isEnabled: Bool
     private let commands: [ChatCommandDescriptor]
     private let mentions: [SharedChatMentionParser.Suggestion]
     private let queued: [ZenComposerQueuedItem]
+    private let draftUpdate: ZenComposerDraftUpdate?
     private let externalFocus: FocusState<Bool>.Binding?
     private let monospaced: Bool
     private let usesGlassContainer: Bool
@@ -172,6 +215,8 @@ public struct ZenComposer: View {
     /// - Parameters:
     ///   - draft: The text being composed, owned by the caller.
     ///   - isBusy: A prompt is generating: Stop shows.
+    ///   - isSpeaking: Voice mode reads aloud and Esc stops it: the key hint
+    ///     names it while nothing generates.
     ///   - isEnabled: `false` disables the field, attach and Send (Stop stays
     ///     available while busy).
     ///   - commands: The slash commands the operator can run, in display order.
@@ -179,6 +224,8 @@ public struct ZenComposer: View {
     ///     active agents), in display order; refreshed by the owner on
     ///     ``ZenComposerActions/refreshMentions``.
     ///   - queued: The prompts waiting in the queue.
+    ///   - draftUpdate: The latest change the owner made to the draft itself;
+    ///     `nil` when it makes none.
     ///   - focus: The caller's focus binding of the field; `nil` uses an
     ///     internal one that focuses the field when it appears.
     ///   - monospaced: Draws the draft in the monospaced font.
@@ -189,10 +236,12 @@ public struct ZenComposer: View {
     public init(
         draft: Binding<String>,
         isBusy: Bool,
+        isSpeaking: Bool = false,
         isEnabled: Bool = true,
         commands: [ChatCommandDescriptor] = [],
         mentions: [SharedChatMentionParser.Suggestion] = [],
         queued: [ZenComposerQueuedItem] = [],
+        draftUpdate: ZenComposerDraftUpdate? = nil,
         focus: FocusState<Bool>.Binding? = nil,
         monospaced: Bool = false,
         usesGlassContainer: Bool = true,
@@ -200,10 +249,12 @@ public struct ZenComposer: View {
     ) {
         self._draft = draft
         self.isBusy = isBusy
+        self.isSpeaking = isSpeaking
         self.isEnabled = isEnabled
         self.commands = commands
         self.mentions = mentions
         self.queued = queued
+        self.draftUpdate = draftUpdate
         self.externalFocus = focus
         self.monospaced = monospaced
         self.usesGlassContainer = usesGlassContainer
@@ -230,6 +281,9 @@ public struct ZenComposer: View {
                 ) {
                     actions.refreshMentions()
                 }
+            }
+            .onChange(of: followedDraft) { old, new in
+                followDraftUpdate(from: old, to: new)
             }
             .onAppear {
                 if externalFocus == nil {
@@ -285,7 +339,11 @@ public struct ZenComposer: View {
                     field
                     trailingButtons
                 }
-                keyHint(ZenComposerLogic.keyHint(isBusy: isBusy, hasSuggestions: hasSuggestions))
+                keyHint(ZenComposerLogic.keyHint(
+                    isBusy: isBusy,
+                    isSpeaking: isSpeaking,
+                    hasSuggestions: hasSuggestions
+                ))
             }
         }
         .padding(.horizontal, 10)
@@ -506,6 +564,43 @@ public struct ZenComposer: View {
         let cursor: Int?
     }
 
+    /// The draft, the selection in it, and the owner's latest change to it,
+    /// observed together: when the change is new, the selection of the draft
+    /// before it is the one the cursor moves from
+    /// (``followDraftUpdate(from:to:)``).
+    private var followedDraft: FollowedDraft {
+        FollowedDraft(
+            draft: draft,
+            selection: ZenComposerLogic.selectionOffsets(in: draft, selection: selectedRange),
+            update: draftUpdate
+        )
+    }
+
+    /// A draft, the selection in it in characters (`nil`: the end of the
+    /// draft), and the owner's latest change.
+    private struct FollowedDraft: Equatable {
+        let draft: String
+        let selection: Range<Int>?
+        let update: ZenComposerDraftUpdate?
+    }
+
+    /// The owner changed the draft itself: the cursor moves where it says,
+    /// from where it was in the draft before the change.
+    private func followDraftUpdate(from old: FollowedDraft, to new: FollowedDraft) {
+        guard let update = new.update else { return }
+        let previous = old.update ?? .none
+        guard update.revision != previous.revision else { return }
+        let draftCount = new.draft.count
+        let followed = ZenComposerLogic.followedSelection(
+            old.selection,
+            previousDraftCount: old.draft.count,
+            draftCount: draftCount
+        ) { cursor in
+            actions.cursorAfterDraftUpdate(cursor, previous, update, draftCount)
+        }
+        selection = ZenComposerLogic.textSelection(followed, in: draft)
+    }
+
     // MARK: - Keys
 
     private func handleReturn(modifiers: EventModifiers) -> KeyPress.Result {
@@ -666,18 +761,22 @@ public enum ZenComposerLogic {
     struct KeyHint: Equatable {
         /// The whole hint.
         let full: String
-        /// The hint when the whole one does not fit (`Esc stop` ahead of the
-        /// other keys, as the terminal's compact help); `nil` when the whole
-        /// one is the only form.
+        /// The hint when the whole one does not fit (`Esc stop` or
+        /// `Esc stop reading` ahead of the other keys, as the terminal's
+        /// compact help); `nil` when the whole one is the only form.
         let compact: String?
     }
 
     /// The hint for the composer's state:
-    /// - with suggestions on screen, their keys (Esc hides them, busy or not);
-    /// - while busy, Return queues and Esc stops the turn;
+    /// - with suggestions on screen, their keys (Esc hides them, busy,
+    ///   reading aloud, or not);
+    /// - while busy, Return queues and Esc stops the turn, the reading aloud
+    ///   too, as in the terminal, where the turn's help wins;
+    /// - while voice mode reads aloud (`isSpeaking`), Return sends and Esc
+    ///   stops the reading;
     /// - otherwise Return sends, and Esc, which has nothing to stop and does
     ///   not clear the draft, is not listed.
-    static func keyHint(isBusy: Bool, hasSuggestions: Bool) -> KeyHint {
+    static func keyHint(isBusy: Bool, isSpeaking: Bool, hasSuggestions: Bool) -> KeyHint {
         if hasSuggestions {
             return KeyHint(full: "↑/↓ select · Tab complete · Enter choose · Esc dismiss", compact: nil)
         }
@@ -685,6 +784,12 @@ public enum ZenComposerLogic {
             return KeyHint(
                 full: "Enter queue · Ctrl+G access · Ctrl+Y chat · Esc stop",
                 compact: "Enter queue · Esc stop · Ctrl+G access · Ctrl+Y chat"
+            )
+        }
+        if isSpeaking {
+            return KeyHint(
+                full: "Enter send · Ctrl+G access · Ctrl+Y chat · Esc stop reading",
+                compact: "Enter send · Esc stop reading · Ctrl+G access · Ctrl+Y chat"
             )
         }
         return KeyHint(full: "Enter send · Ctrl+G access · Ctrl+Y chat", compact: nil)
@@ -754,6 +859,53 @@ public enum ZenComposerLogic {
             return nil
         }
         return text.distance(from: text.startIndex, to: selection.lowerBound)
+    }
+
+    /// The selection of `selection` in `text`, in characters; `nil` without
+    /// one, or for an index outside `text` (a selection left over from an
+    /// older draft).
+    static func selectionOffsets(in text: String, selection: Range<String.Index>?) -> Range<Int>? {
+        guard let selection,
+              selection.lowerBound >= text.startIndex,
+              selection.upperBound <= text.endIndex else {
+            return nil
+        }
+        let lower = text.distance(from: text.startIndex, to: selection.lowerBound)
+        return lower..<(lower + text.distance(from: selection.lowerBound, to: selection.upperBound))
+    }
+
+    /// The selection, in characters, once the owner changed the draft
+    /// itself: the cursor (the end of `selection`; without one, the end of
+    /// the draft before the change, `previousDraftCount` characters) goes
+    /// where `place` puts it, clamped to the draft, now `draftCount`
+    /// characters. A selection whose end `place` leaves where it was stays
+    /// whole.
+    static func followedSelection(
+        _ selection: Range<Int>?,
+        previousDraftCount: Int,
+        draftCount: Int,
+        place: (Int) -> Int
+    ) -> Range<Int> {
+        let range = selection ?? previousDraftCount..<previousDraftCount
+        let cursor = range.upperBound
+        let target = min(max(place(cursor), 0), draftCount)
+        guard target != cursor else { return range }
+        return target..<target
+    }
+
+    /// The index `characterOffset` characters into `text`, clamped to it. A
+    /// character is a `Character`: an emoji or an accented letter is one,
+    /// however many UTF-16 units the field counts for it.
+    static func index(in text: String, characterOffset: Int) -> String.Index {
+        text.index(text.startIndex, offsetBy: min(max(characterOffset, 0), text.count))
+    }
+
+    /// The field's selection of `offsets`, characters of `text`: string
+    /// indices, which the field maps to its UTF-16 range.
+    static func textSelection(_ offsets: Range<Int>, in text: String) -> TextSelection {
+        let lower = index(in: text, characterOffset: offsets.lowerBound)
+        let upper = index(in: text, characterOffset: offsets.upperBound)
+        return lower == upper ? TextSelection(insertionPoint: lower) : TextSelection(range: lower..<upper)
     }
 
     /// What Return does in the field.

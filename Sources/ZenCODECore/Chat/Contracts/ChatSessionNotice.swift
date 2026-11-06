@@ -344,6 +344,21 @@ public enum ChatSessionNotice: Sendable, Equatable {
     /// The task graphs of the session were cleared (`handleTasksCommand`).
     case taskGraphsCleared
 
+    // MARK: - Task graphs from previous sessions
+
+    /// A graph an earlier session left incomplete was adopted into this
+    /// session at startup (`writeResumedTaskGraphNotice`). `isWorkflow` is a
+    /// `/goal` graph that is not terminal, which the next message continues.
+    case taskGraphResumed(graphID: String, pendingTaskCount: Int, isWorkflow: Bool)
+    /// The chosen graph could not be adopted, so the menu is offered again
+    /// (`applyResumableTaskGraphSessionIfNeeded`).
+    case taskGraphResumeFailed(graphID: String, description: String)
+    /// The obsolete graphs the operator chose were deleted from the
+    /// checkpoints of the earlier sessions (`deleteOldResumableTaskGraphs`).
+    case oldTaskGraphsDeleted(count: Int)
+    /// Deleting the obsolete graphs failed (`deleteOldResumableTaskGraphs`).
+    case oldTaskGraphsDeleteFailed(description: String)
+
     // MARK: - /changes, /undo, and /artifacts
 
     /// No file change is tracked (`handleChangesCommand`).
@@ -528,6 +543,10 @@ public enum ChatSessionNotice: Sendable, Equatable {
              .taskRetried,
              .taskCancelled,
              .taskGraphsCleared,
+             .taskGraphResumed,
+             .taskGraphResumeFailed,
+             .oldTaskGraphsDeleted,
+             .oldTaskGraphsDeleteFailed,
              .noTrackedFileChanges,
              .fileChangeSummary,
              .fileChangesReverted,

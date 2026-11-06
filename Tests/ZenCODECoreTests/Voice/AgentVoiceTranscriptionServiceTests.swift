@@ -67,7 +67,7 @@ struct AgentVoiceTranscriptionServiceTests {
                 == "The speech recognition model for it_IT could not be downloaded (offline). Check the network connection and send the voice message again."
         )
         #expect(
-            TerminalDictationError.speechModelDownloadFailed("it_IT", "offline").localizedDescription
+            VoiceDictationError.speechModelDownloadFailed("it_IT", "offline").localizedDescription
                 == "The speech recognition model for it_IT could not be downloaded (offline). Check the network connection and run /voice on again."
         )
     }

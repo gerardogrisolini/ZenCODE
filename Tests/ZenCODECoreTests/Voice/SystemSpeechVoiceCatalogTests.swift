@@ -114,8 +114,8 @@ struct SystemSpeechVoiceCatalogTests {
     @MainActor
     @Test
     func speakerFallsBackToTheAutomaticVoice() {
-        let automatic = TerminalVoiceSpeaker.preferredVoice(localeIdentifier: "it_IT", readingVoiceIdentifier: nil)
-        let missing = TerminalVoiceSpeaker.preferredVoice(
+        let automatic = VoiceSpeaker.preferredVoice(localeIdentifier: "it_IT", readingVoiceIdentifier: nil)
+        let missing = VoiceSpeaker.preferredVoice(
             localeIdentifier: "it_IT",
             readingVoiceIdentifier: "com.zencode.tests.missing-voice"
         )
@@ -123,14 +123,14 @@ struct SystemSpeechVoiceCatalogTests {
 
         let installed = SystemSpeechVoiceCatalog.installedVoices()
         if let otherLanguage = installed.first(where: { SystemSpeechVoiceCatalog.languageCode(of: $0.language) != "it" }) {
-            let ignored = TerminalVoiceSpeaker.preferredVoice(
+            let ignored = VoiceSpeaker.preferredVoice(
                 localeIdentifier: "it_IT",
                 readingVoiceIdentifier: otherLanguage.identifier
             )
             #expect(ignored?.identifier == automatic?.identifier)
         }
         if let italian = SystemSpeechVoiceCatalog.voices(installed, forLocale: "it-IT").last {
-            let saved = TerminalVoiceSpeaker.preferredVoice(
+            let saved = VoiceSpeaker.preferredVoice(
                 localeIdentifier: "it_IT",
                 readingVoiceIdentifier: italian.identifier
             )

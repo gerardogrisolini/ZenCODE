@@ -1,5 +1,5 @@
 //
-//  TerminalDictationVoiceTests.swift
+//  DictationVoiceModeTests.swift
 //  ZenCODECoreTests
 //
 
@@ -7,26 +7,26 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
-@Suite("Terminal dictation voice")
-struct TerminalDictationVoiceTests {
+@Suite("Dictation voice mode")
+struct DictationVoiceModeTests {
     @Test
     func voiceSubcommandsParseCaseInsensitively() {
-        #expect(TerminalVoiceCommandAction(argument: "") == .togglePause)
-        #expect(TerminalVoiceCommandAction(argument: "  ") == .togglePause)
-        #expect(TerminalVoiceCommandAction(argument: "on") == .turnOn)
-        #expect(TerminalVoiceCommandAction(argument: " ON ") == .turnOn)
-        #expect(TerminalVoiceCommandAction(argument: "off") == .turnOff)
-        #expect(TerminalVoiceCommandAction(argument: "Pause") == .pause)
-        #expect(TerminalVoiceCommandAction(argument: "resume") == .resume)
-        #expect(TerminalVoiceCommandAction(argument: "start") == .usage)
-        #expect(TerminalVoiceCommandAction(argument: "on now") == .usage)
-        #expect(TerminalVoiceCommandAction.usageMessage == "Usage: /voice [on|off|pause|resume]\n")
+        #expect(VoiceModeCommandAction(argument: "") == .togglePause)
+        #expect(VoiceModeCommandAction(argument: "  ") == .togglePause)
+        #expect(VoiceModeCommandAction(argument: "on") == .turnOn)
+        #expect(VoiceModeCommandAction(argument: " ON ") == .turnOn)
+        #expect(VoiceModeCommandAction(argument: "off") == .turnOff)
+        #expect(VoiceModeCommandAction(argument: "Pause") == .pause)
+        #expect(VoiceModeCommandAction(argument: "resume") == .resume)
+        #expect(VoiceModeCommandAction(argument: "start") == .usage)
+        #expect(VoiceModeCommandAction(argument: "on now") == .usage)
+        #expect(VoiceModeCommandAction.usageMessage == "Usage: /voice [on|off|pause|resume]\n")
     }
 
     @Test
     func anUtteranceEndsAfterTheSilenceGap() {
         let start = ContinuousClock.now
-        var segmenter = TerminalDictationSegmenter()
+        var segmenter = VoiceDictationSegmenter()
         #expect(segmenter.silence == .milliseconds(5_000))
         #expect(!segmenter.isUtteranceComplete(at: start))
 
@@ -44,7 +44,7 @@ struct TerminalDictationVoiceTests {
 
     @Test
     func theSendKeywordIsRecognisedOnlyAtTheEndAsWholeWords() throws {
-        let keyword = try #require(TerminalVoiceSendKeyword(" Vai! "))
+        let keyword = try #require(VoiceModeSendKeyword(" Vai! "))
         #expect(keyword.text == "Vai!")
         #expect(keyword.words == ["vai"])
         #expect(keyword.textBeforeKeyword(in: "Cerca il file, vai") == "Cerca il file")
@@ -55,28 +55,28 @@ struct TerminalDictationVoiceTests {
         #expect(keyword.textBeforeKeyword(in: "parla del vaiolo vai") == "parla del vaiolo")
         #expect(keyword.textBeforeKeyword(in: "") == nil)
         // Accents and case do not matter; a phrase is matched word by word.
-        let accented = try #require(TerminalVoiceSendKeyword("così"))
+        let accented = try #require(VoiceModeSendKeyword("così"))
         #expect(accented.textBeforeKeyword(in: "fatto COSI") == "fatto")
-        let phrase = try #require(TerminalVoiceSendKeyword("va bene"))
+        let phrase = try #require(VoiceModeSendKeyword("va bene"))
         #expect(phrase.textBeforeKeyword(in: "procedi, va bene") == "procedi")
         #expect(phrase.textBeforeKeyword(in: "procedi bene") == nil)
-        #expect(TerminalVoiceSendKeyword("...") == nil)
-        #expect(TerminalVoiceSendKeyword("") == nil)
+        #expect(VoiceModeSendKeyword("...") == nil)
+        #expect(VoiceModeSendKeyword("") == nil)
         #expect(keyword.utteranceToSend(pending: "prima parte", speech: "seconda parte vai") == "prima parte seconda parte")
         #expect(keyword.utteranceToSend(pending: "prima parte", speech: "seconda parte") == nil)
-        #expect(TerminalVoiceSendKeyword.joined("  ", "solo") == "solo")
+        #expect(VoiceModeSendKeyword.joined("  ", "solo") == "solo")
     }
 
     @Test
     func theSendKeywordEndsMultiLineSpeechAndKeepsItsInnerNewlines() throws {
-        let keyword = try #require(TerminalVoiceSendKeyword("vai"))
+        let keyword = try #require(VoiceModeSendKeyword("vai"))
         #expect(keyword.textBeforeKeyword(in: "Cerca il file\nnella cartella Docs, vai") == "Cerca il file\nnella cartella Docs")
         // The keyword said as a segment of its own.
         #expect(keyword.textBeforeKeyword(in: "Cerca il file\nnella cartella Docs\nvai") == "Cerca il file\nnella cartella Docs")
         #expect(keyword.textBeforeKeyword(in: "Cerca il file\nvai a casa") == nil)
         #expect(keyword.utteranceToSend(pending: "prima parte", speech: "seconda\nparte, vai") == "prima parte seconda\nparte")
 
-        var segmenter = TerminalDictationSegmenter()
+        var segmenter = VoiceDictationSegmenter()
         let start = ContinuousClock.now
         segmenter.observe("Cerca il file", at: start, endsSegment: true)
         segmenter.observe("nella cartella Docs, vai", at: start + .seconds(3))
@@ -85,7 +85,7 @@ struct TerminalDictationVoiceTests {
 
     @Test
     func theKeywordCollectorSendsOnlyOnTheKeywordOrABareAnswerWhenAwaited() throws {
-        var collector = TerminalVoiceKeywordCollector(keyword: try #require(TerminalVoiceSendKeyword("vai")))
+        var collector = VoiceKeywordCollector(keyword: try #require(VoiceModeSendKeyword("vai")))
         #expect(collector.receive("   ", awaitingShortAnswer: false) == .nothing)
         // The keyword alone with nothing collected sends the typed draft.
         #expect(collector.peek("vai", awaitingShortAnswer: false).sends)
@@ -115,16 +115,16 @@ struct TerminalDictationVoiceTests {
 
     @Test
     func aBareYesOrNoIsAnAnswerOnlyWhileTheDialogueAwaitsOne() {
-        #expect(TerminalVoiceUtterance.isAwaitedAnswer("Sì.", awaitingShortAnswer: true))
-        #expect(TerminalVoiceUtterance.isAwaitedAnswer("no", awaitingShortAnswer: true))
-        #expect(!TerminalVoiceUtterance.isAwaitedAnswer("sì", awaitingShortAnswer: false))
-        #expect(!TerminalVoiceUtterance.isAwaitedAnswer("sì, ma prima", awaitingShortAnswer: true))
+        #expect(VoiceModeUtterance.isAwaitedAnswer("Sì.", awaitingShortAnswer: true))
+        #expect(VoiceModeUtterance.isAwaitedAnswer("no", awaitingShortAnswer: true))
+        #expect(!VoiceModeUtterance.isAwaitedAnswer("sì", awaitingShortAnswer: false))
+        #expect(!VoiceModeUtterance.isAwaitedAnswer("sì, ma prima", awaitingShortAnswer: true))
     }
 
     @Test
     func stableTextIsIndependentOfTheSilenceGap() {
         let start = ContinuousClock.now
-        var segmenter = TerminalDictationSegmenter(silence: .seconds(5))
+        var segmenter = VoiceDictationSegmenter(silence: .seconds(5))
         #expect(!segmenter.hasStableText(for: .zero, at: start))
         segmenter.observe("Cerca il file vai", at: start)
         #expect(!segmenter.hasStableText(for: .milliseconds(600), at: start + .milliseconds(500)))
@@ -136,7 +136,7 @@ struct TerminalDictationVoiceTests {
     @Test
     func theTextEndsWithAClosedSegmentOnlyAfterAFinalResult() {
         let start = ContinuousClock.now
-        var segmenter = TerminalDictationSegmenter()
+        var segmenter = VoiceDictationSegmenter()
         #expect(!segmenter.endsWithClosedSegment)
         segmenter.observe("Cerca il file vai", at: start)
         #expect(!segmenter.endsWithClosedSegment)
@@ -156,7 +156,7 @@ struct TerminalDictationVoiceTests {
     @Test
     func emptyRecognitionNeverCompletesAnUtterance() {
         let start = ContinuousClock.now
-        var segmenter = TerminalDictationSegmenter()
+        var segmenter = VoiceDictationSegmenter()
         segmenter.observe("   ", at: start)
         #expect(!segmenter.isUtteranceComplete(at: start + .seconds(5)))
         #expect(segmenter.takeUtterance() == nil)
@@ -169,7 +169,7 @@ struct TerminalDictationVoiceTests {
     @Test
     func speechSegmentsAreJoinedWithANewline() {
         let start = ContinuousClock.now
-        var segmenter = TerminalDictationSegmenter()
+        var segmenter = VoiceDictationSegmenter()
         segmenter.observe("Prima frase", at: start)
         segmenter.observe("Prima frase di prova", at: start + .milliseconds(600))
         #expect(segmenter.text == "Prima frase di prova")
@@ -181,13 +181,13 @@ struct TerminalDictationVoiceTests {
         segmenter.observe(" Seconda frase dopo la pausa ", at: start + .milliseconds(4_600), endsSegment: true)
         segmenter.observe("Terza", at: start + .milliseconds(7_000))
         #expect(segmenter.text == "Prima frase di prova\nSeconda frase dopo la pausa\nTerza")
-        #expect(TerminalDictationSegmenter.segmentSeparator == "\n")
+        #expect(VoiceDictationSegmenter.segmentSeparator == "\n")
     }
 
     @Test
     func textAfterAResetPartialKeepsTheEarlierSegments() {
         let start = ContinuousClock.now
-        var segmenter = TerminalDictationSegmenter()
+        var segmenter = VoiceDictationSegmenter()
         segmenter.observe("Cerca il file nella cartella", at: start)
         segmenter.observe("Cerca il file nella cartella", at: start + .milliseconds(1_500), endsSegment: true)
         // The recognizer restarts: the next results hold only the new phrase,
@@ -205,7 +205,7 @@ struct TerminalDictationVoiceTests {
     @Test
     func anEmptyPartialAfterACommitKeepsTheTextAndTheSilenceGap() {
         let start = ContinuousClock.now
-        var segmenter = TerminalDictationSegmenter(silence: .seconds(5))
+        var segmenter = VoiceDictationSegmenter(silence: .seconds(5))
         segmenter.observe("Prima frase", at: start)
         segmenter.observe("Prima frase", at: start + .seconds(2), endsSegment: true)
         segmenter.observe("", at: start + .seconds(3))
@@ -220,7 +220,7 @@ struct TerminalDictationVoiceTests {
     @Test
     func theSilenceGapIsMeasuredFromTheLastChangeOfTheCombinedText() {
         let start = ContinuousClock.now
-        var segmenter = TerminalDictationSegmenter(silence: .seconds(5))
+        var segmenter = VoiceDictationSegmenter(silence: .seconds(5))
         segmenter.observe("Uno", at: start)
         segmenter.observe("Uno", at: start + .seconds(2), endsSegment: true)
         #expect(segmenter.hasStableText(for: .seconds(2), at: start + .seconds(2)))
@@ -244,7 +244,7 @@ struct TerminalDictationVoiceTests {
     @Test
     func takingTheUtteranceReturnsEverySegmentAndClears() {
         let start = ContinuousClock.now
-        var segmenter = TerminalDictationSegmenter()
+        var segmenter = VoiceDictationSegmenter()
         segmenter.observe("Prima", at: start, endsSegment: true)
         segmenter.observe("Seconda", at: start + .seconds(1), endsSegment: true)
         segmenter.observe("Terza in corso", at: start + .seconds(2))
@@ -261,7 +261,7 @@ struct TerminalDictationVoiceTests {
     @Test
     func resettingForgetsEverySegment() {
         let start = ContinuousClock.now
-        var segmenter = TerminalDictationSegmenter()
+        var segmenter = VoiceDictationSegmenter()
         segmenter.observe("Prima", at: start, endsSegment: true)
         segmenter.observe("Seconda", at: start + .seconds(1))
         segmenter.reset()
@@ -278,7 +278,7 @@ struct TerminalDictationVoiceTests {
     @Test
     func aFinalResultRepeatingTheLastClosedSegmentIsNotAppended() {
         let start = ContinuousClock.now
-        var segmenter = TerminalDictationSegmenter(silence: .seconds(5))
+        var segmenter = VoiceDictationSegmenter(silence: .seconds(5))
         segmenter.observe("Seconda frase dopo la pausa", at: start)
         segmenter.observe("Seconda frase dopo la pausa", at: start + .seconds(2), endsSegment: true)
         // The final result may differ in case and punctuation only.
@@ -291,7 +291,7 @@ struct TerminalDictationVoiceTests {
     @Test
     func theSamePhraseSaidTwiceIsKeptTwice() {
         let start = ContinuousClock.now
-        var segmenter = TerminalDictationSegmenter()
+        var segmenter = VoiceDictationSegmenter()
         segmenter.observe("Sì", at: start)
         segmenter.observe("Sì", at: start + .seconds(2), endsSegment: true)
         segmenter.observe("Sì", at: start + .seconds(4))
@@ -302,7 +302,7 @@ struct TerminalDictationVoiceTests {
     @Test
     func aClosingResultCommitsTheSegmentInProgressOnce() {
         let start = ContinuousClock.now
-        var segmenter = TerminalDictationSegmenter()
+        var segmenter = VoiceDictationSegmenter()
         segmenter.observe("Apri il", at: start)
         // The closing result may complete the words of the partial.
         segmenter.observe("Apri il progetto", at: start + .seconds(1), endsSegment: true)
@@ -317,8 +317,8 @@ struct TerminalDictationVoiceTests {
 
     @Test
     func dictationResultsCarryWhetherTheyCloseASegment() {
-        let open = TerminalDictationEvent.partial(generation: 1, text: "Prima", endsSegment: false)
-        let closing = TerminalDictationEvent.partial(generation: 1, text: "Prima", endsSegment: true)
+        let open = VoiceDictationEvent.partial(generation: 1, text: "Prima", endsSegment: false)
+        let closing = VoiceDictationEvent.partial(generation: 1, text: "Prima", endsSegment: true)
         #expect(open != closing)
         #expect(closing == .partial(generation: 1, text: "Prima", endsSegment: true))
     }
@@ -326,20 +326,20 @@ struct TerminalDictationVoiceTests {
     @Test
     func echoGuardRecognisesTheAssistantsOwnWords() {
         let spoken = "Oggi hai tre appuntamenti: alle dieci, alle quindici e alle diciotto."
-        #expect(TerminalVoiceEchoGuard.isLikelyEcho("oggi hai tre appuntamenti", of: spoken))
-        #expect(TerminalVoiceEchoGuard.isLikelyEcho("Alle QUINDICI", of: spoken))
-        #expect(!TerminalVoiceEchoGuard.isLikelyEcho("aspetta, spostali a domani", of: spoken))
-        #expect(!TerminalVoiceEchoGuard.isLikelyEcho("stop", of: spoken))
-        #expect(!TerminalVoiceEchoGuard.isLikelyEcho("", of: spoken))
-        #expect(!TerminalVoiceEchoGuard.isLikelyEcho("oggi", of: ""))
+        #expect(VoiceEchoGuard.isLikelyEcho("oggi hai tre appuntamenti", of: spoken))
+        #expect(VoiceEchoGuard.isLikelyEcho("Alle QUINDICI", of: spoken))
+        #expect(!VoiceEchoGuard.isLikelyEcho("aspetta, spostali a domani", of: spoken))
+        #expect(!VoiceEchoGuard.isLikelyEcho("stop", of: spoken))
+        #expect(!VoiceEchoGuard.isLikelyEcho("", of: spoken))
+        #expect(!VoiceEchoGuard.isLikelyEcho("oggi", of: ""))
         // Diacritics and case are ignored.
-        #expect(TerminalVoiceEchoGuard.isLikelyEcho("perche e cosi", of: "Perché è così."))
+        #expect(VoiceEchoGuard.isLikelyEcho("perche e cosi", of: "Perché è così."))
     }
 
     @Test
     func speechStateTracksAnUtteranceUntilItsLastBufferPlays() {
         let start = ContinuousClock.now
-        let state = TerminalVoiceSpeechState()
+        let state = VoiceSpeechState()
         #expect(!state.isSpeaking(at: start))
         #expect(state.echoReference(at: start) == nil)
 
@@ -361,7 +361,7 @@ struct TerminalDictationVoiceTests {
     @Test
     func cancelledSpeechIgnoresLateCallbacks() {
         let start = ContinuousClock.now
-        let state = TerminalVoiceSpeechState()
+        let state = VoiceSpeechState()
         let first = state.begin(text: "Prima risposta", at: start)
         #expect(state.bufferScheduled(generation: first, at: start))
         state.cancel(at: start + .milliseconds(50))
@@ -378,7 +378,7 @@ struct TerminalDictationVoiceTests {
     @Test
     func synthesisWithoutATerminalBufferEventuallyStopsSpeaking() {
         let start = ContinuousClock.now
-        let state = TerminalVoiceSpeechState()
+        let state = VoiceSpeechState()
         let generation = state.begin(text: "Testo", at: start)
         #expect(state.bufferScheduled(generation: generation, at: start))
         state.bufferPlayed(generation: generation, at: start + .milliseconds(500))
@@ -391,7 +391,7 @@ struct TerminalDictationVoiceTests {
     @Test
     func aSlowSynthesizerStartIsNotMistakenForTheEndOfSpeech() {
         let start = ContinuousClock.now
-        let state = TerminalVoiceSpeechState()
+        let state = VoiceSpeechState()
         let generation = state.begin(text: "Testo", at: start)
         #expect(state.isSpeaking(at: start + .seconds(5)))
         #expect(!state.isSpeaking(at: start + .seconds(11)))
@@ -406,15 +406,15 @@ struct TerminalDictationVoiceTests {
     @Test
     func shortAnswersAfterSpeechAreNotTreatedAsEcho() {
         let reading = "Sì, ho finito, ok. Non ci sono errori. Vuoi rispondere?"
-        #expect(TerminalVoiceEchoGuard.isLikelyEcho("sì", of: reading))
-        #expect(TerminalVoiceEchoGuard.shouldDrop("sì", spokenReference: reading, isSpeaking: true))
-        #expect(!TerminalVoiceEchoGuard.shouldDrop("sì", spokenReference: reading, isSpeaking: false))
-        #expect(!TerminalVoiceEchoGuard.shouldDrop("No.", spokenReference: reading, isSpeaking: false))
-        #expect(!TerminalVoiceEchoGuard.shouldDrop("ok", spokenReference: reading, isSpeaking: false))
+        #expect(VoiceEchoGuard.isLikelyEcho("sì", of: reading))
+        #expect(VoiceEchoGuard.shouldDrop("sì", spokenReference: reading, isSpeaking: true))
+        #expect(!VoiceEchoGuard.shouldDrop("sì", spokenReference: reading, isSpeaking: false))
+        #expect(!VoiceEchoGuard.shouldDrop("No.", spokenReference: reading, isSpeaking: false))
+        #expect(!VoiceEchoGuard.shouldDrop("ok", spokenReference: reading, isSpeaking: false))
         // The echo of the sentence itself is still dropped after speech.
-        #expect(TerminalVoiceEchoGuard.shouldDrop("non ci sono errori vuoi rispondere", spokenReference: reading, isSpeaking: false))
+        #expect(VoiceEchoGuard.shouldDrop("non ci sono errori vuoi rispondere", spokenReference: reading, isSpeaking: false))
         // Something new is never dropped.
-        #expect(!TerminalVoiceEchoGuard.shouldDrop("aspetta un momento", spokenReference: reading, isSpeaking: true))
+        #expect(!VoiceEchoGuard.shouldDrop("aspetta un momento", spokenReference: reading, isSpeaking: true))
     }
 
     @Test
@@ -436,7 +436,7 @@ struct TerminalDictationVoiceTests {
         ```
         Dettagli su https://calendar.example.com/event/123?id=9
         """
-        let spoken = TerminalVoiceSpeechText.speakable(fromMarkdown: markdown, languageCode: "it")
+        let spoken = VoiceSpeechText.speakable(fromMarkdown: markdown, languageCode: "it")
         #expect(spoken == "Agenda di oggi. 10:00 riunione con Anna. 15:00 chiamata standup. Primo punto. Ora, Evento. 18:00, Palestra. Blocco di codice omesso. Dettagli su calendar.example.com.")
         #expect(!spoken.contains("secret"))
         #expect(!spoken.contains("*"))
@@ -445,16 +445,16 @@ struct TerminalDictationVoiceTests {
 
     @Test
     func codeBlockNoticeFollowsTheLanguage() {
-        #expect(TerminalVoiceSpeechText.codeBlockNotice(languageCode: "it-IT") == "Blocco di codice omesso.")
-        #expect(TerminalVoiceSpeechText.codeBlockNotice(languageCode: "en") == "Code block omitted.")
-        #expect(TerminalVoiceSpeechText.codeBlockNotice(languageCode: "ja") == "Code block omitted.")
-        #expect(TerminalVoiceSpeechText.codeBlockNotice(languageCode: nil) == "Code block omitted.")
+        #expect(VoiceSpeechText.codeBlockNotice(languageCode: "it-IT") == "Blocco di codice omesso.")
+        #expect(VoiceSpeechText.codeBlockNotice(languageCode: "en") == "Code block omitted.")
+        #expect(VoiceSpeechText.codeBlockNotice(languageCode: "ja") == "Code block omitted.")
+        #expect(VoiceSpeechText.codeBlockNotice(languageCode: nil) == "Code block omitted.")
     }
 
     @Test
     func shortAnswersAreReadWhole() {
         let markdown = "## Fatto\n\nHo aggiornato il file. Vuoi che faccia il commit?"
-        let spoken = TerminalVoiceSpeechText.speakable(fromMarkdown: markdown, languageCode: "it")
+        let spoken = VoiceSpeechText.speakable(fromMarkdown: markdown, languageCode: "it")
         #expect(spoken == "Fatto. Ho aggiornato il file. Vuoi che faccia il commit?")
     }
 
@@ -462,7 +462,7 @@ struct TerminalDictationVoiceTests {
     func aLongAnswerIsReadWholeWithoutANotice() {
         let lines = (1...100).map { "Questa è la riga numero \($0) della risposta." }
         let markdown = lines.joined(separator: "\n") + "\nCome vuoi procedere?"
-        let spoken = TerminalVoiceSpeechText.speakable(fromMarkdown: markdown, languageCode: "it")
+        let spoken = VoiceSpeechText.speakable(fromMarkdown: markdown, languageCode: "it")
         #expect(spoken == lines.joined(separator: " ") + " Come vuoi procedere?")
         #expect(spoken.count > 3_000)
         #expect(spoken.hasPrefix("Questa è la riga numero 1 della risposta."))
@@ -511,10 +511,10 @@ struct TerminalDictationVoiceTests {
     /// the loop must still be able to read its language and speaking state.
     @Test
     func aControllerThatIsNotListeningReadsNothingAndSaysSo() async {
-        let controller = TerminalDictationVoiceController(
+        let controller = DictationVoiceModeController(
             languageCode: "it",
             locale: Locale(identifier: "it_IT"),
-            callbacks: TerminalVoiceCallbacks(
+            callbacks: VoiceModeCallbacks(
                 systemMessage: { _ in },
                 failureMessage: { _ in },
                 utteranceRecognized: { _ in },

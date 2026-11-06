@@ -29,6 +29,21 @@ extension ZenCODEACPBridge {
         let promptHandlerToken = enterPromptHandler(sessionID: sessionID)
         defer { leavePromptHandler(sessionID: sessionID, token: promptHandlerToken) }
 
+        // A new session may still be offering the task graphs earlier
+        // sessions left incomplete: the prompt waits for the operator's
+        // answer, so it runs on the graph resumed. A close that cancelled the
+        // offer meanwhile, or a `session/cancel` of this prompt, ends it as
+        // the close ends a prompt already running, `cancelled` (silently
+        // after a shutdown).
+        guard try await waitForResumableTaskGraphOffer(
+            sessionID: sessionID,
+            epoch: knownSession.epoch,
+            promptHandlerToken: promptHandlerToken
+        ) else {
+            await sendStopReason(id: id, "cancelled")
+            return
+        }
+
         // Reserve the session in the host, which checks and reserves in one
         // step: a second `session/prompt` dispatched concurrently finds the
         // reservation taken, whichever of the two the host serves first. A
@@ -524,6 +539,11 @@ extension ZenCODEACPBridge {
         let cancelledTask = session.activePromptTask
         let cancelledTaskPromptID = session.activePromptTaskID
         let workflowPromptID = session.activeWorkflowPromptID
+        // A prompt still waiting for the startup offer of old task graphs has
+        // no reservation yet: it is marked, so it ends as `cancelled` once the
+        // offer ends (the client answers the offer's pending permission
+        // request with `cancelled` itself).
+        cancelPromptsAwaitingResumableTaskGraphOffer(sessionID: sessionID, epoch: session.epoch)
         let cancelledPromptID = await host.cancelPrompt(in: session.slotID) { promptID in
             promptID == workflowPromptID
         }
@@ -560,6 +580,13 @@ extension ZenCODEACPBridge {
             host.retireIncarnation(in: closedSession.slotID, controller: closedSession.controller)
         }
         closedSession?.tasklessObserver?.cancel()
+        // Withdraw the startup offer of old task graphs before anything
+        // suspends: its pending `session/request_permission` returns, so the
+        // offer ends as Start fresh and the prompts waiting for it can be
+        // drained below.
+        let cancelledTaskGraphOffer = closedSession.flatMap {
+            cancelResumableTaskGraphOffer(sessionID: sessionID, epoch: $0.epoch)
+        }
         // Snapshot before the first suspension. Teardown below awaits several
         // collaborators; a session recreated with this id during that window
         // owns different prompt handlers and must not hold this close hostage.
@@ -579,6 +606,9 @@ extension ZenCODEACPBridge {
             // ownership (borrowed/non-ACP installs) survive untouched.
             await sessionRunner.releaseSessionMCPOwnership(sessionID: sessionID, epoch: closedEpoch)
         }
+        // The withdrawn offer ends before the drain: nothing of it reaches the
+        // wire after this close's reply, and the prompts it held wake up.
+        await cancelledTaskGraphOffer?.value
         // Quiesce the ACP prompt wrapper before anything else can answer: with
         // the backend turn already cancelled above, its unwind — the buffered
         // update flush, the snapshot refresh and the `cancelled` reply — is

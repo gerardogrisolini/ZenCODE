@@ -1,5 +1,5 @@
 //
-//  TerminalSherpaVoiceController.swift
+//  SherpaVoiceModeController.swift
 //  ZenCODE
 //
 //  Linux voice mode. Speech recognition and spoken answers run as the
@@ -25,7 +25,7 @@ import Glibc
 /// error is read on a dedicated thread and delivered as ordered lines,
 /// followed by exactly one exit event once the program ended and its output
 /// was drained.
-final class TerminalVoiceProcess: @unchecked Sendable {
+final class VoiceModeProcess: @unchecked Sendable {
     enum Event: Sendable, Equatable {
         case line(String)
         case exited(status: Int32, signaled: Bool)
@@ -175,7 +175,7 @@ final class TerminalVoiceProcess: @unchecked Sendable {
     }
 }
 
-actor TerminalSherpaVoiceController: TerminalVoiceController {
+actor SherpaVoiceModeController: VoiceModeController {
     /// Program paths and arguments; the answer text is appended after `--`.
     struct Invocation: Sendable, Equatable {
         let recognizerProgram: URL
@@ -274,7 +274,7 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
     private let voiceName: String
     nonisolated let languageCode: String
     /// Set in keyword send mode: speech waiting for the keyword.
-    private var keywordCollector: TerminalVoiceKeywordCollector?
+    private var keywordCollector: VoiceKeywordCollector?
     /// The live-chat dialogue awaits a yes or no.
     private var isAwaitingShortAnswer = false
     /// The dictation previewed in the prompt draft (keyword mode only).
@@ -286,28 +286,28 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
     /// A preview is being reported. Reports run one at a time, so they reach
     /// the terminal in order; the one in flight reports the latest text.
     private var isPublishingDictation = false
-    private let callbacks: TerminalVoiceCallbacks
+    private let callbacks: VoiceModeCallbacks
 
     private(set) var phase: Phase = .idle
     private(set) var isPaused = false
     private(set) var isSpeaking = false
 
-    private var recognizer: TerminalVoiceProcess?
+    private var recognizer: VoiceModeProcess?
     private var recognizerGeneration: UInt64 = 0
     private var recognizerStarted = false
     private var recognizerLaunchedAt = ContinuousClock.now
     private var rapidRecognizerExits = 0
     private var recognizerDiagnostics: [String] = []
 
-    private var synthesizer: TerminalVoiceProcess?
+    private var synthesizer: VoiceModeProcess?
     private var synthesizerGeneration: UInt64 = 0
     private var synthesizerStopRequested = false
     private var synthesizerDiagnostics: [String] = []
 
     init(
         paths: SherpaOnnxRuntimePaths,
-        options: TerminalVoiceOptions = TerminalVoiceOptions(),
-        callbacks: TerminalVoiceCallbacks
+        options: VoiceModeOptions = VoiceModeOptions(),
+        callbacks: VoiceModeCallbacks
     ) {
         self.init(
             invocation: Self.invocation(
@@ -325,13 +325,13 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         invocation: Invocation,
         voiceName: String,
         languageCode: String,
-        sendKeyword: TerminalVoiceSendKeyword? = nil,
-        callbacks: TerminalVoiceCallbacks
+        sendKeyword: VoiceModeSendKeyword? = nil,
+        callbacks: VoiceModeCallbacks
     ) {
         self.invocation = invocation
         self.voiceName = voiceName
         self.languageCode = languageCode
-        self.keywordCollector = sendKeyword.map(TerminalVoiceKeywordCollector.init)
+        self.keywordCollector = sendKeyword.map(VoiceKeywordCollector.init)
         self.callbacks = callbacks
     }
 
@@ -368,14 +368,14 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
     /// Reads an answer or a plain text aloud with the microphone off. Returns
     /// `false` when nothing was started.
     @discardableResult
-    func speak(_ text: String, rendering: TerminalVoiceSpeechRendering) async -> Bool {
+    func speak(_ text: String, rendering: VoiceModeSpeechRendering) async -> Bool {
         guard phase == .listening, !isPaused else {
             return false
         }
         let spoken: String
         switch rendering {
         case .answer:
-            spoken = TerminalVoiceSpeechText.speakable(
+            spoken = VoiceSpeechText.speakable(
                 fromMarkdown: text,
                 languageCode: languageCode
             )
@@ -394,7 +394,7 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         synthesizerStopRequested = false
         synthesizerDiagnostics = []
         do {
-            let process = try TerminalVoiceProcess(
+            let process = try VoiceModeProcess(
                 executable: invocation.synthesizerProgram,
                 arguments: invocation.synthesizerArguments + ["--", capped]
             )
@@ -468,7 +468,7 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         recognizerDiagnostics = []
         recognizerLaunchedAt = .now
         do {
-            let process = try TerminalVoiceProcess(
+            let process = try VoiceModeProcess(
                 executable: invocation.recognizerProgram,
                 arguments: invocation.recognizerArguments
             )
@@ -488,7 +488,7 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         recognizer = nil
     }
 
-    private func handleRecognizer(_ event: TerminalVoiceProcess.Event, generation: UInt64) async {
+    private func handleRecognizer(_ event: VoiceModeProcess.Event, generation: UInt64) async {
         guard generation == recognizerGeneration else {
             return
         }
@@ -520,7 +520,7 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
                     case .collected, .nothing:
                         await publishDictation()
                     }
-                } else if TerminalVoiceUtterance.isAwaitedAnswer(text, awaitingShortAnswer: isAwaitingShortAnswer) {
+                } else if VoiceModeUtterance.isAwaitedAnswer(text, awaitingShortAnswer: isAwaitingShortAnswer) {
                     await callbacks.utteranceRecognized(.answer(text))
                 } else {
                     // Pause mode: every segment is sent at once, with the
@@ -563,7 +563,7 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
         synthesizer = nil
     }
 
-    private func handleSynthesizer(_ event: TerminalVoiceProcess.Event, generation: UInt64) async {
+    private func handleSynthesizer(_ event: VoiceModeProcess.Event, generation: UInt64) async {
         guard generation == synthesizerGeneration else {
             return
         }
@@ -633,11 +633,11 @@ actor TerminalSherpaVoiceController: TerminalVoiceController {
     }
 
     private func observe(
-        _ process: TerminalVoiceProcess,
-        handler: @escaping @Sendable (TerminalSherpaVoiceController, TerminalVoiceProcess.Event) async -> Void
+        _ process: VoiceModeProcess,
+        handler: @escaping @Sendable (SherpaVoiceModeController, VoiceModeProcess.Event) async -> Void
     ) {
         let events = process.events
-        Task(name: "ZenCODE.TUI.sherpa-voice-events") { [weak self] in
+        Task(name: "ZenCODE.sherpa-voice-events") { [weak self] in
             for await event in events {
                 guard let self else {
                     return

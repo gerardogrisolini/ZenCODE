@@ -137,6 +137,9 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
     private var sharedChatSendError: AgentSharedChat.Error?
 
     private(set) var prompts: [String] = []
+    /// The per-turn instruction each prompt went out with
+    /// (`AgentTurnInstructionContext`), in the order of ``prompts``.
+    private(set) var turnInstructions: [String?] = []
     /// The attachments of each prompt, in the order of ``prompts``.
     private(set) var attachments: [[AgentRuntimeAttachment]] = []
     /// The system prompts the sessions were created or updated with.
@@ -371,6 +374,7 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> DirectAgentResponse {
         prompts.append(prompt)
+        turnInstructions.append(AgentTurnInstructionContext.currentTurnInstruction)
         attachments.append(promptAttachments)
         let key = scripts.keys.first { prompt.contains($0) }
         if holdsNextTurn {

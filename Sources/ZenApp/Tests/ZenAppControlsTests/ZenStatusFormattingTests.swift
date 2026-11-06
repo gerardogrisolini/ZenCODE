@@ -419,6 +419,65 @@ struct ZenStatusFormattingTests {
         #expect(ZenStatusBarState().localExecAccessMode == .standard)
     }
 
+    @Test("voice mode off shows no voice fragment")
+    func voiceOffHasNoFragment() {
+        let state = ZenStatusBarState(modelID: "gpt-5", voice: .off)
+        #expect(ZenStatusFormatting.fragments(for: state).map(\.kind) == [.model])
+        #expect(ZenStatusBarState().voice == .off)
+        #expect(ZenVoiceIndicator(.off) == nil)
+        // Off wins over stale paused or speaking flags.
+        #expect(ZenVoiceIndicator(VoiceModeSessionState(isOn: false, isPaused: true, isSpeaking: true)) == nil)
+    }
+
+    @Test("the voice indicator: listening, paused, reading aloud, which wins")
+    func voiceIndicatorStates() {
+        let listening = ZenVoiceIndicator(VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false))
+        #expect(listening == .listening)
+        #expect(listening?.symbolName == "mic.fill")
+        #expect(listening?.label == "Voice mode: listening")
+        #expect(listening?.style == .voiceActive)
+
+        let paused = ZenVoiceIndicator(VoiceModeSessionState(isOn: true, isPaused: true, isSpeaking: false))
+        #expect(paused == .paused)
+        #expect(paused?.symbolName == "mic.slash")
+        #expect(paused?.label == "Voice mode: paused")
+        #expect(paused?.style == .voicePaused)
+
+        let reading = ZenVoiceIndicator(VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: true))
+        #expect(reading == .readingAloud)
+        #expect(reading?.symbolName == "waveform")
+        #expect(reading?.label == "Voice mode: reading aloud")
+        #expect(reading?.style == .voiceActive)
+
+        // Reading aloud has precedence over the pause.
+        #expect(ZenVoiceIndicator(VoiceModeSessionState(isOn: true, isPaused: true, isSpeaking: true)) == .readingAloud)
+    }
+
+    @Test("the voice fragment follows the red dot, before the spinner and the model, and has no text")
+    func voiceFragmentOrder() throws {
+        let voice = VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false)
+        var state = ZenStatusBarState(
+            isGenerating: true,
+            turnStartedAt: Date(),
+            modelID: "mlx/Qwen3-Coder",
+            localExecAccessMode: .fullAccess,
+            voice: voice
+        )
+        let fragments = ZenStatusFormatting.fragments(for: state)
+        #expect(fragments.map(\.kind) == [.accessMode, .voice, .activity, .model, .duration])
+        let fragment = try #require(fragments.first { $0.kind == .voice })
+        #expect(fragment.runs.isEmpty)
+        #expect(fragment.voiceIndicator == .listening)
+        #expect(fragments.allSatisfy { $0.kind == .voice || $0.voiceIndicator == nil })
+        // The plain line leaves the symbol out, like the spinner.
+        state.isGenerating = false
+        #expect(ZenStatusFormatting.statusText(for: state) == "● · Qwen3-Coder")
+        // In the default mode it comes first; alone, with nothing else to show.
+        state.localExecAccessMode = .standard
+        #expect(ZenStatusFormatting.fragments(for: state).map(\.kind) == [.voice, .model])
+        #expect(ZenStatusFormatting.fragments(for: ZenStatusBarState(voice: voice)).map(\.kind) == [.voice])
+    }
+
     @Test("while generating without a start the last duration shows")
     func generatingWithoutStartShowsLastDuration() {
         let state = ZenStatusBarState(

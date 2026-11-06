@@ -1,5 +1,5 @@
 //
-//  TerminalVoiceChatDialogueTests.swift
+//  VoiceChatDialogueTests.swift
 //  ZenCODECoreTests
 //
 //  The state machine of the spoken live-chat dialogue in voice mode.
@@ -10,7 +10,7 @@ import Testing
 @testable import ZenCODECore
 
 @Suite("Voice chat dialogue")
-struct TerminalVoiceChatDialogueTests {
+struct VoiceChatDialogueTests {
     private let roomID = "voice-room"
 
     private var operatorID: String {
@@ -47,8 +47,8 @@ struct TerminalVoiceChatDialogueTests {
         )
     }
 
-    private func dialogueAsking(_ message: AgentSharedChat.Message) -> TerminalVoiceChatDialogue {
-        var dialogue = TerminalVoiceChatDialogue()
+    private func dialogueAsking(_ message: AgentSharedChat.Message) -> VoiceChatDialogue {
+        var dialogue = VoiceChatDialogue()
         dialogue.enqueue([message])
         #expect(dialogue.beginAnnouncement(skipping: { _ in false })?.message == message)
         return dialogue
@@ -58,12 +58,12 @@ struct TerminalVoiceChatDialogueTests {
 
     @Test
     func onlyMessagesForTheOperatorFromAgentsOrTheCoordinatorAreAnnounceable() {
-        #expect(TerminalVoiceChatDialogue.isAnnounceable(message(from: reviewer)))
-        #expect(TerminalVoiceChatDialogue.isAnnounceable(message(from: coordinator)))
-        #expect(TerminalVoiceChatDialogue.isAnnounceable(message(from: reviewer, to: [coordinator.id, operatorID])))
-        #expect(!TerminalVoiceChatDialogue.isAnnounceable(message(from: reviewer, to: [coordinator.id])))
-        #expect(!TerminalVoiceChatDialogue.isAnnounceable(message(from: coordinator, to: [reviewer.id])))
-        #expect(!TerminalVoiceChatDialogue.isAnnounceable(operatorMessage()))
+        #expect(VoiceChatDialogue.isAnnounceable(message(from: reviewer)))
+        #expect(VoiceChatDialogue.isAnnounceable(message(from: coordinator)))
+        #expect(VoiceChatDialogue.isAnnounceable(message(from: reviewer, to: [coordinator.id, operatorID])))
+        #expect(!VoiceChatDialogue.isAnnounceable(message(from: reviewer, to: [coordinator.id])))
+        #expect(!VoiceChatDialogue.isAnnounceable(message(from: coordinator, to: [reviewer.id])))
+        #expect(!VoiceChatDialogue.isAnnounceable(operatorMessage()))
     }
 
     @Test
@@ -71,7 +71,7 @@ struct TerminalVoiceChatDialogueTests {
         let first = message(from: reviewer)
         let second = message(from: coordinator)
         let third = message(from: builder)
-        var dialogue = TerminalVoiceChatDialogue()
+        var dialogue = VoiceChatDialogue()
         dialogue.enqueue([first, operatorMessage(), message(from: reviewer, to: [coordinator.id]), second])
         dialogue.enqueue([second, third, first])
         #expect(dialogue.pending.map(\.id) == [first.id, second.id, third.id])
@@ -91,13 +91,13 @@ struct TerminalVoiceChatDialogueTests {
     func messagesAlreadyReadInTheDockAreSkipped() {
         let read = message(from: reviewer)
         let unread = message(from: builder)
-        var dialogue = TerminalVoiceChatDialogue()
+        var dialogue = VoiceChatDialogue()
         dialogue.enqueue([read, unread])
         let announced = dialogue.beginAnnouncement(skipping: { $0 == read.id })
         #expect(announced?.message == unread)
         #expect(announced?.remaining == 0)
 
-        var empty = TerminalVoiceChatDialogue()
+        var empty = VoiceChatDialogue()
         empty.enqueue([read])
         #expect(empty.beginAnnouncement(skipping: { _ in true }) == nil)
         #expect(empty.phase == .idle)
@@ -105,12 +105,12 @@ struct TerminalVoiceChatDialogueTests {
 
     @Test
     func theQueueDropsTheOldestPastItsLimit() {
-        var dialogue = TerminalVoiceChatDialogue()
-        let messages = (0..<(TerminalVoiceChatDialogue.maximumPendingAnnouncements + 3)).map { index in
+        var dialogue = VoiceChatDialogue()
+        let messages = (0..<(VoiceChatDialogue.maximumPendingAnnouncements + 3)).map { index in
             message(from: reviewer, text: "message \(index)")
         }
         dialogue.enqueue(messages)
-        #expect(dialogue.pending.count == TerminalVoiceChatDialogue.maximumPendingAnnouncements)
+        #expect(dialogue.pending.count == VoiceChatDialogue.maximumPendingAnnouncements)
         #expect(dialogue.pending.first?.text == "message 3")
         #expect(dialogue.pending.last?.text == "message \(messages.count - 1)")
     }
@@ -119,7 +119,7 @@ struct TerminalVoiceChatDialogueTests {
     func anUnspokenAnnouncementReturnsToTheHeadOfTheQueue() {
         let first = message(from: reviewer)
         let second = message(from: builder)
-        var dialogue = TerminalVoiceChatDialogue()
+        var dialogue = VoiceChatDialogue()
         dialogue.enqueue([first, second])
         _ = dialogue.beginAnnouncement(skipping: { _ in false })
         dialogue.announcementNotSpoken()
@@ -216,7 +216,7 @@ struct TerminalVoiceChatDialogueTests {
 
     @Test
     func sendPhrasesFromIdleResolveTheirRecipient() {
-        var dialogue = TerminalVoiceChatDialogue()
+        var dialogue = VoiceChatDialogue()
         #expect(dialogue.interpret("Che ore sono?", participants: [reviewer]) == .prompt)
         #expect(
             dialogue.interpret("message to all: pause", participants: [reviewer])
@@ -234,7 +234,7 @@ struct TerminalVoiceChatDialogueTests {
 
     @Test
     func sendPhrasesWithoutTextAskForItAndTheNextUtteranceIsTheText() throws {
-        var dialogue = TerminalVoiceChatDialogue()
+        var dialogue = VoiceChatDialogue()
         #expect(
             dialogue.interpret("messaggio a tutti", participants: [])
                 == .askMessageText(destination: .all, label: "all")
@@ -264,7 +264,7 @@ struct TerminalVoiceChatDialogueTests {
     @Test
     func speechEndArmsADeadlineForEveryQuestionAndAnnouncesWhenIdle() {
         let incoming = message(from: reviewer)
-        var idle = TerminalVoiceChatDialogue()
+        var idle = VoiceChatDialogue()
         #expect(idle.speechEnded() == .announceNext)
         #expect(idle.deadlineToken == nil)
 
@@ -321,7 +321,7 @@ struct TerminalVoiceChatDialogueTests {
     func anAnswerBeingReadPreemptsTheDialogueAndRequeuesAnUnreadMessage() {
         let first = message(from: reviewer)
         let second = message(from: builder)
-        var dialogue = TerminalVoiceChatDialogue()
+        var dialogue = VoiceChatDialogue()
         dialogue.enqueue([first, second])
         _ = dialogue.beginAnnouncement(skipping: { _ in false })
         _ = dialogue.speechEnded()
@@ -365,7 +365,7 @@ struct TerminalVoiceChatDialogueTests {
                 == .send(destination: .direct([reviewer.id]), text: "Procedi.", label: "Reviewer")
         )
 
-        var waitingForText = TerminalVoiceChatDialogue()
+        var waitingForText = VoiceChatDialogue()
         _ = waitingForText.interpret("messaggio a tutti", participants: [])
         waitingForText.answerReadingStarted()
         #expect(waitingForText.phase == .awaitingMessageText(destination: .all, label: "all"))
@@ -374,7 +374,7 @@ struct TerminalVoiceChatDialogueTests {
 
     @Test
     func cancellingClearsTheQueueAndTheQuestion() {
-        var dialogue = TerminalVoiceChatDialogue()
+        var dialogue = VoiceChatDialogue()
         dialogue.enqueue([message(from: reviewer), message(from: builder)])
         _ = dialogue.beginAnnouncement(skipping: { _ in false })
         _ = dialogue.speechEnded()

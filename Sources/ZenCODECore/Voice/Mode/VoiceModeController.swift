@@ -1,8 +1,8 @@
 //
-//  TerminalVoiceController.swift
+//  VoiceModeController.swift
 //  ZenCODE
 //
-//  The platform-neutral contract of terminal voice mode. macOS runs local
+//  The platform-neutral contract of voice mode. macOS runs local
 //  dictation with Apple speech frameworks; Linux runs the downloaded
 //  sherpa-onnx programs. Both turn utterances into ordinary prompts and read
 //  final answers aloud; audio is never persisted.
@@ -11,8 +11,8 @@
 import Foundation
 
 /// What a voice controller recognized and sends.
-enum TerminalVoiceUtterance: Sendable, Equatable {
-    /// The final words of dictation `id`. The terminal sends them after the
+public enum VoiceModeUtterance: Sendable, Equatable {
+    /// The final words of dictation `id`. The channel sends them after the
     /// typed draft, as one prompt, unless an edit already turned the
     /// dictation into ordinary draft text. The text may be empty: the send
     /// keyword said alone sends the typed draft.
@@ -24,26 +24,44 @@ enum TerminalVoiceUtterance: Sendable, Equatable {
     /// Whether `speech` is a bare yes or no while the live-chat dialogue
     /// awaits one.
     static func isAwaitedAnswer(_ speech: String, awaitingShortAnswer: Bool) -> Bool {
-        awaitingShortAnswer && TerminalVoiceChatPhrases.affirmation(in: speech) != nil
+        awaitingShortAnswer && VoiceChatPhrases.affirmation(in: speech) != nil
     }
 }
 
-/// Where a voice controller reports what happens.
-struct TerminalVoiceCallbacks: Sendable {
-    let systemMessage: @Sendable (String) async -> Void
-    let failureMessage: @Sendable (String) async -> Void
-    let utteranceRecognized: @Sendable (TerminalVoiceUtterance) async -> Void
+/// Where a voice controller reports what happens. Only ``VoiceModeSession``
+/// builds them, and hands them to the controller it creates; a test
+/// controller calls them to pretend it heard or read something.
+public struct VoiceModeCallbacks: Sendable {
+    /// A notice of the controller, e.g. that it listens; ends with a newline.
+    public let systemMessage: @Sendable (String) async -> Void
+    /// A failure of the controller; ends with a newline.
+    public let failureMessage: @Sendable (String) async -> Void
+    public let utteranceRecognized: @Sendable (VoiceModeUtterance) async -> Void
     /// The speech recognized but not sent yet for dictation `id`, shown live
     /// at the end of the prompt draft; an empty text removes the preview.
-    let dictationChanged: @Sendable (UInt64, String) async -> Void
+    public let dictationChanged: @Sendable (UInt64, String) async -> Void
     /// The controller started (`true`) or stopped (`false`) reading an
     /// answer aloud, so `Esc` can stop the reading.
-    let speakingChanged: @Sendable (Bool) async -> Void
+    public let speakingChanged: @Sendable (Bool) async -> Void
+
+    init(
+        systemMessage: @escaping @Sendable (String) async -> Void,
+        failureMessage: @escaping @Sendable (String) async -> Void,
+        utteranceRecognized: @escaping @Sendable (VoiceModeUtterance) async -> Void,
+        dictationChanged: @escaping @Sendable (UInt64, String) async -> Void,
+        speakingChanged: @escaping @Sendable (Bool) async -> Void
+    ) {
+        self.systemMessage = systemMessage
+        self.failureMessage = failureMessage
+        self.utteranceRecognized = utteranceRecognized
+        self.dictationChanged = dictationChanged
+        self.speakingChanged = speakingChanged
+    }
 }
 
-/// How a text handed to ``TerminalVoiceController/speak(_:rendering:)`` is
+/// How a text handed to ``VoiceModeController/speak(_:rendering:)`` is
 /// turned into speech.
-enum TerminalVoiceSpeechRendering: Sendable, Equatable {
+public enum VoiceModeSpeechRendering: Sendable, Equatable {
     /// An assistant answer: Markdown becomes plain text and the whole answer
     /// is read, however long.
     case answer
@@ -53,8 +71,11 @@ enum TerminalVoiceSpeechRendering: Sendable, Equatable {
 }
 
 /// One platform's voice mode: dictation into ordinary prompts and spoken
-/// answers.
-protocol TerminalVoiceController: Actor {
+/// answers. ``VoiceModeSession`` drives it; a host app implements it only
+/// to give the session a test controller (see
+/// ``VoiceModeSession/init(makeController:)``), which records and plays
+/// nothing.
+public protocol VoiceModeController: Actor {
     /// `false` once the controller failed or was stopped; `/voice on` then
     /// starts a new one.
     var isActive: Bool { get }
@@ -66,13 +87,16 @@ protocol TerminalVoiceController: Actor {
     /// controller's lifetime, so it is readable without an actor hop.
     nonisolated var languageCode: String { get }
 
+    /// Starts listening. It may wait on the system permission prompts or on
+    /// loading the speech models; the session never awaits it on the
+    /// channel's path.
     func start() async
     func stop() async
     /// Reads `text` aloud, replacing anything still being read. Returns
     /// `false` when nothing was started: voice mode not listening or paused,
     /// no synthesizer, or nothing left to say.
     @discardableResult
-    func speak(_ text: String, rendering: TerminalVoiceSpeechRendering) async -> Bool
+    func speak(_ text: String, rendering: VoiceModeSpeechRendering) async -> Bool
     /// Stops the answer being read, e.g. after `Esc`.
     func interruptPlayback() async
     /// Returns `false` when already in the requested state.
@@ -83,15 +107,15 @@ protocol TerminalVoiceController: Actor {
     func setAwaitingShortAnswer(_ awaiting: Bool) async
     /// An edit turned dictation `id` into ordinary draft text: forget the
     /// speech collected for it and start a new dictation, without reporting
-    /// a preview (the terminal already ended it). Nothing happens when the
+    /// a preview (the channel already ended it). Nothing happens when the
     /// controller has moved past `id`.
     ///
     /// Dictation ids start at 1 and advance after every dictation sent and
-    /// every discard, so the terminal can ignore stale previews and sends.
+    /// every discard, so the channel can ignore stale previews and sends.
     func discardDictation(through id: UInt64) async
 }
 
-extension TerminalVoiceController {
+extension VoiceModeController {
     /// Reads a final answer aloud.
     @discardableResult
     func speak(_ response: String) async -> Bool {
@@ -101,8 +125,8 @@ extension TerminalVoiceController {
 
 /// The voice mode options chosen in `/setup` > Voice mode, resolved against
 /// the built-in defaults; shared by both platforms.
-struct TerminalVoiceOptions: Sendable, Equatable {
-    static let defaultUtteranceSilence = TerminalDictationSegmenter.defaultSilence
+struct VoiceModeOptions: Sendable, Equatable {
+    static let defaultUtteranceSilence = VoiceDictationSegmenter.defaultSilence
     /// In keyword mode the Linux recognizer still splits speech on silence; a
     /// short gap makes the keyword at the end of a segment take effect soon.
     static let keywordRecognizerSilenceSeconds = 1
@@ -112,7 +136,7 @@ struct TerminalVoiceOptions: Sendable, Equatable {
         /// After `utteranceSilence`.
         case pause
         /// Once the speech ends with the keyword; silence never sends.
-        case keyword(TerminalVoiceSendKeyword)
+        case keyword(VoiceModeSendKeyword)
     }
 
     /// Silence that ends an utterance in `.pause` mode.
@@ -130,7 +154,7 @@ struct TerminalVoiceOptions: Sendable, Equatable {
     /// The saved options: a missing value keeps its default, and keyword mode
     /// without a usable keyword is pause mode.
     init(voice: AgentVoiceSettingsManifest?) {
-        let keyword = voice?.sendKeyword.flatMap(TerminalVoiceSendKeyword.init)
+        let keyword = voice?.sendKeyword.flatMap(VoiceModeSendKeyword.init)
         self.init(
             utteranceSilence: voice?.utteranceSilenceSeconds.map { .seconds($0) }
                 ?? Self.defaultUtteranceSilence,
@@ -153,7 +177,7 @@ struct TerminalVoiceOptions: Sendable, Equatable {
         }
     }
 
-    var sendKeyword: TerminalVoiceSendKeyword? {
+    var sendKeyword: VoiceModeSendKeyword? {
         if case let .keyword(keyword) = sendMode {
             return keyword
         }
@@ -165,7 +189,7 @@ struct TerminalVoiceOptions: Sendable, Equatable {
 /// Compared without case, accents or punctuation, as whole words at the end
 /// of the speech: "cerca il file, vai" sends "cerca il file", "vai" alone
 /// sends what was dictated before, and "vai a casa" is ordinary text.
-struct TerminalVoiceSendKeyword: Sendable, Equatable {
+struct VoiceModeSendKeyword: Sendable, Equatable {
     /// As typed in setup, trimmed.
     let text: String
     /// The folded words compared with the end of the speech.
@@ -173,7 +197,7 @@ struct TerminalVoiceSendKeyword: Sendable, Equatable {
 
     init?(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let words = TerminalVoiceEchoGuard.words(in: trimmed)
+        let words = VoiceEchoGuard.words(in: trimmed)
         guard !words.isEmpty else {
             return nil
         }
@@ -190,7 +214,7 @@ struct TerminalVoiceSendKeyword: Sendable, Equatable {
             return nil
         }
         let tail = wordRanges.suffix(words.count)
-        let spoken = tail.map { TerminalVoiceEchoGuard.words(in: String(speech[$0])).joined() }
+        let spoken = tail.map { VoiceEchoGuard.words(in: String(speech[$0])).joined() }
         guard spoken == words else {
             return nil
         }
@@ -239,13 +263,16 @@ struct TerminalVoiceSendKeyword: Sendable, Equatable {
     }
 }
 
-enum TerminalVoiceControllerCreation {
-    case ready(any TerminalVoiceController)
-    /// Voice mode cannot run here; the message explains why.
+/// What a controller factory of ``VoiceModeSession`` returns.
+public enum VoiceModeControllerCreation: Sendable {
+    /// The controller to run; the session starts it.
+    case ready(any VoiceModeController)
+    /// Voice mode cannot run here; the message, which ends with a newline,
+    /// explains why.
     case unavailable(String)
 }
 
-enum TerminalVoicePlatform {
+enum VoiceModePlatform {
     static let unsupportedMessage = "ZenCODE: voice mode requires macOS or Linux.\n"
 
     /// Builds the controller for this platform. On Linux it requires the
@@ -256,14 +283,14 @@ enum TerminalVoicePlatform {
     static func makeController(
         languageCode: String,
         readingVoiceIdentifier: String? = nil,
-        options: TerminalVoiceOptions = TerminalVoiceOptions(),
-        callbacks: TerminalVoiceCallbacks
-    ) -> TerminalVoiceControllerCreation {
+        options: VoiceModeOptions = VoiceModeOptions(),
+        callbacks: VoiceModeCallbacks
+    ) -> VoiceModeControllerCreation {
         #if os(macOS)
-        guard TerminalDictationVoiceController.isSupported else {
+        guard DictationVoiceModeController.isSupported else {
             return .unavailable(unsupportedMessage)
         }
-        return .ready(TerminalDictationVoiceController(
+        return .ready(DictationVoiceModeController(
             languageCode: languageCode,
             locale: AgentVoiceTranscriptionService.locale(for: languageCode),
             readingVoiceIdentifier: readingVoiceIdentifier,
@@ -273,7 +300,7 @@ enum TerminalVoicePlatform {
         #elseif os(Linux)
         switch SherpaOnnxVoiceInstallation.standard().runtimePaths() {
         case let .success(paths):
-            return .ready(TerminalSherpaVoiceController(paths: paths, options: options, callbacks: callbacks))
+            return .ready(SherpaVoiceModeController(paths: paths, options: options, callbacks: callbacks))
         case let .failure(error):
             return .unavailable("ZenCODE: \(error.localizedDescription)\n")
         }

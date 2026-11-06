@@ -274,7 +274,7 @@ struct MacOSVoiceModeSetupTests {
         // Saved with the other settings and read back by voice mode.
         let reloaded = try JSONDecoder().decode(AgentSettingsManifest.self, from: JSONEncoder().encode(manifest))
         #expect(reloaded.voice == manifest.voice)
-        let options = TerminalVoiceOptions(voice: reloaded.voice)
+        let options = VoiceModeOptions(voice: reloaded.voice)
         #expect(options.utteranceSilence == .seconds(8))
         #expect(options.utteranceSilenceSeconds == 8)
 
@@ -320,8 +320,8 @@ struct MacOSVoiceModeSetupTests {
             from: Data(#"{"enabled":true}"#.utf8)
         )
         #expect(legacy == AgentVoiceSettingsManifest(enabled: true))
-        let defaults = TerminalVoiceOptions(voice: legacy)
-        #expect(defaults == TerminalVoiceOptions())
+        let defaults = VoiceModeOptions(voice: legacy)
+        #expect(defaults == VoiceModeOptions())
         #expect(defaults.utteranceSilence == .seconds(5))
         #expect(ZenCODESetupRunner.utteranceSilenceSeconds(manifest: nil) == 5)
         // Invalid saved values fall back to the defaults.
@@ -363,7 +363,7 @@ struct MacOSVoiceModeSetupTests {
         #expect(manifest.voice == AgentVoiceSettingsManifest(enabled: true, sendMode: .keyword, sendKeyword: "Vai!"))
         #expect(chosen.output.contains("Send mode: on the word “Vai!”."))
         #expect(ZenCODESetupRunner.voiceOptionsSetupSuffix(manifest: manifest) == " · send on “Vai!”")
-        let options = TerminalVoiceOptions(voice: manifest.voice)
+        let options = VoiceModeOptions(voice: manifest.voice)
         #expect(options.sendKeyword?.words == ["vai"])
         #expect(options.recognizerSilenceSeconds == 1)
         #expect(options.utteranceSilenceSeconds == 5)
@@ -418,7 +418,7 @@ struct MacOSVoiceModeSetupTests {
             sendKeyword: "Vai!"
         ))
         #expect(ZenCODESetupRunner.voiceOptionsSetupSuffix(manifest: paused.manifest).isEmpty)
-        #expect(TerminalVoiceOptions(voice: paused.manifest?.voice).sendMode == .pause)
+        #expect(VoiceModeOptions(voice: paused.manifest?.voice).sendMode == .pause)
         round = 0
         let again = Self.configure(
             paused.manifest,
@@ -476,13 +476,13 @@ struct MacOSVoiceModeSetupTests {
             AgentVoiceSettingsManifest.self,
             from: Data(#"{"enabled":false,"sendMode":"keyword"}"#.utf8)
         )
-        #expect(TerminalVoiceOptions(voice: noWord).sendMode == .pause)
+        #expect(VoiceModeOptions(voice: noWord).sendMode == .pause)
         #expect(!ZenCODESetupRunner.sendsOnKeyword(manifest: Self.manifest(voice: noWord)))
         let unknown = try JSONDecoder().decode(
             AgentVoiceSettingsManifest.self,
             from: Data(#"{"enabled":false,"sendMode":"gesture","sendKeyword":"vai"}"#.utf8)
         )
         #expect(unknown == AgentVoiceSettingsManifest(sendKeyword: "vai"))
-        #expect(TerminalVoiceOptions(voice: unknown).sendMode == .pause)
+        #expect(VoiceModeOptions(voice: unknown).sendMode == .pause)
     }
 }

@@ -96,6 +96,29 @@ public protocol ChatSessionManagementRuntime: ChatSessionRuntime {
         workingDirectory: URL
     ) async throws -> [String]
 
+    /// The incomplete task graphs that earlier sessions of the project left in
+    /// their checkpoints, most recently updated first.
+    func resumableTaskGraphCheckpoints(
+        workingDirectory: URL
+    ) async -> [ResumableTaskGraph]
+
+    /// Removes the graphs from the checkpoints of the sessions that left
+    /// them, keeping every other graph there.
+    func removeResumableTaskGraphs(
+        _ graphs: [ResumableTaskGraph],
+        workingDirectory: URL
+    ) async throws
+
+    /// Moves `graph` out of the checkpoint of the session that left it into
+    /// the session `sessionID`, which keeps its id, and makes it current
+    /// there (see ``SessionTaskOrchestrator/adoptResumableTaskGraph(_:intoSessionID:workingDirectory:)``).
+    @discardableResult
+    func adoptResumableTaskGraph(
+        _ graph: ResumableTaskGraph,
+        intoSessionID sessionID: String,
+        workingDirectory: URL
+    ) async throws -> TaskGraphSnapshot
+
     @discardableResult
     func activateTaskGraph(
         id graphID: String,

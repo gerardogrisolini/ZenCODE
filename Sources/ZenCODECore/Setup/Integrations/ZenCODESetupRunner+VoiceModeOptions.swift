@@ -45,13 +45,13 @@ extension ZenCODESetupRunner {
     /// Seconds of silence offered for the pause that ends an utterance.
     static let utteranceSilencePresetSeconds = [2, 3, 5, 8, 10]
 
-    static let defaultUtteranceSilenceSeconds = TerminalVoiceOptions().utteranceSilenceSeconds
+    static let defaultUtteranceSilenceSeconds = VoiceModeOptions().utteranceSilenceSeconds
 
     static let sendModeMenuTitle = "Send mode"
 
     /// The effective send mode: keyword only with a usable keyword.
     static func sendsOnKeyword(manifest: AgentSettingsManifest?) -> Bool {
-        TerminalVoiceOptions(voice: manifest?.voice).sendKeyword != nil
+        VoiceModeOptions(voice: manifest?.voice).sendKeyword != nil
     }
 
     static func sendKeyword(manifest: AgentSettingsManifest?) -> String? {
@@ -168,11 +168,11 @@ extension ZenCODESetupRunner {
                 guard let typed = promptKeyword(sendKeyword(manifest: manifest)) else {
                     return manifest
                 }
-                guard let keyword = TerminalVoiceSendKeyword(typed) else {
+                guard let keyword = VoiceModeSendKeyword(typed) else {
                     write("The word must contain letters or digits.\n")
                     continue
                 }
-                if TerminalVoiceChatPhrases.affirmation(in: keyword.text) != nil {
+                if VoiceChatPhrases.affirmation(in: keyword.text) != nil {
                     write("\u{201C}\(keyword.text)\u{201D} is a spoken yes or no and cannot send utterances; choose another word.\n")
                     continue
                 }

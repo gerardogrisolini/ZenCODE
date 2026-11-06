@@ -19,12 +19,14 @@ import ToolCore
 /// records an *Always* exactly as one given on the primary channel, so it
 /// keeps covering the session after the link or the topic changes. A line of
 /// text is the next text message of the chat, an attachment the next
-/// document or image; menus are not offered. Workspace access is asked with
-/// the same card, as a permission to use the folder. The conformance is
-/// declared with the class; the host's methods live here.
+/// document or image, and a single or multiple choice a tap on an inline menu
+/// (`TelegramChannel+ChoiceMenus.swift`); the focused multiple choice is not
+/// offered. Workspace access is asked with the same card, as a permission to
+/// use the folder. The conformance is declared with the class; the host's
+/// methods live here.
 extension TelegramChannel {
     nonisolated public var capabilities: ChatChannelCapabilities {
-        [.toolConsent, .textInput, .attachmentPicker]
+        [.toolConsent, .textInput, .attachmentPicker, .singleChoice, .multipleChoice]
     }
 
     // MARK: - Tool consent
@@ -216,12 +218,14 @@ extension TelegramChannel {
         return true
     }
 
-    /// Whether a question waits for the next message of the chat.
+    /// Whether a question waits for the next message of the chat, or a menu
+    /// for a tap.
     var hasPendingReader: Bool {
-        pendingLineReader != nil || pendingAttachmentReader != nil
+        pendingLineReader != nil || pendingAttachmentReader != nil || pendingChoiceReader != nil
     }
 
-    /// Refuses the readers still waiting: the channel stops reading the chat.
+    /// Refuses the readers still waiting, the menu waiting for a tap
+    /// included: the channel stops reading the chat.
     func cancelPendingReaders() {
         if let reader = pendingLineReader {
             pendingLineReader = nil
@@ -229,6 +233,10 @@ extension TelegramChannel {
         }
         if let reader = pendingAttachmentReader {
             pendingAttachmentReader = nil
+            reader.continuation.resume(returning: nil)
+        }
+        if let reader = pendingChoiceReader {
+            pendingChoiceReader = nil
             reader.continuation.resume(returning: nil)
         }
     }

@@ -20,6 +20,15 @@ import ZenCODECore
 /// (``toggleLocalExecAccessMode()``) changes it for every session of every
 /// window, and every open window shows it. It is never persisted: each launch
 /// starts in the default mode.
+///
+/// Voice mode (`/voice`) is app-wide too: one ``VoiceModeSession`` (one
+/// microphone) for every window, with one state (``voiceState``) that every
+/// window shows. It follows the active window (``activeVoiceWindowID``), the
+/// last one that came to the front (``windowDidBecomeActive(_:)``) or ran
+/// `/voice`: dictation goes into its draft, its answers and comments are read
+/// aloud, its room's messages are announced, and its prompts carry the
+/// per-turn instruction; the other windows get none of these. It is never
+/// persisted: each launch starts with voice mode off.
 @MainActor
 @Observable
 public final class ZenAppRuntime {
@@ -36,6 +45,25 @@ public final class ZenAppRuntime {
     /// ``AgentLocalExecAccessMode/fullAccess`` they run without asking for
     /// consent.
     public private(set) var localExecAccessMode: AgentLocalExecAccessMode
+    /// What voice mode does now, for every window: on, paused, reading
+    /// aloud. `isSpeaking` follows the controller's reports at once, ahead
+    /// of the session's own state, so Esc can stop a reading as soon as it
+    /// starts.
+    public var voiceState: VoiceModeSessionState {
+        VoiceModeSessionState(
+            isOn: voiceSessionState.isOn,
+            isPaused: voiceSessionState.isPaused,
+            isSpeaking: voiceSessionState.isOn && isVoiceSpeaking
+        )
+    }
+    /// The window voice mode follows: the last one that became active and
+    /// that voice mode moved to; `nil` before any did, and once it closed
+    /// with no other active window left.
+    public private(set) var activeVoiceWindowID: UUID?
+    /// The session's state, from its stream.
+    private var voiceSessionState = VoiceModeSessionState.off
+    /// The controller reads aloud, as it last reported.
+    private var isVoiceSpeaking = false
 
     @ObservationIgnored let authorizer: ChatToolConsentAuthorizer
     @ObservationIgnored let openExternal: @Sendable (ChatOpenTarget) async throws -> Void
@@ -47,6 +75,12 @@ public final class ZenAppRuntime {
     /// The latest toggle of the access mode; each one waits for the one
     /// before it, so they reach the runner in order.
     @ObservationIgnored private var accessModeToggle: Task<Void, Never>?
+    /// Voice mode, for every window.
+    @ObservationIgnored let voice: ZenAppVoice
+    /// The windows that became active, the most recent last.
+    @ObservationIgnored private var voiceActivations: [UUID] = []
+    @ObservationIgnored private var voiceStateObservation: Task<Void, Never>?
+    @ObservationIgnored private var voiceUpdateObservation: Task<Void, Never>?
 
     /// `true` once the provider-key migration ran in this process.
     private static var didMigrateProviderKeys = false
@@ -124,12 +158,16 @@ public final class ZenAppRuntime {
     ///   - userHomeDirectoryURL: The home folder the attachment picker starts
     ///     in; `nil` disables the picker.
     ///   - backendFactory: The model backend; `nil` is the production one.
+    ///   - voiceSession: The app's voice mode: `nil` runs this platform's
+    ///     controller (`VoiceModeSession()`); a test passes one built with
+    ///     `VoiceModeSession(makeController:)`, which records nothing.
     ///   - openExternal: Opens a file or URL for `/open`.
     public init(
         configuration: AgentConfiguration,
         featureRuntime: SwiftFeatureRuntime?,
         userHomeDirectoryURL: URL?,
         backendFactory: AgentRuntimeBackendFactory? = nil,
+        voiceSession: VoiceModeSession? = nil,
         openExternal: @escaping @Sendable (ChatOpenTarget) async throws -> Void
     ) async {
         let authorizer = ChatToolConsentAuthorizer(host: ZenRefusingInteractionHost())
@@ -150,6 +188,9 @@ public final class ZenAppRuntime {
         )
         let shell = await sessionHost.shellSnapshot
         let accessMode = await runner.localExecAccessMode()
+        let voiceSession = voiceSession ?? VoiceModeSession()
+        let voice = await ZenAppVoice(session: voiceSession)
+        let voiceStates = await voiceSession.stateUpdates()
         self.launchWorkspace = configuration.workingDirectory
         self.sessionHost = sessionHost
         self.authorizer = authorizer
@@ -157,7 +198,9 @@ public final class ZenAppRuntime {
         self.runner = runner
         self.shell = shell
         self.localExecAccessMode = accessMode
+        self.voice = voice
         observeShell()
+        observeVoice(states: voiceStates)
     }
 
     private func observeShell() {
@@ -188,8 +231,77 @@ public final class ZenAppRuntime {
         return window
     }
 
+    /// Forgets `window`. When voice mode followed it, it moves to the most
+    /// recent active window left, or to none.
     func windowDidClose(_ window: ZenWindowSession) {
         windows.removeAll { $0 === window }
+        voiceActivations.removeAll { $0 == window.id }
+        let fallback = voiceActivations.last.flatMap { id in windows.first { $0.id == id } }
+        voice.sink.post(.windowClosed(window.voiceHost, fallback: fallback?.voiceHost))
+    }
+
+    // MARK: - Voice mode
+
+    /// `window` came to the front: voice mode follows it from now on, as
+    /// the window it reads and listens for. The dictation the previous
+    /// window shows stays in its draft as ordinary text, and dictation goes
+    /// on in `window`; the reading stops, and the live-chat question and the
+    /// queued announcements are dropped. The UI calls it whenever a window
+    /// becomes the key one; nothing happens for the window voice mode
+    /// follows already, for a closed one, and after ``shutdown()``. Returns
+    /// at once; the switch runs in the order it was asked, after the voice
+    /// work asked before it.
+    public func windowDidBecomeActive(_ window: ZenWindowSession) {
+        guard !isShutDown, !window.isClosed, windows.contains(where: { $0 === window }) else { return }
+        noteVoiceActivation(of: window)
+        voice.sink.post(.activate(window.voiceHost))
+    }
+
+    /// Runs `line`, a `/voice` line of `window`: the window becomes the one
+    /// voice mode follows first, then the session runs the command. Returns
+    /// once it ran.
+    func runVoiceCommand(_ line: String, from window: ZenWindowSession) async {
+        guard !isShutDown, !window.isClosed else { return }
+        noteVoiceActivation(of: window)
+        await voice.sink.perform(.command(line, host: window.voiceHost))
+    }
+
+    private func noteVoiceActivation(of window: ZenWindowSession) {
+        voiceActivations.removeAll { $0 == window.id }
+        voiceActivations.append(window.id)
+    }
+
+    /// Follows the session's state and what the voice context reports.
+    private func observeVoice(states: AsyncStream<VoiceModeSessionState>) {
+        voiceStateObservation = Task { [weak self] in
+            for await state in states {
+                guard let self else { return }
+                if self.voiceSessionState != state {
+                    self.voiceSessionState = state
+                }
+            }
+        }
+        let updates = voice.sink.updates
+        voiceUpdateObservation = Task { [weak self] in
+            for await update in updates {
+                guard let self else { return }
+                switch update {
+                case let .speaking(isSpeaking):
+                    if self.isVoiceSpeaking != isSpeaking {
+                        self.isVoiceSpeaking = isSpeaking
+                    }
+                case let .activeWindow(id):
+                    if self.activeVoiceWindowID != id {
+                        self.activeVoiceWindowID = id
+                    }
+                }
+            }
+        }
+    }
+
+    /// Waits until the voice work asked so far was done, for tests.
+    func waitForVoice() async {
+        await voice.sink.perform(.flush)
     }
 
     // MARK: - Access mode
@@ -245,6 +357,14 @@ public final class ZenAppRuntime {
         for window in closing {
             window.markClosed()
         }
+        // Voice mode stops with the app, after the voice work asked before.
+        await voice.sink.perform(.shutdown)
+        voiceStateObservation?.cancel()
+        voiceStateObservation = nil
+        voiceSessionState = .off
+        isVoiceSpeaking = false
+        await voiceUpdateObservation?.value
+        voiceUpdateObservation = nil
         await ZenWindowSteps.shutdown(sessionHost, slotIDs: closing.map(\.slotID))
         for window in closing {
             window.cancelWork()

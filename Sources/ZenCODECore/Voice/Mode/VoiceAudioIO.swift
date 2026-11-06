@@ -1,5 +1,5 @@
 //
-//  TerminalVoiceAudioIO.swift
+//  VoiceAudioIO.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 07/09/26.
@@ -8,11 +8,11 @@
 import Foundation
 
 /// Mono audio format shared by voice capture and playback.
-enum TerminalVoicePCM {
+enum VoicePCM {
     static let sampleRate = 24_000
 }
 
-enum TerminalVoiceAudioError: LocalizedError, Equatable {
+enum VoiceAudioError: LocalizedError, Equatable {
     case unsupportedPlatform
     case noInputDevice
     case unsupportedInputFormat
@@ -33,7 +33,7 @@ enum TerminalVoiceAudioError: LocalizedError, Equatable {
 import AVFoundation
 import CoreAudio
 
-/// Microphone capture and voice playback for terminal voice mode.
+/// Microphone capture and voice playback for voice mode.
 ///
 /// Capture and playback share one `AVAudioEngine` whose I/O nodes run in the
 /// system voice-processing mode, so the echo of everything played through the
@@ -46,12 +46,12 @@ import CoreAudio
 /// the same format. Public methods are driven serially by one voice
 /// controller; the audio callbacks only touch lock-protected state. Audio never
 /// touches the disk.
-final class TerminalVoiceAudioDevice: @unchecked Sendable {
+final class VoiceAudioDevice: @unchecked Sendable {
     static let isSupported = true
 
     static let sampleFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
-        sampleRate: Double(TerminalVoicePCM.sampleRate),
+        sampleRate: Double(VoicePCM.sampleRate),
         channels: 1,
         interleaved: false
     )!
@@ -145,10 +145,10 @@ final class TerminalVoiceAudioDevice: @unchecked Sendable {
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-            throw TerminalVoiceAudioError.noInputDevice
+            throw VoiceAudioError.noInputDevice
         }
         guard let converter = Self.makeConverter(from: inputFormat) else {
-            throw TerminalVoiceAudioError.unsupportedInputFormat
+            throw VoiceAudioError.unsupportedInputFormat
         }
         lock.withLock {
             self.converter = converter
@@ -321,7 +321,7 @@ final class TerminalVoiceAudioDevice: @unchecked Sendable {
         guard let output = AVAudioPCMBuffer(pcmFormat: sampleFormat, frameCapacity: capacity) else {
             return []
         }
-        let feed = TerminalVoiceConverterFeed(buffer)
+        let feed = VoiceConverterFeed(buffer)
         var conversionError: NSError?
         let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in
             feed.next(inputStatus)
@@ -349,7 +349,7 @@ final class TerminalVoiceAudioDevice: @unchecked Sendable {
 
 /// Supplies one input buffer to `AVAudioConverter`, then reports no data so
 /// the converter keeps its resampling state for the next buffer.
-final class TerminalVoiceConverterFeed: @unchecked Sendable {
+final class VoiceConverterFeed: @unchecked Sendable {
     private var buffer: AVAudioPCMBuffer?
 
     init(_ buffer: AVAudioPCMBuffer) {
@@ -370,7 +370,7 @@ final class TerminalVoiceConverterFeed: @unchecked Sendable {
 }
 #else
 /// Voice mode needs AVFoundation; elsewhere the device never starts.
-final class TerminalVoiceAudioDevice: Sendable {
+final class VoiceAudioDevice: Sendable {
     static let isSupported = false
 
     static func requestMicrophoneAccess() async -> Bool {
@@ -382,7 +382,7 @@ final class TerminalVoiceAudioDevice: Sendable {
         capturePaused: Bool,
         onSamples: @escaping @Sendable ([Float]) -> Void
     ) throws -> Bool {
-        throw TerminalVoiceAudioError.unsupportedPlatform
+        throw VoiceAudioError.unsupportedPlatform
     }
 
     var outputDeviceName: String? {

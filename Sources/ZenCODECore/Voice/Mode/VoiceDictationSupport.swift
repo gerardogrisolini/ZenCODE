@@ -1,5 +1,5 @@
 //
-//  TerminalDictationSupport.swift
+//  VoiceDictationSupport.swift
 //  ZenCODE
 //
 //  Created by Gerardo Grisolini on 23/10/26.
@@ -10,7 +10,7 @@ import Synchronization
 
 /// A `/voice` subcommand. Voice mode runs with any agent and belongs to the
 /// current TUI session only: it is never persisted.
-enum TerminalVoiceCommandAction: Sendable, Equatable {
+enum VoiceModeCommandAction: Sendable, Equatable {
     /// Bare `/voice`: pauses a listening voice mode, resumes a paused one.
     case togglePause
     case turnOn
@@ -46,7 +46,7 @@ enum TerminalVoiceCommandAction: Sendable, Equatable {
 /// hold only the words said after it. The segmenter therefore keeps the
 /// segments already closed in the current recognition session plus the one in
 /// progress, and its `text` is all of them, one per line.
-struct TerminalDictationSegmenter: Sendable {
+struct VoiceDictationSegmenter: Sendable {
     static let defaultSilence = Duration.milliseconds(5_000)
     /// Separates the speech segments of one utterance: what is said after a
     /// short pause continues on a new line.
@@ -145,8 +145,8 @@ struct TerminalDictationSegmenter: Sendable {
     /// Whether both texts hold the same words, ignoring case, accents and
     /// punctuation.
     private static func hasSameWords(_ lhs: String, _ rhs: String) -> Bool {
-        let words = TerminalVoiceEchoGuard.words(in: lhs)
-        return !words.isEmpty && words == TerminalVoiceEchoGuard.words(in: rhs)
+        let words = VoiceEchoGuard.words(in: lhs)
+        return !words.isEmpty && words == VoiceEchoGuard.words(in: rhs)
     }
 }
 
@@ -154,7 +154,7 @@ struct TerminalDictationSegmenter: Sendable {
 /// assistant speaks. System echo cancellation removes most of the assistant's
 /// voice from the microphone; this rejects what leaks through, so the
 /// assistant neither interrupts itself nor answers its own words.
-enum TerminalVoiceEchoGuard {
+enum VoiceEchoGuard {
     /// How long after speech ended a recognition can still be its echo.
     static let tail = Duration.milliseconds(1_500)
 
@@ -182,7 +182,7 @@ enum TerminalVoiceEchoGuard {
         guard isLikelyEcho(recognized, of: spokenReference) else {
             return false
         }
-        return isSpeaking || TerminalVoiceChatPhrases.affirmation(in: recognized) == nil
+        return isSpeaking || VoiceChatPhrases.affirmation(in: recognized) == nil
     }
 
     static func words(in text: String) -> [String] {
@@ -194,7 +194,7 @@ enum TerminalVoiceEchoGuard {
 
 /// Lock-protected speaking state shared by the speech synthesizer callback,
 /// playback completions and the dictation controller.
-final class TerminalVoiceSpeechState: Sendable {
+final class VoiceSpeechState: Sendable {
     /// Synthesis that produced no buffer for this long is treated as finished,
     /// even when the synthesizer never delivered its terminal buffer.
     static let synthesisIdleTimeout = Duration.seconds(2)
@@ -290,7 +290,7 @@ final class TerminalVoiceSpeechState: Sendable {
                 return state.text
             }
             let ended = state.finishedAt ?? state.lastActivity
-            guard let ended, ended.duration(to: now) < TerminalVoiceEchoGuard.tail else {
+            guard let ended, ended.duration(to: now) < VoiceEchoGuard.tail else {
                 return nil
             }
             return state.text
@@ -322,7 +322,7 @@ final class TerminalVoiceSpeechState: Sendable {
 /// a segment ends with the keyword, then everything collected is sent as one
 /// utterance. Silence never sends. While the live-chat dialogue awaits a yes
 /// or no, a bare answer is sent at once without the keyword.
-struct TerminalVoiceKeywordCollector: Sendable {
+struct VoiceKeywordCollector: Sendable {
     enum Outcome: Sendable, Equatable {
         /// The keyword was said: send everything collected before it. Empty
         /// for the keyword alone with nothing collected, which sends the
@@ -346,11 +346,11 @@ struct TerminalVoiceKeywordCollector: Sendable {
         }
     }
 
-    let keyword: TerminalVoiceSendKeyword
+    let keyword: VoiceModeSendKeyword
     /// Speech from earlier segments, waiting for the keyword.
     private(set) var pending = ""
 
-    init(keyword: TerminalVoiceSendKeyword) {
+    init(keyword: VoiceModeSendKeyword) {
         self.keyword = keyword
     }
 
@@ -371,14 +371,14 @@ struct TerminalVoiceKeywordCollector: Sendable {
             return .nothing
         }
         if pending.isEmpty,
-           TerminalVoiceUtterance.isAwaitedAnswer(trimmed, awaitingShortAnswer: awaitingShortAnswer) {
+           VoiceModeUtterance.isAwaitedAnswer(trimmed, awaitingShortAnswer: awaitingShortAnswer) {
             return .answer(trimmed)
         }
         if let utterance = keyword.utteranceToSend(pending: pending, speech: trimmed) {
             pending = ""
             return .send(utterance)
         }
-        pending = TerminalVoiceSendKeyword.joined(pending, trimmed)
+        pending = VoiceModeSendKeyword.joined(pending, trimmed)
         return .collected
     }
 
@@ -388,7 +388,7 @@ struct TerminalVoiceKeywordCollector: Sendable {
 }
 
 /// Plain spoken text from an assistant Markdown answer.
-enum TerminalVoiceSpeechText {
+enum VoiceSpeechText {
     /// The text read aloud for an answer: its plain spoken text, however long.
     /// An answer is never shortened; code blocks become a short notice.
     static func speakable(fromMarkdown markdown: String, languageCode: String?) -> String {
