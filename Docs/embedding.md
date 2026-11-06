@@ -18,7 +18,7 @@ contract of [release.md](release.md).
 
 ```swift
 // Package.swift of the app
-.package(url: "https://github.com/gerardogrisolini/ZenCODE.git", from: "4.0.0"),
+.package(url: "https://github.com/gerardogrisolini/ZenCODE.git", from: "4.0.1"),
 // in the target
 .product(name: "ZenCODECore", package: "ZenCODE"),
 ```
