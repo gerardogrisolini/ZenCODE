@@ -10,6 +10,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-11-06
+
+> **Breaking release:** compared with v3.2.0, v4.0.0 renames the run mode
+> `chat` to `tui`: `ZENCODE_AGENT_MODE=chat` is no longer accepted, and in the
+> Swift API of `ZenCODECore` the `.chat` case of `AgentRunMode` and
+> `AgentResolvedRunMode` becomes `.tui`, next to the new `.telegram` case. For
+> code that integrates `ZenCODECore` directly, it also removes the prompt,
+> operation, and sleep-assertion members of `ZenCODEACPBridge` and the Telegram
+> members of `TerminalChat`, which the session host and the Telegram channel
+> replace. `TerminalChatActor` is only deprecated, in favor of
+> `ChatSessionActor`, and is removed in the next major release. See the
+> **Breaking** entries below.
+
 ### Added
 
 - The terminal UI, ACP clients such as Xcode, and headless runs (`zen -p`,
@@ -468,10 +481,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   starts). There they were visible only through `/telegram`.
 - `TerminalChatActor` is deprecated; use `ChatSessionActor`. It is removed in
   the next major release.
-- For code that integrates `ZenCODECore` directly: the ACP bridge keeps its
-  sessions in a `ChatSessionHost`, so `ZenCODEACPBridge.SessionState.activePromptID`
-  and `operationState`, and `ZenCODEACPBridge.holdSessionSleepAssertionIfNeeded()`
-  and `updateSessionSleepAssertion()` are removed, and
+- **Breaking:** for code that integrates `ZenCODECore` directly, the ACP bridge
+  keeps its sessions in a `ChatSessionHost`, so
+  `ZenCODEACPBridge.SessionState.activePromptID` and `operationState`, and
+  `ZenCODEACPBridge.holdSessionSleepAssertionIfNeeded()` and
+  `updateSessionSleepAssertion()` are removed, and
   `ZenCODEACPBridge.sessionState(configuration:selectedAgent:epoch:activePromptID:activePromptTask:operationState:)`
   is no longer public; the prompt and operation state are those of the
   host's incarnation (`ChatSessionHost.incarnation(in:)`), and the host holds

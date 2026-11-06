@@ -13,12 +13,12 @@ without `@testable`.
 
 ## Dependency
 
-The Chat API is public from version 3.3.0. Release tags follow the `vX.Y.Z`
+The Chat API is public from version 4.0.0. Release tags follow the `vX.Y.Z`
 contract of [release.md](release.md).
 
 ```swift
 // Package.swift of the app
-.package(url: "https://github.com/gerardogrisolini/ZenCODE.git", from: "3.3.0"),
+.package(url: "https://github.com/gerardogrisolini/ZenCODE.git", from: "4.0.0"),
 // in the target
 .product(name: "ZenCODECore", package: "ZenCODE"),
 ```
@@ -1063,7 +1063,7 @@ switch.
 ## Compatibility
 
 The public API of `Sources/ZenCODECore/Chat` follows semantic versioning (see
-[Compatibility Contract](architecture.md#compatibility-contract)). From 3.3.0
+[Compatibility Contract](architecture.md#compatibility-contract)). From 4.0.0
 it comprises:
 
 - the session host: `ChatSessionHost` (with `RuntimeSessionDisposition`),
