@@ -27,12 +27,73 @@ enum TerminalChatTextFormatting {
     /// Tracks whether a prefix belongs before the next visible character.
     /// CR is tracked until its successor is known so only CRLF is considered a
     /// line boundary; a lone carriage return keeps its cursor-control meaning.
+    /// ANSI escape sequences are zero-width: the parser position is carried
+    /// across streaming deltas so the continuation bytes of a split sequence
+    /// are never mistaken for visible content.
     struct ChatLineInsetState: Sendable {
         var isAtLineStart: Bool
         var hasTrailingCarriageReturn = false
+        var escapeSequence = EscapeSequenceState.none
 
         init(isAtLineStart: Bool = true) {
             self.isAtLineStart = isAtLineStart
+        }
+    }
+
+    /// Position inside an ANSI escape sequence, using the grammar of
+    /// ``TerminalANSIText/endOfEscapeSequence(in:from:)``: CSI runs to the
+    /// first final byte (`0x40`–`0x7E`), OSC runs to BEL or `ESC \\`, and any
+    /// other marker forms a two-scalar sequence with the ESC.
+    enum EscapeSequenceState: Sendable {
+        case none
+        case afterEscape
+        case controlSequence
+        case operatingSystemCommand
+        case operatingSystemCommandEscape
+
+        /// Advances the parser by one scalar of an open sequence, or by the
+        /// ESC that opens one.
+        mutating func advance(with scalar: Unicode.Scalar) {
+            switch self {
+            case .none:
+                if scalar == "\u{1B}" {
+                    self = .afterEscape
+                }
+            case .afterEscape:
+                switch scalar {
+                case "[":
+                    self = .controlSequence
+                case "]":
+                    self = .operatingSystemCommand
+                default:
+                    self = .none
+                }
+            case .controlSequence:
+                if scalar.value >= 0x40 && scalar.value <= 0x7E {
+                    self = .none
+                }
+            case .operatingSystemCommand:
+                self = Self.operatingSystemCommandState(after: scalar)
+            case .operatingSystemCommandEscape:
+                // An ESC not followed by `\` does not terminate the OSC; the
+                // scalar after it is examined as ordinary OSC content.
+                self = scalar == "\\"
+                    ? .none
+                    : Self.operatingSystemCommandState(after: scalar)
+            }
+        }
+
+        private static func operatingSystemCommandState(
+            after scalar: Unicode.Scalar
+        ) -> EscapeSequenceState {
+            switch scalar {
+            case "\u{07}":
+                return .none
+            case "\u{1B}":
+                return .operatingSystemCommandEscape
+            default:
+                return .operatingSystemCommand
+            }
         }
     }
 
@@ -241,44 +302,64 @@ enum TerminalChatTextFormatting {
             return text
         }
 
-        var output = ""
-        for character in text {
-            if state.hasTrailingCarriageReturn {
-                state.hasTrailingCarriageReturn = false
-                if character == "\n" {
-                    output.append(character)
-                    state.isAtLineStart = true
-                    continue
-                }
-            }
+        var output = String.UnicodeScalarView()
+        // Escape sequences opened in this call while the cursor is at a line
+        // start. They are zero-width: the prefix is placed before them only
+        // when a visible scalar follows on the same row, so the margin keeps
+        // the bytes it always had and never inherits a background color.
+        var pendingEscapes = String.UnicodeScalarView()
+        // The opening bytes of a sequence split across deltas already reached
+        // the terminal without a prefix; a prefix before its continuation
+        // would land inside the sequence and corrupt it.
+        var continuesEarlierSequence = state.escapeSequence != .none
 
-            // As in spacing normalization, an in-buffer CRLF is one Swift
-            // Character; recognize it before the individual CR/LF cases.
-            if character == "\r\n" {
-                output.append(character)
-                state.isAtLineStart = true
+        // Scalars, not Characters: the escape grammar is defined on scalars,
+        // and an in-buffer CRLF is handled as CR followed by LF below.
+        for scalar in text.unicodeScalars {
+            if state.escapeSequence != .none || scalar == "\u{1B}" {
+                state.escapeSequence.advance(with: scalar)
+                if continuesEarlierSequence || !state.isAtLineStart {
+                    output.append(scalar)
+                } else {
+                    pendingEscapes.append(scalar)
+                }
+                if state.escapeSequence == .none {
+                    continuesEarlierSequence = false
+                }
                 continue
             }
 
-            if character == "\r" {
-                output.append(character)
+            // A pending CR only waits for its successor to be known: an LF that
+            // completes the CRLF is a line boundary like any other LF below,
+            // after the escape sequences accumulated in between.
+            state.hasTrailingCarriageReturn = false
+
+            if scalar == "\r" {
+                output.append(contentsOf: pendingEscapes)
+                pendingEscapes.removeAll()
+                output.append(scalar)
                 state.hasTrailingCarriageReturn = true
                 continue
             }
-            if character == "\n" {
-                output.append(character)
+            if scalar == "\n" {
+                output.append(contentsOf: pendingEscapes)
+                pendingEscapes.removeAll()
+                output.append(scalar)
                 state.isAtLineStart = true
                 continue
             }
             if state.isAtLineStart {
-                if !prefix.isEmpty {
-                    output += prefix
-                }
+                output.append(contentsOf: prefix.unicodeScalars)
                 state.isAtLineStart = false
             }
-            output.append(character)
+            output.append(contentsOf: pendingEscapes)
+            pendingEscapes.removeAll()
+            output.append(scalar)
         }
-        return output
+        // Sequences are never held back across calls: without a visible
+        // scalar they are emitted unprefixed and the row stays unstarted.
+        output.append(contentsOf: pendingEscapes)
+        return String(output)
     }
 
     static func updateChatLineInsetState(

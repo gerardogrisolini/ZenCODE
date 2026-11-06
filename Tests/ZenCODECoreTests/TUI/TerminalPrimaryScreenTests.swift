@@ -39,10 +39,16 @@ final class PrimaryScreenCapture: Sendable {
         terminal.withLock { $0.resize(rows: rows, columns: columns) }
         generation.withLock { $0 &+= 1 }
     }
-    func answerReport() async throws {
+    /// Returns the bytes `consume` hands back, as the raw reader receives them.
+    /// If the dispatched delivery releases input before the reply's last byte
+    /// returns, that byte carries the deferred keys instead of leaving them deferred.
+    @discardableResult
+    func answerReport() async throws -> [UInt8] {
         let response = terminal.withLock { $0.cursorReport }
-        for byte in response.utf8 { _ = reports.consume(byte) }
+        var released: [UInt8] = []
+        for byte in response.utf8 { released += reports.consume(byte) }
         try await terminalWaitForCursorReport(reports)
+        return released
     }
     /// Answers a query superseded by a physical resize. Its callback discards
     /// the reply and keeps input held, so wait for the callback itself.
@@ -353,9 +359,10 @@ final class PrimaryScreenCapture: Sendable {
         #expect(capture.queries == 2)
         #expect(capture.reports.takeDeferredKeys().isEmpty)
         for marker in markers { #expect(!capture.bytes.contains(marker)) }
-        try await capture.answerReport()
+        // Like the raw reader: bytes released by consume, then the deferred rest.
+        let released = try await capture.answerReport()
         #expect(!screen.isAppendOnly)
-        #expect(capture.reports.takeDeferredKeys() == keys)
+        #expect(released + capture.reports.takeDeferredKeys() == keys)
         #expect(capture.reports.takeDeferredKeys().isEmpty)
         for marker in markers { #expect(capture.bytes.components(separatedBy: marker).count == 2) }
         let all = capture.history + "\n" + capture.visible

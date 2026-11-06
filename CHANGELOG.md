@@ -639,6 +639,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   prompt, Backspace keeps deleting one character and those characters are
   typed. Terminals with an extended keyboard protocol (iTerm2, Ghostty,
   kitty) are unchanged.
+- Terminal: after a thinking block that ended with a blank line, the live
+  Sub-Agents section was printed again below the previous one at each update
+  instead of being updated in place, and its first line lost the left margin.
+  The section now keeps its margin and is updated in place.
 
 ## [3.2.0] - 2026-10-30
 

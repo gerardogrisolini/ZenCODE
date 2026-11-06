@@ -222,6 +222,185 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func chatLineInsetDoesNotStartARowForATrailingEscapeSequence() {
+        var state = TerminalChatTextFormatting.ChatLineInsetState()
+
+        // The thought renderer emits its SGR reset after the closing blank
+        // line: the reset is zero-width and must not consume the margin.
+        let thoughtTail = TerminalChatTextFormatting.chatLineInsetApplied(
+            to: "\n\n\u{1B}[0m",
+            prefix: " ",
+            state: &state
+        )
+        #expect(thoughtTail == "\n\n\u{1B}[0m")
+        #expect(state.isAtLineStart)
+
+        let next = TerminalChatTextFormatting.chatLineInsetApplied(
+            to: "👥 Sub-Agents:\n",
+            prefix: " ",
+            state: &state
+        )
+        #expect(next == " 👥 Sub-Agents:\n")
+        #expect(state.isAtLineStart)
+
+        // A sequence followed by a line boundary is emitted without margin.
+        #expect(
+            TerminalChatTextFormatting.chatLineInsetApplied(
+                to: "\u{1B}[0m\n\u{1B}[2K\r\u{1B}[0m\r\nok",
+                prefix: " ",
+                state: &state
+            ) == "\u{1B}[0m\n\u{1B}[2K\r\u{1B}[0m\r\n ok"
+        )
+        #expect(!state.isAtLineStart)
+
+        // A sequence between the CR and the LF of one boundary keeps its order,
+        // within one delta and across two.
+        state = TerminalChatTextFormatting.ChatLineInsetState()
+        #expect(
+            TerminalChatTextFormatting.chatLineInsetApplied(
+                to: "\r\u{1B}[0m\nok",
+                prefix: " ",
+                state: &state
+            ) == "\r\u{1B}[0m\n ok"
+        )
+        state = TerminalChatTextFormatting.ChatLineInsetState()
+        let carriageReturn = TerminalChatTextFormatting.chatLineInsetApplied(
+            to: "\r",
+            prefix: " ",
+            state: &state
+        )
+        let lineFeed = TerminalChatTextFormatting.chatLineInsetApplied(
+            to: "\u{1B}[0m\nok",
+            prefix: " ",
+            state: &state
+        )
+        #expect(carriageReturn + lineFeed == "\r\u{1B}[0m\n ok")
+        #expect(!state.isAtLineStart)
+
+        // Mid-row sequences pass through unchanged.
+        #expect(
+            TerminalChatTextFormatting.chatLineInsetApplied(
+                to: "\u{1B}[0m!\n",
+                prefix: " ",
+                state: &state
+            ) == "\u{1B}[0m!\n"
+        )
+        #expect(state.isAtLineStart)
+    }
+
+    @Test
+    func chatLineInsetPlacesTheMarginBeforeLeadingEscapeSequencesOfAVisibleRow() {
+        var state = TerminalChatTextFormatting.ChatLineInsetState()
+
+        #expect(
+            TerminalChatTextFormatting.chatLineInsetApplied(
+                to: "\u{1B}[90mNow",
+                prefix: " ",
+                state: &state
+            ) == " \u{1B}[90mNow"
+        )
+        #expect(!state.isAtLineStart)
+
+        // Escape-only updates tracked without a prefix keep the same state.
+        var trackedState = TerminalChatTextFormatting.ChatLineInsetState()
+        TerminalChatTextFormatting.updateChatLineInsetState(
+            after: "\u{1B}[1m\u{1B}[0m",
+            state: &trackedState
+        )
+        #expect(trackedState.isAtLineStart)
+        TerminalChatTextFormatting.updateChatLineInsetState(
+            after: "\u{1B}[1mX",
+            state: &trackedState
+        )
+        #expect(!trackedState.isAtLineStart)
+    }
+
+    @Test
+    func chatLineInsetKeepsTheMarginOutsideAnEscapeSequenceSplitAcrossDeltas() {
+        var state = TerminalChatTextFormatting.ChatLineInsetState()
+
+        let first = TerminalChatTextFormatting.chatLineInsetApplied(
+            to: "\u{1B}[38;5",
+            prefix: " ",
+            state: &state
+        )
+        #expect(first == "\u{1B}[38;5")
+        #expect(state.isAtLineStart)
+
+        let second = TerminalChatTextFormatting.chatLineInsetApplied(
+            to: ";208mX",
+            prefix: " ",
+            state: &state
+        )
+        let combined = first + second
+        // The continuation bytes are not visible, and the margin follows the
+        // completed sequence instead of being inserted inside the CSI.
+        #expect(second == ";208m X")
+        #expect(combined == "\u{1B}[38;5;208m X")
+        #expect(!combined.contains("\u{1B}[38;5 "))
+        #expect(TerminalANSIText.stripANSI(combined) == " X")
+        #expect(!state.isAtLineStart)
+
+        // A lone ESC at the end of a delta selects the marker in the next one.
+        var escapeState = TerminalChatTextFormatting.ChatLineInsetState()
+        let escape = TerminalChatTextFormatting.chatLineInsetApplied(
+            to: "\u{1B}",
+            prefix: " ",
+            state: &escapeState
+        )
+        let continuation = TerminalChatTextFormatting.chatLineInsetApplied(
+            to: "[1mY",
+            prefix: " ",
+            state: &escapeState
+        )
+        #expect(escape == "\u{1B}")
+        #expect(continuation == "[1m Y")
+        #expect(!escapeState.isAtLineStart)
+    }
+
+    @Test
+    func chatLineInsetTreatsOperatingSystemCommandsAsZeroWidth() {
+        let openLink = "\u{1B}]8;;https://example.com\u{1B}\\"
+        let closeLink = "\u{1B}]8;;\u{1B}\\"
+        var state = TerminalChatTextFormatting.ChatLineInsetState()
+
+        // A hyperlink row keeps the margin outside the OSC 8 sequence.
+        #expect(
+            TerminalChatTextFormatting.chatLineInsetApplied(
+                to: "\(openLink)link\(closeLink)\n",
+                prefix: " ",
+                state: &state
+            ) == " \(openLink)link\(closeLink)\n"
+        )
+        #expect(state.isAtLineStart)
+
+        // OSC sequences alone, terminated by ST or BEL, never start a row.
+        #expect(
+            TerminalChatTextFormatting.chatLineInsetApplied(
+                to: "\(closeLink)\u{1B}]0;title\u{07}",
+                prefix: " ",
+                state: &state
+            ) == "\(closeLink)\u{1B}]0;title\u{07}"
+        )
+        #expect(state.isAtLineStart)
+
+        // The ST of an OSC may be split between deltas.
+        let unterminated = TerminalChatTextFormatting.chatLineInsetApplied(
+            to: "\u{1B}]8;;https://example.com\u{1B}",
+            prefix: " ",
+            state: &state
+        )
+        let terminated = TerminalChatTextFormatting.chatLineInsetApplied(
+            to: "\\link",
+            prefix: " ",
+            state: &state
+        )
+        #expect(unterminated == "\u{1B}]8;;https://example.com\u{1B}")
+        #expect(terminated == "\\ link")
+        #expect(!state.isAtLineStart)
+    }
+
+    @Test
     func terminalWidthForceRefreshBypassesTheMonotonicTTL() {
         let probe = TerminalWidthProbe(120)
         let now = ContinuousClock().now

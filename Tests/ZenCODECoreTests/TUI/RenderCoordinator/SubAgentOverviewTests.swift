@@ -447,4 +447,92 @@ extension TerminalChatRenderCoordinatorTests {
         #expect(stale == .unchanged)
         #expect(staleText.isEmpty)
     }
+
+    @Test
+    func subAgentOverviewAfterBlankLineThoughtAndAgentWaitIsReplacedInPlace() async throws {
+        let renderer = makeRenderer(
+            stdinIsTerminal: true,
+            standardErrorIsTerminal: true,
+            standardOutputIsTerminal: true,
+            columnWidthProvider: { 120 }
+        )
+
+        // The thought renderer appends its SGR reset after the trailing blank
+        // line. That zero-width reset must not start the next row, otherwise
+        // the overview title loses its margin and its rows are never owned.
+        await renderer.writeThought("Now I'm weighing.\n\n")
+        await renderer.writeToolCallStarted(
+            presentedToolCall(
+                id: "wait-after-blank-thought",
+                name: "agent.wait",
+                argumentsObject: [:],
+                argumentsJSON: "{}"
+            )
+        )
+
+        try await expectSubAgentOverviewIsOwnedAndReplacedInPlace(by: renderer)
+    }
+
+    @Test
+    func subAgentOverviewAfterBlankLineThoughtIsReplacedInPlace() async throws {
+        let renderer = makeRenderer(
+            stdinIsTerminal: true,
+            standardErrorIsTerminal: true,
+            standardOutputIsTerminal: true,
+            columnWidthProvider: { 120 }
+        )
+
+        await renderer.writeThought("Now I'm weighing.\n\n")
+        await renderer.finishThoughtOutput()
+
+        try await expectSubAgentOverviewIsOwnedAndReplacedInPlace(by: renderer)
+    }
+
+    /// Publishes two overviews of the same wave and checks that the first one
+    /// owns its rows with the chat margin and the second one rewrites them in
+    /// place instead of being appended below.
+    private func expectSubAgentOverviewIsOwnedAndReplacedInPlace(
+        by renderer: TerminalChatRenderCoordinator
+    ) async throws {
+        let eventsBeforeFirst = await renderer.capturedWriteEvents().count
+        _ = await renderer.renderRememberedSubAgentOverview(
+            signature: "agents:1",
+            text: "\n👥 Sub-Agents:\n   1 total\n   running\n",
+            overviewBatchID: "wave"
+        )
+        let firstText = await renderer.capturedText(droppingFirst: eventsBeforeFirst)
+        let ownedRows = await renderer.snapshot().activeSubAgentOverviewRowCount
+
+        #expect(ownedRows > 0)
+        #expect(try titleRowStartsWithMargin(in: firstText))
+
+        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
+        _ = await renderer.renderRememberedSubAgentOverview(
+            signature: "agents:2",
+            text: "\n👥 Sub-Agents:\n   1 total\n   completed\n",
+            overviewBatchID: "wave"
+        )
+        let refreshText = await renderer.capturedText(droppingFirst: eventsBeforeRefresh)
+        let plainTranscript = await renderer.capturedPlainText()
+
+        #expect(containsCursorUpSequence(refreshText))
+        #expect(refreshText.hasPrefix("\u{1B}[\(ownedRows)A\r"))
+        #expect(refreshText.components(separatedBy: "\u{1B}[2K").count - 1 == ownedRows)
+        #expect(try titleRowStartsWithMargin(in: refreshText))
+        #expect(TerminalANSIText.stripANSI(refreshText).contains("completed"))
+        #expect(plainTranscript.components(separatedBy: "Sub-Agents:").count - 1 == 2)
+        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == ownedRows)
+    }
+
+    /// The visible text of the title row after the last carriage return, so
+    /// cursor-control prefixes emitted by the erase do not hide the margin.
+    private func titleRowStartsWithMargin(in renderedText: String) throws -> Bool {
+        let titleRow = try #require(
+            TerminalANSIText.stripANSI(renderedText)
+                .components(separatedBy: "\n")
+                .first { $0.contains("Sub-Agents:") }
+        )
+        let visibleTitle = titleRow.components(separatedBy: "\r").last ?? titleRow
+        return visibleTitle.hasPrefix(" 👥 Sub-Agents:")
+    }
 }
