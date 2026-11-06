@@ -21,10 +21,36 @@ Release tags follow the strict `vX.Y.Z` contract described in
   are kept. It lists the exact paths and sizes and deletes nothing until you
   confirm (default No); no copy is kept. The browser groups are skipped while
   Chrome is using the profile, and the app build directory while a
-  `zen --ui` is installing the app.
+  `zen --ui` is installing the app. Export backup now runs the same cleanup
+  first; No, or no group selected, exports without cleaning; Esc cancels the
+  export.
+- `/subagent [name|id]` opens, in the interactive terminal and even while a
+  prompt is running, the detail of a sub-agent in progress: a full-height
+  panel above the input panel with the agent's block from `👥 Sub-Agents`,
+  then its transcript (prompts, reasoning, responses, tool calls) and its live
+  activity. With a name or id it opens that sub-agent; without one it opens
+  the only sub-agent in progress, or lists them to choose with `↑`/`↓` and
+  `Enter`. `↑`/`↓`, `PgUp`/`PgDn`, and `Home`/`End` scroll it, `Esc` or `q`
+  closes it; meanwhile the prompt receives no text, while the generation, the
+  shared chat, and the queued prompts go on. The panel updates at most twice
+  a second, and at once when the agent's state changes, following the bottom
+  until you scroll up (`End` follows again). Once the agent ends, its last
+  reading stays visible. Nothing is saved.
 
 ### Fixed
 
+- `/setup` › Data management › Export backup no longer fails with "The
+  support directory contains a symbolic link, which cannot be archived"
+  because of the installed features or of the browser: the build directories
+  of the features (`features/<id>/.build`), which hold only regenerable build
+  output and the `release` link that SwiftPM creates, and the per-run files
+  Chrome keeps at the root of its profile (`browser/RunningChromeVersion`,
+  `DevToolsActivePort`, `Singleton*`) are left out of the backup. Any other
+  symbolic link no longer stops the export either: it is left out of the
+  archive (neither the link nor its target is saved) and listed with its
+  target in the export summary. After an import, rebuild the features from
+  `/setup` › Features (Update installed), or with `feature.build` for
+  Builder-generated features.
 - With the local DS4 provider in the terminal UI, the prompts after the first
   one of a session reuse the KV cache again and prefill only the new text.
   Before, each prompt prefilled the whole conversation again (the status bar

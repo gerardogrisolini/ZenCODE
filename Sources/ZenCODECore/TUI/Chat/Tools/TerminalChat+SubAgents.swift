@@ -344,80 +344,106 @@ extension TerminalChat {
             if density.includesSeparators {
                 lines.append(.regular("", maxWrappedLines: 1))
             }
-
-            if density == .inline {
-                lines.append(
-                    .regular(renderSubAgentInlineEntry(snapshot), maxWrappedLines: 1)
-                )
-                continue
-            }
-
-            lines.append(.regular(renderSubAgentHeader(snapshot)))
-            if density.includesMetadata {
-                lines.append(
-                    .regular(
-                        subAgentMetadataText(label: "id:", value: snapshot.id),
-                        maxWrappedLines: 1
-                    )
-                )
-                if !snapshot.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    lines.append(
-                        .regular(subAgentMetadataText(label: "role:", value: snapshot.role))
-                    )
-                }
-                if let profileName = snapshot.profileName?.nilIfBlank {
-                    lines.append(
-                        .regular(subAgentMetadataText(label: "agent:", value: profileName))
-                    )
-                }
-                if let taskID = snapshot.taskID?.nilIfBlank {
-                    var taskText = subAgentMetadataText(
-                        label: "task:",
-                        value: inlineText(taskID)
-                    )
-                    if let attempt = snapshot.taskAttemptOrdinal {
-                        taskText += " · " + subAgentMetadataText(
-                            label: "attempt:",
-                            value: String(attempt)
-                        )
-                    }
-                    lines.append(.regular(taskText, maxWrappedLines: 2))
-                }
-                if let model = renderSubAgentModelLine(
+            lines.append(
+                contentsOf: subAgentEntryLines(
                     snapshot,
-                    modelTitleResolver: modelTitleResolver
-                ) {
-                    lines.append(.regular(model))
-                }
-            } else if density == .compact {
-                lines.append(
-                    .regular(
-                        renderSubAgentAgentAndModel(
-                            snapshot,
-                            modelTitleResolver: modelTitleResolver
-                        ),
-                        maxWrappedLines: 1
-                    )
+                    modelTitleResolver: modelTitleResolver,
+                    toolPresentation: matchingSubAgentToolPresentation(
+                        for: snapshot,
+                        in: toolPresentationsByAgentID
+                    ),
+                    density: density,
+                    includesFinalResponse: includesFinalResponses,
+                    includesActivity: true
                 )
-            }
-            let activityLines = renderSubAgentActivityLines(
-                snapshot,
-                toolPresentation: matchingSubAgentToolPresentation(
-                    for: snapshot,
-                    in: toolPresentationsByAgentID
-                ),
-                density: density
             )
-            lines.append(contentsOf: activityLines)
-            if let detail = renderSubAgentDetail(
-                snapshot,
-                includesFinalResponse: includesFinalResponses,
-                density: density
-            ) {
-                lines.append(detail)
-            }
         }
 
+        return lines
+    }
+
+    /// The lines of one agent's entry at `density`, without the separator
+    /// that precedes it in the overview: the status header, the metadata the
+    /// density keeps, the current activity when `includesActivity` is `true`,
+    /// and the detail (the latest error, or the final response when
+    /// `includesFinalResponse` is `true`). The inline density folds the whole
+    /// entry, activity fragment included, into a single row.
+    nonisolated static func subAgentEntryLines(
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
+        modelTitleResolver: (String) -> String,
+        toolPresentation: TerminalChatRenderCoordinator.SubAgentToolPresentation?,
+        density: SubAgentOverviewDensity,
+        includesFinalResponse: Bool,
+        includesActivity: Bool
+    ) -> [SubAgentOverviewLine] {
+        if density == .inline {
+            return [.regular(renderSubAgentInlineEntry(snapshot), maxWrappedLines: 1)]
+        }
+
+        var lines = [SubAgentOverviewLine.regular(renderSubAgentHeader(snapshot))]
+        if density.includesMetadata {
+            lines.append(
+                .regular(
+                    subAgentMetadataText(label: "id:", value: snapshot.id),
+                    maxWrappedLines: 1
+                )
+            )
+            if !snapshot.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                lines.append(
+                    .regular(subAgentMetadataText(label: "role:", value: snapshot.role))
+                )
+            }
+            if let profileName = snapshot.profileName?.nilIfBlank {
+                lines.append(
+                    .regular(subAgentMetadataText(label: "agent:", value: profileName))
+                )
+            }
+            if let taskID = snapshot.taskID?.nilIfBlank {
+                var taskText = subAgentMetadataText(
+                    label: "task:",
+                    value: inlineText(taskID)
+                )
+                if let attempt = snapshot.taskAttemptOrdinal {
+                    taskText += " · " + subAgentMetadataText(
+                        label: "attempt:",
+                        value: String(attempt)
+                    )
+                }
+                lines.append(.regular(taskText, maxWrappedLines: 2))
+            }
+            if let model = renderSubAgentModelLine(
+                snapshot,
+                modelTitleResolver: modelTitleResolver
+            ) {
+                lines.append(.regular(model))
+            }
+        } else if density == .compact {
+            lines.append(
+                .regular(
+                    renderSubAgentAgentAndModel(
+                        snapshot,
+                        modelTitleResolver: modelTitleResolver
+                    ),
+                    maxWrappedLines: 1
+                )
+            )
+        }
+        if includesActivity {
+            lines.append(
+                contentsOf: renderSubAgentActivityLines(
+                    snapshot,
+                    toolPresentation: toolPresentation,
+                    density: density
+                )
+            )
+        }
+        if let detail = renderSubAgentDetail(
+            snapshot,
+            includesFinalResponse: includesFinalResponse,
+            density: density
+        ) {
+            lines.append(detail)
+        }
         return lines
     }
 
@@ -576,8 +602,9 @@ extension TerminalChat {
         )
     }
 
-    /// Builds the model title resolver used by the instance overview renderer.
-    private func subAgentModelTitleResolver() -> (String) -> String {
+    /// Builds the model title resolver used by the instance overview renderer
+    /// and by the sub-agent detail header.
+    func subAgentModelTitleResolver() -> (String) -> String {
         { modelID in
             Self.resolvedSubAgentModelTitle(
                 for: modelID,

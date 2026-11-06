@@ -289,6 +289,10 @@ public final class TerminalChat {
     /// until the loop adopted that turn (see
     /// ``takeAdoptedTurnIfNeeded()``).
     var hasAdoptedTelegramTurn = false
+    /// The `/subagent` detail open now, from its opening to its teardown
+    /// (``closeSubAgentDetail(reason:)``); `nil` while none is open.
+    /// Transient: it lasts only while the panel is shown and is never saved.
+    var subAgentDetail: TerminalSubAgentDetail?
     /// Returning `true` stands in for publishing a shared-chat mention the
     /// operator typed or dictated; `nil` in production.
     var onSharedChatPublicationForTesting: (@Sendable () -> Bool)?

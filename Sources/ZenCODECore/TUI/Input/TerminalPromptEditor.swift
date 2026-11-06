@@ -355,7 +355,7 @@ struct TerminalPromptEditor: Equatable, Sendable {
                 lastRepeatTimestampMilliseconds: menu.lastRepeatTimestampMilliseconds
             )
             return .changed
-        case .unknown:
+        case .unknown, .pageUp, .pageDown:
             return .ignored
         default:
             pressAndHoldMenu = nil
@@ -499,6 +499,10 @@ struct TerminalPromptEditor: Equatable, Sendable {
             return cancel(context: context)
         case .endOfInput:
             return buffer.isEmpty ? .endOfInput : .ignored
+        case .pageUp, .pageDown:
+            // The one-row draft has no pages; full-screen readers consume
+            // these before they reach the editor.
+            return .ignored
         case .unknown:
             return .ignored
         }

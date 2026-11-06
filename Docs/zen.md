@@ -234,14 +234,31 @@ directory between machines in one step:
   the archive is never added to itself when saved inside `~/.zencode/`.
   The Linux `voice/` directory is excluded as well: its programs and models
   are large and can be downloaded again from `/setup` > **Voice mode**.
+  The build directories of the installed features (`features/<id>/.build`)
+  are excluded too: they hold only regenerable build output and the
+  `release` symbolic link that SwiftPM creates.
+  The per-run files Chrome keeps at the root of the browser profile
+  (`browser/RunningChromeVersion`, `DevToolsActivePort`, `SingletonLock`,
+  `SingletonSocket` and `SingletonCookie`), recreated at every launch, are
+  excluded too, while the rest of the profile (cookies, logins, settings)
+  is exported.
   The export runs under the support directory's coordination lock, so the
   archive is a coherent snapshot of one moment in time rather than a mix
-  of states captured while settings were being written. If the support
-  directory contains a symbolic link, the export fails with an explicit
-  error instead of silently skipping it — a backup that silently drops a
-  link is worse than one that refuses to lie. Overwriting an existing
-  archive keeps the old one until the new export is complete; a failure
-  during the replacement restores the previous archive.
+  of states captured while settings were being written. Any other symbolic
+  link in the support directory is not archived, neither the link nor what
+  it points to (links are never followed), and the export goes on: the
+  final summary lists every skipped link with its target under "Skipped
+  symbolic links", and an import does not recreate them. Overwriting an
+  existing archive keeps the old one until the new export is complete; a
+  failure during the replacement restores the previous archive.
+  Before writing the archive, Export backup offers the same cleanup as
+  **Clean support directory** (described below), then asks for the archive
+  path. Answering No to "Delete these files?", or selecting no group,
+  exports without cleaning; a cleanup that could not delete some paths
+  shows its summary and the export goes on. Esc on the group menu or on the
+  confirmation cancels the whole export: nothing is deleted and no archive
+  is written. What the cleanup deleted stays deleted if the export is then
+  cancelled or fails.
 - **Import backup** validates the archive completely *before* touching any
   data — structure, version, per-file size and SHA-256 checksum, path
   traversal and symbolic-link rejection, and entry-count/size limits — and
@@ -252,6 +269,10 @@ directory between machines in one step:
   concurrent processes keep a single shared exclusion boundary before,
   during, and after the swap. Because the whole directory is replaced, the
   Linux voice mode files are removed: download them again afterwards.
+  The build directories of the installed features are not in the archive
+  either, so rebuild the features after an import: the optional ones from
+  `/setup` > **Features** (Update installed), the Builder-generated ones
+  with `feature.build`.
 - **Clean memory** lists the memory graphs under `~/.zencode/memory/` (the
   current project, the global graph, and the other projects, with size and
   modification date), then lets you choose the rules to apply to one of them:
@@ -327,10 +348,12 @@ directory between machines in one step:
   main setup menu, now grouped here with the other data operations.
 - **Back**, or Esc on the Data management menu, returns to the main setup
   menu. Esc on a prompt of an action (Export, Import, Clean support directory,
-  Reset) returns to Data management with the data untouched; in **Clean
-  memory**, Esc on the action menu of a graph or on a prompt of its cleanup or
-  deletion (the days, "Apply this cleanup?", the folder deletion) returns to
-  the graph list, and Esc on the graph list returns to Data management. An
+  Reset) returns to Data management with the data untouched; for Export,
+  after a confirmed cleanup, Esc on the archive path prompt returns with the
+  cleaned files already deleted. In **Clean memory**, Esc on the action menu
+  of a graph or on a prompt of its cleanup or deletion (the days, "Apply this
+  cleanup?", the folder deletion) returns to the graph list, and Esc on the
+  graph list returns to Data management. An
   action that fails, such as an archive rejected by Import (`Import failed: …`)
   or an export that cannot be written, prints the error and returns to Data
   management as well. None of this leaves setup, so the setup changes not yet
@@ -646,6 +669,7 @@ Commands start with `/`:
 - `/tasks retry <id>` — return a failed/blocked task to `pending`.
 - `/tasks cancel <id> [reason]` — cancel task and active worker.
 - `/tasks clear` — remove all task graphs for the logical session.
+- `/subagent [name|id]` — open the detail of a sub-agent in progress; interactive terminal only, available even while a prompt is running. With an argument it opens the sub-agent in progress whose id or name matches, ignoring case; without one it opens the only sub-agent in progress, or lists the sub-agents in progress in the same panel to choose with `↑`/`↓` and `Enter`; with none in progress it reports an error. The detail is a full-height panel above the input panel, with a frame of its own, and only one is open at a time: opening another replaces it. Its header is the agent's block from `👥 Sub-Agents` (status, name, badges, id, role, agent, task and attempt, model and tokens, error); under it is the sub-agent's transcript (prompts, reasoning, Markdown responses, tool calls with their compact lines and detail), ending with its live activity while the agent is in progress. `↑`/`↓` scroll one line, `PgUp`/`PgDn` one page, `Home`/`End` to the start or end, and `Esc` or `q` closes it. While it is open the prompt receives no text, but the generation, the shared chat, and the queued prompts go on; the main transcript output produced meanwhile is shown when it closes, and `Esc` there does not stop the generation. It updates live at most twice a second, and at once when the agent's state changes, following the bottom until you scroll up (`End` follows again). Once the agent ends, its last reading stays visible; if no reading ever succeeded, it shows `The transcript of this sub-agent is not available.`. The detail is transient: nothing of it is saved. A tool consent request closes it with `Sub-agent detail closed: a tool asks for consent.` and takes the input.
 
 **Agentic workflow:**
 - `/plan <goal>` — delegate planning to a sub-agent using a profile with the `planner` role (the built-in `Planner` by default). It may ask numbered clarification blocks over multiple turns; normal replies continue that runtime-only discussion with the same Planner, while a new goal closes and replaces it. The same command family is routed by the linked Telegram chat and ACP. See [planner.md](planner.md).
@@ -701,6 +725,9 @@ final output, the runtime delivers that output to `operator` without involving
 the coordinator or duplicating an explicit chat reply. The chat is in-memory and
 never persisted; a session reset drops it. See the [Chat reader
 states](#chat-reader-states) below and [agents.md](agents.md#messages).
+
+The transcript and live activity of one sub-agent in progress open in the
+terminal with `/subagent` (see [Terminal TUI Commands](#terminal-tui-commands)).
 
 #### Chat reader states
 

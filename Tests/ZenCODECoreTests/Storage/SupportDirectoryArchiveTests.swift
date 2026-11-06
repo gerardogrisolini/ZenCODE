@@ -292,8 +292,8 @@ struct SupportDirectoryArchiveTests {
         let modelDirectory = voiceURL.appendingPathComponent("model", isDirectory: true)
         try fileManager.createDirectory(at: modelDirectory, withIntermediateDirectories: true)
         try Data("weights".utf8).write(to: modelDirectory.appendingPathComponent("encoder.onnx"))
-        // A symlink anywhere else in the source makes export fail; inside the
-        // voice directory it is never visited.
+        // Inside the voice directory a symlink is never visited, so it is not
+        // even reported (a symlink anywhere else is skipped and reported).
         try fileManager.createSymbolicLink(
             at: modelDirectory.appendingPathComponent("link.onnx"),
             withDestinationURL: modelDirectory.appendingPathComponent("encoder.onnx")
@@ -306,11 +306,167 @@ struct SupportDirectoryArchiveTests {
         let archiveURL = fileManager.temporaryDirectory
             .appendingPathComponent("voice-\(UUID().uuidString).tar.gz")
         defer { try? fileManager.removeItem(at: archiveURL) }
-        _ = try SupportDirectoryArchive.export(from: sourceURL, to: archiveURL)
+        let result = try SupportDirectoryArchive.export(from: sourceURL, to: archiveURL)
 
         let paths = Set(try SupportDirectoryArchive.validate(archiveURL: archiveURL).entries.map(\.path))
         #expect(!paths.contains { $0.hasPrefix("voice/") })
         #expect(paths.contains("nested/voice/note.txt"))
+        #expect(paths.contains("settings.json"))
+        #expect(result.skippedSymbolicLinks.isEmpty)
+    }
+
+    @Test
+    func exportSkipsFeatureBuildDirectoriesIncludingSymlinks() throws {
+        let sourceURL = try makeTemporaryDirectory("feature-build")
+        _ = try populateSupportDirectory(sourceURL)
+        let featureURL = sourceURL.appendingPathComponent("features/demo", isDirectory: true)
+        let buildURL = featureURL.appendingPathComponent(".build", isDirectory: true)
+        let files = [
+            "features/demo/feature.json",
+            "features/demo/Package.swift",
+            "features/demo/Sources/Demo/main.swift",
+            "features/demo/.build/out/Products/Release/demo-feature",
+            // `.build` directories anywhere but `features/<id>/.build` are kept.
+            "features/demo/Sources/.build/kept.txt",
+            "other/demo/.build/kept.txt",
+            "features/.build/kept.txt",
+            ".build/kept.txt"
+        ]
+        for path in files {
+            let fileURL = sourceURL.appendingPathComponent(path)
+            try fileManager.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data(path.utf8).write(to: fileURL)
+        }
+        // The relative link SwiftPM creates; inside `features/<id>/.build` it is
+        // never visited.
+        try fileManager.createSymbolicLink(
+            atPath: buildURL.appendingPathComponent("release").path,
+            withDestinationPath: "out/Products/Release"
+        )
+
+        let archiveURL = fileManager.temporaryDirectory
+            .appendingPathComponent("feature-build-\(UUID().uuidString).tar.gz")
+        defer { try? fileManager.removeItem(at: archiveURL) }
+        let result = try SupportDirectoryArchive.export(from: sourceURL, to: archiveURL)
+
+        let paths = Set(try SupportDirectoryArchive.validate(archiveURL: archiveURL).entries.map(\.path))
+        #expect(!paths.contains { $0.hasPrefix("features/demo/.build/") })
+        #expect(paths.contains("features/demo/feature.json"))
+        #expect(paths.contains("features/demo/Package.swift"))
+        #expect(paths.contains("features/demo/Sources/Demo/main.swift"))
+        #expect(paths.contains("features/demo/Sources/.build/kept.txt"))
+        #expect(paths.contains("other/demo/.build/kept.txt"))
+        #expect(paths.contains("features/.build/kept.txt"))
+        #expect(paths.contains(".build/kept.txt"))
+        #expect(paths.contains("settings.json"))
+        #expect(result.skippedSymbolicLinks.isEmpty)
+    }
+
+    @Test
+    func exportReportsSymlinksInFeatureDirectoriesOutsideBuild() throws {
+        let sourceURL = try makeTemporaryDirectory("feature-link")
+        _ = try populateSupportDirectory(sourceURL)
+        let featureURL = sourceURL.appendingPathComponent("features/demo", isDirectory: true)
+        try fileManager.createDirectory(at: featureURL, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: featureURL.appendingPathComponent("feature.json"))
+        try fileManager.createSymbolicLink(
+            atPath: featureURL.appendingPathComponent("link").path,
+            withDestinationPath: "feature.json"
+        )
+
+        let archiveURL = fileManager.temporaryDirectory
+            .appendingPathComponent("feature-link-\(UUID().uuidString).tar.gz")
+        defer { try? fileManager.removeItem(at: archiveURL) }
+        let result = try SupportDirectoryArchive.export(from: sourceURL, to: archiveURL)
+
+        #expect(
+            result.skippedSymbolicLinks == [
+                .init(path: "features/demo/link", destination: "feature.json")
+            ]
+        )
+        let paths = Set(try SupportDirectoryArchive.validate(archiveURL: archiveURL).entries.map(\.path))
+        #expect(!paths.contains("features/demo/link"))
+        #expect(paths.contains("features/demo/feature.json"))
+        #expect(paths.contains("settings.json"))
+    }
+
+    @Test
+    func exportSkipsChromeRuntimeEntriesAtTheBrowserProfileRoot() throws {
+        let sourceURL = try makeTemporaryDirectory("browser-runtime")
+        _ = try populateSupportDirectory(sourceURL)
+        let browserURL = sourceURL.appendingPathComponent("browser", isDirectory: true)
+        let files = [
+            "browser/Local State",
+            "browser/Default/Cookies",
+            // A regular file among Chrome's per-run entries.
+            "browser/DevToolsActivePort"
+        ]
+        for path in files {
+            let fileURL = sourceURL.appendingPathComponent(path)
+            try fileManager.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data(path.utf8).write(to: fileURL)
+        }
+        // Chrome's per-run symbolic links; every target is dangling.
+        let links = [
+            "RunningChromeVersion": "156.0.8078.80:1",
+            "SingletonLock": "host-12345",
+            "SingletonSocket": "/tmp/\(UUID().uuidString)/SingletonSocket",
+            "SingletonCookie": "1234"
+        ]
+        for (name, destination) in links {
+            try fileManager.createSymbolicLink(
+                atPath: browserURL.appendingPathComponent(name).path,
+                withDestinationPath: destination
+            )
+        }
+
+        let archiveURL = fileManager.temporaryDirectory
+            .appendingPathComponent("browser-runtime-\(UUID().uuidString).tar.gz")
+        defer { try? fileManager.removeItem(at: archiveURL) }
+        let result = try SupportDirectoryArchive.export(from: sourceURL, to: archiveURL)
+
+        let paths = Set(try SupportDirectoryArchive.validate(archiveURL: archiveURL).entries.map(\.path))
+        for name in SupportDirectoryArchive.browserRuntimeEntryNames {
+            #expect(!paths.contains("browser/\(name)"))
+        }
+        #expect(paths.contains("browser/Local State"))
+        #expect(paths.contains("browser/Default/Cookies"))
+        #expect(paths.contains("settings.json"))
+        #expect(result.skippedSymbolicLinks.isEmpty)
+    }
+
+    @Test
+    func exportReportsChromeRuntimeNamesOutsideTheProfileRoot() throws {
+        let sourceURL = try makeTemporaryDirectory("browser-runtime-nested")
+        _ = try populateSupportDirectory(sourceURL)
+        let profileURL = sourceURL.appendingPathComponent("browser/Default", isDirectory: true)
+        try fileManager.createDirectory(at: profileURL, withIntermediateDirectories: true)
+        try fileManager.createSymbolicLink(
+            atPath: profileURL.appendingPathComponent("RunningChromeVersion").path,
+            withDestinationPath: "156.0.8078.80:1"
+        )
+
+        let archiveURL = fileManager.temporaryDirectory
+            .appendingPathComponent("browser-runtime-nested-\(UUID().uuidString).tar.gz")
+        defer { try? fileManager.removeItem(at: archiveURL) }
+        let result = try SupportDirectoryArchive.export(from: sourceURL, to: archiveURL)
+
+        #expect(
+            result.skippedSymbolicLinks == [
+                .init(
+                    path: "browser/Default/RunningChromeVersion",
+                    destination: "156.0.8078.80:1"
+                )
+            ]
+        )
+        let paths = Set(try SupportDirectoryArchive.validate(archiveURL: archiveURL).entries.map(\.path))
+        #expect(!paths.contains("browser/Default/RunningChromeVersion"))
         #expect(paths.contains("settings.json"))
     }
 
@@ -847,21 +1003,97 @@ struct SupportDirectoryArchiveTests {
     // MARK: - Source symlinks
 
     @Test
-    func exportRejectsSourceSymlinksExplicitly() throws {
+    func exportSkipsAndReportsSourceSymlinks() throws {
         let sourceURL = try makeTemporaryDirectory("symlink-src")
-        _ = try populateSupportDirectory(sourceURL)
+        var files = try populateSupportDirectory(sourceURL)
+        let nestedURL = sourceURL.appendingPathComponent("nested", isDirectory: true)
+        try fileManager.createDirectory(at: nestedURL, withIntermediateDirectories: true)
+        try Data("kept".utf8).write(to: nestedURL.appendingPathComponent("kept.txt"))
+        files["nested/kept.txt"] = Data("kept".utf8)
+
+        // A link to a directory outside the source: it must not be traversed.
+        let outsidePath = NSTemporaryDirectory()
         try fileManager.createSymbolicLink(
-            at: sourceURL.appendingPathComponent("sneaky-link"),
-            withDestinationURL: URL(fileURLWithPath: NSTemporaryDirectory())
+            atPath: sourceURL.appendingPathComponent("sneaky-link").path,
+            withDestinationPath: outsidePath
+        )
+        // A dangling relative link in a nested directory.
+        try fileManager.createSymbolicLink(
+            atPath: nestedURL.appendingPathComponent("dangling").path,
+            withDestinationPath: "missing-target"
+        )
+        // A link to a regular file inside the source: the target is archived
+        // once, under its own name, and the link is not.
+        try fileManager.createSymbolicLink(
+            atPath: sourceURL.appendingPathComponent("link-to-settings").path,
+            withDestinationPath: "settings.json"
         )
 
-        #expect(throws: SupportDirectoryArchive.SupportDirectoryArchiveError.self) {
-            _ = try SupportDirectoryArchive.export(
-                from: sourceURL,
-                to: fileManager.temporaryDirectory
-                    .appendingPathComponent("symlink-\(UUID().uuidString).tar.gz")
-            )
-        }
+        let archiveURL = fileManager.temporaryDirectory
+            .appendingPathComponent("symlink-\(UUID().uuidString).tar.gz")
+        defer { try? fileManager.removeItem(at: archiveURL) }
+        let result = try SupportDirectoryArchive.export(from: sourceURL, to: archiveURL)
+
+        let entries = try SupportDirectoryArchive.validate(archiveURL: archiveURL).entries
+        let paths = entries.map(\.path)
+        #expect(Set(paths) == Set(files.keys))
+        #expect(paths.count == files.count)
+        #expect(!paths.contains("sneaky-link"))
+        #expect(!paths.contains { $0.hasPrefix("sneaky-link/") })
+        #expect(!paths.contains("nested/dangling"))
+        #expect(!paths.contains("link-to-settings"))
+        #expect(paths.contains("settings.json"))
+        #expect(paths.contains("nested/kept.txt"))
+        #expect(result.fileCount == files.count)
+        #expect(
+            result.skippedSymbolicLinks == [
+                .init(path: "link-to-settings", destination: "settings.json"),
+                .init(path: "nested/dangling", destination: "missing-target"),
+                .init(path: "sneaky-link", destination: outsidePath)
+            ]
+        )
+    }
+
+    @Test
+    func exportReplacementReportsTheSameSkippedSymbolicLinks() throws {
+        let sourceURL = try makeTemporaryDirectory("replace-link-src")
+        _ = try populateSupportDirectory(sourceURL)
+        try fileManager.createSymbolicLink(
+            atPath: sourceURL.appendingPathComponent("settings-link").path,
+            withDestinationPath: "settings.json"
+        )
+        try fileManager.createSymbolicLink(
+            atPath: sourceURL.appendingPathComponent("dangling").path,
+            withDestinationPath: "missing-target"
+        )
+        let archiveDirectoryURL = try makeTemporaryDirectory("replace-link-dst")
+        let archiveURL = archiveDirectoryURL.appendingPathComponent("backup.tar.gz")
+        let expected: [SupportDirectoryArchive.SkippedSymbolicLink] = [
+            .init(path: "dangling", destination: "missing-target"),
+            .init(path: "settings-link", destination: "settings.json")
+        ]
+
+        let plain = try SupportDirectoryArchive.export(
+            from: sourceURL,
+            to: archiveDirectoryURL.appendingPathComponent("plain.tar.gz")
+        )
+        // First publication, then an overwrite of the existing archive.
+        let first = try SupportDirectoryArchive.exportReplacingExisting(
+            from: sourceURL,
+            to: archiveURL
+        )
+        let second = try SupportDirectoryArchive.exportReplacingExisting(
+            from: sourceURL,
+            to: archiveURL
+        )
+
+        #expect(plain.skippedSymbolicLinks == expected)
+        #expect(first.skippedSymbolicLinks == expected)
+        #expect(second.skippedSymbolicLinks == expected)
+        let paths = Set(try SupportDirectoryArchive.validate(archiveURL: archiveURL).entries.map(\.path))
+        #expect(!paths.contains("settings-link"))
+        #expect(!paths.contains("dangling"))
+        #expect(paths.contains("settings.json"))
     }
 
     // MARK: - Archive replacement

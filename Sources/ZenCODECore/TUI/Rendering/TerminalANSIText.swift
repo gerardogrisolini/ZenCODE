@@ -373,7 +373,7 @@ enum TerminalANSIText {
 
     /// Tracks the SGR sequences that remain active after `fragment` so a wrap
     /// boundary can re-open them on the next line.
-    private static func updatedActiveStyle(_ current: String, scanning fragment: String) -> String {
+    static func updatedActiveStyle(_ current: String, scanning fragment: String) -> String {
         var active = current
         let scalars = Array(fragment.unicodeScalars)
         var index = 0

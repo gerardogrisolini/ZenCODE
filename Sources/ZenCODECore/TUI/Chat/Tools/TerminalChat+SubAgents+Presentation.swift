@@ -449,7 +449,18 @@ extension TerminalChat {
     nonisolated static func subAgentOverviewRows(
         _ lines: [SubAgentOverviewLine]
     ) -> [String] {
-        let columns = terminalColumnCount()
+        subAgentOverviewRows(lines, columns: terminalColumnCount(), includesTitle: true)
+    }
+
+    /// Physical rows of `lines` laid out for `columns` terminal columns,
+    /// preceded by the section title when `includesTitle` is `true`. The
+    /// content width never drops below the section's 40-column minimum, so a
+    /// caller with fewer columns bounds the rows itself.
+    nonisolated static func subAgentOverviewRows(
+        _ lines: [SubAgentOverviewLine],
+        columns: Int,
+        includesTitle: Bool
+    ) -> [String] {
         let horizontalInset = terminalBoxHorizontalInset(columns: columns)
         let contentWidth = subAgentOverviewContentWidth(columns: columns, horizontalInset: horizontalInset)
         let linePrefix = String(repeating: " ", count: horizontalInset)
@@ -460,7 +471,7 @@ extension TerminalChat {
             ? "👥 \(orange)Sub-Agents:\(reset)"
             : "👥 Sub-Agents:"
 
-        var output = ["\(linePrefix)\(title)"]
+        var output = includesTitle ? ["\(linePrefix)\(title)"] : []
         for line in lines {
             let indentation = max(0, line.indentation)
             let indentationText = String(repeating: " ", count: indentation)

@@ -133,6 +133,11 @@ struct ChatCommandRegistryTests {
             help: "/tasks shows the current task graph. Use /tasks show <id>, /tasks retry <id>, /tasks cancel <id>, or /tasks clear."
         ),
         Command(
+            command: "/subagent",
+            summary: "open a sub-agent detail",
+            help: "/subagent opens the live detail of a sub-agent in progress (↑↓ PgUp PgDn Home End scroll, Esc or q closes). /subagent <name|id> opens it directly; without arguments it lists the sub-agents in progress."
+        ),
+        Command(
             command: "/plan",
             summary: "plan work via sub-agents",
             help: "/plan <goal> creates a new unapproved plan. Use /plan save to persist its todo-derived graph (every plan of a sequence) for this project, /plan load in a new session to restore the first saved draft that is not completed as unapproved, /plan list to review saved plans, /plan delete <plan|prefix|all> to remove saved plans from the project library, /plan status to show item progress, /plan approve to provide a descriptive Goal, approve it, and start implementation, or /plan clear to discard the active plan in this session (saved copies are kept).",
@@ -203,7 +208,7 @@ struct ChatCommandRegistryTests {
     }
 
     private static let channelCommands: Set<String> = [
-        "/setup", "/ds4", "/feature", "/cron", "/telegram", "/voice", "/exit",
+        "/setup", "/ds4", "/feature", "/subagent", "/cron", "/telegram", "/voice", "/exit",
     ]
 
     private static let registry = TerminalChat.commandRegistry
@@ -216,8 +221,8 @@ struct ChatCommandRegistryTests {
         #expect(Self.registry.descriptors.map(\.command) == [
             "/help", "/setup", "/models", "/think", "/ds4", "/agents", "/tools",
             "/feature", "/skills", "/sessions", "/attach", "/open", "/artifacts",
-            "/changes", "/undo", "/tasks", "/plan", "/goal", "/review", "/cron",
-            "/telegram", "/voice", "/exit",
+            "/changes", "/undo", "/tasks", "/subagent", "/plan", "/goal", "/review",
+            "/cron", "/telegram", "/voice", "/exit",
         ])
     }
 
@@ -353,6 +358,8 @@ struct ChatCommandRegistryTests {
             ("/tasks retry task-1", false),
             ("/tasks cancel task-1", false),
             ("/tasks clear", false),
+            ("/subagent", true),
+            ("/subagent x", true),
             ("/telegram", true),
             ("/telegram on", true),
             ("/telegram off", true),

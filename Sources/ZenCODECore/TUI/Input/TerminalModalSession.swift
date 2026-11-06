@@ -62,6 +62,12 @@ final class TerminalModalSession {
         screen.menuHeaderScrollLimit(for: value)
     }
 
+    /// Rows and columns a dialog may fill without elision, from the screen's
+    /// current geometry and footer.
+    func dialogViewport() -> (rows: Int, columns: Int) {
+        screen.dialogViewport()
+    }
+
     func updateDialog(_ value: TerminalDialogPresentation) {
         guard prepareUpdate() else { return }
         screen.updateDialog(id, value: value)

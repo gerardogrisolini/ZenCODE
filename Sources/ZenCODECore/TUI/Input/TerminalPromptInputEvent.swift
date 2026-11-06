@@ -11,6 +11,10 @@ public enum TerminalPromptInputEvent: Sendable {
     case toggleAccessModeRequested
     case toggleSharedChatReaderRequested
     case sharedChatReaderNavigation(TerminalSharedChatReaderAction)
+    /// A key read while the `/subagent` detail owns the panel. The reader
+    /// never interprets it: the detail controller decides, for example,
+    /// whether `scrollUp` moves the agent list focus or the transcript.
+    case subAgentDetail(TerminalSubAgentDetailAction)
     case endOfInput
 }
 

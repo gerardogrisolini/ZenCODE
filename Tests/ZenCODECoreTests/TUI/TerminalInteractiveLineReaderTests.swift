@@ -530,6 +530,49 @@ struct TerminalInteractiveLineReaderTests {
         pipe.fileHandleForWriting.closeFile()
     }
 
+    /// The sub-agent detail pages its transcript with PgUp/PgDn, so the
+    /// decoder reports them as their own keys whatever modifier the terminal
+    /// adds, while the neighbouring tilde prefixes keep their meaning.
+    @Test
+    func tildeSequencesDecodePageKeysWithoutChangingExistingPrefixes() {
+        let pipe = Pipe()
+        let reader = TerminalInteractiveLineReader(
+            rawInput: TerminalRawInput(
+                fileDescriptor: pipe.fileHandleForReading.fileDescriptor
+            )
+        )
+
+        func decode(_ bytes: [UInt8]) -> TerminalInteractiveLineReader.Key? {
+            pipe.fileHandleForWriting.write(Data(bytes))
+            return reader.readKey(pollTimeoutMilliseconds: 500)
+        }
+
+        #expect(decode(Array("\u{1B}[5~".utf8)) == .pageUp)
+        #expect(decode(Array("\u{1B}[6~".utf8)) == .pageDown)
+        #expect(decode(Array("\u{1B}[5;5~".utf8)) == .pageUp)
+        #expect(decode(Array("\u{1B}[6;2~".utf8)) == .pageDown)
+        // Option as Meta prefixes the plain sequence with another ESC.
+        #expect(decode(Array("\u{1B}\u{1B}[5~".utf8)) == .pageUp)
+        pipe.fileHandleForWriting.closeFile()
+
+        #expect(reader.keyFromCSI(Array("5~".utf8)) == .pageUp)
+        #expect(reader.keyFromCSI(Array("6~".utf8)) == .pageDown)
+        #expect(reader.keyFromCSI(Array("5;3~".utf8)) == .pageUp)
+        #expect(reader.keyFromCSI(Array("6;5~".utf8)) == .pageDown)
+
+        #expect(reader.keyFromCSI(Array("1~".utf8)) == .home)
+        #expect(reader.keyFromCSI(Array("7~".utf8)) == .home)
+        #expect(reader.keyFromCSI(Array("1;5~".utf8)) == .bufferStart)
+        #expect(reader.keyFromCSI(Array("2~".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("3~".utf8)) == .delete)
+        #expect(reader.keyFromCSI(Array("3;5~".utf8)) == .deleteWordAfter)
+        #expect(reader.keyFromCSI(Array("4~".utf8)) == .end)
+        #expect(reader.keyFromCSI(Array("8~".utf8)) == .end)
+        #expect(reader.keyFromCSI(Array("4;5~".utf8)) == .bufferEnd)
+        #expect(reader.keyFromCSI(Array("201~".utf8)) == .unknown)
+        #expect(reader.keyFromCSI(Array("15~".utf8)) == .unknown)
+    }
+
     @Test
     func oscSequencesDrainPayloadThroughBELAndST() {
         let pipe = Pipe()

@@ -15,7 +15,9 @@ import Foundation
 /// compressed archive, import with full validation, and the existing remote
 /// configuration reset — behind one clearly named entry point. Every action
 /// states the exact paths it touches and the sensitive nature of the data,
-/// and cancelling any prompt leaves the support directory untouched.
+/// and cancelling any prompt leaves the support directory untouched, except
+/// that the files an Export already cleaned stay deleted when one of its
+/// archive prompts is cancelled.
 extension ZenCODESetupRunner {
     enum DataManagementAction: Equatable {
         case export
@@ -197,12 +199,19 @@ extension ZenCODESetupRunner {
 
     /// Prompts for a destination and writes the support directory archive.
     ///
-    /// The prompt names the source directory explicitly and warns that the
-    /// archive contains credentials in plain text.
+    /// It first runs the Clean support directory step (see
+    /// ``runDataExportCleanupStep(supportDirectoryURL:fileManager:write:selectGroups:confirmDeletion:)``),
+    /// then the prompt names the source directory explicitly and warns that
+    /// the archive contains credentials in plain text. What the cleanup
+    /// deleted stays deleted if the export is then cancelled or fails.
     static func runDataExport(
         fileManager: FileManager = .default
     ) throws {
         let supportDirectoryURL = ZenFileService.supportDirectoryURL(
+            fileManager: fileManager
+        )
+        try runDataExportCleanupStep(
+            supportDirectoryURL: supportDirectoryURL,
             fileManager: fileManager
         )
         AgentOutput.standardError.writeString(
@@ -236,6 +245,42 @@ extension ZenCODESetupRunner {
             fileManager: fileManager
         )
         printDataExportResult(result)
+    }
+
+    /// The cleanup that Export backup runs before its prompts: the same flow
+    /// as Clean support directory. Esc on the group menu or on "Delete these
+    /// files?" throws `ZenCODESetupError.cancelled`, so the whole export is
+    /// cancelled with nothing deleted. No on the confirmation writes that the
+    /// cleanup was skipped and returns; nothing to clean, no group selected,
+    /// skipped browser groups and a cleanup that could not delete some paths
+    /// return as well, after the step's own messages, so the export goes on.
+    ///
+    /// `write`, `selectGroups` and `confirmDeletion` replace the terminal in
+    /// tests.
+    static func runDataExportCleanupStep(
+        supportDirectoryURL: URL,
+        fileManager: FileManager = .default,
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) },
+        selectGroups: ([TerminalCheckboxMenuItem<SupportCleanupGroup>]) -> Set<SupportCleanupGroup>? = {
+            selectSupportCleanupGroups($0)
+        },
+        confirmDeletion: () throws -> Bool = { try confirmSupportCleanupDeletion() }
+    ) throws {
+        let outcome = try runSupportDirectoryCleanupStep(
+            supportDirectoryURL: supportDirectoryURL,
+            fileManager: fileManager,
+            write: write,
+            selectGroups: selectGroups,
+            confirmDeletion: confirmDeletion
+        )
+        switch outcome {
+        case .menuCancelled, .confirmationCancelled:
+            throw ZenCODESetupError.cancelled
+        case .declined:
+            write("Cleanup skipped: nothing was deleted.\n\n")
+        case .nothingToClean, .noGroupSelected, .applied:
+            break
+        }
     }
 
     /// `~/Downloads` when available, otherwise the parent of the support
@@ -274,18 +319,40 @@ extension ZenCODESetupRunner {
     private static func printDataExportResult(
         _ result: SupportDirectoryArchive.ExportResult
     ) {
-        AgentOutput.standardError.writeString(
-            """
+        AgentOutput.standardError.writeString(renderDataExportResult(result))
+    }
+
+    /// The final summary of an export. Symbolic links that were left out of the
+    /// archive are listed (path relative to the support directory and the raw
+    /// link target) between the size line and the privacy reminder; nothing is
+    /// added when there were none.
+    static func renderDataExportResult(
+        _ result: SupportDirectoryArchive.ExportResult
+    ) -> String {
+        var text = """
 
             Backup exported:
               File: \(result.archiveURL.path)
               Files: \(result.fileCount)
               Size (uncompressed): \(result.totalBytes) bytes
 
+            """
+        if !result.skippedSymbolicLinks.isEmpty {
+            text += "Skipped symbolic links (\(result.skippedSymbolicLinks.count)), not in the archive:\n"
+            for link in result.skippedSymbolicLinks {
+                if let destination = link.destination {
+                    text += "  - \(link.path) -> \(destination)\n"
+                } else {
+                    text += "  - \(link.path)\n"
+                }
+            }
+        }
+        text += """
+
             Keep the archive private: it contains API keys and tokens.
 
             """
-        )
+        return text
     }
 
     // MARK: - Import

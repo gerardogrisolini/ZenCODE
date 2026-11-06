@@ -142,6 +142,60 @@ struct DataManagementSetupTests {
         }
     }
 
+    // MARK: - Export summary
+
+    @Test
+    func exportSummaryWithoutSkippedSymbolicLinksIsUnchanged() {
+        let result = SupportDirectoryArchive.ExportResult(
+            archiveURL: URL(fileURLWithPath: "/tmp/backup.tar.gz"),
+            fileCount: 12,
+            totalBytes: 3456,
+            skippedSymbolicLinks: []
+        )
+
+        #expect(
+            ZenCODESetupRunner.renderDataExportResult(result) == """
+
+            Backup exported:
+              File: /tmp/backup.tar.gz
+              Files: 12
+              Size (uncompressed): 3456 bytes
+
+            Keep the archive private: it contains API keys and tokens.
+
+            """
+        )
+    }
+
+    @Test
+    func exportSummaryListsSkippedSymbolicLinksWithTheirTargets() {
+        let result = SupportDirectoryArchive.ExportResult(
+            archiveURL: URL(fileURLWithPath: "/tmp/backup.tar.gz"),
+            fileCount: 12,
+            totalBytes: 3456,
+            skippedSymbolicLinks: [
+                .init(path: "features/demo/link", destination: "feature.json"),
+                .init(path: "sneaky-link", destination: nil)
+            ]
+        )
+
+        #expect(
+            ZenCODESetupRunner.renderDataExportResult(result) == """
+
+            Backup exported:
+              File: /tmp/backup.tar.gz
+              Files: 12
+              Size (uncompressed): 3456 bytes
+            Skipped symbolic links (2), not in the archive:
+              - features/demo/link -> feature.json
+              - sneaky-link
+
+            Keep the archive private: it contains API keys and tokens.
+
+            """
+        )
+    }
+
     // MARK: - Esc on the Data management menu, failed actions
 
     @Test

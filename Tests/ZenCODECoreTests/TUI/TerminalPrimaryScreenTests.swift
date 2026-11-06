@@ -532,4 +532,50 @@ final class PrimaryScreenCapture: Sendable {
         #expect(capture.visible.contains("Chat"))
         await bar.stop()
     }
+
+    @Test func dialogViewportIsTheRowBudgetLeftByTheCommittedGeometryAndFooter() {
+        let capture = PrimaryScreenCapture(rows: 20, columns: 60)
+        let screen = capture.screen()
+        install(screen, rows: 20, columns: 60)
+        func size(_ viewport: (rows: Int, columns: Int)) -> [Int] { [viewport.rows, viewport.columns] }
+        // 20 rows minus the 4-row footer and the two rows kept for the transcript.
+        #expect(size(screen.dialogViewport()) == [14, 60])
+        let modal = TerminalModalSession(screen: screen)
+        #expect(size(modal.dialogViewport()) == [14, 60])
+        modal.close()
+
+        // A taller footer, committed on the same geometry, shrinks it.
+        screen.commitFooter(geometry: .init(rows: 20, columns: 60), reservedRows: 6,
+                            sequence: footer(rows: 20, columns: 60))
+        #expect(size(screen.dialogViewport()) == [12, 60])
+    }
+
+    @Test func dialogFillingTheDialogViewportIsShownWholeWithoutElision() throws {
+        let capture = PrimaryScreenCapture()
+        let screen = capture.screen()
+        install(screen)
+        let viewport = screen.dialogViewport()
+        try #require(viewport.rows > 4)
+        // One row as wide as the viewport, the others numbered.
+        let expected = [String(repeating: "=", count: viewport.columns)]
+            + (1..<viewport.rows).map { "DIALOG_ROW_\($0)" }
+        let modal = TerminalModalSession(screen: screen)
+        defer { modal.close() }
+        modal.updateDialog(TerminalDialogPresentation(prompt: expected.joined(separator: "\n")))
+
+        let rows = capture.terminal.withLock { $0.viewport.map(\.text) }
+        #expect(Array(rows.dropLast(4).suffix(expected.count)) == expected)
+        #expect(Array(rows.suffix(4)) == ["PROMPT| draft 界🙂", "draft second line", "DOCK| 2 unread", "STATUS| ready"])
+        #expect(!capture.visible.contains("…"))
+
+        // One row more no longer fits: the dialog keeps its heading and tail
+        // around the elision.
+        modal.updateDialog(TerminalDialogPresentation(
+            prompt: (expected + ["DIALOG_ROW_EXTRA"]).joined(separator: "\n")
+        ))
+        let elided = capture.terminal.withLock { $0.viewport.map(\.text) }
+        #expect(elided.contains("…"))
+        #expect(!elided.contains("DIALOG_ROW_1"))
+        #expect(elided.contains("DIALOG_ROW_EXTRA"))
+    }
 }

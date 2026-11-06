@@ -92,8 +92,8 @@ extension TerminalChat {
     }
 
     /// The commands only the terminal runs (`/exit`, `/setup`, `/feature`,
-    /// `/tools logs`, `/telegram`, `/cron`, `/voice`, `/ds4`), once the
-    /// shared dispatcher resolved them as visible channel commands.
+    /// `/tools logs`, `/subagent`, `/telegram`, `/cron`, `/voice`, `/ds4`),
+    /// once the shared dispatcher resolved them as visible channel commands.
     private func channelCommandAction(_ command: String) async -> TerminalSubmittedLineAction {
         switch command {
         case "/exit":
@@ -119,6 +119,9 @@ extension TerminalChat {
             case let .prefillPrompt(prompt):
                 return .prefillPrompt(prompt)
             }
+        case let command where command == "/subagent" || command.hasPrefix("/subagent "):
+            await handleSubAgentCommand(command)
+            return .continueChat
         case let command where command == "/telegram" || command.hasPrefix("/telegram "):
             await handleTelegramCommand(command)
             return .continueChat

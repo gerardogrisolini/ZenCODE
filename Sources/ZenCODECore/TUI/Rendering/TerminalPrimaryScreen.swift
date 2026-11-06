@@ -510,6 +510,15 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
             menuLayout(for: modal).header.scrollLimit
         }
     }
+    /// Rows and columns a dialog may fill with the current geometry and
+    /// footer: a ``TerminalDialogPresentation`` with at most `rows` lines, each
+    /// at most `columns` wide, is shown whole, without the `…` elision. Same
+    /// budget `dialogLines` applies.
+    func dialogViewport() -> (rows: Int, columns: Int) {
+        TerminalOutputSynchronization.withTransaction {
+            (max(0, geometry.rows - footerRows - 2), geometry.columns)
+        }
+    }
     private func modalLines() -> [String] {
         guard let presentation = modals.last?.value, case let .menu(modal) = presentation else { return [] }
         let layout = menuLayout(for: modal)

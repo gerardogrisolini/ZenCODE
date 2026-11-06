@@ -548,6 +548,7 @@ extension TerminalInteractiveLineReader {
                     guard state.panelSupportsPressAndHold,
                           state.panelOverlayOverride == nil,
                           !state.panelSharedChatReaderIsOpen,
+                          !state.panelSubAgentDetailIsOpen,
                           let base = state.editor.pressAndHoldMenu?.base else {
                         return nil
                     }
@@ -589,6 +590,17 @@ extension TerminalInteractiveLineReader {
         consumedPickerRepeat: Character? = nil,
         onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void
     ) async {
+        // The `/subagent` detail owns every key except end-of-input, which
+        // keeps its usual meaning. Keys it does not bind are swallowed so they
+        // can never edit the hidden draft, and `Esc` closes the detail instead
+        // of stopping the generation.
+        let isSubAgentDetailOpen = withPanelLock { $0.panelSubAgentDetailIsOpen }
+        if isSubAgentDetailOpen, key != .endOfInput {
+            if let action = Self.subAgentDetailAction(for: key) {
+                await onEvent(.subAgentDetail(action))
+            }
+            return
+        }
         let readerAction = withPanelLock { state -> TerminalSharedChatReaderAction? in
             guard state.panelSharedChatReaderIsOpen else { return nil }
             switch key {
@@ -661,6 +673,37 @@ extension TerminalInteractiveLineReader {
         }
     }
 
+    /// Hands the panel keys to the `/subagent` detail, or gives them back to
+    /// the draft. Synchronous like ``setSharedChatReaderOpen(_:)`` so the
+    /// ownership changes before the next key is reduced. The flag survives
+    /// panel stops and resumes; only the chat loop that opened the detail
+    /// clears it.
+    func setSubAgentDetailOpen(_ isOpen: Bool) {
+        withPanelLock { state in
+            state.panelSubAgentDetailIsOpen = isOpen
+            if isOpen {
+                state.editor.resetPressAndHold()
+            }
+        }
+    }
+
+    /// Semantic action of a key while the `/subagent` detail is open, or `nil`
+    /// for a key the detail swallows. Arrows always scroll: the controller
+    /// turns them into list focus when it shows the agent list.
+    static func subAgentDetailAction(for key: Key) -> TerminalSubAgentDetailAction? {
+        switch key {
+        case .up: .scrollUp
+        case .down: .scrollDown
+        case .pageUp: .pageUp
+        case .pageDown: .pageDown
+        case .home, .bufferStart: .top
+        case .end, .bufferEnd: .bottom
+        case .enter, .newline: .confirm
+        case .cancel, .character("q"), .character("Q"): .close
+        default: nil
+        }
+    }
+
     /// A consent prompt owns the TTY while panel reads report timeouts. Only
     /// that ownership condition invalidates the transient heuristic; ordinary
     /// polling timeouts never count as hold activity and leave it untouched.
@@ -685,6 +728,7 @@ extension TerminalInteractiveLineReader {
             clearsDraftOnCancel: true,
             supportsPressAndHold: state.panelSupportsPressAndHold
                 && !state.panelSharedChatReaderIsOpen
+                && !state.panelSubAgentDetailIsOpen
         )
     }
 }

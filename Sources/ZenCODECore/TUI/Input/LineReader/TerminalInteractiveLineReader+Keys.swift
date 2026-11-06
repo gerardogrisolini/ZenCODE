@@ -387,6 +387,11 @@ extension TerminalInteractiveLineReader {
             return isControlModified ? .deleteWordAfter : .delete
         case "4", "8":
             return isControlModified ? .bufferEnd : .end
+        case "5":
+            // Page keys carry no modifier semantics: Ctrl/Shift+PgUp is PgUp.
+            return .pageUp
+        case "6":
+            return .pageDown
         default:
             return .unknown
         }

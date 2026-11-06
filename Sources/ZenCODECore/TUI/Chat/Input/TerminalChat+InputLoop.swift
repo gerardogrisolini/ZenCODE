@@ -31,8 +31,11 @@ extension TerminalChat {
     /// consume or contend for the operator's keystroke (no second terminal
     /// input device), then resumed. Reading runs off the cooperative executor
     /// so the authorizer actor is not blocked while the operator decides.
+    /// An open `/subagent` detail closes first: the consent takes the input,
+    /// and the dialog answers the keys the detail would otherwise receive.
     func configureConsentReader(eventQueue: TerminalChatEventQueue) async {
         await permissionAuthorizer.setConsentReader({ @ChatSessionActor [interactiveReader, renderCoordinator, statusBar, weak self] prompt in
+            await self?.closeSubAgentDetail(reason: .consent)
             await interactiveReader.stopPanelInput(clearPanel: false)
             let outputCapacity = await statusBar.scrollableOutputRowCapacity()
             await renderCoordinator.beginExternalTerminalPrompt(
@@ -369,7 +372,10 @@ extension TerminalChat {
             }
 
             let action = await submittedLineAction(line, origin: origin)
-            if shouldSuspendPanel {
+            // A `/subagent` detail the command left open keeps the overviews
+            // suspended: its external-writer phase releases them when it
+            // closes (`closeSubAgentDetail`).
+            if shouldSuspendPanel, !isSubAgentDetailOpen {
                 await renderCoordinator.setOverviewPublishingSuspended(false)
             }
             // `/telegram off` while a turn from Telegram runs: the loop takes
@@ -663,6 +669,10 @@ extension TerminalChat {
                             )
                         }
                     }
+                case let .subAgentDetail(action):
+                    // The reader emits these only while the detail is open;
+                    // Esc/q close it through the controller's `onClosed`.
+                    await handleSubAgentDetailAction(action)
                 case .endOfInput:
                     generationTask?.cancel()
                     break eventLoop
@@ -855,6 +865,11 @@ extension TerminalChat {
                 await voiceSession.answerDeadlineElapsed(token)
             }
         }
+
+        // Every way out of the loop passes here (end of input, `/exit`,
+        // `/setup`, a dictated exit, the queue finishing): an open `/subagent`
+        // detail gives the terminal back before the teardown below.
+        await closeSubAgentDetail(reason: .sessionEnded)
 
         // Teardown paths that bypass `finishPromptResult` (end-of-input during
         // generation, cancellation). Finish the queue BEFORE joining the

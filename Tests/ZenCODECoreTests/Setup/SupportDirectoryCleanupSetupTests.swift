@@ -4,7 +4,8 @@
 //
 //  Data management › Clean support directory: inventory, path safety, Chrome
 //  profile and app install locks, deletion, menu items and report rendering,
-//  always on a temporary support directory.
+//  and the interactive step shared with Export backup, always on a temporary
+//  support directory.
 //
 
 #if canImport(Darwin)
@@ -633,5 +634,341 @@ struct SupportDirectoryCleanupSetupTests {
             Not deleted:
             - /tmp/zen-support/browser/ShaderCache: denied
             """)
+    }
+
+    // MARK: - Interactive step
+
+    private struct Boom: Error {}
+
+    private static func isCancelled(_ error: ZenCODESetupError?) -> Bool {
+        if case .cancelled? = error {
+            return true
+        }
+        return false
+    }
+
+    /// The paths of the full fixture, regenerable and protected, that are gone.
+    private static func missingPopulatedPaths(_ fixture: Fixture) -> [String] {
+        let paths = fixture.expectedPaths().values.flatMap { $0 } + Fixture.protectedPaths.map(fixture.path)
+        return paths.filter { !FileManager.default.fileExists(atPath: $0) }
+    }
+
+    private static func measuringLine(_ fixture: Fixture) -> String {
+        "Measuring the regenerable data under \(fixture.supportURL.path)…\n"
+    }
+
+    @Test
+    func cleanupStepReportsHowItEnded() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try fixture.populate()
+        func step(
+            select: Set<Group>?,
+            confirm: () throws -> Bool
+        ) throws -> Runner.SupportCleanupStepOutcome {
+            try Runner.runSupportDirectoryCleanupStep(
+                supportDirectoryURL: fixture.supportURL,
+                write: { _ in },
+                selectGroups: { _ in select },
+                confirmDeletion: confirm
+            )
+        }
+
+        #expect(try step(select: nil, confirm: { true }) == .menuCancelled)
+        #expect(try step(select: [], confirm: { true }) == .noGroupSelected)
+        #expect(try step(select: [.zencronBuild], confirm: { false }) == .declined)
+        #expect(try step(select: [.zencronBuild], confirm: { throw ZenCODESetupError.cancelled }) == .confirmationCancelled)
+        // Another error of the confirmation propagates.
+        #expect(throws: Boom.self) {
+            _ = try step(select: [.zencronBuild], confirm: { throw Boom() })
+        }
+        #expect(Self.missingPopulatedPaths(fixture).isEmpty)
+
+        let applied = try step(select: [.zencronBuild], confirm: { true })
+
+        guard case let .applied(result) = applied else {
+            Issue.record("Expected applied, got \(applied)")
+            return
+        }
+        #expect(result.deleted.map(\.url.path) == [fixture.path("zencron/package/.build")])
+        #expect(result.failures.isEmpty)
+        #expect(!fixture.exists("zencron/package/.build"))
+        #expect(fixture.exists("zencron/package/Package.swift"))
+
+        let empty = try Fixture()
+        defer { empty.remove() }
+        try empty.file("settings.json")
+        let nothing = try Runner.runSupportDirectoryCleanupStep(
+            supportDirectoryURL: empty.supportURL,
+            write: { _ in },
+            selectGroups: { _ in nil },
+            confirmDeletion: { true }
+        )
+        #expect(nothing == .nothingToClean)
+    }
+
+    @Test
+    func standaloneCleanupKeepsItsMessages() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try fixture.populate()
+        func run(select: Set<Group>?, confirm: () throws -> Bool) throws -> String {
+            var output = ""
+            try Runner.runSupportDirectoryCleanup(
+                supportDirectoryURL: fixture.supportURL,
+                write: { output += $0 },
+                selectGroups: { _ in select },
+                confirmDeletion: confirm
+            )
+            return output
+        }
+        let measuring = Self.measuringLine(fixture)
+        let report = Runner.renderSupportCleanupReport(
+            fixture.inventory().filter { $0.group == .zencronBuild },
+            supportDirectoryURL: fixture.supportURL
+        )
+
+        // Esc on the group menu returns silently.
+        #expect(try run(select: nil, confirm: { true }) == measuring)
+        #expect(try run(select: [], confirm: { true }) == measuring + "No group selected.\n\n")
+        // No and Esc on the confirmation both cancel the cleanup.
+        let cancelled = measuring + "\n" + report + "\n\nCleanup cancelled.\n\n"
+        #expect(try run(select: [.zencronBuild], confirm: { false }) == cancelled)
+        #expect(try run(select: [.zencronBuild], confirm: { throw ZenCODESetupError.cancelled }) == cancelled)
+        #expect(Self.missingPopulatedPaths(fixture).isEmpty)
+
+        let applied = try run(select: [.zencronBuild], confirm: { true })
+
+        #expect(applied.hasPrefix(measuring + "\n" + report + "\n\nFreed "))
+        #expect(!applied.contains("Cleanup cancelled"))
+        #expect(!fixture.exists("zencron/package/.build"))
+    }
+
+    @Test
+    func exportStepEscOnTheGroupMenuCancelsTheExport() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try fixture.populate()
+        var output = ""
+        var offered: [Group] = []
+        var confirmations = 0
+
+        let error = #expect(throws: ZenCODESetupError.self) {
+            try Runner.runDataExportCleanupStep(
+                supportDirectoryURL: fixture.supportURL,
+                write: { output += $0 },
+                selectGroups: { items in
+                    offered = items.map(\.value)
+                    return nil
+                },
+                confirmDeletion: {
+                    confirmations += 1
+                    return true
+                }
+            )
+        }
+
+        #expect(Self.isCancelled(error))
+        #expect(offered == fixture.inventory().map(\.group))
+        #expect(confirmations == 0)
+        #expect(Self.missingPopulatedPaths(fixture).isEmpty)
+        #expect(output == Self.measuringLine(fixture))
+    }
+
+    @Test
+    func exportStepEscOnTheConfirmationCancelsTheExport() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try fixture.populate()
+        var output = ""
+        var confirmations = 0
+
+        let error = #expect(throws: ZenCODESetupError.self) {
+            try Runner.runDataExportCleanupStep(
+                supportDirectoryURL: fixture.supportURL,
+                write: { output += $0 },
+                selectGroups: { Set($0.map(\.value)) },
+                confirmDeletion: {
+                    confirmations += 1
+                    throw ZenCODESetupError.cancelled
+                }
+            )
+        }
+
+        #expect(Self.isCancelled(error))
+        #expect(confirmations == 1)
+        #expect(Self.missingPopulatedPaths(fixture).isEmpty)
+        #expect(output.contains("Total: "))
+        #expect(!output.contains("Freed "))
+        #expect(!output.contains("Cleanup cancelled"))
+        #expect(!output.contains("Cleanup skipped"))
+    }
+
+    @Test
+    func exportStepNoSkipsTheCleanupAndContinues() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try fixture.populate()
+        var output = ""
+
+        try Runner.runDataExportCleanupStep(
+            supportDirectoryURL: fixture.supportURL,
+            write: { output += $0 },
+            selectGroups: { Set($0.map(\.value)) },
+            confirmDeletion: { false }
+        )
+
+        #expect(Self.missingPopulatedPaths(fixture).isEmpty)
+        #expect(output.contains("Total: "))
+        #expect(output.hasSuffix("\n\nCleanup skipped: nothing was deleted.\n\n"))
+        #expect(!output.contains("Cleanup cancelled"))
+        #expect(!output.contains("Freed "))
+    }
+
+    @Test
+    func exportStepYesDeletesTheSelectedGroupsAndContinues() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try fixture.populate()
+        var output = ""
+        var confirmations = 0
+
+        try Runner.runDataExportCleanupStep(
+            supportDirectoryURL: fixture.supportURL,
+            write: { output += $0 },
+            selectGroups: { Set($0.map(\.value)).subtracting([.browserModel]) },
+            confirmDeletion: {
+                confirmations += 1
+                return true
+            }
+        )
+
+        #expect(confirmations == 1)
+        let expected = fixture.expectedPaths()
+        for path in expected[.browserModel]! {
+            #expect(FileManager.default.fileExists(atPath: path), "\(path)")
+        }
+        for (group, paths) in expected where group != .browserModel {
+            for path in paths {
+                #expect(!FileManager.default.fileExists(atPath: path), "\(path)")
+            }
+        }
+        for protected in Fixture.protectedPaths {
+            #expect(fixture.exists(protected), "\(protected)")
+        }
+        #expect(fixture.inventory().map(\.group) == [.browserModel])
+        #expect(output.contains("Freed "))
+        #expect(!output.contains("Not deleted:"))
+        #expect(!output.contains("Cleanup skipped"))
+        #expect(!output.contains("Cleanup cancelled"))
+    }
+
+    @Test
+    func exportStepShowsTheFailuresAndContinues() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try fixture.file("features/alpha/.build/repositories/dep/HEAD")
+        try fixture.file("features/alpha/.build/checkouts/dep/Package.swift")
+        var output = ""
+
+        try Runner.runDataExportCleanupStep(
+            supportDirectoryURL: fixture.supportURL,
+            write: { output += $0 },
+            selectGroups: { Set($0.map(\.value)) },
+            confirmDeletion: {
+                // A candidate becomes a link after the inventory.
+                try FileManager.default.removeItem(at: fixture.url("features/alpha/.build/checkouts"))
+                try fixture.link("features/alpha/.build/checkouts", to: fixture.outsideURL.path)
+                return true
+            }
+        )
+
+        #expect(!fixture.exists("features/alpha/.build/repositories"))
+        #expect(fixture.isLink("features/alpha/.build/checkouts"))
+        #expect(output.contains("Freed "))
+        #expect(output.contains("Not deleted:\n- \(fixture.path("features/alpha/.build/checkouts")): "))
+    }
+
+    @Test
+    func exportStepContinuesWithoutTheBrowserGroupsWhileChromeRuns() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try fixture.populate()
+        try fixture.link("browser/SingletonLock", to: "my-host-\(ProcessInfo.processInfo.processIdentifier)")
+        var output = ""
+        var offered: [Group] = []
+
+        try Runner.runDataExportCleanupStep(
+            supportDirectoryURL: fixture.supportURL,
+            write: { output += $0 },
+            selectGroups: { items in
+                offered = items.map(\.value)
+                return Set(offered)
+            },
+            confirmDeletion: { true }
+        )
+
+        #expect(!offered.contains(.browserModel))
+        #expect(!offered.contains(.browserCaches))
+        #expect(offered.contains(.featureDependencies))
+        #expect(output.contains("Skipped Browser on-device AI model"))
+        #expect(output.contains("Skipped Browser caches"))
+        #expect(output.contains("Freed "))
+        let expected = fixture.expectedPaths()
+        for path in expected[.browserModel]! + expected[.browserCaches]! {
+            #expect(FileManager.default.fileExists(atPath: path), "\(path)")
+        }
+        #expect(!fixture.exists("features/alpha/.build/repositories"))
+    }
+
+    @Test
+    func exportStepWithNothingToCleanContinuesWithoutTheMenu() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try fixture.file("settings.json")
+        var output = ""
+        var menus = 0
+        var confirmations = 0
+
+        try Runner.runDataExportCleanupStep(
+            supportDirectoryURL: fixture.supportURL,
+            write: { output += $0 },
+            selectGroups: { _ in
+                menus += 1
+                return nil
+            },
+            confirmDeletion: {
+                confirmations += 1
+                return true
+            }
+        )
+
+        #expect(menus == 0)
+        #expect(confirmations == 0)
+        #expect(fixture.exists("settings.json"))
+        #expect(output == Self.measuringLine(fixture) + "Nothing to clean under \(fixture.supportURL.path).\n\n")
+    }
+
+    @Test
+    func exportStepWithNoGroupSelectedContinuesAndDeletesNothing() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try fixture.populate()
+        var output = ""
+        var confirmations = 0
+
+        try Runner.runDataExportCleanupStep(
+            supportDirectoryURL: fixture.supportURL,
+            write: { output += $0 },
+            selectGroups: { _ in [] },
+            confirmDeletion: {
+                confirmations += 1
+                return true
+            }
+        )
+
+        #expect(confirmations == 0)
+        #expect(Self.missingPopulatedPaths(fixture).isEmpty)
+        #expect(output == Self.measuringLine(fixture) + "No group selected.\n\n")
     }
 }

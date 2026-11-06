@@ -1132,6 +1132,273 @@ struct TerminalPromptInputPanelTests {
         #expect(reader.withPanelLock { $0.editor.pressAndHoldMenu == nil })
         reader.finishPanelStop(clearPanel: false)
     }
+
+    // MARK: - Sub-agent detail
+
+    /// While the `/subagent` detail is open every navigation key becomes a
+    /// detail action, and none of them reaches the hidden draft or history.
+    @Test
+    func subAgentDetailMapsNavigationKeysToDetailActions() async {
+        let reader = TerminalInteractiveLineReader()
+        reader.withPanelLock { state in
+            state.history = ["earlier"]
+            state.panelBuffer = Array("draft")
+            state.panelCursorIndex = 2
+        }
+        reader.setSubAgentDetailOpen(true)
+        let recorder = TerminalPanelEventRecorder()
+        let expectations: [(TerminalInteractiveLineReader.Key, TerminalSubAgentDetailAction)] = [
+            (.up, .scrollUp),
+            (.down, .scrollDown),
+            (.pageUp, .pageUp),
+            (.pageDown, .pageDown),
+            (.home, .top),
+            (.bufferStart, .top),
+            (.end, .bottom),
+            (.bufferEnd, .bottom),
+            (.enter, .confirm),
+            (.newline, .confirm),
+            (.character("q"), .close),
+            (.character("Q"), .close),
+            (.cancel, .close)
+        ]
+
+        for (key, _) in expectations {
+            await reader.handlePanelKey(key, timestampMilliseconds: 100, onEvent: recorder.onEvent)
+        }
+
+        #expect(recorder.detailActions.withLock { $0 } == expectations.map { $0.1 })
+        #expect(recorder.otherEvents.withLock { $0 }.isEmpty)
+        #expect(reader.withPanelLock { String($0.panelBuffer) } == "draft")
+        #expect(reader.withPanelLock { $0.panelCursorIndex } == 2)
+        #expect(reader.withPanelLock { $0.history } == ["earlier"])
+        #expect(reader.withPanelLock { $0.historyIndex } == nil)
+    }
+
+    /// `Esc` in the detail only closes it: a running generation must keep
+    /// going, so the panel never reports `cancelRequested` for it.
+    @Test
+    func escapeClosesSubAgentDetailWithoutCancellingTheGeneration() async {
+        let reader = TerminalInteractiveLineReader()
+        reader.withPanelLock { $0.panelIsProcessing = true }
+        reader.setSubAgentDetailOpen(true)
+        let recorder = TerminalPanelEventRecorder()
+
+        await reader.handlePanelKey(.cancel, onEvent: recorder.onEvent)
+        #expect(recorder.detailActions.withLock { $0 } == [.close])
+        #expect(recorder.otherEvents.withLock { $0 }.isEmpty)
+
+        // Once the detail is closed the same key stops the generation again.
+        reader.setSubAgentDetailOpen(false)
+        await reader.handlePanelKey(.cancel, onEvent: recorder.onEvent)
+        #expect(recorder.detailActions.withLock { $0 } == [.close])
+        #expect(recorder.otherEvents.withLock { $0 } == ["cancelRequested"])
+    }
+
+    /// Keys the detail does not bind are swallowed: they neither edit the
+    /// hidden draft nor emit events, and the press-and-hold picker is off.
+    @Test
+    func subAgentDetailSwallowsUnboundKeysAndPaste() async {
+        let reader = TerminalInteractiveLineReader()
+        reader.withPanelLock { state in
+            state.panelSupportsPressAndHold = true
+            state.panelBuffer = Array("draft")
+            state.panelCursorIndex = 2
+        }
+        reader.setSubAgentDetailOpen(true)
+        #expect(reader.withPanelLock { !reader.editorContextLocked(state: $0).supportsPressAndHold })
+        let recorder = TerminalPanelEventRecorder()
+        let swallowedKeys: [TerminalInteractiveLineReader.Key] = [
+            .character("x"),
+            .paste("pasted text"),
+            .tab,
+            .backspace,
+            .delete,
+            .left,
+            .right,
+            .wordLeft,
+            .deleteWordBefore,
+            .clearDraft,
+            .clearBeforeCursor,
+            .toggleAccessMode,
+            .toggleSharedChatReader,
+            .unknown
+        ]
+
+        for key in swallowedKeys {
+            await reader.handlePanelKey(key, timestampMilliseconds: 100, onEvent: recorder.onEvent)
+        }
+        // A held vowel would open the accent picker in the draft.
+        for timestamp in [UInt64(0), 500, 550, 600, 650] {
+            await reader.handlePanelKey(
+                .character("a"),
+                timestampMilliseconds: timestamp,
+                onEvent: recorder.onEvent
+            )
+        }
+
+        #expect(recorder.detailActions.withLock { $0 }.isEmpty)
+        #expect(recorder.otherEvents.withLock { $0 }.isEmpty)
+        #expect(reader.withPanelLock { String($0.panelBuffer) } == "draft")
+        #expect(reader.withPanelLock { $0.panelCursorIndex } == 2)
+        #expect(reader.withPanelLock { $0.editor.pressAndHoldMenu == nil })
+    }
+
+    /// The panel parser must not speculate on a picker repeat behind `Esc`
+    /// while the detail owns the keys, even if a picker were still installed.
+    @Test
+    func subAgentDetailDisablesPickerAwareEscapeParsing() async {
+        let pipe = Pipe()
+        defer {
+            pipe.fileHandleForWriting.closeFile()
+            pipe.fileHandleForReading.closeFile()
+        }
+        let reader = TerminalInteractiveLineReader(
+            rawInput: TerminalRawInput(
+                fileDescriptor: pipe.fileHandleForReading.fileDescriptor
+            ),
+            consentInputOwnership: TerminalConsentInputOwnership()
+        )
+        reader.withPanelLock { state in
+            state.panelSupportsPressAndHold = true
+        }
+        for timestamp in [UInt64(0), 500, 550, 600, 650] {
+            await reader.handlePanelKey(.character("a"), timestampMilliseconds: timestamp) { _ in }
+        }
+        #expect(reader.withPanelLock { $0.editor.pressAndHoldMenu?.base } == "a")
+        // Bypass `setSubAgentDetailOpen` so the picker survives and only the
+        // parser guard is exercised.
+        reader.withPanelLock { $0.panelSubAgentDetailIsOpen = true }
+
+        pipe.fileHandleForWriting.write(Data([0x1B, 0x61]))
+        let result = TerminalInteractiveLineReader.readPanelKeyResult(
+            reader: reader,
+            token: TerminalBlockingReadToken()
+        )
+
+        #expect(result != .pickerEscape(consumedRepeat: "a"))
+        #expect(result == .key(.unknown))
+    }
+
+    /// End-of-input keeps its meaning inside the detail.
+    @Test
+    func subAgentDetailKeepsEndOfInputOnItsUsualPath() async {
+        let reader = TerminalInteractiveLineReader()
+        reader.setSubAgentDetailOpen(true)
+        let recorder = TerminalPanelEventRecorder()
+
+        await reader.handlePanelKey(.endOfInput, onEvent: recorder.onEvent)
+
+        #expect(recorder.detailActions.withLock { $0 }.isEmpty)
+        #expect(recorder.otherEvents.withLock { $0 } == ["endOfInput"])
+    }
+
+    /// A consent prompt stops and resumes the panel while the detail stays on
+    /// screen, so neither transition (nor a fresh start) hands the keys back
+    /// to the draft.
+    @Test
+    func subAgentDetailOwnershipSurvivesPanelStopAndResume() async {
+        let reader = TerminalInteractiveLineReader()
+        let statusBar = TerminalStatusBar(isEnabled: false)
+        reader.setSubAgentDetailOpen(true)
+        func isDetailOpen() -> Bool {
+            reader.withPanelLock { $0.panelSubAgentDetailIsOpen }
+        }
+
+        reader.finishPanelStart(task: Task(name: "ZenCODE.Tests.completed-panel-loop") {})
+        await reader.stopPanelInput(clearPanel: false)
+        #expect(isDetailOpen())
+
+        #expect(
+            reader.preparePanelForStart(
+                statusBar: statusBar,
+                commandSuggestions: [],
+                preservingState: true
+            ) == .admitted
+        )
+        reader.finishPanelStart(task: Task(name: "ZenCODE.Tests.completed-panel-loop") {})
+        #expect(isDetailOpen())
+
+        await reader.stopPanelInput()
+        #expect(isDetailOpen())
+        #expect(
+            reader.preparePanelForStart(
+                statusBar: statusBar,
+                commandSuggestions: [],
+                preservingState: false
+            ) == .admitted
+        )
+        reader.abandonPanelStart()
+        #expect(isDetailOpen())
+
+        let recorder = TerminalPanelEventRecorder()
+        await reader.handlePanelKey(.character("q"), onEvent: recorder.onEvent)
+        #expect(recorder.detailActions.withLock { $0 } == [.close])
+        #expect(reader.withPanelLock { $0.panelBuffer.isEmpty })
+    }
+
+    /// Closing the detail gives the keys back to the draft, where page keys
+    /// remain no-ops that touch neither the draft, the history nor a picker.
+    @Test
+    func closedSubAgentDetailReturnsKeysToTheDraftAndIgnoresPageKeys() async {
+        let reader = TerminalInteractiveLineReader()
+        reader.withPanelLock { $0.history = ["earlier"] }
+        reader.setSubAgentDetailOpen(true)
+        reader.setSubAgentDetailOpen(false)
+        let recorder = TerminalPanelEventRecorder()
+
+        await reader.handlePanelKey(.character("q"), onEvent: recorder.onEvent)
+        await reader.handlePanelKey(.pageUp, onEvent: recorder.onEvent)
+        await reader.handlePanelKey(.pageDown, onEvent: recorder.onEvent)
+
+        #expect(recorder.detailActions.withLock { $0 }.isEmpty)
+        #expect(recorder.otherEvents.withLock { $0 }.isEmpty)
+        #expect(reader.withPanelLock { String($0.panelBuffer) } == "q")
+        #expect(reader.withPanelLock { $0.panelCursorIndex } == 1)
+        #expect(reader.withPanelLock { $0.historyIndex } == nil)
+
+        var editor = TerminalPromptEditor()
+        editor.buffer = Array("draft")
+        editor.cursorIndex = 2
+        let context = TerminalPromptEditorContext(history: ["earlier"])
+        #expect(editor.apply(.pageUp, context: context) == .ignored)
+        #expect(editor.apply(.pageDown, context: context) == .ignored)
+        #expect(editor.buffer == Array("draft"))
+        #expect(editor.cursorIndex == 2)
+        #expect(editor.historyIndex == nil)
+
+        // An open accent picker treats page keys like any unknown key.
+        let pickerContext = TerminalPromptEditorContext(supportsPressAndHold: true)
+        var pickerEditor = TerminalPromptEditor()
+        for timestamp in [UInt64(0), 500, 550, 600, 650] {
+            _ = pickerEditor.apply(
+                .character("a"),
+                context: pickerContext,
+                timestampMilliseconds: timestamp
+            )
+        }
+        #expect(pickerEditor.pressAndHoldMenu != nil)
+        #expect(pickerEditor.apply(.pageDown, context: pickerContext, timestampMilliseconds: 700) == .ignored)
+        #expect(pickerEditor.pressAndHoldMenu != nil)
+    }
+}
+
+/// Records what the panel dispatched. `TerminalPromptInputEvent` is not
+/// `Equatable`, so detail actions are kept typed and every other event is
+/// reduced to its description.
+private final class TerminalPanelEventRecorder: Sendable {
+    let detailActions = Mutex<[TerminalSubAgentDetailAction]>([])
+    let otherEvents = Mutex<[String]>([])
+
+    var onEvent: @Sendable (TerminalPromptInputEvent) async -> Void {
+        { [self] event in
+            if case let .subAgentDetail(action) = event {
+                detailActions.withLock { $0.append(action) }
+            } else {
+                otherEvents.withLock { $0.append(String(describing: event)) }
+            }
+        }
+    }
 }
 
 /// Suspends exactly the first renderer task without blocking its executor or

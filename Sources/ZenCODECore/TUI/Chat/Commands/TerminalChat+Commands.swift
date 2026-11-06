@@ -214,6 +214,15 @@ extension TerminalChat {
                     hiddenMessage: renderFeatureCommandUnavailableForAgent()
                 ),
             ]),
+            (after: "/tasks", descriptors: [
+                ChatCommandDescriptor(
+                    command: "/subagent",
+                    summary: "open a sub-agent detail",
+                    help: "/subagent opens the live detail of a sub-agent in progress (↑↓ PgUp PgDn Home End scroll, Esc or q closes). /subagent <name|id> opens it directly; without arguments it lists the sub-agents in progress.",
+                    scope: .channel,
+                    availableDuringGeneration: true
+                ),
+            ]),
             (after: "/review", descriptors: [
                 ChatCommandDescriptor(
                     command: "/cron",

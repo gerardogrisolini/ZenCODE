@@ -264,7 +264,6 @@ public actor TerminalTelegramControlService {
         )
         pollFailureNotified = false
         lifecycleGate.setActive(true)
-        publishCommandMenu(client: client)
         let pollGeneration = generation
         let subscription = try await dispatcher.subscribe(
             botID: bot.id, client: client,
@@ -285,6 +284,11 @@ public actor TerminalTelegramControlService {
                 await self?.handle(update)
             }
         }
+        // Published only after the last suspension point of start(): the menu
+        // outcome can then never land in the state this call returns, so a
+        // fresh start always reports `commandMenuError == nil` and the result
+        // arrives later through `commandMenuError` alone.
+        publishCommandMenu(client: client)
         return state
     }
 

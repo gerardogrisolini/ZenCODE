@@ -40,6 +40,23 @@ enum SupportDirectoryArchive {
     /// the bound prevents an unbounded allocation before it is decoded.
     static let maximumManifestUncompressedSize: UInt64 = 8 * 1024 * 1024
     static let defaultArchiveFilename = "zencode-backup.tar.gz"
+    /// Matches `SwiftFeatureRegistry.appFeatureRootURL`.
+    static let featuresDirectoryName = "features"
+    /// SwiftPM build directory inside every installed feature package.
+    static let featureBuildDirectoryName = ".build"
+    /// Matches ZenCODESetupRunner.supportCleanupBrowserDirectoryName (the dedicated Chrome profile).
+    static let browserDirectoryName = "browser"
+    /// Chrome's per-run state at the root of the browser profile: version and
+    /// DevTools port markers plus the singleton lock, socket and cookie links.
+    /// Chrome recreates them at every launch, and some are symbolic links
+    /// (often dangling) that cannot be archived.
+    static let browserRuntimeEntryNames: Set<String> = [
+        "RunningChromeVersion",
+        "DevToolsActivePort",
+        "SingletonLock",
+        "SingletonSocket",
+        "SingletonCookie"
+    ]
 
     enum SupportDirectoryArchiveError: LocalizedError, Equatable {
         case archiveExists(URL)
@@ -50,7 +67,6 @@ enum SupportDirectoryArchive {
         case unsupportedManifestVersion(Int)
         case traversal(String)
         case symlinkEntry(String)
-        case sourceSymlink(String)
         case unexpectedEntry(String)
         case entryCountExceeded(Int)
         case sizeLimitExceeded(UInt64)
@@ -79,8 +95,6 @@ enum SupportDirectoryArchive {
                 return "The archive contains an unsafe path: \(path)"
             case let .symlinkEntry(path):
                 return "The archive contains a symbolic link entry: \(path)"
-            case let .sourceSymlink(path):
-                return "The support directory contains a symbolic link, which cannot be archived: \(path)"
             case let .unexpectedEntry(path):
                 return "The archive contains an entry that is not declared in its manifest: \(path)"
             case let .entryCountExceeded(count):
@@ -140,10 +154,29 @@ enum SupportDirectoryArchive {
         }
     }
 
+    /// A symbolic link found in the support directory during an export. It is
+    /// never archived and never followed: neither the link nor its target enters
+    /// the archive.
+    struct SkippedSymbolicLink: Equatable {
+        /// Path relative to the support directory, like `ManifestEntry.path`.
+        let path: String
+        /// Raw `readlink` value (not resolved), or nil when it cannot be read.
+        let destination: String?
+    }
+
     struct ExportResult: Equatable {
         let archiveURL: URL
         let fileCount: Int
         let totalBytes: UInt64
+        /// Symbolic links left out of the archive, sorted by path.
+        let skippedSymbolicLinks: [SkippedSymbolicLink]
+    }
+
+    /// What an export walk found: the regular files to archive and the symbolic
+    /// links it left out.
+    struct ExportCollection: Equatable {
+        let entries: [ManifestEntry]
+        let skippedSymbolicLinks: [SkippedSymbolicLink]
     }
 
     struct ImportResult: Equatable {
@@ -157,10 +190,12 @@ enum SupportDirectoryArchive {
     /// `archiveURL`, which must not exist yet.
     ///
     /// Manifest collection and archive creation run under the exclusive
-    /// coordination lock, so the archive is a coherent snapshot. Source symlinks
-    /// are refused rather than silently skipped. Coordination artifacts (lock,
-    /// journal, import staging) and an archive written inside the source
-    /// directory are never included.
+    /// coordination lock, so the archive is a coherent snapshot. Symbolic links
+    /// are never followed or archived: each one outside the silent exclusions is
+    /// skipped and reported in `ExportResult.skippedSymbolicLinks`, and the
+    /// export goes on. An unreadable file still fails the export. Coordination
+    /// artifacts (lock, journal, import staging) and an archive written inside
+    /// the source directory are never included.
     static func export(
         from sourceDirectoryURL: URL,
         to archiveURL: URL,
@@ -199,12 +234,13 @@ enum SupportDirectoryArchive {
         additionalExcludedArchiveURL: URL?,
         fileManager: FileManager
     ) throws -> ExportResult {
-        let entries = try collectExportEntries(
+        let collection = try collectExportEntries(
             sourceURL: sourceURL,
             archiveURL: archiveURL,
             additionalExcludedArchiveURL: additionalExcludedArchiveURL,
             fileManager: fileManager
         )
+        let entries = collection.entries
 
         let manifest = Manifest(version: manifestVersion, entries: entries)
         let encoder = JSONEncoder()
@@ -291,7 +327,8 @@ enum SupportDirectoryArchive {
         return ExportResult(
             archiveURL: archiveURL,
             fileCount: entries.count,
-            totalBytes: try Manifest.totalSize(of: entries)
+            totalBytes: try Manifest.totalSize(of: entries),
+            skippedSymbolicLinks: collection.skippedSymbolicLinks
         )
     }
 
@@ -382,17 +419,21 @@ enum SupportDirectoryArchive {
         return ExportResult(
             archiveURL: destinationURL,
             fileCount: exported.fileCount,
-            totalBytes: exported.totalBytes
+            totalBytes: exported.totalBytes,
+            skippedSymbolicLinks: exported.skippedSymbolicLinks
         )
     }
 
-    /// Records every regular file (hidden and nested) in sorted order.
+    /// Records every regular file (hidden and nested) in sorted order. A symbolic
+    /// link outside the silent exclusions is recorded as skipped instead of
+    /// failing the walk; it is never followed, so a link to a directory is not
+    /// traversed.
     static func collectExportEntries(
         sourceURL: URL,
         archiveURL: URL,
         additionalExcludedArchiveURL: URL?,
         fileManager: FileManager
-    ) throws -> [ManifestEntry] {
+    ) throws -> ExportCollection {
         var excludedPaths = Set(
             temporaryArtifactPaths(in: sourceURL).map(\.path)
         )
@@ -409,7 +450,24 @@ enum SupportDirectoryArchive {
                 .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         }
 
+        /// Whether `directoryURL` is `<sourceURL>/features/<id>`, the root of one
+        /// installed feature package. Compares path components relative to the
+        /// source, so trailing slashes never matter.
+        func isFeaturePackageDirectory(_ directoryURL: URL) -> Bool {
+            let components = relativePath(of: directoryURL.path).split(separator: "/")
+            return components.count == 2 && components[0] == featuresDirectoryName
+        }
+
+        /// Whether `directoryURL` is `<sourceURL>/browser`, the root of the
+        /// dedicated Chrome profile. Compares path components relative to the
+        /// source, so trailing slashes never matter.
+        func isBrowserProfileDirectory(_ directoryURL: URL) -> Bool {
+            let components = relativePath(of: directoryURL.path).split(separator: "/")
+            return components.count == 1 && components[0] == browserDirectoryName
+        }
+
         var entries: [ManifestEntry] = []
+        var skippedSymbolicLinks: [SkippedSymbolicLink] = []
         var pending = [sourceURL]
         while let directoryURL = pending.popLast() {
             let children = try fileManager.contentsOfDirectory(
@@ -428,11 +486,37 @@ enum SupportDirectoryArchive {
                     || child != SherpaOnnxVoiceInstallation.directoryName else {
                     continue
                 }
+                // The build output of the installed features
+                // (`features/<id>/.build`) is regenerable (rebuilt from
+                // /setup > Features or with feature.build) and its `release`
+                // symlink cannot be archived; it never enters a backup.
+                guard child != featureBuildDirectoryName
+                    || !isFeaturePackageDirectory(directoryURL) else {
+                    continue
+                }
+                // Chrome's per-run state at the browser profile root
+                // (`browser/RunningChromeVersion`, `Singleton*`, ...) is
+                // recreated at every launch and may be a dangling symlink;
+                // it never enters a backup, whatever its file type.
+                guard !browserRuntimeEntryNames.contains(child)
+                    || !isBrowserProfileDirectory(directoryURL) else {
+                    continue
+                }
                 let values = try childURL.resourceValues(
                     forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey]
                 )
                 if values.isSymbolicLink == true {
-                    throw SupportDirectoryArchiveError.sourceSymlink(relativePath(of: childURL.path))
+                    // Neither the link nor its target is archived. The target
+                    // is read verbatim (never resolved) for the export summary.
+                    skippedSymbolicLinks.append(
+                        SkippedSymbolicLink(
+                            path: relativePath(of: childURL.path),
+                            destination: try? fileManager.destinationOfSymbolicLink(
+                                atPath: childURL.path
+                            )
+                        )
+                    )
+                    continue
                 }
                 if values.isDirectory == true {
                     pending.append(childURL)
@@ -453,7 +537,10 @@ enum SupportDirectoryArchive {
                 )
             }
         }
-        return entries.sorted { $0.path < $1.path }
+        return ExportCollection(
+            entries: entries.sorted { $0.path < $1.path },
+            skippedSymbolicLinks: skippedSymbolicLinks.sorted { $0.path < $1.path }
+        )
     }
 
     /// Whether `url` is inside `directory` (path-component boundary, so siblings

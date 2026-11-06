@@ -597,65 +597,104 @@ extension ZenCODESetupRunner {
 
     // MARK: - Interactive flow
 
-    /// Measures, lets the operator choose the groups, shows the exact paths
-    /// and deletes them after a confirmation (default No). Cancelling any
-    /// prompt leaves every file in place. No copy is kept.
-    static func runSupportDirectoryCleanup(
-        fileManager: FileManager = .default
-    ) throws {
-        let supportDirectoryURL = ZenFileService.supportDirectoryURL(fileManager: fileManager)
-        AgentOutput.standardError.writeString(
-            "Measuring the regenerable data under \(supportDirectoryURL.path)…\n"
+    /// How ``runSupportDirectoryCleanupStep(supportDirectoryURL:fileManager:write:selectGroups:confirmDeletion:)``
+    /// ended.
+    enum SupportCleanupStepOutcome: Equatable, Sendable {
+        /// No group had something to delete (or every one was skipped).
+        case nothingToClean
+        /// The operator unchecked every group.
+        case noGroupSelected
+        /// Esc on the group menu.
+        case menuCancelled
+        /// No on "Delete these files?".
+        case declined
+        /// Esc on "Delete these files?".
+        case confirmationCancelled
+        /// The chosen groups were deleted; failures and skips are in the result.
+        case applied(SupportCleanupResult)
+    }
+
+    /// The group menu of the cleanup: every offered group preselected.
+    /// Returns `nil` on Esc.
+    static func selectSupportCleanupGroups(
+        _ items: [TerminalCheckboxMenuItem<SupportCleanupGroup>]
+    ) -> Set<SupportCleanupGroup>? {
+        TerminalCheckboxMenu.selectWithFocus(
+            title: "Clean support directory",
+            items: items,
+            selected: Set(items.map(\.value)),
+            focused: nil
+        )?.selected
+    }
+
+    /// The "Delete these files?" confirmation (default No). Throws
+    /// `ZenCODESetupError.cancelled` on Esc.
+    static func confirmSupportCleanupDeletion() throws -> Bool {
+        try promptYesNo(
+            "Delete these files?",
+            defaultValue: false,
+            help: "No copy is kept. Everything listed is regenerated: Chrome downloads its on-device model again and rebuilds its caches, and the features, the app and ZenCRON rebuild from scratch on their next update."
         )
+    }
+
+    /// Measures, lets the operator choose the groups, shows the exact paths
+    /// and deletes them after a confirmation, writing the measuring line, the
+    /// skipped groups, "Nothing to clean", "No group selected", the report
+    /// and the summary. Messages that depend on the outcome ("Cleanup
+    /// cancelled.", …) are left to the caller. Only `ZenCODESetupError.cancelled`
+    /// from `confirmDeletion` is mapped (to ``SupportCleanupStepOutcome/confirmationCancelled``);
+    /// any other error propagates. Nothing is deleted unless the outcome is
+    /// ``SupportCleanupStepOutcome/applied(_:)``. No copy is kept.
+    ///
+    /// `write`, `selectGroups` and `confirmDeletion` replace the terminal in
+    /// tests.
+    static func runSupportDirectoryCleanupStep(
+        supportDirectoryURL: URL,
+        fileManager: FileManager = .default,
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) },
+        selectGroups: ([TerminalCheckboxMenuItem<SupportCleanupGroup>]) -> Set<SupportCleanupGroup>? = {
+            selectSupportCleanupGroups($0)
+        },
+        confirmDeletion: () throws -> Bool = { try confirmSupportCleanupDeletion() }
+    ) throws -> SupportCleanupStepOutcome {
+        write("Measuring the regenerable data under \(supportDirectoryURL.path)…\n")
         let inventory = supportCleanupInventory(
             supportDirectoryURL: supportDirectoryURL,
             fileManager: fileManager
         )
         if let skipped = renderSupportCleanupSkippedGroups(inventory) {
-            AgentOutput.standardError.writeString(skipped + "\n")
+            write(skipped + "\n")
         }
         let items = supportCleanupMenuItems(inventory)
         guard !items.isEmpty else {
-            AgentOutput.standardError.writeString(
-                "Nothing to clean under \(supportDirectoryURL.path).\n\n"
-            )
-            return
+            write("Nothing to clean under \(supportDirectoryURL.path).\n\n")
+            return .nothingToClean
         }
 
-        guard let choice = TerminalCheckboxMenu.selectWithFocus(
-            title: "Clean support directory",
-            items: items,
-            selected: Set(items.map(\.value)),
-            focused: nil
-        ) else {
-            return
+        guard let selection = selectGroups(items) else {
+            return .menuCancelled
         }
         let selectedGroups = inventory.filter {
-            $0.skipReason == nil && choice.selected.contains($0.group)
+            $0.skipReason == nil && selection.contains($0.group)
         }
         guard !selectedGroups.isEmpty else {
-            AgentOutput.standardError.writeString("No group selected.\n\n")
-            return
+            write("No group selected.\n\n")
+            return .noGroupSelected
         }
 
-        AgentOutput.standardError.writeString(
+        write(
             "\n"
                 + renderSupportCleanupReport(selectedGroups, supportDirectoryURL: supportDirectoryURL)
                 + "\n\n"
         )
         let confirmed: Bool
         do {
-            confirmed = try promptYesNo(
-                "Delete these files?",
-                defaultValue: false,
-                help: "No copy is kept. Everything listed is regenerated: Chrome downloads its on-device model again and rebuilds its caches, and the features, the app and ZenCRON rebuild from scratch on their next update."
-            )
+            confirmed = try confirmDeletion()
         } catch ZenCODESetupError.cancelled {
-            confirmed = false
+            return .confirmationCancelled
         }
         guard confirmed else {
-            AgentOutput.standardError.writeString("Cleanup cancelled.\n\n")
-            return
+            return .declined
         }
 
         let result = applySupportDirectoryCleanup(
@@ -663,6 +702,46 @@ extension ZenCODESetupRunner {
             supportDirectoryURL: supportDirectoryURL,
             fileManager: fileManager
         )
-        AgentOutput.standardError.writeString(renderSupportCleanupSummary(result) + "\n\n")
+        write(renderSupportCleanupSummary(result) + "\n\n")
+        return .applied(result)
+    }
+
+    /// Data management › Clean support directory: the cleanup step on the
+    /// support directory. Esc on the group menu returns silently; No or Esc
+    /// on the confirmation writes "Cleanup cancelled.". Cancelling any prompt
+    /// leaves every file in place. No copy is kept.
+    static func runSupportDirectoryCleanup(
+        fileManager: FileManager = .default
+    ) throws {
+        try runSupportDirectoryCleanup(
+            supportDirectoryURL: ZenFileService.supportDirectoryURL(fileManager: fileManager),
+            fileManager: fileManager
+        )
+    }
+
+    /// ``runSupportDirectoryCleanup(fileManager:)`` on an explicit support
+    /// directory, with the terminal replaceable in tests.
+    static func runSupportDirectoryCleanup(
+        supportDirectoryURL: URL,
+        fileManager: FileManager = .default,
+        write: (String) -> Void = { AgentOutput.standardError.writeString($0) },
+        selectGroups: ([TerminalCheckboxMenuItem<SupportCleanupGroup>]) -> Set<SupportCleanupGroup>? = {
+            selectSupportCleanupGroups($0)
+        },
+        confirmDeletion: () throws -> Bool = { try confirmSupportCleanupDeletion() }
+    ) throws {
+        let outcome = try runSupportDirectoryCleanupStep(
+            supportDirectoryURL: supportDirectoryURL,
+            fileManager: fileManager,
+            write: write,
+            selectGroups: selectGroups,
+            confirmDeletion: confirmDeletion
+        )
+        switch outcome {
+        case .declined, .confirmationCancelled:
+            write("Cleanup cancelled.\n\n")
+        case .nothingToClean, .noGroupSelected, .menuCancelled, .applied:
+            break
+        }
     }
 }
