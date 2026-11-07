@@ -136,6 +136,17 @@ final class TerminalChatSessionPresenter: ChatSlotChannelPresenter {
         }
     }
 
+    /// The delegated tool row in the sub-agent section, and the status-bar
+    /// git summary after a delegated file mutation; the controller captures
+    /// the baseline, presents the artifacts, and publishes the overview.
+    func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
+        guard let chat else { return }
+        await chat.renderCoordinator.recordSubAgentToolEvent(event)
+        if TerminalChat.shouldRefreshGitStatus(for: event) {
+            await chat.refreshStatusBarGitStatusSummaryForFileMutation()
+        }
+    }
+
     func presentSealedFileArtifacts(_ turn: SessionFileArtifactHistory.Turn) async {
         await chat?.writeFileArtifacts([turn], includeHistoryHeadings: false)
     }

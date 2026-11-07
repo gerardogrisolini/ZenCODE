@@ -86,6 +86,7 @@ public actor TerminalStatusBar {
         /// from a retired stream may clear only its own overlay.
         var sharedChatReaderObservationID: UUID?
         var localExecAccessMode: AgentLocalExecAccessMode = .standard
+        var latestAgentName: String?
         var latestModelID: String?
         var latestThinkingSelection: AgentThinkingSelection?
         var latestMetrics: DirectAgentGenerationMetrics?
@@ -413,6 +414,7 @@ public actor TerminalStatusBar {
         state.latestMetrics = nil
         state.shouldReplaceMetricsOnNextUpdate = false
         state.latestContextWindow = nil
+        state.latestAgentName = nil
         state.latestModelID = nil
         state.latestThinkingSelection = nil
         state.isProcessing = false
@@ -453,6 +455,23 @@ public actor TerminalStatusBar {
             return
         }
         renderStatusLocked(state: &state)
+    }
+
+    /// Updates the selected agent's name shown right before the model.
+    /// Blank names are treated as no agent.
+    @discardableResult
+    public func update(agentName: String?) -> Bool {
+        let normalizedName = agentName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let agentName = normalizedName?.isEmpty == false ? normalizedName : nil
+        guard state.latestAgentName != agentName else {
+            return state.isStarted
+        }
+        state.latestAgentName = agentName
+        guard state.isStarted else {
+            return false
+        }
+        renderStatusLocked(state: &state)
+        return true
     }
 
     @discardableResult
@@ -601,6 +620,7 @@ public actor TerminalStatusBar {
         row: Int = 24,
         columns: Int = 100,
         modelID: String? = nil,
+        agentName: String? = nil,
         isProcessing: Bool = false,
         isResizePending: Bool = false
     ) {
@@ -608,6 +628,7 @@ public actor TerminalStatusBar {
         state.row = row
         state.columns = columns
         state.latestModelID = modelID
+        state.latestAgentName = agentName
         state.isProcessing = isProcessing
         state.isResizePending = isResizePending
     }

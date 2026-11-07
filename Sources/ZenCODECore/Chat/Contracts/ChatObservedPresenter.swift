@@ -95,6 +95,10 @@ struct ChatObservedPresenter: ChatSessionPresenter {
         await present { await $0.presentLiveFileArtifacts(turns, agentID: agentID) }
     }
 
+    func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
+        await present { await $0.presentSubAgentToolEvent(event) }
+    }
+
     func presentSealedFileArtifacts(_ turn: SessionFileArtifactHistory.Turn) async {
         await present { await $0.presentSealedFileArtifacts(turn) }
     }

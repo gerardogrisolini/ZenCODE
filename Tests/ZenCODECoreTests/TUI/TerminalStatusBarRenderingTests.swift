@@ -76,6 +76,129 @@ struct TerminalStatusBarRenderingTests {
         #expect(frame.contains("\(border)│\(reset) \(TerminalStyle.Text.secondary)test-model"))
     }
 
+    // MARK: - Agent name
+
+    @Test
+    func statusBarShowsAgentNameRightBeforeTheModel() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(
+            row: 24,
+            columns: 100,
+            modelID: "test-model",
+            agentName: "Developer"
+        )
+
+        await bar.renderStatusOverlay()
+
+        let frame = captured.combined
+        #expect(frame.contains("\(TerminalStyle.Text.secondary)Developer · test-model\(TerminalStyle.reset)"))
+    }
+
+    @Test
+    func statusBarPlacesAgentNameBetweenSpinnerAndModelWhileProcessing() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(
+            row: 24,
+            columns: 100,
+            modelID: "test-model",
+            agentName: "Developer",
+            isProcessing: true
+        )
+
+        await bar.renderStatusOverlay()
+
+        let spinner = TerminalStatusBar.spinnerFrames[0]
+        #expect(captured.combined.contains("\(spinner) · Developer · test-model"))
+    }
+
+    @Test
+    func statusBarShowsOnlyTheAgentNameWhenNoModelIsKnown() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 24, columns: 100, agentName: "Developer")
+
+        await bar.renderStatusOverlay()
+
+        #expect(captured.combined.contains("\(TerminalStyle.Text.secondary)Developer\(TerminalStyle.reset)"))
+    }
+
+    @Test
+    func statusBarWithoutAgentNameKeepsTheModelFirst() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 24, columns: 100, modelID: "test-model")
+
+        await bar.renderStatusOverlay()
+
+        let frame = captured.combined
+        #expect(!frame.contains("Developer"))
+        #expect(frame.contains("\(TerminalStyle.Text.secondary)test-model\(TerminalStyle.reset)"))
+    }
+
+    @Test
+    func updateAgentNameRendersAndTrimsSurroundingWhitespace() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(row: 24, columns: 100, modelID: "test-model")
+
+        let didRender = await bar.update(agentName: "  Developer \n")
+
+        #expect(didRender)
+        #expect(captured.combined.contains("Developer · test-model"))
+        #expect(!captured.combined.contains("  Developer"))
+
+        captured.clear()
+        _ = await bar.update(agentName: "Developer")
+        #expect(captured.count == 0)
+    }
+
+    @Test
+    func resetClearsTheAgentName() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(
+            row: 24,
+            columns: 100,
+            modelID: "test-model",
+            agentName: "Developer"
+        )
+
+        await bar.reset()
+        captured.clear()
+        await bar.update(modelID: "test-model")
+
+        let frame = captured.combined
+        #expect(frame.contains("test-model"))
+        #expect(!frame.contains("Developer"))
+    }
+
+    @Test
+    func blankAgentNameIsTreatedAsNoAgent() async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        await bar.configureForTesting(
+            row: 24,
+            columns: 100,
+            modelID: "test-model",
+            agentName: "Developer"
+        )
+
+        await bar.update(agentName: "  ")
+
+        let frame = captured.combined
+        #expect(!frame.isEmpty)
+        #expect(!frame.contains("Developer"))
+        #expect(frame.contains("\(TerminalStyle.Text.secondary)test-model\(TerminalStyle.reset)"))
+
+        // A blank name on a bar that already has no agent is a no-op.
+        captured.clear()
+        await bar.update(agentName: "")
+        await bar.update(agentName: nil)
+        #expect(captured.count == 0)
+    }
+
     @Test
     func inputPanelUsesRoundedTopBorderCorners() async {
         let captured = CapturedOutput()

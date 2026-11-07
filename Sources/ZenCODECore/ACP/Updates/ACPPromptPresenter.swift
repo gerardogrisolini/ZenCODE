@@ -23,6 +23,10 @@ struct ACPPromptPresenter: ChatSessionPresenter {
     let updatePipeline: ACPPromptUpdatePipeline?
     /// Starts the taskless sub-agent observer before a tool call is shown.
     let ensureTasklessObserver: @Sendable () async -> Void
+    /// Claims the delivery of one delegated tool notification (its tool call
+    /// id and phase) for this prompt: `true` once per prompt, and only while
+    /// the prompt holds its incarnation and presents its updates.
+    let claimDelegatedToolNotification: @Sendable (String) async -> Bool
 
     private func send(_ update: JSONValue) async {
         if let updatePipeline {
@@ -92,6 +96,31 @@ struct ACPPromptPresenter: ChatSessionPresenter {
 
     func presentTurnEnded(_ outcome: DirectAgentTurnOutcome) async {
         await finishThought()
+    }
+
+    /// A delegated agent's tool call, as a `tool_call` when it starts and a
+    /// `tool_call_update` when it completes, titled with the agent's name and
+    /// sent once per call and phase while the prompt is current.
+    func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
+        // Runtime agent IDs are unique per creation/attempt, and are also
+        // available to the permission broker before any operation executes.
+        let id = "acp:tool:\(event.agentID):\(event.toolCall.id)"
+        var update: [String: Any]
+        let phase: String
+        switch event.lifecycle {
+        case .started:
+            phase = "started"
+            update = ZenCODEACPBridge.toolCallCreateUpdate(for: event.toolCall, workingDirectory: workspaceURL)
+        case let .completed(result):
+            phase = "completed"
+            update = ZenCODEACPBridge.toolCallCompletionUpdate(
+                for: event.toolCall, result: result, workingDirectory: workspaceURL
+            )
+        }
+        guard await claimDelegatedToolNotification(id + ":" + phase) else { return }
+        update["toolCallId"] = id
+        update["title"] = "\(event.agentName) — \(ZenCODEACPBridge.toolTitle(for: event.toolCall))"
+        await send(JSONValue.acpValue(from: update))
     }
 
     /// Also covers backends that return without a turnEnded event, before an

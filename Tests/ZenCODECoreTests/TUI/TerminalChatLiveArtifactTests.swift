@@ -394,7 +394,7 @@ struct TerminalChatLiveArtifactTests {
             signature: "split-fence", markdown: "## Deferred fence overview\n"
         )
         #expect(deferred == .deferred)
-        await terminal.writeSubAgentToolEvent(
+        await terminal.chatSession.presentSubAgentToolEvent(
             .init(
                 agentID: "worker", agentName: "worker",
                 toolCall: call("split-fence", path: "Artifact.swift"),
@@ -536,7 +536,7 @@ struct TerminalChatLiveArtifactTests {
         terminal.resetFileArtifactState()
         let current = try #require(await terminal.beginFileArtifactTurn())
         await terminal.publishLiveFileArtifacts(evidence, callID: "call", context: old)
-        await terminal.writeSubAgentToolEvent(
+        await terminal.chatSession.presentSubAgentToolEvent(
             .init(agentID: "worker", agentName: "worker", toolCall: call("call", path: "stale.txt"), lifecycle: .completed(evidence)),
             sessionID: old.sessionID, history: old.history
         )
@@ -621,8 +621,11 @@ private actor LiveArtifactBackend: AgentRuntimeBackend {
         let delegated = DirectAgentToolResult(output: "Updated", summary: "Updated", fileChanges: [
             .init(path: "Live.swift", oldText: "root source\n", newText: "delegated source\n")
         ])
-        let event = DirectSubAgentToolEvent(agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .completed(delegated))
-        await handler?(.init(agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .started))
+        let event = DirectSubAgentToolEvent(
+            agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .completed(delegated),
+            rootSessionID: sessionID
+        )
+        await handler?(.init(agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .started, rootSessionID: sessionID))
         await handler?(event)
         await handler?(event)
         let next = DirectAgentToolCall(id: "next-call", name: "local.writeFile", argumentsObject: ["path": "Live.swift"], argumentsJSON: "{}")
@@ -630,7 +633,7 @@ private actor LiveArtifactBackend: AgentRuntimeBackend {
             DirectAgentToolResult(output: "Updated", summary: "Updated", fileChanges: [
                 .init(path: "Live.swift", oldText: "delegated source\n", newText: "next source\n")
             ])
-        )))
+        ), rootSessionID: sessionID))
         await probe?()
         didProbe = true
         await onEvent(.content("generation ended"))
@@ -667,7 +670,7 @@ private actor CompletionArtifactBackend: AgentRuntimeBackend {
         for stage in 1...2 {
             let call = DirectAgentToolCall(id: "shell-\(stage)", name: "local.exec", argumentsObject: ["command": "edit"], argumentsJSON: "{}")
             if delegated {
-                await handler?(.init(agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .started))
+                await handler?(.init(agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .started, rootSessionID: sessionID))
             } else {
                 await onEvent(.toolCallStarted(call))
             }
@@ -675,7 +678,7 @@ private actor CompletionArtifactBackend: AgentRuntimeBackend {
             // A failed command may also have written files before exiting.
             let result = DirectAgentToolResult(output: "done", summary: "done", status: stage == 1 ? .completed : .failed)
             if delegated {
-                await handler?(.init(agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .completed(result)))
+                await handler?(.init(agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .completed(result), rootSessionID: sessionID))
             } else {
                 await onEvent(.toolCallCompleted(call, result))
             }

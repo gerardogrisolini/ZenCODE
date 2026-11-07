@@ -92,6 +92,9 @@ public final class ChatSessionHost {
     /// Reads the saved sessions of a workspace for the shell; `nil` reads the
     /// session store. A test installs a reader here to order the reads.
     var shellSavedSessionsReader: (@Sendable (URL) async -> [ChatSavedSessionSummary]?)?
+    /// `true` once the host's router of the delegated tool events is the
+    /// runner's handler (see `ChatSessionHost+SubAgentToolEvents.swift`).
+    var isRoutingSubAgentToolEvents = false
 
     /// A host over `runner`, which it shuts down with itself.
     ///

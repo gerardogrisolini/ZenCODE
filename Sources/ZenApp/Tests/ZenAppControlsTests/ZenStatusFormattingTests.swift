@@ -478,6 +478,58 @@ struct ZenStatusFormattingTests {
         #expect(ZenStatusFormatting.fragments(for: ZenStatusBarState(voice: voice)).map(\.kind) == [.voice])
     }
 
+    // MARK: - Agent
+
+    @Test("the agent name comes right before the model, after the spinner")
+    func agentFragmentOrder() throws {
+        let voice = VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false)
+        let state = ZenStatusBarState(
+            isGenerating: true,
+            turnStartedAt: Date(),
+            modelID: "mlx/Qwen3-Coder",
+            agentName: "Developer",
+            localExecAccessMode: .fullAccess,
+            voice: voice
+        )
+        let fragments = ZenStatusFormatting.fragments(for: state)
+        #expect(fragments.map(\.kind) == [.accessMode, .voice, .activity, .agent, .model, .duration])
+        let agent = try #require(fragments.first { $0.kind == .agent })
+        #expect(agent.runs == [ZenStatusRun("Developer")])
+        #expect(agent.gaugeFraction == nil)
+        #expect(agent.voiceIndicator == nil)
+    }
+
+    @Test("the plain status line shows the agent before the model and the thinking")
+    func agentInStatusText() {
+        var state = ZenStatusBarState(modelID: "mlx/Qwen3-Coder", agentName: "Developer")
+        #expect(ZenStatusFormatting.statusText(for: state) == "Developer · Qwen3-Coder")
+        state.thinking = .high
+        #expect(ZenStatusFormatting.statusText(for: state) == "Developer · Qwen3-Coder · High")
+    }
+
+    @Test("an agent without a model shows alone, and the spinner still needs a model")
+    func agentWithoutModel() {
+        let state = ZenStatusBarState(isGenerating: true, agentName: "Developer")
+        let fragments = ZenStatusFormatting.fragments(for: state)
+        #expect(fragments.map(\.kind) == [.agent])
+        #expect(!fragments.contains { $0.kind == .activity })
+        #expect(ZenStatusFormatting.statusText(for: state) == "Developer")
+    }
+
+    @Test("the agent name is trimmed and a blank name is no agent")
+    func agentTextNormalization() {
+        #expect(ZenStatusFormatting.agentText("  Developer \n") == "Developer")
+        #expect(ZenStatusFormatting.agentText("Developer") == "Developer")
+        #expect(ZenStatusFormatting.agentText("  ") == nil)
+        #expect(ZenStatusFormatting.agentText("\n\t ") == nil)
+        #expect(ZenStatusFormatting.agentText("") == nil)
+        #expect(ZenStatusFormatting.agentText(nil) == nil)
+
+        let blank = ZenStatusBarState(modelID: "gpt-5", agentName: "  ")
+        #expect(ZenStatusFormatting.fragments(for: blank).map(\.kind) == [.model])
+        #expect(ZenStatusBarState().agentName == nil)
+    }
+
     @Test("while generating without a start the last duration shows")
     func generatingWithoutStartShowsLastDuration() {
         let state = ZenStatusBarState(

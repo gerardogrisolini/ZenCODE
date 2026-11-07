@@ -256,11 +256,28 @@ struct TerminalChatSessionHostTests {
             #expect(terminal.activeSessionHistory.isEmpty)
             #expect(previous.selection.modelIDOverride == "other-model")
             // The slot is the same and runs the new incarnation; the Telegram
-            // channel and the sub-agent event handler follow it.
+            // channel and the routing of the sub-agent tool events follow it.
             #expect(terminal.terminalSlotID == slot)
             let incarnation = try #require(host.incarnation(in: slot))
             #expect(incarnation.controller === next)
-            #expect(terminal.didInstallSubAgentToolEventHandler == false)
+            // A delegated tool event of the new session reaches the new
+            // controller, and through it the terminal's delegated tool rows;
+            // one of the replaced session is dropped.
+            let read = DirectAgentToolCall(
+                id: "read", name: "local.readFile",
+                argumentsObject: ["path": "a.swift"], argumentsJSON: "{}"
+            )
+            await host.routeSubAgentToolEvent(DirectSubAgentToolEvent(
+                agentID: "stale-worker", agentName: "stale-worker", toolCall: read,
+                lifecycle: .started, rootSessionID: previousSessionID
+            ))
+            await host.routeSubAgentToolEvent(DirectSubAgentToolEvent(
+                agentID: "worker", agentName: "worker", toolCall: read,
+                lifecycle: .started, rootSessionID: terminal.sessionID
+            ))
+            let delegatedRows = await terminal.renderCoordinator.subAgentToolPresentationSnapshot()
+            #expect(delegatedRows.presentationsByAgentID["worker"]?.toolCall.id == "read")
+            #expect(delegatedRows.presentationsByAgentID["stale-worker"] == nil)
             #expect(await terminal.sessionRunner.snapshotSession(id: terminal.sessionID) != nil)
             #expect(await terminal.sessionRunner.snapshotSession(id: previousSessionID) == nil)
             #expect(await Self.capturedText(of: terminal).contains("Started a new session."))

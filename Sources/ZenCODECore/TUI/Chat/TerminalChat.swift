@@ -242,9 +242,6 @@ public final class TerminalChat {
     var subAgentOverviewRefreshTask: Task<Void, Never>? {
         chatSession.subAgentOverviewRefreshTask
     }
-    /// The runner retains this handler across backend rebuilds. Install once
-    /// per artifact-history lifetime so a reset fences callbacks from old sessions.
-    var didInstallSubAgentToolEventHandler = false
     /// Interval between automatic sub-agent overview refreshes, the one of the
     /// controller's refresher (see ``ChatSubAgentOverviewRefresher/interval``).
     /// Mutable so tests can shorten it.
@@ -485,10 +482,9 @@ public final class TerminalChat {
 
     /// The slot runs `incarnation` now: `/sessions new` or `/sessions load`
     /// replaced the session, or ``sessionID`` changed in place. The terminal
-    /// follows: ``chatSession`` is the new controller, and the runner's
-    /// sub-agent event handler, bound to the previous artifact history, is
-    /// installed again at the next turn. The slot's Telegram channel follows
-    /// the slot by itself. Everything else the terminal keeps per session
+    /// follows: ``chatSession`` is the new controller, to which the host routes
+    /// the tool events of the session's sub-agents. The slot's Telegram channel
+    /// follows the slot by itself. Everything else the terminal keeps per session
     /// (status bar, overviews, task-graph observer, staged attachments,
     /// response language) is realigned by the channel hooks of the
     /// operation, in the order they always ran. A slot without session
@@ -496,10 +492,7 @@ public final class TerminalChat {
     /// controller.
     private func followIncarnation(_ incarnation: ChatSessionIncarnation?) {
         guard let incarnation else { return }
-        let previous: ChatSessionIncarnation = currentIncarnation
         currentIncarnation = incarnation
-        guard incarnation.epoch != previous.epoch else { return }
-        didInstallSubAgentToolEventHandler = false
     }
 
     public static func supportsInteractiveStatusBar() -> Bool {

@@ -282,7 +282,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
     ) async {
         let result = DirectAgentToolResult(output: "Updated", summary: "Updated", fileChanges: [change])
         if delegated {
-            await terminal.writeSubAgentToolEvent(
+            await terminal.chatSession.presentSubAgentToolEvent(
                 .init(agentID: "worker", agentName: "worker", toolCall: call(callID, path: change.path),
                       lifecycle: .completed(result)),
                 sessionID: context.sessionID, history: context.history

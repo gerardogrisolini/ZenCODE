@@ -114,6 +114,8 @@ public struct ZenStatusFragment: Equatable, Sendable, Identifiable {
         case voice
         /// The activity spinner shown while a prompt is generating.
         case activity
+        /// The selected agent's name, right before the model.
+        case agent
         /// Model display name and thinking selection.
         case model
         /// Context window `used/max`.
@@ -184,6 +186,19 @@ public enum ZenStatusFormatting {
         case .fullAccess:
             [ZenStatusRun(fullAccessDot, style: .fullAccess)]
         }
+    }
+
+    // MARK: - Agent
+
+    /// The selected agent's name without surrounding whitespace and newlines;
+    /// `nil` for no agent or a blank name, like
+    /// `TerminalStatusBar.update(agentName:)`.
+    public static func agentText(_ agentName: String?) -> String? {
+        guard let name = agentName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty else {
+            return nil
+        }
+        return name
     }
 
     // MARK: - Model
@@ -441,8 +456,8 @@ public enum ZenStatusFormatting {
 
     /// The fragments of the status line in the terminal UI's order
     /// (`TerminalStatusBar.statusTextLocked`): the full-access dot, the
-    /// app's voice indicator, spinner and model, context window, elapsed
-    /// time or last response duration, token counts, throughput,
+    /// app's voice indicator, spinner, agent name and model, context window,
+    /// elapsed time or last response duration, token counts, throughput,
     /// subscription usage, git summary.
     ///
     /// - Parameter now: The instant the live elapsed time is measured at.
@@ -460,10 +475,13 @@ public enum ZenStatusFormatting {
         if let indicator = ZenVoiceIndicator(state.voice) {
             fragments.append(ZenStatusFragment(kind: .voice, runs: [], voiceIndicator: indicator))
         }
+        if state.modelID != nil, state.isGenerating {
+            fragments.append(ZenStatusFragment(kind: .activity, runs: []))
+        }
+        if let agentText = agentText(state.agentName) {
+            fragments.append(ZenStatusFragment(kind: .agent, runs: [ZenStatusRun(agentText)]))
+        }
         if let modelID = state.modelID {
-            if state.isGenerating {
-                fragments.append(ZenStatusFragment(kind: .activity, runs: []))
-            }
             fragments.append(ZenStatusFragment(
                 kind: .model,
                 runs: [ZenStatusRun(modelText(modelID: modelID, thinking: state.thinking))]

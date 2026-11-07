@@ -124,39 +124,21 @@ extension ZenCODEACPBridge {
 }
 
 extension ZenCODEACPBridge {
-    func presentDelegatedToolEvent(_ event: DirectSubAgentToolEvent) async {
-        // Capture ownership before the cross-actor lookup. A suspended callback
-        // must never adopt a replacement session or a later prompt. The
-        // reservations are the host's: they are read in one step, for every
-        // live entry, before anything else suspends.
-        let bindings = sessions.mapValues { ($0.slotID, $0.epoch) }
-        let activePrompts = await host.activePromptIDs(
-            in: Dictionary(uniqueKeysWithValues: bindings.values.map { ($0.0, $0.1) })
-        )
-        let owners = bindings.mapValues { binding in (binding.1, activePrompts[binding.0]) }
-        let snapshots = await sessionRunner.subAgentSnapshots()
-        guard let agent = snapshots.first(where: { $0.id == event.agentID }),
-              let (epoch, ownerPromptID) = owners[agent.rootSessionID],
-              let promptID = ownerPromptID,
-              let session = await reservedPromptSession(sessionID: agent.rootSessionID, epoch: epoch, promptID: promptID),
-              let pipeline = session.promptUpdatePipeline else { return }
-        // Runtime agent IDs are unique per creation/attempt, and are also
-        // available to the permission broker before any operation executes.
-        let id = "acp:tool:\(agent.id):\(event.toolCall.id)"
-        var update: [String: Any]
-        let phase: String
-        switch event.lifecycle {
-        case .started:
-            phase = "started"
-            update = Self.toolCallCreateUpdate(for: event.toolCall, workingDirectory: URL(fileURLWithPath: session.cwd))
-        case let .completed(result):
-            phase = "completed"
-            update = Self.toolCallCompletionUpdate(for: event.toolCall, result: result, workingDirectory: URL(fileURLWithPath: session.cwd))
-        }
-        let notificationID = id + ":" + phase
-        guard sessions[session.id]?.delegatedToolNotifications.insert(notificationID).inserted == true else { return }
-        update["toolCallId"] = id
-        update["title"] = "\(agent.name) — \(Self.toolTitle(for: event.toolCall))"
-        await pipeline.enqueue(.init(kind: .consume(JSONValue.acpValue(from: update)))).value
+    /// Claims, for the prompt `promptID` of the incarnation `epoch` of
+    /// `sessionID`, the delivery of one delegated tool notification (a tool
+    /// call id and its phase): `true` the first time during that prompt, and
+    /// only while the prompt holds its incarnation and its update pipeline is
+    /// the session's. The prompt's presenter renders the notification (see
+    /// ``ACPPromptPresenter/presentSubAgentToolEvent(_:)``); the host routes
+    /// the event to the session's controller by its root session.
+    func claimDelegatedToolNotification(
+        _ notificationID: String,
+        sessionID: String,
+        epoch: UInt64,
+        promptID: UUID
+    ) async -> Bool {
+        guard let session = await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID),
+              session.promptUpdatePipeline != nil else { return false }
+        return sessions[session.id]?.delegatedToolNotifications.insert(notificationID).inserted == true
     }
 }

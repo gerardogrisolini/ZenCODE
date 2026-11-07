@@ -28,6 +28,14 @@ public protocol ChatSessionPresenter: Sendable {
     /// File artifacts recorded while the turn runs. `agentID` is non-nil when
     /// a delegated agent produced them.
     func presentLiveFileArtifacts(_ turns: [SessionFileArtifactHistory.Turn], agentID: String?) async
+    /// A tool call of a delegated sub-agent of the session started or
+    /// completed, as the channel renders it (a tool row of its own, a
+    /// status refresh after a file mutation). The controller presents it on
+    /// the presenter of the turn running now, and itself owns the rest: the
+    /// baseline of the files a started call touches, the live artifacts of a
+    /// completed one (``presentLiveFileArtifacts(_:agentID:)``), and the
+    /// sub-agent overview that follows.
+    func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async
     /// Artifacts of the sealed turn that were not presented live.
     func presentSealedFileArtifacts(_ turn: SessionFileArtifactHistory.Turn) async
     /// The reconciled file changes of the whole turn, sent once before the
@@ -139,6 +147,7 @@ extension ChatSessionPresenter {
     public func presentToolCallCompleted(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {}
     public func presentToolCallSettled(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {}
     public func presentLiveFileArtifacts(_ turns: [SessionFileArtifactHistory.Turn], agentID: String?) async {}
+    public func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {}
     public func presentSealedFileArtifacts(_ turn: SessionFileArtifactHistory.Turn) async {}
     public func presentFileChangeSummary(_ summary: TurnFileChangeSummary) async {}
     public func modelTurnDidReturn() async {}

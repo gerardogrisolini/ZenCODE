@@ -508,7 +508,8 @@ first one:
   crossed-out microphone while it is paused, and a waveform while it reads
   aloud, which wins over the pause; the tooltip says `Voice mode: listening`,
   `Voice mode: paused`, or `Voice mode: reading aloud`;
-- the model and the thinking level, with a spinner while a turn runs;
+- the selected agent's name, the model, and the thinking level, with a spinner
+  while a turn runs;
 - the context window, `used/max`, with a small gauge;
 - the elapsed time of the turn, live, then the duration of the last response;
 - the token counts (`c:` cached, `p:` prompt, `g:` generated);
@@ -607,12 +608,12 @@ is never saved: closing the window ends it.
 
 ## Toolbar and menus
 
-The toolbar starts with the agent button, which shows the agent's name, then,
-apart, one group: the model and thinking-level buttons, as icons only (the
-status bar shows the model and the level), the buttons for the tools, the
-skills, and the task graph, and a **Changes** menu (show changes, show changes
-with the diff, undo changes, review changes). Always last comes the
-**Artifacts** button, which shows and hides the artifacts sidebar.
+The toolbar has one group with the buttons for the agent, the model, and the
+thinking level, as icons only (the status bar shows the agent, the model, and
+the level), the buttons for the tools, the skills, and the task graph, and a
+**Changes** menu (show changes, show changes with the diff, undo changes,
+review changes). Always last comes the **Artifacts** button, which shows and
+hides the artifacts sidebar.
 The **Session** menu has Stop (⌘.), then **Show Chat Reader** (**Hide Chat
 Reader**, ⌃Y) in a section of its own, then **Full Access** (⌃G) in a section
 of its own, then **Voice Mode** and **Pause Voice** (**Resume Voice**) in a

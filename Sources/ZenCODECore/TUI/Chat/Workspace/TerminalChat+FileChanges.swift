@@ -42,7 +42,6 @@ extension TerminalChat {
     /// Replacing the actor also fences restores that reuse the same session ID.
     func resetFileArtifactState() {
         chatSession.resetFileArtifactState()
-        didInstallSubAgentToolEventHandler = false
     }
 
     public func publishFileChangeSummaryIfNeeded(

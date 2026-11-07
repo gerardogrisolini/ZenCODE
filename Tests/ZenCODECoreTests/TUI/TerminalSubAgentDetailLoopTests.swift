@@ -315,12 +315,13 @@ struct TerminalSubAgentDetailLoopTests {
             return prompts.prompts == expected
         }
 
+        /// Waits until the detail is closed and its teardown has finished.
+        /// `closeSubAgentDetail(reason:)` takes the detail before its first
+        /// suspension and gives the panel mode, the external-writer phase,
+        /// and the overviews back afterwards, so the detail alone reads closed
+        /// before the terminal is given back.
         func detailClosed(timeout: Duration = .seconds(10)) async -> Bool {
-            let deadline = ContinuousClock.now + timeout
-            while terminal.isSubAgentDetailOpen, ContinuousClock.now < deadline {
-                try? await Task.sleep(for: .milliseconds(10))
-            }
-            return !terminal.isSubAgentDetailOpen
+            await eventually(timeout: timeout) { await detailGaveTheTerminalBack() }
         }
 
         var capturedOutput: [String] {

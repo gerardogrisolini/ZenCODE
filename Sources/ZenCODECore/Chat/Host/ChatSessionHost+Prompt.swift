@@ -132,19 +132,6 @@ extension ChatSessionHost {
         return slots[slotID]?.incarnation?.activePromptID
     }
 
-    /// The prompts reserved on the incarnations `bindings` names (slot to
-    /// epoch), by slot, read in one step for a caller that must capture them
-    /// before it suspends. Incarnations that are not live have no entry.
-    func activePromptIDs(in bindings: [ChatSlotID: UInt64]) -> [ChatSlotID: UUID] {
-        var promptIDs: [ChatSlotID: UUID] = [:]
-        for (slotID, epoch) in bindings {
-            if let promptID = activePromptID(in: slotID, epoch: epoch) {
-                promptIDs[slotID] = promptID
-            }
-        }
-        return promptIDs
-    }
-
     // MARK: - Cancel
 
     /// Cancels the prompt reserved on the session `slotID` runs now: the

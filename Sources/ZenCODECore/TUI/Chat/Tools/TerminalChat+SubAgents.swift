@@ -69,20 +69,6 @@ extension TerminalChat {
         )
     }
 
-    func installSubAgentToolEventHandlerIfNeeded() async {
-        guard !didInstallSubAgentToolEventHandler else {
-            return
-        }
-        didInstallSubAgentToolEventHandler = true
-        let observedSessionID = sessionID
-        let history = fileArtifactHistory
-        await sessionRunner.updateSubAgentToolEventHandler { [weak self] event in
-            await self?.writeSubAgentToolEvent(
-                event, sessionID: observedSessionID, history: history
-            )
-        }
-    }
-
     // MARK: - Live refresh during agent.* tool calls
 
     /// Starts the periodic overview refresh of the shared controller (see

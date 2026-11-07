@@ -2,10 +2,11 @@
 //  ZenWindowToolbar.swift
 //  ZenApp
 //
-//  The glass toolbar of a window: the agent, the session's other selections
-//  (model, thinking), its capabilities and its work (tools, skills, tasks,
-//  changes) in one group, and, always last, the artifacts sidebar toggle.
-//  Every other item runs a slash command; the menus a command needs arrive as
+//  The glass toolbar of a window: one group with the agent, the model, and the
+//  thinking level as icons, then the session's capabilities and work (tools,
+//  skills, tasks, changes), and, always last, the artifacts sidebar toggle.
+//  The status bar shows the agent's name, the model, and the level. Every
+//  other item runs a slash command; the menus a command needs arrive as
 //  pending requests and open as sheets.
 //
 
@@ -35,26 +36,22 @@ enum ZenSessionCommand {
 }
 
 /// The toolbar items of a window. The labels that show the status read it in
-/// their own bodies. The agent comes first, with its name; the model and
-/// thinking buttons follow as icons only, with the tools, skills, tasks, and
-/// changes, in one group. The artifacts sidebar toggle is always the trailing
-/// item.
+/// their own bodies. One group holds the agent, model, and thinking buttons as
+/// icons only, followed by the tools, skills, tasks, and changes. The
+/// artifacts sidebar toggle, preceded by its own spacer, is always the
+/// trailing item.
 struct ZenWindowToolbar: ToolbarContent {
     let session: ZenWindowSession
 
     var body: some ToolbarContent {
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarItemGroup(placement: .primaryAction) {
             Button {
                 session.run(ZenSessionCommand.agents)
             } label: {
                 ZenAgentToolbarLabel(session: session)
             }
             .help("Choose the agent (/agents)")
-        }
 
-        ToolbarSpacer(.fixed, placement: .primaryAction)
-
-        ToolbarItemGroup(placement: .primaryAction) {
             Button {
                 session.run(ZenSessionCommand.models)
             } label: {
@@ -140,14 +137,15 @@ struct ZenThinkingToolbarLabel: View {
     }
 }
 
-/// The label of the agent button: the agent's name. It reads the status in
-/// its own body.
+/// The label of the agent button: the `person.crop.circle` icon only. The
+/// agent's name stays its title, for accessibility, but does not show; the
+/// status bar shows it. It reads the status in its own body.
 struct ZenAgentToolbarLabel: View {
     let session: ZenWindowSession
 
     var body: some View {
         Label(session.status.agentName ?? "Agent", systemImage: "person.crop.circle")
-            .labelStyle(.titleAndIcon)
+            .labelStyle(.iconOnly)
     }
 }
 

@@ -297,9 +297,6 @@ extension ZenCODEACPBridge {
         }
         // Persistent taskless agents may run during a text-only follow-up.
         await ensureTasklessObserver(sessionID: sessionID, epoch: epoch, promptID: promptID)
-        await sessionRunner.updateSubAgentToolEventHandler { [weak self] event in
-            await self?.presentDelegatedToolEvent(event)
-        }
         let taskPresentation = session.taskPresentation
         let graphEvents = await sessionRunner.taskOrchestrator.events(sessionID: sessionID)
         let graphObserver = Task {
@@ -336,6 +333,11 @@ extension ZenCODEACPBridge {
             updatePipeline: updatePipeline,
             ensureTasklessObserver: { [weak self] in
                 await self?.ensureTasklessObserver(sessionID: sessionID, epoch: epoch, promptID: promptID)
+            },
+            claimDelegatedToolNotification: { [weak self] notificationID in
+                await self?.claimDelegatedToolNotification(
+                    notificationID, sessionID: sessionID, epoch: epoch, promptID: promptID
+                ) ?? false
             }
         )
         let activePromptTask = Task(name: "ZenCODEACPBridge.prompt") {

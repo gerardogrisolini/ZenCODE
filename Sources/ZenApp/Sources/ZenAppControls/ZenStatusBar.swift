@@ -22,6 +22,8 @@ public struct ZenStatusBarState: Equatable, Sendable {
     public var modelID: String?
     /// The thinking selection shown after the model name.
     public var thinking: AgentThinkingSelection?
+    /// The name of the selected agent, shown right before the model.
+    public var agentName: String?
     /// The latest generation metrics of the session.
     public var metrics: DirectAgentGenerationMetrics?
     /// The latest context-window status.
@@ -41,6 +43,7 @@ public struct ZenStatusBarState: Equatable, Sendable {
         turnStartedAt: Date? = nil,
         modelID: String? = nil,
         thinking: AgentThinkingSelection? = nil,
+        agentName: String? = nil,
         metrics: DirectAgentGenerationMetrics? = nil,
         contextWindow: DirectAgentContextWindowStatus? = nil,
         subscriptionUsage: DirectAgentSubscriptionUsageStatus? = nil,
@@ -52,6 +55,7 @@ public struct ZenStatusBarState: Equatable, Sendable {
         self.turnStartedAt = turnStartedAt
         self.modelID = modelID
         self.thinking = thinking
+        self.agentName = agentName
         self.metrics = metrics
         self.contextWindow = contextWindow
         self.subscriptionUsage = subscriptionUsage
@@ -67,10 +71,10 @@ public struct ZenStatusBarState: Equatable, Sendable {
 /// (formatted by ``ZenStatusFormatting``): a red dot in full access, the
 /// app's voice indicator while voice mode is on (`mic.fill` listening,
 /// `mic.slash` paused, `waveform` reading aloud, with its tooltip), a
-/// spinner while generating, model and thinking, the context window with a
-/// small gauge, the live elapsed time (refreshed every second) or the last
-/// response duration, token counts, throughput, subscription usage, and the
-/// git summary.
+/// spinner while generating, the agent's name, model and thinking, the
+/// context window with a small gauge, the live elapsed time (refreshed every
+/// second) or the last response duration, token counts, throughput,
+/// subscription usage, and the git summary.
 public struct ZenStatusBar: View {
     @Environment(\.zenPalette) private var palette
     private let state: ZenStatusBarState
@@ -192,6 +196,7 @@ struct ZenContextGauge: View {
         turnStartedAt: Date().addingTimeInterval(-42),
         modelID: "remote-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
         thinking: .high,
+        agentName: "Developer",
         metrics: DirectAgentGenerationMetrics(
             promptTokenCount: 120,
             cachedPromptTokenCount: 800,

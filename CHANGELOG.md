@@ -10,8 +10,21 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- `ChatSessionPresenter.presentSubAgentToolEvent(_:)` (a no-op by default)
+  renders a tool call of a delegated sub-agent in a channel, and
+  `ChatSessionController.presentSubAgentToolEvent(_:sessionID:history:)`
+  presents it with the shared part: the baseline of the files it touches, its
+  live artifacts, and the sub-agent overview. `DirectSubAgentToolEvent.rootSessionID`
+  names the coordinator session the agent belongs to.
+
 ### Changed
 
+- The status bar shows the name of the selected agent right before the model
+  (`Agent · model`), in the terminal UI and in the macOS app. In the app's
+  toolbar the agent button shows only its icon and joins the group of the
+  model, thinking, tools, skills, tasks, and changes buttons.
 - The `/subagent` detail of an agent no longer blocks the prompt: as with the
   shared chat reader, it takes only `↑`/`↓`, `PgUp`/`PgDn`, `Home`/`End`, and
   `Esc` (which closes it), and every other key goes to the prompt, so you can
@@ -19,6 +32,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   mentions while it stays open. `q` now closes only the list of the
   sub-agents in progress, which stays modal. A command that opens a menu or a
   line prompt closes the detail first.
+- The tool events of the sub-agents are routed by the shared session host to
+  the session their agent belongs to, the same way for every channel (the
+  terminal, ACP, headless Telegram, and the macOS app). ACP and headless
+  Telegram now capture the baseline of the files a sub-agent changes, as the
+  terminal does, so the turn's file changes know their content before the
+  edit.
 
 ### Fixed
 
@@ -36,6 +55,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   duplicate, indented tool line.
 - The sub-agent tabs of the macOS app get both: the target of each tool call
   and the reasoning of Claude sub-agents.
+- ZenCODE for macOS shows the file artifacts of the sub-agents live, as the
+  terminal does, instead of all at once at the end of the turn, and refreshes
+  the git summary when a sub-agent changes a file.
 
 ## [4.0.2] - 2026-11-07
 

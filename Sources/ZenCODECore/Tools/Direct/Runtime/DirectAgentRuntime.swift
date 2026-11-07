@@ -391,17 +391,23 @@ public struct DirectSubAgentToolEvent: Sendable {
     public let agentName: String
     public let toolCall: DirectAgentToolCall
     public let lifecycle: Lifecycle
+    /// The coordinator session the agent belongs to, which routes the event
+    /// to the chat session that presents it; `nil` when the producer does
+    /// not know it, and the agent is then looked up by ``agentID``.
+    public let rootSessionID: String?
 
     public init(
         agentID: String,
         agentName: String,
         toolCall: DirectAgentToolCall,
-        lifecycle: Lifecycle
+        lifecycle: Lifecycle,
+        rootSessionID: String? = nil
     ) {
         self.agentID = agentID
         self.agentName = agentName
         self.toolCall = toolCall
         self.lifecycle = lifecycle
+        self.rootSessionID = rootSessionID
     }
 }
 

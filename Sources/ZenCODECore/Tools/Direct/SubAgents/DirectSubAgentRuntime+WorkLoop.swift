@@ -263,7 +263,8 @@ extension DirectSubAgentRuntime {
                 agentID: agent.id,
                 agentName: agent.name,
                 toolCall: toolCall,
-                lifecycle: .started
+                lifecycle: .started,
+                rootSessionID: agent.rootSessionID
             )
         case let .toolCallCompleted(toolCall, result):
             // Keep the compatibility snapshot projection until the next model
@@ -275,7 +276,8 @@ extension DirectSubAgentRuntime {
                 agentID: agent.id,
                 agentName: agent.name,
                 toolCall: toolCall,
-                lifecycle: .completed(result)
+                lifecycle: .completed(result),
+                rootSessionID: agent.rootSessionID
             )
         case let .sessionSnapshot(snapshot):
             agent.modelID = snapshot.modelID?.nilIfBlank ?? agent.modelID

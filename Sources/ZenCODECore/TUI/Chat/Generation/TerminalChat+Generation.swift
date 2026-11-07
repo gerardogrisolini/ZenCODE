@@ -21,7 +21,6 @@ extension TerminalChat {
         if attempt.locksResponseLanguage {
             lockResponseLanguageIfNeeded()
         }
-        await installSubAgentToolEventHandlerIfNeeded()
         let assistantOutput = TerminalAssistantResponseBuffer()
         activeAssistantOutput = assistantOutput
         let request = ChatTurnRequest(

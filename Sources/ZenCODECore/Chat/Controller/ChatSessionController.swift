@@ -82,6 +82,11 @@ public final class ChatSessionController {
     /// Runtime-only artifact history. It is never serialized with a session.
     var fileArtifactHistory = SessionFileArtifactHistory()
     var activeFileArtifactTurn: ChatFileArtifactTurn?
+    /// The presenter of the turn running now, with the turn's token and
+    /// session, from the start of ``runTurn(_:)`` to its end: what a delegated
+    /// tool event is presented on while the turn is current (see
+    /// ``presentSubAgentToolEvent(_:sessionID:history:)``).
+    var runningTurnPresenter: (token: UUID, sessionID: String, presenter: any ChatSessionPresenter)?
     /// Publishes the task-graph overview while the graph changes, from the
     /// moment the channel starts it (see ``startTaskGraphObserver()``).
     let taskGraphObserver = ChatTaskGraphObserver()

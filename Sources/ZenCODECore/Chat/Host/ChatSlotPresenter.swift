@@ -191,6 +191,10 @@ final class ChatSlotPresenter: ChatSessionPresenter {
         await releasedActivePresenter().presentLiveFileArtifacts(turns, agentID: agentID)
     }
 
+    func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
+        await releasedActivePresenter().presentSubAgentToolEvent(event)
+    }
+
     func presentSealedFileArtifacts(_ turn: SessionFileArtifactHistory.Turn) async {
         await releasedActivePresenter().presentSealedFileArtifacts(turn)
     }

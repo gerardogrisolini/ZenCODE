@@ -160,19 +160,21 @@ final class ZenWindowHooks: ChatSessionChannelHooks {
 /// snapshot, so this presenter renders nothing; like the terminal's presenter
 /// it publishes the sub-agent overview around the `agent.*` tool calls (and
 /// refreshes it while one runs), which reaches the reducer as an observer, and
-/// tells the window when a file-mutation tool settled so it refreshes the git
-/// summary. It records the task graphs `/tasks` publishes, for their cards.
+/// tells the window when a file-mutation tool settled, the main agent's or a
+/// delegated agent's, so it refreshes the git summary. It records the task
+/// graphs `/tasks` publishes, for their cards.
 /// For voice mode, as the terminal's presenter, it follows the text of the main
 /// agent: the comment it writes before a tool call goes to
 /// ``voiceCommentaryHandler``, and the final answer of a turn is read from it
 /// (``finalAnswer(of:purpose:)``). The thinking is not part of it, and the
-/// delegated agents never reach this presenter.
+/// delegated agents' text never reaches this presenter.
 /// Every call returns quickly: the chat actor is shared.
 @ChatSessionActor
 final class ZenWindowPresenter: ChatSessionPresenter {
     weak var sessionHost: ChatSessionHost?
     var slotID: ChatSlotID?
-    /// Called after a file-mutation tool settled.
+    /// Called after a file-mutation tool settled, or a delegated agent's
+    /// completed.
     var fileMutationHandler: (@Sendable () -> Void)?
     /// Called with the comment the main agent wrote before a tool call,
     /// never blank.
@@ -225,6 +227,15 @@ final class ZenWindowPresenter: ChatSessionPresenter {
         if DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) {
             await controller.stopSubAgentOverviewRefresh()
         }
+    }
+
+    /// A delegated agent's file mutation refreshes the git summary when it
+    /// completes, as the terminal's status bar does; its live artifacts reach
+    /// the window through the reducer.
+    func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
+        guard case .completed = event.lifecycle,
+              ZenGitStatus.isFileMutationTool(event.toolCall.name) else { return }
+        fileMutationHandler?()
     }
 
     /// Records a graph `/tasks` published (an explicit overview), with the

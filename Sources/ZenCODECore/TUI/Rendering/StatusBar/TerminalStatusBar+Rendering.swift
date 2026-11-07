@@ -437,16 +437,20 @@ extension TerminalStatusBar {
         if let accessModeFragment = Self.accessModeStatusFragment(state.localExecAccessMode) {
             fragments.append(accessModeFragment)
         }
+        if state.latestModelID != nil, state.isProcessing {
+            let loader = Self.spinnerFrames[state.spinnerIndex % Self.spinnerFrames.count]
+            fragments.append(loader)
+        }
+        if let latestAgentName = state.latestAgentName {
+            fragments.append(latestAgentName)
+        }
         if let latestModelID = state.latestModelID {
-            let model = Self.modelStatusFragment(
-                modelID: latestModelID,
-                thinkingSelection: state.latestThinkingSelection
+            fragments.append(
+                Self.modelStatusFragment(
+                    modelID: latestModelID,
+                    thinkingSelection: state.latestThinkingSelection
+                )
             )
-            if state.isProcessing {
-                let loader = Self.spinnerFrames[state.spinnerIndex % Self.spinnerFrames.count]
-                fragments.append(loader)
-            }
-            fragments.append(model)
         }
         if tokensUsed != nil || state.latestContextWindow?.maxTokens != nil {
             let contextText = Self.tokenWindowText(

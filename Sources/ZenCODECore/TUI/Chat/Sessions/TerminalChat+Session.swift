@@ -70,6 +70,7 @@ extension TerminalChat {
     }
 
     public func refreshInitialStatusBarContextWindow() async {
+        _ = await statusBar.update(agentName: selectedAgent?.displayName)
         await refreshStatusBarThinkingSelection()
         let effectiveModelID = currentEffectiveModelID()
         if let hostedModel = hostedModelManifest(for: effectiveModelID) {

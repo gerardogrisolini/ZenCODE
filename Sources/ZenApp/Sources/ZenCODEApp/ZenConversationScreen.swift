@@ -298,6 +298,7 @@ extension ZenStatusBarState {
             turnStartedAt: status.turnStartedAt,
             modelID: status.modelID,
             thinking: status.thinking,
+            agentName: status.agentName,
             metrics: status.metrics,
             contextWindow: status.contextWindow,
             subscriptionUsage: status.subscriptionUsage,
