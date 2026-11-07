@@ -39,12 +39,16 @@ public enum TerminalSubAgentDetailAction: Sendable, Equatable {
 ///
 /// - the top and bottom borders take one row each, leaving
 ///   `interior = max(0, frameRows - 2)` rows;
+/// - when `interior >= 6` one blank row pads the interior below the top
+///   border and one above the bottom border, leaving
+///   `content = interior - 2` rows; smaller frames give those rows to the
+///   content (`content = interior`);
 /// - the header and its `├─┤` separator together take at most
-///   `interior / 2` rows (rounded down), so the body always keeps at least
-///   half of the interior rows, and at least one when `interior >= 1`;
-/// - the first `min(headerRows.count, interior / 2 - 1)` header rows are
+///   `content / 2` rows (rounded down), so the body always keeps at least
+///   half of the content rows, and at least one when `content >= 1`;
+/// - the first `min(headerRows.count, content / 2 - 1)` header rows are
 ///   shown; when that is zero neither the header nor the separator is drawn;
-/// - the body gets every remaining interior row.
+/// - the body gets every remaining content row.
 ///
 /// The body capacity therefore depends only on the header and the frame
 /// height, never on the body length, so a growing transcript does not move
@@ -86,6 +90,9 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
     /// Narrowest frame whose interior row keeps one content column between
     /// `│ ` and ` │`; narrower terminals get this minimal frame.
     private static let minimumColumns = 5
+    /// Fewest interior rows that keep the blank padding row below the top
+    /// border and the one above the bottom border.
+    private static let minimumPaddedInterior = 6
 
     init(
         mode: Mode = .showing,
@@ -168,7 +175,8 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
 
         let layout = Self.layout(headerCount: headerRows.count, frameRows: rows)
         let window = bodyWindow(capacity: layout.bodyCapacity)
-        var lines = [top]
+        let padding = Array(repeating: Self.interiorLine("", columns: columns), count: layout.padding)
+        var lines = [top] + padding
         if layout.headerCount > 0 {
             lines += headerRows.prefix(layout.headerCount).map { Self.interiorLine($0, columns: columns) }
             let border = TerminalStyle.Chrome.border, reset = TerminalStyle.reset
@@ -179,6 +187,7 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
             repeating: Self.interiorLine("", columns: columns),
             count: max(0, layout.bodyCapacity - window.rows.count)
         )
+        lines += padding
         let indicator: String? = window.total > layout.bodyCapacity && layout.bodyCapacity > 0
             ? " rows \(window.start + 1)–\(window.start + window.rows.count)/\(window.total) "
             : nil
@@ -189,6 +198,8 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
     // MARK: - Layout
 
     private struct Layout {
+        /// Blank rows below the top border, and as many above the bottom one.
+        let padding: Int
         let headerCount: Int
         let bodyCapacity: Int
     }
@@ -196,10 +207,16 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
     /// The shared row budget documented on the type.
     private static func layout(headerCount: Int, frameRows: Int) -> Layout {
         let interior = max(0, frameRows - 2)
-        let headerBudget = interior / 2
+        let padding = interior >= minimumPaddedInterior ? 1 : 0
+        let content = interior - 2 * padding
+        let headerBudget = content / 2
         let visibleHeader = headerBudget >= 2 ? min(headerCount, headerBudget - 1) : 0
         let separator = visibleHeader > 0 ? 1 : 0
-        return Layout(headerCount: visibleHeader, bodyCapacity: interior - visibleHeader - separator)
+        return Layout(
+            padding: padding,
+            headerCount: visibleHeader,
+            bodyCapacity: content - visibleHeader - separator
+        )
     }
 
     private static func maximumOffset(rowCount: Int, capacity: Int) -> Int {

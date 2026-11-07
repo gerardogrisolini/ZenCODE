@@ -76,7 +76,10 @@ struct ZenSubAgentTabView: View {
             }
             .padding(.horizontal, 24)
             .padding(.top, 16)
-            .padding(.bottom, 12)
+            // Nothing sits below the tab (no composer, no status bar): the
+            // margin keeps the last row clear of the window's edge and of
+            // its soft scroll-edge effect.
+            .padding(.bottom, 28)
         }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
