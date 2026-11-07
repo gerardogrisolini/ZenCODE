@@ -127,8 +127,12 @@ extension ZenCODEACPBridge {
     /// Claims, for the prompt `promptID` of the incarnation `epoch` of
     /// `sessionID`, the delivery of one delegated tool notification (a tool
     /// call id and its phase): `true` the first time during that prompt, and
-    /// only while the prompt holds its incarnation and its update pipeline is
-    /// the session's. The prompt's presenter renders the notification (see
+    /// only while the prompt holds its incarnation and the session has a
+    /// prompt update pipeline (from the moment the prompt starts presenting
+    /// until its task presentation finishes). The pipeline is not compared
+    /// with the prompt's: the prompt installs its own before its presenter
+    /// exists, and no other prompt can install one while this one holds the
+    /// reservation. The prompt's presenter renders the notification (see
     /// ``ACPPromptPresenter/presentSubAgentToolEvent(_:)``); the host routes
     /// the event to the session's controller by its root session.
     func claimDelegatedToolNotification(

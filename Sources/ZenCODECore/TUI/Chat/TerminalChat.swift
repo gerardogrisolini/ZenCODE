@@ -175,10 +175,6 @@ public final class TerminalChat {
         get { chatSession.fileArtifactHistory }
         set { chatSession.fileArtifactHistory = newValue }
     }
-    var activeFileArtifactTurn: FileArtifactTurnContext? {
-        get { chatSession.activeFileArtifactTurn }
-        set { chatSession.activeFileArtifactTurn = newValue }
-    }
     public var activePlan: TerminalSessionPlan? {
         get { chatSession.activePlan }
         set { chatSession.activePlan = newValue }

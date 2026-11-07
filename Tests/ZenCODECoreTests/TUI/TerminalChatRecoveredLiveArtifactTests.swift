@@ -48,7 +48,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
             #expect(summary.entries.first?.beforeDataBase64 == Data(before.utf8).base64EncodedString())
             #expect(summary.entries.first?.patch?.contains("+let value = 2") == true)
             #expect(await renderer.capturedWriteEvents().count == events.count)
-            #expect(terminal.activeFileArtifactTurn == nil)
+            #expect(terminal.chatSession.activeFileArtifactTurn == nil)
             #expect(terminal.lastFileChangeSummary == summary)
             let history = await context.history.snapshot()
             #expect(history.count == 1)
@@ -284,11 +284,10 @@ struct TerminalChatRecoveredLiveArtifactTests {
         if delegated {
             await terminal.chatSession.presentSubAgentToolEvent(
                 .init(agentID: "worker", agentName: "worker", toolCall: call(callID, path: change.path),
-                      lifecycle: .completed(result)),
-                sessionID: context.sessionID, history: context.history
+                      lifecycle: .completed(result))
             )
         } else {
-            await terminal.publishLiveFileArtifacts(result, callID: callID, context: context)
+            await terminal.chatSession.publishLiveFileArtifacts(result, callID: callID, context: context)
         }
     }
 

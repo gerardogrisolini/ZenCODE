@@ -121,11 +121,6 @@ extension ChatSessionHost {
         return incarnation
     }
 
-    /// The prompt reserved on the incarnation `epoch` of `slotID`, if any.
-    func activePromptID(in slotID: ChatSlotID, epoch: UInt64) -> UUID? {
-        liveIncarnation(in: slotID, epoch: epoch)?.activePromptID
-    }
-
     /// The prompt reserved on the session `slotID` runs now, if any.
     func activePromptID(in slotID: ChatSlotID) -> UUID? {
         guard !isShutDown else { return nil }

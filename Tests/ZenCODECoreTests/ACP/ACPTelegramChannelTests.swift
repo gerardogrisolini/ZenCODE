@@ -873,7 +873,7 @@ extension ZenCODEACPBridge {
     /// Whether a prompt is reserved on the live incarnation of `sessionID`.
     fileprivate func telegramTestPromptIsReserved(sessionID: String) async -> Bool {
         guard let session = sessions[sessionID] else { return false }
-        return await host.activePromptID(in: session.slotID, epoch: session.epoch) != nil
+        return await host.liveIncarnation(in: session.slotID, epoch: session.epoch)?.activePromptID != nil
     }
 
     /// Whether a turn of the Telegram channel of `sessionID`'s slot reserved

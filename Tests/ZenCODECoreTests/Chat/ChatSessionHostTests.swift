@@ -382,7 +382,7 @@ struct ChatSessionHostTests {
             #expect(host.releasePrompt(oldReservation) == false)
             #expect(host.withReservedIncarnation(oldReservation) { _ in true } == nil)
             #expect(host.withLiveIncarnation(slot, epoch: old.epoch) { _ in true } == nil)
-            #expect(host.activePromptID(in: slot, epoch: old.epoch) == nil)
+            #expect(host.liveIncarnation(in: slot, epoch: old.epoch)?.activePromptID == nil)
             #expect(host.incarnation(in: slot)?.activePromptID == nil)
             #expect(host.withLiveIncarnation(slot, epoch: replacement.epoch) { $0.sessionID } == "same-id")
 

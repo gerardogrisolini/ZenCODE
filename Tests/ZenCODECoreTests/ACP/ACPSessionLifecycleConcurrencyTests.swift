@@ -1055,7 +1055,7 @@ extension ZenCODEACPBridge {
     /// host holds it.
     func testActivePromptID(sessionID: String) async -> UUID? {
         guard let session = sessions[sessionID] else { return nil }
-        return await host.activePromptID(in: session.slotID, epoch: session.epoch)
+        return await host.liveIncarnation(in: session.slotID, epoch: session.epoch)?.activePromptID
     }
 
     func testHasSession(sessionID: String) -> Bool {

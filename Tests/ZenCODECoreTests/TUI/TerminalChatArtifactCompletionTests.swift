@@ -124,8 +124,8 @@ struct TerminalChatArtifactCompletionTests {
                         // An already published artifact must not clear a live
                         // overview or disturb its clock/status presentation.
                         let bytesBeforeDuplicate = capture.bytes
-                        let context = try #require(terminal.activeFileArtifactTurn)
-                        await terminal.publishLiveFileArtifacts(
+                        let context = try #require(terminal.chatSession.activeFileArtifactTurn)
+                        await terminal.chatSession.publishLiveFileArtifacts(
                             result, callID: call.id,
                             agentID: delegated ? "worker" : nil, context: context
                         )
@@ -141,7 +141,7 @@ struct TerminalChatArtifactCompletionTests {
                 let output = capture.history + "\n" + capture.visible
                 #expect(!output.contains("⏳"))
                 #expect(output.components(separatedBy: "1 │ +let completed = 42").count - 1 == 1)
-                #expect(terminal.activeFileArtifactTurn == nil)
+                #expect(terminal.chatSession.activeFileArtifactTurn == nil)
                 await runner.shutdown()
             }.value
         }

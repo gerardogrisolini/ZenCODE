@@ -36,6 +36,17 @@ extension AgentCoreSessionRunner {
         return await backend.subAgentSnapshots()
     }
 
+    /// Sets the handler the backend calls, and awaits, for every tool call a
+    /// delegated sub-agent starts or completes; the runner hands it to every
+    /// backend it creates and before every model request.
+    ///
+    /// Under a ``ChatSessionHost`` the handler belongs to the host: its
+    /// router installs itself here once, before the first hosted turn
+    /// (``ChatSessionHost/installSubAgentToolEventRoutingIfNeeded()``), and
+    /// routes every event to the slots that run the agent's root session. An
+    /// app that runs its sessions in a host must not replace it, or the
+    /// events reach no slot any more; only an app that drives the runner
+    /// without a host sets its own.
     public func updateSubAgentToolEventHandler(
         _ handler: DirectSubAgentToolEventHandler?
     ) async {

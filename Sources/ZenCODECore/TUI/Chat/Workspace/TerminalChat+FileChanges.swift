@@ -25,20 +25,6 @@ extension TerminalChat {
         await chatSession.beginFileArtifactTurn(coordinator: coordinator)
     }
 
-    func publishLiveFileArtifacts(
-        _ result: DirectAgentToolResult,
-        callID: String,
-        agentID: String? = nil,
-        context: FileArtifactTurnContext?
-    ) async {
-        await chatSession.publishLiveFileArtifacts(
-            result,
-            callID: callID,
-            agentID: agentID,
-            context: context
-        )
-    }
-
     /// Replacing the actor also fences restores that reuse the same session ID.
     func resetFileArtifactState() {
         chatSession.resetFileArtifactState()

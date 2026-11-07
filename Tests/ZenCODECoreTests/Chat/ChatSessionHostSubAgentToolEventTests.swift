@@ -7,8 +7,11 @@
 //  of the slot running the agent's root session (every such slot, by epoch),
 //  the live artifact a completed call records in the running turn before it
 //  ends, the baseline a started call captures for the turn's summary, the
-//  root session read from the runner's snapshots when the event has none,
-//  and the events dropped for an unknown session or a host shut down. Every
+//  presenter an event and its overview are presented on (the turn's, the
+//  controller's once the turn was cancelled), the root session read from the
+//  runner's snapshots when the event has none, the slot skipped when it
+//  stopped running the session during an earlier delivery, and the events
+//  dropped for an unknown session or a host shut down. Every
 //  test runs in directories named by UUIDs; nothing touches the real
 //  application state.
 //
@@ -20,15 +23,26 @@ import ToolCore
 @testable import ZenCODECore
 
 /// Records, as `<name>:<agent>:<call>:<phase>`, the delegated tool events a
-/// slot's presenter receives, in a log several presenters may share.
+/// slot's presenter receives, in a log several presenters may share, and,
+/// when asked, the sub-agent overviews it receives as `<name>:overview`.
 private actor DelegatedToolEventPresenter: ChatSessionPresenter {
     nonisolated let name: String
     nonisolated let log: SharedDeliveryLog?
+    nonisolated let logsOverviews: Bool
     private(set) var events: [String] = []
+    /// Runs, on the chat actor, once the first event is recorded, before the
+    /// presentation returns: what happens while the router is suspended in
+    /// this delivery.
+    private var onFirstEvent: (@Sendable @ChatSessionActor () async -> Void)?
 
-    init(name: String, log: SharedDeliveryLog? = nil) {
+    init(name: String, log: SharedDeliveryLog? = nil, logsOverviews: Bool = false) {
         self.name = name
         self.log = log
+        self.logsOverviews = logsOverviews
+    }
+
+    func setOnFirstEvent(_ hook: @escaping @Sendable @ChatSessionActor () async -> Void) {
+        onFirstEvent = hook
     }
 
     func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
@@ -40,6 +54,19 @@ private actor DelegatedToolEventPresenter: ChatSessionPresenter {
         let entry = "\(event.agentID):\(event.toolCall.id):\(phase)"
         events.append(entry)
         log?.entries.withLock { $0.append("\(name):\(entry)") }
+        if let hook = onFirstEvent {
+            onFirstEvent = nil
+            await hook()
+        }
+    }
+
+    func presentSubAgentOverview(
+        _ overview: ChatSubAgentOverview,
+        origin: ChatOverviewOrigin,
+        publication: ChatOverviewPublication?
+    ) async {
+        guard logsOverviews else { return }
+        log?.entries.withLock { $0.append("\(name):overview") }
     }
 }
 
@@ -374,6 +401,135 @@ struct ChatSessionHostSubAgentToolEventTests {
             #expect(runningLive.map(\.agentID) == ["worker"])
             #expect(runningLive.first?.paths == ["Shared.swift"])
             #expect(Self.liveArtifacts(of: try #require(idleIncarnation.reducer)).isEmpty)
+            await host.shutdown()
+        }
+    }
+
+    /// An event and the overview that follows it are presented on the
+    /// presenter the turn binds while the turn is current; once the channel
+    /// cancelled the turn, with its model request still running, on the
+    /// controller's presenter (for ACP, the silent one), never on the turn's.
+    @Test
+    nonisolated func anEventAfterTheTurnWasCancelledIsPresentedOnTheControllersPresenterNotTheTurns() async throws {
+        try await withEnvironment { environment in
+            let host = try environment.makeHost()
+            let log = SharedDeliveryLog()
+            let slotPresenter = DelegatedToolEventPresenter(name: "slot", log: log, logsOverviews: true)
+            let turnPresenter = DelegatedToolEventPresenter(name: "turn", log: log, logsOverviews: true)
+            let slot = try host.openSlot(environment.descriptor("slot", presenter: slotPresenter))
+            let incarnation = try await host.newSession(in: slot, sessionID: "root")
+            let write = Self.call("write", path: "Cancelled.swift")
+            let cancelledPromptRan = Box(false)
+            await environment.backend.setScript { sessionID, handler in
+                let handler = try #require(handler)
+                await handler(DirectSubAgentToolEvent(
+                    agentID: "worker", agentName: "worker", toolCall: write,
+                    lifecycle: .started, rootSessionID: sessionID
+                ))
+                // The channel stops the turn while its model request runs.
+                host.cancelPrompt(in: slot)
+                cancelledPromptRan.value = true
+                await handler(DirectSubAgentToolEvent(
+                    agentID: "worker", agentName: "worker", toolCall: write,
+                    lifecycle: .completed(DirectAgentToolResult(output: "Updated", summary: "Updated")),
+                    rootSessionID: sessionID
+                ))
+            }
+            let controller = incarnation.controller
+            _ = try? await controller.runTurn(ChatTurnRequest(
+                prompt: "Delegate",
+                sessionConfiguration: await controller.currentSessionConfiguration(responseLanguageSection: nil),
+                presenter: turnPresenter
+            ))
+
+            #expect(cancelledPromptRan.value)
+            #expect(log.entries.withLock { $0 } == [
+                "turn:worker:write:started",
+                "turn:overview",
+                "slot:worker:write:completed",
+                "slot:overview",
+            ])
+            await host.shutdown()
+        }
+    }
+
+    /// How a slot the router chose stops running the incarnation it chose,
+    /// while an earlier slot presents the event.
+    enum SlotChange: CaseIterable, Sendable {
+        /// The slot's incarnation adopts another session id, in place.
+        case adoptsAnotherSessionID
+        /// The slot starts a new incarnation, with the same session id.
+        case startsANewIncarnationOfTheSameSession
+    }
+
+    /// The router checks each slot again right before it hands the event
+    /// over: a slot that, while an earlier slot presented the event, moved to
+    /// another session or replaced its incarnation (a stale incarnation,
+    /// even with the same session id) is skipped. The next event goes where
+    /// the slots are then.
+    @Test(arguments: SlotChange.allCases)
+    nonisolated func aSlotThatStopsRunningTheChosenIncarnationDuringAnEarlierDeliveryIsSkipped(
+        change: SlotChange
+    ) async throws {
+        try await withEnvironment { environment in
+            let host = try environment.makeHost()
+            let log = SharedDeliveryLog()
+            let first = DelegatedToolEventPresenter(name: "first", log: log)
+            let second = DelegatedToolEventPresenter(name: "second", log: log)
+            let firstSlot = try host.openSlot(environment.descriptor("first", presenter: first))
+            let secondSlot = try host.openSlot(environment.descriptor("second", presenter: second))
+            let firstIncarnation = try await host.newSession(in: firstSlot, sessionID: "shared-root")
+            let chosen = try await host.newSession(in: secondSlot, sessionID: "shared-root")
+            #expect(firstIncarnation.epoch < chosen.epoch)
+            // A hosted turn installs the router before its model request.
+            _ = try await Self.runTurn("Hello", on: firstIncarnation)
+            #expect(await environment.backend.hasSubAgentToolEventHandler())
+            let changed = Box(false)
+            await first.setOnFirstEvent {
+                // The router is suspended in the first slot's delivery, with
+                // the second slot already chosen.
+                do {
+                    switch change {
+                    case .adoptsAnotherSessionID:
+                        try host.adoptSessionID("moved", in: secondSlot)
+                    case .startsANewIncarnationOfTheSameSession:
+                        try await host.newSession(in: secondSlot, sessionID: "shared-root")
+                    }
+                    changed.value = true
+                } catch {
+                    Issue.record("The second slot did not change: \(error)")
+                }
+            }
+            let write = Self.call("write", path: "Shared.swift")
+            await environment.backend.emit(DirectSubAgentToolEvent(
+                agentID: "worker", agentName: "worker", toolCall: write,
+                lifecycle: .started, rootSessionID: "shared-root"
+            ))
+
+            #expect(changed.value)
+            #expect(log.entries.withLock { $0 } == ["first:worker:write:started"])
+            switch change {
+            case .adoptsAnotherSessionID:
+                // Same epoch, another session.
+                #expect(host.liveIncarnation(in: secondSlot, epoch: chosen.epoch)?.sessionID == "moved")
+            case .startsANewIncarnationOfTheSameSession:
+                // The chosen incarnation is stale.
+                #expect(host.liveIncarnation(in: secondSlot, epoch: chosen.epoch) == nil)
+                #expect(host.incarnation(in: secondSlot)?.sessionID == "shared-root")
+            }
+
+            await environment.backend.emit(DirectSubAgentToolEvent(
+                agentID: "worker", agentName: "worker", toolCall: write,
+                lifecycle: .completed(DirectAgentToolResult(output: "Updated", summary: "Updated")),
+                rootSessionID: "shared-root"
+            ))
+            let next: [String] = switch change {
+            case .adoptsAnotherSessionID:
+                ["first:worker:write:completed"]
+            case .startsANewIncarnationOfTheSameSession:
+                ["first:worker:write:completed", "second:worker:write:completed"]
+            }
+            #expect(log.entries.withLock { $0 } == ["first:worker:write:started"] + next)
             await host.shutdown()
         }
     }

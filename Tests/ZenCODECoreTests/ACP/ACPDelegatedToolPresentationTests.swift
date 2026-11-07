@@ -8,7 +8,8 @@
 //  it completes, identified by agent and call and titled with the agent's
 //  name (a completion's title ending with the time the runtime measured),
 //  once per call and phase in a prompt, in the order they happened,
-//  never for another session's agent and never outside a prompt.
+//  never for another session's agent, never outside a prompt, and never
+//  after the prompt was cancelled.
 //
 
 import Foundation
@@ -70,6 +71,11 @@ private actor DelegatedToolBackend: AgentRuntimeBackend {
 /// The messages the bridge wrote, decoded, in order.
 private final class WireLog: Sendable {
     let messages = Mutex<[JSONValue]>([])
+}
+
+/// A flag a backend script sets, for the test to read afterwards.
+private final class ScriptFlag: Sendable {
+    let isSet = Mutex(false)
 }
 
 private extension ZenCODEACPBridge {
@@ -211,6 +217,67 @@ struct ACPDelegatedToolPresentationTests {
         let afterSecond = Self.delegatedUpdates(output)
         #expect(afterSecond.count == 3)
         #expect(afterSecond.last == Self.expectedUpdate(started, cwd: cwd))
+        await bridge.shutdown()
+    }
+
+    /// A delegated call that completes after `session/cancel`, while the
+    /// cancelled turn's model request is still running, writes nothing: the
+    /// controller presents it on its own presenter, the silent one, since the
+    /// turn is no longer current, and the prompt's claim ended with its
+    /// reservation. The start presented before the cancel stays.
+    @Test func aDelegatedCompletionAfterTheCancelOfAPromptStillRunningWritesNothing() async throws {
+        let workspace = try Self.makeWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let output = WireLog()
+        let backend = DelegatedToolBackend()
+        let configuration = try AgentConfiguration(
+            hostedModelID: "test-model",
+            availableModels: [.init(id: "test-model", kind: .remoteAPI, modelID: "local/test-model")],
+            runMode: .acp, workingDirectory: workspace, appMode: false
+        )
+        let bridge = ZenCODEACPBridge(configuration: configuration, writer: ACPWriter { data in
+            if let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
+                output.messages.withLock { $0.append(value) }
+            }
+        }, backendFactory: { _, _ in backend })
+        try await bridge.newSession(id: .number(1), params: ["cwd": workspace.path, "allowedTools": [String]()])
+        let sessionID = try #require(await bridge.testAnySessionID())
+        let cwd = try #require(await bridge.delegatedToolTestCWD(sessionID: sessionID))
+
+        let write = DirectAgentToolCall(
+            id: "call-1", name: "local.writeFile",
+            argumentsObject: ["path": "Delegated.swift", "content": "let value = 2\n"],
+            argumentsJSON: #"{"path":"Delegated.swift","content":"let value = 2\n"}"#
+        )
+        let started = DirectSubAgentToolEvent(
+            agentID: "worker-1", agentName: "Worker", toolCall: write,
+            lifecycle: .started, rootSessionID: sessionID
+        )
+        let completed = DirectSubAgentToolEvent(
+            agentID: "worker-1", agentName: "Worker", toolCall: write,
+            lifecycle: .completed(DirectAgentToolResult(
+                output: "Updated", summary: "Updated",
+                fileChanges: [OperationFileChange(path: "Delegated.swift", oldText: nil, newText: "let value = 2\n")],
+                elapsed: .milliseconds(1_250)
+            )),
+            rootSessionID: sessionID
+        )
+        let cancelled = ScriptFlag()
+        await backend.setScript { sessionID, handler in
+            await handler?(started)
+            // The client cancels while the model request is still running.
+            do {
+                try await bridge.cancel(id: nil, params: ["sessionId": sessionID])
+                cancelled.isSet.withLock { $0 = true }
+            } catch {
+                Issue.record("session/cancel failed: \(error)")
+            }
+            await handler?(completed)
+        }
+        try await bridge.prompt(id: .number(2), params: ["sessionId": sessionID, "prompt": "cancel me"])
+
+        #expect(cancelled.isSet.withLock { $0 })
+        #expect(Self.delegatedUpdates(output) == [Self.expectedUpdate(started, cwd: cwd)])
         await bridge.shutdown()
     }
 

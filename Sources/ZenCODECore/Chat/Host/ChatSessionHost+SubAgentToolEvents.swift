@@ -17,7 +17,11 @@ extension ChatSessionHost {
     /// session. The runner hands its handler to the backend it creates and
     /// before every model request, so a controller installs the router
     /// before its turn's request (``ChatSessionController/runTurn(_:)``).
-    /// Nothing happens after ``shutdown(keepingExternalTools:)``.
+    /// The runner's handler belongs to the host from then on: nothing else
+    /// may replace it (see
+    /// ``AgentCoreSessionRunner/updateSubAgentToolEventHandler(_:)``), or
+    /// the events reach no slot any more. Nothing happens after
+    /// ``shutdown(keepingExternalTools:)``.
     func installSubAgentToolEventRoutingIfNeeded() async {
         guard !isShutDown, !isRoutingSubAgentToolEvents else { return }
         isRoutingSubAgentToolEvents = true
@@ -29,10 +33,21 @@ extension ChatSessionHost {
     /// Hands `event` to the controller of every open slot whose session is
     /// the agent's root session (the event's, or the one the runner's
     /// sub-agent snapshots know for the agent), in the order of their
-    /// epochs, each while its incarnation is still live; see
-    /// ``ChatSessionController/presentSubAgentToolEvent(_:sessionID:history:)``.
-    /// An event of a session no slot runs, or that reaches a host already
-    /// shut down, is dropped.
+    /// epochs, each while its incarnation is still live and still runs that
+    /// session: the check and the hand-over happen with no suspension
+    /// between them, so the controller takes the event as its session's
+    /// (``ChatSessionController/presentSubAgentToolEvent(_:)``). A slot that
+    /// replaced its incarnation or changed its session while an earlier
+    /// slot presented the event is skipped. An event of a session no slot
+    /// runs, or that reaches a host already shut down, is dropped.
+    ///
+    /// The delivery is sequential: the slots one after the other, each one
+    /// awaited, and the sub-agent's work loop awaits the whole delivery
+    /// before it goes on, so an agent's events arrive in order. A slow
+    /// presentation slows the agent down without deadlocking it: while the
+    /// terminal takes the slot back from Telegram and renders what it
+    /// catches up with (``ChatSlotPresenter/holdOutput()``), the event waits
+    /// with the rest of the slot's output, and so does the agent.
     func routeSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
         guard !isShutDown else { return }
         let rootSessionID: String

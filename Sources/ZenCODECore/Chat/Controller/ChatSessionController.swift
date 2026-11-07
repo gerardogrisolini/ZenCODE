@@ -85,7 +85,7 @@ public final class ChatSessionController {
     /// The presenter of the turn running now, with the turn's token and
     /// session, from the start of ``runTurn(_:)`` to its end: what a delegated
     /// tool event is presented on while the turn is current (see
-    /// ``presentSubAgentToolEvent(_:sessionID:history:)``).
+    /// ``presentSubAgentToolEvent(_:)``).
     var runningTurnPresenter: (token: UUID, sessionID: String, presenter: any ChatSessionPresenter)?
     /// Publishes the task-graph overview while the graph changes, from the
     /// moment the channel starts it (see ``startTaskGraphObserver()``).

@@ -40,7 +40,7 @@ struct TerminalChatLiveArtifactTests {
                 }
                 #expect(!output.contains("🪬 Artifacts"))
                 #expect(!output.contains("Turn 1 —"))
-                #expect(terminal.activeFileArtifactTurn == nil)
+                #expect(terminal.chatSession.activeFileArtifactTurn == nil)
                 await runner.shutdown()
             }.value
         }
@@ -54,7 +54,7 @@ struct TerminalChatLiveArtifactTests {
         let terminal = try makeTerminal(directory, renderer: renderer)
         let context = try #require(await terminal.beginFileArtifactTurn())
         let change = OperationFileChange(path: "Deleted.swift", oldText: "let removed = 1\n", newText: nil)
-        await terminal.publishLiveFileArtifacts(result([change]), callID: "delete", context: context)
+        await terminal.chatSession.publishLiveFileArtifacts(result([change]), callID: "delete", context: context)
         let liveEvents = await renderer.capturedWriteEvents()
         #expect(liveEvents.allSatisfy { $0.channel == .standardError })
         let live = liveEvents.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
@@ -146,7 +146,7 @@ struct TerminalChatLiveArtifactTests {
         let context = try #require(await terminal.beginFileArtifactTurn())
         let old = "let value = 1\n"
         let new = "let value = 2\n"
-        await terminal.publishLiveFileArtifacts(
+        await terminal.chatSession.publishLiveFileArtifacts(
             result([OperationFileChange(path: "Value.swift", oldText: old, newText: new)]),
             callID: "modify", context: context
         )
@@ -401,8 +401,7 @@ struct TerminalChatLiveArtifactTests {
                 lifecycle: .completed(result([
                     OperationFileChange(path: "Artifact.swift", oldText: nil, newText: "let artifact = 42\n")
                 ]))
-            ),
-            sessionID: context.sessionID, history: context.history
+            )
         )
         let afterArtifact = await renderer.capturedWriteEvents()
         let visibleBeforeContinuation = TerminalANSIText.stripANSI(afterArtifact.map(\.text).joined())
@@ -455,7 +454,7 @@ struct TerminalChatLiveArtifactTests {
             OperationFileChange(path: "same.txt", oldText: "before\n", newText: "live\n"),
             OperationFileChange(path: "later.txt", oldText: "before\n", newText: "live\n")
         ]
-        await terminal.publishLiveFileArtifacts(result(changes), callID: "live", context: context)
+        await terminal.chatSession.publishLiveFileArtifacts(result(changes), callID: "live", context: context)
         try Data("live\n".utf8).write(to: directory.appendingPathComponent("same.txt"))
         try Data("opaque after live\n".utf8).write(to: directory.appendingPathComponent("later.txt"))
         try Data("final only\n".utf8).write(to: directory.appendingPathComponent("final.txt"))
@@ -519,11 +518,16 @@ struct TerminalChatLiveArtifactTests {
         #expect(await finalization.value?.fileCount == 1)
         let output = await renderer.capturedWriteEvents().map(\.text).joined()
         #expect(output.components(separatedBy: "1 │ +pending source").count - 1 == 1)
-        #expect(terminal.activeFileArtifactTurn == nil)
+        #expect(terminal.chatSession.activeFileArtifactTurn == nil)
     }
 
+    /// The root and final evidence of a turn that a reset replaced are
+    /// refused even under the same session id. A delegated event carries no
+    /// turn: the controller presents it in the turn it records now, and a
+    /// stale delegation is the router's to drop (see
+    /// `ChatSessionHostSubAgentToolEventTests`).
     @Test
-    func resetRejectsStaleRootDelegateAndFinalEvidenceEvenWithSameSessionID() async throws {
+    func resetRejectsStaleRootAndFinalEvidenceEvenWithSameSessionID() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let renderer = makeRenderer()
@@ -535,18 +539,15 @@ struct TerminalChatLiveArtifactTests {
         let evidence = result([OperationFileChange(path: "stale.txt", oldText: nil, newText: "stale\n")])
         terminal.resetFileArtifactState()
         let current = try #require(await terminal.beginFileArtifactTurn())
-        await terminal.publishLiveFileArtifacts(evidence, callID: "call", context: old)
-        await terminal.chatSession.presentSubAgentToolEvent(
-            .init(agentID: "worker", agentName: "worker", toolCall: call("call", path: "stale.txt"), lifecycle: .completed(evidence)),
-            sessionID: old.sessionID, history: old.history
-        )
+        #expect(current.sessionID == old.sessionID)
+        await terminal.chatSession.publishLiveFileArtifacts(evidence, callID: "call", context: old)
         #expect(await terminal.collectFileChangeSummaryIfNeeded(
             from: coordinator, sessionID: old.sessionID, history: old.history, turnID: old.id
         ) == nil)
         #expect(await renderer.capturedWriteEvents().isEmpty)
         #expect(terminal.lastFileChangeSummary == nil)
         #expect(await terminal.fileArtifactHistory.snapshot().isEmpty)
-        await terminal.publishLiveFileArtifacts(evidence, callID: "call", context: current)
+        await terminal.chatSession.publishLiveFileArtifacts(evidence, callID: "call", context: current)
         let output = await renderer.capturedWriteEvents().map(\.text).joined()
         #expect(output.contains("**added `stale.txt`**  +1 -0"))
         #expect(output.contains("1 │ +stale"))

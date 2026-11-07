@@ -30,6 +30,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - `DirectAgentToolResult.replacing(modelOutput:fileChanges:)` derives a result
   from another; `withElapsed(_:)` and it share the one field-by-field copy.
 
+### Changed
+
+- `ChatSessionController.presentSubAgentToolEvent(_:sessionID:history:)` is
+  now `presentSubAgentToolEvent(_:)`: routing the event to the controller of
+  the agent's root session is the host's job, and the controller no longer
+  re-checks a session and a history its only caller always passed as its own.
+  The sub-agent overview it publishes goes on the same presenter as the event.
+- `AgentCoreSessionRunner.updateSubAgentToolEventHandler(_:)` documents that
+  the handler belongs to the `ChatSessionHost`, which routes the events of the
+  delegated sub-agents to every channel; an embedder must not replace it
+  (`Docs/embedding.md`).
+
 ### Fixed
 
 - Reading the transcript of a sub-agent (`/subagent`, the macOS sub-agent
@@ -37,6 +49,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   the consent it can ask for), not even after the feature bundles were
   reloaded: the calls of tools discovered at runtime are shown without their
   title and presentation until the feature is discovered again.
+- The ACP `tool_call_update` of a delegated tool call no longer rebuilds its
+  title: it prefixes the agent's name to the title the completion payload
+  already carries, with the same result on the wire.
 
 ## [4.1.0] - 2026-11-07
 

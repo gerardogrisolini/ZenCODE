@@ -515,6 +515,30 @@ sub-agents of the session are registered under (the runner receives it as
   copy of the history, so an app that shows the conversation after the agent
   ends keeps its own last read.
 
+The tool calls of the delegated sub-agents reach the presenter as
+`presentSubAgentToolEvent(_:)` (a no-op by default), one call when a tool
+call starts and one when it completes, on the presenter of the turn running
+now (the slot's presenter outside a turn). The host routes them: before its
+first hosted turn it makes its router the runner's handler of these events
+(`AgentCoreSessionRunner.updateSubAgentToolEventHandler(_:)`), and the router
+hands each event to the controller of every slot that runs the agent's root
+session, oldest incarnation first
+(`ChatSessionController.presentSubAgentToolEvent(_:)`). The controller does
+the shared part: it captures the baseline of the files a started call
+touches, presents a completed call's file changes as live artifacts of the
+running turn, and publishes the sub-agent overview on the presenter it
+presented the event on.
+
+- The runner's handler belongs to the host: an app that runs its sessions in
+  a `ChatSessionHost` must not replace it with
+  `updateSubAgentToolEventHandler(_:)`, or the events no longer reach any
+  slot. Render the events in the presenter instead.
+- The delivery is sequential, and the sub-agent's work loop waits until the
+  event is presented before it goes on: a slow `presentSubAgentToolEvent(_:)`
+  slows the agent down. It does not deadlock it, but while a channel holds
+  the slot's output (the terminal rendering what it catches up with after
+  Telegram drove the session) the agent waits with it.
+
 ## Observing a Session
 
 `ChatSessionStateReducer` is a presenter that keeps the observable state of a

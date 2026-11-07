@@ -106,32 +106,29 @@ struct ACPPromptPresenter: ChatSessionPresenter {
     /// `tool_call_update` when it completes, titled with the agent's name and
     /// sent once per call and phase while the prompt is current. A completion
     /// title ends with the time the tool executor measured
-    /// (``DirectAgentToolResult/elapsed``), when the result has it.
+    /// (``DirectAgentToolResult/elapsed``), when the result has it, as the
+    /// completion payload already sets it
+    /// (``ZenCODEACPBridge/toolCallCompletionUpdate(for:result:workingDirectory:)``).
     func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
         // Runtime agent IDs are unique per creation/attempt, and are also
         // available to the permission broker before any operation executes.
         let id = "acp:tool:\(event.agentID):\(event.toolCall.id)"
-        var update: [String: Any]
-        let phase: String
-        let elapsed: Duration?
-        switch event.lifecycle {
+        let phase = switch event.lifecycle {
+        case .started: "started"
+        case .completed: "completed"
+        }
+        // Claimed before the payload is built: a duplicate maps no file changes.
+        guard await claimDelegatedToolNotification(id + ":" + phase) else { return }
+        var update = switch event.lifecycle {
         case .started:
-            phase = "started"
-            elapsed = nil
-            update = ZenCODEACPBridge.toolCallCreateUpdate(for: event.toolCall, workingDirectory: workspaceURL)
+            ZenCODEACPBridge.toolCallCreateUpdate(for: event.toolCall, workingDirectory: workspaceURL)
         case let .completed(result):
-            phase = "completed"
-            elapsed = result.elapsed
-            update = ZenCODEACPBridge.toolCallCompletionUpdate(
+            ZenCODEACPBridge.toolCallCompletionUpdate(
                 for: event.toolCall, result: result, workingDirectory: workspaceURL
             )
         }
-        guard await claimDelegatedToolNotification(id + ":" + phase) else { return }
         update["toolCallId"] = id
-        update["title"] = ZenCODEACPBridge.toolTitle(
-            "\(event.agentName) — \(ZenCODEACPBridge.toolTitle(for: event.toolCall))",
-            elapsed: elapsed
-        )
+        update["title"] = "\(event.agentName) — \(update["title"] as? String ?? "")"
         await send(JSONValue.acpValue(from: update))
     }
 
