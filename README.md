@@ -1,8 +1,9 @@
 [![CI](https://github.com/gerardogrisolini/ZenCODE/actions/workflows/ci.yml/badge.svg)](https://github.com/gerardogrisolini/ZenCODE/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/gerardogrisolini/ZenCODE?sort=semver)](https://github.com/gerardogrisolini/ZenCODE/releases)
-[![Swift 6.4](https://img.shields.io/badge/Swift-6.4-F05138?logo=swift&logoColor=white)](https://www.swift.org)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20WSL-blue)](#install)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Swift versions](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fgerardogrisolini%2FZenCODE%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/gerardogrisolini/ZenCODE)
+[![SPI platforms](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fgerardogrisolini%2FZenCODE%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/gerardogrisolini/ZenCODE)
 
 **ZenCODE** is a native-Swift coding agent built around three ideas: sub-agents you
 can talk to while they work, routing each task to the cheapest model strong enough
