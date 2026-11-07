@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-11-07
+
 ### Added
 
 - `ChatSessionPresenter.presentSubAgentToolEvent(_:)` (a no-op by default)
@@ -4359,7 +4361,9 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v4.0.1...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v4.1.0...HEAD
+[4.1.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v4.0.2...v4.1.0
+[4.0.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v4.0.1...v4.0.2
 [4.0.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v3.2.0...v4.0.0
 [3.2.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v3.1.0...v3.2.0
