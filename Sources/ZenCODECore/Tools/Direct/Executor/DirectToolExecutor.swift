@@ -584,19 +584,24 @@ public actor DirectToolExecutor {
         let evidencedResult = DirectAgentToolResult(
             output: baseResult.output, summary: baseResult.summary,
             modelOutput: baseResult.modelOutput, status: baseResult.status,
-            attachments: baseResult.attachments, fileChanges: recorder.changes
+            attachments: baseResult.attachments, fileChanges: recorder.changes,
+            elapsed: baseResult.elapsed
         )
-        let result = await deliveringInlineSharedChatMessages(
+        let deliveredResult = await deliveringInlineSharedChatMessages(
             evidencedResult,
             sessionID: sessionID
         )
+        // The one measurement of the call: the log records it, and the
+        // result carries it to every surface that shows a call's time.
+        let duration = started.duration(to: clock.now)
+        let result = deliveredResult.withElapsed(duration)
         ToolExecutionLog.record(
             context: toolExecutionContext,
             sessionID: sessionID,
             toolCall: toolCall,
             workingDirectory: workingDirectory,
             result: result,
-            duration: started.duration(to: clock.now),
+            duration: duration,
             error: executionError
         )
         return result
@@ -634,7 +639,8 @@ public actor DirectToolExecutor {
                 + DirectSubAgentRuntime.inlineSharedChatDeliveryBlock(deliverable),
             status: result.status,
             attachments: result.attachments,
-            fileChanges: result.fileChanges
+            fileChanges: result.fileChanges,
+            elapsed: result.elapsed
         )
     }
 

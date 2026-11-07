@@ -50,9 +50,12 @@ struct ZenTranscriptProjectionTests {
         #expect(projection.compositionCount == compositions)
         #expect(projection.liveBlockID(for: snapshot) == "\(epoch)-live-1-0")
 
-        // A tool call closes the block; its result fills the call's row.
+        // A tool call closes the block; its result fills the call's row, with
+        // the time the Core measured for it.
         let call = toolCall("call-1", "local.readFile")
-        let result = DirectAgentToolResult(output: "contents", summary: "read 1 file")
+        let result = DirectAgentToolResult(
+            output: "contents", summary: "read 1 file", elapsed: .milliseconds(1_250)
+        )
         await reducer.presentToolCallStarted(call)
         snapshot = await reducer.snapshot
         let changed3 = projection.update(with: snapshot)
@@ -106,6 +109,11 @@ struct ZenTranscriptProjectionTests {
         }.map(\.sequence)
         #expect(items.filter { $0.id.hasPrefix("\(epoch)-log-") }.map(\.id) == rowSequences.map { "\(epoch)-log-\($0)" })
         #expect(items.contains { $0.id == callRowID && $0.content == .toolCall(call: call, result: result) })
+        if case let .toolCall(_, rowResult)? = items.first(where: { $0.id == callRowID })?.content {
+            #expect(rowResult?.elapsed == .milliseconds(1_250))
+        } else {
+            Issue.record("The call's row is not a tool call")
+        }
         #expect(items[6].id == "\(epoch)-summary-1")
         #expect(items[6].turnID == 1)
         #expect(items[7].turnID == nil)

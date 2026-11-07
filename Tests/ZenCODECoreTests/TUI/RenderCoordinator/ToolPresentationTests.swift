@@ -7,16 +7,12 @@ extension TerminalChatRenderCoordinatorTests {
     @Test
     func standardPreservesCompactANSICompletionWithoutSourceChanges() async {
         let toolCall = exampleEditFileCall(id: "standard-ansi-edit")
-        let clock = StreamingClock()
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            toolNow: { clock.now }
-        )
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
         await renderer.writeToolCallStarted(toolCall)
         let startEventCount = await renderer.capturedWriteEvents().count
         await renderer.writeToolCallCompleted(
             toolCall,
-            result: DirectAgentToolResult(output: "Updated", summary: "Updated")
+            result: DirectAgentToolResult(output: "Updated", summary: "Updated", elapsed: .zero)
         )
         let completion = await renderer.capturedText(droppingFirst: startEventCount)
         let compactCompletion = compactCompletionText(for: toolCall, newline: false)
@@ -68,13 +64,12 @@ extension TerminalChatRenderCoordinatorTests {
     @Test
     func standardCompletionWithoutSourceRowsIsExactlyTheCompactBlock() async throws {
         let toolCall = exampleReadFileCall(id: "standard-characterization-read")
-        let clock = StreamingClock()
-        let renderer = makeRenderer(standardErrorIsTerminal: true, toolNow: { clock.now })
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
         await renderer.writeToolCallStarted(toolCall)
         let startEventCount = await renderer.capturedWriteEvents().count
         await renderer.writeToolCallCompleted(
             toolCall,
-            result: DirectAgentToolResult(output: "let value = 1", summary: "Read")
+            result: DirectAgentToolResult(output: "let value = 1", summary: "Read", elapsed: .zero)
         )
         let completion = await renderer.capturedText(droppingFirst: startEventCount)
         let compactCompletion = compactCompletionText(for: toolCall, newline: true)
@@ -380,13 +375,12 @@ extension TerminalChatRenderCoordinatorTests {
     @Test
     func standardCompletionHasNoSourceAppendix() async throws {
         let toolCall = exampleEditFileCall(id: "standard-characterization-edit")
-        let clock = StreamingClock()
-        let renderer = makeRenderer(standardErrorIsTerminal: true, toolNow: { clock.now })
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
         await renderer.writeToolCallStarted(toolCall)
         let startEventCount = await renderer.capturedWriteEvents().count
         await renderer.writeToolCallCompleted(
             toolCall,
-            result: DirectAgentToolResult(output: "Updated", summary: "Updated")
+            result: DirectAgentToolResult(output: "Updated", summary: "Updated", elapsed: .zero)
         )
         let completion = await renderer.capturedText(droppingFirst: startEventCount)
         let compactCompletion = compactCompletionText(for: toolCall, newline: false)

@@ -73,6 +73,34 @@ extension RemoteSessionSnapshotTests {
         }
     }
 
+    /// An executed tool's result is in the session before its completion is
+    /// reported, as `RemoteGenerationClient` does, so a session read the
+    /// completion triggers (a sub-agent transcript) already sees it; the
+    /// completion carries the time the executor measured.
+    @Test
+    func subscriptionChatGPTRecordsTheToolResultBeforeTheCompletionEvent() async throws {
+        let task = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes:
+            try subscriptionRecoveryFrames(id: "tool", arguments: "{}")
+            + subscriptionRecoveryFrames(id: "final", text: "Done"))
+        let pool = subscriptionRecoveryPool([task])
+        defer { pool.closeAll() }
+        let client = ChatGPTSubscriptionGenerationClient(configuration: remoteStreamingConfiguration(), webSocketPool: pool)
+        await client.createSession(id: "ordered", cwd: FileManager.default.temporaryDirectory.path, allowedToolNames: ["local.pwd"])
+        let recordedAtCompletion = Mutex<[String: Bool]>([:])
+        let elapsedAtCompletion = Mutex<[String: Duration?]>([:])
+        _ = try await client.sendPrompt(
+            sessionID: "ordered", prompt: "hi", attachments: [], loadCredentials: subscriptionRecoveryCredentials
+        ) { event in
+            guard case let .toolCallCompleted(call, result) = event else { return }
+            let history = await client.snapshotSession(id: "ordered")?.history ?? []
+            let recorded = history.contains { $0.role == .tool && $0.toolCallID == call.id }
+            recordedAtCompletion.withLock { $0[call.id] = recorded }
+            elapsedAtCompletion.withLock { $0[call.id] = result.elapsed }
+        }
+        #expect(recordedAtCompletion.withLock { $0 } == ["call_tool": true])
+        #expect(elapsedAtCompletion.withLock { $0["call_tool"] ?? nil } != nil)
+    }
+
     @Test(arguments: [false, true], [false, true])
     func subscriptionMalformedRoundRetriesWithoutDuplicatePrefixes(divergent: Bool, fallback: Bool) async throws {
         let first = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes: try subscriptionRecoveryFrames(id: "invalid", arguments: "{", mixed: true))

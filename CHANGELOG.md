@@ -19,12 +19,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
   live artifacts, and the sub-agent overview. `DirectSubAgentToolEvent.rootSessionID`
   names the coordinator session the agent belongs to.
 - `ChatSubAgentTranscript.toolDurations` gives the elapsed time of the
-  completed tool calls of a sub-agent, by tool call id, as the Core measures
-  them in memory for the agent's last 512 calls. Nothing is saved.
-- `DirectSubAgentToolEvent.elapsed` carries the elapsed time of a completed
-  sub-agent tool call, the same duration the Core records in
-  `ChatSubAgentTranscript.toolDurations`. It is `nil` for a started call and
-  for a call without an id or without a recorded start.
+  completed tool calls of a sub-agent, by tool call id, as the Core measured
+  them, kept in memory for the agent's last 512 calls. Nothing is saved.
+- `DirectAgentToolResult.elapsed` carries the elapsed time of a tool call,
+  measured once by the Core's tool executor, so every surface shows the same
+  time. It lives in memory only: it is never saved nor sent to the model. It
+  is `nil` for a result the executor did not produce (a call cancelled before
+  its dispatch, a result rebuilt from a transcript or a saved session).
 
 ### Changed
 
@@ -50,6 +51,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   root tool calls end with it (`✅ Read file 1.25s`). In ACP clients (Xcode,
   Zed, …), the title of the `tool_call_update` that completes a tool call
   ends with it (`Read file · 1.25s`), for the sub-agents' calls too.
+- The elapsed time of a tool call is measured once, by the Core, and every
+  surface (the terminal, the `/subagent` detail, the macOS app, Telegram,
+  ACP) shows that time instead of timing the call itself.
 
 ### Fixed
 
@@ -71,6 +75,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   and the reasoning of Claude sub-agents.
 - The sub-agent tabs of the macOS app show the elapsed time of the tool calls
   as the Core measured it, also for the calls that ran before the tab opened.
+- The conversation of the macOS app no longer loses the elapsed time of fast
+  tool calls that completed before the window drew them running.
+- With Claude and ChatGPT subscriptions, the sub-agent detail (the macOS
+  app's sub-agent tab and `/subagent`) shows a tool call's elapsed time as
+  soon as the call completes, instead of a later refresh or never.
 - ZenCODE for macOS shows the file artifacts of the sub-agents live, as the
   terminal does, instead of all at once at the end of the turn, and refreshes
   the git summary when a sub-agent changes a file.

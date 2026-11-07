@@ -343,19 +343,6 @@ extension ACPStandardPresentationTests {
     }
 }
 
-/// A clock that stands still until a test advances it.
-private final class ACPManualClock: Sendable {
-    private let instant = Mutex(ContinuousClock.now)
-
-    @Sendable func now() -> ContinuousClock.Instant {
-        instant.withLock { $0 }
-    }
-
-    func advance(by duration: Duration) {
-        instant.withLock { $0 += duration }
-    }
-}
-
 /// The `session/update` payloads a writer put on the wire, in order.
 private final class ACPSessionUpdateLog: Sendable {
     private let messages = Mutex<[JSONValue]>([])
@@ -376,12 +363,12 @@ private final class ACPSessionUpdateLog: Sendable {
 }
 
 extension ACPStandardPresentationTests {
-    /// A root call's completion title ends with the time elapsed since its
-    /// `tool_call`, which stays as it was; a completion without a recorded
-    /// start (cancelled before dispatch, or already completed) has no time.
-    @Test func rootToolCallCompletionTitleEndsWithTheTimeSinceItsToolCall() async {
+    /// A root call's completion title ends with the time its result carries
+    /// (``DirectAgentToolResult/elapsed``), and its `tool_call` stays as it
+    /// was; a result without one (a call cancelled before its dispatch) gives
+    /// a title without time.
+    @Test func rootToolCallCompletionTitleEndsWithTheResultsMeasuredTime() async {
         let log = ACPSessionUpdateLog()
-        let clock = ACPManualClock()
         let workspace = URL(fileURLWithPath: "/tmp/acp-workspace")
         let presenter = ACPPromptPresenter(
             sessionID: "session",
@@ -389,8 +376,7 @@ extension ACPStandardPresentationTests {
             writer: log.writer,
             updatePipeline: nil,
             ensureTasklessObserver: {},
-            claimDelegatedToolNotification: { _ in true },
-            toolCallTimer: ACPToolCallTimer(now: clock.now)
+            claimDelegatedToolNotification: { _ in true }
         )
         let exec = DirectAgentToolCall(
             id: "call-1", name: "local.exec",
@@ -400,44 +386,27 @@ extension ACPStandardPresentationTests {
             id: "call-2", name: "local.exec",
             argumentsObject: ["command": "swift build"], argumentsJSON: #"{"command":"swift build"}"#
         )
-        let result = DirectAgentToolResult(output: "Build complete.", summary: "Build complete.")
+        let result = DirectAgentToolResult(
+            output: "Build complete.", summary: "Build complete.", elapsed: .milliseconds(1_250)
+        )
+        let untimedResult = DirectAgentToolResult(output: "Cancelled.", summary: "Cancelled.", status: .failed)
 
         await presenter.presentToolCallStarted(exec)
-        clock.advance(by: .milliseconds(1_250))
         await presenter.presentToolCallCompleted(exec, result: result)
-        await presenter.presentToolCallCompleted(cancelled, result: result)
-        await presenter.presentToolCallCompleted(exec, result: result)
+        await presenter.presentToolCallCompleted(cancelled, result: untimedResult)
 
         let updates = log.updates
-        #expect(updates.count == 4)
-        guard updates.count == 4 else { return }
+        #expect(updates.count == 3)
+        guard updates.count == 3 else { return }
         #expect(updates[0] == ZenCODEACPBridge.toolCallCreateJSONUpdate(for: exec, workingDirectory: workspace))
+        #expect(updates[0].objectValue?["title"] == .string("local.exec swift test"))
         #expect(updates[1] == ZenCODEACPBridge.toolCallCompletionJSONUpdate(
-            for: exec, result: result, workingDirectory: workspace, elapsed: .milliseconds(1_250)
+            for: exec, result: result, workingDirectory: workspace
         ))
         #expect(updates[1].objectValue?["title"] == .string("local.exec swift test · 1.25s"))
         #expect(updates[2] == ZenCODEACPBridge.toolCallCompletionJSONUpdate(
-            for: cancelled, result: result, workingDirectory: workspace
+            for: cancelled, result: untimedResult, workingDirectory: workspace
         ))
-        #expect(updates[3] == ZenCODEACPBridge.toolCallCompletionJSONUpdate(
-            for: exec, result: result, workingDirectory: workspace
-        ))
-    }
-
-    /// The timer of one prompt measures each call from its start; an empty
-    /// id is never timed.
-    @Test func theToolCallTimerMeasuresEachCallFromItsStart() {
-        let clock = ACPManualClock()
-        let timer = ACPToolCallTimer(now: clock.now)
-        timer.start("a")
-        clock.advance(by: .milliseconds(100))
-        timer.start("b")
-        timer.start("")
-        clock.advance(by: .milliseconds(320))
-        #expect(timer.complete("b") == .milliseconds(320))
-        #expect(timer.complete("a") == .milliseconds(420))
-        #expect(timer.complete("a") == nil)
-        #expect(timer.complete("") == nil)
-        #expect(timer.complete("unknown") == nil)
+        #expect(updates[2].objectValue?["title"] == .string("local.exec swift build"))
     }
 }

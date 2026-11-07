@@ -250,7 +250,6 @@ struct TerminalChatRenderingBaselineTests {
             capturesWrites: true,
             streamingFlushDelay: nil,
             streamingNow: { fixedInstant },
-            toolNow: { fixedInstant },
             columnWidthProvider: { 80 }
         )
     }
@@ -306,7 +305,7 @@ struct TerminalChatRenderingBaselineTests {
         await renderer.writeToolCallStarted(toolCall)
         await renderer.writeToolCallCompleted(
             toolCall,
-            result: DirectAgentToolResult(output: "Done", summary: "Done")
+            result: DirectAgentToolResult(output: "Done", summary: "Done", elapsed: .zero)
         )
         await renderer.writeAssistantContent("Here is the **answer**: 42.\n")
         await renderer.finishAssistantContent()

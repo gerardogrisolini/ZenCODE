@@ -5,12 +5,13 @@
 //  Created by Gerardo Grisolini on 30/05/26.
 //
 
-/// Actor-confined bookkeeping for tool-row ownership and lifecycle timing.
+/// Actor-confined bookkeeping for tool-row ownership.
 /// The coordinator remains the sole mutator; this value only groups invariants
 /// that must advance together when ownership transfers between tool calls.
+/// A call's elapsed time is not measured here: it comes with its result
+/// (``DirectAgentToolResult/elapsed``).
 struct TerminalToolBlockAccounting<ActiveBlock> {
     var activeBlock: ActiveBlock?
-    var startInstants: [String: ContinuousClock.Instant] = [:]
     var activeBlockIsSubAgentTool = false
 }
 
@@ -18,7 +19,6 @@ struct TerminalToolBlockAccounting<ActiveBlock> {
 /// One entry per agent preserves the historical presentation contract: a new
 /// call replaces that agent's previous call instead of becoming transcript.
 struct TerminalSubAgentToolPresentationState {
-    var startInstants: [String: ContinuousClock.Instant] = [:]
     var presentationsByAgentID: [
         String: TerminalChatRenderCoordinator.SubAgentToolPresentation
     ] = [:]

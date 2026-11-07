@@ -259,11 +259,6 @@ extension DirectSubAgentRuntime {
             agent.currentToolName = toolCall.name
             agent.currentToolTarget = ToolCallPresentation.displayToolTarget(for: toolCall)
             agent.latestContentPreview = nil
-            // The start of the call's duration for the transcript. A call
-            // without an id cannot be matched to its completion: no duration.
-            if !toolCall.id.isEmpty {
-                agent.toolCallStarts[toolCall.id] = ContinuousClock.now
-            }
             delegatedToolEvent = DirectSubAgentToolEvent(
                 agentID: agent.id,
                 agentName: agent.name,
@@ -277,22 +272,19 @@ extension DirectSubAgentRuntime {
             // does not reconstruct a separate tool row from these fields.
             agent.currentToolName = toolCall.name
             agent.currentToolTarget = ToolCallPresentation.displayToolTarget(for: toolCall)
-            // Measured before the delegated event is handled, so the
-            // completion handler's own time is not part of the call's.
-            var elapsed: Duration?
-            if !toolCall.id.isEmpty,
-               let start = agent.toolCallStarts.removeValue(forKey: toolCall.id) {
-                let duration = start.duration(to: ContinuousClock.now)
-                agent.toolCallDurations.record(duration, forCallID: toolCall.id)
-                elapsed = duration
+            // The call's time for the transcript, as the tool executor
+            // measured it (``DirectAgentToolResult/elapsed``). A call without
+            // an id cannot be matched to its row, and a result the executor
+            // did not produce has no time: nothing is recorded.
+            if !toolCall.id.isEmpty, let elapsed = result.elapsed {
+                agent.toolCallDurations.record(elapsed, forCallID: toolCall.id)
             }
             delegatedToolEvent = DirectSubAgentToolEvent(
                 agentID: agent.id,
                 agentName: agent.name,
                 toolCall: toolCall,
                 lifecycle: .completed(result),
-                rootSessionID: agent.rootSessionID,
-                elapsed: elapsed
+                rootSessionID: agent.rootSessionID
             )
         case let .sessionSnapshot(snapshot):
             agent.modelID = snapshot.modelID?.nilIfBlank ?? agent.modelID

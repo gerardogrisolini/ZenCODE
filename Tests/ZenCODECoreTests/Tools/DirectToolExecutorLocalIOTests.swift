@@ -295,6 +295,48 @@ struct DirectToolExecutorLocalIOTests {
         #expect(result.output.contains("no shell command was run"))
     }
 
+    /// The executor measures every execution once and returns the time with
+    /// its result, whatever the outcome; the time is part of the result's
+    /// equality. The isolated early return executes nothing and has none.
+    @Test
+    func executeReturnsTheMeasuredElapsedTimeWithEveryResult() async throws {
+        let executor = DirectToolExecutor(
+            authorizationHandler: { _ in false },
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+        )
+        let workingDirectory = URL(fileURLWithPath: "/tmp")
+        let calls = [
+            DirectAgentToolCall(id: "pwd", name: "local.pwd", argumentsObject: [:], argumentsJSON: "{}"),
+            // Missing required arguments fail in dispatch.
+            DirectAgentToolCall(id: "failed", name: "local.readFile", argumentsObject: [:], argumentsJSON: "{}"),
+            DirectAgentToolCall(
+                id: "denied", name: "local.exec",
+                argumentsObject: ["command": "whoami"], argumentsJSON: #"{"command":"whoami"}"#
+            ),
+        ]
+        var statuses: [DirectAgentToolResult.Status] = []
+        for call in calls {
+            let result = await executor.execute(
+                sessionID: "session", toolCall: call, workingDirectory: workingDirectory
+            )
+            statuses.append(result.status)
+            let elapsed = try #require(result.elapsed, "\(call.id)")
+            #expect(elapsed >= .zero)
+            #expect(result != result.withElapsed(nil))
+            #expect(result.withElapsed(nil).withElapsed(elapsed) == result)
+        }
+        #expect(statuses == [.completed, .failed, .permissionDenied])
+
+        let isolated = await MemoryConsolidationContext.$isIsolated.withValue(true) {
+            await executor.execute(
+                sessionID: "session", toolCall: calls[0], workingDirectory: workingDirectory
+            )
+        }
+        #expect(isolated.status == .permissionDenied)
+        #expect(isolated.elapsed == nil)
+    }
+
     @Test
     func localExecSkipsHarmlessBuiltinsEndToEnd() async {
         let recorder = LocalExecAuthorizationRecorder(decisions: [true])

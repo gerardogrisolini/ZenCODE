@@ -95,10 +95,6 @@ actor TerminalChatRenderCoordinator {
     /// safe. Tests pass a controllable closure so the idle-window check is
     /// deterministic; production uses `ContinuousClock`.
     let streamingNow: @Sendable () -> ContinuousClock.Instant
-    /// Injectable monotonic clock used to measure the interval between a tool's
-    /// start and completion. It is intentionally sampled only at those two
-    /// lifecycle events: compact tool rows do not schedule periodic redraws.
-    let toolNow: @Sendable () -> ContinuousClock.Instant
     /// Returns the current terminal column count. Overridable in tests to
     /// simulate a deterministic resize between tool start and completion.
     let columnWidthProvider: @Sendable () -> Int
@@ -178,9 +174,6 @@ actor TerminalChatRenderCoordinator {
         streamingNow: @Sendable @escaping () -> ContinuousClock.Instant = {
             ContinuousClock().now
         },
-        toolNow: @Sendable @escaping () -> ContinuousClock.Instant = {
-            ContinuousClock().now
-        },
         columnWidthProvider: (@Sendable () -> Int)? = nil,
         freshColumnWidthProvider: (@Sendable () -> Int)? = nil
     ) {
@@ -198,7 +191,6 @@ actor TerminalChatRenderCoordinator {
         self.capturesWrites = capturesWrites
         self.streamingFlushDelay = streamingFlushDelay
         self.streamingNow = streamingNow
-        self.toolNow = toolNow
         if let columnWidthProvider {
             self.columnWidthProvider = columnWidthProvider
             self.freshColumnWidthProvider = freshColumnWidthProvider

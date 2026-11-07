@@ -27,9 +27,6 @@ struct ACPPromptPresenter: ChatSessionPresenter {
     /// id and phase) for this prompt: `true` once per prompt, and only while
     /// the prompt holds its incarnation and presents its updates.
     let claimDelegatedToolNotification: @Sendable (String) async -> Bool
-    /// The elapsed time of this prompt's root tool calls, for the title of
-    /// their completion update; one per presenter, hence per prompt.
-    var toolCallTimer = ACPToolCallTimer()
 
     private func send(_ update: JSONValue) async {
         if let updatePipeline {
@@ -79,28 +76,24 @@ struct ACPPromptPresenter: ChatSessionPresenter {
         }
     }
 
-    /// The call's `tool_call`; its elapsed time starts once it is sent, so
-    /// the wire's backpressure is not part of it.
     func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {
         await ensureTasklessObserver()
         await send(ZenCODEACPBridge.toolCallCreateJSONUpdate(for: toolCall, workingDirectory: workspaceURL))
-        toolCallTimer.start(toolCall.id)
     }
 
     /// The call's completion `tool_call_update`, its title ending with the
-    /// time elapsed since its `tool_call`; without a recorded start (a call
-    /// cancelled before it was dispatched) the title has no time.
+    /// time the tool executor measured (``DirectAgentToolResult/elapsed``);
+    /// a result without it (a call cancelled before it was dispatched) gives
+    /// a title without time.
     func presentToolCallCompleted(
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) async {
-        let elapsed = toolCallTimer.complete(toolCall.id)
         await send(
             ZenCODEACPBridge.toolCallCompletionJSONUpdate(
                 for: toolCall,
                 result: result,
-                workingDirectory: workspaceURL,
-                elapsed: elapsed
+                workingDirectory: workspaceURL
             )
         )
     }
@@ -112,8 +105,8 @@ struct ACPPromptPresenter: ChatSessionPresenter {
     /// A delegated agent's tool call, as a `tool_call` when it starts and a
     /// `tool_call_update` when it completes, titled with the agent's name and
     /// sent once per call and phase while the prompt is current. A completion
-    /// title ends with the time the sub-agent runtime measured
-    /// (``DirectSubAgentToolEvent/elapsed``), when known.
+    /// title ends with the time the tool executor measured
+    /// (``DirectAgentToolResult/elapsed``), when the result has it.
     func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
         // Runtime agent IDs are unique per creation/attempt, and are also
         // available to the permission broker before any operation executes.
@@ -128,7 +121,7 @@ struct ACPPromptPresenter: ChatSessionPresenter {
             update = ZenCODEACPBridge.toolCallCreateUpdate(for: event.toolCall, workingDirectory: workspaceURL)
         case let .completed(result):
             phase = "completed"
-            elapsed = event.elapsed
+            elapsed = result.elapsed
             update = ZenCODEACPBridge.toolCallCompletionUpdate(
                 for: event.toolCall, result: result, workingDirectory: workspaceURL
             )

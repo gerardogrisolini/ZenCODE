@@ -166,49 +166,29 @@ struct ZenTranscriptItemView: View {
     }
 }
 
-/// The durations of the tool calls that ran while the window watched them,
-/// measured on the main actor: a call is timed from the first transcript
-/// that shows it without a result to the first one that shows its result. A
-/// call first seen with its result (a restored session) has no duration.
+/// The durations of the completed tool calls, as the Core measured them: the
+/// time a call's result carries (`DirectAgentToolResult.elapsed`), measured
+/// once by the tool executor. A result the executor did not produce (a call
+/// cancelled before its dispatch, a restored session) has none, and the row
+/// shows no time.
 ///
-/// Calls are keyed by their row id, which is unique across the sessions of a
-/// window (`<epoch>-log-<sequence>`), so a later session never inherits a
-/// duration. The window observes the closed rows only, when they change. A
-/// sub-agent tab has durations of its own and does not measure them: it
-/// shows the ones the Core measured (``replace(with:)``, from
-/// `ZenSubAgentTranscriptModel.toolDurations`).
+/// A sub-agent tab rebuilds its rows from the agent's history, whose results
+/// carry no time: it shows the durations the Core kept for the agent instead
+/// (``replace(with:)``, by row id, from
+/// `ZenSubAgentTranscriptModel.toolDurations`), which win over the result's.
 @MainActor
 @Observable
 final class ZenToolDurations {
-    /// The durations of the completed calls, by row id.
+    /// The durations given by ``replace(with:)``, by row id.
     private(set) var durations: [String: Duration] = [:]
-
-    @ObservationIgnored private var starts: [String: ContinuousClock.Instant] = [:]
-    @ObservationIgnored private var seen: Set<String> = []
 
     init() {}
 
-    /// The duration of the call of `item`, once measured.
+    /// The duration of the call of `item` once it completed: the one given
+    /// for its row by ``replace(with:)``, else the one its result carries.
     func duration(for item: ZenTranscriptItem) -> Duration? {
-        guard case let .toolCall(_, result) = item.content, result != nil else { return nil }
-        return durations[item.id]
-    }
-
-    /// Records the calls of `transcript`, seen at `now`.
-    func observe(_ transcript: [ZenTranscriptItem], at now: ContinuousClock.Instant = .now) {
-        for item in transcript {
-            guard case let .toolCall(_, result) = item.content else { continue }
-            if result == nil {
-                if seen.insert(item.id).inserted {
-                    starts[item.id] = now
-                }
-            } else {
-                seen.insert(item.id)
-                if let start = starts.removeValue(forKey: item.id) {
-                    durations[item.id] = start.duration(to: now)
-                }
-            }
-        }
+        guard case let .toolCall(_, result) = item.content, let result else { return nil }
+        return durations[item.id] ?? result.elapsed
     }
 
     /// Shows `durations` (by row id), measured elsewhere, instead of the

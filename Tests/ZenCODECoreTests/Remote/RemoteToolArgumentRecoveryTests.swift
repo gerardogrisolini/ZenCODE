@@ -205,6 +205,30 @@ extension RemoteSessionSnapshotTests {
         #expect(snapshot.history.filter { $0.role == .assistant }.count == 2)
     }
 
+    /// An executed tool's result is in the session before its completion is
+    /// reported, so a session read the completion triggers already sees it;
+    /// the completion carries the time the executor measured.
+    @Test(arguments: [0, 1, 2])
+    func remoteGenerationRecordsTheToolResultBeforeTheCompletionEvent(profile: Int) async throws {
+        let fixture = try await RemoteNIOStreamingFixture.start(
+            responseBody: recoveryBody(profile, malformed: false, tool: false, text: "Done"),
+            responseSequence: [recoveryBody(profile, malformed: false)]
+        )
+        defer { fixture.beginShutdown() }
+        let client = recoveryClient(fixture, profile: profile)
+        let recordedAtCompletion = Mutex<[String: Bool]>([:])
+        let elapsedAtCompletion = Mutex<[String: Duration?]>([:])
+        _ = try await client.sendPrompt(sessionID: "ordered", prompt: "hi", attachments: []) { event in
+            guard case let .toolCallCompleted(call, result) = event else { return }
+            let history = await client.snapshotSession(id: "ordered")?.history ?? []
+            let recorded = history.contains { $0.role == .tool && $0.toolCallID == call.id }
+            recordedAtCompletion.withLock { $0[call.id] = recorded }
+            elapsedAtCompletion.withLock { $0[call.id] = result.elapsed }
+        }
+        #expect(recordedAtCompletion.withLock { $0 } == ["call_1": true])
+        #expect(elapsedAtCompletion.withLock { $0["call_1"] ?? nil } != nil)
+    }
+
     @Test(arguments: [0, 1, 2])
     func malformedToolRetryBudgetSurvivesValidRound(profile: Int) async throws {
         let fixture = try await RemoteNIOStreamingFixture.start(

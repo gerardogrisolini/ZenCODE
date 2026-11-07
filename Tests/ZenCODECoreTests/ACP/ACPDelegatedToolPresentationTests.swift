@@ -107,7 +107,7 @@ struct ACPDelegatedToolPresentationTests {
 
     /// The payload the delegated `event` must produce: the coordinator's
     /// canonical tool update with the agent's id and name, a completion's
-    /// title ending with the time the runtime measured, when known.
+    /// title ending with the time its result carries, when known.
     private static func expectedUpdate(_ event: DirectSubAgentToolEvent, cwd: String) -> JSONValue {
         let workingDirectory = URL(fileURLWithPath: cwd)
         var update: [String: Any]
@@ -119,7 +119,7 @@ struct ACPDelegatedToolPresentationTests {
             update = ZenCODEACPBridge.toolCallCompletionUpdate(
                 for: event.toolCall, result: result, workingDirectory: workingDirectory
             )
-            if let elapsed = event.elapsed {
+            if let elapsed = result.elapsed {
                 title += " · " + TerminalChat.toolElapsedTimeText(elapsed)
             }
         }
@@ -160,10 +160,10 @@ struct ACPDelegatedToolPresentationTests {
             agentID: "worker-1", agentName: "Worker", toolCall: write,
             lifecycle: .completed(DirectAgentToolResult(
                 output: "Updated", summary: "Updated",
-                fileChanges: [OperationFileChange(path: "Delegated.swift", oldText: nil, newText: "let value = 2\n")]
+                fileChanges: [OperationFileChange(path: "Delegated.swift", oldText: nil, newText: "let value = 2\n")],
+                elapsed: .milliseconds(1_250)
             )),
-            rootSessionID: sessionID,
-            elapsed: .milliseconds(1_250)
+            rootSessionID: sessionID
         )
         let foreign = DirectSubAgentToolEvent(
             agentID: "worker-2", agentName: "Other", toolCall: write,
@@ -214,10 +214,10 @@ struct ACPDelegatedToolPresentationTests {
         await bridge.shutdown()
     }
 
-    /// A delegated completion's title ends with the time the sub-agent
-    /// runtime measured (``DirectSubAgentToolEvent/elapsed``); without one,
-    /// and for a start, the title is the agent's name and the tool's title.
-    @Test func aDelegatedCompletionTitleEndsWithTheRuntimeMeasuredTime() async {
+    /// A delegated completion's title ends with the time the tool executor
+    /// measured (``DirectAgentToolResult/elapsed``); without one, and for a
+    /// start, the title is the agent's name and the tool's title.
+    @Test func aDelegatedCompletionTitleEndsWithTheResultsMeasuredTime() async {
         let output = WireLog()
         let workspace = URL(fileURLWithPath: "/tmp/acp-delegated-workspace")
         let presenter = ACPPromptPresenter(
@@ -241,11 +241,12 @@ struct ACPDelegatedToolPresentationTests {
             argumentsObject: ["path": "README.md"], argumentsJSON: #"{"path":"README.md"}"#
         )
         let result = DirectAgentToolResult(output: "contents", summary: "Read")
+        let timedResult = DirectAgentToolResult(output: "contents", summary: "Read", elapsed: .milliseconds(420))
         let events = [
             DirectSubAgentToolEvent(agentID: "worker-1", agentName: "Worker", toolCall: read, lifecycle: .started),
             DirectSubAgentToolEvent(
                 agentID: "worker-1", agentName: "Worker", toolCall: read,
-                lifecycle: .completed(result), elapsed: .milliseconds(420)
+                lifecycle: .completed(timedResult)
             ),
             DirectSubAgentToolEvent(
                 agentID: "worker-1", agentName: "Worker", toolCall: untimed, lifecycle: .completed(result)

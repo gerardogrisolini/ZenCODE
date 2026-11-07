@@ -84,8 +84,9 @@ public actor DirectSubAgentRuntime {
         case content
     }
 
-    /// The durations the runtime measured of an agent's completed tool calls,
-    /// by tool call id, bounded to the `limit` most recent ones. A repeated id
+    /// The durations of an agent's completed tool calls, as the tool executor
+    /// measured them, by tool call id, bounded to the `limit` most recent
+    /// ones. A repeated id
     /// overwrites its duration and becomes the most recent; beyond the limit
     /// the oldest are evicted first. Kept in memory only, in the agent's
     /// record: never persisted, snapshotted, or checkpointed.
@@ -181,16 +182,13 @@ public actor DirectSubAgentRuntime {
         var shouldReplaceMetricsOnNextUpdate = false
         public var latestContentPreview: String? = nil
         public var latestEventAt: Date? = nil
-        /// When each tool call in flight started, by tool call id, measured
-        /// when the runtime received `.toolCallStarted`. Cleared by
-        /// ``resetActivityState()``: a call that did not complete before a
-        /// turn starts, fails, or is cancelled gets no duration.
-        var toolCallStarts: [String: ContinuousClock.Instant] = [:]
-        /// The durations of the agent's latest completed tool calls, for its
-        /// transcript (``ChatSubAgentTranscript/toolDurations``). They survive
-        /// the turns and ``prepareForTerminalRetention()``: a read after the
-        /// agent ended may still return a transcript, and it must keep its
-        /// times. The store is bounded
+        /// The durations of the agent's latest completed tool calls, as the
+        /// tool executor measured them (``DirectAgentToolResult/elapsed``),
+        /// for its transcript (``ChatSubAgentTranscript/toolDurations``),
+        /// which is rebuilt from the history and so has no result's time.
+        /// They survive the turns and ``prepareForTerminalRetention()``: a
+        /// read after the agent ended may still return a transcript, and it
+        /// must keep its times. The store is bounded
         /// (``DirectSubAgentRuntime/maximumRetainedToolCallDurationsPerAgent``)
         /// and in memory only.
         var toolCallDurations = ToolCallDurations()
@@ -227,11 +225,11 @@ public actor DirectSubAgentRuntime {
         }
 
         /// Clears every in-flight model-phase projection: the visible activity
-        /// and its kind plus the private thinking/content buffers, the tool
-        /// row, and the starts of the tool calls in flight. Lifecycle
-        /// transitions call this so no partial paragraph, buffered message,
-        /// or open tool call can survive into the next turn or into a closed
-        /// agent. The measured durations of completed calls are kept.
+        /// and its kind plus the private thinking/content buffers and the tool
+        /// row. Lifecycle transitions call this so no partial paragraph,
+        /// buffered message, or open tool call can survive into the next turn
+        /// or into a closed agent. The measured durations of completed calls
+        /// are kept.
         mutating func resetActivityState() {
             currentActivity = nil
             currentActivityKind = nil
@@ -239,7 +237,6 @@ public actor DirectSubAgentRuntime {
             pendingContentBuffer = nil
             currentToolName = nil
             currentToolTarget = nil
-            toolCallStarts.removeAll()
         }
 
         /// Drops heavyweight report prefixes before this inactive record enters

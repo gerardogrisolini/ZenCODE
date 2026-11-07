@@ -49,9 +49,10 @@ extension View {
 /// only when the transcript changes); the snapshot, the notice, and the live
 /// activity are read by the small views that show them. It follows the
 /// bottom as the conversation does (``ZenScrollMetrics``), and shows the tool
-/// durations the Core measured (``ZenSubAgentTranscriptModel/toolDurations``)
-/// rather than measuring its own, so a call that ran before the tab opened
-/// has its time too.
+/// durations the Core kept for the agent
+/// (``ZenSubAgentTranscriptModel/toolDurations``): its rows are rebuilt from
+/// the agent's history, whose results carry no time, so a call that ran
+/// before the tab opened has its time too.
 struct ZenSubAgentTabView: View {
     let model: ZenSubAgentTranscriptModel
 

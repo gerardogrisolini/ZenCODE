@@ -1,5 +1,4 @@
 import Foundation
-import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
@@ -32,7 +31,7 @@ struct TerminalChatArtifactCompletionTests {
             sequence: "\u{1B}[40;1HSTATUS| ready"
         )
         screen.positionOutputForTesting(row: 1)
-        let renderer = makeRenderer(clock: ArtifactCompletionClock())
+        let renderer = makeRenderer()
         await renderer.usePrimaryScreenForTesting(screen)
         _ = await renderer.renderSubAgentOverview(
             signature: "unsafe-pending", text: "\nPending local.writeFile ⏳\n",
@@ -64,7 +63,6 @@ struct TerminalChatArtifactCompletionTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         try await AppStorageDirectory.withSupportDirectoryURL(directory.appendingPathComponent("support")) {
             try await Task(name: "ZenCODE.Tests.artifact-completion") { @ChatSessionActor in
-                let clock = ArtifactCompletionClock()
                 let capture = PrimaryScreenCapture(rows: 40, columns: 100)
                 let screen = capture.screen()
                 screen.commitFooter(
@@ -73,11 +71,11 @@ struct TerminalChatArtifactCompletionTests {
                 )
                 screen.positionOutputForTesting(row: 1)
                 screen.append("PERMANENT| earlier transcript\n")
-                let renderer = makeRenderer(clock: clock)
+                let renderer = makeRenderer()
                 await renderer.usePrimaryScreenForTesting(screen)
                 let backend = ArtifactCompletionBackend(
                     directory: directory, toolName: toolName, status: status,
-                    delegated: delegated, clock: clock
+                    delegated: delegated
                 )
                 let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
                 let terminal = TerminalChat(
@@ -149,20 +147,14 @@ struct TerminalChatArtifactCompletionTests {
         }
     }
 
-    private func makeRenderer(clock: ArtifactCompletionClock) -> TerminalChatRenderCoordinator {
+    private func makeRenderer() -> TerminalChatRenderCoordinator {
         TerminalChatRenderCoordinator(
             stdinIsTerminal: false, standardOutput: nil, standardError: nil,
             standardOutputIsTerminal: true, standardErrorIsTerminal: true,
             cursorTopology: .shared, capturesWrites: true, streamingFlushDelay: nil,
-            toolNow: { clock.now }, columnWidthProvider: { 100 }
+            columnWidthProvider: { 100 }
         )
     }
-}
-
-private final class ArtifactCompletionClock: Sendable {
-    private let instant = Mutex(ContinuousClock.now)
-    var now: ContinuousClock.Instant { instant.withLock { $0 } }
-    func advance(by duration: Duration) { instant.withLock { $0 = $0.advanced(by: duration) } }
 }
 
 private actor ArtifactCompletionBackend: AgentRuntimeBackend {
@@ -170,7 +162,6 @@ private actor ArtifactCompletionBackend: AgentRuntimeBackend {
     private let toolName: String
     private let status: DirectAgentToolResult.Status
     private let delegated: Bool
-    private let clock: ArtifactCompletionClock
     private let overviewBatchID = UUID()
     private var currentCall: DirectAgentToolCall?
     private var rootSessionID = "default"
@@ -181,13 +172,12 @@ private actor ArtifactCompletionBackend: AgentRuntimeBackend {
 
     init(
         directory: URL, toolName: String, status: DirectAgentToolResult.Status,
-        delegated: Bool, clock: ArtifactCompletionClock
+        delegated: Bool
     ) {
         self.directory = directory
         self.toolName = toolName
         self.status = status
         self.delegated = delegated
-        self.clock = clock
     }
 
     func setProbes(
@@ -239,14 +229,14 @@ private actor ArtifactCompletionBackend: AgentRuntimeBackend {
             await onEvent(.toolCallStarted(call))
         }
         try await startedProbe?()
-        clock.advance(by: .milliseconds(1_200))
         // A failed write can still have changed a file before its later step
         // failed. Keep actual disk mutation and captured evidence consistent.
         try Data("let completed = 42\n".utf8).write(to: directory.appendingPathComponent("Completed.swift"))
         let result = DirectAgentToolResult(
             output: status == .completed ? "Updated" : "Tool error: stopped after writing",
             summary: "Updated", status: status,
-            fileChanges: [.init(path: "Completed.swift", oldText: nil, newText: "let completed = 42\n")]
+            fileChanges: [.init(path: "Completed.swift", oldText: nil, newText: "let completed = 42\n")],
+            elapsed: .milliseconds(1_200)
         )
         if delegated {
             await handler?(.init(agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .completed(result)))

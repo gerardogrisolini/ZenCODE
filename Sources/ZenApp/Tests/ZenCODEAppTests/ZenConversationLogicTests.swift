@@ -33,14 +33,16 @@ private func assistant(_ id: String) -> ZenTranscriptItem {
     ZenTranscriptItem(id: id, turnID: 1, content: .assistantText("answer \(id)", isStreaming: false))
 }
 
-private func toolCall(_ id: String, name: String = "local.exec", completed: Bool) -> ZenTranscriptItem {
+private func toolCall(
+    _ id: String, name: String = "local.exec", completed: Bool, elapsed: Duration? = nil
+) -> ZenTranscriptItem {
     let call = DirectAgentToolCall(
         id: "call-\(id)",
         name: name,
         argumentsObject: [:],
         argumentsJSON: "{}"
     )
-    let result = completed ? DirectAgentToolResult(output: "ok", summary: "ok") : nil
+    let result = completed ? DirectAgentToolResult(output: "ok", summary: "ok", elapsed: elapsed) : nil
     return ZenTranscriptItem(id: id, turnID: 1, content: .toolCall(call: call, result: result))
 }
 
@@ -298,56 +300,36 @@ struct ZenTurnSeparatorTests {
 @Suite("Tool durations")
 @MainActor
 struct ZenToolDurationTests {
-    @Test("a call is timed from the transcript that shows it running to the one with its result")
-    func timesARunningCall() {
+    @Test("a completed call shows the time its result carries, as the Core measured it")
+    func theDurationIsTheResultsElapsedTime() {
         let durations = ZenToolDurations()
-        let start = ContinuousClock.now
-        durations.observe([toolCall("1-log-1", completed: false)], at: start)
-        #expect(durations.duration(for: toolCall("1-log-1", completed: false)) == nil)
-
-        // A later transcript that still shows it running does not restart it.
-        durations.observe([toolCall("1-log-1", completed: false)], at: start + .seconds(1))
-        let finished = toolCall("1-log-1", completed: true)
-        durations.observe([finished], at: start + .seconds(3))
-        #expect(durations.duration(for: finished) == .seconds(3))
-
-        // Seen again later: the duration stays.
-        durations.observe([finished], at: start + .seconds(9))
-        #expect(durations.duration(for: finished) == .seconds(3))
+        let finished = toolCall("1-log-1", completed: true, elapsed: .milliseconds(1_250))
+        #expect(durations.duration(for: finished) == .milliseconds(1_250))
+        // A call still running has none, whatever it will carry.
+        #expect(durations.duration(for: toolCall("1-log-1", completed: false, elapsed: .seconds(3))) == nil)
     }
 
-    @Test("a call first seen with its result has no duration")
-    func restoredCall() {
+    @Test("a result without a time (a restored session, a call cancelled before its dispatch) has no duration")
+    func aResultWithoutATimeHasNoDuration() {
         let durations = ZenToolDurations()
-        let restored = toolCall("1-log-4", completed: true)
-        durations.observe([restored], at: .now)
-        #expect(durations.duration(for: restored) == nil)
+        #expect(durations.duration(for: toolCall("1-log-4", completed: true)) == nil)
     }
 
-    @Test("ids of another session never inherit a duration")
-    func idsAcrossEpochs() {
+    @Test("a duration given for the row wins over the result's")
+    func aReplacedDurationWins() {
         let durations = ZenToolDurations()
-        let start = ContinuousClock.now
-        durations.observe([toolCall("1-log-2", completed: false)], at: start)
-        durations.observe([toolCall("1-log-2", completed: true)], at: start + .seconds(2))
-        #expect(durations.duration(for: toolCall("1-log-2", completed: true)) == .seconds(2))
-
-        // The same log sequence in the next session is another row.
-        let nextSession = toolCall("2-log-2", completed: true)
-        durations.observe([nextSession], at: start + .seconds(5))
-        #expect(durations.duration(for: nextSession) == nil)
-
-        // A running call of the next session is timed on its own.
-        durations.observe([toolCall("2-log-3", completed: false)], at: start + .seconds(6))
-        durations.observe([toolCall("2-log-3", completed: true)], at: start + .seconds(7))
-        #expect(durations.duration(for: toolCall("2-log-3", completed: true)) == .seconds(1))
-        #expect(durations.duration(for: toolCall("1-log-2", completed: true)) == .seconds(2))
+        let finished = toolCall("subagent-a-1", completed: true, elapsed: .seconds(1))
+        let other = toolCall("subagent-a-2", completed: true, elapsed: .seconds(4))
+        durations.replace(with: ["subagent-a-1": .seconds(2)])
+        #expect(durations.duration(for: finished) == .seconds(2))
+        // A row without a given duration falls back to its result's.
+        #expect(durations.duration(for: other) == .seconds(4))
     }
 
     @Test("rows that are not completed tool calls have no duration")
     func otherRows() {
         let durations = ZenToolDurations()
-        durations.observe([prompt("1-log-1"), assistant("1-log-2")], at: .now)
+        durations.replace(with: ["1-log-1": .seconds(1), "1-log-2": .seconds(2)])
         #expect(durations.duration(for: prompt("1-log-1")) == nil)
         #expect(durations.duration(for: assistant("1-log-2")) == nil)
     }

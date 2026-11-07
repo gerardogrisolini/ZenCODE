@@ -55,11 +55,13 @@ extension TerminalChatRenderCoordinatorTests {
     @Test
     func delegatedToolEventsUseCanonicalRowsInsideTheIndentedOverview() async {
         let toolCall = exampleEditFileCall(id: "shared-render-edit")
-        let result = DirectAgentToolResult(output: "Updated", summary: "Updated")
-        let delegatedClock = StreamingClock()
+        let result = DirectAgentToolResult(
+            output: "Updated",
+            summary: "Updated",
+            elapsed: .milliseconds(1_200)
+        )
         let delegatedRenderer = makeRenderer(
             standardErrorIsTerminal: true,
-            toolNow: { delegatedClock.now },
             columnWidthProvider: { 120 }
         )
 
@@ -71,7 +73,6 @@ extension TerminalChatRenderCoordinatorTests {
                 lifecycle: .started
             )
         )
-        delegatedClock.advance(by: .milliseconds(1_200))
         await delegatedRenderer.recordSubAgentToolEvent(
             DirectSubAgentToolEvent(
                 agentID: "agent-worker",
@@ -202,18 +203,21 @@ extension TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func delegatedToolTimingScopesMatchingProviderCallIDsByAgent() async {
+    func delegatedToolTimingComesFromEachAgentsResultForMatchingProviderCallIDs() async {
         let toolCall = presentedToolCall(
             id: "provider-reused-call-id",
             name: "search.grep",
             argumentsObject: ["pattern": "needle"],
             argumentsJSON: "{}"
         )
-        let result = DirectAgentToolResult(output: "match", summary: "1 match")
-        let clock = StreamingClock()
+        let firstResult = DirectAgentToolResult(
+            output: "match", summary: "1 match", elapsed: .milliseconds(600)
+        )
+        let secondResult = DirectAgentToolResult(
+            output: "match", summary: "1 match", elapsed: .milliseconds(200)
+        )
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
-            toolNow: { clock.now },
             columnWidthProvider: { 120 }
         )
         let firstStarted = DirectSubAgentToolEvent(
@@ -230,24 +234,21 @@ extension TerminalChatRenderCoordinatorTests {
         )
 
         await renderer.recordSubAgentToolEvent(firstStarted)
-        clock.advance(by: .milliseconds(100))
         await renderer.recordSubAgentToolEvent(secondStarted)
-        clock.advance(by: .milliseconds(200))
         await renderer.recordSubAgentToolEvent(
             DirectSubAgentToolEvent(
                 agentID: "agent-second",
                 agentName: "second",
                 toolCall: toolCall,
-                lifecycle: .completed(result)
+                lifecycle: .completed(secondResult)
             )
         )
-        clock.advance(by: .milliseconds(300))
         await renderer.recordSubAgentToolEvent(
             DirectSubAgentToolEvent(
                 agentID: "agent-first",
                 agentName: "first",
                 toolCall: toolCall,
-                lifecycle: .completed(result)
+                lifecycle: .completed(firstResult)
             )
         )
 
@@ -427,10 +428,8 @@ extension TerminalChatRenderCoordinatorTests {
 
     @Test
     func agentToolAndOverviewTransferTheSingleRewriteAnchorWithoutStalePendingSections() async {
-        let clock = StreamingClock()
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
-            toolNow: { clock.now },
             columnWidthProvider: { 120 }
         )
         let toolCall = presentedToolCall(
@@ -460,11 +459,10 @@ extension TerminalChatRenderCoordinatorTests {
         #expect(await renderer.snapshot().activeToolCallID == nil)
         #expect(pendingOverviewRows > 0)
 
-        clock.advance(by: .milliseconds(1_200))
         let eventsBeforeCompletion = await renderer.capturedWriteEvents().count
         await renderer.writeToolCallCompleted(
             toolCall,
-            result: DirectAgentToolResult(output: "Done", summary: "Done"),
+            result: DirectAgentToolResult(output: "Done", summary: "Done", elapsed: .milliseconds(1_200)),
             maximumInPlaceRows: 20
         )
         let completionEvents = Array(

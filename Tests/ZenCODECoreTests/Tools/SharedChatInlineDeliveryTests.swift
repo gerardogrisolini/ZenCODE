@@ -65,6 +65,8 @@ struct SharedChatInlineDeliveryTests {
             )
             #expect(base.status == expectedStatus)
             #expect(base.output.hasPrefix("Tool error:") == (branch == "genericError"))
+            let baseElapsed = try #require(base.elapsed)
+            #expect(baseElapsed >= .zero)
 
             let batchSize = AgentSharedChat.maximumMessagesPerInjectedPrompt
             for index in 0...batchSize {
@@ -85,6 +87,10 @@ struct SharedChatInlineDeliveryTests {
                 #expect(first.modelOutput.components(separatedBy: "mailbox-marker-\(index)-end").count == 2)
             }
             #expect(!first.modelOutput.contains("mailbox-marker-\(batchSize)-end"))
+            // The inline delivery rebuilds the result: it keeps the time the
+            // executor measured for the call.
+            let firstElapsed = try #require(first.elapsed)
+            #expect(firstElapsed >= .zero)
 
             // A second call must see exactly the one message left by the first drain.
             let second = await executor.execute(
@@ -138,6 +144,7 @@ struct SharedChatInlineDeliveryTests {
             #expect(result.summary == result.output)
             #expect(result.modelOutput == result.output)
             #expect(result.attachments.isEmpty)
+            #expect(result.elapsed == nil)
             let pending = await chat.drain(
                 roomID: room, participantID: AgentSharedChat.coordinatorID(for: room)
             )

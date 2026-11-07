@@ -503,7 +503,9 @@ extension ChatGPTSubscriptionGenerationClient {
                         workingDirectory: URL(fileURLWithPath: activeSession.cwd),
                         allowedToolNames: activeSession.allowedToolNames
                     )
-                    await onEvent(.toolCallCompleted(toolCall, result))
+                    // Persist an obtained result before the completion
+                    // callback, as `RemoteGenerationClient` does: a session
+                    // read triggered by the completion already sees it.
                     guard mutateSession(for: lease, { session in
                         session.messages.append(
                             RemoteGenerationClient.toolResultMessage(
@@ -514,6 +516,7 @@ extension ChatGPTSubscriptionGenerationClient {
                     }) else {
                         throw ChatGPTSubscriptionGenerationError.missingSession
                     }
+                    await onEvent(.toolCallCompleted(toolCall, result))
                 }
 
                 if round == configuration.maxToolRounds - 1 {

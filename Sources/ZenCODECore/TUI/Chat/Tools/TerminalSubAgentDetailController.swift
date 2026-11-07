@@ -417,8 +417,8 @@ final class TerminalSubAgentDetailController {
     /// without a transcript keeps the rows, and so does a read that answers
     /// after a later one was applied. The rows are rendered again when the
     /// kinds or the tool durations changed: the backend records a tool result
-    /// before the runtime measures the call, so a later read can add only the
-    /// duration of a call already shown completed.
+    /// before the runtime records the call's duration, so a later read can add
+    /// only the duration of a call already shown completed.
     private func reloadTranscript(following: UInt64) async {
         guard isFollowing(following), let agentID else { return }
         startedReadCount &+= 1

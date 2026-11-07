@@ -125,6 +125,14 @@ public struct DirectAgentToolResult: Sendable, Equatable {
     public let status: Status
     public let attachments: [AgentRuntimeAttachment]
     public let fileChanges: [OperationFileChange]
+    /// The time ``DirectToolExecutor`` measured for the execution that
+    /// produced this result, once, from the start of its dispatch to the
+    /// result it returns. It lives in memory only: it is never persisted,
+    /// never sent to the model, and reaches a wire only where a surface
+    /// already shows a call's time. `nil` for every result the executor did
+    /// not produce: a call cancelled before its dispatch, or a result rebuilt
+    /// from a transcript, a history, or a restored session.
+    public let elapsed: Duration?
 
     public init(
         output: String,
@@ -132,7 +140,8 @@ public struct DirectAgentToolResult: Sendable, Equatable {
         modelOutput: String? = nil,
         status: Status = .completed,
         attachments: [AgentRuntimeAttachment] = [],
-        fileChanges: [OperationFileChange] = []
+        fileChanges: [OperationFileChange] = [],
+        elapsed: Duration? = nil
     ) {
         self.output = output
         self.summary = summary
@@ -140,6 +149,20 @@ public struct DirectAgentToolResult: Sendable, Equatable {
         self.status = status
         self.attachments = attachments
         self.fileChanges = fileChanges
+        self.elapsed = elapsed
+    }
+
+    /// The same result with `elapsed` as its measured time.
+    public func withElapsed(_ elapsed: Duration?) -> DirectAgentToolResult {
+        DirectAgentToolResult(
+            output: output,
+            summary: summary,
+            modelOutput: modelOutput,
+            status: status,
+            attachments: attachments,
+            fileChanges: fileChanges,
+            elapsed: elapsed
+        )
     }
 
     public var isFailure: Bool {
@@ -395,25 +418,19 @@ public struct DirectSubAgentToolEvent: Sendable {
     /// to the chat session that presents it; `nil` when the producer does
     /// not know it, and the agent is then looked up by ``agentID``.
     public let rootSessionID: String?
-    /// How long a completed call ran, as the sub-agent runtime measured it
-    /// from its start to its completion; `nil` for a started call, and for a
-    /// completed one without an id or without a recorded start.
-    public let elapsed: Duration?
 
     public init(
         agentID: String,
         agentName: String,
         toolCall: DirectAgentToolCall,
         lifecycle: Lifecycle,
-        rootSessionID: String? = nil,
-        elapsed: Duration? = nil
+        rootSessionID: String? = nil
     ) {
         self.agentID = agentID
         self.agentName = agentName
         self.toolCall = toolCall
         self.lifecycle = lifecycle
         self.rootSessionID = rootSessionID
-        self.elapsed = elapsed
     }
 }
 

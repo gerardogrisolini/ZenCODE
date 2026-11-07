@@ -300,8 +300,9 @@ extension TerminalChat {
     /// The canonical compact rows of a tool call, as the full sub-agent
     /// overview renders them (``renderSubAgentToolLines(_:density:standardErrorIsTerminal:)``),
     /// with the completion detail of the result as the main chat makes it:
-    /// the elapsed time the runtime measured (`elapsed`, `nil` when it has
-    /// none), then the exit code of a failed process.
+    /// the elapsed time the tool executor measured, as the transcript's
+    /// durations keep it (`elapsed`, `nil` when it has none), then the exit
+    /// code of a failed process.
     private nonisolated static func subAgentTranscriptToolRows(
         _ call: DirectAgentToolCall,
         result: DirectAgentToolResult?,

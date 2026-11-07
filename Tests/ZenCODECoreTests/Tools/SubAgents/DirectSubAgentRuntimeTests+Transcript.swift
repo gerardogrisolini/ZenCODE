@@ -271,33 +271,36 @@ extension DirectSubAgentRuntimeTests {
     // MARK: - Tool call durations
 
     @Test
-    func transcriptCarriesTheMeasuredDurationOfEveryCompletedToolCall() async throws {
+    func transcriptCarriesTheElapsedTimeOfEveryCompletedToolCallResult() async throws {
         try await withTranscriptTestSupportDirectory {
             let backend = TranscriptRecordingSubAgentBackend()
             let runtime = makeDirectSubAgentRuntime(backend: backend)
             let agentID = try await createTranscriptAgent(in: runtime, rootSessionID: "root", prompt: "Timed")
             await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agentID)
-            // The backend reports no tool event: nothing was measured.
+            // The backend reports no tool event: nothing was recorded.
             let unmeasured = try #require(await runtime.transcript(agentID: agentID, rootSessionID: "root"))
             #expect(unmeasured.toolDurations.isEmpty)
 
             let completed = durationTestToolCall("call-timed")
+            let untimed = durationTestToolCall("call-untimed")
             let running = durationTestToolCall("call-running")
             let anonymous = durationTestToolCall("")
             await runtime.recordEvent(.toolCallStarted(completed), agentID: agentID)
+            await runtime.recordEvent(.toolCallStarted(untimed), agentID: agentID)
             await runtime.recordEvent(.toolCallStarted(running), agentID: agentID)
             await runtime.recordEvent(.toolCallStarted(anonymous), agentID: agentID)
-            let pause = Duration.milliseconds(30)
-            try await Task.sleep(for: pause)
             await runtime.recordEvent(.toolCallCompleted(completed, durationTestToolResult), agentID: agentID)
+            await runtime.recordEvent(.toolCallCompleted(untimed, untimedTestToolResult), agentID: agentID)
             await runtime.recordEvent(.toolCallCompleted(anonymous, durationTestToolResult), agentID: agentID)
 
             // The history has a tool call: the read that asks for the
             // descriptors carries the durations too.
             let transcript = try #require(await runtime.transcript(agentID: agentID, rootSessionID: "root"))
-            let duration = try #require(transcript.toolDurations["call-timed"])
-            #expect(duration >= pause)
-            // A running call, and a call without an id, have none.
+            // The time is exactly the one the result carries.
+            #expect(transcript.toolDurations["call-timed"] == .seconds(2))
+            // A result without a time, a running call, and a call without an
+            // id have none.
+            #expect(transcript.toolDurations["call-untimed"] == nil)
             #expect(transcript.toolDurations["call-running"] == nil)
             #expect(transcript.toolDurations[""] == nil)
             #expect(transcript.toolDurations.count == 1)
@@ -307,7 +310,7 @@ extension DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func theCompletedToolEventCarriesTheDurationTheTranscriptShows() async throws {
+    func theCompletedToolEventCarriesTheResultWhoseTimeTheTranscriptShows() async throws {
         try await withTranscriptTestSupportDirectory {
             let backend = TranscriptRecordingSubAgentBackend()
             let runtime = makeDirectSubAgentRuntime(backend: backend)
@@ -317,35 +320,38 @@ extension DirectSubAgentRuntimeTests {
             await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agentID)
 
             let timed = durationTestToolCall("call-timed")
-            let anonymous = durationTestToolCall("")
-            let unstarted = durationTestToolCall("call-unstarted")
+            let untimed = durationTestToolCall("call-untimed")
             await runtime.recordEvent(.toolCallStarted(timed), agentID: agentID)
-            await runtime.recordEvent(.toolCallStarted(anonymous), agentID: agentID)
-            try await Task.sleep(for: .milliseconds(5))
             await runtime.recordEvent(.toolCallCompleted(timed, durationTestToolResult), agentID: agentID)
-            await runtime.recordEvent(.toolCallCompleted(anonymous, durationTestToolResult), agentID: agentID)
-            await runtime.recordEvent(.toolCallCompleted(unstarted, durationTestToolResult), agentID: agentID)
+            await runtime.recordEvent(.toolCallCompleted(untimed, untimedTestToolResult), agentID: agentID)
 
             let transcript = try #require(await runtime.transcript(agentID: agentID, rootSessionID: "root"))
-            let measured = try #require(transcript.toolDurations["call-timed"])
+            #expect(transcript.toolDurations == ["call-timed": .seconds(2)])
             let recorded = events.snapshot.filter { $0.agentID == agentID }
-            #expect(recorded.map(\.toolCall.id) == ["call-timed", "", "call-timed", "", "call-unstarted"])
-            guard recorded.count == 5 else { return }
-            // A start has no time; the completion carries exactly the
-            // duration the transcript shows for its call.
-            #expect(recorded[0].elapsed == nil)
-            #expect(recorded[1].elapsed == nil)
-            #expect(recorded[2].elapsed == measured)
-            // A call without an id, or without a recorded start, has none.
-            #expect(recorded[3].elapsed == nil)
-            #expect(recorded[4].elapsed == nil)
+            #expect(recorded.map(\.toolCall.id) == ["call-timed", "call-timed", "call-untimed"])
+            guard recorded.count == 3 else { return }
+            // The completion hands on the result unchanged, its time included:
+            // the time the transcript shows for its call.
+            guard case .started = recorded[0].lifecycle else {
+                Issue.record("The first event is not a start")
+                return
+            }
+            guard case let .completed(timedResult) = recorded[1].lifecycle,
+                  case let .completed(untimedResult) = recorded[2].lifecycle else {
+                Issue.record("The completions are not completions")
+                return
+            }
+            #expect(timedResult == durationTestToolResult)
+            #expect(timedResult.elapsed == transcript.toolDurations["call-timed"])
+            #expect(untimedResult == untimedTestToolResult)
+            #expect(untimedResult.elapsed == nil)
 
             await runtime.shutdown()
         }
     }
 
     @Test
-    func aNewTurnKeepsTheMeasuredDurationsAndDropsTheCallsLeftOpen() async throws {
+    func aNewTurnKeepsTheRecordedDurations() async throws {
         try await withTranscriptTestSupportDirectory {
             let backend = TranscriptRecordingSubAgentBackend()
             let runtime = makeDirectSubAgentRuntime(backend: backend)
@@ -363,9 +369,8 @@ extension DirectSubAgentRuntimeTests {
 
             try await runtime.queuePrompt("Second", for: agentID)
             await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agentID)
-            // The new turn dropped the start of the call left open: its late
-            // completion has no duration.
-            await runtime.recordEvent(.toolCallCompleted(leftOpen, durationTestToolResult), agentID: agentID)
+            // A late completion whose result has no time adds none.
+            await runtime.recordEvent(.toolCallCompleted(leftOpen, untimedTestToolResult), agentID: agentID)
 
             let transcript = try #require(await runtime.transcript(agentID: agentID, rootSessionID: "root"))
             #expect(transcriptLabels(transcript.kinds).contains("user:Second"))
@@ -459,7 +464,11 @@ private func durationTestToolCall(_ id: String) -> DirectAgentToolCall {
     DirectAgentToolCall(id: id, name: "local.exec", argumentsObject: [:], argumentsJSON: "{}")
 }
 
-private let durationTestToolResult = DirectAgentToolResult(output: "ok", summary: "ok")
+/// A result with the time the tool executor measured for it.
+private let durationTestToolResult = DirectAgentToolResult(output: "ok", summary: "ok", elapsed: .seconds(2))
+
+/// A result the tool executor did not produce: it has no time.
+private let untimedTestToolResult = DirectAgentToolResult(output: "ok", summary: "ok")
 
 /// The delegated tool events a runtime handed its handler, in order.
 private final class TranscriptToolEventLog: Sendable {

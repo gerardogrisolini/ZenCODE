@@ -227,6 +227,44 @@ struct AnthropicSubscriptionMidTurnAuthRecoveryTests {
         await client.shutdown()
     }
 
+    /// An executed tool's result is in the session before its completion is
+    /// reported, as `RemoteGenerationClient` does, so a session read the
+    /// completion triggers (a sub-agent transcript) already sees it; the
+    /// completion carries the time the executor measured.
+    @Test("a tool result is in the session before its completion is reported")
+    func toolResultIsRecordedBeforeTheCompletionEvent() async throws {
+        let server = try await StatusSequenceServer.start(responses: [
+            (200, Self.toolResponse),
+            (200, Self.textResponse)
+        ])
+        defer { server.shutdown() }
+        let client = makeClient(server: server)
+        await client.setCredentialProviders(
+            load: { Self.credentials("access") },
+            refresh: { _ in Self.credentials("access") }
+        )
+        let recordedAtCompletion = Mutex<[String: Bool]>([:])
+        let elapsedAtCompletion = Mutex<[String: Duration?]>([:])
+
+        let result = try await client.sendPrompt(
+            sessionID: "ordered",
+            prompt: "hello",
+            attachments: [],
+            onEvent: { event in
+                guard case let .toolCallCompleted(call, result) = event else { return }
+                let history = await client.snapshotSession(id: "ordered")?.history ?? []
+                let recorded = history.contains { $0.role == .tool && $0.toolCallID == call.id }
+                recordedAtCompletion.withLock { $0[call.id] = recorded }
+                elapsedAtCompletion.withLock { $0[call.id] = result.elapsed }
+            }
+        )
+
+        #expect(result.text == "Recovered")
+        #expect(recordedAtCompletion.withLock { $0 } == ["tool_1": true])
+        #expect(elapsedAtCompletion.withLock { $0["tool_1"] ?? nil } != nil)
+        await client.shutdown()
+    }
+
     @Test("only 401 and 403 provider failures are authentication failures")
     func authenticationFailureClassification() {
         let prefix = AnthropicSubscriptionGenerationClient.httpFailureMessagePrefix

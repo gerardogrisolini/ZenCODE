@@ -103,8 +103,8 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
     /// of `ChatSubAgentTranscript.toolDurations`), so a call that ran before
     /// the tab opened has its time too. Recomputed when the transcript's kinds
     /// or its durations change: the backend records a tool result before the
-    /// Core measures the call, so a later read can add only a duration. A read
-    /// without a transcript keeps them.
+    /// Core records the call's duration, so a later read can add only a
+    /// duration. A read without a transcript keeps them.
     public private(set) var toolDurations: [String: Duration] = [:]
     /// Whether ``items`` holds a transcript.
     public private(set) var availability: Availability = .loading

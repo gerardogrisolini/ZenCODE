@@ -501,12 +501,16 @@ sub-agents of the session are registered under (the runner receives it as
   (`ChatTurnEntry.Kind` values, oldest first): the agent's backend history at
   the time of the call, including a turn still running. Its `toolDurations`
   give the elapsed time of the agent's completed tool calls by tool call id,
-  as the Core measured them in memory (the last 512 calls of the agent; a
-  running call, or a call without an id, has none). The backend records a
-  tool result before the Core measures the call, so a later read can add only
-  a duration: compare `toolDurations` too, not only `kinds`, to know when to
-  draw again. The read itself stores nothing. It is `nil` for an agent that
-  does not belong to the session and for an agent whose backend was shut down
+  the time the Core's tool executor measured for each call
+  (`DirectAgentToolResult.elapsed`), kept in memory (the last 512 calls of
+  the agent; a running call, a call without an id, or a result without a
+  time, has none): the rebuilt `kinds` carry no time of their own. The
+  backend records a tool result before it reports the completion, and the
+  Core records the duration when it handles that report, so a later read can
+  add only a duration: compare `toolDurations` too, not only `kinds`, to know
+  when to draw again. The read itself stores nothing. It is `nil` for an
+  agent that does not belong to the session and for an agent whose backend
+  was shut down
   (closed, cancelled, failed, or released from standby): the Core keeps no
   copy of the history, so an app that shows the conversation after the agent
   ends keeps its own last read.
@@ -885,10 +889,10 @@ What happens at the handover:
   the controller presents, and the channel sends the chat, with no setting:
   each response, each completed reasoning block as a `💭` expandable quotation,
   the root tool calls as the lines of one activity message edited in place
-  (the call's title, its outcome, and its elapsed time, never its arguments
-  or result), the task-graph card, and the sub-agent overview as one
-  `🤖 Sub-agent` message per turn. The channel asks the controller for the
-  sub-agent overview itself.
+  (the call's title, its outcome, and the elapsed time the Core measured,
+  never its arguments or result), the task-graph card, and the sub-agent
+  overview as one `🤖 Sub-agent` message per turn. The channel asks the
+  controller for the sub-agent overview itself.
   What the sub-agents already showed when the chat takes the slot, in the app,
   is not sent: their responses present then stay out of the chat, and an
   overview unchanged since then creates no message; each response that comes

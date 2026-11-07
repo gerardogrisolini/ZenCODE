@@ -28,27 +28,23 @@ struct TerminalTelegramTurnActivityTests {
     // MARK: - Tool activity
 
     /// A call is a row with a neutral marker, edited in place with ✅ or ❌
-    /// and the time elapsed since the row appeared once it ended; a running
-    /// row shows no time; a second outcome or an unknown call changes nothing.
+    /// and the time the tool executor measured once it ended; a running row
+    /// shows no time; a second outcome or an unknown call changes nothing.
     @Test
     func aToolCallIsARowEditedInPlaceWithItsOutcome() async {
         let log = TelegramTurnActivityWireLog()
-        let clock = TelegramTurnActivityClock()
-        let reporter = log.makeReporter(clock: clock)
+        let reporter = log.makeReporter()
 
         await reporter.toolCallDidStart(id: "1", title: "Read Package.swift")
         await reporter.flush()
-        clock.advance(by: .milliseconds(420))
         await reporter.toolCallDidStart(id: "2", title: "Run swift build")
         await reporter.flush()
-        clock.advance(by: .milliseconds(830))
-        await reporter.toolCallDidComplete(id: "1", failed: false)
+        await reporter.toolCallDidComplete(id: "1", failed: false, elapsed: .milliseconds(1_250))
         await reporter.flush()
-        clock.advance(by: .milliseconds(500))
-        await reporter.toolCallDidComplete(id: "2", failed: true)
+        await reporter.toolCallDidComplete(id: "2", failed: true, elapsed: .milliseconds(1_330))
         await reporter.flush()
-        await reporter.toolCallDidComplete(id: "1", failed: true)
-        await reporter.toolCallDidComplete(id: "9", failed: false)
+        await reporter.toolCallDidComplete(id: "1", failed: true, elapsed: .seconds(9))
+        await reporter.toolCallDidComplete(id: "9", failed: false, elapsed: .seconds(9))
         await reporter.flush()
 
         #expect(await log.effects == [
@@ -60,6 +56,32 @@ struct TerminalTelegramTurnActivityTests {
         // The activity message stays in the chat: retiring deletes nothing.
         await reporter.retire()
         #expect(await log.effects.count == 4)
+    }
+
+    /// A completion without a time (a result the tool executor did not
+    /// produce, such as a call cancelled before its dispatch) writes only
+    /// the outcome.
+    @Test
+    func aCompletionWithoutAnElapsedTimeWritesOnlyItsOutcome() async {
+        let log = TelegramTurnActivityWireLog()
+        let reporter = log.makeReporter()
+
+        await reporter.toolCallDidStart(id: "1", title: "Read Package.swift")
+        await reporter.flush()
+        await reporter.toolCallDidStart(id: "2", title: "Run swift build")
+        await reporter.flush()
+        await reporter.toolCallDidComplete(id: "1", failed: false, elapsed: nil)
+        await reporter.flush()
+        await reporter.toolCallDidComplete(id: "2", failed: true, elapsed: nil)
+        await reporter.flush()
+
+        #expect(await log.effects == [
+            .create(id: 100, text: "⏳ Read Package.swift"),
+            .edit(id: 100, text: "⏳ Read Package.swift\n⏳ Run swift build"),
+            .edit(id: 100, text: "✅ Read Package.swift\n⏳ Run swift build"),
+            .edit(id: 100, text: "✅ Read Package.swift\n❌ Run swift build"),
+        ])
+        await reporter.retire()
     }
 
     /// Only a new message closes the activity message: the first card and
@@ -137,8 +159,8 @@ struct TerminalTelegramTurnActivityTests {
         await reporter.toolCallDidStart(id: "a", title: "A")
         await reporter.enqueue(.agentResponse("Between"))
         await reporter.toolCallDidStart(id: "b", title: "B")
-        await reporter.toolCallDidComplete(id: "a", failed: false)
-        await reporter.toolCallDidComplete(id: "b", failed: true)
+        await reporter.toolCallDidComplete(id: "a", failed: false, elapsed: .zero)
+        await reporter.toolCallDidComplete(id: "b", failed: true, elapsed: .zero)
         await reporter.flush()
 
         #expect(await log.effects == [
@@ -163,9 +185,9 @@ struct TerminalTelegramTurnActivityTests {
         await log.waitUntilACreateIsHeld()
         for index in 1 ..< 20 {
             await reporter.toolCallDidStart(id: "\(index)", title: "Call \(index)")
-            await reporter.toolCallDidComplete(id: "\(index)", failed: false)
+            await reporter.toolCallDidComplete(id: "\(index)", failed: false, elapsed: .zero)
         }
-        await reporter.toolCallDidComplete(id: "0", failed: false)
+        await reporter.toolCallDidComplete(id: "0", failed: false, elapsed: .zero)
         await log.releaseCreates()
         await reporter.flush()
 
@@ -183,8 +205,7 @@ struct TerminalTelegramTurnActivityTests {
     @Test
     func aRowThatDoesNotFitOpensANewMessage() async {
         let log = TelegramTurnActivityWireLog()
-        let clock = TelegramTurnActivityClock()
-        let reporter = log.makeReporter(clock: clock)
+        let reporter = log.makeReporter()
         let title = String(repeating: "x", count: 200)
 
         for index in 0 ..< 25 {
@@ -200,9 +221,9 @@ struct TerminalTelegramTurnActivityTests {
             #expect(text.utf16.count <= TerminalTelegramTurnProgressReporter.maximumMessageLength)
         }
 
-        clock.advance(by: .seconds(1_234_567) + .milliseconds(890))
+        let elapsed: Duration = .seconds(1_234_567) + .milliseconds(890)
         for index in 0 ..< 25 {
-            await reporter.toolCallDidComplete(id: "\(index)", failed: false)
+            await reporter.toolCallDidComplete(id: "\(index)", failed: false, elapsed: elapsed)
         }
         await reporter.flush()
         texts = await log.editableTexts
@@ -219,8 +240,7 @@ struct TerminalTelegramTurnActivityTests {
     @Test
     func theRoomKeptForTheTimesOfTheRunningRowsFitsTheirTimes() async {
         let log = TelegramTurnActivityWireLog()
-        let clock = TelegramTurnActivityClock()
-        let reporter = log.makeReporter(clock: clock)
+        let reporter = log.makeReporter()
         let titles = Array(repeating: String(repeating: "x", count: 200), count: 18)
             + [String(repeating: "y", count: 16)]
 
@@ -236,9 +256,11 @@ struct TerminalTelegramTurnActivityTests {
         #expect(texts[101] == "⏳ z")
 
         // "1234567.89s" is 11 units: with its space, the whole reserve.
-        clock.advance(by: .seconds(1_234_567) + .milliseconds(890))
+        let elapsed: Duration = .seconds(1_234_567) + .milliseconds(890)
         for index in titles.indices {
-            await reporter.toolCallDidComplete(id: "\(index)", failed: index.isMultiple(of: 2))
+            await reporter.toolCallDidComplete(
+                id: "\(index)", failed: index.isMultiple(of: 2), elapsed: elapsed
+            )
         }
         await reporter.flush()
         texts = await log.editableTexts
@@ -253,8 +275,7 @@ struct TerminalTelegramTurnActivityTests {
     @Test
     func aCompletionWhoseTimeWouldOverflowTheMessageIsWrittenWithoutIt() async throws {
         let log = TelegramTurnActivityWireLog()
-        let clock = TelegramTurnActivityClock()
-        let reporter = log.makeReporter(clock: clock)
+        let reporter = log.makeReporter()
         let titles = Array(repeating: String(repeating: "x", count: 200), count: 18)
             + [String(repeating: "y", count: 16)]
         for (index, title) in titles.enumerated() {
@@ -263,9 +284,8 @@ struct TerminalTelegramTurnActivityTests {
 
         // " 1000000000.00s" is 15 units, 3 more than the reserve: the room
         // left (19 × 12 = 228 units) holds 15 of them.
-        clock.advance(by: .seconds(1_000_000_000))
         for index in titles.indices {
-            await reporter.toolCallDidComplete(id: "\(index)", failed: false)
+            await reporter.toolCallDidComplete(id: "\(index)", failed: false, elapsed: .seconds(1_000_000_000))
         }
         await reporter.flush()
 
@@ -292,8 +312,8 @@ struct TerminalTelegramTurnActivityTests {
         await reporter.flush()
         await reporter.toolCallDidStart(id: "b", title: "B")
         await reporter.flush()
-        await reporter.toolCallDidComplete(id: "a", failed: false)
-        await reporter.toolCallDidComplete(id: "b", failed: true)
+        await reporter.toolCallDidComplete(id: "a", failed: false, elapsed: .zero)
+        await reporter.toolCallDidComplete(id: "b", failed: true, elapsed: .zero)
         await reporter.flush()
         await reporter.toolCallDidStart(id: "c", title: "C")
         await reporter.flush()
@@ -344,7 +364,7 @@ struct TerminalTelegramTurnActivityTests {
         await reporter.toolCallDidStart(id: "a", title: "A")
         await reporter.flush()
         await reporter.retire()
-        await reporter.toolCallDidComplete(id: "a", failed: false)
+        await reporter.toolCallDidComplete(id: "a", failed: false, elapsed: .zero)
         await reporter.toolCallDidStart(id: "b", title: "B")
         await reporter.enqueue(.thought("late"))
         await reporter.enqueue(.subAgentStatus("🤖 Sub-agent\n\nlate"))
@@ -369,7 +389,7 @@ struct TerminalTelegramTurnActivityTests {
         await reporter.toolCallDidStart(id: "a", title: "A")
         await log.waitUntilACreateIsHeld()
         await reporter.toolCallDidStart(id: "b", title: "B")
-        await reporter.toolCallDidComplete(id: "a", failed: false)
+        await reporter.toolCallDidComplete(id: "a", failed: false, elapsed: .zero)
         await reporter.retire()
         await log.releaseCreates()
         await reporter.flush()

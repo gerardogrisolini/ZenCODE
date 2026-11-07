@@ -34,19 +34,19 @@ extension DirectSubAgentRuntime {
     ///   requests, so a read never starts a feature's tool discovery
     ///   (`--list-tools`) or the consent it can ask for.
     ///
-    /// The transcript also carries the durations the runtime measured of the
-    /// agent's completed tool calls (``ChatSubAgentTranscript/toolDurations``,
-    /// by tool call id): from the `.toolCallStarted` to the
-    /// `.toolCallCompleted` event the runtime received, for the agent's last
-    /// 512 calls (`maximumRetainedToolCallDurationsPerAgent`). The backend
-    /// records a tool result in the history before it reports the
-    /// completion, so a read can show a completed call whose duration is not
-    /// there yet: a later read has it.
+    /// The transcript also carries the durations of the agent's completed
+    /// tool calls (``ChatSubAgentTranscript/toolDurations``, by tool call id):
+    /// the time the tool executor measured for each call
+    /// (``DirectAgentToolResult/elapsed``), recorded when the runtime handles
+    /// its `.toolCallCompleted` event, for the agent's last 512 calls
+    /// (`maximumRetainedToolCallDurationsPerAgent`). Every backend records a
+    /// tool result in the history before it reports the completion, so a read
+    /// between the two can show a completed call whose duration is not there
+    /// yet: a later read has it.
     ///
     /// The read itself keeps no state: the runtime stores no copy of the
     /// history or of the descriptors, and the history itself is not changed;
-    /// the durations are the runtime's own measurement, kept in memory only
-    /// in the agent's record.
+    /// the durations are kept in memory only, in the agent's record.
     /// `nil` when no such agent exists, it belongs to another root session,
     /// or its backend no longer has the agent's session (the backend was shut
     /// down: the agent was closed, cancelled, failed, or released from

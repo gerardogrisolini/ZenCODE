@@ -37,7 +37,8 @@ struct TelegramChannelTurnActivityTests {
     /// The reasoning goes out whole once the response closes it, the
     /// response at the tool call, then the call's row; `agent.message` has
     /// no row, as in the terminal's tool blocks; a `local.exec` that exits
-    /// with 1 is ❌, as the terminal marks it; no argument or result is sent.
+    /// with 1 is ❌, as the terminal marks it; a row ends with the time its
+    /// result carries, none without one; no argument or result is sent.
     @Test
     func theChatSeesTheThoughtThenTheResponseThenTheToolRows() async throws {
         try await Support.withSupport {
@@ -63,7 +64,9 @@ struct TelegramChannelTurnActivityTests {
             await presenter.presentToolCallStarted(message)
             await presenter.presentToolCallCompleted(message, result: Fixtures.result())
             await presenter.presentToolCallSettled(message, result: Fixtures.result())
-            await presenter.presentToolCallCompleted(read, result: Fixtures.result("manifest contents"))
+            await presenter.presentToolCallCompleted(
+                read, result: Fixtures.result("manifest contents", elapsed: .milliseconds(1_250))
+            )
             await reporter.flush()
             await presenter.presentToolCallStarted(exec)
             await reporter.flush()
@@ -78,9 +81,9 @@ struct TelegramChannelTurnActivityTests {
                 .thought("I should read the manifest."),
                 .message("Reading the manifest."),
                 .create(id: 100, text: "⏳ \(readRow)"),
-                .edit(id: 100, text: "✅ \(readRow) 0ms"),
-                .edit(id: 100, text: "✅ \(readRow) 0ms\n⏳ \(execRow)"),
-                .edit(id: 100, text: "✅ \(readRow) 0ms\n❌ \(execRow) 0ms"),
+                .edit(id: 100, text: "✅ \(readRow) 1.25s"),
+                .edit(id: 100, text: "✅ \(readRow) 1.25s\n⏳ \(execRow)"),
+                .edit(id: 100, text: "✅ \(readRow) 1.25s\n❌ \(execRow)"),
             ])
             for text in await log.editableTexts.values {
                 #expect(!text.contains("manifest contents"))
@@ -273,7 +276,7 @@ struct TelegramChannelTurnActivityTests {
             #expect(await log.effects == [
                 .message("Reading it."),
                 .create(id: 100, text: "⏳ \(Fixtures.rowTitle(read))"),
-                .edit(id: 100, text: "✅ \(Fixtures.rowTitle(read)) 0ms"),
+                .edit(id: 100, text: "✅ \(Fixtures.rowTitle(read))"),
                 .message("*ZenCODE completed*\n\nReading it."),
             ])
             await terminal.sessionHost.shutdown()
@@ -589,7 +592,7 @@ struct TelegramChannelTurnActivityTests {
                 .snapshots([Fixtures.subAgent(id: "worker", status: .running, toolName: "local.exec", toolTarget: "swift test")]),
                 .toolCallStarted(wait),
                 .snapshots([Fixtures.subAgent(id: "worker", status: .idle, response: "Tests pass.")]),
-                .toolCallCompleted(wait, Fixtures.result()),
+                .toolCallCompleted(wait, Fixtures.result(elapsed: .milliseconds(420))),
                 .toolCallStarted(exec),
                 .toolCallCompleted(exec, Fixtures.result("exit_code: 1\nboom", summary: "exit_code: 1")),
                 .content("Done."),
@@ -613,13 +616,9 @@ struct TelegramChannelTurnActivityTests {
             #expect(sends[6].text.contains("Done."))
 
             let finalTexts = Self.finalTexts(requests)
-            #expect(Fixtures.isTimedRow(
-                finalTexts[sends[2].messageID], marker: "✅", title: Fixtures.rowTitle(wait)
-            ), "\(finalTexts[sends[2].messageID] ?? "nil")")
+            #expect(finalTexts[sends[2].messageID] == "✅ \(Fixtures.rowTitle(wait)) 420ms")
             #expect(finalTexts[sends[3].messageID]?.contains("[COMPLETED]") == true)
-            #expect(Fixtures.isTimedRow(
-                finalTexts[sends[5].messageID], marker: "❌", title: Fixtures.rowTitle(exec)
-            ), "\(finalTexts[sends[5].messageID] ?? "nil")")
+            #expect(finalTexts[sends[5].messageID] == "❌ \(Fixtures.rowTitle(exec))")
             let created = Set([sends[2].messageID, sends[3].messageID, sends[5].messageID])
             let edits = requests.enumerated().filter { $0.element.method == "editMessageText" }
             #expect(!edits.isEmpty)

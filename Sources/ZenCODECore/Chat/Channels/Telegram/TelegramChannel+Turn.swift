@@ -632,7 +632,8 @@ extension TelegramChannel {
     /// Writes the outcome of a root tool call in its activity row: ✅, or ❌
     /// when it failed as the terminal judges it
     /// (``TerminalChat/toolResultIsFailure(for:result:)``), with the time the
-    /// reporter measured since the row appeared. Its result is never sent.
+    /// tool executor measured for it (``DirectAgentToolResult/elapsed``),
+    /// when the result has one. Its result is never sent.
     func presentToolCallActivityCompleted(
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
@@ -641,7 +642,8 @@ extension TelegramChannel {
               let reporter = activeProgressReporter else { return }
         await reporter.toolCallDidComplete(
             id: toolCall.id,
-            failed: TerminalChat.toolResultIsFailure(for: toolCall, result: result)
+            failed: TerminalChat.toolResultIsFailure(for: toolCall, result: result),
+            elapsed: result.elapsed
         )
     }
 

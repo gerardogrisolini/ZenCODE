@@ -73,9 +73,9 @@ struct TerminalTelegramTurnActivityWire: Sendable {
 ///
 /// Tool calls are shown in activity messages edited in place, one row per
 /// call: its title, then only its outcome and elapsed time
-/// (``toolCallDidStart(id:title:)``, ``toolCallDidComplete(id:failed:)``).
-/// The time is measured by the reporter from the row's creation to the
-/// call's completion. An activity message is closed by every queued payload
+/// (``toolCallDidStart(id:title:)``, ``toolCallDidComplete(id:failed:elapsed:)``).
+/// The time is the one the tool executor measured for the call
+/// (``DirectAgentToolResult/elapsed``). An activity message is closed by every queued payload
 /// that creates a new message in the chat (a response, a reasoning block,
 /// the first task-graph card, the creation of the sub-agent status, a
 /// delegated response, an authorization, the outcome, the summary): the next
@@ -140,12 +140,10 @@ actor TerminalTelegramTurnProgressReporter {
         var elapsed: Duration?
     }
 
-    /// Where the row of a running call is: its block and its index there,
-    /// and when the row was created.
+    /// Where the row of a running call is: its block and its index there.
     private struct ActivityRowLocation {
         let block: Int
         let row: Int
-        let startedAt: ContinuousClock.Instant
     }
 
     let chatID: Int64
@@ -160,8 +158,6 @@ actor TerminalTelegramTurnProgressReporter {
     private let activityWire: TerminalTelegramTurnActivityWire?
     private let wireFence: TerminalTelegramWireFence
     private let waitForWireQuiescence: (@Sendable (TerminalTelegramWireFence) async -> Void)?
-    /// The clock of the tool calls' elapsed times.
-    private let now: @Sendable () -> ContinuousClock.Instant
 
     private var queue: [QueuedItem] = []
     /// The activity messages of the reporter, oldest first.
@@ -169,7 +165,7 @@ actor TerminalTelegramTurnProgressReporter {
     /// The activity message the next call joins; `nil` once a new message
     /// closed it.
     private var openActivityBlock: Int?
-    /// The rows of the calls still running, by call id, with their start.
+    /// The rows of the calls still running, by call id.
     private var runningToolCallRows: [String: ActivityRowLocation] = [:]
     /// The sub-agent status message, once created.
     private var subAgentStatus: TerminalTelegramEditableMessageLedger?
@@ -191,8 +187,7 @@ actor TerminalTelegramTurnProgressReporter {
         progressCards: TerminalTelegramProgressCardLedger? = nil,
         activityWire: TerminalTelegramTurnActivityWire? = nil,
         wireFence: TerminalTelegramWireFence,
-        waitForWireQuiescence: (@Sendable (TerminalTelegramWireFence) async -> Void)? = nil,
-        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }
+        waitForWireQuiescence: (@Sendable (TerminalTelegramWireFence) async -> Void)? = nil
     ) {
         self.chatID = chatID
         self.sendMessage = sendMessage
@@ -201,7 +196,6 @@ actor TerminalTelegramTurnProgressReporter {
         self.activityWire = activityWire
         self.wireFence = wireFence
         self.waitForWireQuiescence = waitForWireQuiescence
-        self.now = now
         if let sendDraft {
             draftStreamer = TerminalTelegramDraftStreamer(chatID: chatID, sendDraft: sendDraft)
         }
@@ -229,8 +223,8 @@ actor TerminalTelegramTurnProgressReporter {
 
     /// Shows a root tool call that started: a row with `title` and a neutral
     /// marker, in the open activity message, or in a new one when no message
-    /// is open or the row would not fit, and records when it started. Without
-    /// the activity wire, or once retired, nothing happens.
+    /// is open or the row would not fit. Without the activity wire, or once
+    /// retired, nothing happens.
     func toolCallDidStart(id: String, title: String) {
         guard !isRetired, activityWire != nil else { return }
         let row = ActivityRow(title: TerminalTelegramTurnActivity.toolTitle(title), outcome: nil, elapsed: nil)
@@ -247,20 +241,21 @@ actor TerminalTelegramTurnProgressReporter {
             return
         }
         runningToolCallRows[id] = ActivityRowLocation(
-            block: blockIndex, row: activityBlocks[blockIndex].rows.count - 1, startedAt: now()
+            block: blockIndex, row: activityBlocks[blockIndex].rows.count - 1
         )
         let block = activityBlocks[blockIndex]
         enqueueEdit(of: block.ledger, text: block.text)
     }
 
     /// Writes the outcome of a call that ``toolCallDidStart(id:title:)``
-    /// showed in its row, in the message it started in, with the time elapsed
-    /// since the row was created; the time is left out when the message would
-    /// exceed ``maximumMessageLength`` with it. A call the reporter did not
-    /// show, or one that already ended, changes nothing.
-    func toolCallDidComplete(id: String, failed: Bool) {
+    /// showed in its row, in the message it started in, with `elapsed`, the
+    /// time the tool executor measured for the call
+    /// (``DirectAgentToolResult/elapsed``); the time is left out when it is
+    /// `nil` or when the message would exceed ``maximumMessageLength`` with
+    /// it. A call the reporter did not show, or one that already ended,
+    /// changes nothing.
+    func toolCallDidComplete(id: String, failed: Bool, elapsed: Duration?) {
         guard !isRetired, let location = runningToolCallRows.removeValue(forKey: id) else { return }
-        let elapsed = location.startedAt.duration(to: now())
         var rows = activityBlocks[location.block].rows
         rows[location.row].outcome = failed ? .failed : .succeeded
         rows[location.row].elapsed = elapsed

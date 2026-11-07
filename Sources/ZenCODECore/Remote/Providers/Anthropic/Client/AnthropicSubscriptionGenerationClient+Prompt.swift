@@ -198,7 +198,9 @@ extension AnthropicSubscriptionGenerationClient {
                         workingDirectory: activeSession.cwd,
                         allowedToolNames: activeSession.allowedToolNames
                     )
-                    await onEvent(.toolCallCompleted(toolCall, result))
+                    // Persist an obtained result before the completion
+                    // callback, as `RemoteGenerationClient` does: a session
+                    // read triggered by the completion already sees it.
                     guard mutateSession(for: lease, { session in
                         session.messages.append(
                             RemoteGenerationClient.toolResultMessage(
@@ -214,6 +216,7 @@ extension AnthropicSubscriptionGenerationClient {
                     // predecessor's conversation inflation into the next
                     // preflight.
                     invalidateRequestOverhead(sessionID: lease.id)
+                    await onEvent(.toolCallCompleted(toolCall, result))
                 }
 
                 if round == configuration.maxToolRounds - 1 {

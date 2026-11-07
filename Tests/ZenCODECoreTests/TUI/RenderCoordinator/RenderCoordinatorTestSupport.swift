@@ -16,9 +16,6 @@ extension RenderCoordinatorTestSupport {
         streamingNow: @Sendable @escaping () -> ContinuousClock.Instant = {
             ContinuousClock().now
         },
-        toolNow: @Sendable @escaping () -> ContinuousClock.Instant = {
-            ContinuousClock().now
-        },
         columnWidthProvider: (@Sendable () -> Int)? = nil,
         freshColumnWidthProvider: (@Sendable () -> Int)? = nil,
         cursorTopology: TerminalChatRenderCoordinator.CursorTopology? = nil
@@ -43,7 +40,6 @@ extension RenderCoordinatorTestSupport {
             capturesWrites: true,
             streamingFlushDelay: streamingFlushDelay,
             streamingNow: streamingNow,
-            toolNow: toolNow,
             columnWidthProvider: columnWidthProvider,
             freshColumnWidthProvider: freshColumnWidthProvider
         )

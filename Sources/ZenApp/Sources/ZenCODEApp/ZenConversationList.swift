@@ -167,10 +167,6 @@ struct ZenConversationList: View {
         .onScrollGeometryChange(for: ZenScrollMetrics.self, of: ZenScrollMetrics.init) { old, new in
             follow(old: old, new: new)
         }
-        // The closed rows only: a streamed token does not reach the timer.
-        .onChange(of: transcript, initial: true) { _, transcript in
-            durations.observe(transcript)
-        }
         .onChange(of: followToken) { _, _ in
             jumpToLatest(animated: false)
         }

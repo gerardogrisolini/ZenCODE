@@ -99,11 +99,9 @@ extension TerminalChatRenderCoordinatorTests {
 
     @Test
     func compactCompletionShowsElapsedMetadataWithinTheRedrawWidthBudget() async {
-        let clock = StreamingClock()
         let terminalColumns = 26
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
-            toolNow: { clock.now },
             columnWidthProvider: { terminalColumns }
         )
         let toolCall = presentedToolCall(
@@ -116,17 +114,16 @@ extension TerminalChatRenderCoordinatorTests {
         await renderer.writeToolCallStarted(toolCall)
         let started = await renderer.snapshot()
         let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
-        clock.advance(by: .milliseconds(1_200))
 
-        // Advancing the injected clock alone cannot schedule a live compact-row
-        // redraw. Completion is the only subsequent rendering event.
-        #expect(await renderer.capturedWriteEvents().count == eventCountBeforeCompletion)
-
+        // The time is the one the result carries: no clock of the renderer
+        // schedules a live compact-row redraw, completion is the only
+        // subsequent rendering event.
         await renderer.writeToolCallCompleted(
             toolCall,
             result: DirectAgentToolResult(
                 output: "exit_code: 7\nstderr:\nboom",
-                summary: "command failed"
+                summary: "command failed",
+                elapsed: .milliseconds(1_200)
             )
         )
 
@@ -154,6 +151,47 @@ extension TerminalChatRenderCoordinatorTests {
             TerminalChat.displayWidth($0) <= terminalColumns - 1
         })
         #expect(started.activeToolRenderedRowCount == 2)
+    }
+
+    /// The time comes from the result alone (``DirectAgentToolResult/elapsed``):
+    /// a result without one (a call cancelled before its dispatch) completes
+    /// without a time, for a root call and for a delegated one.
+    @Test
+    func completionWithoutTheResultsElapsedTimeShowsNoTime() async {
+        let toolCall = exampleReadFileCall(id: "untimed-read")
+        let renderer = makeRenderer(standardErrorIsTerminal: true)
+        await renderer.writeToolCallStarted(toolCall)
+        let startEventCount = await renderer.capturedWriteEvents().count
+        await renderer.writeToolCallCompleted(
+            toolCall,
+            result: DirectAgentToolResult(output: "let value = 1", summary: "Read")
+        )
+        let completion = await renderer.capturedText(droppingFirst: startEventCount)
+        let untimedCompletion = TerminalChat.compactToolTerminalText(
+            TerminalChat.compactToolLines(for: toolCall, statusIcon: "✅", statusDetail: nil),
+            lineInset: "",
+            newline: true
+        )
+        #expect(completion.hasSuffix(untimedCompletion))
+
+        let started = DirectSubAgentToolEvent(
+            agentID: "agent-worker", agentName: "worker", toolCall: toolCall, lifecycle: .started
+        )
+        await renderer.recordSubAgentToolEvent(started)
+        await renderer.recordSubAgentToolEvent(
+            DirectSubAgentToolEvent(
+                agentID: "agent-worker", agentName: "worker", toolCall: toolCall,
+                lifecycle: .completed(DirectAgentToolResult(output: "let value = 1", summary: "Read"))
+            )
+        )
+        let presentation = await renderer.subAgentToolPresentationSnapshot()
+            .presentationsByAgentID["agent-worker"]
+        if case let .completed(_, detail, elapsed)? = presentation?.lifecycle {
+            #expect(detail == nil)
+            #expect(elapsed == nil)
+        } else {
+            Issue.record("The delegated tool did not complete")
+        }
     }
 
     @Test

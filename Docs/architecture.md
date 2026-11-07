@@ -316,8 +316,9 @@ a row of an activity message edited in place, its title
 (`ToolCallPresentation.toolTitle(for:)`) and then only its outcome, `⏳`, `✅`,
 or `❌` by the terminal's own criterion for ⚠️
 (`TerminalChat.toolResultIsFailure(for:result:)`), and its elapsed time
-(`TerminalChat.toolElapsedTimeText(_:)`, measured by the reporter from the
-row's creation; every running row keeps room for it in the message, and a
+(`TerminalChat.toolElapsedTimeText(_:)`, the time the tool executor measured
+and the result carries, `DirectAgentToolResult.elapsed`, none for a result
+without one; every running row keeps room for it in the message, and a
 time that would still take the message past its limit is left out), never its
 arguments or result, and none for the calls the terminal does not show
 (`TerminalChat.shouldSuppressToolRendering(for:)`); and the overviews the
@@ -842,19 +843,20 @@ presentation of the agent's own tool descriptors, which are asked for only
 in that case so a read never starts a feature's tool discovery. The system
 prompt, the dynamic context, and the memory block are not in that history.
 The only state behind the read is the elapsed time of the tool calls, which
-the history does not keep: the runtime measures each call of the agent from
-the start to the completion it receives, and keeps, only in memory in the
-agent's record, the durations of the agent's last 512 tool calls (the oldest
-are evicted first, and they survive the agent's turns and its end), exposed
-as `toolDurations` by tool call id. The backend records a tool result before
-it reports the completion, so a read can show a completed call whose
-duration only a later read has. Once the agent's backend is shut down (the
-agent was closed, cancelled, failed, or released from standby) the read
-returns `nil`: the runtime keeps no copy of the history, in the agent's record
-or anywhere else, and neither the history nor the durations reach saved
-sessions, session snapshots, checkpoint trees, or task checkpoints. A host
-that wants to show the conversation after the agent ends keeps its own last
-read.
+the history does not keep: the runtime records, when it handles a
+`.toolCallCompleted` of the agent, the time the tool executor measured for the
+call and its result carries (`DirectAgentToolResult.elapsed`), and keeps,
+only in memory in the agent's record, the durations of the agent's last 512
+tool calls (the oldest are evicted first, and they survive the agent's turns
+and its end), exposed as `toolDurations` by tool call id. Every backend
+records a tool result before it reports the completion, so a read between
+the two can show a completed call whose duration only a later read has. Once
+the agent's backend is shut down (the agent was closed, cancelled, failed, or
+released from standby) the read returns `nil`: the runtime keeps no copy of
+the history, in the agent's record or anywhere else, and neither the history
+nor the durations reach saved sessions, session snapshots, checkpoint trees,
+or task checkpoints. A host that wants to show the conversation after the
+agent ends keeps its own last read.
 
 Local operation evidence may also contain a complete compact unified patch and
 its counts instead of full old/new text. Compaction runs on the operation's

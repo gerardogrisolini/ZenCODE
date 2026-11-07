@@ -111,10 +111,11 @@ The transcript shows what the terminal shows:
 - The model's reasoning, as a `Thinking` block that is open while it streams
   and collapses to a one-line preview when it ends.
 - Tool calls, one line each with the tool, its target, and, for the calls
-  that ran while the window was watching, the duration, between a disclosure
-  chevron at the start, as in the `Thinking` block, and a status glyph at the
-  end. Click a line for the details the tool declares (parameters, code, diff,
-  list) and the bounded output of the result.
+  that ran in the window's session, the duration the Core measured (a call of
+  a saved session you load has none), between a disclosure chevron at the
+  start, as in the `Thinking` block, and a status glyph at the end. Click a
+  line for the details the tool declares (parameters, code, diff, list) and
+  the bounded output of the result.
 - The file-change summary at the end of a turn, with the patch of each file
   behind a disclosure, its lines numbered like the artifacts' diffs, and the
   `/undo` hint. The file artifacts of the turns show in the artifacts sidebar

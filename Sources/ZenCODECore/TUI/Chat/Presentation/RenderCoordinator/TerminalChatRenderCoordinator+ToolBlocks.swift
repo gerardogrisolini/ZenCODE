@@ -22,7 +22,6 @@ extension TerminalChatRenderCoordinator {
         }
         let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
         if isBottomOverlayTransitionActive {
-            toolState.startInstants[toolCall.id] = toolNow()
             bottomOverlayDeferredToolRenders.append(
                 DeferredToolRender(
                     toolCall: toolCall,
@@ -40,7 +39,6 @@ extension TerminalChatRenderCoordinator {
             maximumInPlaceRows: maximumInPlaceRows
         )
         prepareForToolOutput()
-        toolState.startInstants[toolCall.id] = toolNow()
         toolState.activeBlockIsSubAgentTool = isSubAgentTool
         renderToolBlock(
             toolCall,
@@ -58,8 +56,9 @@ extension TerminalChatRenderCoordinator {
             return
         }
         let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
-        let elapsed = toolState.startInstants.removeValue(forKey: toolCall.id)
-            .map { $0.duration(to: toolNow()) }
+        // The time the tool executor measured for the call; a result it did
+        // not produce (a call cancelled before its dispatch) has none.
+        let elapsed = result.elapsed
         let compactStatusDetail = TerminalChat.compactToolCompletionDetail(
             for: toolCall,
             result: result,
@@ -105,16 +104,12 @@ extension TerminalChatRenderCoordinator {
         guard !TerminalChat.shouldSuppressToolRendering(for: event.toolCall.name) else {
             return
         }
-        let executionID = "\u{1E}sub-agent\u{1F}\(event.agentID)\u{1F}\(event.toolCall.id)"
         let lifecycle: ToolBlockLifecycle
         switch event.lifecycle {
         case .started:
-            subAgentToolState.startInstants[executionID] = toolNow()
             lifecycle = .started
         case let .completed(result):
-            let elapsed = subAgentToolState.startInstants
-                .removeValue(forKey: executionID)
-                .map { $0.duration(to: toolNow()) }
+            let elapsed = result.elapsed
             lifecycle = .completed(
                 result: result,
                 compactStatusDetail: TerminalChat.compactToolCompletionDetail(
