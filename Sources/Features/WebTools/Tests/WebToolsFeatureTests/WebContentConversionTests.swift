@@ -923,7 +923,9 @@ extension WebContentConversionTests {
             }
             let conversion = try #require(result)
 
-            #expect(elapsed < .seconds(2), "parse + convert took \(elapsed)")
+            // Wall-clock bound with headroom for contended CI runners (~0.5 s idle in
+            // debug); quadratic behaviour on 1 MB would still exceed it by far.
+            #expect(elapsed < .seconds(10), "parse + convert took \(elapsed)")
             #expect(conversion.title == "Big")
             #expect(conversion.content.count > 100_000)
             #expect(conversion.links.count == 80)
