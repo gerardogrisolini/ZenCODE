@@ -448,6 +448,7 @@ struct ZenSubAgentsCardTests {
         activity: String? = nil,
         activityKind: DirectSubAgentRuntime.ActivityKind? = nil,
         toolName: String? = nil,
+        toolIsRunning: Bool = false,
         metrics: DirectAgentGenerationMetrics? = nil,
         output: String? = nil
     ) -> DirectSubAgentRuntime.AgentSnapshot {
@@ -465,6 +466,7 @@ struct ZenSubAgentsCardTests {
             currentActivity: activity,
             currentActivityKind: activityKind,
             currentToolName: toolName,
+            currentToolIsRunning: toolIsRunning,
             latestMetrics: metrics,
             latestOutput: output,
             latestError: nil,
@@ -599,27 +601,51 @@ struct ZenSubAgentsCardTests {
         #expect(message.phase == .message("Writing the file."))
         #expect(ZenSubAgentActivity(snapshot(activity: "No kind.")).phase == .message("No kind."))
 
-        let tool = ZenSubAgentActivity(snapshot(toolName: "local.exec"))
+        let tool = ZenSubAgentActivity(snapshot(toolName: "local.exec", toolIsRunning: true))
         #expect(tool.phase == .none)
         #expect(tool.toolName == "local.exec")
+        #expect(tool.toolIsRunning)
         #expect(!tool.showsThinkingPlaceholder)
+
+        // A tool that completed keeps its row (the overview shows the last
+        // call) but no longer runs: the agent writes its next message, so the
+        // placeholder is back.
+        let completed = ZenSubAgentActivity(snapshot(toolName: "local.exec", toolIsRunning: false))
+        #expect(completed.phase == .none)
+        #expect(completed.toolName == "local.exec")
+        #expect(!completed.toolIsRunning)
+        #expect(completed.showsThinkingPlaceholder)
+
+        // With the message text of the agent the overview shows the message
+        // row, not the placeholder, as before.
+        let writing = ZenSubAgentActivity(snapshot(
+            activity: "Writing the file.", activityKind: .content, toolName: "local.exec"
+        ))
+        #expect(writing.phase == .message("Writing the file."))
+        #expect(writing.toolName == "local.exec")
+        #expect(!writing.showsThinkingPlaceholder)
 
         // A pending agent with nothing to show holds the thinking placeholder.
         let idleWork = ZenSubAgentActivity(snapshot(status: .queued))
         #expect(idleWork.phase == .none)
         #expect(idleWork.toolName == nil)
+        #expect(!idleWork.toolIsRunning)
         #expect(idleWork.showsThinkingPlaceholder)
     }
 
-    @Test("a hidden tool is left out and does not stop the placeholder")
+    @Test("a hidden tool is left out and does not stop the placeholder, running or not")
     func hiddenToolIsExcluded() {
-        let hidden = ZenSubAgentActivity(snapshot(toolName: "agent.message"))
-        #expect(hidden.toolName == nil)
-        #expect(hidden.showsThinkingPlaceholder)
+        for isRunning in [true, false] {
+            let hidden = ZenSubAgentActivity(snapshot(toolName: "agent.message", toolIsRunning: isRunning))
+            #expect(hidden.toolName == nil)
+            #expect(!hidden.toolIsRunning)
+            #expect(hidden.showsThinkingPlaceholder)
+        }
 
-        let blank = ZenSubAgentActivity(snapshot(activity: "  \n ", toolName: "  "))
+        let blank = ZenSubAgentActivity(snapshot(activity: "  \n ", toolName: "  ", toolIsRunning: true))
         #expect(blank.phase == .none)
         #expect(blank.toolName == nil)
+        #expect(!blank.toolIsRunning)
         #expect(blank.showsThinkingPlaceholder)
 
         // A finished agent has no placeholder.
@@ -637,18 +663,34 @@ struct ZenSubAgentsCardTests {
         // The message phase shows the placeholder too, with its text or not.
         #expect(ZenSubAgentLiveActivity(snapshot(activity: "Writing.", activityKind: .content)) == .thinkingPlaceholder)
         #expect(ZenSubAgentLiveActivity(snapshot(activityKind: .content)) == .thinkingPlaceholder)
-        // Nothing else to show: queued, or a tool the transcript hides.
+        // Nothing else to show: queued, or a tool the transcript hides (it
+        // runs, but its row is not in the transcript).
         #expect(ZenSubAgentLiveActivity(snapshot(status: .queued)) == .thinkingPlaceholder)
+        #expect(ZenSubAgentLiveActivity(snapshot(toolName: "agent.message", toolIsRunning: true)) == .thinkingPlaceholder)
         #expect(ZenSubAgentLiveActivity(snapshot(toolName: "agent.message")) == .thinkingPlaceholder)
+        // A tool that completed leaves its name in the snapshot while the
+        // agent writes its next message (a model without reasoning): the
+        // placeholder shows, with the message text or not.
+        #expect(ZenSubAgentLiveActivity(snapshot(toolName: "local.exec", toolIsRunning: false)) == .thinkingPlaceholder)
+        #expect(ZenSubAgentLiveActivity(snapshot(
+            activity: "Writing.", activityKind: .content, toolName: "local.exec", toolIsRunning: false
+        )) == .thinkingPlaceholder)
+        // Reasoning after a completed tool shows the paragraph.
+        #expect(ZenSubAgentLiveActivity(snapshot(
+            activity: "Reading the output.", activityKind: .thinking, toolName: "local.exec", toolIsRunning: false
+        )) == .thought("Reading the output."))
         // A running tool has its row in the transcript: nothing, while
         // reasoning too.
-        #expect(ZenSubAgentLiveActivity(snapshot(toolName: "local.exec")) == .none)
+        #expect(ZenSubAgentLiveActivity(snapshot(toolName: "local.exec", toolIsRunning: true)) == .none)
         #expect(ZenSubAgentLiveActivity(snapshot(
-            activity: "Reading the output.", activityKind: .thinking, toolName: "local.exec"
+            activity: "Reading the output.", activityKind: .thinking, toolName: "local.exec", toolIsRunning: true
         )) == .none)
         // Not pending, or no snapshot: nothing.
         #expect(ZenSubAgentLiveActivity(snapshot(
             status: .idle, activity: "Old thought", activityKind: .thinking, output: "Done."
+        )) == .none)
+        #expect(ZenSubAgentLiveActivity(snapshot(
+            status: .idle, toolName: "local.exec", toolIsRunning: false, output: "Done."
         )) == .none)
         #expect(ZenSubAgentLiveActivity(snapshot(status: .failed)) == .none)
         #expect(ZenSubAgentLiveActivity(nil) == .none)

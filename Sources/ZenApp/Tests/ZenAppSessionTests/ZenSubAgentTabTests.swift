@@ -34,6 +34,7 @@ private func agent(
     status: DirectSubAgentRuntime.Status = .running,
     activity: String? = nil,
     toolName: String? = nil,
+    toolIsRunning: Bool = false,
     second: TimeInterval = 0,
     executionRevision: UInt64 = 0,
     error: String? = nil
@@ -47,6 +48,7 @@ private func agent(
         currentActivity: activity,
         currentActivityKind: activity == nil ? nil : .thinking,
         currentToolName: toolName,
+        currentToolIsRunning: toolIsRunning,
         latestEventAt: referenceDate.addingTimeInterval(second),
         latestOutput: nil,
         executionRevision: executionRevision,
@@ -525,6 +527,13 @@ struct ZenSubAgentTranscriptModelTests {
         await waitUntil("a new state reads the transcript") { feed.readCount == 4 }
         feed.yield([agent(status: .idle, toolName: "local.exec", second: 2)])
         await waitUntil("a new event reads the transcript") { feed.readCount == 5 }
+
+        // The end of its tool alone (same name, same event time) reads too:
+        // the result is in the transcript now.
+        feed.yield([agent(status: .idle, toolName: "local.exec", toolIsRunning: true, second: 2)])
+        await waitUntil("a tool that starts reads the transcript") { feed.readCount == 6 }
+        feed.yield([agent(status: .idle, toolName: "local.exec", toolIsRunning: false, second: 2)])
+        await waitUntil("a tool that ends reads the transcript") { feed.readCount == 7 }
         model.stop()
     }
 
@@ -645,6 +654,19 @@ struct ZenSubAgentTranscriptModelTests {
         await waitUntil("the snapshot changes") { model.snapshot?.latestError == "boom" }
         await settle()
         #expect(snapshotChanges.count == 1)
+
+        // The end of a tool is shown too, though its name stays: the live
+        // activity of the tab draws the placeholder again (the snapshot
+        // published is the one without a running tool).
+        feed.yield([agent(toolName: "local.exec", toolIsRunning: true, second: 4, error: "boom")])
+        await waitUntil("the running tool is shown") { model.snapshot?.currentToolIsRunning == true }
+        feed.yield([agent(toolName: "local.exec", toolIsRunning: false, second: 4, error: "boom")])
+        await waitUntil("the end of the tool is shown") {
+            model.snapshot?.currentToolName == "local.exec" && model.snapshot?.currentToolIsRunning == false
+        }
+        await settle()
+        #expect(snapshotChanges.count == 3)
+        #expect(model.snapshot?.currentToolIsRunning == false)
         model.stop()
     }
 

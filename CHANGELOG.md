@@ -58,10 +58,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   the consent it can ask for), not even after the feature bundles were
   reloaded: the calls of tools discovered at runtime are shown without their
   title and presentation until the feature is discovered again.
-- The `/subagent` detail shows the `🤔 thinking…` placeholder again while the
-  agent writes the message that follows a completed tool call; the snapshot
-  kept the name of the last call and the live activity took it for a running
-  one.
+- The `/subagent` detail and the macOS sub-agent tab show the `🤔 thinking…`
+  placeholder again while the agent writes the message that follows a
+  completed tool call; the snapshot kept the name of the last call and the
+  live activity took it for a running one.
 - A `q` typed right after `Enter` in the sub-agent list no longer closes the
   detail it just opened; a consent request that arrives while the detail is
   opening cancels the opening instead of drawing the detail over the consent

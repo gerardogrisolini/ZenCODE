@@ -97,10 +97,16 @@ struct ZenSubAgentActivity: Equatable {
     }
 
     let phase: Phase
-    /// The tool the agent runs, `nil` when there is none or it is hidden.
+    /// The latest tool call of the turn, `nil` when there is none or it is
+    /// hidden. It is the call that runs now (``toolIsRunning``) or the last one
+    /// completed: the overview row shows both.
     let toolName: String?
-    /// Whether the agent is pending with nothing else to show, so the row
-    /// holds the thinking placeholder.
+    /// Whether the call ``toolName`` names is still running. A hidden call
+    /// never counts, and a completed one does not: the agent writes its next
+    /// message while the last call's name and target stay in the snapshot.
+    let toolIsRunning: Bool
+    /// Whether the agent is pending with nothing else to show (no activity
+    /// text and no tool running), so the row holds the thinking placeholder.
     let showsThinkingPlaceholder: Bool
 
     init(_ snapshot: DirectSubAgentRuntime.AgentSnapshot) {
@@ -115,7 +121,8 @@ struct ZenSubAgentActivity: Equatable {
         }
         toolName = ZenTranscriptText.nonBlank(snapshot.currentToolName)
             .flatMap { ZenToolCallFormatting.isHidden(toolName: $0) ? nil : ZenTranscriptText.inline($0, limit: 120) }
-        showsThinkingPlaceholder = snapshot.pending && phase == .none && toolName == nil
+        toolIsRunning = toolName != nil && snapshot.currentToolIsRunning
+        showsThinkingPlaceholder = snapshot.pending && phase == .none && !toolIsRunning
     }
 }
 
@@ -394,6 +401,7 @@ private enum ZenSubAgentPreviewData {
                 configuredModelID: "claude-opus",
                 currentToolName: "local.exec",
                 currentToolTarget: "swift build --target ZenAppTranscript",
+                currentToolIsRunning: true,
                 latestMetrics: DirectAgentGenerationMetrics(
                     promptTokenCount: 1_250,
                     cachedPromptTokenCount: 48_000,

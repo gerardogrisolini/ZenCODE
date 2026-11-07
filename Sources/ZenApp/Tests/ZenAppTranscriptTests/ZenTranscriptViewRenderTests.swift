@@ -66,13 +66,24 @@ struct ZenTranscriptViewRenderTests {
         )
     }
 
+    /// A pending agent that writes its message after a tool completed: the
+    /// snapshot keeps the call's name, but no tool runs.
+    private static var writingAfterToolSubAgent: DirectSubAgentRuntime.AgentSnapshot {
+        DirectSubAgentRuntime.AgentSnapshot(
+            id: "a5", name: "writer", role: "Developer",
+            status: .running, pending: true,
+            currentToolName: "local.exec", currentToolTarget: "swift build", currentToolIsRunning: false,
+            latestOutput: nil, latestError: nil, createdAt: .now, updatedAt: .now
+        )
+    }
+
     private static var subAgentOverview: ChatSubAgentOverview {
         ChatSubAgentOverview(snapshots: [
             DirectSubAgentRuntime.AgentSnapshot(
                 id: "a1", taskID: "t1", taskAttemptOrdinal: 2, name: "dev", role: "Developer", profileName: "Developer",
                 status: .running, pending: true, configuredModelID: "model",
                 currentActivity: "Reading", currentActivityKind: .thinking,
-                currentToolName: "local.exec", currentToolTarget: "swift build",
+                currentToolName: "local.exec", currentToolTarget: "swift build", currentToolIsRunning: true,
                 latestMetrics: DirectAgentGenerationMetrics(promptTokenCount: 10, completionTokenCount: 5),
                 latestOutput: nil, latestError: "boom", createdAt: .now, updatedAt: .now
             ),
@@ -163,6 +174,8 @@ struct ZenTranscriptViewRenderTests {
             // Reasoning in progress, then the placeholder of a queued agent.
             AnyView(ZenSubAgentLiveActivityView(snapshot: Self.reasoningSubAgent)),
             AnyView(ZenSubAgentLiveActivityView(snapshot: Self.subAgentOverview.snapshots[1])),
+            AnyView(ZenSubAgentLiveActivityView(snapshot: Self.writingAfterToolSubAgent)),
+            AnyView(ZenSubAgentsCard(overview: ChatSubAgentOverview(snapshots: [Self.writingAfterToolSubAgent]))),
             AnyView(ZenWelcomeView(workspace: URL(fileURLWithPath: "/tmp"))),
             AnyView(ZenWelcomeView(
                 workspace: URL(fileURLWithPath: "/tmp"),
@@ -202,6 +215,11 @@ struct ZenTranscriptViewRenderTests {
         #expect(layOut(ZenSubAgentLiveActivityView(snapshot: nil), scheme: scheme).height == 0)
         // Reasoning while `local.exec` runs: the transcript has the call's row.
         #expect(layOut(ZenSubAgentLiveActivityView(snapshot: Self.subAgentOverview.snapshots[0]), scheme: scheme).height == 0)
+    }
+
+    @Test("the live activity of a sub-agent tab draws the placeholder once the last tool completed", arguments: [ColorScheme.light, .dark])
+    func liveActivityShowsThePlaceholderAfterATool(scheme: ColorScheme) {
+        #expect(layOut(ZenSubAgentLiveActivityView(snapshot: Self.writingAfterToolSubAgent), scheme: scheme).height > 0)
     }
 
     @Test("an artifact card splits its path into the file name and the folder before it")

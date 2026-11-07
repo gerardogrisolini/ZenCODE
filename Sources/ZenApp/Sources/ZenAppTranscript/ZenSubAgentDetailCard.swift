@@ -48,11 +48,13 @@ public enum ZenSubAgentLiveActivity: Equatable, Sendable {
     case none
 
     /// The live activity of `snapshot`: while it is pending and no tool
-    /// runs (a tool the transcript hides does not count), the reasoning
-    /// paragraph during the thinking phase, else the placeholder, the
-    /// message phase included; `.none` otherwise and without a snapshot.
+    /// runs (a tool the transcript hides does not count, and neither does
+    /// one that completed: the snapshot keeps its name until the next model
+    /// state), the reasoning paragraph during the thinking phase, else the
+    /// placeholder, the message phase included; `.none` otherwise and
+    /// without a snapshot.
     public init(_ snapshot: DirectSubAgentRuntime.AgentSnapshot?) {
-        guard let snapshot, snapshot.pending, ZenSubAgentActivity(snapshot).toolName == nil else {
+        guard let snapshot, snapshot.pending, !ZenSubAgentActivity(snapshot).toolIsRunning else {
             self = .none
             return
         }

@@ -368,6 +368,9 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
         let activity: String?
         let toolName: String?
         let toolTarget: String?
+        /// The end of the call flips it while its name and target stay: the
+        /// live activity shows the placeholder again.
+        let toolIsRunning: Bool
         let cachedPromptTokens: Int?
         let promptTokens: Int?
         let completionTokens: Int?
@@ -392,6 +395,7 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
             activity = snapshot.currentActivity
             toolName = snapshot.currentToolName
             toolTarget = snapshot.currentToolTarget
+            toolIsRunning = snapshot.currentToolIsRunning
             cachedPromptTokens = snapshot.latestMetrics?.cachedPromptTokenCount
             promptTokens = snapshot.latestMetrics?.promptTokenCount
             completionTokens = snapshot.latestMetrics?.completionTokenCount
@@ -403,11 +407,14 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
     }
 
     /// What decides that the transcript may have changed: the agent's
-    /// lifecycle, its completed execution, its tool, and its latest event.
+    /// lifecycle, its completed execution, its tool and whether it runs (the
+    /// end of the call adds its result to the transcript), and its latest
+    /// event.
     private struct ReloadKey: Equatable {
         let lifecycle: ZenSubAgentLifecycle
         let completedExecutionRevision: UInt64
         let toolName: String?
+        let toolIsRunning: Bool
         let latestEventAt: Date?
         let updatedAt: Date
 
@@ -415,6 +422,7 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
             lifecycle = ZenSubAgentLifecycle(snapshot)
             completedExecutionRevision = snapshot.completedExecutionRevision
             toolName = snapshot.currentToolName
+            toolIsRunning = snapshot.currentToolIsRunning
             latestEventAt = snapshot.latestEventAt
             updatedAt = snapshot.updatedAt
         }
