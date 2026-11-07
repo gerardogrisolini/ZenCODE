@@ -20,7 +20,6 @@ public enum DirectSubAgentBackendFactoryError: LocalizedError {
 }
 
 public actor DirectSubAgentRuntime {
-    public static let maximumAgentsPerCreate = 8
     /// Terminal agents are historical inspection records, not live runtime
     /// state. Keeping every closed/failed backend and report for the lifetime of
     /// a long session makes that history an unbounded cache.

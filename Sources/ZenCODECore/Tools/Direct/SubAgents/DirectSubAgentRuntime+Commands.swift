@@ -19,9 +19,6 @@ extension DirectSubAgentRuntime {
         guard !payloads.isEmpty else {
             throw DirectSubAgentRuntimeError.missingArgument("agents")
         }
-        guard payloads.count <= Self.maximumAgentsPerCreate else {
-            throw DirectSubAgentRuntimeError.agentLimitExceeded(Self.maximumAgentsPerCreate)
-        }
         if let taskOrchestrator,
            await taskOrchestrator.executionScope(for: rootSessionID) != nil {
             throw SessionTaskOrchestratorError.permissionDenied(

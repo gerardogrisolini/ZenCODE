@@ -21,7 +21,7 @@ extension DirectSubAgentRuntimeTests {
         let agents = try #require(properties["agents"] as? [String: Any])
         #expect(agents["type"] as? String == "array")
         #expect((agents["minItems"] as? NSNumber)?.intValue == 1)
-        #expect((agents["maxItems"] as? NSNumber)?.intValue == 8)
+        #expect(agents["maxItems"] == nil)
 
         let item = try #require(agents["items"] as? [String: Any])
         let itemProperties = try #require(item["properties"] as? [String: Any])
@@ -498,22 +498,25 @@ extension DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func createRejectsOversizedBatches() async throws {
+    func createAcceptsBatchesLargerThanEightAgents() async throws {
         let runtime = DirectSubAgentRuntime(
             contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
             profileResolver: builtInDirectSubAgentProfileResolver
         )
-        let oversized = (0...DirectSubAgentRuntime.maximumAgentsPerCreate).map { index in
-            JSONValue.object(["name": .string("report-\(index)")])
+        let batch = (0..<12).map { index in
+            JSONValue.object([
+                "name": .string("worker-\(index)"),
+                "profile": .string("Developer"),
+            ])
         }
 
-        await #expect(throws: DirectSubAgentRuntimeError.self) {
-            _ = try await runtime.createAgents(
-                arguments: ["agents": .array(oversized)],
-                workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
-                parentAllowedToolNames: nil
-            )
-        }
-        #expect(await runtime.snapshots().isEmpty)
+        _ = try await runtime.createAgents(
+            arguments: ["agents": .array(batch)],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil
+        )
+
+        #expect(await runtime.snapshots().count == 12)
+        await runtime.shutdown()
     }
 }

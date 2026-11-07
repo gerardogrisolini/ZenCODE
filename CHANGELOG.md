@@ -35,6 +35,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- `agent.create` no longer caps a single request at 8 sub-agents: the
+  `maxItems: 8` of its schema, the "1–8" of its description, the
+  `DirectSubAgentRuntime.maximumAgentsPerCreate` constant and the
+  `DirectSubAgentRuntimeError.agentLimitExceeded` case are removed. The bound
+  that remains is the 64 participants of a session's shared-chat room, the
+  coordinator included: a batch that would exceed it is rejected whole.
 - `ChatSessionController.presentSubAgentToolEvent(_:sessionID:history:)` is
   now `presentSubAgentToolEvent(_:)`: routing the event to the controller of
   the agent's root session is the host's job, and the controller no longer
