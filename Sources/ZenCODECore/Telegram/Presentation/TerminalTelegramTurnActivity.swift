@@ -16,7 +16,8 @@ import ToolCore
 /// sub-agent name or activity) and therefore untrusted: it is reduced to
 /// visible characters and sent as plain text, or styled by entity, never
 /// parsed as Markdown or HTML. No tool argument or result reaches it: a
-/// tool row is the call's title and, once the call ended, its outcome.
+/// tool row is the call's title and, once the call ended, its outcome and
+/// elapsed time.
 enum TerminalTelegramTurnActivity {
     /// The longest tool title an activity row shows, in characters.
     static let maximumToolTitleLength = 200
@@ -37,14 +38,20 @@ enum TerminalTelegramTurnActivity {
     // MARK: - Tool activity
 
     /// One row of an activity message: a neutral marker while the call runs,
-    /// then only its outcome.
-    static func toolRow(title: String, outcome: ToolOutcome?) -> String {
+    /// then only its outcome and, when known, its elapsed time after the
+    /// title, formatted as the terminal formats it
+    /// (``TerminalChat/toolElapsedTimeText(_:)``, e.g. `✅ Read file 1.25s`).
+    /// A running row never shows a time.
+    static func toolRow(title: String, outcome: ToolOutcome?, elapsed: Duration? = nil) -> String {
         let marker = switch outcome {
         case nil: "⏳"
         case .succeeded: "✅"
         case .failed: "❌"
         }
-        return "\(marker) \(title)"
+        guard outcome != nil, let elapsed else {
+            return "\(marker) \(title)"
+        }
+        return "\(marker) \(title) \(TerminalChat.toolElapsedTimeText(elapsed))"
     }
 
     /// The title of a tool call as an activity row shows it: one line, at

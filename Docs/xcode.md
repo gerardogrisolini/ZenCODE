@@ -84,7 +84,10 @@ ZenCODE emits standard ACP v1 `plan`, `tool_call`, `tool_call_update` and
 fallback. Creating a delegated agent is distinct from that agent's execution and
 from task validation. Failed/blocked/cancelled plan entries are explicitly labelled
 because ACP's plan status enum has no matching failure values. Taskless idle or
-standby alone is not evidence of successful execution.
+standby alone is not evidence of successful execution. The `title` of the
+`tool_call_update` that completes a tool call, a delegated agent's included, ends
+with the call's elapsed time as the terminal shows it (` · 1.25s`); the
+`tool_call` that creates it keeps the plain title.
 
 Diffs are **per operation**, not a reconstructed end-of-turn summary. When Xcode
 advertises the standard ACP filesystem capabilities, `local.readFile` /

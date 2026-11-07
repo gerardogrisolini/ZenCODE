@@ -21,6 +21,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - `ChatSubAgentTranscript.toolDurations` gives the elapsed time of the
   completed tool calls of a sub-agent, by tool call id, as the Core measures
   them in memory for the agent's last 512 calls. Nothing is saved.
+- `DirectSubAgentToolEvent.elapsed` carries the elapsed time of a completed
+  sub-agent tool call, the same duration the Core records in
+  `ChatSubAgentTranscript.toolDurations`. It is `nil` for a started call and
+  for a call without an id or without a recorded start.
 
 ### Changed
 
@@ -41,6 +45,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   Telegram now capture the baseline of the files a sub-agent changes, as the
   terminal does, so the turn's file changes know their content before the
   edit.
+- Tool calls show their elapsed time outside the terminal too, in the
+  terminal's format (`1.25s`, `420ms`). On Telegram, the activity rows of the
+  root tool calls end with it (`✅ Read file 1.25s`). In ACP clients (Xcode,
+  Zed, …), the title of the `tool_call_update` that completes a tool call
+  ends with it (`Read file · 1.25s`), for the sub-agents' calls too.
 
 ### Fixed
 

@@ -395,19 +395,25 @@ public struct DirectSubAgentToolEvent: Sendable {
     /// to the chat session that presents it; `nil` when the producer does
     /// not know it, and the agent is then looked up by ``agentID``.
     public let rootSessionID: String?
+    /// How long a completed call ran, as the sub-agent runtime measured it
+    /// from its start to its completion; `nil` for a started call, and for a
+    /// completed one without an id or without a recorded start.
+    public let elapsed: Duration?
 
     public init(
         agentID: String,
         agentName: String,
         toolCall: DirectAgentToolCall,
         lifecycle: Lifecycle,
-        rootSessionID: String? = nil
+        rootSessionID: String? = nil,
+        elapsed: Duration? = nil
     ) {
         self.agentID = agentID
         self.agentName = agentName
         self.toolCall = toolCall
         self.lifecycle = lifecycle
         self.rootSessionID = rootSessionID
+        self.elapsed = elapsed
     }
 }
 

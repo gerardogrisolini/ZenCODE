@@ -153,14 +153,19 @@ extension ZenCODEACPBridge {
         JSONValue.acpValue(from: toolCallProgressUpdate(for: toolCall, workingDirectory: workingDirectory))
     }
 
+    /// The `tool_call_update` that completes a call. With `elapsed`, its
+    /// `title` ends with the call's elapsed time
+    /// (``toolTitle(_:elapsed:)``); nothing else of the payload changes.
     public static func toolCallCompletionUpdate(
         for toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult,
-        workingDirectory: URL? = nil
+        workingDirectory: URL? = nil,
+        elapsed: Duration? = nil
     ) -> [String: Any] {
         var update = toolCallCommonFields(for: toolCall, workingDirectory: workingDirectory)
         update["sessionUpdate"] = "tool_call_update"
         update["status"] = result.isFailure ? "failed" : "completed"
+        update["title"] = toolTitle(toolTitle(for: toolCall), elapsed: elapsed)
         let artifacts = FileChangeArtifactMapper.artifacts(
             from: result.fileChanges,
             workingDirectory: workingDirectory
@@ -211,13 +216,23 @@ extension ZenCODEACPBridge {
     public static func toolCallCompletionJSONUpdate(
         for toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult,
-        workingDirectory: URL? = nil
+        workingDirectory: URL? = nil,
+        elapsed: Duration? = nil
     ) -> JSONValue {
         JSONValue.acpValue(from: toolCallCompletionUpdate(
             for: toolCall,
             result: result,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            elapsed: elapsed
         ))
+    }
+
+    /// `title` followed by ` · ` and `elapsed` as the terminal formats it
+    /// (``TerminalChat/toolElapsedTimeText(_:)``, e.g. `Read file · 1.25s`);
+    /// `title` itself without `elapsed`.
+    static func toolTitle(_ title: String, elapsed: Duration?) -> String {
+        guard let elapsed else { return title }
+        return "\(title) · \(TerminalChat.toolElapsedTimeText(elapsed))"
     }
 
     private static func toolCallCommonFields(

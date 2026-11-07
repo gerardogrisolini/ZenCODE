@@ -78,9 +78,9 @@ struct TelegramChannelTurnActivityTests {
                 .thought("I should read the manifest."),
                 .message("Reading the manifest."),
                 .create(id: 100, text: "⏳ \(readRow)"),
-                .edit(id: 100, text: "✅ \(readRow)"),
-                .edit(id: 100, text: "✅ \(readRow)\n⏳ \(execRow)"),
-                .edit(id: 100, text: "✅ \(readRow)\n❌ \(execRow)"),
+                .edit(id: 100, text: "✅ \(readRow) 0ms"),
+                .edit(id: 100, text: "✅ \(readRow) 0ms\n⏳ \(execRow)"),
+                .edit(id: 100, text: "✅ \(readRow) 0ms\n❌ \(execRow) 0ms"),
             ])
             for text in await log.editableTexts.values {
                 #expect(!text.contains("manifest contents"))
@@ -273,7 +273,7 @@ struct TelegramChannelTurnActivityTests {
             #expect(await log.effects == [
                 .message("Reading it."),
                 .create(id: 100, text: "⏳ \(Fixtures.rowTitle(read))"),
-                .edit(id: 100, text: "✅ \(Fixtures.rowTitle(read))"),
+                .edit(id: 100, text: "✅ \(Fixtures.rowTitle(read)) 0ms"),
                 .message("*ZenCODE completed*\n\nReading it."),
             ])
             await terminal.sessionHost.shutdown()
@@ -613,9 +613,13 @@ struct TelegramChannelTurnActivityTests {
             #expect(sends[6].text.contains("Done."))
 
             let finalTexts = Self.finalTexts(requests)
-            #expect(finalTexts[sends[2].messageID] == "✅ \(Fixtures.rowTitle(wait))")
+            #expect(Fixtures.isTimedRow(
+                finalTexts[sends[2].messageID], marker: "✅", title: Fixtures.rowTitle(wait)
+            ), "\(finalTexts[sends[2].messageID] ?? "nil")")
             #expect(finalTexts[sends[3].messageID]?.contains("[COMPLETED]") == true)
-            #expect(finalTexts[sends[5].messageID] == "❌ \(Fixtures.rowTitle(exec))")
+            #expect(Fixtures.isTimedRow(
+                finalTexts[sends[5].messageID], marker: "❌", title: Fixtures.rowTitle(exec)
+            ), "\(finalTexts[sends[5].messageID] ?? "nil")")
             let created = Set([sends[2].messageID, sends[3].messageID, sends[5].messageID])
             let edits = requests.enumerated().filter { $0.element.method == "editMessageText" }
             #expect(!edits.isEmpty)

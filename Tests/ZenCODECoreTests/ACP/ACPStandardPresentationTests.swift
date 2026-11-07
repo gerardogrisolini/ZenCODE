@@ -342,3 +342,102 @@ extension ACPStandardPresentationTests {
         #expect(update.objectValue?["hasLineCounts"] == nil)
     }
 }
+
+/// A clock that stands still until a test advances it.
+private final class ACPManualClock: Sendable {
+    private let instant = Mutex(ContinuousClock.now)
+
+    @Sendable func now() -> ContinuousClock.Instant {
+        instant.withLock { $0 }
+    }
+
+    func advance(by duration: Duration) {
+        instant.withLock { $0 += duration }
+    }
+}
+
+/// The `session/update` payloads a writer put on the wire, in order.
+private final class ACPSessionUpdateLog: Sendable {
+    private let messages = Mutex<[JSONValue]>([])
+
+    var writer: ACPWriter {
+        ACPWriter { data in
+            if let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
+                self.messages.withLock { $0.append(value) }
+            }
+        }
+    }
+
+    var updates: [JSONValue] {
+        messages.withLock { values in
+            values.compactMap { $0.objectValue?["params"]?.objectValue?["update"] }
+        }
+    }
+}
+
+extension ACPStandardPresentationTests {
+    /// A root call's completion title ends with the time elapsed since its
+    /// `tool_call`, which stays as it was; a completion without a recorded
+    /// start (cancelled before dispatch, or already completed) has no time.
+    @Test func rootToolCallCompletionTitleEndsWithTheTimeSinceItsToolCall() async {
+        let log = ACPSessionUpdateLog()
+        let clock = ACPManualClock()
+        let workspace = URL(fileURLWithPath: "/tmp/acp-workspace")
+        let presenter = ACPPromptPresenter(
+            sessionID: "session",
+            workspaceURL: workspace,
+            writer: log.writer,
+            updatePipeline: nil,
+            ensureTasklessObserver: {},
+            claimDelegatedToolNotification: { _ in true },
+            toolCallTimer: ACPToolCallTimer(now: clock.now)
+        )
+        let exec = DirectAgentToolCall(
+            id: "call-1", name: "local.exec",
+            argumentsObject: ["command": "swift test"], argumentsJSON: #"{"command":"swift test"}"#
+        )
+        let cancelled = DirectAgentToolCall(
+            id: "call-2", name: "local.exec",
+            argumentsObject: ["command": "swift build"], argumentsJSON: #"{"command":"swift build"}"#
+        )
+        let result = DirectAgentToolResult(output: "Build complete.", summary: "Build complete.")
+
+        await presenter.presentToolCallStarted(exec)
+        clock.advance(by: .milliseconds(1_250))
+        await presenter.presentToolCallCompleted(exec, result: result)
+        await presenter.presentToolCallCompleted(cancelled, result: result)
+        await presenter.presentToolCallCompleted(exec, result: result)
+
+        let updates = log.updates
+        #expect(updates.count == 4)
+        guard updates.count == 4 else { return }
+        #expect(updates[0] == ZenCODEACPBridge.toolCallCreateJSONUpdate(for: exec, workingDirectory: workspace))
+        #expect(updates[1] == ZenCODEACPBridge.toolCallCompletionJSONUpdate(
+            for: exec, result: result, workingDirectory: workspace, elapsed: .milliseconds(1_250)
+        ))
+        #expect(updates[1].objectValue?["title"] == .string("local.exec swift test · 1.25s"))
+        #expect(updates[2] == ZenCODEACPBridge.toolCallCompletionJSONUpdate(
+            for: cancelled, result: result, workingDirectory: workspace
+        ))
+        #expect(updates[3] == ZenCODEACPBridge.toolCallCompletionJSONUpdate(
+            for: exec, result: result, workingDirectory: workspace
+        ))
+    }
+
+    /// The timer of one prompt measures each call from its start; an empty
+    /// id is never timed.
+    @Test func theToolCallTimerMeasuresEachCallFromItsStart() {
+        let clock = ACPManualClock()
+        let timer = ACPToolCallTimer(now: clock.now)
+        timer.start("a")
+        clock.advance(by: .milliseconds(100))
+        timer.start("b")
+        timer.start("")
+        clock.advance(by: .milliseconds(320))
+        #expect(timer.complete("b") == .milliseconds(320))
+        #expect(timer.complete("a") == .milliseconds(420))
+        #expect(timer.complete("a") == nil)
+        #expect(timer.complete("") == nil)
+        #expect(timer.complete("unknown") == nil)
+    }
+}

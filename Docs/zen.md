@@ -821,7 +821,8 @@ with a tap (cut at 3,900 characters), after the response
 written before it; each response the agent wrote before a reasoning block or a
 tool call, as a message of its own; the agent's tool calls, as lines of one
 activity message edited in place, `⏳ <tool and target>`, which becomes `✅`, or
-`❌` where the terminal shows ⚠️; the
+`❌` where the terminal shows ⚠️, followed by the call's elapsed time as the
+terminal shows it (`✅ <tool and target> 1.25s`); the
 task-graph card, edited in place and removed when the turn ends; and, while
 sub-agents work, a `🤖 Sub-agent` message with their summary and one line per
 agent, edited in place, followed by their partial (💬) and completed (✅)

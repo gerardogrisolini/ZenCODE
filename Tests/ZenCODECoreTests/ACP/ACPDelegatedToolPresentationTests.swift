@@ -6,7 +6,8 @@
 //  host routes them to the session's controller and the prompt's presenter
 //  renders them: a `tool_call` when one starts and a `tool_call_update` when
 //  it completes, identified by agent and call and titled with the agent's
-//  name, once per call and phase in a prompt, in the order they happened,
+//  name (a completion's title ending with the time the runtime measured),
+//  once per call and phase in a prompt, in the order they happened,
 //  never for another session's agent and never outside a prompt.
 //
 
@@ -105,10 +106,12 @@ struct ACPDelegatedToolPresentationTests {
     }
 
     /// The payload the delegated `event` must produce: the coordinator's
-    /// canonical tool update with the agent's id and name.
+    /// canonical tool update with the agent's id and name, a completion's
+    /// title ending with the time the runtime measured, when known.
     private static func expectedUpdate(_ event: DirectSubAgentToolEvent, cwd: String) -> JSONValue {
         let workingDirectory = URL(fileURLWithPath: cwd)
         var update: [String: Any]
+        var title = "\(event.agentName) — \(ZenCODEACPBridge.toolTitle(for: event.toolCall))"
         switch event.lifecycle {
         case .started:
             update = ZenCODEACPBridge.toolCallCreateUpdate(for: event.toolCall, workingDirectory: workingDirectory)
@@ -116,9 +119,12 @@ struct ACPDelegatedToolPresentationTests {
             update = ZenCODEACPBridge.toolCallCompletionUpdate(
                 for: event.toolCall, result: result, workingDirectory: workingDirectory
             )
+            if let elapsed = event.elapsed {
+                title += " · " + TerminalChat.toolElapsedTimeText(elapsed)
+            }
         }
         update["toolCallId"] = "acp:tool:\(event.agentID):\(event.toolCall.id)"
-        update["title"] = "\(event.agentName) — \(ZenCODEACPBridge.toolTitle(for: event.toolCall))"
+        update["title"] = title
         return JSONValue.acpValue(from: update)
     }
 
@@ -156,7 +162,8 @@ struct ACPDelegatedToolPresentationTests {
                 output: "Updated", summary: "Updated",
                 fileChanges: [OperationFileChange(path: "Delegated.swift", oldText: nil, newText: "let value = 2\n")]
             )),
-            rootSessionID: sessionID
+            rootSessionID: sessionID,
+            elapsed: .milliseconds(1_250)
         )
         let foreign = DirectSubAgentToolEvent(
             agentID: "worker-2", agentName: "Other", toolCall: write,
@@ -180,6 +187,8 @@ struct ACPDelegatedToolPresentationTests {
         #expect(firstPrompt.first?.objectValue?["sessionUpdate"] == .string("tool_call"))
         #expect(firstPrompt.last?.objectValue?["sessionUpdate"] == .string("tool_call_update"))
         #expect(firstPrompt.first?.objectValue?["title"]?.acpStringValue?.hasPrefix("Worker — ") == true)
+        #expect(firstPrompt.first?.objectValue?["title"]?.acpStringValue?.contains(" · ") == false)
+        #expect(firstPrompt.last?.objectValue?["title"]?.acpStringValue?.hasSuffix(" · 1.25s") == true)
         // The delegated calls precede the root text streamed after them.
         let all = Self.updates(output)
         let completedIndex = try #require(all.firstIndex(of: Self.expectedUpdate(completed, cwd: cwd)))
@@ -203,5 +212,56 @@ struct ACPDelegatedToolPresentationTests {
         #expect(afterSecond.count == 3)
         #expect(afterSecond.last == Self.expectedUpdate(started, cwd: cwd))
         await bridge.shutdown()
+    }
+
+    /// A delegated completion's title ends with the time the sub-agent
+    /// runtime measured (``DirectSubAgentToolEvent/elapsed``); without one,
+    /// and for a start, the title is the agent's name and the tool's title.
+    @Test func aDelegatedCompletionTitleEndsWithTheRuntimeMeasuredTime() async {
+        let output = WireLog()
+        let workspace = URL(fileURLWithPath: "/tmp/acp-delegated-workspace")
+        let presenter = ACPPromptPresenter(
+            sessionID: "session",
+            workspaceURL: workspace,
+            writer: ACPWriter { data in
+                if let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
+                    output.messages.withLock { $0.append(value) }
+                }
+            },
+            updatePipeline: nil,
+            ensureTasklessObserver: {},
+            claimDelegatedToolNotification: { _ in true }
+        )
+        let read = DirectAgentToolCall(
+            id: "call-1", name: "local.readFile",
+            argumentsObject: ["path": "Package.swift"], argumentsJSON: #"{"path":"Package.swift"}"#
+        )
+        let untimed = DirectAgentToolCall(
+            id: "call-2", name: "local.readFile",
+            argumentsObject: ["path": "README.md"], argumentsJSON: #"{"path":"README.md"}"#
+        )
+        let result = DirectAgentToolResult(output: "contents", summary: "Read")
+        let events = [
+            DirectSubAgentToolEvent(agentID: "worker-1", agentName: "Worker", toolCall: read, lifecycle: .started),
+            DirectSubAgentToolEvent(
+                agentID: "worker-1", agentName: "Worker", toolCall: read,
+                lifecycle: .completed(result), elapsed: .milliseconds(420)
+            ),
+            DirectSubAgentToolEvent(
+                agentID: "worker-1", agentName: "Worker", toolCall: untimed, lifecycle: .completed(result)
+            ),
+        ]
+        for event in events {
+            await presenter.presentSubAgentToolEvent(event)
+        }
+
+        let titles = Self.delegatedUpdates(output).map { $0.objectValue?["title"]?.acpStringValue }
+        let readTitle = ZenCODEACPBridge.toolTitle(for: read)
+        #expect(titles == [
+            "Worker — \(readTitle)",
+            "Worker — \(readTitle) · 420ms",
+            "Worker — \(ZenCODEACPBridge.toolTitle(for: untimed))",
+        ])
+        #expect(Self.delegatedUpdates(output) == events.map { Self.expectedUpdate($0, cwd: workspace.path) })
     }
 }

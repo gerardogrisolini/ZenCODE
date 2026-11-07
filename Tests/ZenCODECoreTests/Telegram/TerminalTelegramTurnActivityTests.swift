@@ -3,10 +3,11 @@
 //  ZenCODE
 //
 //  What a turn reporter sends besides its text messages: the tool activity
-//  (rows edited in place with their outcome, the message closed only by a
-//  new message or by a creation whose outcome is unknown, an outcome written
-//  where the call started, bursts coalesced, a full message continued in a
-//  new one), the thinking messages
+//  (rows edited in place with their outcome and elapsed time, room kept for
+//  the times so a message never exceeds the limit, the message closed only by
+//  a new message or by a creation whose outcome is unknown, an outcome
+//  written where the call started, bursts coalesced, a full message continued
+//  in a new one), the thinking messages
 //  (a plain text in an expandable blockquote with the reasoning in italic
 //  by entity, cut to the message limit, always one `sendMessage` and never
 //  retried), the
@@ -27,18 +28,23 @@ struct TerminalTelegramTurnActivityTests {
     // MARK: - Tool activity
 
     /// A call is a row with a neutral marker, edited in place with ✅ or ❌
-    /// once it ended; a second outcome or an unknown call changes nothing.
+    /// and the time elapsed since the row appeared once it ended; a running
+    /// row shows no time; a second outcome or an unknown call changes nothing.
     @Test
     func aToolCallIsARowEditedInPlaceWithItsOutcome() async {
         let log = TelegramTurnActivityWireLog()
-        let reporter = log.makeReporter()
+        let clock = TelegramTurnActivityClock()
+        let reporter = log.makeReporter(clock: clock)
 
         await reporter.toolCallDidStart(id: "1", title: "Read Package.swift")
         await reporter.flush()
+        clock.advance(by: .milliseconds(420))
         await reporter.toolCallDidStart(id: "2", title: "Run swift build")
         await reporter.flush()
+        clock.advance(by: .milliseconds(830))
         await reporter.toolCallDidComplete(id: "1", failed: false)
         await reporter.flush()
+        clock.advance(by: .milliseconds(500))
         await reporter.toolCallDidComplete(id: "2", failed: true)
         await reporter.flush()
         await reporter.toolCallDidComplete(id: "1", failed: true)
@@ -48,8 +54,8 @@ struct TerminalTelegramTurnActivityTests {
         #expect(await log.effects == [
             .create(id: 100, text: "⏳ Read Package.swift"),
             .edit(id: 100, text: "⏳ Read Package.swift\n⏳ Run swift build"),
-            .edit(id: 100, text: "✅ Read Package.swift\n⏳ Run swift build"),
-            .edit(id: 100, text: "✅ Read Package.swift\n❌ Run swift build"),
+            .edit(id: 100, text: "✅ Read Package.swift 1.25s\n⏳ Run swift build"),
+            .edit(id: 100, text: "✅ Read Package.swift 1.25s\n❌ Run swift build 1.33s"),
         ])
         // The activity message stays in the chat: retiring deletes nothing.
         await reporter.retire()
@@ -139,8 +145,8 @@ struct TerminalTelegramTurnActivityTests {
             .create(id: 100, text: "⏳ A"),
             .message("Between"),
             .create(id: 101, text: "⏳ B"),
-            .edit(id: 100, text: "✅ A"),
-            .edit(id: 101, text: "❌ B"),
+            .edit(id: 100, text: "✅ A 0ms"),
+            .edit(id: 101, text: "❌ B 0ms"),
         ])
         await reporter.retire()
     }
@@ -163,7 +169,7 @@ struct TerminalTelegramTurnActivityTests {
         await log.releaseCreates()
         await reporter.flush()
 
-        let rows = (0 ..< 20).map { "✅ Call \($0)" }.joined(separator: "\n")
+        let rows = (0 ..< 20).map { "✅ Call \($0) 0ms" }.joined(separator: "\n")
         #expect(await log.effects == [
             .create(id: 100, text: "⏳ Call 0"),
             .edit(id: 100, text: rows),
@@ -171,12 +177,14 @@ struct TerminalTelegramTurnActivityTests {
         await reporter.retire()
     }
 
-    /// A row that would take the message past 3 900 UTF-16 units opens a new
-    /// message; each one stays within the limit.
+    /// A row that would take the message past 3 900 UTF-16 units, the room
+    /// kept for the time of every running row included, opens a new message;
+    /// each one stays within the limit once every call ended with its time.
     @Test
     func aRowThatDoesNotFitOpensANewMessage() async {
         let log = TelegramTurnActivityWireLog()
-        let reporter = log.makeReporter()
+        let clock = TelegramTurnActivityClock()
+        let reporter = log.makeReporter(clock: clock)
         let title = String(repeating: "x", count: 200)
 
         for index in 0 ..< 25 {
@@ -184,13 +192,89 @@ struct TerminalTelegramTurnActivityTests {
         }
         await reporter.flush()
 
-        let texts = await log.editableTexts
+        var texts = await log.editableTexts
         #expect(texts.keys.sorted() == [100, 101])
-        #expect(texts[100]?.split(separator: "\n").count == 19)
-        #expect(texts[101]?.split(separator: "\n").count == 6)
+        #expect(texts[100]?.split(separator: "\n").count == 18)
+        #expect(texts[101]?.split(separator: "\n").count == 7)
         for text in texts.values {
             #expect(text.utf16.count <= TerminalTelegramTurnProgressReporter.maximumMessageLength)
         }
+
+        clock.advance(by: .seconds(1_234_567) + .milliseconds(890))
+        for index in 0 ..< 25 {
+            await reporter.toolCallDidComplete(id: "\(index)", failed: false)
+        }
+        await reporter.flush()
+        texts = await log.editableTexts
+        for text in texts.values {
+            #expect(text.utf16.count <= TerminalTelegramTurnProgressReporter.maximumMessageLength)
+            #expect(text.split(separator: "\n").allSatisfy { $0 == "✅ \(title) 1234567.89s" })
+        }
+        await reporter.retire()
+    }
+
+    /// Eighteen rows of 200 characters and one of 16 fill a message to the
+    /// limit with the room kept for their 19 times: the next row opens a new
+    /// message, and 19 times of 11 units fill the room exactly.
+    @Test
+    func theRoomKeptForTheTimesOfTheRunningRowsFitsTheirTimes() async {
+        let log = TelegramTurnActivityWireLog()
+        let clock = TelegramTurnActivityClock()
+        let reporter = log.makeReporter(clock: clock)
+        let titles = Array(repeating: String(repeating: "x", count: 200), count: 18)
+            + [String(repeating: "y", count: 16)]
+
+        for (index, title) in titles.enumerated() {
+            await reporter.toolCallDidStart(id: "\(index)", title: title)
+        }
+        await reporter.toolCallDidStart(id: "next", title: "z")
+        await reporter.flush()
+        var texts = await log.editableTexts
+        #expect(texts.keys.sorted() == [100, 101])
+        #expect(texts[100]?.utf16.count == TerminalTelegramTurnProgressReporter.maximumMessageLength
+            - titles.count * TerminalTelegramTurnProgressReporter.elapsedTimeReserve)
+        #expect(texts[101] == "⏳ z")
+
+        // "1234567.89s" is 11 units: with its space, the whole reserve.
+        clock.advance(by: .seconds(1_234_567) + .milliseconds(890))
+        for index in titles.indices {
+            await reporter.toolCallDidComplete(id: "\(index)", failed: index.isMultiple(of: 2))
+        }
+        await reporter.flush()
+        texts = await log.editableTexts
+        #expect(texts[100]?.utf16.count == TerminalTelegramTurnProgressReporter.maximumMessageLength)
+        #expect(texts[100]?.split(separator: "\n").allSatisfy { $0.hasSuffix(" 1234567.89s") } == true)
+        await reporter.retire()
+    }
+
+    /// A completion whose time would take a full message past the limit,
+    /// because the time is longer than the room kept for it, is written
+    /// without its time: the message never exceeds 3 900 UTF-16 units.
+    @Test
+    func aCompletionWhoseTimeWouldOverflowTheMessageIsWrittenWithoutIt() async throws {
+        let log = TelegramTurnActivityWireLog()
+        let clock = TelegramTurnActivityClock()
+        let reporter = log.makeReporter(clock: clock)
+        let titles = Array(repeating: String(repeating: "x", count: 200), count: 18)
+            + [String(repeating: "y", count: 16)]
+        for (index, title) in titles.enumerated() {
+            await reporter.toolCallDidStart(id: "\(index)", title: title)
+        }
+
+        // " 1000000000.00s" is 15 units, 3 more than the reserve: the room
+        // left (19 × 12 = 228 units) holds 15 of them.
+        clock.advance(by: .seconds(1_000_000_000))
+        for index in titles.indices {
+            await reporter.toolCallDidComplete(id: "\(index)", failed: false)
+        }
+        await reporter.flush()
+
+        let text = try #require(await log.editableTexts[100])
+        let rows = text.split(separator: "\n").map(String.init)
+        #expect(rows.count == titles.count)
+        #expect(text.utf16.count <= TerminalTelegramTurnProgressReporter.maximumMessageLength)
+        #expect(rows.prefix(15).allSatisfy { $0.hasSuffix(" 1000000000.00s") })
+        #expect(Array(rows.dropFirst(15)) == titles.dropFirst(15).map { "✅ \($0)" })
         await reporter.retire()
     }
 
@@ -217,8 +301,8 @@ struct TerminalTelegramTurnActivityTests {
         #expect(await log.effects == [
             .createFailed(text: "⏳ A"),
             .create(id: 100, text: "⏳ B"),
-            .edit(id: 100, text: "❌ B"),
-            .edit(id: 100, text: "❌ B\n⏳ C"),
+            .edit(id: 100, text: "❌ B 0ms"),
+            .edit(id: 100, text: "❌ B 0ms\n⏳ C"),
         ])
         await reporter.retire()
     }
@@ -360,6 +444,23 @@ struct TerminalTelegramTurnActivityTests {
         #expect(TerminalTelegramTurnActivity.toolRow(title: "A", outcome: nil) == "⏳ A")
         #expect(TerminalTelegramTurnActivity.toolRow(title: "A", outcome: .succeeded) == "✅ A")
         #expect(TerminalTelegramTurnActivity.toolRow(title: "A", outcome: .failed) == "❌ A")
+    }
+
+    /// An ended row ends with its elapsed time as the terminal formats it; a
+    /// running row never shows one.
+    @Test
+    func anEndedRowEndsWithItsElapsedTime() {
+        typealias Activity = TerminalTelegramTurnActivity
+        #expect(Activity.toolRow(title: "Read file", outcome: .succeeded, elapsed: .milliseconds(1_250))
+            == "✅ Read file 1.25s")
+        #expect(Activity.toolRow(title: "Run tests", outcome: .failed, elapsed: .milliseconds(420))
+            == "❌ Run tests 420ms")
+        #expect(Activity.toolRow(title: "Tiny", outcome: .succeeded, elapsed: .nanoseconds(1))
+            == "✅ Tiny <0.01ms")
+        #expect(Activity.toolRow(title: "Running", outcome: nil, elapsed: .seconds(3)) == "⏳ Running")
+        #expect(Activity.toolRow(title: "Untimed", outcome: .succeeded, elapsed: nil) == "✅ Untimed")
+        #expect(Activity.toolRow(title: "A", outcome: .succeeded, elapsed: .seconds(90))
+            == "✅ A " + TerminalChat.toolElapsedTimeText(.seconds(90)))
     }
 
     /// A long reasoning block is cut to 3 900 characters with an ellipsis; a

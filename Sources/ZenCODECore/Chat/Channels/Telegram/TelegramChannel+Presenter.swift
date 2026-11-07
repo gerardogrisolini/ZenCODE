@@ -19,10 +19,11 @@ import ToolCore
 /// the tool call that follows it, or before a reasoning block that the next
 /// content closes, so the chat receives them in the order they were
 /// written; each root tool call becomes a row of the turn's activity
-/// message, with its title and then its outcome; the task-graph and
-/// sub-agent overviews the controller publishes go through the reporter's
-/// ordered queue; the ending of the turn (``presentTurnEnding(_:)``) retires
-/// the reporter with the outcome and the file-change summary.
+/// message, with its title and then its outcome and elapsed time; the
+/// task-graph and sub-agent overviews the controller publishes go through
+/// the reporter's ordered queue; the ending of the turn
+/// (``presentTurnEnding(_:)``) retires the reporter with the outcome and the
+/// file-change summary.
 ///
 /// Like the terminal, it asks the controller for the sub-agent overview when
 /// an `agent.*` call starts and when it settles, runs the controller's

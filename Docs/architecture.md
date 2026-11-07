@@ -315,8 +315,11 @@ content reach the chat in the order they were written; each root tool call as
 a row of an activity message edited in place, its title
 (`ToolCallPresentation.toolTitle(for:)`) and then only its outcome, `⏳`, `✅`,
 or `❌` by the terminal's own criterion for ⚠️
-(`TerminalChat.toolResultIsFailure(for:result:)`), never its arguments or
-result, and none for the calls the terminal does not show
+(`TerminalChat.toolResultIsFailure(for:result:)`), and its elapsed time
+(`TerminalChat.toolElapsedTimeText(_:)`, measured by the reporter from the
+row's creation; every running row keeps room for it in the message, and a
+time that would still take the message past its limit is left out), never its
+arguments or result, and none for the calls the terminal does not show
 (`TerminalChat.shouldSuppressToolRendering(for:)`); and the overviews the
 controller publishes: a task graph once per signature within a turn (the
 progress card, edited in place and deleted when the reporter retires), and the

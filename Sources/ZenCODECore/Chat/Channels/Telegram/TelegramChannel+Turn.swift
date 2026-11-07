@@ -631,8 +631,8 @@ extension TelegramChannel {
 
     /// Writes the outcome of a root tool call in its activity row: ✅, or ❌
     /// when it failed as the terminal judges it
-    /// (``TerminalChat/toolResultIsFailure(for:result:)``). Its result is
-    /// never sent.
+    /// (``TerminalChat/toolResultIsFailure(for:result:)``), with the time the
+    /// reporter measured since the row appeared. Its result is never sent.
     func presentToolCallActivityCompleted(
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult

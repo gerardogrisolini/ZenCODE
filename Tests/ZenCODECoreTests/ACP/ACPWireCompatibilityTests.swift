@@ -834,6 +834,43 @@ extension ACPCompatibilityTests {
         }
     }
 
+    /// With an elapsed time the completion's `title` ends with ` · ` and the
+    /// time as the terminal formats it; nothing else of the payload changes,
+    /// and without one the payload is the untimed completion.
+    @Test
+    func toolCallCompletionWithAnElapsedTimeChangesOnlyItsTitle() throws {
+        let toolCall = presentedToolCall(
+            id: "call_timed",
+            name: "local.exec",
+            argumentsObject: ["command": "swift test", "workingDirectory": "Sources"],
+            argumentsJSON: #"{"command":"swift test","workingDirectory":"Sources"}"#
+        )
+        let workspace = URL(fileURLWithPath: "/tmp/acp-workspace")
+        let result = DirectAgentToolResult(
+            output: "Build complete.", summary: "Build complete.",
+            fileChanges: [.init(path: "/tmp/acp-workspace/Sources/A.swift", oldText: "a", newText: "b")]
+        )
+        let untimed = ZenCODEACPBridge.toolCallCompletionJSONUpdate(
+            for: toolCall, result: result, workingDirectory: workspace
+        )
+        let timed = ZenCODEACPBridge.toolCallCompletionJSONUpdate(
+            for: toolCall, result: result, workingDirectory: workspace, elapsed: .milliseconds(1_250)
+        )
+        #expect(timed.objectValue?["title"] == .string("local.exec swift test · 1.25s"))
+        var expected = try #require(untimed.objectValue)
+        expected["title"] = .string("local.exec swift test · 1.25s")
+        #expect(timed == .object(expected))
+        #expect(ZenCODEACPBridge.toolCallCompletionJSONUpdate(
+            for: toolCall, result: result, workingDirectory: workspace, elapsed: nil
+        ) == untimed)
+        let dictionary = ZenCODEACPBridge.toolCallCompletionUpdate(
+            for: toolCall, result: result, workingDirectory: workspace, elapsed: .milliseconds(420)
+        )
+        #expect(dictionary["title"] as? String == "local.exec swift test · 420ms")
+        #expect(ZenCODEACPBridge.toolTitle("Worker — Read", elapsed: .nanoseconds(1)) == "Worker — Read · <0.01ms")
+        #expect(ZenCODEACPBridge.toolTitle("Worker — Read", elapsed: nil) == "Worker — Read")
+    }
+
     @Test
     func completionLocationsIncludeEveryRecordedChangedFile() {
         let toolCall = presentedToolCall(

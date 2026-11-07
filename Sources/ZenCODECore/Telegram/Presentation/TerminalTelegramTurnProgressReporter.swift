@@ -14,7 +14,8 @@ import ToolCore
 ///
 /// The surface stays closed: streaming deltas never reach the remote chat,
 /// reasoning reaches it only as a completed block (``thought(_:)``), and of a
-/// tool call only its title and outcome do, never its arguments or result.
+/// tool call only its title, outcome, and elapsed time do, never its
+/// arguments or result.
 enum TerminalTelegramTurnPayload: Sendable {
     case agentResponse(String)
     case subAgentResponse(String)
@@ -71,12 +72,14 @@ struct TerminalTelegramTurnActivityWire: Sendable {
 /// it. A reasoning block arrives already complete (``TerminalTelegramTurnPayload/thought(_:)``).
 ///
 /// Tool calls are shown in activity messages edited in place, one row per
-/// call: its title, then only its outcome (``toolCallDidStart(id:title:)``,
-/// ``toolCallDidComplete(id:failed:)``). An activity message is closed by
-/// every queued payload that creates a new message in the chat (a response,
-/// a reasoning block, the first task-graph card, the creation of the
-/// sub-agent status, a delegated response, an authorization, the outcome, the
-/// summary): the next call opens a new one below it. Editing a message in
+/// call: its title, then only its outcome and elapsed time
+/// (``toolCallDidStart(id:title:)``, ``toolCallDidComplete(id:failed:)``).
+/// The time is measured by the reporter from the row's creation to the
+/// call's completion. An activity message is closed by every queued payload
+/// that creates a new message in the chat (a response, a reasoning block,
+/// the first task-graph card, the creation of the sub-agent status, a
+/// delegated response, an authorization, the outcome, the summary): the next
+/// call opens a new one below it. Editing a message in
 /// place (a later task-graph card, a later sub-agent status) closes nothing.
 /// A call's outcome is written in the row of the message it started in, even
 /// when that message is closed. An activity message whose creation had an
@@ -95,6 +98,12 @@ struct TerminalTelegramTurnActivityWire: Sendable {
 actor TerminalTelegramTurnProgressReporter {
     /// Telegram rejects messages beyond ~4096 characters; stay below it.
     static let maximumMessageLength = 3_900
+    /// The room, in UTF-16 code units, an activity message keeps for the
+    /// elapsed time of every row still running: a space and the time
+    /// (``TerminalChat/toolElapsedTimeText(_:)`` is at most 11 units below
+    /// about three years). A completion whose time would still not fit is
+    /// written without it, so the message limit is never exceeded.
+    static let elapsedTimeReserve = 12
 
     /// One queued wire effect.
     private enum QueuedItem {
@@ -128,12 +137,15 @@ actor TerminalTelegramTurnProgressReporter {
     private struct ActivityRow {
         let title: String
         var outcome: TerminalTelegramTurnActivity.ToolOutcome?
+        var elapsed: Duration?
     }
 
-    /// Where the row of a running call is: its block and its index there.
+    /// Where the row of a running call is: its block and its index there,
+    /// and when the row was created.
     private struct ActivityRowLocation {
         let block: Int
         let row: Int
+        let startedAt: ContinuousClock.Instant
     }
 
     let chatID: Int64
@@ -148,6 +160,8 @@ actor TerminalTelegramTurnProgressReporter {
     private let activityWire: TerminalTelegramTurnActivityWire?
     private let wireFence: TerminalTelegramWireFence
     private let waitForWireQuiescence: (@Sendable (TerminalTelegramWireFence) async -> Void)?
+    /// The clock of the tool calls' elapsed times.
+    private let now: @Sendable () -> ContinuousClock.Instant
 
     private var queue: [QueuedItem] = []
     /// The activity messages of the reporter, oldest first.
@@ -155,7 +169,7 @@ actor TerminalTelegramTurnProgressReporter {
     /// The activity message the next call joins; `nil` once a new message
     /// closed it.
     private var openActivityBlock: Int?
-    /// The rows of the calls still running, by call id.
+    /// The rows of the calls still running, by call id, with their start.
     private var runningToolCallRows: [String: ActivityRowLocation] = [:]
     /// The sub-agent status message, once created.
     private var subAgentStatus: TerminalTelegramEditableMessageLedger?
@@ -177,7 +191,8 @@ actor TerminalTelegramTurnProgressReporter {
         progressCards: TerminalTelegramProgressCardLedger? = nil,
         activityWire: TerminalTelegramTurnActivityWire? = nil,
         wireFence: TerminalTelegramWireFence,
-        waitForWireQuiescence: (@Sendable (TerminalTelegramWireFence) async -> Void)? = nil
+        waitForWireQuiescence: (@Sendable (TerminalTelegramWireFence) async -> Void)? = nil,
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
         self.chatID = chatID
         self.sendMessage = sendMessage
@@ -186,6 +201,7 @@ actor TerminalTelegramTurnProgressReporter {
         self.activityWire = activityWire
         self.wireFence = wireFence
         self.waitForWireQuiescence = waitForWireQuiescence
+        self.now = now
         if let sendDraft {
             draftStreamer = TerminalTelegramDraftStreamer(chatID: chatID, sendDraft: sendDraft)
         }
@@ -213,11 +229,11 @@ actor TerminalTelegramTurnProgressReporter {
 
     /// Shows a root tool call that started: a row with `title` and a neutral
     /// marker, in the open activity message, or in a new one when no message
-    /// is open or the row would not fit. Without the activity wire, or once
-    /// retired, nothing happens.
+    /// is open or the row would not fit, and records when it started. Without
+    /// the activity wire, or once retired, nothing happens.
     func toolCallDidStart(id: String, title: String) {
         guard !isRetired, activityWire != nil else { return }
-        let row = ActivityRow(title: TerminalTelegramTurnActivity.toolTitle(title), outcome: nil)
+        let row = ActivityRow(title: TerminalTelegramTurnActivity.toolTitle(title), outcome: nil, elapsed: nil)
         let blockIndex: Int
         if let open = openActivityBlock,
            Self.fits(activityBlocks[open].rows + [row]) {
@@ -231,32 +247,45 @@ actor TerminalTelegramTurnProgressReporter {
             return
         }
         runningToolCallRows[id] = ActivityRowLocation(
-            block: blockIndex, row: activityBlocks[blockIndex].rows.count - 1
+            block: blockIndex, row: activityBlocks[blockIndex].rows.count - 1, startedAt: now()
         )
         let block = activityBlocks[blockIndex]
         enqueueEdit(of: block.ledger, text: block.text)
     }
 
     /// Writes the outcome of a call that ``toolCallDidStart(id:title:)``
-    /// showed in its row, in the message it started in. A call the reporter
-    /// did not show, or one that already ended, changes nothing.
+    /// showed in its row, in the message it started in, with the time elapsed
+    /// since the row was created; the time is left out when the message would
+    /// exceed ``maximumMessageLength`` with it. A call the reporter did not
+    /// show, or one that already ended, changes nothing.
     func toolCallDidComplete(id: String, failed: Bool) {
         guard !isRetired, let location = runningToolCallRows.removeValue(forKey: id) else { return }
-        activityBlocks[location.block].rows[location.row].outcome = failed ? .failed : .succeeded
+        let elapsed = location.startedAt.duration(to: now())
+        var rows = activityBlocks[location.block].rows
+        rows[location.row].outcome = failed ? .failed : .succeeded
+        rows[location.row].elapsed = elapsed
+        if Self.activityText(rows).utf16.count > Self.maximumMessageLength {
+            rows[location.row].elapsed = nil
+        }
+        activityBlocks[location.block].rows = rows
         let block = activityBlocks[location.block]
         enqueueEdit(of: block.ledger, text: block.text)
     }
 
     /// Whether an activity message with `rows` stays within the message
-    /// limit, counted in UTF-16 code units as Telegram counts it.
+    /// limit, counted in UTF-16 code units as Telegram counts it, keeping
+    /// ``elapsedTimeReserve`` for every row still running.
     private static func fits(_ rows: [ActivityRow]) -> Bool {
-        activityText(rows).utf16.count <= maximumMessageLength
+        let reserve = rows.count(where: { $0.outcome == nil }) * elapsedTimeReserve
+        return activityText(rows).utf16.count + reserve <= maximumMessageLength
     }
 
     /// The text of an activity message: one row per call, in call order.
     private static func activityText(_ rows: [ActivityRow]) -> String {
-        rows.map { TerminalTelegramTurnActivity.toolRow(title: $0.title, outcome: $0.outcome) }
-            .joined(separator: "\n")
+        rows.map {
+            TerminalTelegramTurnActivity.toolRow(title: $0.title, outcome: $0.outcome, elapsed: $0.elapsed)
+        }
+        .joined(separator: "\n")
     }
 
     private func makeEditableMessageLedger() -> TerminalTelegramEditableMessageLedger? {
@@ -406,7 +435,8 @@ actor TerminalTelegramTurnProgressReporter {
     /// Fences draft/card activity for finish, error, cancellation, rebind and
     /// teardown. Progress cards are deleted; persistent turn messages remain,
     /// the activity and sub-agent status messages included, which receive no
-    /// further edit: a call still running keeps its neutral marker.
+    /// further edit: a call still running keeps its neutral marker, and its
+    /// recorded start is dropped.
     func retire() async {
         guard !isRetired else { return }
         isRetired = true

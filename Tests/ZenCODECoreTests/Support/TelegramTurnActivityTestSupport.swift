@@ -7,10 +7,12 @@
 //  sub-agent status): a recorder of every wire effect of a reporter, in the
 //  order its drain ran them, with synthetic receipts, a gate that holds
 //  the creation of an editable message, and creations that fail with an
-//  unknown outcome. Nothing reaches the network.
+//  unknown outcome, and a manual clock for the tool calls' elapsed times.
+//  Nothing reaches the network.
 //
 
 import Foundation
+import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
@@ -34,6 +36,24 @@ enum TelegramTurnActivityEffect: Equatable, Sendable {
     case cardEdit(id: Int, text: String)
     /// The deletion of the task-graph card.
     case cardDelete(id: Int)
+}
+
+/// A manual clock for a reporter's tool-call times: it stands still until
+/// ``advance(by:)`` moves it, so a row's elapsed time is exactly what a test
+/// advanced between its start and its completion (`0ms` when it did not).
+final class TelegramTurnActivityClock: Sendable {
+    private let instant = Mutex(ContinuousClock.now)
+
+    init() {}
+
+    @Sendable
+    func now() -> ContinuousClock.Instant {
+        instant.withLock { $0 }
+    }
+
+    func advance(by duration: Duration) {
+        instant.withLock { $0 += duration }
+    }
 }
 
 /// Records the wire effects of the reporters it builds
@@ -195,8 +215,12 @@ actor TelegramTurnActivityWireLog {
     /// A reporter for `chatID` whose every wire effect lands here: its text
     /// messages, its task-graph card, its activity and status messages, and
     /// its thinking messages, behind a fence whose route always stays
-    /// current.
-    nonisolated func makeReporter(chatID: Int64 = 42) -> TerminalTelegramTurnProgressReporter {
+    /// current. Its tool-call times come from `clock`, which stands still
+    /// unless the test advances it.
+    nonisolated func makeReporter(
+        chatID: Int64 = 42,
+        clock: TelegramTurnActivityClock = TelegramTurnActivityClock()
+    ) -> TerminalTelegramTurnProgressReporter {
         let lease = TerminalTelegramRouteLease(
             key: .init(chatID: chatID, userID: 7, roomID: "test-room"), generation: 1
         )
@@ -224,7 +248,8 @@ actor TelegramTurnActivityWireLog {
             ),
             wireFence: TerminalTelegramWireFence(lease: lease, lifecycleEpoch: UUID()) { candidate in
                 guard candidate == lease else { throw CancellationError() }
-            }
+            },
+            now: clock.now
         )
     }
 }
@@ -260,6 +285,21 @@ enum TelegramTurnActivityFixtures {
     /// The row title the channel shows for `toolCall`.
     static func rowTitle(_ toolCall: DirectAgentToolCall) -> String {
         TerminalTelegramTurnActivity.toolTitle(ToolCallPresentation.toolTitle(for: toolCall))
+    }
+
+    /// Whether `text` is the completed row `marker title time`, its time a
+    /// token ``TerminalChat/toolElapsedTimeText(_:)`` produces: for the rows
+    /// of a production reporter, whose clock is the real one.
+    static func isTimedRow(_ text: String?, marker: String, title: String) -> Bool {
+        let prefix = "\(marker) \(title) "
+        guard let text, text.hasPrefix(prefix) else { return false }
+        return isElapsedTimeToken(String(text.dropFirst(prefix.count)))
+    }
+
+    /// Whether `token` is a time ``TerminalChat/toolElapsedTimeText(_:)``
+    /// produces (`1.25s`, `420ms`, `4.2ms`, `<0.01ms`, `0ms`).
+    static func isElapsedTimeToken(_ token: String) -> Bool {
+        token.wholeMatch(of: #/\d+\.\d{2}s|\d+(\.\d{1,2})?ms|<0\.01ms|0ms/#) != nil
     }
 
     /// A sub-agent snapshot: `status`, its current activity of `kind` at

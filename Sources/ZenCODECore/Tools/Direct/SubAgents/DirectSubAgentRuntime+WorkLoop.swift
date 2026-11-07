@@ -279,19 +279,20 @@ extension DirectSubAgentRuntime {
             agent.currentToolTarget = ToolCallPresentation.displayToolTarget(for: toolCall)
             // Measured before the delegated event is handled, so the
             // completion handler's own time is not part of the call's.
+            var elapsed: Duration?
             if !toolCall.id.isEmpty,
                let start = agent.toolCallStarts.removeValue(forKey: toolCall.id) {
-                agent.toolCallDurations.record(
-                    start.duration(to: ContinuousClock.now),
-                    forCallID: toolCall.id
-                )
+                let duration = start.duration(to: ContinuousClock.now)
+                agent.toolCallDurations.record(duration, forCallID: toolCall.id)
+                elapsed = duration
             }
             delegatedToolEvent = DirectSubAgentToolEvent(
                 agentID: agent.id,
                 agentName: agent.name,
                 toolCall: toolCall,
                 lifecycle: .completed(result),
-                rootSessionID: agent.rootSessionID
+                rootSessionID: agent.rootSessionID,
+                elapsed: elapsed
             )
         case let .sessionSnapshot(snapshot):
             agent.modelID = snapshot.modelID?.nilIfBlank ?? agent.modelID

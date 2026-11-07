@@ -885,9 +885,10 @@ What happens at the handover:
   the controller presents, and the channel sends the chat, with no setting:
   each response, each completed reasoning block as a `💭` expandable quotation,
   the root tool calls as the lines of one activity message edited in place
-  (the call's title and its outcome, never its arguments or result), the
-  task-graph card, and the sub-agent overview as one `🤖 Sub-agent` message
-  per turn. The channel asks the controller for the sub-agent overview itself.
+  (the call's title, its outcome, and its elapsed time, never its arguments
+  or result), the task-graph card, and the sub-agent overview as one
+  `🤖 Sub-agent` message per turn. The channel asks the controller for the
+  sub-agent overview itself.
   What the sub-agents already showed when the chat takes the slot, in the app,
   is not sent: their responses present then stay out of the chat, and an
   overview unchanged since then creates no message; each response that comes
