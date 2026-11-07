@@ -100,7 +100,7 @@ actor TerminalTelegramTurnProgressReporter {
     static let maximumMessageLength = 3_900
     /// The room, in UTF-16 code units, an activity message keeps for the
     /// elapsed time of every row still running: a space and the time
-    /// (``TerminalChat/toolElapsedTimeText(_:)`` is at most 11 units below
+    /// (``ToolCallPresentation/elapsedTimeText(_:)`` is at most 11 units below
     /// about three years). A completion whose time would still not fit is
     /// written without it, so the message limit is never exceeded.
     static let elapsedTimeReserve = 12

@@ -149,7 +149,7 @@ extension TerminalChat {
     ) -> String? {
         var components: [String] = []
         if let elapsed {
-            components.append(toolElapsedTimeText(elapsed))
+            components.append(ToolCallPresentation.elapsedTimeText(elapsed))
         }
         if let exitCode = compactLocalExecExitCode(
             for: toolCall,
@@ -240,29 +240,6 @@ extension TerminalChat {
         let separator = icon == "⚠️" ? "  " : " "
         let expanded = "\(icon)\(separator)\(detail)"
         return displayWidth(expanded) <= maximumWidth ? expanded : icon
-    }
-
-    nonisolated static func toolElapsedTimeText(_ duration: Duration) -> String {
-        let seconds = max(
-            0,
-            Double(duration.components.seconds)
-                + Double(duration.components.attoseconds) / 1_000_000_000_000_000_000
-        )
-        let locale = Locale(identifier: "en_US_POSIX")
-        guard seconds < 1 else {
-            return String(format: "%.2fs", locale: locale, seconds)
-        }
-
-        let milliseconds = seconds * 1_000
-        guard milliseconds > 0 else {
-            return "0ms"
-        }
-        guard milliseconds >= 0.01 else {
-            return "<0.01ms"
-        }
-
-        let format = milliseconds < 10 ? "%.2fms" : milliseconds < 100 ? "%.1fms" : "%.0fms"
-        return String(format: format, locale: locale, milliseconds)
     }
 
     /// Compact status rows have no font-size control, so elapsed time uses the

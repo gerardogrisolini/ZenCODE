@@ -457,7 +457,7 @@ struct TerminalSubAgentDetailControllerTests {
         controller.open(agentID: "agent-1", snapshot: agent())
         await waitUntil("the transcript is read") { controller.panel.availability == .available }
         let elapsed = Duration.milliseconds(1_250)
-        let time = TerminalChat.toolElapsedTimeText(elapsed)
+        let time = ToolCallPresentation.elapsedTimeText(elapsed)
         #expect(!controller.panel.bodyRows.contains { $0.contains(time) })
         #expect(controller.transcriptRenderCount == 1)
 

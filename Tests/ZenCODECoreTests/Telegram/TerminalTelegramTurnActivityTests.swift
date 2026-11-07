@@ -480,7 +480,7 @@ struct TerminalTelegramTurnActivityTests {
         #expect(Activity.toolRow(title: "Running", outcome: nil, elapsed: .seconds(3)) == "⏳ Running")
         #expect(Activity.toolRow(title: "Untimed", outcome: .succeeded, elapsed: nil) == "✅ Untimed")
         #expect(Activity.toolRow(title: "A", outcome: .succeeded, elapsed: .seconds(90))
-            == "✅ A " + TerminalChat.toolElapsedTimeText(.seconds(90)))
+            == "✅ A " + ToolCallPresentation.elapsedTimeText(.seconds(90)))
     }
 
     /// A long reasoning block is cut to 3 900 characters with an ellipsis; a

@@ -226,11 +226,11 @@ extension ZenCODEACPBridge {
     }
 
     /// `title` followed by ` · ` and `elapsed` as the terminal formats it
-    /// (``TerminalChat/toolElapsedTimeText(_:)``, e.g. `Read file · 1.25s`);
+    /// (``ToolCallPresentation/elapsedTimeText(_:)``, e.g. `Read file · 1.25s`);
     /// `title` itself without `elapsed`.
     static func toolTitle(_ title: String, elapsed: Duration?) -> String {
         guard let elapsed else { return title }
-        return "\(title) · \(TerminalChat.toolElapsedTimeText(elapsed))"
+        return "\(title) · \(ToolCallPresentation.elapsedTimeText(elapsed))"
     }
 
     private static func toolCallCommonFields(

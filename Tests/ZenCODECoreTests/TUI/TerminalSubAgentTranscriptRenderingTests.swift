@@ -254,7 +254,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
         )
 
         #expect(rows == mainChatCompletedRows(call, result: result, elapsed: elapsed))
-        #expect(occurrences(of: TerminalChat.toolElapsedTimeText(elapsed), in: rows) == 1)
+        #expect(occurrences(of: ToolCallPresentation.elapsedTimeText(elapsed), in: rows) == 1)
         #expect(occurrences(of: "✅", in: rows) == 1)
     }
 
@@ -280,7 +280,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
             standardErrorIsTerminal: false
         )
 
-        #expect(occurrences(of: "\(TerminalChat.toolElapsedTimeText(elapsed)) exit 2", in: rows) == 1)
+        #expect(occurrences(of: "\(ToolCallPresentation.elapsedTimeText(elapsed)) exit 2", in: rows) == 1)
     }
 
     @Test
@@ -296,7 +296,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
         )
 
         #expect(rows == plainRows([.toolCallStarted(call)]))
-        #expect(occurrences(of: TerminalChat.toolElapsedTimeText(elapsed), in: rows) == 0)
+        #expect(occurrences(of: ToolCallPresentation.elapsedTimeText(elapsed), in: rows) == 0)
         #expect(occurrences(of: "⏳", in: rows) == 1)
     }
 
@@ -321,7 +321,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
 
         #expect(withOtherDurations == withoutDurations)
         #expect(withoutDurations == ["Reading.", ""] + mainChatCompletedRows(call, result: result, elapsed: nil))
-        #expect(occurrences(of: TerminalChat.toolElapsedTimeText(.seconds(4)), in: withoutDurations) == 0)
+        #expect(occurrences(of: ToolCallPresentation.elapsedTimeText(.seconds(4)), in: withoutDurations) == 0)
     }
 
     @Test
@@ -338,7 +338,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
         )
 
         #expect(rows == plainRows(kinds))
-        #expect(occurrences(of: TerminalChat.toolElapsedTimeText(.seconds(4)), in: rows) == 0)
+        #expect(occurrences(of: ToolCallPresentation.elapsedTimeText(.seconds(4)), in: rows) == 0)
     }
 
     @Test

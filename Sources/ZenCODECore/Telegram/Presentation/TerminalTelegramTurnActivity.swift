@@ -40,7 +40,7 @@ enum TerminalTelegramTurnActivity {
     /// One row of an activity message: a neutral marker while the call runs,
     /// then only its outcome and, when known, its elapsed time after the
     /// title, formatted as the terminal formats it
-    /// (``TerminalChat/toolElapsedTimeText(_:)``, e.g. `✅ Read file 1.25s`).
+    /// (``ToolCallPresentation/elapsedTimeText(_:)``, e.g. `✅ Read file 1.25s`).
     /// A running row never shows a time.
     static func toolRow(title: String, outcome: ToolOutcome?, elapsed: Duration? = nil) -> String {
         let marker = switch outcome {
@@ -51,7 +51,7 @@ enum TerminalTelegramTurnActivity {
         guard outcome != nil, let elapsed else {
             return "\(marker) \(title)"
         }
-        return "\(marker) \(title) \(TerminalChat.toolElapsedTimeText(elapsed))"
+        return "\(marker) \(title) \(ToolCallPresentation.elapsedTimeText(elapsed))"
     }
 
     /// The title of a tool call as an activity row shows it: one line, at

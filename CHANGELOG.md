@@ -12,6 +12,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
+- `ToolCallPresentation.elapsedTimeText(_:)` formats the elapsed time of a
+  tool call (`1.25s`, `420ms`) for every client: the terminal, Telegram, ACP,
+  and the macOS app now share this one formatter instead of a terminal helper
+  and a copy of it in the app.
 - `DirectSubAgentRuntime.AgentSnapshot.currentToolIsRunning` tells whether the
   call `currentToolName` names is still running: it is `true` from the start of
   the call to its completion, while the name and the target stay until the

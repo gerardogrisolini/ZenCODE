@@ -316,7 +316,7 @@ a row of an activity message edited in place, its title
 (`ToolCallPresentation.toolTitle(for:)`) and then only its outcome, `⏳`, `✅`,
 or `❌` by the terminal's own criterion for ⚠️
 (`TerminalChat.toolResultIsFailure(for:result:)`), and its elapsed time
-(`TerminalChat.toolElapsedTimeText(_:)`, the time the tool executor measured
+(`ToolCallPresentation.elapsedTimeText(_:)`, the time the tool executor measured
 and the result carries, `DirectAgentToolResult.elapsed`, none for a result
 without one; every running row keeps room for it in the message, and a
 time that would still take the message past its limit is left out), never its

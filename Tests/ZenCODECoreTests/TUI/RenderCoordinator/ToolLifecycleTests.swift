@@ -196,12 +196,12 @@ extension TerminalChatRenderCoordinatorTests {
 
     @Test
     func elapsedTimeUsesMillisecondsBelowOneSecond() {
-        #expect(TerminalChat.toolElapsedTimeText(.zero) == "0ms")
-        #expect(TerminalChat.toolElapsedTimeText(.nanoseconds(1)) == "<0.01ms")
-        #expect(TerminalChat.toolElapsedTimeText(.microseconds(820)) == "0.82ms")
-        #expect(TerminalChat.toolElapsedTimeText(.milliseconds(12)) == "12.0ms")
-        #expect(TerminalChat.toolElapsedTimeText(.milliseconds(350)) == "350ms")
-        #expect(TerminalChat.toolElapsedTimeText(.milliseconds(1_200)) == "1.20s")
+        #expect(ToolCallPresentation.elapsedTimeText(.zero) == "0ms")
+        #expect(ToolCallPresentation.elapsedTimeText(.nanoseconds(1)) == "<0.01ms")
+        #expect(ToolCallPresentation.elapsedTimeText(.microseconds(820)) == "0.82ms")
+        #expect(ToolCallPresentation.elapsedTimeText(.milliseconds(12)) == "12.0ms")
+        #expect(ToolCallPresentation.elapsedTimeText(.milliseconds(350)) == "350ms")
+        #expect(ToolCallPresentation.elapsedTimeText(.milliseconds(1_200)) == "1.20s")
 
         let rendered = TerminalChat.renderCompactToolLine(
             "Read ✅ 0.82ms",

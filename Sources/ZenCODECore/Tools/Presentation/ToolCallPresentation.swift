@@ -53,6 +53,42 @@ public enum ToolCallPresentation {
         "🛠️"
     }
 
+    /// Formats the elapsed time of a tool call the way every client writes it
+    /// (TUI, Telegram, ACP, and the Zen app), always with the `en_US_POSIX`
+    /// locale so the decimal separator never depends on the user's region.
+    ///
+    /// - One second or more: seconds with two decimals (`1.25s`).
+    /// - Below one second: milliseconds, with two decimals under 10ms
+    ///   (`8.40ms`), one decimal under 100ms (`45.5ms`), none from 100ms
+    ///   (`420ms`).
+    /// - Positive but below 0.01ms: `<0.01ms`.
+    /// - Zero or negative: `0ms`.
+    ///
+    /// - Parameter duration: The elapsed time measured by the tool executor.
+    /// - Returns: The compact, human-readable duration text.
+    public static func elapsedTimeText(_ duration: Duration) -> String {
+        let seconds = max(
+            0,
+            Double(duration.components.seconds)
+                + Double(duration.components.attoseconds) / 1_000_000_000_000_000_000
+        )
+        let locale = Locale(identifier: "en_US_POSIX")
+        guard seconds < 1 else {
+            return String(format: "%.2fs", locale: locale, seconds)
+        }
+
+        let milliseconds = seconds * 1_000
+        guard milliseconds > 0 else {
+            return "0ms"
+        }
+        guard milliseconds >= 0.01 else {
+            return "<0.01ms"
+        }
+
+        let format = milliseconds < 10 ? "%.2fms" : milliseconds < 100 ? "%.1fms" : "%.0fms"
+        return String(format: format, locale: locale, milliseconds)
+    }
+
     private static let locationStringArgumentKeys = [
         "path",
         "file_path",

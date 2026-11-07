@@ -120,7 +120,7 @@ struct ACPDelegatedToolPresentationTests {
                 for: event.toolCall, result: result, workingDirectory: workingDirectory
             )
             if let elapsed = result.elapsed {
-                title += " · " + TerminalChat.toolElapsedTimeText(elapsed)
+                title += " · " + ToolCallPresentation.elapsedTimeText(elapsed)
             }
         }
         update["toolCallId"] = "acp:tool:\(event.agentID):\(event.toolCall.id)"
