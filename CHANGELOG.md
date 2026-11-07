@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [4.0.2] - 2026-11-07
+
 ### Added
 
 - `/setup` › Data management › **Clean support directory** frees disk space
