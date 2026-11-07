@@ -62,7 +62,7 @@ struct TerminalSubAgentDetailPanelTests {
         #expect(panel.isFollowing)
         #expect(bodyContents(panel.frameLines(rows: 6, columns: 30)) == ["row-6", "row-7", "row-8", "row-9"])
         // Drawing re-derives the bottom for another frame height while following.
-        #expect(bodyContents(panel.frameLines(rows: 10, columns: 30)) == [""] + (4...9).map { "row-\($0)" } + [""])
+        #expect(bodyContents(panel.frameLines(rows: 8, columns: 30)) == (4...9).map { "row-\($0)" })
     }
 
     @Test func scrollingAwayDisablesFollowAndReachingTheBottomRestoresIt() {
@@ -117,20 +117,20 @@ struct TerminalSubAgentDetailPanelTests {
 
     @Test func pagingMovesByTheBodyCapacityAndClamps() {
         var panel = TerminalSubAgentDetailPanel()
-        panel.replace(headerRows: ["title", "status"], bodyRows: numberedRows(20), frameRows: 13)
-        #expect(panel.bodyCapacity(frameRows: 13) == 6)
+        panel.replace(headerRows: ["title", "status"], bodyRows: numberedRows(20), frameRows: 11)
+        #expect(panel.bodyCapacity(frameRows: 11) == 6)
         #expect(panel.scrollOffset == 14)
 
-        panel.apply(.pageUp, frameRows: 13)
+        panel.apply(.pageUp, frameRows: 11)
         #expect(panel.scrollOffset == 8)
         #expect(!panel.isFollowing)
-        panel.apply(.pageUp, frameRows: 13)
-        panel.apply(.pageUp, frameRows: 13)
+        panel.apply(.pageUp, frameRows: 11)
+        panel.apply(.pageUp, frameRows: 11)
         #expect(panel.scrollOffset == 0)
-        panel.apply(.pageDown, frameRows: 13)
+        panel.apply(.pageDown, frameRows: 11)
         #expect(panel.scrollOffset == 6)
-        panel.apply(.pageDown, frameRows: 13)
-        panel.apply(.pageDown, frameRows: 13)
+        panel.apply(.pageDown, frameRows: 11)
+        panel.apply(.pageDown, frameRows: 11)
         #expect(panel.scrollOffset == 14)
         #expect(panel.isFollowing)
 
@@ -167,42 +167,17 @@ struct TerminalSubAgentDetailPanelTests {
         #expect(panel.bodyCapacity(frameRows: 3) == 1)
         #expect(panel.bodyCapacity(frameRows: 5) == 3)
         #expect(panel.bodyCapacity(frameRows: 6) == 2)
-        #expect(panel.bodyCapacity(frameRows: 12) == 4)
-        #expect(TerminalSubAgentDetailPanel(headerRows: ["a", "b"]).bodyCapacity(frameRows: 12) == 5)
-        #expect(TerminalSubAgentDetailPanel().bodyCapacity(frameRows: 12) == 8)
+        #expect(panel.bodyCapacity(frameRows: 12) == 5)
+        #expect(TerminalSubAgentDetailPanel(headerRows: ["a", "b"]).bodyCapacity(frameRows: 12) == 7)
+        #expect(TerminalSubAgentDetailPanel().bodyCapacity(frameRows: 12) == 10)
 
         let lines = plain(panel.frameLines(rows: 12, columns: 20))
-        #expect(lines[1...4].map(content) == ["", "h-0", "h-1", "h-2"])
+        #expect(lines[1...4].map(content) == ["h-0", "h-1", "h-2", "h-3"])
         #expect(lines[5] == "├" + String(repeating: "─", count: 18) + "┤")
         #expect(lines[6...10].allSatisfy { content($0).isEmpty })
 
         // Without room for a header row the separator is omitted too.
         #expect(!plain(panel.frameLines(rows: 5, columns: 20)).contains { $0.hasPrefix("├") })
-    }
-
-    @Test func paddingKeepsABlankRowBelowTheTitleAndAboveTheBottomBorder() {
-        var panel = TerminalSubAgentDetailPanel()
-        panel.replace(headerRows: ["title", "status"], bodyRows: numberedRows(30), frameRows: 14)
-        #expect(panel.bodyCapacity(frameRows: 14) == 7)
-
-        let blank = "│" + String(repeating: " ", count: 38) + "│"
-        let lines = plain(panel.frameLines(rows: 14, columns: 40))
-        #expect(lines.count == 14)
-        #expect(lines[0].hasPrefix("╭─ 👥 Sub-agent ─"))
-        #expect(lines[1] == blank)
-        #expect(lines[2...3].map(content) == ["title", "status"])
-        #expect(lines[4] == "├" + String(repeating: "─", count: 38) + "┤")
-        #expect(lines[5...11].map(content) == (23...29).map { "row-\($0)" })
-        #expect(lines[12] == blank)
-        #expect(lines[13].hasPrefix("╰─ rows 24–30/30 ─"))
-
-        // The agent list is padded the same way.
-        let list = TerminalSubAgentDetailPanel(mode: .choosing(entries: entries(3), focusedIndex: 0))
-        #expect(bodyContents(list.frameLines(rows: 8, columns: 30))
-            == ["", "▸ agent-0", "  agent-1", "  agent-2", "", ""])
-        // Below six interior rows the padding goes to the content.
-        #expect(bodyContents(list.frameLines(rows: 7, columns: 30))
-            == ["▸ agent-0", "  agent-1", "  agent-2", "", ""])
     }
 
     @Test(arguments: [0, 1, 2, 3, 4, 5, 6, 9, 24], [5, 6, 13, 40, 120])
@@ -241,26 +216,26 @@ struct TerminalSubAgentDetailPanelTests {
 
     @Test func bottomBorderShowsTheVisibleRangeOnlyWhenTheBodyOverflows() {
         var panel = TerminalSubAgentDetailPanel()
-        panel.replace(headerRows: [], bodyRows: numberedRows(84), frameRows: 23)
-        #expect(panel.bodyCapacity(frameRows: 23) == 19)
-        #expect(plain(panel.frameLines(rows: 23, columns: 40)).last?.hasPrefix("╰─ rows 66–84/84 ─") == true)
+        panel.replace(headerRows: [], bodyRows: numberedRows(84), frameRows: 21)
+        #expect(panel.bodyCapacity(frameRows: 21) == 19)
+        #expect(plain(panel.frameLines(rows: 21, columns: 40)).last?.hasPrefix("╰─ rows 66–84/84 ─") == true)
 
-        panel.apply(.top, frameRows: 23)
-        #expect(plain(panel.frameLines(rows: 23, columns: 40)).last?.hasPrefix("╰─ rows 1–19/84 ─") == true)
+        panel.apply(.top, frameRows: 21)
+        #expect(plain(panel.frameLines(rows: 21, columns: 40)).last?.hasPrefix("╰─ rows 1–19/84 ─") == true)
         for _ in 0..<11 {
-            panel.apply(.scrollDown, frameRows: 23)
+            panel.apply(.scrollDown, frameRows: 21)
         }
-        let bottom = plain(panel.frameLines(rows: 23, columns: 40)).last
+        let bottom = plain(panel.frameLines(rows: 21, columns: 40)).last
         #expect(bottom?.hasPrefix("╰─ rows 12–30/84 ─") == true)
         #expect(bottom?.hasSuffix("─╯") == true)
 
-        panel.replace(headerRows: ["title", "status"], bodyRows: numberedRows(10), frameRows: 13)
-        #expect(plain(panel.frameLines(rows: 13, columns: 40)).last?.hasPrefix("╰─ rows 5–10/10 ─") == true)
+        panel.replace(headerRows: ["title", "status"], bodyRows: numberedRows(10), frameRows: 11)
+        #expect(plain(panel.frameLines(rows: 11, columns: 40)).last?.hasPrefix("╰─ rows 5–10/10 ─") == true)
 
-        panel.replace(headerRows: [], bodyRows: numberedRows(19), frameRows: 23)
-        #expect(plain(panel.frameLines(rows: 23, columns: 40)).last == "╰" + String(repeating: "─", count: 38) + "╯")
-        panel.replace(headerRows: [], bodyRows: [], frameRows: 23)
-        #expect(plain(panel.frameLines(rows: 23, columns: 40)).last == "╰" + String(repeating: "─", count: 38) + "╯")
+        panel.replace(headerRows: [], bodyRows: numberedRows(19), frameRows: 21)
+        #expect(plain(panel.frameLines(rows: 21, columns: 40)).last == "╰" + String(repeating: "─", count: 38) + "╯")
+        panel.replace(headerRows: [], bodyRows: [], frameRows: 21)
+        #expect(plain(panel.frameLines(rows: 21, columns: 40)).last == "╰" + String(repeating: "─", count: 38) + "╯")
     }
 
     /// The width of `🛠️` (`U+1F6E0 U+FE0F`) depends on the terminal, so every

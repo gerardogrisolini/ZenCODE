@@ -46,11 +46,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   the agent's root session is the host's job, and the controller no longer
   re-checks a session and a history its only caller always passed as its own.
   The sub-agent overview it publishes goes on the same presenter as the event.
-- The `/subagent` frame keeps a blank row below its `👥 Sub-agent` title and
-  one above its bottom border (and its `rows` indicator); frames with fewer
-  than six interior rows give those rows to the content. The sub-agent tabs
-  of the macOS app likewise keep a wider margin below their last row, which
-  no longer scrolls up to the window's edge.
+- The sub-agent tabs of the macOS app keep a 16 pt margin below their last
+  row, as above their first one, so it no longer scrolls up to the window's
+  edge.
 - The status bar truncates the agent name to 24 columns, so on a narrow
   terminal the model, the context, and the token counters keep their room.
 - `TerminalInteractiveLineReader.setPanelModeOverride(_:)` is removed and
