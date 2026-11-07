@@ -6,6 +6,7 @@
 import Foundation
 import Synchronization
 import Testing
+import ToolCore
 @testable import ZenCODECore
 
 private let referenceDate = Date(timeIntervalSince1970: 1_800_000_000)
@@ -435,6 +436,46 @@ struct TerminalSubAgentDetailControllerTests {
         #expect(controller.transcriptReadCount == 3)
         #expect(controller.panel.availability == .available)
         #expect(!controller.panel.bodyRows.contains(TerminalSubAgentDetailController.unavailableRow))
+        controller.stop()
+    }
+
+    @Test func aReadWithTheSameKindsAndNewDurationsShowsTheTimes() async {
+        let call = presentedToolCall(
+            id: "read-1",
+            name: "local.readFile",
+            argumentsObject: ["path": "/tmp/Example.swift"],
+            argumentsJSON: #"{"path":"/tmp/Example.swift"}"#
+        )
+        let kinds: [ChatTurnEntry.Kind] = [
+            .toolCallStarted(call),
+            .toolCallCompleted(call, result: DirectAgentToolResult(output: "ok", summary: "ok")),
+        ]
+        // The backend recorded the result before the runtime measured the
+        // call: the first read has no duration yet.
+        let harness = DetailHarness(transcript: ChatSubAgentTranscript(agentID: "agent-1", kinds: kinds))
+        let controller = harness.makeController()
+        controller.open(agentID: "agent-1", snapshot: agent())
+        await waitUntil("the transcript is read") { controller.panel.availability == .available }
+        let elapsed = Duration.milliseconds(1_250)
+        let time = TerminalChat.toolElapsedTimeText(elapsed)
+        #expect(!controller.panel.bodyRows.contains { $0.contains(time) })
+        #expect(controller.transcriptRenderCount == 1)
+
+        // The next read has the same kinds and the duration.
+        let durations = ["read-1": elapsed]
+        harness.feed.setTranscript(ChatSubAgentTranscript(agentID: "agent-1", kinds: kinds, toolDurations: durations))
+        await waitUntil("the controller subscribes") { harness.feed.isSubscribed }
+        let running = agent(second: 1)
+        harness.feed.yield([running])
+        await waitUntil("the time is shown") { controller.panel.bodyRows.contains { $0.contains(time) } }
+        #expect(controller.transcriptRenderCount == 2)
+        #expect(controller.panel.bodyRows == TerminalChat.renderSubAgentTranscriptRows(
+            kinds,
+            toolDurations: durations,
+            width: 56,
+            standardErrorIsTerminal: false
+        ) + [""] + liveActivity(running))
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
         controller.stop()
     }
 

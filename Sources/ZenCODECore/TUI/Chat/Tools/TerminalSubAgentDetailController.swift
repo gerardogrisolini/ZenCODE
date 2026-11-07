@@ -173,8 +173,10 @@ final class TerminalSubAgentDetailController {
     private var choiceSnapshots: [DirectSubAgentRuntime.AgentSnapshot] = []
     /// The latest applied snapshot of the agent, as the reads decide on it.
     private var reloadKey: ReloadKey?
-    /// The kinds of the latest transcript applied, and their revision.
+    /// The kinds and the tool durations of the latest transcript applied, and
+    /// their revision.
     private var kinds: [ChatTurnEntry.Kind]?
+    private var toolDurations: [String: Duration] = [:]
     private var kindsRevision: UInt64 = 0
     private var transcriptRows: TranscriptRows?
     /// The reads started, and the one whose transcript is applied: a read
@@ -292,6 +294,7 @@ final class TerminalSubAgentDetailController {
         // the stream's first value, which repeats it, reads nothing more.
         reloadKey = snapshot.map(ReloadKey.init)
         kinds = nil
+        toolDurations = [:]
         transcriptRows = nil
         panel = TerminalSubAgentDetailPanel(mode: .showing)
         render()
@@ -412,7 +415,10 @@ final class TerminalSubAgentDetailController {
 
     /// Reads the agent's transcript, applies it, and draws the panel. A read
     /// without a transcript keeps the rows, and so does a read that answers
-    /// after a later one was applied.
+    /// after a later one was applied. The rows are rendered again when the
+    /// kinds or the tool durations changed: the backend records a tool result
+    /// before the runtime measures the call, so a later read can add only the
+    /// duration of a call already shown completed.
     private func reloadTranscript(following: UInt64) async {
         guard isFollowing(following), let agentID else { return }
         startedReadCount &+= 1
@@ -423,8 +429,9 @@ final class TerminalSubAgentDetailController {
         if let transcript {
             guard read > appliedRead else { return }
             appliedRead = read
-            if kinds != transcript.kinds {
+            if kinds != transcript.kinds || toolDurations != transcript.toolDurations {
                 kinds = transcript.kinds
+                toolDurations = transcript.toolDurations
                 kindsRevision &+= 1
             }
             panel.availability = .available
@@ -536,7 +543,8 @@ final class TerminalSubAgentDetailController {
     }
 
     /// The rows of the applied transcript at `width`, rendered again only
-    /// when the transcript or the width changed.
+    /// when the transcript (its kinds or its tool durations) or the width
+    /// changed.
     private func renderedTranscript(width: Int) -> [String] {
         guard let kinds else { return [] }
         if let transcriptRows, transcriptRows.revision == kindsRevision, transcriptRows.width == width {
@@ -545,6 +553,7 @@ final class TerminalSubAgentDetailController {
         transcriptRenderCount += 1
         let rows = TerminalChat.renderSubAgentTranscriptRows(
             kinds,
+            toolDurations: toolDurations,
             width: width,
             standardErrorIsTerminal: environment.standardErrorIsTerminal
         )

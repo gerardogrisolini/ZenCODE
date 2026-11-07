@@ -259,6 +259,11 @@ extension DirectSubAgentRuntime {
             agent.currentToolName = toolCall.name
             agent.currentToolTarget = ToolCallPresentation.displayToolTarget(for: toolCall)
             agent.latestContentPreview = nil
+            // The start of the call's duration for the transcript. A call
+            // without an id cannot be matched to its completion: no duration.
+            if !toolCall.id.isEmpty {
+                agent.toolCallStarts[toolCall.id] = ContinuousClock.now
+            }
             delegatedToolEvent = DirectSubAgentToolEvent(
                 agentID: agent.id,
                 agentName: agent.name,
@@ -272,6 +277,15 @@ extension DirectSubAgentRuntime {
             // does not reconstruct a separate tool row from these fields.
             agent.currentToolName = toolCall.name
             agent.currentToolTarget = ToolCallPresentation.displayToolTarget(for: toolCall)
+            // Measured before the delegated event is handled, so the
+            // completion handler's own time is not part of the call's.
+            if !toolCall.id.isEmpty,
+               let start = agent.toolCallStarts.removeValue(forKey: toolCall.id) {
+                agent.toolCallDurations.record(
+                    start.duration(to: ContinuousClock.now),
+                    forCallID: toolCall.id
+                )
+            }
             delegatedToolEvent = DirectSubAgentToolEvent(
                 agentID: agent.id,
                 agentName: agent.name,

@@ -266,9 +266,169 @@ extension DirectSubAgentRuntimeTests {
             await runtime.shutdown()
         }
     }
+
+    // MARK: - Tool call durations
+
+    @Test
+    func transcriptCarriesTheMeasuredDurationOfEveryCompletedToolCall() async throws {
+        try await withTranscriptTestSupportDirectory {
+            let backend = TranscriptRecordingSubAgentBackend()
+            let runtime = makeDirectSubAgentRuntime(backend: backend)
+            let agentID = try await createTranscriptAgent(in: runtime, rootSessionID: "root", prompt: "Timed")
+            await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agentID)
+            // The backend reports no tool event: nothing was measured.
+            let unmeasured = try #require(await runtime.transcript(agentID: agentID, rootSessionID: "root"))
+            #expect(unmeasured.toolDurations.isEmpty)
+
+            let completed = durationTestToolCall("call-timed")
+            let running = durationTestToolCall("call-running")
+            let anonymous = durationTestToolCall("")
+            await runtime.recordEvent(.toolCallStarted(completed), agentID: agentID)
+            await runtime.recordEvent(.toolCallStarted(running), agentID: agentID)
+            await runtime.recordEvent(.toolCallStarted(anonymous), agentID: agentID)
+            let pause = Duration.milliseconds(30)
+            try await Task.sleep(for: pause)
+            await runtime.recordEvent(.toolCallCompleted(completed, durationTestToolResult), agentID: agentID)
+            await runtime.recordEvent(.toolCallCompleted(anonymous, durationTestToolResult), agentID: agentID)
+
+            // The history has a tool call: the read that asks for the
+            // descriptors carries the durations too.
+            let transcript = try #require(await runtime.transcript(agentID: agentID, rootSessionID: "root"))
+            let duration = try #require(transcript.toolDurations["call-timed"])
+            #expect(duration >= pause)
+            // A running call, and a call without an id, have none.
+            #expect(transcript.toolDurations["call-running"] == nil)
+            #expect(transcript.toolDurations[""] == nil)
+            #expect(transcript.toolDurations.count == 1)
+
+            await runtime.shutdown()
+        }
+    }
+
+    @Test
+    func aNewTurnKeepsTheMeasuredDurationsAndDropsTheCallsLeftOpen() async throws {
+        try await withTranscriptTestSupportDirectory {
+            let backend = TranscriptRecordingSubAgentBackend()
+            let runtime = makeDirectSubAgentRuntime(backend: backend)
+            let agentID = try await createTranscriptAgent(in: runtime, rootSessionID: "root", prompt: "First")
+            await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agentID)
+
+            let finished = durationTestToolCall("call-finished")
+            let leftOpen = durationTestToolCall("call-left-open")
+            await runtime.recordEvent(.toolCallStarted(finished), agentID: agentID)
+            await runtime.recordEvent(.toolCallCompleted(finished, durationTestToolResult), agentID: agentID)
+            await runtime.recordEvent(.toolCallStarted(leftOpen), agentID: agentID)
+            let measured = try #require(
+                await runtime.transcript(agentID: agentID, rootSessionID: "root")?.toolDurations["call-finished"]
+            )
+
+            try await runtime.queuePrompt("Second", for: agentID)
+            await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agentID)
+            // The new turn dropped the start of the call left open: its late
+            // completion has no duration.
+            await runtime.recordEvent(.toolCallCompleted(leftOpen, durationTestToolResult), agentID: agentID)
+
+            let transcript = try #require(await runtime.transcript(agentID: agentID, rootSessionID: "root"))
+            #expect(transcriptLabels(transcript.kinds).contains("user:Second"))
+            #expect(transcript.toolDurations == ["call-finished": measured])
+
+            await runtime.shutdown()
+        }
+    }
+
+    @Test
+    func theMeasuredDurationsSurviveTheEndOfTheAgent() async throws {
+        try await withTranscriptTestSupportDirectory {
+            let backend = TranscriptRecordingSubAgentBackend()
+            let runtime = makeDirectSubAgentRuntime(backend: backend)
+            let agentID = try await createTranscriptAgent(in: runtime, rootSessionID: "root", prompt: "Ending")
+            await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agentID)
+            let call = durationTestToolCall("call-before-the-end")
+            await runtime.recordEvent(.toolCallStarted(call), agentID: agentID)
+            await runtime.recordEvent(.toolCallCompleted(call, durationTestToolResult), agentID: agentID)
+            let measured = try #require(
+                await runtime.transcript(agentID: agentID, rootSessionID: "root")?.toolDurations["call-before-the-end"]
+            )
+
+            // A failed taskless agent keeps its backend: its transcript is
+            // still read, with the times.
+            await runtime.recordFailure(CancellationError(), agentID: agentID)
+            #expect(await runtime.snapshots().first { $0.id == agentID }?.status == .failed)
+            let failed = try #require(await runtime.transcript(agentID: agentID, rootSessionID: "root"))
+            #expect(failed.toolDurations == ["call-before-the-end": measured])
+
+            // The close prepares the record for terminal retention: the
+            // durations stay in it, bounded.
+            _ = try await runtime.closeAgent(arguments: ["id": .string(agentID)])
+            #expect(await runtime.retainedToolCallDurations(agentID: agentID) == ["call-before-the-end": measured])
+
+            await runtime.shutdown()
+        }
+    }
+
+    @Test
+    func theMeasuredDurationsKeepOnlyTheLatestCallsOfTheAgent() async throws {
+        try await withTranscriptTestSupportDirectory {
+            // A history without tool calls: the read that needs no descriptor
+            // carries the durations too.
+            let backend = ScriptedTranscriptSubAgentBackend(
+                history: [AgentRuntimeMessage(role: .user, content: "Many")]
+            )
+            let runtime = makeDirectSubAgentRuntime(backend: backend)
+            let agentID = try await createTranscriptAgent(in: runtime, rootSessionID: "root", prompt: "Many")
+            await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agentID)
+
+            let limit = DirectSubAgentRuntime.maximumRetainedToolCallDurationsPerAgent
+            #expect(limit == 512)
+            func complete(_ id: String) async {
+                let call = durationTestToolCall(id)
+                await runtime.recordEvent(.toolCallStarted(call), agentID: agentID)
+                await runtime.recordEvent(.toolCallCompleted(call, durationTestToolResult), agentID: agentID)
+            }
+            for index in 0...limit {
+                await complete("call-\(index)")
+            }
+            let full = try #require(await runtime.transcript(agentID: agentID, rootSessionID: "root"))
+            #expect(transcriptLabels(full.kinds) == ["user:Many"])
+            // One call more than the limit: the oldest was evicted.
+            #expect(full.toolDurations.count == limit)
+            #expect(full.toolDurations["call-0"] == nil)
+            #expect(full.toolDurations["call-1"] != nil)
+            #expect(full.toolDurations["call-\(limit)"] != nil)
+
+            // A repeated id overwrites its duration and becomes the newest, so
+            // the next eviction takes the call after it.
+            await complete("call-1")
+            await complete("call-extra")
+            let latest = try #require(await runtime.transcript(agentID: agentID, rootSessionID: "root"))
+            #expect(latest.toolDurations.count == limit)
+            #expect(latest.toolDurations["call-1"] != nil)
+            #expect(latest.toolDurations["call-2"] == nil)
+            #expect(latest.toolDurations["call-3"] != nil)
+            #expect(latest.toolDurations["call-extra"] != nil)
+
+            await runtime.shutdown()
+        }
+    }
 }
 
 // MARK: - Fixtures
+
+/// A tool call with `id` for the duration tests; its tool has no row of its
+/// own in the backend history.
+private func durationTestToolCall(_ id: String) -> DirectAgentToolCall {
+    DirectAgentToolCall(id: id, name: "local.exec", argumentsObject: [:], argumentsJSON: "{}")
+}
+
+private let durationTestToolResult = DirectAgentToolResult(output: "ok", summary: "ok")
+
+private extension DirectSubAgentRuntime {
+    /// The durations kept in the record of `agentID`, by tool call id; `nil`
+    /// without such a record.
+    func retainedToolCallDurations(agentID: String) -> [String: Duration]? {
+        agents[agentID]?.toolCallDurations.byCallID
+    }
+}
 
 /// A sub-agent backend whose session history is the given one, whatever the
 /// prompts, and whose tool descriptors are the given ones. It records the

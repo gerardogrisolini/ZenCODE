@@ -26,6 +26,10 @@ public actor DirectSubAgentRuntime {
     /// a long session makes that history an unbounded cache.
     static let maximumRetainedTerminalAgents = 32
     static let maximumRetainedTerminalOutputBytes = 262_144
+    /// Upper bound on the tool-call durations kept per agent for its
+    /// transcript (``ChatSubAgentTranscript/toolDurations``): the oldest are
+    /// evicted first, so a long-lived agent keeps those of its latest calls.
+    static let maximumRetainedToolCallDurationsPerAgent = 512
 
     /// Upper bound for shared-chat-derived prompts queued for one agent. It
     /// matches twice the bus mailbox capacity, so a fast producer cannot grow
@@ -78,6 +82,33 @@ public actor DirectSubAgentRuntime {
         case thinking
         /// A completed assistant message projected into the overview.
         case content
+    }
+
+    /// The durations the runtime measured of an agent's completed tool calls,
+    /// by tool call id, bounded to the `limit` most recent ones. A repeated id
+    /// overwrites its duration and becomes the most recent; beyond the limit
+    /// the oldest are evicted first. Kept in memory only, in the agent's
+    /// record: never persisted, snapshotted, or checkpointed.
+    struct ToolCallDurations {
+        let limit: Int
+        /// The durations, by tool call id.
+        private(set) var byCallID: [String: Duration] = [:]
+        /// The ids of ``byCallID``, oldest first.
+        private var order: [String] = []
+
+        init(limit: Int = DirectSubAgentRuntime.maximumRetainedToolCallDurationsPerAgent) {
+            self.limit = max(0, limit)
+        }
+
+        mutating func record(_ duration: Duration, forCallID callID: String) {
+            if byCallID.updateValue(duration, forKey: callID) != nil {
+                order.removeAll { $0 == callID }
+            }
+            order.append(callID)
+            while order.count > limit {
+                byCallID.removeValue(forKey: order.removeFirst())
+            }
+        }
     }
 
     struct AgentRecord {
@@ -150,6 +181,19 @@ public actor DirectSubAgentRuntime {
         var shouldReplaceMetricsOnNextUpdate = false
         public var latestContentPreview: String? = nil
         public var latestEventAt: Date? = nil
+        /// When each tool call in flight started, by tool call id, measured
+        /// when the runtime received `.toolCallStarted`. Cleared by
+        /// ``resetActivityState()``: a call that did not complete before a
+        /// turn starts, fails, or is cancelled gets no duration.
+        var toolCallStarts: [String: ContinuousClock.Instant] = [:]
+        /// The durations of the agent's latest completed tool calls, for its
+        /// transcript (``ChatSubAgentTranscript/toolDurations``). They survive
+        /// the turns and ``prepareForTerminalRetention()``: a read after the
+        /// agent ended may still return a transcript, and it must keep its
+        /// times. The store is bounded
+        /// (``DirectSubAgentRuntime/maximumRetainedToolCallDurationsPerAgent``)
+        /// and in memory only.
+        var toolCallDurations = ToolCallDurations()
         public var runTask: Task<Void, Never>?
         /// Single-flight guard for the shared-chat mailbox drain. Only one
         /// drain loop may be active per agent, so a burst of wake-up callbacks
@@ -183,10 +227,11 @@ public actor DirectSubAgentRuntime {
         }
 
         /// Clears every in-flight model-phase projection: the visible activity
-        /// and its kind plus the private thinking/content buffers and the tool
-        /// row. Lifecycle transitions call this so no partial paragraph or
-        /// buffered message can survive into the next turn or into a closed
-        /// agent.
+        /// and its kind plus the private thinking/content buffers, the tool
+        /// row, and the starts of the tool calls in flight. Lifecycle
+        /// transitions call this so no partial paragraph, buffered message,
+        /// or open tool call can survive into the next turn or into a closed
+        /// agent. The measured durations of completed calls are kept.
         mutating func resetActivityState() {
             currentActivity = nil
             currentActivityKind = nil
@@ -194,11 +239,14 @@ public actor DirectSubAgentRuntime {
             pendingContentBuffer = nil
             currentToolName = nil
             currentToolTarget = nil
+            toolCallStarts.removeAll()
         }
 
         /// Drops heavyweight report prefixes before this inactive record enters
         /// the bounded terminal-history cache. The latest tail is retained because
         /// it contains the final answer and validation summary callers need most.
+        /// The tool-call durations are deliberately kept: they are bounded,
+        /// and a transcript read after the agent ended must not lose them.
         mutating func prepareForTerminalRetention() {
             latestOutput = DirectSubAgentRuntime.boundedTerminalOutput(latestOutput)
             accumulatedOutput = DirectSubAgentRuntime.boundedTerminalOutput(accumulatedOutput)

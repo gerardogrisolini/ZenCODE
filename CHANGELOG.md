@@ -18,6 +18,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   presents it with the shared part: the baseline of the files it touches, its
   live artifacts, and the sub-agent overview. `DirectSubAgentToolEvent.rootSessionID`
   names the coordinator session the agent belongs to.
+- `ChatSubAgentTranscript.toolDurations` gives the elapsed time of the
+  completed tool calls of a sub-agent, by tool call id, as the Core measures
+  them in memory for the agent's last 512 calls. Nothing is saved.
 
 ### Changed
 
@@ -45,6 +48,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   draw the tool icon `🛠️` one column wide.
 - The tool calls of the `/subagent` detail now show their target (path,
   pattern, command, …), not only the tool name.
+- The completed tool calls of the `/subagent` detail show their elapsed time,
+  as in the chat.
 - The reasoning of Claude sub-agents stays in the `/subagent` detail after the
   live preview: it is read from the Anthropic thinking blocks of the
   agent's history.
@@ -55,6 +60,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   duplicate, indented tool line.
 - The sub-agent tabs of the macOS app get both: the target of each tool call
   and the reasoning of Claude sub-agents.
+- The sub-agent tabs of the macOS app show the elapsed time of the tool calls
+  as the Core measured it, also for the calls that ran before the tab opened.
 - ZenCODE for macOS shows the file artifacts of the sub-agents live, as the
   terminal does, instead of all at once at the end of the turn, and refreshes
   the git summary when a sub-agent changes a file.

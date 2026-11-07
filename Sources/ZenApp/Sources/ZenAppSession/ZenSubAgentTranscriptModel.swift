@@ -14,8 +14,9 @@ import ToolCore
 import ZenCODECore
 
 /// The state of one sub-agent tab of a window: the agent's latest snapshot
-/// (``snapshot``) and the last transcript read, as rows (``items``), from the
-/// session the tab was opened in.
+/// (``snapshot``), the last transcript read, as rows (``items``), and the
+/// durations the Core measured of its tool calls (``toolDurations``), from
+/// the session the tab was opened in.
 ///
 /// The page keeps the history, not the Core. The Core only reads the live
 /// history of the agent's backend
@@ -96,6 +97,15 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
     /// (``ZenSubAgentTranscriptProjection/items(for:agentID:)``). A read
     /// without a transcript keeps them.
     public private(set) var items: [ZenTranscriptItem] = []
+    /// The durations the Core measured of the completed tool calls of
+    /// ``items``, by row id
+    /// (``ZenSubAgentTranscriptProjection/toolDurations(for:callDurations:)``
+    /// of `ChatSubAgentTranscript.toolDurations`), so a call that ran before
+    /// the tab opened has its time too. Recomputed when the transcript's kinds
+    /// or its durations change: the backend records a tool result before the
+    /// Core measures the call, so a later read can add only a duration. A read
+    /// without a transcript keeps them.
+    public private(set) var toolDurations: [String: Duration] = [:]
     /// Whether ``items`` holds a transcript.
     public private(set) var availability: Availability = .loading
 
@@ -131,6 +141,8 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
     @ObservationIgnored private(set) var isStopped = false
     /// The kinds of the latest transcript applied.
     @ObservationIgnored private var kinds: [ChatTurnEntry.Kind]?
+    /// The tool durations of the latest transcript applied, by call id.
+    @ObservationIgnored private var callDurations: [String: Duration] = [:]
     /// The latest applied snapshot of the agent, as the reads decide on it;
     /// it starts from the snapshot the tab opened with.
     @ObservationIgnored private var reloadKey: ReloadKey?
@@ -315,11 +327,22 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
         }
         guard read > appliedRead else { return }
         appliedRead = read
-        if kinds != transcript.kinds {
+        let kindsChanged = kinds != transcript.kinds
+        if kindsChanged {
             kinds = transcript.kinds
             let rows = ZenSubAgentTranscriptProjection.items(for: transcript.kinds, agentID: agentID)
             if items != rows {
                 items = rows
+            }
+        }
+        if kindsChanged || callDurations != transcript.toolDurations {
+            callDurations = transcript.toolDurations
+            let durations = ZenSubAgentTranscriptProjection.toolDurations(
+                for: items,
+                callDurations: transcript.toolDurations
+            )
+            if toolDurations != durations {
+                toolDurations = durations
             }
         }
         if availability != .available {

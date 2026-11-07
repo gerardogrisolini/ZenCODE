@@ -222,6 +222,125 @@ struct TerminalSubAgentTranscriptRenderingTests {
         #expect(occurrences(of: "exit 2", in: rows) == 1)
     }
 
+    /// The plain rows the main chat draws for `call` completed with `result`
+    /// after `elapsed`, at the default width of ``plainRows(_:width:)``.
+    private func mainChatCompletedRows(
+        _ call: DirectAgentToolCall,
+        result: DirectAgentToolResult,
+        elapsed: Duration?
+    ) -> [String] {
+        let presentation = TerminalChat.toolPresentationRows(
+            for: call,
+            result: result,
+            statusDetail: TerminalChat.compactToolCompletionDetail(for: call, result: result, elapsed: elapsed),
+            contentInsetWidth: 0,
+            columnWidth: 81,
+            includesSourceChanges: false
+        )
+        return presentation.compactRows.map(\.plainText) + presentation.detailRows.map(\.plainText)
+    }
+
+    @Test
+    func completedToolCallShowsItsMeasuredDurationAsTheMainChatDoes() {
+        let call = readFileCall(id: "read-1")
+        let result = DirectAgentToolResult(output: "contents", summary: "contents")
+        let elapsed = Duration.milliseconds(1_250)
+
+        let rows = TerminalChat.renderSubAgentTranscriptRows(
+            [.toolCallStarted(call), .toolCallCompleted(call, result: result)],
+            toolDurations: ["read-1": elapsed],
+            width: 80,
+            standardErrorIsTerminal: false
+        )
+
+        #expect(rows == mainChatCompletedRows(call, result: result, elapsed: elapsed))
+        #expect(occurrences(of: TerminalChat.toolElapsedTimeText(elapsed), in: rows) == 1)
+        #expect(occurrences(of: "✅", in: rows) == 1)
+    }
+
+    @Test
+    func failedProcessShowsItsDurationBeforeItsExitCode() {
+        let call = presentedToolCall(
+            id: "exec-1",
+            name: "local.exec",
+            argumentsObject: ["command": "swift test"],
+            argumentsJSON: #"{"command":"swift test"}"#
+        )
+        let elapsed = Duration.seconds(3)
+        let rows = TerminalChat.renderSubAgentTranscriptRows(
+            [
+                .toolCallStarted(call),
+                .toolCallCompleted(call, result: DirectAgentToolResult(
+                    output: "exit_code: 2\nstderr: failure",
+                    summary: "exit_code: 2"
+                ))
+            ],
+            toolDurations: ["exec-1": elapsed],
+            width: 80,
+            standardErrorIsTerminal: false
+        )
+
+        #expect(occurrences(of: "\(TerminalChat.toolElapsedTimeText(elapsed)) exit 2", in: rows) == 1)
+    }
+
+    @Test
+    func runningToolCallShowsNoDuration() {
+        let call = readFileCall(id: "read-1")
+        let elapsed = Duration.milliseconds(1_250)
+
+        let rows = TerminalChat.renderSubAgentTranscriptRows(
+            [.toolCallStarted(call)],
+            toolDurations: ["read-1": elapsed],
+            width: 80,
+            standardErrorIsTerminal: false
+        )
+
+        #expect(rows == plainRows([.toolCallStarted(call)]))
+        #expect(occurrences(of: TerminalChat.toolElapsedTimeText(elapsed), in: rows) == 0)
+        #expect(occurrences(of: "⏳", in: rows) == 1)
+    }
+
+    @Test
+    func toolCallsWithoutADurationRenderAsBefore() {
+        let call = readFileCall(id: "read-1")
+        let result = DirectAgentToolResult(output: "contents", summary: "contents")
+        let kinds: [ChatTurnEntry.Kind] = [
+            .assistantText("Reading."),
+            .toolCallStarted(call),
+            .toolCallCompleted(call, result: result)
+        ]
+
+        let withoutDurations = plainRows(kinds)
+        // A duration of another call changes nothing either.
+        let withOtherDurations = TerminalChat.renderSubAgentTranscriptRows(
+            kinds,
+            toolDurations: ["read-2": .seconds(4)],
+            width: 80,
+            standardErrorIsTerminal: false
+        )
+
+        #expect(withOtherDurations == withoutDurations)
+        #expect(withoutDurations == ["Reading.", ""] + mainChatCompletedRows(call, result: result, elapsed: nil))
+        #expect(occurrences(of: TerminalChat.toolElapsedTimeText(.seconds(4)), in: withoutDurations) == 0)
+    }
+
+    @Test
+    func toolCallsWithoutAnIDNeverTakeADuration() {
+        let call = readFileCall(id: "")
+        let result = DirectAgentToolResult(output: "contents", summary: "contents")
+        let kinds: [ChatTurnEntry.Kind] = [.toolCallStarted(call), .toolCallCompleted(call, result: result)]
+
+        let rows = TerminalChat.renderSubAgentTranscriptRows(
+            kinds,
+            toolDurations: ["": .seconds(4)],
+            width: 80,
+            standardErrorIsTerminal: false
+        )
+
+        #expect(rows == plainRows(kinds))
+        #expect(occurrences(of: TerminalChat.toolElapsedTimeText(.seconds(4)), in: rows) == 0)
+    }
+
     @Test
     func suppressedToolsHaveNoRows() {
         let hidden = agentMessageCall(id: "message-1")

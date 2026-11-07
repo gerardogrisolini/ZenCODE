@@ -8,7 +8,9 @@
 //
 
 import Foundation
+import Observation
 import SwiftUI
+import Synchronization
 import Testing
 import ToolCore
 import ZenAppSession
@@ -349,6 +351,43 @@ struct ZenToolDurationTests {
         #expect(durations.duration(for: prompt("1-log-1")) == nil)
         #expect(durations.duration(for: assistant("1-log-2")) == nil)
     }
+
+    @Test("durations measured elsewhere replace the ones held, and are assigned only when they differ")
+    func replacesTheDurations() {
+        let durations = ZenToolDurations()
+        let finished = toolCall("subagent-a-1", completed: true)
+        let running = toolCall("subagent-a-2", completed: false)
+        let measured: [String: Duration] = ["subagent-a-1": .seconds(2), "subagent-a-2": .seconds(5)]
+
+        #expect(observesChange(of: { _ = durations.durations }) { durations.replace(with: measured) })
+        #expect(durations.duration(for: finished) == .seconds(2))
+        // Only a completed call reads its duration.
+        #expect(durations.duration(for: running) == nil)
+
+        // The same durations assign nothing.
+        #expect(!observesChange(of: { _ = durations.durations }) { durations.replace(with: measured) })
+
+        // New ones replace them all.
+        #expect(observesChange(of: { _ = durations.durations }) {
+            durations.replace(with: ["subagent-a-3": .seconds(1)])
+        })
+        #expect(durations.duration(for: finished) == nil)
+        #expect(durations.duration(for: toolCall("subagent-a-3", completed: true)) == .seconds(1))
+    }
+}
+
+/// Whether `change` changes what `read` reads, as Observation reports it.
+@MainActor
+private func observesChange(of read: () -> Void, _ change: () -> Void) -> Bool {
+    final class Flag: Sendable {
+        let isRaised = Mutex(false)
+    }
+    let flag = Flag()
+    withObservationTracking(read) {
+        flag.isRaised.withLock { $0 = true }
+    }
+    change()
+    return flag.isRaised.withLock { $0 }
 }
 
 // MARK: - Esc

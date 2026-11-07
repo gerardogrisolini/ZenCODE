@@ -3,10 +3,11 @@
 //  ZenAppSessionTests
 //
 //  The sub-agent tabs without a window: the projection of a sub-agent
-//  transcript, which tab a close selects, the mailbox of the snapshots, and
-//  the model of a tab over a scripted source and a sleep the test releases
-//  (the throttling, the lifecycle changes, the selection, the
-//  re-subscription, the reads, the last read kept, the stop).
+//  transcript and of its tool durations, which tab a close selects, the
+//  mailbox of the snapshots, and the model of a tab over a scripted source
+//  and a sleep the test releases (the throttling, the lifecycle changes, the
+//  selection, the re-subscription, the reads, the last read kept, the tool
+//  durations, the stop).
 //
 
 import Foundation
@@ -136,6 +137,32 @@ struct ZenSubAgentTranscriptProjectionTests {
         #expect(ZenSubAgentTranscriptProjection.rowIDPrefix(agentID: "agent-2") == "subagent-agent-2-")
         #expect(ZenSubAgentTranscriptProjection.items(for: [], agentID: "agent-1").isEmpty)
         #expect(ZenSubAgentTranscriptProjection.items(for: [.turnPhase(.started)], agentID: "agent-1").isEmpty)
+    }
+
+    @Test("The call durations go to the rows of the completed calls that have one, by row id")
+    func toolDurations() {
+        let kinds: [ChatTurnEntry.Kind] = [
+            brief,
+            .toolCallStarted(call("a")),
+            .toolCallStarted(call("b")),
+            .toolCallStarted(call("", "anonymous")),
+            .toolCallCompleted(call("a"), result: result("A")),
+            .toolCallCompleted(call("", "anonymous"), result: result("anonymous")),
+            .toolCallStarted(call("c")),
+            .toolCallCompleted(call("c"), result: result("C")),
+            .assistantText("Done."),
+        ]
+        let items = ZenSubAgentTranscriptProjection.items(for: kinds, agentID: "agent-1")
+        let durations = ZenSubAgentTranscriptProjection.toolDurations(
+            for: items,
+            callDurations: ["a": .seconds(1), "b": .seconds(2), "": .seconds(3), "missing": .seconds(4)]
+        )
+        // `a` completed with a duration; `b` still runs; the call without an
+        // id never takes one; `c` completed without one; the prompt and the
+        // text are not calls.
+        #expect(durations == ["subagent-agent-1-1": .seconds(1)])
+        #expect(ZenSubAgentTranscriptProjection.toolDurations(for: items, callDurations: [:]).isEmpty)
+        #expect(ZenSubAgentTranscriptProjection.toolDurations(for: [], callDurations: ["a": .seconds(1)]).isEmpty)
     }
 }
 
@@ -723,5 +750,49 @@ struct ZenSubAgentTranscriptModelTests {
         model.start()
         await settle()
         #expect(feed.subscriptionCount == 1)
+    }
+
+    @Test("The tool durations are the transcript's, by row id: a read that adds only a duration shows it, a nil read keeps them")
+    func toolDurations() async {
+        let kinds: [ChatTurnEntry.Kind] = [
+            brief,
+            .toolCallStarted(call("a")),
+            .toolCallCompleted(call("a"), result: result("A")),
+        ]
+        // The backend recorded the result before the Core measured the call.
+        let feed = ZenSubAgentFeed(transcript: transcript(kinds))
+        let model = model(feed)
+        model.isSelected = true
+        model.start()
+        await waitUntil("the transcript is read") { model.availability == .available }
+        #expect(model.items.count == 2)
+        #expect(model.toolDurations.isEmpty)
+        await waitUntil("the model subscribes") { feed.isSubscribed }
+
+        let itemChanges = ZenObservationCounter { _ = model.items }
+        let durationChanges = ZenObservationCounter { _ = model.toolDurations }
+        // The same kinds, now with the duration.
+        feed.setTranscript(ChatSubAgentTranscript(agentID: "agent-1", kinds: kinds, toolDurations: ["a": .seconds(2)]))
+        feed.yield([agent(second: 1)])
+        await waitUntil("the duration is applied") { model.toolDurations == ["subagent-agent-1-1": .seconds(2)] }
+        await settle()
+        #expect(itemChanges.count == 0)
+        #expect(durationChanges.count == 1)
+
+        // The same transcript read again assigns nothing.
+        feed.yield([agent(second: 2)])
+        await waitUntil("the transcript is read again") { feed.readCount == 3 }
+        await settle()
+        #expect(durationChanges.count == 1)
+
+        // A read without a transcript keeps them.
+        feed.setTranscript(nil)
+        feed.yield([agent(status: .closed, second: 3)])
+        await waitUntil("the end is read") { feed.readCount == 4 }
+        await settle()
+        #expect(model.toolDurations == ["subagent-agent-1-1": .seconds(2)])
+        #expect(durationChanges.count == 1)
+        #expect(itemChanges.count == 0)
+        model.stop()
     }
 }

@@ -15,7 +15,7 @@ extension TerminalChat {
         case prompt(String)
         case thought(String)
         case assistantText(String)
-        case toolCall(DirectAgentToolCall, result: DirectAgentToolResult?)
+        case toolCall(DirectAgentToolCall, result: DirectAgentToolResult?, elapsed: Duration?)
     }
 
     /// Renders the conversation of one sub-agent (``ChatSubAgentTranscript/kinds``,
@@ -29,8 +29,11 @@ extension TerminalChat {
     /// - an assistant block as Markdown;
     /// - a tool call as its canonical compact rows, once: the row stays where
     ///   the call started and shows its result once it completed (as the
-    ///   ZenApp sub-agent tab merges them). Tools without a terminal
-    ///   representation (``shouldSuppressToolRendering(for:)``) have no row.
+    ///   ZenApp sub-agent tab merges them). A completed call shows its elapsed
+    ///   time from `toolDurations` (``ChatSubAgentTranscript/toolDurations``,
+    ///   by call id) as the main chat does; a running call, or one without a
+    ///   duration, shows none. Tools without a terminal representation
+    ///   (``shouldSuppressToolRendering(for:)``) have no row.
     ///
     /// File artifacts, notices, workflow notices, and turn phases are not
     /// part of the conversation and have no row. One blank row separates two
@@ -42,12 +45,13 @@ extension TerminalChat {
     /// write each row independently. Without it the rows are plain text.
     nonisolated static func renderSubAgentTranscriptRows(
         _ kinds: [ChatTurnEntry.Kind],
+        toolDurations: [String: Duration] = [:],
         width: Int,
         standardErrorIsTerminal: Bool
     ) -> [String] {
         let width = max(1, width)
         var rows: [String] = []
-        for entry in subAgentTranscriptEntries(kinds) {
+        for entry in subAgentTranscriptEntries(kinds, toolDurations: toolDurations) {
             let entryRows = subAgentTranscriptRows(
                 for: entry,
                 width: width,
@@ -106,7 +110,7 @@ extension TerminalChat {
     ///
     /// No row exceeds `width` visible columns. With `standardErrorIsTerminal`
     /// every row is styled on its own, as in
-    /// ``renderSubAgentTranscriptRows(_:width:standardErrorIsTerminal:)``;
+    /// ``renderSubAgentTranscriptRows(_:toolDurations:width:standardErrorIsTerminal:)``;
     /// without it the rows are plain text.
     nonisolated static func subAgentLiveActivityRows(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
@@ -164,10 +168,12 @@ extension TerminalChat {
 
     /// The conversation entries of `kinds`, oldest first. A completed tool
     /// call fills the entry of its start (by ID, the latest one still open;
-    /// without ID, the oldest one still open); a completion without a start
-    /// is an entry of its own. Calls of suppressed tools are dropped.
+    /// without ID, the oldest one still open), with its duration in
+    /// `toolDurations` when it has an ID; a completion without a start is an
+    /// entry of its own. Calls of suppressed tools are dropped.
     private nonisolated static func subAgentTranscriptEntries(
-        _ kinds: [ChatTurnEntry.Kind]
+        _ kinds: [ChatTurnEntry.Kind],
+        toolDurations: [String: Duration]
     ) -> [SubAgentTranscriptEntry] {
         var entries: [SubAgentTranscriptEntry] = []
         var openCalls: [String: Int] = [:]
@@ -187,7 +193,7 @@ extension TerminalChat {
                 } else {
                     openCalls[call.id] = entries.count
                 }
-                entries.append(.toolCall(call, result: nil))
+                entries.append(.toolCall(call, result: nil, elapsed: nil))
             case let .toolCallCompleted(call, result):
                 guard !shouldSuppressToolRendering(for: call.name) else { continue }
                 let startIndex: Int?
@@ -196,10 +202,11 @@ extension TerminalChat {
                 } else {
                     startIndex = openCalls.removeValue(forKey: call.id)
                 }
+                let elapsed = call.id.isEmpty ? nil : toolDurations[call.id]
                 if let startIndex {
-                    entries[startIndex] = .toolCall(call, result: result)
+                    entries[startIndex] = .toolCall(call, result: result, elapsed: elapsed)
                 } else {
-                    entries.append(.toolCall(call, result: result))
+                    entries.append(.toolCall(call, result: result, elapsed: elapsed))
                 }
             case .fileArtifacts, .notice, .workflowNotice, .turnPhase:
                 continue
@@ -245,10 +252,11 @@ extension TerminalChat {
             logicalRows = subAgentTranscriptLogicalRows(
                 formatter.consume(text) + formatter.finish()
             )
-        case let .toolCall(call, result):
+        case let .toolCall(call, result, elapsed):
             logicalRows = subAgentTranscriptToolRows(
                 call,
                 result: result,
+                elapsed: elapsed,
                 width: width,
                 standardErrorIsTerminal: standardErrorIsTerminal
             )
@@ -291,11 +299,13 @@ extension TerminalChat {
 
     /// The canonical compact rows of a tool call, as the full sub-agent
     /// overview renders them (``renderSubAgentToolLines(_:density:standardErrorIsTerminal:)``),
-    /// with the stable completion detail of the result: the transcript has no
-    /// elapsed time.
+    /// with the completion detail of the result as the main chat makes it:
+    /// the elapsed time the runtime measured (`elapsed`, `nil` when it has
+    /// none), then the exit code of a failed process.
     private nonisolated static func subAgentTranscriptToolRows(
         _ call: DirectAgentToolCall,
         result: DirectAgentToolResult?,
+        elapsed: Duration?,
         width: Int,
         standardErrorIsTerminal: Bool
     ) -> [String] {
@@ -303,7 +313,7 @@ extension TerminalChat {
             for: call,
             result: result,
             statusDetail: result.flatMap {
-                compactToolCompletionDetail(for: call, result: $0, elapsed: nil)
+                compactToolCompletionDetail(for: call, result: $0, elapsed: elapsed)
             },
             contentInsetWidth: 0,
             // The canonical renderer reserves its own final safety column.

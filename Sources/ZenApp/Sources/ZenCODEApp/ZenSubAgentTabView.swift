@@ -48,8 +48,10 @@ extension View {
 /// Its body reads the rows (``ZenSubAgentTranscriptModel/items``, changed
 /// only when the transcript changes); the snapshot, the notice, and the live
 /// activity are read by the small views that show them. It follows the
-/// bottom as the conversation does (``ZenScrollMetrics``), and measures its
-/// own tool durations.
+/// bottom as the conversation does (``ZenScrollMetrics``), and shows the tool
+/// durations the Core measured (``ZenSubAgentTranscriptModel/toolDurations``)
+/// rather than measuring its own, so a call that ran before the tab opened
+/// has its time too.
 struct ZenSubAgentTabView: View {
     let model: ZenSubAgentTranscriptModel
 
@@ -81,8 +83,8 @@ struct ZenSubAgentTabView: View {
         .onScrollGeometryChange(for: ZenScrollMetrics.self, of: ZenScrollMetrics.init) { old, new in
             follow(old: old, new: new)
         }
-        .onChange(of: items, initial: true) { _, items in
-            durations.observe(items)
+        .onChange(of: model.toolDurations, initial: true) { _, new in
+            durations.replace(with: new)
         }
         .overlay(alignment: .bottom) {
             if showsJumpToLatest {

@@ -415,6 +415,27 @@ public enum ZenSubAgentTranscriptProjection {
     public static func rowIDPrefix(agentID: String) -> String {
         "subagent-\(agentID)-"
     }
+
+    /// The durations of the completed tool calls of `items`, by row id: each
+    /// tool-call row with a result whose call id has a duration in
+    /// `callDurations` (`ChatSubAgentTranscript.toolDurations`, by call id).
+    /// A running call, a call without an id, and a call without a duration
+    /// have none; every other row has none either.
+    public static func toolDurations(
+        for items: [ZenTranscriptItem],
+        callDurations: [String: Duration]
+    ) -> [String: Duration] {
+        guard !callDurations.isEmpty else { return [:] }
+        var durations: [String: Duration] = [:]
+        for item in items {
+            guard case let .toolCall(call, result) = item.content,
+                  result != nil,
+                  !call.id.isEmpty,
+                  let duration = callDurations[call.id] else { continue }
+            durations[item.id] = duration
+        }
+        return durations
+    }
 }
 
 // MARK: - Log rows

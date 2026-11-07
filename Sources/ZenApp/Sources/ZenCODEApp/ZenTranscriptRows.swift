@@ -174,8 +174,9 @@ struct ZenTranscriptItemView: View {
 /// Calls are keyed by their row id, which is unique across the sessions of a
 /// window (`<epoch>-log-<sequence>`), so a later session never inherits a
 /// duration. The window observes the closed rows only, when they change. A
-/// sub-agent tab measures the calls of its transcript with durations of its
-/// own.
+/// sub-agent tab has durations of its own and does not measure them: it
+/// shows the ones the Core measured (``replace(with:)``, from
+/// `ZenSubAgentTranscriptModel.toolDurations`).
 @MainActor
 @Observable
 final class ZenToolDurations {
@@ -207,6 +208,14 @@ final class ZenToolDurations {
                     durations[item.id] = start.duration(to: now)
                 }
             }
+        }
+    }
+
+    /// Shows `durations` (by row id), measured elsewhere, instead of the
+    /// ones held; assigned only when they differ.
+    func replace(with durations: [String: Duration]) {
+        if self.durations != durations {
+            self.durations = durations
         }
     }
 }

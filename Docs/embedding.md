@@ -499,11 +499,17 @@ sub-agents of the session are registered under (the runner receives it as
 - `ChatSessionController.subAgentTranscript(agentID:)` returns the live
   conversation of one sub-agent as a `ChatSubAgentTranscript`
   (`ChatTurnEntry.Kind` values, oldest first): the agent's backend history at
-  the time of the call, including a turn still running. The read keeps no
-  state. It is `nil` for an agent that does not belong to the session and for
-  an agent whose backend was shut down (closed, cancelled, failed, or released
-  from standby): the Core keeps no copy of the history, so an app that shows
-  the conversation after the agent ends keeps its own last read.
+  the time of the call, including a turn still running. Its `toolDurations`
+  give the elapsed time of the agent's completed tool calls by tool call id,
+  as the Core measured them in memory (the last 512 calls of the agent; a
+  running call, or a call without an id, has none). The backend records a
+  tool result before the Core measures the call, so a later read can add only
+  a duration: compare `toolDurations` too, not only `kinds`, to know when to
+  draw again. The read itself stores nothing. It is `nil` for an agent that
+  does not belong to the session and for an agent whose backend was shut down
+  (closed, cancelled, failed, or released from standby): the Core keeps no
+  copy of the history, so an app that shows the conversation after the agent
+  ends keeps its own last read.
 
 ## Observing a Session
 

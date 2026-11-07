@@ -829,21 +829,29 @@ host (`ChatShellSnapshot`) is transient too.
 
 The transcript of a delegated sub-agent (`ChatSubAgentTranscript`, read with
 `ChatSessionController.subAgentTranscript(agentID:)` and scoped to the
-controller's session as the root session) adds no event log and no state: it
-is the same rebuild of the agent's own backend history, read from the live
-backend at each call. The read completes it for presentation only, without
-changing the history: an assistant message without reasoning takes the text
-of its `thinking` blocks as its thought (Anthropic keeps its reasoning only
-there), and when the history has a tool call, the calls take the title and
+controller's session as the root session) adds no event log: it is the same
+rebuild of the agent's own backend history, read from the live backend at
+each call. The read completes it for presentation only, without changing the
+history: an assistant message without reasoning takes the text of its
+`thinking` blocks as its thought (Anthropic keeps its reasoning only there),
+and when the history has a tool call, the calls take the title and
 presentation of the agent's own tool descriptors, which are asked for only
 in that case so a read never starts a feature's tool discovery. The system
 prompt, the dynamic context, and the memory block are not in that history.
-Once the agent's backend is shut down (the
+The only state behind the read is the elapsed time of the tool calls, which
+the history does not keep: the runtime measures each call of the agent from
+the start to the completion it receives, and keeps, only in memory in the
+agent's record, the durations of the agent's last 512 tool calls (the oldest
+are evicted first, and they survive the agent's turns and its end), exposed
+as `toolDurations` by tool call id. The backend records a tool result before
+it reports the completion, so a read can show a completed call whose
+duration only a later read has. Once the agent's backend is shut down (the
 agent was closed, cancelled, failed, or released from standby) the read
 returns `nil`: the runtime keeps no copy of the history, in the agent's record
-or anywhere else, so nothing reaches saved sessions, session snapshots,
-checkpoint trees, or task checkpoints. A host that wants to show the
-conversation after the agent ends keeps its own last read.
+or anywhere else, and neither the history nor the durations reach saved
+sessions, session snapshots, checkpoint trees, or task checkpoints. A host
+that wants to show the conversation after the agent ends keeps its own last
+read.
 
 Local operation evidence may also contain a complete compact unified patch and
 its counts instead of full old/new text. Compaction runs on the operation's

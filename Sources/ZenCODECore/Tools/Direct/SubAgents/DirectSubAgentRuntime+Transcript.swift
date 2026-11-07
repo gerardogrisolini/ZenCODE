@@ -34,8 +34,19 @@ extension DirectSubAgentRuntime {
     ///   requests, so a read never starts a feature's tool discovery
     ///   (`--list-tools`) or the consent it can ask for.
     ///
-    /// The read keeps no state: the runtime stores no copy of the history or
-    /// of the descriptors, and the history itself is not changed.
+    /// The transcript also carries the durations the runtime measured of the
+    /// agent's completed tool calls (``ChatSubAgentTranscript/toolDurations``,
+    /// by tool call id): from the `.toolCallStarted` to the
+    /// `.toolCallCompleted` event the runtime received, for the agent's last
+    /// 512 calls (`maximumRetainedToolCallDurationsPerAgent`). The backend
+    /// records a tool result in the history before it reports the
+    /// completion, so a read can show a completed call whose duration is not
+    /// there yet: a later read has it.
+    ///
+    /// The read itself keeps no state: the runtime stores no copy of the
+    /// history or of the descriptors, and the history itself is not changed;
+    /// the durations are the runtime's own measurement, kept in memory only
+    /// in the agent's record.
     /// `nil` when no such agent exists, it belongs to another root session,
     /// or its backend no longer has the agent's session (the backend was shut
     /// down: the agent was closed, cancelled, failed, or released from
@@ -61,14 +72,19 @@ extension DirectSubAgentRuntime {
             fromTranscript: history.map(Self.transcriptMessageWithThinkingBlockReasoning)
         )
         guard kinds.contains(where: Self.isToolCallKind) else {
-            return ChatSubAgentTranscript(agentID: agentID, kinds: kinds)
+            return ChatSubAgentTranscript(
+                agentID: agentID,
+                kinds: kinds,
+                toolDurations: current.toolCallDurations.byCallID
+            )
         }
         let descriptors = await current.backend.activeToolDescriptors(
             sessionID: current.sessionID
         )
         // Actor reentrancy again: decide on the record as it is after the
-        // descriptors were read.
-        guard agents[agentID]?.rootSessionID == rootSessionID else {
+        // descriptors were read, its durations included.
+        guard let latest = agents[agentID],
+              latest.rootSessionID == rootSessionID else {
             return nil
         }
         let descriptorsByName = Dictionary(
@@ -77,7 +93,8 @@ extension DirectSubAgentRuntime {
         )
         return ChatSubAgentTranscript(
             agentID: agentID,
-            kinds: kinds.map { Self.transcriptKind($0, presentedWith: descriptorsByName) }
+            kinds: kinds.map { Self.transcriptKind($0, presentedWith: descriptorsByName) },
+            toolDurations: latest.toolCallDurations.byCallID
         )
     }
 
