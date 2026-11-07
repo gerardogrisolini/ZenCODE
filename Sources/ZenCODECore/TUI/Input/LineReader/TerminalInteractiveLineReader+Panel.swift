@@ -548,7 +548,7 @@ extension TerminalInteractiveLineReader {
                     guard state.panelSupportsPressAndHold,
                           state.panelOverlayOverride == nil,
                           !state.panelSharedChatReaderIsOpen,
-                          !state.panelSubAgentDetailIsOpen,
+                          state.panelSubAgentDetailMode == .closed,
                           let base = state.editor.pressAndHoldMenu?.base else {
                         return nil
                     }
@@ -590,16 +590,22 @@ extension TerminalInteractiveLineReader {
         consumedPickerRepeat: Character? = nil,
         onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void
     ) async {
-        // The `/subagent` detail owns every key except end-of-input, which
-        // keeps its usual meaning. Keys it does not bind are swallowed so they
-        // can never edit the hidden draft, and `Esc` closes the detail instead
-        // of stopping the generation.
-        let isSubAgentDetailOpen = withPanelLock { $0.panelSubAgentDetailIsOpen }
-        if isSubAgentDetailOpen, key != .endOfInput {
-            if let action = Self.subAgentDetailAction(for: key) {
+        // The `/subagent` detail comes first; end-of-input keeps its usual
+        // meaning in every mode. The agent list is modal: it owns every other
+        // key and swallows those it does not bind, so they can never edit the
+        // draft behind it. An agent's detail takes only its navigation keys,
+        // like the shared-chat reader below, and leaves every other key to
+        // the draft, which the operator keeps typing and sending. In both
+        // `Esc` closes the detail instead of stopping the generation.
+        let subAgentDetailMode = withPanelLock { $0.panelSubAgentDetailMode }
+        if subAgentDetailMode != .closed, key != .endOfInput {
+            if let action = Self.subAgentDetailAction(for: key, mode: subAgentDetailMode) {
                 await onEvent(.subAgentDetail(action))
+                return
             }
-            return
+            if subAgentDetailMode == .list {
+                return
+            }
         }
         let readerAction = withPanelLock { state -> TerminalSharedChatReaderAction? in
             guard state.panelSharedChatReaderIsOpen else { return nil }
@@ -673,33 +679,55 @@ extension TerminalInteractiveLineReader {
         }
     }
 
-    /// Hands the panel keys to the `/subagent` detail, or gives them back to
-    /// the draft. Synchronous like ``setSharedChatReaderOpen(_:)`` so the
-    /// ownership changes before the next key is reduced. The flag survives
-    /// panel stops and resumes; only the chat loop that opened the detail
-    /// clears it.
-    func setSubAgentDetailOpen(_ isOpen: Bool) {
+    /// What the `/subagent` detail does with the panel keys.
+    enum SubAgentDetailMode: Sendable, Equatable {
+        /// No detail is open: every key belongs to the draft.
+        case closed
+        /// The detail lists the sub-agents in progress. It is modal: it owns
+        /// every key but end-of-input and swallows those it does not bind.
+        case list
+        /// The detail shows an agent. Like the shared-chat reader it takes
+        /// only its navigation keys and `Esc`; every other key edits and
+        /// sends the draft, completions included.
+        case detail
+    }
+
+    /// Tells the panel what the `/subagent` detail does with its keys;
+    /// ``SubAgentDetailMode/closed`` gives them all back to the draft.
+    /// Synchronous like ``setSharedChatReaderOpen(_:)`` so the routing
+    /// changes before the next key is reduced. The mode survives panel stops
+    /// and resumes; only the chat loop that opened the detail changes it.
+    func setSubAgentDetailMode(_ mode: SubAgentDetailMode) {
         withPanelLock { state in
-            state.panelSubAgentDetailIsOpen = isOpen
-            if isOpen {
+            state.panelSubAgentDetailMode = mode
+            if mode != .closed {
                 state.editor.resetPressAndHold()
             }
         }
     }
 
-    /// Semantic action of a key while the `/subagent` detail is open, or `nil`
-    /// for a key the detail swallows. Arrows always scroll: the controller
-    /// turns them into list focus when it shows the agent list.
-    static func subAgentDetailAction(for key: Key) -> TerminalSubAgentDetailAction? {
-        switch key {
-        case .up: .scrollUp
-        case .down: .scrollDown
-        case .pageUp: .pageUp
-        case .pageDown: .pageDown
-        case .home, .bufferStart: .top
-        case .end, .bufferEnd: .bottom
-        case .enter, .newline: .confirm
-        case .cancel, .character("q"), .character("Q"): .close
+    /// Semantic action of a key for the `/subagent` detail in `mode`, or
+    /// `nil` for a key the detail does not bind: the agent list swallows it,
+    /// an agent's detail leaves it to the draft. In both modes the arrows,
+    /// the page keys and `Home`/`End` scroll (the controller turns the
+    /// arrows into the list focus) and `Esc` closes. Only the list binds
+    /// `Enter` (open the focused agent) and `q`/`Q` (close): in an agent's
+    /// detail they belong to the draft.
+    static func subAgentDetailAction(
+        for key: Key,
+        mode: SubAgentDetailMode
+    ) -> TerminalSubAgentDetailAction? {
+        switch (mode, key) {
+        case (.closed, _): nil
+        case (_, .up): .scrollUp
+        case (_, .down): .scrollDown
+        case (_, .pageUp): .pageUp
+        case (_, .pageDown): .pageDown
+        case (_, .home), (_, .bufferStart): .top
+        case (_, .end), (_, .bufferEnd): .bottom
+        case (_, .cancel): .close
+        case (.list, .enter), (.list, .newline): .confirm
+        case (.list, .character("q")), (.list, .character("Q")): .close
         default: nil
         }
     }
@@ -721,14 +749,19 @@ extension TerminalInteractiveLineReader {
         TerminalPromptEditorContext(
             history: state.history,
             suggestions: state.panelCommandSuggestions,
-            isOverlayActive: state.panelOverlayOverride != nil,
+            // An agent's `/subagent` detail leaves the draft to the operator,
+            // like the shared-chat reader: its panel mode is no overlay of the
+            // prompt, so the completion menu stays. The modal agent list's
+            // mode does count as one.
+            isOverlayActive: state.panelOverlayOverride != nil
+                && state.panelSubAgentDetailMode != .detail,
             isProcessing: state.panelIsProcessing,
             isSpeaking: state.panelIsSpeaking,
             supportsCompletions: true,
             clearsDraftOnCancel: true,
             supportsPressAndHold: state.panelSupportsPressAndHold
                 && !state.panelSharedChatReaderIsOpen
-                && !state.panelSubAgentDetailIsOpen
+                && state.panelSubAgentDetailMode == .closed
         )
     }
 }

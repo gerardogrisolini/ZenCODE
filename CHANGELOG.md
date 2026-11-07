@@ -10,6 +10,33 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- The `/subagent` detail of an agent no longer blocks the prompt: as with the
+  shared chat reader, it takes only `↑`/`↓`, `PgUp`/`PgDn`, `Home`/`End`, and
+  `Esc` (which closes it), and every other key goes to the prompt, so you can
+  type, complete (slash commands and `@` mentions), and send prompts and
+  mentions while it stays open. `q` now closes only the list of the
+  sub-agents in progress, which stays modal. A command that opens a menu or a
+  line prompt closes the detail first.
+
+### Fixed
+
+- The right border of the `/subagent` detail stays straight on terminals that
+  draw the tool icon `🛠️` one column wide.
+- The tool calls of the `/subagent` detail now show their target (path,
+  pattern, command, …), not only the tool name.
+- The reasoning of Claude sub-agents stays in the `/subagent` detail after the
+  live preview: it is read from the Anthropic thinking blocks of the
+  agent's history.
+- The live end of the `/subagent` detail matches the sub-agent tab of the
+  macOS app: while the agent reasons, its paragraph in progress is drawn as a
+  thinking block of the transcript, otherwise `🤔 thinking…`, and nothing
+  while a tool runs (its row is already in the transcript) instead of a
+  duplicate, indented tool line.
+- The sub-agent tabs of the macOS app get both: the target of each tool call
+  and the reasoning of Claude sub-agents.
+
 ## [4.0.2] - 2026-11-07
 
 ### Added

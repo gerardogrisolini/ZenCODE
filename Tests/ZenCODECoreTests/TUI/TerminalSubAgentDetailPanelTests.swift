@@ -271,6 +271,47 @@ struct TerminalSubAgentDetailPanelTests {
         #expect(TerminalANSIText.stripANSI(lines[1]).hasPrefix("│     let value = 1"))
     }
 
+    /// The width of `🛠️` (`U+1F6E0 U+FE0F`) depends on the terminal, so every
+    /// interior row must place its right border with an absolute column move.
+    @Test(arguments: [5, 13, 30, 80])
+    func interiorRowsPlaceTheRightBorderAtAnAbsoluteColumn(columns: Int) throws {
+        let toolRow = "🛠️ Bash swift test"
+        let panel = TerminalSubAgentDetailPanel(
+            headerRows: ["🛠️ header", "status"],
+            bodyRows: [toolRow, "plain row", "🛠️"]
+        )
+        let lines = panel.frameLines(rows: 12, columns: columns)
+        let border = TerminalStyle.Chrome.border, reset = TerminalStyle.reset
+        let anchor = "\u{1B}[K\u{1B}[\(columns)G"
+        let closingBorder = anchor + border + "│" + reset
+
+        #expect(lines.count == 12)
+        #expect(lines.allSatisfy { TerminalANSIText.visibleWidth($0) == columns })
+
+        let top = try #require(lines.first)
+        let bottom = try #require(lines.last)
+        let separator = border + "├"
+        let interior = lines.dropFirst().dropLast().filter { !$0.hasPrefix(separator) }
+        #expect(interior.count == 9)
+        for line in interior {
+            #expect(line.hasPrefix(border + "│" + reset + " "))
+            #expect(line.hasSuffix(closingBorder))
+            #expect(line.ranges(of: anchor).count == 1)
+            #expect(TerminalANSIText.visibleWidth(line) == columns)
+        }
+
+        // Borders and separator are plain rules: no absolute positioning.
+        for line in [top, bottom] + lines.filter({ $0.hasPrefix(separator) }) {
+            #expect(!line.contains("\u{1B}[K"))
+            #expect(!line.contains("\u{1B}[\(columns)G"))
+        }
+        // The glyph row really is part of the frame once there is room for it.
+        if columns >= 30 {
+            #expect(interior.contains { $0.contains("🛠️ Bash swift test") })
+            #expect(interior.contains { $0.contains("🛠️ header") })
+        }
+    }
+
     // MARK: - Agent choice
 
     @Test func focusMovesCyclicallyAndOtherActionsLeaveTheListUnchanged() {

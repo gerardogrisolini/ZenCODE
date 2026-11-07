@@ -19,6 +19,12 @@ import Foundation
 ///
 /// The system prompt, the dynamic session context, and the automatic memory
 /// block are not part of the history, so the transcript never contains them.
+///
+/// What the history does not keep is added for presentation only (see
+/// ``DirectSubAgentRuntime/transcript(agentID:rootSessionID:)``): an assistant
+/// message without reasoning shows the text of its `thinking` blocks as its
+/// thought, and a tool call carries the title and the presentation of the
+/// agent's own tool descriptor, so it is shown with its target.
 public struct ChatSubAgentTranscript: Sendable, Equatable {
     /// The sub-agent the transcript belongs to.
     public let agentID: String

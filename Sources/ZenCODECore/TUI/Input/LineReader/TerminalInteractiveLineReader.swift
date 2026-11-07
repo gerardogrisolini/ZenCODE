@@ -176,11 +176,11 @@ public final class TerminalInteractiveLineReader: Sendable {
         var panelPendingAttachmentCount = 0
         var panelOverlayOverride: TerminalPanelModeOverride?
         var panelSharedChatReaderIsOpen = false
-        /// The `/subagent` detail owns the panel keys. Unlike the draft it is
-        /// not session state of the panel: stopping or resuming the panel (for
-        /// a consent prompt, say) leaves it untouched, because only the chat
-        /// loop that opened the detail may close it.
-        var panelSubAgentDetailIsOpen = false
+        /// What the `/subagent` detail does with the panel keys. Unlike the
+        /// draft it is not session state of the panel: stopping or resuming
+        /// the panel (for a consent prompt, say) leaves it untouched, because
+        /// only the chat loop that opened the detail may change it.
+        var panelSubAgentDetailMode: SubAgentDetailMode = .closed
         var panelCommandSuggestions: [TerminalCommandSuggestion] = []
         /// Pull-based source of live `@mention` suggestions.
         ///

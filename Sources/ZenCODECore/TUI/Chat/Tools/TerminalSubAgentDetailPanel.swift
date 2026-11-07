@@ -158,16 +158,15 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
 
         let layout = Self.layout(headerCount: headerRows.count, frameRows: rows)
         let window = bodyWindow(capacity: layout.bodyCapacity)
-        let width = columns - 4
         var lines = [top]
         if layout.headerCount > 0 {
-            lines += headerRows.prefix(layout.headerCount).map { Self.interiorLine($0, width: width) }
+            lines += headerRows.prefix(layout.headerCount).map { Self.interiorLine($0, columns: columns) }
             let border = TerminalStyle.Chrome.border, reset = TerminalStyle.reset
             lines.append(border + "├" + String(repeating: "─", count: columns - 2) + "┤" + reset)
         }
-        lines += window.rows.map { Self.interiorLine($0, width: width) }
+        lines += window.rows.map { Self.interiorLine($0, columns: columns) }
         lines += Array(
-            repeating: Self.interiorLine("", width: width),
+            repeating: Self.interiorLine("", columns: columns),
             count: max(0, layout.bodyCapacity - window.rows.count)
         )
         let indicator: String? = window.total > layout.bodyCapacity && layout.bodyCapacity > 0
@@ -223,11 +222,23 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
 
     // MARK: - Drawing
 
-    private static func interiorLine(_ text: String, width: Int) -> String {
+    /// An interior row of a frame `columns` wide: `│ `, the content padded to
+    /// `columns - 4` columns, ` ` and the right `│`.
+    ///
+    /// The right border is placed with an absolute cursor move instead of
+    /// relying on the padding: terminals disagree on the width of some emoji
+    /// (`🛠️` is `U+1F6E0 U+FE0F`, which `TerminalANSIText.visibleWidth` counts
+    /// as 2 columns while many terminals draw it 1 column wide), so a row with
+    /// such a glyph would end one column short and the `│` would zigzag.
+    /// `ESC[K` first clears whatever the glyph left to the right, then
+    /// `ESC[<columns>G` jumps to the last column. Both are zero-width CSI
+    /// sequences, so the row still measures exactly `columns` visible columns.
+    private static func interiorLine(_ text: String, columns: Int) -> String {
+        let width = columns - 4
         let border = TerminalStyle.Chrome.border, reset = TerminalStyle.reset
         return border + "│" + reset + " "
             + TerminalCheckboxMenu.padded(fitRow(text, width: width), width: width)
-            + " " + border + "│" + reset
+            + " " + "\u{1B}[K" + "\u{1B}[\(columns)G" + border + "│" + reset
     }
 
     /// A horizontal border `columns` wide, embedding `label` after the first

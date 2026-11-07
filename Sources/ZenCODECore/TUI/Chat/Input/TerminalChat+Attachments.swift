@@ -185,6 +185,7 @@ extension TerminalChat {
                 return nil
             }
 
+            await closeSubAgentDetailForModalInput()
             guard let selectedPath = await TerminalCheckboxMenu.selectOneOffActor(
                 title: "Attach image or video — \(directory.path)",
                 items: items,

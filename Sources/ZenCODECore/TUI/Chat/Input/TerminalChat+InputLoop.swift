@@ -671,7 +671,8 @@ extension TerminalChat {
                     }
                 case let .subAgentDetail(action):
                     // The reader emits these only while the detail is open;
-                    // Esc/q close it through the controller's `onClosed`.
+                    // Esc (and `q` in the agent list) close it through the
+                    // controller's `onClosed`.
                     await handleSubAgentDetailAction(action)
                 case .endOfInput:
                     generationTask?.cancel()

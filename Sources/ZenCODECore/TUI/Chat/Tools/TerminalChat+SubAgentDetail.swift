@@ -33,13 +33,16 @@ extension TerminalChat {
         case choosing([DirectSubAgentRuntime.AgentSnapshot])
     }
 
-    /// The input panel's mode while the detail shows an agent.
+    /// The input panel's mode while the detail shows an agent. It is no
+    /// overlay of the prompt: below the detail the operator keeps typing,
+    /// completing and sending the draft.
     nonisolated static let subAgentDetailPanelOverride = TerminalPanelModeOverride(
         modeText: "Sub-agent",
         helpText: "↑↓ PgUp PgDn Home End scroll · Esc close"
     )
 
-    /// The input panel's mode while the detail lists the agents in progress.
+    /// The input panel's mode while the detail lists the agents in progress,
+    /// which own every key of the panel until one is opened.
     nonisolated static let subAgentListPanelOverride = TerminalPanelModeOverride(
         modeText: "Sub-agent",
         helpText: "↑↓ choose · Enter open · Esc close"
@@ -103,6 +106,13 @@ extension TerminalChat {
     /// keys that scroll and close it) on a primary screen that still owns the
     /// layout; otherwise, and when no sub-agent is in progress, it writes why
     /// and opens nothing. A failed match leaves an open detail as it is.
+    ///
+    /// The agent list owns every key of the panel. An agent's detail takes
+    /// only the keys that scroll it and `Esc`, which closes it: the prompt
+    /// keeps the other keys, so prompts and `@` mentions are typed and sent
+    /// while it stays open, and a command goes on with it open unless it
+    /// opens a menu or a line prompt
+    /// (``closeSubAgentDetailForModalInput()``).
     func handleSubAgentCommand(_ command: String) async {
         guard stdinIsTerminal,
               loopEventQueue != nil,
@@ -173,25 +183,27 @@ extension TerminalChat {
             standardErrorIsTerminal: AgentOutput.standardErrorIsTerminal
         ))
         subAgentDetail = TerminalSubAgentDetail(controller: controller, session: session)
-        interactiveReader.setSubAgentDetailOpen(true)
 
         switch target {
         case let .agent(snapshot):
+            interactiveReader.setSubAgentDetailMode(.detail)
             await interactiveReader.setPanelModeOverride(Self.subAgentDetailPanelOverride)
             controller.open(agentID: snapshot.id, snapshot: snapshot)
         case let .choosing(snapshots):
+            interactiveReader.setSubAgentDetailMode(.list)
             await interactiveReader.setPanelModeOverride(Self.subAgentListPanelOverride)
             controller.open(choosing: snapshots)
         }
     }
 
-    /// Shows the panel mode of the list or of the detail, while the detail
-    /// opened in `session` is still the one open.
-    private func subAgentDetailModeDidChange(
+    /// Routes the panel keys and shows the panel mode of the list or of the
+    /// detail, while the detail opened in `session` is still the one open.
+    func subAgentDetailModeDidChange(
         isChoosing: Bool,
         session: TerminalModalSession
     ) async {
         guard subAgentDetail?.session === session else { return }
+        interactiveReader.setSubAgentDetailMode(isChoosing ? .list : .detail)
         await interactiveReader.setPanelModeOverride(
             isChoosing ? Self.subAgentListPanelOverride : Self.subAgentDetailPanelOverride
         )
@@ -213,7 +225,7 @@ extension TerminalChat {
         subAgentDetail = nil
         detail.controller.stop()
         detail.session.close()
-        interactiveReader.setSubAgentDetailOpen(false)
+        interactiveReader.setSubAgentDetailMode(.closed)
         await interactiveReader.setPanelModeOverride(nil)
         if reason == .consent {
             // Still inside the external-writer phase: it follows the output
@@ -222,6 +234,30 @@ extension TerminalChat {
         }
         await renderCoordinator.endExternalTerminalPrompt()
         await interactiveReader.refreshPanel()
+    }
+
+    /// Closes the open detail, if any, with
+    /// ``TerminalSubAgentDetailController/CloseReason/replaced`` before a menu
+    /// or a line prompt takes the terminal: that modal draws its own frame
+    /// and reads the keys itself, so the detail gives the screen, the keys
+    /// and its external-writer phase back first. Does nothing while no
+    /// detail is open.
+    ///
+    /// Called right before the modal opens, so a command that opens none
+    /// (`/help`, say) leaves the detail open: by every interaction of
+    /// ``TerminalInteractionHost`` that opens a menu or a line prompt (the
+    /// menus of the shared commands, and the requests of a tool) and by the
+    /// terminal's own menus and line prompts (`/feature`, the attachment
+    /// picker). Consent closes the detail on its own
+    /// (``TerminalSubAgentDetailController/CloseReason/consent``) and
+    /// `/subagent` replaces it.
+    ///
+    /// ``TerminalInteractionHost/requestWorkspaceAccess(_:)`` calls it before
+    /// asking `TerminalWorkspaceToolAccessStore`, which decides by itself
+    /// whether the folder is already trusted: the detail closes even when no
+    /// question follows.
+    func closeSubAgentDetailForModalInput() async {
+        await closeSubAgentDetail(reason: .replaced)
     }
 
     /// Hands a key of the panel to the open detail; does nothing while none

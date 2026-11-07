@@ -831,8 +831,14 @@ The transcript of a delegated sub-agent (`ChatSubAgentTranscript`, read with
 `ChatSessionController.subAgentTranscript(agentID:)` and scoped to the
 controller's session as the root session) adds no event log and no state: it
 is the same rebuild of the agent's own backend history, read from the live
-backend at each call. The system prompt, the dynamic context, and the memory
-block are not in that history. Once the agent's backend is shut down (the
+backend at each call. The read completes it for presentation only, without
+changing the history: an assistant message without reasoning takes the text
+of its `thinking` blocks as its thought (Anthropic keeps its reasoning only
+there), and when the history has a tool call, the calls take the title and
+presentation of the agent's own tool descriptors, which are asked for only
+in that case so a read never starts a feature's tool discovery. The system
+prompt, the dynamic context, and the memory block are not in that history.
+Once the agent's backend is shut down (the
 agent was closed, cancelled, failed, or released from standby) the read
 returns `nil`: the runtime keeps no copy of the history, in the agent's record
 or anywhere else, so nothing reaches saved sessions, session snapshots,

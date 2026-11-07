@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ToolCore
 
 extension TerminalChat {
     /// One conversation entry of a sub-agent transcript, as the detail view
@@ -88,22 +89,67 @@ extension TerminalChat {
         )
     }
 
-    /// The live activity of the sub-agent as the full overview entry shows
-    /// it (the reasoning title and paragraph, the latest assistant block, or
-    /// the tool it runs), without a delegated tool presentation. No row
-    /// exceeds `width` visible columns.
+    /// The live activity shown after the transcript of a sub-agent in
+    /// progress, as the sub-agent tab of ZenApp shows it:
+    ///
+    /// - no row when the agent is not pending, or when it runs a tool: the
+    ///   transcript already has the row of that call. A tool without a
+    ///   terminal representation (``shouldSuppressToolRendering(for:)``, as
+    ///   `agent.message`) does not count as a running tool;
+    /// - while it reasons with a paragraph in progress, the rows the
+    ///   transcript draws for a reasoning block: the thinking title
+    ///   followed by the paragraph in the thinking style, at the full
+    ///   `width`;
+    /// - in every other case (it reasons without a paragraph yet, writes a
+    ///   message, has no activity, or is queued) a single row with the
+    ///   thinking title alone (``thinkingPlaceholder``).
+    ///
+    /// No row exceeds `width` visible columns. With `standardErrorIsTerminal`
+    /// every row is styled on its own, as in
+    /// ``renderSubAgentTranscriptRows(_:width:standardErrorIsTerminal:)``;
+    /// without it the rows are plain text.
     nonisolated static func subAgentLiveActivityRows(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
-        width: Int
+        width: Int,
+        standardErrorIsTerminal: Bool
     ) -> [String] {
-        subAgentRowsTruncated(
-            subAgentOverviewRows(
-                renderSubAgentActivityLines(snapshot, toolPresentation: nil, density: .full),
-                columns: width,
-                includesTitle: false
-            ),
-            to: width
-        )
+        guard snapshot.pending else { return [] }
+        if let toolName = snapshot.currentToolName?.nilIfBlank,
+           !shouldSuppressToolRendering(for: toolName) {
+            return []
+        }
+        let width = max(1, width)
+        if snapshot.currentActivityKind == .thinking,
+           let paragraph = snapshot.currentActivity,
+           paragraph.nilIfBlank != nil {
+            // The rows of the transcript fit `width` unless one glyph is wider
+            // than the view itself (a view of one column); only such a row is cut.
+            return subAgentTranscriptRows(
+                for: .thought(paragraph),
+                width: width,
+                standardErrorIsTerminal: standardErrorIsTerminal
+            ).map { row in
+                TerminalANSIText.visibleWidth(row) > width
+                    ? TerminalANSIText.truncate(row, to: width)
+                    : row
+            }
+        }
+        return [
+            TerminalANSIText.truncate(
+                subAgentThinkingTitle(standardErrorIsTerminal: standardErrorIsTerminal),
+                to: width
+            )
+        ]
+    }
+
+    /// The title of a reasoning block: ``thinkingPlaceholder`` in the thinking
+    /// title style, reset after it, when `standardErrorIsTerminal`.
+    private nonisolated static func subAgentThinkingTitle(
+        standardErrorIsTerminal: Bool
+    ) -> String {
+        standardErrorIsTerminal
+            ? "\(TerminalStyle.Thinking.title)\(thinkingPlaceholder)\(TerminalStyle.reset)"
+            : thinkingPlaceholder
     }
 
     /// The overview rows never narrow below the section's minimum content
@@ -181,9 +227,7 @@ extension TerminalChat {
                 standardErrorIsTerminal: standardErrorIsTerminal
             )
         case let .thought(text):
-            let title = standardErrorIsTerminal
-                ? "\(TerminalStyle.Thinking.title)\(thinkingPlaceholder)\(TerminalStyle.reset)"
-                : thinkingPlaceholder
+            let title = subAgentThinkingTitle(standardErrorIsTerminal: standardErrorIsTerminal)
             let body = renderSubAgentThinkingMarkdown(
                 text,
                 standardErrorIsTerminal: standardErrorIsTerminal,

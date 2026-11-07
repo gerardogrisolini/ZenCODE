@@ -56,7 +56,7 @@ import ToolCore
 final class TerminalSubAgentDetailController {
     /// Why the panel closed.
     enum CloseReason: Sendable, Equatable {
-        /// The operator dismissed the panel (Esc or `q`).
+        /// The operator dismissed the panel (Esc, or `q` in the agent list).
         case dismissed
         /// A consent request needs the input panel.
         case consent
@@ -223,7 +223,8 @@ final class TerminalSubAgentDetailController {
 
     /// Applies a key of the panel. In the agent list ↑/↓ move the focus,
     /// Enter shows the focused agent and Esc/`q` close; in an agent's detail
-    /// the scrolling keys scroll and Esc/`q` close. Every other key is
+    /// the scrolling keys scroll and Esc closes (the panel leaves `q` and
+    /// Enter to the prompt there). Every other key is
     /// ignored, and so is every key after ``stop()``.
     func handle(_ action: TerminalSubAgentDetailAction) async {
         guard !isStopped else { return }
@@ -507,7 +508,9 @@ final class TerminalSubAgentDetailController {
     }
 
     /// The transcript (or the unavailable row), then the live activity of a
-    /// pending agent, one blank row apart.
+    /// pending agent (``TerminalChat/subAgentLiveActivityRows(_:width:standardErrorIsTerminal:)``:
+    /// the reasoning in progress or the thinking placeholder, nothing while
+    /// the agent runs a tool), one blank row apart when both have rows.
     private func body(width: Int) -> [String] {
         var rows: [String]
         switch panel.availability {
@@ -519,7 +522,11 @@ final class TerminalSubAgentDetailController {
             rows = []
         }
         if let snapshot, snapshot.pending {
-            let activity = TerminalChat.subAgentLiveActivityRows(snapshot, width: width)
+            let activity = TerminalChat.subAgentLiveActivityRows(
+                snapshot,
+                width: width,
+                standardErrorIsTerminal: environment.standardErrorIsTerminal
+            )
             if !rows.isEmpty, !activity.isEmpty {
                 rows.append("")
             }

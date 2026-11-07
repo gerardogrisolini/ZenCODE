@@ -49,6 +49,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
         pending: Bool = true,
         currentActivity: String? = nil,
         currentActivityKind: DirectSubAgentRuntime.ActivityKind? = nil,
+        currentToolName: String? = nil,
         latestOutput: String? = nil,
         latestError: String? = nil
     ) -> DirectSubAgentRuntime.AgentSnapshot {
@@ -64,6 +65,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
             configuredModelID: "openai:gpt-test",
             currentActivity: currentActivity,
             currentActivityKind: currentActivityKind,
+            currentToolName: currentToolName,
             latestMetrics: DirectAgentGenerationMetrics(
                 promptTokenCount: 12_345,
                 cachedPromptTokenCount: 9_000,
@@ -381,40 +383,211 @@ struct TerminalSubAgentTranscriptRenderingTests {
     }
 
     @Test(arguments: [12, 30, 39, 80])
-    func detailHeaderAndLiveActivityRowsFitTheWidth(width: Int) {
-        let agent = snapshot(
-            currentActivity: "Working on the parser and the renderer of the very long transcript",
-            currentActivityKind: .content,
-            latestError: "a long error message that certainly does not fit the narrow panel"
-        )
-
+    func detailHeaderRowsFitTheWidth(width: Int) {
         let header = TerminalChat.subAgentDetailHeaderRows(
-            agent,
+            snapshot(
+                currentActivity: "Working on the parser and the renderer of the very long transcript",
+                currentActivityKind: .content,
+                latestError: "a long error message that certainly does not fit the narrow panel"
+            ),
             modelTitleResolver: { $0 },
             width: width
         )
-        let activity = TerminalChat.subAgentLiveActivityRows(agent, width: width)
 
         #expect(!header.isEmpty)
-        #expect(!activity.isEmpty)
         expectRowsFit(header, width: width)
-        expectRowsFit(activity, width: width)
+    }
+
+    // MARK: - Live activity
+
+    private func liveActivity(
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
+        width: Int = 80,
+        standardErrorIsTerminal: Bool
+    ) -> [String] {
+        TerminalChat.subAgentLiveActivityRows(
+            snapshot,
+            width: width,
+            standardErrorIsTerminal: standardErrorIsTerminal
+        )
+    }
+
+    /// The `🤔 thinking…` title, as the transcript draws it.
+    private func thinkingTitle(standardErrorIsTerminal: Bool) -> String {
+        standardErrorIsTerminal
+            ? "\(TerminalStyle.Thinking.title)\(TerminalChat.thinkingPlaceholder)\(TerminalStyle.reset)"
+            : TerminalChat.thinkingPlaceholder
+    }
+
+    @Test(arguments: [false, true])
+    func liveActivityShowsTheReasoningParagraphAsAThinkingBlock(standardErrorIsTerminal: Bool) {
+        let paragraph = "Weighing the options.\n\nThe second paragraph also wraps around the width."
+
+        for width in [30, 80] {
+            let rows = liveActivity(
+                snapshot(currentActivity: paragraph, currentActivityKind: .thinking),
+                width: width,
+                standardErrorIsTerminal: standardErrorIsTerminal
+            )
+            let transcriptRows = TerminalChat.renderSubAgentTranscriptRows(
+                [.thought(paragraph)],
+                width: width,
+                standardErrorIsTerminal: standardErrorIsTerminal
+            )
+
+            #expect(rows == transcriptRows)
+            #expect(rows.first == thinkingTitle(standardErrorIsTerminal: standardErrorIsTerminal))
+            #expect(rows.count > 1)
+            #expect(!rows.contains { $0.contains("Sub-Agents:") || $0.contains("💬") })
+            if standardErrorIsTerminal {
+                for row in rows {
+                    // Written on its own, a row leaves no style open.
+                    #expect(TerminalANSIText.updatedActiveStyle("", scanning: row).isEmpty)
+                }
+            } else {
+                #expect(rows.allSatisfy { !$0.contains("\u{1B}") })
+            }
+        }
     }
 
     @Test
-    func liveActivityRowsShowTheCurrentActivity() {
-        let content = TerminalChat.subAgentLiveActivityRows(
-            snapshot(currentActivity: "Working on the parser", currentActivityKind: .content),
-            width: 80
-        ).map { TerminalANSIText.stripANSI($0) }
-        let thinking = TerminalChat.subAgentLiveActivityRows(
-            snapshot(currentActivity: "Weighing the options.", currentActivityKind: .thinking),
-            width: 80
-        ).map { TerminalANSIText.stripANSI($0) }
+    func liveActivityParagraphKeepsTheTextAsTheTranscriptDoes() {
+        let paragraph = "  Weighing the options.\n"
+        let rows = liveActivity(
+            snapshot(currentActivity: paragraph, currentActivityKind: .thinking),
+            standardErrorIsTerminal: false
+        )
 
-        #expect(content.contains { $0.contains("💬 Working on the parser") })
-        #expect(!content.contains { $0.contains("Sub-Agents:") })
-        #expect(thinking.contains { $0.contains(TerminalChat.thinkingPlaceholder) })
-        #expect(thinking.contains { $0.contains("Weighing the options.") })
+        #expect(rows == plainRows([.thought(paragraph)]))
+        #expect(rows.contains { $0.contains("Weighing the options.") })
+    }
+
+    @Test(arguments: [false, true])
+    func liveActivityInTheMessagePhaseIsOnlyThePlaceholder(standardErrorIsTerminal: Bool) {
+        let rows = liveActivity(
+            snapshot(currentActivity: "Working on the parser", currentActivityKind: .content),
+            standardErrorIsTerminal: standardErrorIsTerminal
+        )
+
+        #expect(rows == [thinkingTitle(standardErrorIsTerminal: standardErrorIsTerminal)])
+        #expect(!rows.contains { $0.contains("Working on the parser") || $0.contains("💬") })
+    }
+
+    @Test(arguments: [false, true])
+    func liveActivityWithoutAParagraphIsOnlyThePlaceholder(standardErrorIsTerminal: Bool) {
+        let placeholder = [thinkingTitle(standardErrorIsTerminal: standardErrorIsTerminal)]
+        let agents = [
+            // No activity at all.
+            snapshot(),
+            // The message phase without text.
+            snapshot(currentActivityKind: .content),
+            // Reasoning without a paragraph yet.
+            snapshot(currentActivityKind: .thinking),
+            snapshot(currentActivity: " \n", currentActivityKind: .thinking),
+            // Queued.
+            snapshot(status: .queued),
+            // A blank tool name is no tool.
+            snapshot(currentActivity: "Weighing.", currentActivityKind: .content, currentToolName: "  ")
+        ]
+
+        for agent in agents {
+            #expect(liveActivity(agent, standardErrorIsTerminal: standardErrorIsTerminal) == placeholder)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func liveActivityHasNoRowsWhileAToolRuns(standardErrorIsTerminal: Bool) {
+        let agents = [
+            snapshot(currentToolName: "local.readFile"),
+            snapshot(
+                currentActivity: "Weighing the options.",
+                currentActivityKind: .thinking,
+                currentToolName: "local.readFile"
+            ),
+            snapshot(
+                currentActivity: "Working on the parser",
+                currentActivityKind: .content,
+                currentToolName: "local.exec"
+            )
+        ]
+
+        for agent in agents {
+            #expect(liveActivity(agent, standardErrorIsTerminal: standardErrorIsTerminal).isEmpty)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func liveActivityDoesNotCountASuppressedToolAsRunning(standardErrorIsTerminal: Bool) {
+        let paragraph = "Weighing the options."
+
+        let thinking = liveActivity(
+            snapshot(
+                currentActivity: paragraph,
+                currentActivityKind: .thinking,
+                currentToolName: "agent.message"
+            ),
+            standardErrorIsTerminal: standardErrorIsTerminal
+        )
+        let withoutActivity = liveActivity(
+            snapshot(currentToolName: "agent.message"),
+            standardErrorIsTerminal: standardErrorIsTerminal
+        )
+
+        #expect(TerminalChat.shouldSuppressToolRendering(for: "agent.message"))
+        #expect(
+            thinking == TerminalChat.renderSubAgentTranscriptRows(
+                [.thought(paragraph)],
+                width: 80,
+                standardErrorIsTerminal: standardErrorIsTerminal
+            )
+        )
+        #expect(withoutActivity == [thinkingTitle(standardErrorIsTerminal: standardErrorIsTerminal)])
+    }
+
+    @Test(arguments: [false, true])
+    func liveActivityHasNoRowsWhenTheAgentIsNotPending(standardErrorIsTerminal: Bool) {
+        let agents = [
+            snapshot(status: .idle, pending: false),
+            snapshot(
+                status: .standby,
+                pending: false,
+                currentActivity: "Weighing the options.",
+                currentActivityKind: .thinking
+            ),
+            snapshot(
+                status: .failed,
+                pending: false,
+                currentActivity: "Working on the parser",
+                currentActivityKind: .content,
+                currentToolName: "local.readFile",
+                latestError: "backend crashed"
+            ),
+            snapshot(status: .closed, pending: false, currentToolName: "agent.message")
+        ]
+
+        for agent in agents {
+            #expect(liveActivity(agent, standardErrorIsTerminal: standardErrorIsTerminal).isEmpty)
+        }
+    }
+
+    @Test(arguments: [false, true], [1, 5, 12, 30, 39, 80])
+    func liveActivityRowsFitTheWidth(standardErrorIsTerminal: Bool, width: Int) {
+        let agents = [
+            snapshot(
+                currentActivity: "Working on the parser and the renderer of the very long transcript",
+                currentActivityKind: .content
+            ),
+            snapshot(currentActivityKind: .thinking),
+            snapshot(
+                currentActivity: "Weighing the options and the very long reasoning that wraps.\n\nSecond paragraph.",
+                currentActivityKind: .thinking
+            )
+        ]
+
+        for agent in agents {
+            let rows = liveActivity(agent, width: width, standardErrorIsTerminal: standardErrorIsTerminal)
+            #expect(!rows.isEmpty)
+            expectRowsFit(rows, width: width)
+        }
     }
 }

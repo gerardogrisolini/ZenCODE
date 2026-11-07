@@ -225,6 +225,7 @@ extension TerminalChat {
         )
         let sortedStatuses = statuses.sorted(by: Self.featureStatusSortOrder)
         let selectedIDs = Set(sortedStatuses.filter(\.enabled).map(\.id))
+        await closeSubAgentDetailForModalInput()
         let requestedIDs = await TerminalCheckboxMenu.selectOffActor(
             title: "Features",
             items: sortedStatuses.map(Self.featureCheckboxItem),

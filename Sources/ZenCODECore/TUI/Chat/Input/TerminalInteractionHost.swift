@@ -16,6 +16,10 @@ import Foundation
 /// does not offer them, so the selection commands print their
 /// non-interactive output instead. The same holds for the attachment picker
 /// and for opening files and URLs with the platform's launcher.
+///
+/// A menu or a line prompt first closes an open `/subagent` detail
+/// (``TerminalChat/closeSubAgentDetailForModalInput()``): it draws its own
+/// modal and reads the keys itself.
 @ChatSessionActor
 final class TerminalInteractionHost: ChatInteractionHost {
     weak var chat: TerminalChat?
@@ -61,6 +65,7 @@ final class TerminalInteractionHost: ChatInteractionHost {
         selectedID: String?
     ) async -> String? {
         guard let chat else { return nil }
+        await chat.closeSubAgentDetailForModalInput()
         return await TerminalCheckboxMenu.selectOneOffActor(
             title: title,
             items: Self.menuItems(items),
@@ -75,6 +80,7 @@ final class TerminalInteractionHost: ChatInteractionHost {
         selectedIDs: Set<String>
     ) async -> Set<String>? {
         guard let chat else { return nil }
+        await chat.closeSubAgentDetailForModalInput()
         return await TerminalCheckboxMenu.selectOffActor(
             title: title,
             items: Self.menuItems(items),
@@ -92,6 +98,7 @@ final class TerminalInteractionHost: ChatInteractionHost {
         confirmLabel: String
     ) async -> ChatFocusedChoice? {
         guard let chat else { return nil }
+        await chat.closeSubAgentDetailForModalInput()
         guard let choice = await TerminalCheckboxMenu.selectWithFocusOffActor(
             title: title,
             items: Self.menuItems(items),
@@ -110,6 +117,7 @@ final class TerminalInteractionHost: ChatInteractionHost {
 
     func readLine(prompt: String) async -> String? {
         guard let chat else { return nil }
+        await chat.closeSubAgentDetailForModalInput()
         return await TerminalChat.readLineOffActor(
             reader: chat.interactiveReader,
             prompt: prompt
@@ -117,12 +125,15 @@ final class TerminalInteractionHost: ChatInteractionHost {
     }
 
     /// Without a terminal or inside a host app access is granted; on macOS
-    /// the terminal asks for the folder; elsewhere access is granted.
+    /// the terminal asks for the folder (closing an open `/subagent` detail
+    /// first, even when the folder turns out to be trusted already);
+    /// elsewhere access is granted.
     func requestWorkspaceAccess(_ request: ChatWorkspaceAccessRequest) async -> Bool {
         guard stdinIsTerminal, !appMode else {
             return true
         }
         #if os(macOS)
+        await chat?.closeSubAgentDetailForModalInput()
         return await TerminalWorkspaceToolAccessStore.shared.ensureAccess(
             for: request.workspaceURL
         )
@@ -139,7 +150,8 @@ final class TerminalInteractionHost: ChatInteractionHost {
 
     /// The terminal attachment picker (see
     /// `TerminalChat.selectAttachmentURLInteractively(startingAt:)`), which
-    /// says itself why a folder cannot be shown.
+    /// says itself why a folder cannot be shown and closes an open
+    /// `/subagent` detail right before its menu opens.
     func pickAttachment(startingAt directory: URL) async -> URL? {
         guard let chat else { return nil }
         return await chat.selectAttachmentURLInteractively(startingAt: directory)

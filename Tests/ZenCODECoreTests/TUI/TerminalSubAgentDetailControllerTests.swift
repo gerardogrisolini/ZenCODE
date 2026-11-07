@@ -306,7 +306,12 @@ struct TerminalSubAgentDetailControllerTests {
     }
 
     private func liveActivity(_ snapshot: DirectSubAgentRuntime.AgentSnapshot, columns: Int = 60) -> [String] {
-        TerminalChat.subAgentLiveActivityRows(snapshot, width: columns - 4)
+        TerminalChat.subAgentLiveActivityRows(
+            snapshot,
+            width: columns - 4,
+            // The harness environment's `standardErrorIsTerminal`.
+            standardErrorIsTerminal: false
+        )
     }
 
     private func waitUntil(_ what: String, _ condition: () -> Bool) async {
