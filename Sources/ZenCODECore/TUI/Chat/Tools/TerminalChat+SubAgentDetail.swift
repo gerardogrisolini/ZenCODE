@@ -186,12 +186,12 @@ extension TerminalChat {
 
         switch target {
         case let .agent(snapshot):
-            interactiveReader.setSubAgentDetailMode(.detail)
-            await interactiveReader.setPanelModeOverride(Self.subAgentDetailPanelOverride)
+            interactiveReader.setSubAgentDetailMode(.detail, panelModeOverride: Self.subAgentDetailPanelOverride)
+            await interactiveReader.refreshPanel()
             controller.open(agentID: snapshot.id, snapshot: snapshot)
         case let .choosing(snapshots):
-            interactiveReader.setSubAgentDetailMode(.list)
-            await interactiveReader.setPanelModeOverride(Self.subAgentListPanelOverride)
+            interactiveReader.setSubAgentDetailMode(.list, panelModeOverride: Self.subAgentListPanelOverride)
+            await interactiveReader.refreshPanel()
             controller.open(choosing: snapshots)
         }
     }
@@ -203,10 +203,11 @@ extension TerminalChat {
         session: TerminalModalSession
     ) async {
         guard subAgentDetail?.session === session else { return }
-        interactiveReader.setSubAgentDetailMode(isChoosing ? .list : .detail)
-        await interactiveReader.setPanelModeOverride(
-            isChoosing ? Self.subAgentListPanelOverride : Self.subAgentDetailPanelOverride
+        interactiveReader.setSubAgentDetailMode(
+            isChoosing ? .list : .detail,
+            panelModeOverride: isChoosing ? Self.subAgentListPanelOverride : Self.subAgentDetailPanelOverride
         )
+        await interactiveReader.refreshPanel()
     }
 
     /// Closes the open detail, if any, and gives the terminal back: it stops
@@ -225,8 +226,8 @@ extension TerminalChat {
         subAgentDetail = nil
         detail.controller.stop()
         detail.session.close()
-        interactiveReader.setSubAgentDetailMode(.closed)
-        await interactiveReader.setPanelModeOverride(nil)
+        interactiveReader.setSubAgentDetailMode(.closed, panelModeOverride: nil)
+        await interactiveReader.refreshPanel()
         if reason == .consent {
             // Still inside the external-writer phase: it follows the output
             // held while the detail was open.

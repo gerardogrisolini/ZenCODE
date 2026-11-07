@@ -404,16 +404,24 @@ extension TerminalInteractiveLineReader {
 
     public func setPanelOverlay(_ override: TerminalPanelModeOverride?, isProcessing: Bool? = nil) async {
         withPanelLock { state in
-            state.panelOverlayOverride = override
-            if override != nil {
-                state.editor.resetPressAndHold()
-            }
+            applyPanelOverlayLocked(override, state: &state)
             if let isProcessing {
                 state.panelIsProcessing = isProcessing
             }
-            state.panelCommandSuggestionIndex = 0
         }
         await renderPanel()
+    }
+
+    /// Replaces the panel mode override with `override` and resets the
+    /// per-override state (a press-and-hold menu is dismissed while an
+    /// override shows, and the command suggestion selection starts over).
+    /// The caller holds the panel lock.
+    private func applyPanelOverlayLocked(_ override: TerminalPanelModeOverride?, state: inout State) {
+        state.panelOverlayOverride = override
+        if override != nil {
+            state.editor.resetPressAndHold()
+        }
+        state.panelCommandSuggestionIndex = 0
     }
 
     public func setPanelText(_ text: String, cursorIndex: Int? = nil) async {
@@ -703,6 +711,26 @@ extension TerminalInteractiveLineReader {
             if mode != .closed {
                 state.editor.resetPressAndHold()
             }
+        }
+    }
+
+    /// Sets what the `/subagent` detail does with the panel keys and the
+    /// panel mode override that goes with it in one critical section, so no
+    /// reader of the panel state (the key routing, a render snapshot) sees the
+    /// mode of one and the panel mode of the other. Synchronous like
+    /// ``setSubAgentDetailMode(_:)`` so the routing changes before the next
+    /// key is reduced, and it does not render: the caller redraws the panel
+    /// with ``refreshPanel()``.
+    func setSubAgentDetailMode(
+        _ mode: SubAgentDetailMode,
+        panelModeOverride override: TerminalPanelModeOverride?
+    ) {
+        withPanelLock { state in
+            state.panelSubAgentDetailMode = mode
+            if mode != .closed {
+                state.editor.resetPressAndHold()
+            }
+            applyPanelOverlayLocked(override, state: &state)
         }
     }
 

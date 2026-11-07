@@ -200,12 +200,18 @@ struct TerminalSubAgentDetailLoopTests {
             ))
             terminal.subAgentDetail = TerminalSubAgentDetail(controller: controller, session: session)
             if let snapshots {
-                terminal.interactiveReader.setSubAgentDetailMode(.list)
-                await terminal.interactiveReader.setPanelModeOverride(TerminalChat.subAgentListPanelOverride)
+                terminal.interactiveReader.setSubAgentDetailMode(
+                    .list,
+                    panelModeOverride: TerminalChat.subAgentListPanelOverride
+                )
+                await terminal.interactiveReader.refreshPanel()
                 controller.open(choosing: snapshots)
             } else {
-                terminal.interactiveReader.setSubAgentDetailMode(.detail)
-                await terminal.interactiveReader.setPanelModeOverride(TerminalChat.subAgentDetailPanelOverride)
+                terminal.interactiveReader.setSubAgentDetailMode(
+                    .detail,
+                    panelModeOverride: TerminalChat.subAgentDetailPanelOverride
+                )
+                await terminal.interactiveReader.refreshPanel()
             }
             return controller
         }
