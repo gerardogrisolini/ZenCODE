@@ -46,11 +46,32 @@ struct TerminalOverviewArbitration<Kind: Hashable, Pending> {
 extension TerminalChatRenderCoordinator {
     enum ToolBlockLifecycle: Sendable {
         case started
+        /// The call's result and the detail of its compact status row (the
+        /// executor's time, the exit code). The time is the result's own
+        /// ``DirectAgentToolResult/elapsed``; ``completed(for:result:)`` builds
+        /// the case from it.
         case completed(
             result: DirectAgentToolResult,
-            compactStatusDetail: String?,
-            elapsed: Duration?
+            compactStatusDetail: String?
         )
+
+        /// The completion of `toolCall` with `result`, its compact status
+        /// detail measured from the time the tool executor recorded on the
+        /// result; a result it did not produce (a call cancelled before its
+        /// dispatch) has no time.
+        static func completed(
+            for toolCall: DirectAgentToolCall,
+            result: DirectAgentToolResult
+        ) -> ToolBlockLifecycle {
+            .completed(
+                result: result,
+                compactStatusDetail: TerminalChat.compactToolCompletionDetail(
+                    for: toolCall,
+                    result: result,
+                    elapsed: result.elapsed
+                )
+            )
+        }
 
         var isCompletion: Bool {
             if case .completed = self { return true }
@@ -58,7 +79,7 @@ extension TerminalChatRenderCoordinator {
         }
 
         var compactStatusDetail: String? {
-            if case let .completed(_, compactStatusDetail, _) = self {
+            if case let .completed(_, compactStatusDetail) = self {
                 return compactStatusDetail
             }
             return nil

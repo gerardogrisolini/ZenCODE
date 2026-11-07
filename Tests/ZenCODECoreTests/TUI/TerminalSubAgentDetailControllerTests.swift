@@ -269,6 +269,8 @@ struct TerminalSubAgentDetailControllerTests {
         pending: Bool = true,
         executionRevision: UInt64 = 1,
         activity: String? = nil,
+        toolName: String? = nil,
+        toolIsRunning: Bool = false,
         second: TimeInterval = 0
     ) -> DirectSubAgentRuntime.AgentSnapshot {
         DirectSubAgentRuntime.AgentSnapshot(
@@ -279,6 +281,8 @@ struct TerminalSubAgentDetailControllerTests {
             pending: pending,
             currentActivity: activity,
             currentActivityKind: activity == nil ? nil : .content,
+            currentToolName: toolName,
+            currentToolIsRunning: toolIsRunning,
             latestEventAt: referenceDate.addingTimeInterval(second),
             latestOutput: nil,
             executionRevision: executionRevision,
@@ -479,6 +483,39 @@ struct TerminalSubAgentDetailControllerTests {
         controller.stop()
     }
 
+    /// The end of a call reads the transcript again, where its result lands,
+    /// and draws the live activity again below it, even from a snapshot that
+    /// changes nothing but the running flag: the runtime keeps the call's
+    /// name after its result.
+    @Test func theEndOfACallReadsAgainAndDrawsTheLiveActivityAgain() async {
+        let harness = DetailHarness(transcript: transcript(["READING"]))
+        let controller = harness.makeController()
+        let running = agent(activity: "Reading.", toolName: "local.readFile", toolIsRunning: true)
+        controller.open(agentID: "agent-1", snapshot: running)
+        await waitUntil("the transcript is read") { controller.panel.availability == .available }
+        // Nothing below the transcript while the call runs.
+        #expect(liveActivity(running).isEmpty)
+        #expect(controller.panel.bodyRows == rows(["READING"]))
+
+        // The stream's first value repeats the opening snapshot: no read.
+        await waitUntil("the controller subscribes") { harness.feed.isSubscribed }
+        harness.feed.yield([running])
+        await waitUntil("the controller waits") { harness.gate.pendingCount(DetailHarness.updateInterval) == 1 }
+        #expect(controller.transcriptReadCount == 1)
+
+        harness.feed.setTranscript(transcript(["READING", "RESULT"]))
+        let completed = agent(activity: "Reading.", toolName: "local.readFile", toolIsRunning: false)
+        harness.feed.yield([completed])
+        #expect(harness.gate.release(DetailHarness.updateInterval))
+        await waitUntil("the end of the call is read") { controller.transcriptReadCount == 2 }
+        await waitUntil("the live activity is drawn") {
+            controller.panel.bodyRows == rows(["READING", "RESULT"]) + [""] + liveActivity(completed)
+        }
+        #expect(liveActivity(completed) == [TerminalChat.thinkingPlaceholder])
+        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
+        controller.stop()
+    }
+
     @Test func subscribesAgainAfterTheStreamFinishes() async {
         let harness = DetailHarness(transcript: transcript(["FIRST"]), finishedStreams: 1)
         let controller = harness.makeController()
@@ -619,6 +656,34 @@ struct TerminalSubAgentDetailControllerTests {
         #expect(harness.feed.reads == ["agent-2"])
         #expect(controller.panel.bodyRows == rows(["SECOND_AGENT"]))
         controller.stop()
+    }
+
+    /// The list's `q` closes the list; once an agent is shown, a `q` typed
+    /// ahead of the panel's switch to the detail arrives as the list's key
+    /// and is ignored, while `Esc` still closes the detail.
+    @Test func theListsCloseKeyClosesOnlyTheList() async {
+        let listHarness = DetailHarness(transcript: transcript(["FIRST"]))
+        let list = listHarness.makeController()
+        list.open(choosing: [agent("agent-1"), agent("agent-2")])
+        await list.handle(.closeList)
+        #expect(listHarness.closeReasons == [.dismissed])
+        #expect(list.isStopped)
+
+        let harness = DetailHarness(transcript: transcript(["FIRST"]))
+        let controller = harness.makeController()
+        controller.open(choosing: [agent("agent-1"), agent("agent-2")])
+        await controller.handle(.confirm)
+        await controller.handle(.closeList)
+        #expect(controller.panel.mode == .showing)
+        #expect(controller.agentID == "agent-1")
+        #expect(!controller.isStopped)
+        #expect(harness.closeReasons.isEmpty)
+        await waitUntil("the agent's transcript is read") { controller.panel.availability == .available }
+        #expect(controller.panel.bodyRows == rows(["FIRST"]) + [""] + liveActivity(agent("agent-1")))
+
+        await controller.handle(.close)
+        #expect(harness.closeReasons == [.dismissed])
+        #expect(controller.isStopped)
     }
 
     // MARK: Closing

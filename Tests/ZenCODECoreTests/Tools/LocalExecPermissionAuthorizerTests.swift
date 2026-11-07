@@ -237,6 +237,39 @@ struct LocalExecPermissionAuthorizerTests {
         #expect(!TerminalWorkspaceToolAccessStore.terminalConsentAllowsAccess("no"))
         #expect(!TerminalWorkspaceToolAccessStore.terminalConsentAllowsAccess("maybe"))
     }
+
+    /// `hasAccess` only reads the recorded trust of the folder, a file inside
+    /// it included, and `ensureAccess` grants a trusted folder without
+    /// asking.
+    @Test
+    func terminalWorkspaceAccessReadsTheRecordedTrustOnly() async throws {
+        let suiteName = "ZenCODE.tests.workspace-access.\(UUID().uuidString)"
+        // A fresh instance of the suite per use: `UserDefaults` is not
+        // `Sendable`, and every instance of a suite shares its storage.
+        func defaults() throws -> UserDefaults {
+            try #require(UserDefaults(suiteName: suiteName))
+        }
+        defer { try? defaults().removePersistentDomain(forName: suiteName) }
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ZenCODE-workspace-access-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = TerminalWorkspaceToolAccessStore()
+
+        #expect(await !store.hasAccess(for: folder, userDefaults: try defaults()))
+
+        let key = await store.terminalConsentKey(for: folder)
+        try defaults().set(true, forKey: key)
+        // Required: `ensureAccess` below would otherwise ask on the terminal.
+        try #require(await store.hasAccess(for: folder, userDefaults: try defaults()))
+        #expect(
+            await store.hasAccess(
+                for: folder.appendingPathComponent("Package.swift"),
+                userDefaults: try defaults()
+            )
+        )
+        #expect(await store.ensureAccess(for: folder, userDefaults: try defaults()))
+    }
     #endif
 
     @Test

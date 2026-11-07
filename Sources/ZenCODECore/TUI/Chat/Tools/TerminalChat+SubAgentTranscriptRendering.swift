@@ -96,17 +96,21 @@ extension TerminalChat {
     /// The live activity shown after the transcript of a sub-agent in
     /// progress, as the sub-agent tab of ZenApp shows it:
     ///
-    /// - no row when the agent is not pending, or when it runs a tool: the
-    ///   transcript already has the row of that call. A tool without a
-    ///   terminal representation (``shouldSuppressToolRendering(for:)``, as
-    ///   `agent.message`) does not count as a running tool;
+    /// - no row when the agent is not pending, or while it runs a tool
+    ///   (``DirectSubAgentRuntime/AgentSnapshot/currentToolIsRunning``): the
+    ///   transcript already has the row of that call. The runtime keeps the
+    ///   name of a completed call until the next model state, so the name
+    ///   alone does not mean a running tool. A tool without a terminal
+    ///   representation (``shouldSuppressToolRendering(for:)``, as
+    ///   `agent.message`) does not count as a running tool either;
     /// - while it reasons with a paragraph in progress, the rows the
     ///   transcript draws for a reasoning block: the thinking title
     ///   followed by the paragraph in the thinking style, at the full
     ///   `width`;
     /// - in every other case (it reasons without a paragraph yet, writes a
-    ///   message, has no activity, or is queued) a single row with the
-    ///   thinking title alone (``thinkingPlaceholder``).
+    ///   message, also right after a completed call, has no activity, or is
+    ///   queued) a single row with the thinking title alone
+    ///   (``thinkingPlaceholder``).
     ///
     /// No row exceeds `width` visible columns. With `standardErrorIsTerminal`
     /// every row is styled on its own, as in
@@ -118,7 +122,8 @@ extension TerminalChat {
         standardErrorIsTerminal: Bool
     ) -> [String] {
         guard snapshot.pending else { return [] }
-        if let toolName = snapshot.currentToolName?.nilIfBlank,
+        if snapshot.currentToolIsRunning,
+           let toolName = snapshot.currentToolName?.nilIfBlank,
            !shouldSuppressToolRendering(for: toolName) {
             return []
         }

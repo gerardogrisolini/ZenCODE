@@ -197,7 +197,7 @@ extension TerminalChat {
         }
 
         let result: DirectAgentToolResult?
-        if case let .completed(completedResult, _, _) = presentation.lifecycle {
+        if case let .completed(completedResult, _) = presentation.lifecycle {
             result = completedResult
         } else {
             result = nil

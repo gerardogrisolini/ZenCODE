@@ -255,12 +255,12 @@ extension TerminalChatRenderCoordinatorTests {
         let presentations = await renderer
             .subAgentToolPresentationSnapshot()
             .presentationsByAgentID
-        if case let .completed(_, secondDetail, _)? = presentations["agent-second"]?.lifecycle {
+        if case let .completed(_, secondDetail)? = presentations["agent-second"]?.lifecycle {
             #expect(secondDetail == "200ms")
         } else {
             Issue.record("Second delegated tool did not complete")
         }
-        if case let .completed(_, firstDetail, _)? = presentations["agent-first"]?.lifecycle {
+        if case let .completed(_, firstDetail)? = presentations["agent-first"]?.lifecycle {
             #expect(firstDetail == "600ms")
         } else {
             Issue.record("First delegated tool did not complete")

@@ -1135,9 +1135,9 @@ struct TerminalPromptInputPanelTests {
 
     // MARK: - Sub-agent detail
 
-    /// The key map of each mode: the agent list binds `Enter` and `q` too,
-    /// an agent's detail only the scrolling keys and `Esc`, a closed detail
-    /// nothing.
+    /// The key map of each mode: the agent list binds `Enter` and `q` too
+    /// (`q` as the list's own close, distinct from `Esc`'s), an agent's
+    /// detail only the scrolling keys and `Esc`, a closed detail nothing.
     @Test
     func subAgentDetailKeyMapDependsOnTheMode() {
         typealias Reader = TerminalInteractiveLineReader
@@ -1155,8 +1155,8 @@ struct TerminalPromptInputPanelTests {
         let listOnly: [(Reader.Key, TerminalSubAgentDetailAction)] = [
             (.enter, .confirm),
             (.newline, .confirm),
-            (.character("q"), .close),
-            (.character("Q"), .close)
+            (.character("q"), .closeList),
+            (.character("Q"), .closeList)
         ]
         let unbound: [Reader.Key] = [
             .character("x"),
@@ -1189,6 +1189,15 @@ struct TerminalPromptInputPanelTests {
         }
     }
 
+    /// Every routing of the panel keys goes with its own panel mode: the
+    /// list's, the detail's, none once closed.
+    @Test
+    func subAgentPanelModeOverrideFollowsTheDetailMode() {
+        #expect(TerminalChat.subAgentPanelModeOverride(for: .closed) == nil)
+        #expect(TerminalChat.subAgentPanelModeOverride(for: .list) == TerminalChat.subAgentListPanelOverride)
+        #expect(TerminalChat.subAgentPanelModeOverride(for: .detail) == TerminalChat.subAgentDetailPanelOverride)
+    }
+
     /// While the `/subagent` agent list is open every key it binds becomes a
     /// detail action, and none of them reaches the draft or history.
     @Test
@@ -1199,7 +1208,7 @@ struct TerminalPromptInputPanelTests {
             state.panelBuffer = Array("draft")
             state.panelCursorIndex = 2
         }
-        reader.setSubAgentDetailMode(.list)
+        reader.setSubAgentDetailMode(.list, panelModeOverride: TerminalChat.subAgentListPanelOverride)
         let recorder = TerminalPanelEventRecorder()
         let expectations: [(TerminalInteractiveLineReader.Key, TerminalSubAgentDetailAction)] = [
             (.up, .scrollUp),
@@ -1212,8 +1221,8 @@ struct TerminalPromptInputPanelTests {
             (.bufferEnd, .bottom),
             (.enter, .confirm),
             (.newline, .confirm),
-            (.character("q"), .close),
-            (.character("Q"), .close),
+            (.character("q"), .closeList),
+            (.character("Q"), .closeList),
             (.cancel, .close)
         ]
 
@@ -1239,7 +1248,7 @@ struct TerminalPromptInputPanelTests {
             state.panelBuffer = Array("draft")
             state.panelCursorIndex = 2
         }
-        reader.setSubAgentDetailMode(.detail)
+        reader.setSubAgentDetailMode(.detail, panelModeOverride: TerminalChat.subAgentDetailPanelOverride)
         let recorder = TerminalPanelEventRecorder()
         let expectations: [(TerminalInteractiveLineReader.Key, TerminalSubAgentDetailAction)] = [
             (.up, .scrollUp),
@@ -1272,7 +1281,7 @@ struct TerminalPromptInputPanelTests {
     func subAgentDetailLeavesTypingAndSendingToTheDraft() async {
         let reader = TerminalInteractiveLineReader()
         reader.withPanelLock { $0.panelSupportsPressAndHold = true }
-        reader.setSubAgentDetailMode(.detail)
+        reader.setSubAgentDetailMode(.detail, panelModeOverride: TerminalChat.subAgentDetailPanelOverride)
         #expect(reader.withPanelLock { !reader.editorContextLocked(state: $0).supportsPressAndHold })
         let recorder = TerminalPanelEventRecorder()
         let keys: [TerminalInteractiveLineReader.Key] = [
@@ -1327,8 +1336,7 @@ struct TerminalPromptInputPanelTests {
                 TerminalCommandSuggestion(command: "/feature", summary: "manage features")
             ]
         }
-        reader.setSubAgentDetailMode(.list)
-        await reader.setPanelModeOverride(TerminalChat.subAgentListPanelOverride)
+        reader.setSubAgentDetailMode(.list, panelModeOverride: TerminalChat.subAgentListPanelOverride)
         reader.withPanelLock { state in
             state.panelBuffer = Array("/fea")
             state.panelCursorIndex = 4
@@ -1336,8 +1344,7 @@ struct TerminalPromptInputPanelTests {
         #expect(reader.withPanelLock { reader.editorContextLocked(state: $0).isOverlayActive })
         #expect(reader.withPanelLock { !reader.hasActiveCommandSuggestionsLocked(state: $0) })
 
-        reader.setSubAgentDetailMode(.detail)
-        await reader.setPanelModeOverride(TerminalChat.subAgentDetailPanelOverride)
+        reader.setSubAgentDetailMode(.detail, panelModeOverride: TerminalChat.subAgentDetailPanelOverride)
         #expect(reader.withPanelLock { !reader.editorContextLocked(state: $0).isOverlayActive })
         #expect(reader.withPanelLock { reader.hasActiveCommandSuggestionsLocked(state: $0) })
         #expect(reader.withPanelLock { reader.panelSuggestionProjectionLocked(state: $0).lines.count } == 1)
@@ -1373,7 +1380,7 @@ struct TerminalPromptInputPanelTests {
     func subAgentDetailComesBeforeTheSharedChatReader() async {
         let reader = TerminalInteractiveLineReader()
         reader.setSharedChatReaderOpen(true)
-        reader.setSubAgentDetailMode(.detail)
+        reader.setSubAgentDetailMode(.detail, panelModeOverride: TerminalChat.subAgentDetailPanelOverride)
         let recorder = TerminalPanelEventRecorder()
 
         for key: TerminalInteractiveLineReader.Key in [.up, .home, .left, .right, .character("q")] {
@@ -1406,7 +1413,7 @@ struct TerminalPromptInputPanelTests {
             state.panelBuffer = Array("next")
             state.panelCursorIndex = 4
         }
-        reader.setSubAgentDetailMode(mode)
+        reader.setSubAgentDetailMode(mode, panelModeOverride: TerminalChat.subAgentPanelModeOverride(for: mode))
         let recorder = TerminalPanelEventRecorder()
 
         await reader.handlePanelKey(.cancel, onEvent: recorder.onEvent)
@@ -1415,7 +1422,7 @@ struct TerminalPromptInputPanelTests {
         #expect(reader.withPanelLock { String($0.panelBuffer) } == "next")
 
         // Once the detail is closed the same key stops the generation again.
-        reader.setSubAgentDetailMode(.closed)
+        reader.setSubAgentDetailMode(.closed, panelModeOverride: nil)
         await reader.handlePanelKey(.cancel, onEvent: recorder.onEvent)
         #expect(recorder.detailActions.withLock { $0 } == [.close])
         #expect(recorder.otherEvents.withLock { $0 } == ["cancelRequested"])
@@ -1431,7 +1438,7 @@ struct TerminalPromptInputPanelTests {
             state.panelBuffer = Array("draft")
             state.panelCursorIndex = 2
         }
-        reader.setSubAgentDetailMode(.list)
+        reader.setSubAgentDetailMode(.list, panelModeOverride: TerminalChat.subAgentListPanelOverride)
         #expect(reader.withPanelLock { !reader.editorContextLocked(state: $0).supportsPressAndHold })
         let recorder = TerminalPanelEventRecorder()
         let swallowedKeys: [TerminalInteractiveLineReader.Key] = [
@@ -1521,7 +1528,7 @@ struct TerminalPromptInputPanelTests {
         _ mode: TerminalInteractiveLineReader.SubAgentDetailMode
     ) async {
         let reader = TerminalInteractiveLineReader()
-        reader.setSubAgentDetailMode(mode)
+        reader.setSubAgentDetailMode(mode, panelModeOverride: TerminalChat.subAgentPanelModeOverride(for: mode))
         let recorder = TerminalPanelEventRecorder()
 
         await reader.handlePanelKey(.endOfInput, onEvent: recorder.onEvent)
@@ -1542,7 +1549,7 @@ struct TerminalPromptInputPanelTests {
     ) async {
         let reader = TerminalInteractiveLineReader()
         let statusBar = TerminalStatusBar(isEnabled: false)
-        reader.setSubAgentDetailMode(mode)
+        reader.setSubAgentDetailMode(mode, panelModeOverride: TerminalChat.subAgentPanelModeOverride(for: mode))
         func currentMode() -> TerminalInteractiveLineReader.SubAgentDetailMode {
             reader.withPanelLock { $0.panelSubAgentDetailMode }
         }
@@ -1578,8 +1585,8 @@ struct TerminalPromptInputPanelTests {
         await reader.handlePanelKey(.cancel, onEvent: recorder.onEvent)
         switch mode {
         case .list:
-            // `q` and `Esc` both close the list.
-            #expect(recorder.detailActions.withLock { $0 } == [.close, .close])
+            // `q` closes the list (as its own action) and so does `Esc`.
+            #expect(recorder.detailActions.withLock { $0 } == [.closeList, .close])
             #expect(reader.withPanelLock { $0.panelBuffer.isEmpty })
         case .detail, .closed:
             // `q` is text below an agent's detail; only `Esc` closes it.
@@ -1599,8 +1606,8 @@ struct TerminalPromptInputPanelTests {
     ) async {
         let reader = TerminalInteractiveLineReader()
         reader.withPanelLock { $0.history = ["earlier"] }
-        reader.setSubAgentDetailMode(mode)
-        reader.setSubAgentDetailMode(.closed)
+        reader.setSubAgentDetailMode(mode, panelModeOverride: TerminalChat.subAgentPanelModeOverride(for: mode))
+        reader.setSubAgentDetailMode(.closed, panelModeOverride: nil)
         let recorder = TerminalPanelEventRecorder()
 
         await reader.handlePanelKey(.character("q"), onEvent: recorder.onEvent)

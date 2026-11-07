@@ -9,12 +9,22 @@ import Foundation
 
 /// Keys accepted by the sub-agent detail panel while it owns the input
 /// panel. Public because `TerminalPromptInputEvent` carries it; the panel
-/// model interprets only the navigation cases and leaves `confirm` and
-/// `close` to the controller.
+/// model interprets only the navigation cases and leaves `confirm`, `close`
+/// and `closeList` to the controller.
 public enum TerminalSubAgentDetailAction: Sendable, Equatable {
     case scrollUp, scrollDown, pageUp, pageDown, top, bottom
     case focusPrevious, focusNext
-    case confirm, close
+    /// Opens the agent focused in the list (`Enter`).
+    case confirm
+    /// Closes the panel in every mode (`Esc`).
+    case close
+    /// Closes the agent list only (`q`/`Q` there); an agent's detail ignores
+    /// it. It is distinct from ``close`` for the keys typed ahead: the panel
+    /// keeps routing the list's keys until the chat loop tells it that the
+    /// detail of the agent just confirmed is shown, so a `q` typed right
+    /// after `Enter` still arrives as the list's key and must not close that
+    /// detail.
+    case closeList
 }
 
 /// Pure layout/state model for the `/subagent` detail panel. Terminal drawing
@@ -111,7 +121,7 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
                 mode = .choosing(entries: entries, focusedIndex: current == 0 ? entries.count - 1 : current - 1)
             case .focusNext:
                 mode = .choosing(entries: entries, focusedIndex: current == entries.count - 1 ? 0 : current + 1)
-            case .scrollUp, .scrollDown, .pageUp, .pageDown, .top, .bottom, .confirm, .close:
+            case .scrollUp, .scrollDown, .pageUp, .pageDown, .top, .bottom, .confirm, .close, .closeList:
                 return
             }
         case .showing:
@@ -128,7 +138,7 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
             case .pageDown: target = current + max(1, capacity)
             case .top: target = 0
             case .bottom: target = maximum
-            case .focusPrevious, .focusNext, .confirm, .close:
+            case .focusPrevious, .focusNext, .confirm, .close, .closeList:
                 return
             }
             scrollOffset = min(max(0, target), maximum)

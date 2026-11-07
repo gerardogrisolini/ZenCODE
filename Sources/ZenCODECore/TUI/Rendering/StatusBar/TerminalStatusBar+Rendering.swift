@@ -442,7 +442,7 @@ extension TerminalStatusBar {
             fragments.append(loader)
         }
         if let latestAgentName = state.latestAgentName {
-            fragments.append(latestAgentName)
+            fragments.append(Self.agentNameStatusFragment(latestAgentName))
         }
         if let latestModelID = state.latestModelID {
             fragments.append(

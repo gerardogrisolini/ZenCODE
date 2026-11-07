@@ -125,18 +125,19 @@ final class TerminalInteractionHost: ChatInteractionHost {
     }
 
     /// Without a terminal or inside a host app access is granted; on macOS
-    /// the terminal asks for the folder (closing an open `/subagent` detail
-    /// first, even when the folder turns out to be trusted already);
-    /// elsewhere access is granted.
+    /// the terminal asks for the folder unless it is trusted already, and
+    /// only then closes an open `/subagent` detail first; elsewhere access is
+    /// granted.
     func requestWorkspaceAccess(_ request: ChatWorkspaceAccessRequest) async -> Bool {
         guard stdinIsTerminal, !appMode else {
             return true
         }
         #if os(macOS)
-        await chat?.closeSubAgentDetailForModalInput()
-        return await TerminalWorkspaceToolAccessStore.shared.ensureAccess(
-            for: request.workspaceURL
-        )
+        let store = TerminalWorkspaceToolAccessStore.shared
+        if await !store.hasAccess(for: request.workspaceURL) {
+            await chat?.closeSubAgentDetailForModalInput()
+        }
+        return await store.ensureAccess(for: request.workspaceURL)
         #else
         return true
         #endif

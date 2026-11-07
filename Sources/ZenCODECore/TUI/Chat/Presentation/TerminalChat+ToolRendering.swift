@@ -140,8 +140,10 @@ extension TerminalChat {
     }
 
     /// Compact completion metadata is intentionally assembled independently
-    /// from layout. The coordinator measures elapsed time at lifecycle edges;
-    /// this helper merely makes the stable, human-readable status fragment.
+    /// from layout. `elapsed` is the time the tool executor measured for the
+    /// call (``DirectAgentToolResult/elapsed``), `nil` for a result it did not
+    /// produce; this helper merely makes the stable, human-readable status
+    /// fragment.
     nonisolated static func compactToolCompletionDetail(
         for toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult,

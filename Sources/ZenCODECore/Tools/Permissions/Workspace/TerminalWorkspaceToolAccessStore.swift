@@ -21,24 +21,35 @@ public actor TerminalWorkspaceToolAccessStore {
         )
     }
 
+    /// Whether the folder of `workspaceURL` is already trusted, so
+    /// ``ensureAccess(for:userDefaults:)`` would grant access without asking.
+    /// It only reads `userDefaults`; it never asks.
+    func hasAccess(
+        for workspaceURL: URL,
+        userDefaults: UserDefaults = .standard
+    ) -> Bool {
+        userDefaults.bool(forKey: terminalConsentKey(for: normalizedDirectoryURL(workspaceURL)))
+    }
+
     private func authorizeWithTerminalConsentIfNeeded(
         for workspaceURL: URL,
         userDefaults: UserDefaults
     ) async -> Bool {
         let normalizedWorkspaceURL = normalizedDirectoryURL(workspaceURL)
-        let key = terminalConsentKey(for: normalizedWorkspaceURL)
-        if userDefaults.bool(forKey: key) {
+        if hasAccess(for: workspaceURL, userDefaults: userDefaults) {
             return true
         }
 
         guard Self.requestTerminalConsent(for: normalizedWorkspaceURL) else {
             return false
         }
-        userDefaults.set(true, forKey: key)
+        userDefaults.set(true, forKey: terminalConsentKey(for: normalizedWorkspaceURL))
         return true
     }
 
-    private func terminalConsentKey(for workspaceURL: URL) -> String {
+    /// The `UserDefaults` key that records the trust of the folder of
+    /// `workspaceURL`.
+    func terminalConsentKey(for workspaceURL: URL) -> String {
         "workspaceToolAccessConsent:" + normalizedDirectoryURL(workspaceURL).path
     }
 

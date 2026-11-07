@@ -430,8 +430,8 @@ actor TerminalTelegramTurnProgressReporter {
     /// Fences draft/card activity for finish, error, cancellation, rebind and
     /// teardown. Progress cards are deleted; persistent turn messages remain,
     /// the activity and sub-agent status messages included, which receive no
-    /// further edit: a call still running keeps its neutral marker, and its
-    /// recorded start is dropped.
+    /// further edit: a call still running keeps its neutral marker and gets
+    /// no time, since only its result would carry one.
     func retire() async {
         guard !isRetired else { return }
         isRetired = true

@@ -398,11 +398,12 @@ extension TerminalInteractiveLineReader {
         await renderPanel()
     }
 
-    public func setPanelModeOverride(_ override: TerminalPanelModeOverride?) async {
-        await setPanelOverlay(override)
-    }
-
-    public func setPanelOverlay(_ override: TerminalPanelModeOverride?, isProcessing: Bool? = nil) async {
+    /// Replaces the panel mode override with `override`, and with
+    /// `isProcessing` the processing flag, then redraws the panel. Production
+    /// sets the only override, the `/subagent` detail's, together with its key
+    /// routing through ``setSubAgentDetailMode(_:panelModeOverride:)``; this
+    /// entry point is left to tests of the override alone.
+    func setPanelOverlay(_ override: TerminalPanelModeOverride?, isProcessing: Bool? = nil) async {
         withPanelLock { state in
             applyPanelOverlayLocked(override, state: &state)
             if let isProcessing {
@@ -700,27 +701,16 @@ extension TerminalInteractiveLineReader {
         case detail
     }
 
-    /// Tells the panel what the `/subagent` detail does with its keys;
-    /// ``SubAgentDetailMode/closed`` gives them all back to the draft.
-    /// Synchronous like ``setSharedChatReaderOpen(_:)`` so the routing
-    /// changes before the next key is reduced. The mode survives panel stops
-    /// and resumes; only the chat loop that opened the detail changes it.
-    func setSubAgentDetailMode(_ mode: SubAgentDetailMode) {
-        withPanelLock { state in
-            state.panelSubAgentDetailMode = mode
-            if mode != .closed {
-                state.editor.resetPressAndHold()
-            }
-        }
-    }
-
     /// Sets what the `/subagent` detail does with the panel keys and the
     /// panel mode override that goes with it in one critical section, so no
     /// reader of the panel state (the key routing, a render snapshot) sees the
-    /// mode of one and the panel mode of the other. Synchronous like
-    /// ``setSubAgentDetailMode(_:)`` so the routing changes before the next
-    /// key is reduced, and it does not render: the caller redraws the panel
-    /// with ``refreshPanel()``.
+    /// mode of one and the panel mode of the other;
+    /// ``SubAgentDetailMode/closed`` gives every key back to the draft.
+    /// Synchronous like ``setSharedChatReaderOpen(_:)`` so the routing
+    /// changes before the next key is reduced, and it does not render: the
+    /// caller redraws the panel with ``refreshPanel()``. The mode survives
+    /// panel stops and resumes; only the chat loop that opened the detail
+    /// changes it.
     func setSubAgentDetailMode(
         _ mode: SubAgentDetailMode,
         panelModeOverride override: TerminalPanelModeOverride?
@@ -739,8 +729,9 @@ extension TerminalInteractiveLineReader {
     /// an agent's detail leaves it to the draft. In both modes the arrows,
     /// the page keys and `Home`/`End` scroll (the controller turns the
     /// arrows into the list focus) and `Esc` closes. Only the list binds
-    /// `Enter` (open the focused agent) and `q`/`Q` (close): in an agent's
-    /// detail they belong to the draft.
+    /// `Enter` (open the focused agent) and `q`/`Q`
+    /// (``TerminalSubAgentDetailAction/closeList``, which closes only the
+    /// list): in an agent's detail they belong to the draft.
     static func subAgentDetailAction(
         for key: Key,
         mode: SubAgentDetailMode
@@ -755,7 +746,7 @@ extension TerminalInteractiveLineReader {
         case (_, .end), (_, .bufferEnd): .bottom
         case (_, .cancel): .close
         case (.list, .enter), (.list, .newline): .confirm
-        case (.list, .character("q")), (.list, .character("Q")): .close
+        case (.list, .character("q")), (.list, .character("Q")): .closeList
         default: nil
         }
     }

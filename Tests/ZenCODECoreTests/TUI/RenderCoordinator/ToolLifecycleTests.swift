@@ -186,12 +186,36 @@ extension TerminalChatRenderCoordinatorTests {
         )
         let presentation = await renderer.subAgentToolPresentationSnapshot()
             .presentationsByAgentID["agent-worker"]
-        if case let .completed(_, detail, elapsed)? = presentation?.lifecycle {
+        if case let .completed(result, detail)? = presentation?.lifecycle {
             #expect(detail == nil)
-            #expect(elapsed == nil)
+            #expect(result.elapsed == nil)
         } else {
             Issue.record("The delegated tool did not complete")
         }
+    }
+
+    @Test
+    func completedLifecycleTakesItsTimeFromTheResult() {
+        typealias Lifecycle = TerminalChatRenderCoordinator.ToolBlockLifecycle
+        let toolCall = exampleReadFileCall(id: "factory-read")
+
+        let timed = DirectAgentToolResult(output: "ok", summary: "ok", elapsed: .milliseconds(350))
+        let timedLifecycle = Lifecycle.completed(for: toolCall, result: timed)
+        #expect(timedLifecycle.isCompletion)
+        #expect(timedLifecycle.compactStatusDetail == "350ms")
+        #expect(
+            timedLifecycle.compactStatusDetail
+                == TerminalChat.compactToolCompletionDetail(for: toolCall, result: timed, elapsed: timed.elapsed)
+        )
+        if case let .completed(result, _) = timedLifecycle {
+            #expect(result.elapsed == .milliseconds(350))
+        } else {
+            Issue.record("The factory did not build a completion")
+        }
+
+        let untimed = DirectAgentToolResult(output: "ok", summary: "ok")
+        #expect(Lifecycle.completed(for: toolCall, result: untimed).compactStatusDetail == nil)
+        #expect(Lifecycle.started.compactStatusDetail == nil)
     }
 
     @Test

@@ -10,7 +10,7 @@ import Testing
 struct TerminalSubAgentDetailPanelTests {
     private static let allActions: [TerminalSubAgentDetailAction] = [
         .scrollUp, .scrollDown, .pageUp, .pageDown, .top, .bottom,
-        .focusPrevious, .focusNext, .confirm, .close
+        .focusPrevious, .focusNext, .confirm, .close, .closeList
     ]
 
     private func numberedRows(_ count: Int, prefix: String = "row") -> [String] {
@@ -152,7 +152,7 @@ struct TerminalSubAgentDetailPanelTests {
         panel.replace(headerRows: [], bodyRows: numberedRows(10), frameRows: 6)
         panel.apply(.scrollUp, frameRows: 6)
         let before = panel
-        for action: TerminalSubAgentDetailAction in [.focusPrevious, .focusNext, .confirm, .close] {
+        for action: TerminalSubAgentDetailAction in [.focusPrevious, .focusNext, .confirm, .close, .closeList] {
             panel.apply(action, frameRows: 6)
         }
         #expect(panel == before)
@@ -324,7 +324,9 @@ struct TerminalSubAgentDetailPanelTests {
         #expect(focusedIndex(panel) == 1)
 
         let before = panel
-        for action: TerminalSubAgentDetailAction in [.scrollUp, .scrollDown, .pageUp, .pageDown, .top, .bottom, .confirm, .close] {
+        for action: TerminalSubAgentDetailAction in [
+            .scrollUp, .scrollDown, .pageUp, .pageDown, .top, .bottom, .confirm, .close, .closeList
+        ] {
             panel.apply(action, frameRows: 10)
         }
         #expect(panel == before)

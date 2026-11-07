@@ -29,6 +29,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
   known without starting a feature's tool discovery.
 - `DirectAgentToolResult.replacing(modelOutput:fileChanges:)` derives a result
   from another; `withElapsed(_:)` and it share the one field-by-field copy.
+- `TerminalSubAgentDetailAction.closeList` is the `q` of the sub-agent list, an
+  action distinct from `Esc` so a `q` typed right after `Enter` (type-ahead)
+  cannot close the detail it just opened.
 
 ### Changed
 
@@ -37,6 +40,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   the agent's root session is the host's job, and the controller no longer
   re-checks a session and a history its only caller always passed as its own.
   The sub-agent overview it publishes goes on the same presenter as the event.
+- The status bar truncates the agent name to 24 columns, so on a narrow
+  terminal the model, the context, and the token counters keep their room.
+- `TerminalInteractiveLineReader.setPanelModeOverride(_:)` is removed and
+  `setPanelOverlay(_:isProcessing:)` is no longer public: the panel mode and
+  the routing of the panel keys are set together by
+  `setSubAgentDetailMode(_:panelModeOverride:)`.
 - `AgentCoreSessionRunner.updateSubAgentToolEventHandler(_:)` documents that
   the handler belongs to the `ChatSessionHost`, which routes the events of the
   delegated sub-agents to every channel; an embedder must not replace it
@@ -49,6 +58,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
   the consent it can ask for), not even after the feature bundles were
   reloaded: the calls of tools discovered at runtime are shown without their
   title and presentation until the feature is discovered again.
+- The `/subagent` detail shows the `🤔 thinking…` placeholder again while the
+  agent writes the message that follows a completed tool call; the snapshot
+  kept the name of the last call and the live activity took it for a running
+  one.
+- A `q` typed right after `Enter` in the sub-agent list no longer closes the
+  detail it just opened; a consent request that arrives while the detail is
+  opening cancels the opening instead of drawing the detail over the consent
+  card; and a workspace access request for a folder already trusted leaves
+  the detail open.
 - The ACP `tool_call_update` of a delegated tool call no longer rebuilds its
   title: it prefixes the agent's name to the title the completion payload
   already carries, with the same result on the wire.

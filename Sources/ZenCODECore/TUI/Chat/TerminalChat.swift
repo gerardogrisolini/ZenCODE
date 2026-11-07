@@ -286,6 +286,13 @@ public final class TerminalChat {
     /// (``closeSubAgentDetail(reason:)``); `nil` while none is open.
     /// Transient: it lasts only while the panel is shown and is never saved.
     var subAgentDetail: TerminalSubAgentDetail?
+    /// `true` while ``openSubAgentDetail(_:on:)`` runs: from its start, across
+    /// the suspensions before ``subAgentDetail`` is set, to its end.
+    var isOpeningSubAgentDetail = false
+    /// A ``closeSubAgentDetail(reason:)`` arrived while the detail was being
+    /// opened and did not exist yet: the opening gives the terminal back and
+    /// opens nothing. Reset at every opening.
+    var subAgentDetailCloseRequestedWhileOpening = false
     /// Returning `true` stands in for publishing a shared-chat mention the
     /// operator typed or dictated; `nil` in production.
     var onSharedChatPublicationForTesting: (@Sendable () -> Bool)?

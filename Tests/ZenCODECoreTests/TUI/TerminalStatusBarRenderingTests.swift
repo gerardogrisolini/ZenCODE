@@ -137,6 +137,27 @@ struct TerminalStatusBarRenderingTests {
         #expect(frame.contains("\(TerminalStyle.Text.secondary)test-model\(TerminalStyle.reset)"))
     }
 
+    /// The status row is cut from its end, so a long agent name is cut on its
+    /// own first: on a narrow terminal the model after it stays whole.
+    @Test(arguments: [50, 60, 100])
+    func aLongAgentNameIsCutSoTheModelStaysVisible(columns: Int) async {
+        let captured = CapturedOutput()
+        let bar = TerminalStatusBar(isEnabled: true) { captured.append($0) }
+        let name = "Very long delegated reviewer profile name"
+        await bar.configureForTesting(row: 24, columns: columns, modelID: "test-model", agentName: name)
+
+        await bar.renderStatusOverlay()
+
+        let limit = TerminalStatusBar.maximumAgentNameColumns
+        let shown = String(name.prefix(limit - 1)) + "…"
+        #expect(limit == 24)
+        #expect(TerminalStatusBar.agentNameStatusFragment(name) == shown)
+        #expect(TerminalStatusBar.agentNameStatusFragment("Developer") == "Developer")
+        let frame = captured.combined
+        #expect(frame.contains("\(TerminalStyle.Text.secondary)\(shown) · test-model\(TerminalStyle.reset)"))
+        #expect(!frame.contains(name))
+    }
+
     @Test
     func updateAgentNameRendersAndTrimsSurroundingWhitespace() async {
         let captured = CapturedOutput()

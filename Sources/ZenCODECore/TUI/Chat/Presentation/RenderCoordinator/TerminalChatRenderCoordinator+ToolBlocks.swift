@@ -56,19 +56,7 @@ extension TerminalChatRenderCoordinator {
             return
         }
         let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
-        // The time the tool executor measured for the call; a result it did
-        // not produce (a call cancelled before its dispatch) has none.
-        let elapsed = result.elapsed
-        let compactStatusDetail = TerminalChat.compactToolCompletionDetail(
-            for: toolCall,
-            result: result,
-            elapsed: elapsed
-        )
-        let lifecycle = ToolBlockLifecycle.completed(
-            result: result,
-            compactStatusDetail: compactStatusDetail,
-            elapsed: elapsed
-        )
+        let lifecycle = ToolBlockLifecycle.completed(for: toolCall, result: result)
         if isBottomOverlayTransitionActive {
             bottomOverlayDeferredToolRenders.append(
                 DeferredToolRender(
@@ -109,16 +97,7 @@ extension TerminalChatRenderCoordinator {
         case .started:
             lifecycle = .started
         case let .completed(result):
-            let elapsed = result.elapsed
-            lifecycle = .completed(
-                result: result,
-                compactStatusDetail: TerminalChat.compactToolCompletionDetail(
-                    for: event.toolCall,
-                    result: result,
-                    elapsed: elapsed
-                ),
-                elapsed: elapsed
-            )
+            lifecycle = .completed(for: event.toolCall, result: result)
         }
         subAgentToolState.presentationsByAgentID[event.agentID] =
             SubAgentToolPresentation(
@@ -342,7 +321,7 @@ extension TerminalChatRenderCoordinator {
         switch lifecycle {
         case .started:
             result = nil
-        case let .completed(completedResult, _, _):
+        case let .completed(completedResult, _):
             result = completedResult
         }
         return TerminalChat.toolPresentationRows(

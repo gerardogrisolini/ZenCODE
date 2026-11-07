@@ -518,6 +518,86 @@ struct TerminalSubAgentDetailLoopTests {
         try await harness.end(loop)
     }
 
+    /// A `q` typed right after `Enter` in the agent list reaches the loop
+    /// before the panel routes the detail's keys, so it still arrives as
+    /// the list's key: it must not close the detail of the agent just
+    /// opened. `Esc` closes it as usual.
+    @Test
+    func aQTypedAheadOfTheOpenedAgentDoesNotCloseItsDetail() async throws {
+        let harness = try Harness()
+        let loop = await harness.run()
+        let controller = await harness.openDetail(
+            choosing: [Self.agent("agent-1", name: "alpha"), Self.agent("agent-2", name: "beta")]
+        )
+        #expect(TerminalInteractiveLineReader.subAgentDetailAction(for: .enter, mode: .list) == .confirm)
+        #expect(TerminalInteractiveLineReader.subAgentDetailAction(for: .character("q"), mode: .list) == .closeList)
+
+        // What the panel emits for `Enter` then `q` while it still routes the
+        // list's keys.
+        harness.send(.subAgentDetail(.confirm))
+        harness.send(.subAgentDetail(.closeList))
+        harness.send(.submitted("ciao"))
+
+        let ran = await harness.promptsReached(["ciao"])
+        #expect(ran)
+        #expect(controller.agentID == "agent-1")
+        #expect(controller.panel.mode == .showing)
+        #expect(!controller.isStopped)
+        #expect(harness.controllerCloseReasons.isEmpty)
+        #expect(harness.terminal.isSubAgentDetailOpen)
+        #expect(harness.readerDetailMode == .detail)
+        #expect(harness.panelOverride == TerminalChat.subAgentDetailPanelOverride)
+
+        await harness.press(.cancel)
+        let closed = await harness.detailClosed()
+        #expect(closed)
+        #expect(harness.controllerCloseReasons == [.dismissed])
+        try await harness.end(loop)
+    }
+
+    // MARK: - Opening
+
+    /// A close requested while `/subagent` opens the detail, before the
+    /// detail exists (a consent request, here), cancels the opening: no
+    /// detail opens over the consent, the keys stay with the draft, and the
+    /// external-writer phase the opening started is given back.
+    @Test
+    func aCloseWhileTheDetailOpensCancelsTheOpening() async throws {
+        let harness = try Harness()
+        let terminal = harness.terminal
+        let screen = TerminalPrimaryScreen(output: { _ in })
+        let opening = Task { @ChatSessionActor in
+            await terminal.openSubAgentDetail(.agent(Self.agent("agent-1", name: "alpha")), on: screen)
+        }
+
+        // The opening sets its flag before its first suspension; seen from
+        // here with no detail yet, it is suspended before the detail exists.
+        var inTheWindow = false
+        for _ in 0..<1_000 {
+            if terminal.isOpeningSubAgentDetail, !terminal.isSubAgentDetailOpen {
+                inTheWindow = true
+                break
+            }
+            if terminal.isSubAgentDetailOpen { break }
+            await Task.yield()
+        }
+        try #require(inTheWindow)
+        await terminal.closeSubAgentDetail(reason: .consent)
+        await opening.value
+
+        #expect(!terminal.isSubAgentDetailOpen)
+        #expect(!terminal.isOpeningSubAgentDetail)
+        #expect(!terminal.subAgentDetailCloseRequestedWhileOpening)
+        #expect(await harness.detailGaveTheTerminalBack())
+        #expect(harness.panelOverride == nil)
+        // Nothing was shown, so nothing says it closed.
+        #expect(!harness.capturedOutput.contains(Self.consentNotice))
+
+        // A close with no opening in progress records nothing.
+        await terminal.closeSubAgentDetail(reason: .consent)
+        #expect(!terminal.subAgentDetailCloseRequestedWhileOpening)
+    }
+
     // MARK: - Menus
 
     /// A menu or a line prompt closes the open detail before it opens, as

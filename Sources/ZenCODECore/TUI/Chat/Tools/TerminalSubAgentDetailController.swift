@@ -30,7 +30,8 @@ import ToolCore
 /// - At once on a change of the agent's lifecycle (its status, whether it is
 ///   pending, its execution revision) from the last snapshot applied.
 /// - Whenever an applied snapshot changes the reload key (the lifecycle, the
-///   completed execution, the tool, the latest event, the latest update).
+///   completed execution, the tool and whether it still runs, the latest
+///   event, the latest update).
 ///
 /// The updates other than the lifecycle changes, header and live activity
 /// included, are applied at most once per ``Environment/updateInterval``: a
@@ -226,8 +227,10 @@ final class TerminalSubAgentDetailController {
     /// Applies a key of the panel. In the agent list ↑/↓ move the focus,
     /// Enter shows the focused agent and Esc/`q` close; in an agent's detail
     /// the scrolling keys scroll and Esc closes (the panel leaves `q` and
-    /// Enter to the prompt there). Every other key is
-    /// ignored, and so is every key after ``stop()``.
+    /// Enter to the prompt there). The list's `q` (``TerminalSubAgentDetailAction/closeList``)
+    /// that reaches an agent's detail was typed ahead of the switch to it
+    /// and is ignored, so it never closes the detail just opened. Every
+    /// other key is ignored, and so is every key after ``stop()``.
     func handle(_ action: TerminalSubAgentDetailAction) async {
         guard !isStopped else { return }
         switch panel.mode {
@@ -244,7 +247,7 @@ final class TerminalSubAgentDetailController {
                 let agentID = entries[min(max(0, focusedIndex), entries.count - 1)].agentID
                 show(agentID: agentID, snapshot: choiceSnapshots.first { $0.id == agentID })
                 await environment.modeDidChange(false)
-            case .close:
+            case .close, .closeList:
                 await close(reason: .dismissed)
             case .pageUp, .pageDown, .top, .bottom:
                 return
@@ -256,7 +259,7 @@ final class TerminalSubAgentDetailController {
                 render()
             case .close:
                 await close(reason: .dismissed)
-            case .focusPrevious, .focusNext, .confirm:
+            case .focusPrevious, .focusNext, .confirm, .closeList:
                 return
             }
         }
@@ -598,11 +601,14 @@ final class TerminalSubAgentDetailController {
     }
 
     /// What decides that the transcript may have changed: the agent's
-    /// lifecycle, its completed execution, its tool, and its latest event.
+    /// lifecycle, its completed execution, its tool and whether that tool
+    /// still runs (its result reaches the transcript when it stops), and its
+    /// latest event.
     private struct ReloadKey: Equatable {
         let lifecycle: TerminalSubAgentLifecycle
         let completedExecutionRevision: UInt64
         let toolName: String?
+        let toolIsRunning: Bool
         let latestEventAt: Date?
         let updatedAt: Date
 
@@ -610,6 +616,7 @@ final class TerminalSubAgentDetailController {
             lifecycle = TerminalSubAgentLifecycle(snapshot)
             completedExecutionRevision = snapshot.completedExecutionRevision
             toolName = snapshot.currentToolName
+            toolIsRunning = snapshot.currentToolIsRunning
             latestEventAt = snapshot.latestEventAt
             updatedAt = snapshot.updatedAt
         }

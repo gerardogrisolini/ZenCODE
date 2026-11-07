@@ -17,6 +17,17 @@ import os
 #endif
 
 extension TerminalStatusBar {
+    /// The widest agent name the status row shows, in visible columns.
+    /// ``fit(_:width:)`` cuts the row from its end, so an unbounded name would
+    /// push the model, the context and the tokens out of a narrow terminal.
+    static let maximumAgentNameColumns = 24
+
+    /// The agent name of the status row, cut to ``maximumAgentNameColumns``
+    /// with a trailing `…`.
+    static func agentNameStatusFragment(_ agentName: String) -> String {
+        TerminalANSIText.truncate(agentName, to: maximumAgentNameColumns)
+    }
+
     static func modelStatusFragment(
         modelID: String,
         thinkingSelection: AgentThinkingSelection?

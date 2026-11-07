@@ -50,6 +50,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
         currentActivity: String? = nil,
         currentActivityKind: DirectSubAgentRuntime.ActivityKind? = nil,
         currentToolName: String? = nil,
+        currentToolIsRunning: Bool = false,
         latestOutput: String? = nil,
         latestError: String? = nil
     ) -> DirectSubAgentRuntime.AgentSnapshot {
@@ -66,6 +67,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
             currentActivity: currentActivity,
             currentActivityKind: currentActivityKind,
             currentToolName: currentToolName,
+            currentToolIsRunning: currentToolIsRunning,
             latestMetrics: DirectAgentGenerationMetrics(
                 promptTokenCount: 12_345,
                 cachedPromptTokenCount: 9_000,
@@ -616,23 +618,76 @@ struct TerminalSubAgentTranscriptRenderingTests {
 
     @Test(arguments: [false, true])
     func liveActivityHasNoRowsWhileAToolRuns(standardErrorIsTerminal: Bool) {
+        // As the runtime leaves the agent at a call's start: the message that
+        // preceded the call, if any, and the call running.
         let agents = [
-            snapshot(currentToolName: "local.readFile"),
+            snapshot(currentToolName: "local.readFile", currentToolIsRunning: true),
             snapshot(
                 currentActivity: "Weighing the options.",
                 currentActivityKind: .thinking,
-                currentToolName: "local.readFile"
+                currentToolName: "local.readFile",
+                currentToolIsRunning: true
             ),
             snapshot(
                 currentActivity: "Working on the parser",
                 currentActivityKind: .content,
-                currentToolName: "local.exec"
+                currentToolName: "local.exec",
+                currentToolIsRunning: true
             )
         ]
 
         for agent in agents {
             #expect(liveActivity(agent, standardErrorIsTerminal: standardErrorIsTerminal).isEmpty)
         }
+    }
+
+    /// The runtime keeps the name and the target of a call after its result
+    /// until the next model state, and the deltas of the next message do not
+    /// change the snapshot: an agent that writes after a call, without
+    /// reasoning first, still shows the placeholder.
+    @Test(arguments: [false, true])
+    func liveActivityAfterACompletedToolIsThePlaceholderAgain(standardErrorIsTerminal: Bool) {
+        let placeholder = [thinkingTitle(standardErrorIsTerminal: standardErrorIsTerminal)]
+        let agents = [
+            // The call completed; the model writes its next message.
+            snapshot(currentToolName: "local.readFile", currentToolIsRunning: false),
+            // The message that preceded the call stays as the activity.
+            snapshot(
+                currentActivity: "Working on the parser",
+                currentActivityKind: .content,
+                currentToolName: "local.exec",
+                currentToolIsRunning: false
+            )
+        ]
+
+        for agent in agents {
+            #expect(agent.currentToolName != nil)
+            #expect(liveActivity(agent, standardErrorIsTerminal: standardErrorIsTerminal) == placeholder)
+        }
+    }
+
+    /// Only the running flag tells a running call from a completed one with
+    /// the same name.
+    @Test(arguments: [false, true])
+    func liveActivityFollowsTheRunningFlagOfTheSameCall(standardErrorIsTerminal: Bool) {
+        let running = snapshot(
+            currentActivity: "Reading.",
+            currentActivityKind: .content,
+            currentToolName: "local.readFile",
+            currentToolIsRunning: true
+        )
+        let completed = snapshot(
+            currentActivity: "Reading.",
+            currentActivityKind: .content,
+            currentToolName: "local.readFile",
+            currentToolIsRunning: false
+        )
+
+        #expect(liveActivity(running, standardErrorIsTerminal: standardErrorIsTerminal).isEmpty)
+        #expect(
+            liveActivity(completed, standardErrorIsTerminal: standardErrorIsTerminal)
+                == [thinkingTitle(standardErrorIsTerminal: standardErrorIsTerminal)]
+        )
     }
 
     @Test(arguments: [false, true])
@@ -643,12 +698,13 @@ struct TerminalSubAgentTranscriptRenderingTests {
             snapshot(
                 currentActivity: paragraph,
                 currentActivityKind: .thinking,
-                currentToolName: "agent.message"
+                currentToolName: "agent.message",
+                currentToolIsRunning: true
             ),
             standardErrorIsTerminal: standardErrorIsTerminal
         )
         let withoutActivity = liveActivity(
-            snapshot(currentToolName: "agent.message"),
+            snapshot(currentToolName: "agent.message", currentToolIsRunning: true),
             standardErrorIsTerminal: standardErrorIsTerminal
         )
 
@@ -679,6 +735,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
                 currentActivity: "Working on the parser",
                 currentActivityKind: .content,
                 currentToolName: "local.readFile",
+                currentToolIsRunning: true,
                 latestError: "backend crashed"
             ),
             snapshot(status: .closed, pending: false, currentToolName: "agent.message")
