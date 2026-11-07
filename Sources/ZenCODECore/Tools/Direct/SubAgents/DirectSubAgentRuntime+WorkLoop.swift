@@ -235,6 +235,7 @@ extension DirectSubAgentRuntime {
             )
             agent.currentToolName = nil
             agent.currentToolTarget = nil
+            agent.currentToolIsRunning = false
             agent.latestContentPreview = nil
         case let .modelLoaded(modelID):
             agent.modelID = modelID.nilIfBlank ?? agent.modelID
@@ -258,6 +259,7 @@ extension DirectSubAgentRuntime {
             }
             agent.currentToolName = toolCall.name
             agent.currentToolTarget = ToolCallPresentation.displayToolTarget(for: toolCall)
+            agent.currentToolIsRunning = true
             agent.latestContentPreview = nil
             delegatedToolEvent = DirectSubAgentToolEvent(
                 agentID: agent.id,
@@ -269,9 +271,12 @@ extension DirectSubAgentRuntime {
         case let .toolCallCompleted(toolCall, result):
             // Keep the compatibility snapshot projection until the next model
             // state. Terminal presentation receives the lossless event below and
-            // does not reconstruct a separate tool row from these fields.
+            // does not reconstruct a separate tool row from these fields. Only
+            // `currentToolIsRunning` turns off: the name and the target name
+            // the call that just completed, not one that runs.
             agent.currentToolName = toolCall.name
             agent.currentToolTarget = ToolCallPresentation.displayToolTarget(for: toolCall)
+            agent.currentToolIsRunning = false
             // The call's time for the transcript, as the tool executor
             // measured it (``DirectAgentToolResult/elapsed``). A call without
             // an id cannot be matched to its row, and a result the executor

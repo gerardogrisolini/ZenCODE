@@ -209,20 +209,7 @@ enum PlanningCommandKernel {
             guard !message.toolCalls.isEmpty else { return nil }
             // Preserve the provider/tool-call envelope required for replay, but
             // remove coordinator prose from the operational assistant response.
-            return AgentRuntimeMessage(
-                role: message.role,
-                content: "",
-                reasoningContent: message.reasoningContent,
-                reasoningItemsJSON: message.reasoningItemsJSON,
-                thinkingBlocksJSON: message.thinkingBlocksJSON,
-                anthropicContentBlocksJSON: message.anthropicContentBlocksJSON,
-                providerResponseID: message.providerResponseID,
-                attachments: message.attachments,
-                toolCalls: message.toolCalls,
-                toolCallID: message.toolCallID,
-                toolName: message.toolName,
-                toolResultIsError: message.toolResultIsError
-            )
+            return message.replacing(content: "")
         })
         correctedHistory.append(
             AgentRuntimeMessage(role: .assistant, content: plannerOutput)

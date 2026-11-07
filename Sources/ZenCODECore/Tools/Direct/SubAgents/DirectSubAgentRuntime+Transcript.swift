@@ -26,23 +26,26 @@ extension DirectSubAgentRuntime {
     ///   message already has always wins.
     /// - A tool call gets the title and the presentation of the agent's own
     ///   tool descriptor with its name
-    ///   (``AgentRuntimeBackend/activeToolDescriptors(sessionID:)``), so it is
+    ///   (``AgentRuntimeBackend/knownToolDescriptors(sessionID:)``), so it is
     ///   shown with its target as it was live; the first descriptor wins when
     ///   names repeat. A call without a descriptor is left as rebuilt. The
-    ///   descriptors are requested only when the transcript has a tool call:
-    ///   by then the backend has already listed the agent's tools for its
-    ///   requests, so a read never starts a feature's tool discovery
-    ///   (`--list-tools`) or the consent it can ask for.
+    ///   descriptors are requested only when the transcript has a tool call,
+    ///   and only those the backend already knows: a read never starts a
+    ///   feature's tool discovery (`--list-tools`) or the consent it can ask
+    ///   for. Until a feature whose tools are discovered at runtime is
+    ///   discovered again after a reload of the feature bundles, only its
+    ///   declared tools are known, and a call of one of its discovered tools is
+    ///   left as rebuilt.
     ///
     /// The transcript also carries the durations of the agent's completed
     /// tool calls (``ChatSubAgentTranscript/toolDurations``, by tool call id):
     /// the time the tool executor measured for each call
     /// (``DirectAgentToolResult/elapsed``), recorded when the runtime handles
-    /// its `.toolCallCompleted` event, for the agent's last 512 calls
-    /// (`maximumRetainedToolCallDurationsPerAgent`). Every backend records a
-    /// tool result in the history before it reports the completion, so a read
-    /// between the two can show a completed call whose duration is not there
-    /// yet: a later read has it.
+    /// its `.toolCallCompleted` event, for the agent's most recent calls (at
+    /// most ``DirectSubAgentRuntime/maximumRetainedToolCallDurationsPerAgent``).
+    /// Every backend records a tool result in the history before it reports
+    /// the completion, so a read between the two can show a completed call
+    /// whose duration is not there yet: a later read has it.
     ///
     /// The read itself keeps no state: the runtime stores no copy of the
     /// history or of the descriptors, and the history itself is not changed;
@@ -78,7 +81,7 @@ extension DirectSubAgentRuntime {
                 toolDurations: current.toolCallDurations.byCallID
             )
         }
-        let descriptors = await current.backend.activeToolDescriptors(
+        let descriptors = await current.backend.knownToolDescriptors(
             sessionID: current.sessionID
         )
         // Actor reentrancy again: decide on the record as it is after the
@@ -109,20 +112,7 @@ extension DirectSubAgentRuntime {
               let reasoning = thinkingText(fromThinkingBlocksJSON: message.thinkingBlocksJSON) else {
             return message
         }
-        return AgentRuntimeMessage(
-            role: message.role,
-            content: message.content,
-            reasoningContent: reasoning,
-            reasoningItemsJSON: message.reasoningItemsJSON,
-            thinkingBlocksJSON: message.thinkingBlocksJSON,
-            anthropicContentBlocksJSON: message.anthropicContentBlocksJSON,
-            providerResponseID: message.providerResponseID,
-            attachments: message.attachments,
-            toolCalls: message.toolCalls,
-            toolCallID: message.toolCallID,
-            toolName: message.toolName,
-            toolResultIsError: message.toolResultIsError
-        )
+        return message.replacing(reasoningContent: reasoning)
     }
 
     /// The `thinking` text of the blocks in `json` (a JSON array of block
@@ -182,11 +172,7 @@ extension DirectSubAgentRuntime {
         guard let descriptor = descriptorsByName[call.name] else {
             return call
         }
-        return DirectAgentToolCall(
-            id: call.id,
-            name: call.name,
-            argumentsObject: call.argumentsObject,
-            argumentsJSON: call.argumentsJSON,
+        return call.presented(
             descriptorTitle: descriptor.title,
             presentation: descriptor.presentation
         )

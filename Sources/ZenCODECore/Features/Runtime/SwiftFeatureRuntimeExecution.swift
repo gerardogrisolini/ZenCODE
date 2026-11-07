@@ -16,12 +16,11 @@ extension SwiftFeatureRuntime {
     ) async -> [DirectToolDescriptor] {
         var resolvedTools: [ToolDescriptor] = []
         var seenToolNames = Set<String>()
-        for feature in features {
-            guard !excludingFeatureIDs.contains(feature.id),
-                  feature.isRelevant(allowedToolNames: allowedToolNames) else {
-                continue
-            }
-
+        for feature in features where isListed(
+            feature,
+            allowedToolNames: allowedToolNames,
+            excludingFeatureIDs: excludingFeatureIDs
+        ) {
             // Runtime discovery invokes the `--list-tools` subprocess and waits
             // for completion, including any feature-owned consent. Results are
             // cached per-feature in `runtimeDiscoveredToolsByFeatureID`, so only
@@ -31,18 +30,72 @@ extension SwiftFeatureRuntime {
             let featureTools = feature.discoversToolsAtRuntime
                 ? await tools(for: feature)
                 : feature.tools
-            for tool in ToolDescriptor.canonicalized(featureTools)
-            where seenToolNames.insert(tool.name).inserted
-                && features.first(where: { $0.contains(toolName: tool.name) })?.id == feature.id {
-                // Execution resolves the first feature containing a name, even
-                // when only a later duplicate is relevant to the allowlist. Do
-                // not publish that later descriptor with an owner that cannot
-                // execute it.
-                resolvedTools.append(tool)
-            }
+            appendOwnedTools(
+                featureTools,
+                of: feature,
+                to: &resolvedTools,
+                seenToolNames: &seenToolNames
+            )
         }
 
         return ToolDescriptor.canonicalized(resolvedTools).map(DirectToolDescriptor.init)
+    }
+
+    /// The descriptors ``descriptors(allowedToolNames:excludingFeatureIDs:)``
+    /// resolves, from the tools already known only: it never starts a
+    /// feature's tool discovery (`--list-tools`) or the consent it can ask
+    /// for. A feature that discovers its tools at runtime contributes the
+    /// tools its last discovery cached, or only its declared tools when it
+    /// has not been discovered since the runtime was created or its bundles
+    /// were reloaded.
+    public func knownDescriptors(
+        allowedToolNames: Set<String>? = nil,
+        excludingFeatureIDs: Set<String> = []
+    ) -> [DirectToolDescriptor] {
+        var resolvedTools: [ToolDescriptor] = []
+        var seenToolNames = Set<String>()
+        for feature in features where isListed(
+            feature,
+            allowedToolNames: allowedToolNames,
+            excludingFeatureIDs: excludingFeatureIDs
+        ) {
+            appendOwnedTools(
+                knownTools(for: feature),
+                of: feature,
+                to: &resolvedTools,
+                seenToolNames: &seenToolNames
+            )
+        }
+
+        return ToolDescriptor.canonicalized(resolvedTools).map(DirectToolDescriptor.init)
+    }
+
+    private func isListed(
+        _ feature: SwiftFeatureBundle,
+        allowedToolNames: Set<String>?,
+        excludingFeatureIDs: Set<String>
+    ) -> Bool {
+        !excludingFeatureIDs.contains(feature.id)
+            && feature.isRelevant(allowedToolNames: allowedToolNames)
+    }
+
+    /// Appends the tools of `featureTools` whose name is not listed yet and
+    /// that `feature` executes.
+    private func appendOwnedTools(
+        _ featureTools: [ToolDescriptor],
+        of feature: SwiftFeatureBundle,
+        to resolvedTools: inout [ToolDescriptor],
+        seenToolNames: inout Set<String>
+    ) {
+        for tool in ToolDescriptor.canonicalized(featureTools)
+        where seenToolNames.insert(tool.name).inserted
+            && features.first(where: { $0.contains(toolName: tool.name) })?.id == feature.id {
+            // Execution resolves the first feature containing a name, even
+            // when only a later duplicate is relevant to the allowlist. Do
+            // not publish that later descriptor with an owner that cannot
+            // execute it.
+            resolvedTools.append(tool)
+        }
     }
 
     public func featureToolIsAllowed(

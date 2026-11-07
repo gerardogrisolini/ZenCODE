@@ -248,6 +248,28 @@ public struct AgentRuntimeMessage: Codable, Equatable, Sendable {
         self.toolName = toolName?.nilIfBlank
         self.toolResultIsError = toolResultIsError
     }
+
+    /// The same message with `content` and `reasoningContent` replaced; a
+    /// `nil` argument keeps the current value. Every other field is kept.
+    func replacing(
+        content: String? = nil,
+        reasoningContent: String? = nil
+    ) -> AgentRuntimeMessage {
+        AgentRuntimeMessage(
+            role: role,
+            content: content ?? self.content,
+            reasoningContent: reasoningContent ?? self.reasoningContent,
+            reasoningItemsJSON: reasoningItemsJSON,
+            thinkingBlocksJSON: thinkingBlocksJSON,
+            anthropicContentBlocksJSON: anthropicContentBlocksJSON,
+            providerResponseID: providerResponseID,
+            attachments: attachments,
+            toolCalls: toolCalls,
+            toolCallID: toolCallID,
+            toolName: toolName,
+            toolResultIsError: toolResultIsError
+        )
+    }
 }
 
 /// Encodes session-specific instructions as one recognisable leading user
@@ -821,6 +843,15 @@ public protocol AgentRuntimeBackend: Actor {
 
     func activeToolDescriptors() async -> [DirectToolDescriptor]
     func activeToolDescriptors(sessionID: String?) async -> [DirectToolDescriptor]
+    /// The tool descriptors of `sessionID` already known, read without
+    /// starting any tool discovery: a feature's `--list-tools`, or the consent
+    /// it can ask for, never runs. For presentation only, such as
+    /// ``DirectSubAgentRuntime/transcript(agentID:rootSessionID:)``: a feature
+    /// that discovers its tools at runtime contributes the tools already
+    /// discovered, or only its declared ones. The default implementation
+    /// returns ``activeToolDescriptors(sessionID:)``; a backend whose
+    /// descriptors can start a discovery overrides it.
+    func knownToolDescriptors(sessionID: String?) async -> [DirectToolDescriptor]
 
     func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot]
     func subAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]>
@@ -926,6 +957,12 @@ extension AgentRuntimeBackend {
         sessionID _: String?
     ) async -> [DirectToolDescriptor] {
         await activeToolDescriptors()
+    }
+
+    public func knownToolDescriptors(
+        sessionID: String?
+    ) async -> [DirectToolDescriptor] {
+        await activeToolDescriptors(sessionID: sessionID)
     }
 
     public func installTaskOrchestrator(

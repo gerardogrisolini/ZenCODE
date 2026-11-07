@@ -29,8 +29,10 @@ import Foundation
 ///
 /// The elapsed times of the tool calls (``toolDurations``) are not in the
 /// history either: the runtime keeps the times the tool executor measured
-/// (``DirectAgentToolResult/elapsed``), in memory only, for the agent's last
-/// 512 calls. They are never saved.
+/// (``DirectAgentToolResult/elapsed``), in memory only, for the agent's most
+/// recent calls (at most
+/// ``DirectSubAgentRuntime/maximumRetainedToolCallDurationsPerAgent``). They
+/// are never saved.
 public struct ChatSubAgentTranscript: Sendable, Equatable {
     /// The sub-agent the transcript belongs to.
     public let agentID: String
@@ -43,12 +45,13 @@ public struct ChatSubAgentTranscript: Sendable, Equatable {
     ///
     /// A call that is still running, a call without an id, a call whose
     /// result the executor did not produce (cancelled before its dispatch),
-    /// and a call older than the agent's last 512 have none. Every backend
-    /// records a tool result in the history before it reports the
-    /// completion, and the duration is recorded when the runtime handles that
-    /// report, so ``kinds`` can briefly show a completed call whose duration
-    /// a later read adds: a caller that shows the times compares them too,
-    /// not only ``kinds``.
+    /// and a call older than the agent's most recent
+    /// ``DirectSubAgentRuntime/maximumRetainedToolCallDurationsPerAgent`` have
+    /// none. Every backend records a tool result in the history before it
+    /// reports the completion, and the duration is recorded when the runtime
+    /// handles that report, so ``kinds`` can briefly show a completed call
+    /// whose duration a later read adds: a caller that shows the times
+    /// compares them too, not only ``kinds``.
     public let toolDurations: [String: Duration]
 
     public init(

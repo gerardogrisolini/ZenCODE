@@ -492,8 +492,10 @@ private extension DirectSubAgentRuntime {
 }
 
 /// A sub-agent backend whose session history is the given one, whatever the
-/// prompts, and whose tool descriptors are the given ones. It records the
-/// sessions it creates and the session of every descriptor request.
+/// prompts, and whose known tool descriptors are the given ones. It records the
+/// sessions it creates and the session of every known-descriptor request; its
+/// active descriptors, which a real backend can discover, are empty, so a
+/// transcript that asked for them would show no descriptor.
 /// `shutdown()` drops every session, as a real backend that was shut down.
 private actor ScriptedTranscriptSubAgentBackend: AgentRuntimeBackend {
     private let history: [AgentRuntimeMessage]
@@ -580,7 +582,11 @@ private actor ScriptedTranscriptSubAgentBackend: AgentRuntimeBackend {
         await activeToolDescriptors(sessionID: nil)
     }
 
-    func activeToolDescriptors(sessionID: String?) async -> [DirectToolDescriptor] {
+    func activeToolDescriptors(sessionID _: String?) async -> [DirectToolDescriptor] {
+        []
+    }
+
+    func knownToolDescriptors(sessionID: String?) async -> [DirectToolDescriptor] {
         descriptorRequests.append(sessionID)
         return descriptors
     }

@@ -10,6 +10,30 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- `DirectSubAgentRuntime.AgentSnapshot.currentToolIsRunning` tells whether the
+  call `currentToolName` names is still running: it is `true` from the start of
+  the call to its completion, while the name and the target stay until the
+  next model state, so a live presentation can tell a running call from the
+  one that just completed.
+- `AgentRuntimeBackend.knownToolDescriptors(sessionID:)` (with a default
+  implementation that returns `activeToolDescriptors(sessionID:)`),
+  `SwiftFeatureRuntime.knownDescriptors(allowedToolNames:excludingFeatureIDs:)`
+  and the `discoversFeatureTools:` parameter of
+  `DirectToolExecutor.descriptors(...)` read the tool descriptors already
+  known without starting a feature's tool discovery.
+- `DirectAgentToolResult.replacing(modelOutput:fileChanges:)` derives a result
+  from another; `withElapsed(_:)` and it share the one field-by-field copy.
+
+### Fixed
+
+- Reading the transcript of a sub-agent (`/subagent`, the macOS sub-agent
+  tabs) no longer starts the tool discovery of a feature (`--list-tools`, and
+  the consent it can ask for), not even after the feature bundles were
+  reloaded: the calls of tools discovered at runtime are shown without their
+  title and presentation until the feature is discovered again.
+
 ## [4.1.0] - 2026-11-07
 
 ### Added

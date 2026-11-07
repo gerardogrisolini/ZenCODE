@@ -225,6 +225,7 @@ extension DirectSubAgentRuntime {
             currentActivityRevision: agent.currentActivityRevision,
             currentToolName: agent.currentToolName,
             currentToolTarget: agent.currentToolTarget,
+            currentToolIsRunning: agent.currentToolIsRunning,
             latestMetrics: agent.latestMetrics,
             latestContentPreview: agent.latestContentPreview,
             latestEventAt: agent.latestEventAt,

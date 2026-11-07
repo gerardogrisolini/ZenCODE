@@ -840,17 +840,23 @@ history: an assistant message without reasoning takes the text of its
 `thinking` blocks as its thought (Anthropic keeps its reasoning only there),
 and when the history has a tool call, the calls take the title and
 presentation of the agent's own tool descriptors, which are asked for only
-in that case so a read never starts a feature's tool discovery. The system
-prompt, the dynamic context, and the memory block are not in that history.
-The only state behind the read is the elapsed time of the tool calls, which
-the history does not keep: the runtime records, when it handles a
-`.toolCallCompleted` of the agent, the time the tool executor measured for the
-call and its result carries (`DirectAgentToolResult.elapsed`), and keeps,
-only in memory in the agent's record, the durations of the agent's last 512
-tool calls (the oldest are evicted first, and they survive the agent's turns
-and its end), exposed as `toolDurations` by tool call id. Every backend
-records a tool result before it reports the completion, so a read between
-the two can show a completed call whose duration only a later read has. Once
+in that case and only as the backend already knows them
+(`AgentRuntimeBackend.knownToolDescriptors(sessionID:)`), so a read never
+starts a feature's tool discovery (`--list-tools`) or the consent it can ask
+for: until a feature whose tools are discovered at runtime is discovered
+again after a reload of the feature bundles, only its declared tools are
+known. The system prompt, the dynamic context, and the memory block are not
+in that history. The only state behind the read is the elapsed time of the
+tool calls, which the history does not keep: the runtime records, when it
+handles a `.toolCallCompleted` of the agent, the time the tool executor
+measured for the call and its result carries
+(`DirectAgentToolResult.elapsed`), and keeps, only in memory in the agent's
+record, the durations of the agent's most recent tool calls (at most
+`DirectSubAgentRuntime.maximumRetainedToolCallDurationsPerAgent`; the oldest
+are evicted first, and they survive the agent's turns and its end), exposed
+as `toolDurations` by tool call id. Every backend records a tool result
+before it reports the completion, so a read between the two can show a
+completed call whose duration only a later read has. Once
 the agent's backend is shut down (the agent was closed, cancelled, failed, or
 released from standby) the read returns `nil`: the runtime keeps no copy of
 the history, in the agent's record or anywhere else, and neither the history

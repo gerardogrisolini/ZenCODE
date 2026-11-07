@@ -38,8 +38,18 @@ extension DirectSubAgentRuntime {
         /// this instead of inspecting the activity text.
         public let currentActivityKind: ActivityKind?
         public let currentActivityRevision: UInt64
+        /// The name of the latest tool call of the turn: the one running now
+        /// (``currentToolIsRunning``), or the last one completed, kept until
+        /// the next model state so the overview row survives the boundary.
         public let currentToolName: String?
         public let currentToolTarget: String?
+        /// Whether the call ``currentToolName`` names is still running: `true`
+        /// from its start to its completion, `false` once its result arrived
+        /// (the name and the target stay) or when there is no call. A live
+        /// presentation that draws nothing while a tool runs branches on this,
+        /// not on the name alone, so the agent's next message after a call
+        /// shows its activity again.
+        public let currentToolIsRunning: Bool
         /// Generation metrics of the latest turn, already merged by the
         /// runtime. Presentation renders them inline on the model row.
         public let latestMetrics: DirectAgentGenerationMetrics?
@@ -76,6 +86,7 @@ extension DirectSubAgentRuntime {
             currentActivityRevision: UInt64 = 0,
             currentToolName: String? = nil,
             currentToolTarget: String? = nil,
+            currentToolIsRunning: Bool = false,
             latestMetrics: DirectAgentGenerationMetrics? = nil,
             latestContentPreview: String? = nil,
             latestEventAt: Date? = nil,
@@ -109,6 +120,7 @@ extension DirectSubAgentRuntime {
             self.currentActivityRevision = currentActivityRevision
             self.currentToolName = currentToolName
             self.currentToolTarget = currentToolTarget
+            self.currentToolIsRunning = currentToolIsRunning
             self.latestMetrics = latestMetrics
             self.latestContentPreview = latestContentPreview
             self.latestEventAt = latestEventAt

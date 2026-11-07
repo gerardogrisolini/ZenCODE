@@ -356,10 +356,22 @@ public actor DirectToolExecutor {
         await subAgentRuntime.sharedChatTranscriptMessages(rootSessionID: rootSessionID)
     }
 
+    /// The tool descriptors available to `sessionID`, filtered by
+    /// `allowedToolNames`.
+    ///
+    /// With `discoversFeatureTools` (the default) a relevant feature that
+    /// discovers its tools at runtime and has not been discovered yet, or
+    /// whose discovery was cleared by a reload of the feature bundles, is
+    /// discovered now (`--list-tools`, and the consent it can ask for).
+    /// Without it the descriptors are only the ones already known
+    /// (``SwiftFeatureRuntime/knownDescriptors(allowedToolNames:excludingFeatureIDs:)``):
+    /// nothing is discovered, so such a feature contributes only its declared
+    /// tools.
     public func descriptors(
         allowedToolNames: Set<String>? = nil,
         preferredWorkspaceRootURL: URL? = nil,
-        sessionID: String? = nil
+        sessionID: String? = nil,
+        discoversFeatureTools: Bool = true
     ) async -> [DirectToolDescriptor] {
         if MemoryConsolidationContext.isIsolated || allowedToolNames?.isEmpty == true {
             return []
@@ -399,10 +411,13 @@ public actor DirectToolExecutor {
         )
         .filter { !providerToolNames.contains($0.name) }
         .filter { !reservedSkillToolNames.contains($0.name) }
-        let featureDescriptors = await swiftFeatureRuntime.descriptors(
-            allowedToolNames: allowedToolNames
-        )
-        .filter { !reservedSkillToolNames.contains($0.name) }
+        let resolvedFeatureDescriptors = if discoversFeatureTools {
+            await swiftFeatureRuntime.descriptors(allowedToolNames: allowedToolNames)
+        } else {
+            await swiftFeatureRuntime.knownDescriptors(allowedToolNames: allowedToolNames)
+        }
+        let featureDescriptors = resolvedFeatureDescriptors
+            .filter { !reservedSkillToolNames.contains($0.name) }
 
         let featureManagementDescriptors = Self.filtered(
             DirectToolCatalog.featureDescriptors,
@@ -581,12 +596,7 @@ public actor DirectToolExecutor {
                 )
             }
         }
-        let evidencedResult = DirectAgentToolResult(
-            output: baseResult.output, summary: baseResult.summary,
-            modelOutput: baseResult.modelOutput, status: baseResult.status,
-            attachments: baseResult.attachments, fileChanges: recorder.changes,
-            elapsed: baseResult.elapsed
-        )
+        let evidencedResult = baseResult.replacing(fileChanges: recorder.changes)
         let deliveredResult = await deliveringInlineSharedChatMessages(
             evidencedResult,
             sessionID: sessionID
@@ -631,16 +641,10 @@ public actor DirectToolExecutor {
         )
         let deliverable = messages.filter { $0.sender.id != participantID }
         guard !deliverable.isEmpty else { return result }
-        return DirectAgentToolResult(
-            output: result.output,
-            summary: result.summary,
+        return result.replacing(
             modelOutput: result.modelOutput
                 + "\n\n"
-                + DirectSubAgentRuntime.inlineSharedChatDeliveryBlock(deliverable),
-            status: result.status,
-            attachments: result.attachments,
-            fileChanges: result.fileChanges,
-            elapsed: result.elapsed
+                + DirectSubAgentRuntime.inlineSharedChatDeliveryBlock(deliverable)
         )
     }
 

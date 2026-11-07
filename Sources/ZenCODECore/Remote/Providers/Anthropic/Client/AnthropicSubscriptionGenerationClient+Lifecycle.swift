@@ -135,6 +135,19 @@ extension AnthropicSubscriptionGenerationClient {
     public func activeToolDescriptors(
         sessionID: String?
     ) async -> [DirectToolDescriptor] {
+        await toolDescriptors(sessionID: sessionID, discoversFeatureTools: true)
+    }
+
+    public func knownToolDescriptors(
+        sessionID: String?
+    ) async -> [DirectToolDescriptor] {
+        await toolDescriptors(sessionID: sessionID, discoversFeatureTools: false)
+    }
+
+    private func toolDescriptors(
+        sessionID: String?,
+        discoversFeatureTools: Bool
+    ) async -> [DirectToolDescriptor] {
         let session = if let sessionID {
             sessions[sessionID]
         } else {
@@ -146,7 +159,8 @@ extension AnthropicSubscriptionGenerationClient {
         return await toolExecutor.descriptors(
             allowedToolNames: session.allowedToolNames,
             preferredWorkspaceRootURL: session.cwd,
-            sessionID: session.id
+            sessionID: session.id,
+            discoversFeatureTools: discoversFeatureTools
         )
     }
 

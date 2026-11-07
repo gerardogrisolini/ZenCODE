@@ -25,6 +25,16 @@ extension SwiftFeatureRuntime {
         return canonicalTools
     }
 
+    /// The tools of `feature` already known, without discovering them: its
+    /// cached discovery when it discovers its tools at runtime and has one,
+    /// otherwise its declared tools. Never starts a process.
+    func knownTools(for feature: SwiftFeatureBundle) -> [ToolDescriptor] {
+        guard feature.discoversToolsAtRuntime else {
+            return feature.tools
+        }
+        return runtimeDiscoveredToolsByFeatureID[feature.id] ?? feature.tools
+    }
+
     private func discoverRuntimeTools(
         feature: SwiftFeatureBundle
     ) async throws -> [ToolDescriptor] {

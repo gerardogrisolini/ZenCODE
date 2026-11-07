@@ -101,6 +101,40 @@ public struct DirectAgentToolCall: Sendable, Equatable {
         self.presentation = presentation
     }
 
+    private init(
+        id: String,
+        name: String,
+        arguments: [String: JSONValue],
+        argumentsJSON: String,
+        descriptorTitle: String?,
+        presentation: ToolPresentationDefinition?
+    ) {
+        self.id = id
+        self.name = name
+        self.arguments = arguments
+        self.argumentsJSON = argumentsJSON
+        self.descriptorTitle = descriptorTitle
+        self.presentation = presentation
+    }
+
+    /// The same call, with `descriptorTitle` and `presentation` as its
+    /// runtime-only descriptor metadata (`nil` clears it). The ID, the name,
+    /// and the arguments are carried over as they are stored, without
+    /// converting or canonicalizing them again.
+    func presented(
+        descriptorTitle: String?,
+        presentation: ToolPresentationDefinition?
+    ) -> DirectAgentToolCall {
+        DirectAgentToolCall(
+            id: id,
+            name: name,
+            arguments: arguments,
+            argumentsJSON: argumentsJSON,
+            descriptorTitle: descriptorTitle,
+            presentation: presentation
+        )
+    }
+
     /// The tool arguments as a JSON-compatible `[String: Any]` dictionary,
     /// materialized on demand from the stored `JSONValue` payload.
     public var argumentsObject: [String: Any] {
@@ -130,7 +164,9 @@ public struct DirectAgentToolResult: Sendable, Equatable {
     /// result it returns. It lives in memory only: it is never persisted,
     /// never sent to the model, and reaches a wire only where a surface
     /// already shows a call's time. `nil` for every result the executor did
-    /// not produce: a call cancelled before its dispatch, or a result rebuilt
+    /// not measure: a call cancelled before its dispatch, a call the executor
+    /// refuses without dispatching it because its request is isolated from
+    /// tools (`MemoryConsolidationContext.isIsolated`), or a result rebuilt
     /// from a transcript, a history, or a restored session.
     public let elapsed: Duration?
 
@@ -152,8 +188,32 @@ public struct DirectAgentToolResult: Sendable, Equatable {
         self.elapsed = elapsed
     }
 
-    /// The same result with `elapsed` as its measured time.
+    /// The same result with `elapsed` as its measured time (`nil` clears it).
     public func withElapsed(_ elapsed: Duration?) -> DirectAgentToolResult {
+        copy(modelOutput: modelOutput, fileChanges: fileChanges, elapsed: elapsed)
+    }
+
+    /// The same result with `modelOutput` and `fileChanges` replaced; a `nil`
+    /// argument keeps the current value. Every other field, `elapsed`
+    /// included, is kept.
+    public func replacing(
+        modelOutput: String? = nil,
+        fileChanges: [OperationFileChange]? = nil
+    ) -> DirectAgentToolResult {
+        copy(
+            modelOutput: modelOutput ?? self.modelOutput,
+            fileChanges: fileChanges ?? self.fileChanges,
+            elapsed: elapsed
+        )
+    }
+
+    /// The one field-by-field copy of a result: every derived result is built
+    /// here, so a new field has a single place to be carried over.
+    private func copy(
+        modelOutput: String,
+        fileChanges: [OperationFileChange],
+        elapsed: Duration?
+    ) -> DirectAgentToolResult {
         DirectAgentToolResult(
             output: output,
             summary: summary,

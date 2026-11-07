@@ -86,10 +86,10 @@ public actor DirectSubAgentRuntime {
 
     /// The durations of an agent's completed tool calls, as the tool executor
     /// measured them, by tool call id, bounded to the `limit` most recent
-    /// ones. A repeated id
-    /// overwrites its duration and becomes the most recent; beyond the limit
-    /// the oldest are evicted first. Kept in memory only, in the agent's
-    /// record: never persisted, snapshotted, or checkpointed.
+    /// ones. A repeated id overwrites its duration and becomes the most
+    /// recent; beyond the limit the oldest are evicted first. Kept in memory
+    /// only, in the agent's record: never persisted, snapshotted, or
+    /// checkpointed.
     struct ToolCallDurations {
         let limit: Int
         /// The durations, by tool call id.
@@ -172,6 +172,9 @@ public actor DirectSubAgentRuntime {
         var pendingContentBuffer: String? = nil
         public var currentToolName: String? = nil
         public var currentToolTarget: String? = nil
+        /// Whether the call `currentToolName` names is still running; see
+        /// ``AgentSnapshot/currentToolIsRunning``.
+        public var currentToolIsRunning = false
         /// Generation metrics accumulated for the turn in progress, folded with
         /// the same semantics the status bar uses for the root session.
         public var latestMetrics: DirectAgentGenerationMetrics? = nil
@@ -237,6 +240,7 @@ public actor DirectSubAgentRuntime {
             pendingContentBuffer = nil
             currentToolName = nil
             currentToolTarget = nil
+            currentToolIsRunning = false
         }
 
         /// Drops heavyweight report prefixes before this inactive record enters
