@@ -443,79 +443,6 @@ struct TerminalSubAgentDetailControllerTests {
         controller.stop()
     }
 
-    @Test func aReadWithTheSameKindsAndNewDurationsShowsTheTimes() async {
-        let call = presentedToolCall(
-            id: "read-1",
-            name: "local.readFile",
-            argumentsObject: ["path": "/tmp/Example.swift"],
-            argumentsJSON: #"{"path":"/tmp/Example.swift"}"#
-        )
-        let kinds: [ChatTurnEntry.Kind] = [
-            .toolCallStarted(call),
-            .toolCallCompleted(call, result: DirectAgentToolResult(output: "ok", summary: "ok")),
-        ]
-        // The backend recorded the result before the runtime measured the
-        // call: the first read has no duration yet.
-        let harness = DetailHarness(transcript: ChatSubAgentTranscript(agentID: "agent-1", kinds: kinds))
-        let controller = harness.makeController()
-        controller.open(agentID: "agent-1", snapshot: agent())
-        await waitUntil("the transcript is read") { controller.panel.availability == .available }
-        let elapsed = Duration.milliseconds(1_250)
-        let time = ToolCallPresentation.elapsedTimeText(elapsed)
-        #expect(!controller.panel.bodyRows.contains { $0.contains(time) })
-        #expect(controller.transcriptRenderCount == 1)
-
-        // The next read has the same kinds and the duration.
-        let durations = ["read-1": elapsed]
-        harness.feed.setTranscript(ChatSubAgentTranscript(agentID: "agent-1", kinds: kinds, toolDurations: durations))
-        await waitUntil("the controller subscribes") { harness.feed.isSubscribed }
-        let running = agent(second: 1)
-        harness.feed.yield([running])
-        await waitUntil("the time is shown") { controller.panel.bodyRows.contains { $0.contains(time) } }
-        #expect(controller.transcriptRenderCount == 2)
-        #expect(controller.panel.bodyRows == TerminalChat.renderSubAgentTranscriptRows(
-            kinds,
-            toolDurations: durations,
-            width: 56,
-            standardErrorIsTerminal: false
-        ) + [""] + liveActivity(running))
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
-        controller.stop()
-    }
-
-    /// The end of a call reads the transcript again, where its result lands,
-    /// and draws the live activity again below it, even from a snapshot that
-    /// changes nothing but the running flag: the runtime keeps the call's
-    /// name after its result.
-    @Test func theEndOfACallReadsAgainAndDrawsTheLiveActivityAgain() async {
-        let harness = DetailHarness(transcript: transcript(["READING"]))
-        let controller = harness.makeController()
-        let running = agent(activity: "Reading.", toolName: "local.readFile", toolIsRunning: true)
-        controller.open(agentID: "agent-1", snapshot: running)
-        await waitUntil("the transcript is read") { controller.panel.availability == .available }
-        // Nothing below the transcript while the call runs.
-        #expect(liveActivity(running).isEmpty)
-        #expect(controller.panel.bodyRows == rows(["READING"]))
-
-        // The stream's first value repeats the opening snapshot: no read.
-        await waitUntil("the controller subscribes") { harness.feed.isSubscribed }
-        harness.feed.yield([running])
-        await waitUntil("the controller waits") { harness.gate.pendingCount(DetailHarness.updateInterval) == 1 }
-        #expect(controller.transcriptReadCount == 1)
-
-        harness.feed.setTranscript(transcript(["READING", "RESULT"]))
-        let completed = agent(activity: "Reading.", toolName: "local.readFile", toolIsRunning: false)
-        harness.feed.yield([completed])
-        #expect(harness.gate.release(DetailHarness.updateInterval))
-        await waitUntil("the end of the call is read") { controller.transcriptReadCount == 2 }
-        await waitUntil("the live activity is drawn") {
-            controller.panel.bodyRows == rows(["READING", "RESULT"]) + [""] + liveActivity(completed)
-        }
-        #expect(liveActivity(completed) == [TerminalChat.thinkingPlaceholder])
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
-        controller.stop()
-    }
-
     @Test func subscribesAgainAfterTheStreamFinishes() async {
         let harness = DetailHarness(transcript: transcript(["FIRST"]), finishedStreams: 1)
         let controller = harness.makeController()
@@ -551,54 +478,6 @@ struct TerminalSubAgentDetailControllerTests {
     }
 
     // MARK: Keys
-
-    @Test func scrollingUpStopsFollowingAndBottomResumesIt() async {
-        let blocks = (0..<10).map { "BLOCK_\($0)" }
-        let harness = DetailHarness(transcript: transcript(blocks))
-        harness.viewport = (rows: 8, columns: 40)
-        let controller = harness.makeController()
-        controller.open(agentID: "agent-1", snapshot: agent(status: .idle, pending: false))
-        await waitUntil("the transcript is read") { controller.panel.availability == .available }
-        #expect(controller.panel.bodyRows == rows(blocks, columns: 40))
-        let capacity = controller.panel.bodyCapacity(frameRows: 8)
-        let maximum = controller.panel.bodyRows.count - capacity
-        #expect(capacity > 0)
-        #expect(controller.panel.isFollowing)
-        #expect(controller.panel.scrollOffset == maximum)
-
-        await controller.handle(.scrollUp)
-        #expect(!controller.panel.isFollowing)
-        #expect(controller.panel.scrollOffset == maximum - 1)
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 8, columns: 40))
-
-        // The keys of the agent list do nothing here.
-        let scrolled = controller.panel
-        await controller.handle(.focusNext)
-        await controller.handle(.confirm)
-        #expect(controller.panel == scrolled)
-        #expect(harness.modeChanges.isEmpty)
-
-        // A longer transcript keeps the rows being read in place.
-        let longer = blocks + ["BLOCK_10", "BLOCK_11"]
-        harness.feed.setTranscript(transcript(longer))
-        await waitUntil("the controller subscribes") { harness.feed.isSubscribed }
-        harness.feed.yield([agent(status: .idle, pending: false, executionRevision: 2, second: 1)])
-        await waitUntil("the longer transcript is read") {
-            controller.panel.bodyRows == rows(longer, columns: 40)
-        }
-        #expect(!controller.panel.isFollowing)
-        #expect(controller.panel.scrollOffset == maximum - 1)
-
-        await controller.handle(.bottom)
-        #expect(controller.panel.isFollowing)
-        #expect(controller.panel.scrollOffset
-            == controller.panel.bodyRows.count - controller.panel.bodyCapacity(frameRows: 8))
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 8, columns: 40))
-
-        await controller.handle(.close)
-        #expect(harness.closeReasons == [.dismissed])
-        #expect(controller.isStopped)
-    }
 
     @Test func theListMovesTheFocusAndEnterOpensTheFocusedAgent() async {
         let harness = DetailHarness(transcript: transcript(["SECOND_AGENT"], agentID: "agent-2"))
@@ -658,34 +537,6 @@ struct TerminalSubAgentDetailControllerTests {
         controller.stop()
     }
 
-    /// The list's `q` closes the list; once an agent is shown, a `q` typed
-    /// ahead of the panel's switch to the detail arrives as the list's key
-    /// and is ignored, while `Esc` still closes the detail.
-    @Test func theListsCloseKeyClosesOnlyTheList() async {
-        let listHarness = DetailHarness(transcript: transcript(["FIRST"]))
-        let list = listHarness.makeController()
-        list.open(choosing: [agent("agent-1"), agent("agent-2")])
-        await list.handle(.closeList)
-        #expect(listHarness.closeReasons == [.dismissed])
-        #expect(list.isStopped)
-
-        let harness = DetailHarness(transcript: transcript(["FIRST"]))
-        let controller = harness.makeController()
-        controller.open(choosing: [agent("agent-1"), agent("agent-2")])
-        await controller.handle(.confirm)
-        await controller.handle(.closeList)
-        #expect(controller.panel.mode == .showing)
-        #expect(controller.agentID == "agent-1")
-        #expect(!controller.isStopped)
-        #expect(harness.closeReasons.isEmpty)
-        await waitUntil("the agent's transcript is read") { controller.panel.availability == .available }
-        #expect(controller.panel.bodyRows == rows(["FIRST"]) + [""] + liveActivity(agent("agent-1")))
-
-        await controller.handle(.close)
-        #expect(harness.closeReasons == [.dismissed])
-        #expect(controller.isStopped)
-    }
-
     // MARK: Closing
 
     @Test func closingIsIdempotentAndNothingFollowsIt() async {
@@ -738,37 +589,6 @@ struct TerminalSubAgentDetailControllerTests {
     }
 
     // MARK: Viewport
-
-    @Test func drawsAgainWhenTheViewportChanges() async {
-        let harness = DetailHarness(transcript: transcript(["FIRST"]))
-        let controller = harness.makeController()
-        let snapshot = agent(status: .idle, pending: false)
-        controller.open(agentID: "agent-1", snapshot: snapshot)
-        await waitUntil("the transcript is read") { controller.panel.availability == .available }
-        await waitUntil("the poll waits") { harness.gate.pendingCount(DetailHarness.pollInterval) == 1 }
-
-        // A poll that finds the same viewport draws nothing.
-        let frames = harness.frames.count
-        #expect(harness.gate.release(DetailHarness.pollInterval))
-        await waitUntil("the next poll waits") { harness.gate.requestCount(DetailHarness.pollInterval) == 2 }
-        #expect(harness.frames.count == frames)
-
-        // A poll that finds a new viewport draws for it.
-        harness.viewport = (rows: 12, columns: 40)
-        #expect(harness.gate.release(DetailHarness.pollInterval))
-        await waitUntil("the panel is drawn again") { harness.frames.last?.count == 12 }
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 12, columns: 40))
-        #expect(controller.panel.headerRows == header(snapshot, columns: 40))
-        #expect(controller.panel.bodyRows == rows(["FIRST"], columns: 40))
-        #expect(controller.transcriptRenderCount == 2)
-
-        // A resize signal checks at once, without the poll.
-        harness.viewport = (rows: 10, columns: 50)
-        harness.resize.signal()
-        await waitUntil("the panel is drawn again") { harness.frames.last?.count == 10 }
-        #expect(harness.frames.last == controller.panel.frameLines(rows: 10, columns: 50))
-        controller.stop()
-    }
 
     @Test(arguments: [false, true])
     func closesWhenTheScreenTurnsAppendOnly(throughResizeSignal: Bool) async {

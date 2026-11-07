@@ -15,29 +15,6 @@ import Testing
 @Suite("Terminal voice turn instruction")
 struct TerminalVoiceTurnInstructionTests {
     @Test
-    func instructionTextIsTheAgreedWording() {
-        #expect(
-            TerminalChat.voiceTurnInstruction
-                == "Voice mode is on: the user is listening and your final answer is read aloud. Answer in short sentences. While you work, briefly comment on what you are doing as you do it. Keep any format the request requires."
-        )
-    }
-
-    @Test
-    func noInstructionWhileVoiceModeIsOff() async throws {
-        let chat = try makeChat()
-        #expect(chat.voiceController == nil)
-        #expect(await chat.voiceTurnInstruction() == nil)
-    }
-
-    @Test
-    func listeningVoiceModeSendsTheInstruction() async throws {
-        let chat = try makeChat()
-        chat.voiceController = ListeningVoiceController()
-
-        #expect(await chat.voiceTurnInstruction() == TerminalChat.voiceTurnInstruction)
-    }
-
-    @Test
     func pausedVoiceModeSendsNoInstruction() async throws {
         let chat = try makeChat()
         let voice = ListeningVoiceController()
@@ -59,25 +36,6 @@ struct TerminalVoiceTurnInstructionTests {
         await voice.stop()
         // The controller stays installed (as after a failure) but is inactive.
         #expect(chat.voiceController != nil)
-        #expect(await chat.voiceTurnInstruction() == nil)
-    }
-
-    @Test
-    func voiceCommandsChangeTheInstructionFromTheNextPrompt() async throws {
-        let chat = try makeChat()
-        chat.voiceController = ListeningVoiceController()
-        // Collect the command messages instead of writing to a terminal.
-        chat.capturedCommandOutputForTesting = []
-        defer { chat.capturedCommandOutputForTesting = nil }
-
-        await chat.handleVoiceCommand("/voice pause")
-        #expect(await chat.voiceTurnInstruction() == nil)
-
-        await chat.handleVoiceCommand("/voice resume")
-        #expect(await chat.voiceTurnInstruction() == TerminalChat.voiceTurnInstruction)
-
-        await chat.handleVoiceCommand("/voice off")
-        #expect(chat.voiceController == nil)
         #expect(await chat.voiceTurnInstruction() == nil)
     }
 

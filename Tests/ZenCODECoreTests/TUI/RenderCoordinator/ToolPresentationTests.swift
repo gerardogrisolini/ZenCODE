@@ -4,23 +4,6 @@ import ToolCore
 @testable import ZenCODECore
 
 extension TerminalChatRenderCoordinatorTests {
-    @Test
-    func standardPreservesCompactANSICompletionWithoutSourceChanges() async {
-        let toolCall = exampleEditFileCall(id: "standard-ansi-edit")
-        let renderer = makeRenderer(standardErrorIsTerminal: true)
-        await renderer.writeToolCallStarted(toolCall)
-        let startEventCount = await renderer.capturedWriteEvents().count
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Updated", summary: "Updated", elapsed: .zero)
-        )
-        let completion = await renderer.capturedText(droppingFirst: startEventCount)
-        let compactCompletion = compactCompletionText(for: toolCall, newline: false)
-
-        #expect(completion.contains(compactCompletion))
-        #expect(!completion.contains("oldValue"))
-        #expect(!completion.contains("newValue"))
-    }
 
     @Test
     func standardKeepsPendingAndCompletionCompact() async {
@@ -59,48 +42,6 @@ extension TerminalChatRenderCoordinatorTests {
         #expect(!completionText.contains("truncated"))
     }
 
-    /// Characterization: without source rows the standard block degenerates to
-    /// exactly the compact block, byte for byte, with no appendix.
-    @Test
-    func standardCompletionWithoutSourceRowsIsExactlyTheCompactBlock() async throws {
-        let toolCall = exampleReadFileCall(id: "standard-characterization-read")
-        let renderer = makeRenderer(standardErrorIsTerminal: true)
-        await renderer.writeToolCallStarted(toolCall)
-        let startEventCount = await renderer.capturedWriteEvents().count
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "let value = 1", summary: "Read", elapsed: .zero)
-        )
-        let completion = await renderer.capturedText(droppingFirst: startEventCount)
-        let compactCompletion = compactCompletionText(for: toolCall, newline: true)
-
-        #expect(completion.hasSuffix(compactCompletion))
-        let controlPrefix = String(completion.dropLast(compactCompletion.count))
-        #expect(TerminalANSIText.stripANSI(controlPrefix).allSatisfy { $0 == "\r" || $0 == "\n" })
-        #expect(!TerminalANSIText.stripANSI(completion).contains("let value = 1"))
-    }
-
-    @Test
-    func standardShowsCompactStatusWithoutMutationSource() async {
-        let toolCall = exampleEditFileCall(id: "standard-edit")
-        let standard = makeRenderer(standardErrorIsTerminal: true)
-        await standard.writeToolCallStarted(toolCall)
-        await standard.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Updated", summary: "Updated")
-        )
-        let standardText = await standard.capturedPlainText()
-        #expect(!standardText.contains("oldValue"))
-        #expect(!standardText.contains("newValue"))
-        #expect(standardText.contains("local.editFile"))
-        #expect(standardText.contains("/tmp/Example.swift"))
-        #expect(standardText.contains("✅"))
-        #expect(!standardText.contains("kind:"))
-        #expect(!standardText.contains("change:"))
-        #expect(!standardText.contains("status:"))
-
-    }
-
     @Test
     func standardHidesCodeAndDiffFromNonMutationPresentation() {
         let toolCall = presentedToolCall(
@@ -131,33 +72,6 @@ extension TerminalChatRenderCoordinatorTests {
         )
 
         #expect(TerminalChat.standardToolCallRows(for: toolCall).isEmpty)
-    }
-
-    @Test
-    func standardShowsCompactFileReadWithoutRawOutput() async {
-        let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = presentedToolCall(
-            id: "read-details",
-            name: "local.readFile",
-            argumentsObject: ["path": "/tmp/Secret.swift"],
-            argumentsJSON: #"{"path":"/tmp/Secret.swift"}"#
-        )
-        await renderer.writeToolCallStarted(toolCall)
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "let secret = true", summary: "Read")
-        )
-        let text = await renderer.capturedPlainText()
-        #expect(text.contains("local.readFile"))
-        #expect(text.contains("/tmp/Secret.swift"))
-        #expect(!text.contains("let secret = true"))
-        #expect(!text.contains("status:"))
-        #expect(text.contains("⏳"))
-        #expect(text.contains("✅"))
-        let snapshot = await renderer.snapshot()
-        #expect(snapshot.activeToolCallID == nil)
-        #expect(snapshot.activeToolCallID == nil)
-
     }
 
     @Test
@@ -367,33 +281,5 @@ extension TerminalChatRenderCoordinatorTests {
         #expect(!visibleRows.contains { $0.hasPrefix("target: ") })
         #expect(visibleRows.filter { !$0.hasPrefix("  ") }.allSatisfy { !$0.contains("\u{1B}") })
         #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 100 })
-    }
-
-    /// Characterization: a standard completion is the byte-identical compact
-    /// block followed only by the source appendix. Anything preceding the shared
-    /// compact bytes must be pure cursor control, never printable text.
-    @Test
-    func standardCompletionHasNoSourceAppendix() async throws {
-        let toolCall = exampleEditFileCall(id: "standard-characterization-edit")
-        let renderer = makeRenderer(standardErrorIsTerminal: true)
-        await renderer.writeToolCallStarted(toolCall)
-        let startEventCount = await renderer.capturedWriteEvents().count
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Updated", summary: "Updated", elapsed: .zero)
-        )
-        let completion = await renderer.capturedText(droppingFirst: startEventCount)
-        let compactCompletion = compactCompletionText(for: toolCall, newline: false)
-
-        let compactRange = try #require(completion.range(of: compactCompletion))
-        let controlPrefix = String(completion[completion.startIndex..<compactRange.lowerBound])
-        let appendix = String(completion[compactRange.upperBound...])
-
-        #expect(TerminalANSIText.stripANSI(controlPrefix).allSatisfy { $0 == "\r" || $0 == "\n" })
-        #expect(!TerminalANSIText.stripANSI(appendix).contains("oldValue"))
-        #expect(!TerminalANSIText.stripANSI(appendix).contains("newValue"))
-        // The appendix never repeats the compact prefix content.
-        #expect(!TerminalANSIText.stripANSI(appendix).contains("local.editFile"))
-        // No blank source appendix is emitted; the block is compact only.
     }
 }

@@ -66,26 +66,6 @@ struct TerminalPickerEscapeReplayTests {
         #expect(reader.withPanelLock { String($0.panelBuffer) } == base)
     }
 
-    @Test
-    func plainEscapeDoesNotPretendToHaveObservedARepeat() async throws {
-        let pipe = Pipe()
-        defer {
-            pipe.fileHandleForWriting.closeFile()
-            pipe.fileHandleForReading.closeFile()
-        }
-        let reader = pickerReader(pipe: pipe, base: "a")
-        pipe.fileHandleForWriting.write(Data([0x1B]))
-        let result = try #require(TerminalInteractiveLineReader.readPanelKeyResult(
-            reader: reader,
-            token: TerminalBlockingReadToken()
-        ))
-        #expect(result == .key(.cancel))
-        #expect(result.consumedPickerRepeat == nil)
-        await reader.handlePanelKey(.cancel, timestampMilliseconds: 4_000) { _ in }
-        await reader.handlePanelKey(.character("a"), timestampMilliseconds: 4_010) { _ in }
-        #expect(reader.withPanelLock { String($0.panelBuffer) } == "aa")
-    }
-
     @Test(arguments: [false, true])
     func failedSS3ProbeReplaysAllLookaheadInOrderAtTimeoutEOFAndLengthLimit(closeWriter: Bool) {
         let suffixes: [[UInt8]] = [

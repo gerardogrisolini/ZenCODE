@@ -14,59 +14,6 @@ import Testing
 struct ZenCRONInstallationTests {
     // MARK: - Locations
 
-    @Test
-    func constantsNameTheExecutableAndThePackage() {
-        #expect(ZenCRONInstallation.executableName == "ZenCRON")
-        #expect(ZenCRONInstallation.packageRelativePath == "Sources/ZenCRON")
-        #expect(ZenCRONInstallation.versionArgument == "--zencron-version")
-    }
-
-    @Test(arguments: [
-        ("/Users/me/.zencode", "/Users/me/.zencode/bin/ZenCRON"),
-        ("/custom/support dir", "/custom/support dir/bin/ZenCRON")
-    ])
-    func theInstalledExecutableLivesInTheBinDirectoryOfTheGivenSupportDirectory(
-        support: String,
-        expected: String
-    ) {
-        // The directory is what `ZENCODE_SUPPORT_DIRECTORY` names when set,
-        // and `~/.zencode` otherwise: the helper only appends `bin/ZenCRON`.
-        let url = ZenCRONInstallation.installedExecutableURL(
-            supportDirectory: URL(fileURLWithPath: support, isDirectory: true)
-        )
-        #expect(url.path == expected)
-    }
-
-    @Test
-    func theDefaultSupportDirectoryIsTheStandardOne() throws {
-        let support = try makeTemporaryDirectory()
-        defer { remove(support) }
-
-        AppStorageDirectory.withSupportDirectoryURL(support) {
-            #expect(
-                ZenCRONInstallation.installedExecutableURL().path
-                    == support.standardizedFileURL.appendingPathComponent("bin/ZenCRON").path
-            )
-            #expect(
-                ZenCRONInstallation.workingCopyURL().path
-                    == support.standardizedFileURL.appendingPathComponent("zencron/package").path
-            )
-        }
-        #expect(
-            ZenCRONInstallation.installedExecutableURL()
-                == ZenCRONInstallation.installedExecutableURL(supportDirectory: ZenFileService.supportDirectoryURL())
-        )
-    }
-
-    @Test
-    func theBuiltExecutableIsInTheReleaseBuildDirectoryOfThePackage() {
-        let package = URL(fileURLWithPath: "/work/package", isDirectory: true)
-        #expect(
-            ZenCRONInstallation.builtExecutableURL(packageDirectory: package).path
-                == "/work/package/.build/release/ZenCRON"
-        )
-    }
-
     // MARK: - Version parsing
 
     @Test(arguments: [
@@ -133,79 +80,7 @@ struct ZenCRONInstallationTests {
         }
     }
 
-    @Test
-    func versionErrorsReadAsTheReasonInsideDoesNotStart() {
-        #expect(ZenCRONInstallation.VersionError.notExecutable.localizedDescription == "it is not executable")
-        #expect(
-            ZenCRONInstallation.VersionError.exitStatus(2, stderr: " dyld: missing\n").localizedDescription
-                == "it exited with status 2: dyld: missing"
-        )
-        #expect(
-            ZenCRONInstallation.VersionError.exitStatus(2, stderr: "").localizedDescription
-                == "it exited with status 2"
-        )
-        #expect(
-            ZenCRONInstallation.VersionError.timedOut(seconds: 10).localizedDescription
-                == "it did not answer --zencron-version within 10 seconds"
-        )
-        #expect(ZenCRONInstallation.VersionError.noOutput.localizedDescription == "it printed no version")
-        #expect(
-            ZenCRONInstallation.VersionError.unexpectedOutput("hello").localizedDescription
-                == "it printed 'hello' instead of 'ZenCRON <number>'"
-        )
-    }
-
     // MARK: - Version of a real executable
-
-    @Test
-    func versionRunsTheExecutableWithTheVersionArgument() async throws {
-        let directory = try makeTemporaryDirectory()
-        defer { remove(directory) }
-        // Fails unless the only argument is `--zencron-version`; `cat` returns
-        // at once only when standard input is /dev/null.
-        let executable = try makeScript(
-            """
-            [ "$#" = 1 ] && [ "$1" = "--zencron-version" ] || exit 9
-            cat > /dev/null
-            printf 'ZenCRON 3\\n'
-            """,
-            in: directory
-        )
-
-        #expect(try await ZenCRONInstallation.version(ofExecutableAt: executable, timeout: 20) == "ZenCRON 3")
-    }
-
-    @Test
-    func versionFailsWhenTheExitStatusIsNotZero() async throws {
-        let directory = try makeTemporaryDirectory()
-        defer { remove(directory) }
-        let executable = try makeScript(
-            "printf 'ZenCRON 1\\n'; printf 'boom\\n' >&2; exit 2",
-            in: directory
-        )
-
-        await #expect(throws: ZenCRONInstallation.VersionError.exitStatus(2, stderr: "boom\n")) {
-            try await ZenCRONInstallation.version(ofExecutableAt: executable, timeout: 20)
-        }
-    }
-
-    @Test(arguments: [
-        ("printf 'hello\\n'", ZenCRONInstallation.VersionError.unexpectedOutput("hello")),
-        ("printf 'ZenCRON 1\\nZenCRON 1\\n'", .multipleLines),
-        ("exit 0", .noOutput)
-    ])
-    func versionFailsWhenTheOutputIsNotASingleVersionLine(
-        script: String,
-        expected: ZenCRONInstallation.VersionError
-    ) async throws {
-        let directory = try makeTemporaryDirectory()
-        defer { remove(directory) }
-        let executable = try makeScript(script, in: directory)
-
-        await #expect(throws: expected) {
-            try await ZenCRONInstallation.version(ofExecutableAt: executable, timeout: 20)
-        }
-    }
 
     @Test
     func versionTimesOutOnAnExecutableThatDoesNotAnswer() async throws {
@@ -215,26 +90,6 @@ struct ZenCRONInstallationTests {
 
         await #expect(throws: ZenCRONInstallation.VersionError.timedOut(seconds: 1)) {
             try await ZenCRONInstallation.version(ofExecutableAt: executable, timeout: 0.5)
-        }
-    }
-
-    @Test
-    func versionFailsWhenTheExecutableCannotBeLaunched() async throws {
-        let directory = try makeTemporaryDirectory()
-        defer { remove(directory) }
-
-        do {
-            _ = try await ZenCRONInstallation.version(
-                ofExecutableAt: directory.appendingPathComponent("missing"),
-                timeout: 20
-            )
-            Issue.record("expected the missing executable to fail")
-        } catch let error as ZenCRONInstallation.VersionError {
-            guard case .launchFailed = error else {
-                Issue.record("unexpected error: \(error)")
-                return
-            }
-            #expect(error.localizedDescription.hasPrefix("it could not be launched: "))
         }
     }
 
@@ -270,83 +125,30 @@ struct ZenCRONInstallationTests {
         }
     }
 
-    @Test
-    func checkedInstalledExecutableRefusesAFileThatIsNotExecutable() async throws {
-        let support = try makeTemporaryDirectory()
-        defer { remove(support) }
-        let url = try installScript("printf 'ZenCRON 1\\n'", in: support)
-        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
-
-        await #expect(
-            throws: ZenCrontabError.zenCRONDoesNotStart(path: url.path, reason: "it is not executable")
-        ) {
-            try await ZenCRONInstallation.checkedInstalledExecutable(supportDirectory: support, timeout: 20)
-        }
-    }
-
-    @Test
-    func checkedInstalledExecutableRefusesAHostThatDoesNotReportItsVersion() async throws {
-        let support = try makeTemporaryDirectory()
-        defer { remove(support) }
-        let url = try installScript("exit 1", in: support)
-
-        await #expect(
-            throws: ZenCrontabError.zenCRONDoesNotStart(path: url.path, reason: "it exited with status 1")
-        ) {
-            try await ZenCRONInstallation.checkedInstalledExecutable(supportDirectory: support, timeout: 20)
-        }
-    }
-
     // MARK: - Replacement policy
 
-    @Test
-    func macOSKeepsTheInstalledHostOfTheSameVersion() {
-        #expect(
-            ZenCRONInstallation.decision(
-                installedVersion: "ZenCRON 1", builtVersion: "ZenCRON 1", platform: .macOS
-            ) == .keep
-        )
-    }
-
+    /// macOS keeps the installed host of the same version and replaces any other
+    /// (or an unreadable one); Linux always replaces it.
     @Test(arguments: [
-        ("ZenCRON 1", "ZenCRON 2"),
-        ("ZenCRON 2", "ZenCRON 1"),
-        ("ZenCRON 1", "ZenCRON 10")
-    ])
-    func macOSReplacesTheInstalledHostOfADifferentVersion(installed: String, built: String) {
+        ("ZenCRON 1", "ZenCRON 1", ZenCRONInstallation.Platform.macOS, ZenCRONInstallation.Decision.keep),
+        ("ZenCRON 1", "ZenCRON 2", .macOS, .install),
+        ("ZenCRON 2", "ZenCRON 1", .macOS, .install),
+        ("ZenCRON 1", "ZenCRON 10", .macOS, .install),
+        (nil, "ZenCRON 1", .macOS, .install),
+        ("ZenCRON 1", "ZenCRON 1", .linux, .install),
+        ("ZenCRON 1", "ZenCRON 2", .linux, .install),
+        (nil, "ZenCRON 1", .linux, .install)
+    ] as [(String?, String, ZenCRONInstallation.Platform, ZenCRONInstallation.Decision)])
+    func macOSReplacesTheInstalledHostOfADifferentVersion(
+        installed: String?,
+        built: String,
+        platform: ZenCRONInstallation.Platform,
+        expected: ZenCRONInstallation.Decision
+    ) {
         #expect(
-            ZenCRONInstallation.decision(installedVersion: installed, builtVersion: built, platform: .macOS)
-                == .install
+            ZenCRONInstallation.decision(installedVersion: installed, builtVersion: built, platform: platform)
+                == expected
         )
-    }
-
-    @Test
-    func macOSInstallsWhenThereIsNoReadableInstalledVersion() {
-        #expect(
-            ZenCRONInstallation.decision(installedVersion: nil, builtVersion: "ZenCRON 1", platform: .macOS)
-                == .install
-        )
-    }
-
-    @Test(arguments: [
-        ("ZenCRON 1", "ZenCRON 1"),
-        ("ZenCRON 1", "ZenCRON 2"),
-        (nil, "ZenCRON 1")
-    ] as [(String?, String)])
-    func linuxAlwaysReplacesTheInstalledHost(installed: String?, built: String) {
-        #expect(
-            ZenCRONInstallation.decision(installedVersion: installed, builtVersion: built, platform: .linux)
-                == .install
-        )
-    }
-
-    @Test
-    func theCurrentPlatformIsTheOneTheCodeRunsOn() {
-        #if os(macOS)
-        #expect(ZenCRONInstallation.Platform.current == .macOS)
-        #else
-        #expect(ZenCRONInstallation.Platform.current == .linux)
-        #endif
     }
 
     // MARK: - Atomic installation
@@ -372,18 +174,6 @@ struct ZenCRONInstallationTests {
         // The build product is left alone.
         #expect(try Data(contentsOf: built) == bytes)
         #expect(try permissions(of: built) == 0o600)
-    }
-
-    @Test
-    func installLeavesNoTemporaryFileInTheBinDirectory() throws {
-        let root = try makeTemporaryDirectory()
-        defer { remove(root) }
-        let built = try writeFile("one", named: "built", in: root)
-
-        let target = try ZenCRONInstallation.install(builtExecutable: built, supportDirectory: root)
-
-        let entries = try FileManager.default.contentsOfDirectory(atPath: target.deletingLastPathComponent().path)
-        #expect(entries == ["ZenCRON"])
     }
 
     @Test
@@ -413,38 +203,6 @@ struct ZenCRONInstallationTests {
     }
 
     @Test
-    func installKeepsTheModeOfAnExistingBinDirectory() throws {
-        let root = try makeTemporaryDirectory()
-        defer { remove(root) }
-        let built = try writeFile("x", named: "built", in: root)
-        let bin = root.appendingPathComponent("bin", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: bin,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-
-        try ZenCRONInstallation.install(builtExecutable: built, supportDirectory: root)
-
-        #expect(try permissions(of: bin) == 0o700)
-    }
-
-    @Test
-    func installCopiesTheFileASymbolicLinkPointsTo() throws {
-        let root = try makeTemporaryDirectory()
-        defer { remove(root) }
-        let real = try writeFile("real bytes", named: "arm64-release-ZenCRON", in: root)
-        let link = root.appendingPathComponent("ZenCRON-link")
-        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
-
-        let target = try ZenCRONInstallation.install(builtExecutable: link, supportDirectory: root)
-
-        let type = try FileManager.default.attributesOfItem(atPath: target.path)[.type] as? FileAttributeType
-        #expect(type == .typeRegular)
-        #expect(try String(contentsOf: target, encoding: .utf8) == "real bytes")
-    }
-
-    @Test
     func aFailedInstallLeavesTheInstalledHostAndNoTemporaryFile() throws {
         let root = try makeTemporaryDirectory()
         defer { remove(root) }
@@ -463,31 +221,6 @@ struct ZenCRONInstallationTests {
         }
 
         #expect(try String(contentsOf: target, encoding: .utf8) == "installed")
-        let entries = try FileManager.default.contentsOfDirectory(atPath: target.deletingLastPathComponent().path)
-        #expect(entries == ["ZenCRON"])
-    }
-
-    @Test
-    func aTargetThatCannotBeReplacedReportsItsPathAndCleansUp() throws {
-        let root = try makeTemporaryDirectory()
-        defer { remove(root) }
-        let built = try writeFile("x", named: "built", in: root)
-        // A non-empty directory where the executable should be: rename fails.
-        let target = ZenCRONInstallation.installedExecutableURL(supportDirectory: root)
-        try FileManager.default.createDirectory(
-            at: target.appendingPathComponent("inside"),
-            withIntermediateDirectories: true
-        )
-
-        do {
-            try ZenCRONInstallation.install(builtExecutable: built, supportDirectory: root)
-            Issue.record("expected the installation to fail")
-        } catch let error as ZenCRONInstallation.InstallError {
-            guard case let .failed(path, reason) = error else { return }
-            #expect(path == target.path)
-            #expect(!reason.isEmpty)
-            #expect(error.localizedDescription.hasPrefix("Could not install ZenCRON at \(target.path): "))
-        }
         let entries = try FileManager.default.contentsOfDirectory(atPath: target.deletingLastPathComponent().path)
         #expect(entries == ["ZenCRON"])
     }

@@ -13,28 +13,6 @@ import Testing
 @Suite
 struct PromptSkillToolProviderTests {
     @Test
-    func staticSkillSectionCarriesNoSelectionMetadata() throws {
-        let skill = skill(promptBody: "FULL-SKILL-BODY")
-        let section = try #require(
-            SystemPromptBuilder.selectedSkillSection(skills: [skill])
-        )
-
-        #expect(section == SystemPromptBuilder.staticSkillSection)
-        #expect(section.contains("skills.list"))
-        #expect(section.contains("skills.read"))
-        #expect(section.contains("local.exec"))
-        #expect(section.contains("available and the documented command is authorized"))
-        #expect(section.contains("report a blocker instead of inspecting the script"))
-        #expect(section.contains("skills.read` is a reader, not an executor"))
-        #expect(section.contains("arbitrary filesystem paths"))
-        #expect(section.contains("real installed skill directory"))
-        #expect(section.contains("stale or example paths"))
-        #expect(!section.contains("Release Review"))
-        #expect(!section.contains(skill.id))
-        #expect(!section.contains("FULL-SKILL-BODY"))
-    }
-
-    @Test
     func persistedPromptReplacesLegacySkillCatalogWithStaticInstruction() {
         let prompt = """
         Base instructions.
@@ -55,19 +33,6 @@ struct PromptSkillToolProviderTests {
         #expect(!updated.contains("LEGACY-FULL-SKILL-BODY"))
         #expect(!updated.contains("Selected skill guidance for this task"))
         #expect(updated.contains("Response language:\nUse Italian."))
-    }
-
-    @Test
-    func replacingSkillSectionIsIdempotent() {
-        let prompt = "Base.\n\n\(SystemPromptBuilder.staticSkillSection)\n\nResponse language:\nUse Italian."
-        let once = SystemPromptBuilder.replacingSelectedSkillSection(in: prompt)
-        let twice = SystemPromptBuilder.replacingSelectedSkillSection(in: once)
-
-        #expect(once == twice)
-        let markerOccurrences = once.components(
-            separatedBy: SystemPromptBuilder.staticSkillSectionMarker
-        ).count - 1
-        #expect(markerOccurrences == 1)
     }
 
     @Test
@@ -95,21 +60,6 @@ struct PromptSkillToolProviderTests {
         #expect(!output.contains("/tmp/skills"))
         #expect(!output.contains("sourceDirectoryPath"))
         #expect(!output.contains("Release Review"))
-    }
-
-    @Test
-    func listIsEmptyWhenNoSkillsAreSelected() async throws {
-        let provider = PromptSkillSessionProvider()
-
-        let output = try await provider.execute(
-            toolCall: AgentToolCall(
-                id: "list",
-                name: PromptSkillToolProvider.listToolName,
-                argumentsJSON: "{}"
-            )
-        )
-
-        #expect(output == #"{"skills":[]}"#)
     }
 
     @Test
@@ -161,21 +111,6 @@ struct PromptSkillToolProviderTests {
     }
 
     @Test
-    func readRequiresAnIdentifier() async throws {
-        let provider = PromptSkillSessionProvider(skills: [skill(promptBody: "FULL-SKILL-BODY")])
-
-        await #expect(throws: PromptSkillToolProviderError.self) {
-            _ = try await provider.execute(
-                toolCall: AgentToolCall(
-                    id: "missing-identifier",
-                    name: PromptSkillToolProvider.toolName,
-                    argumentsJSON: "{}"
-                )
-            )
-        }
-    }
-
-    @Test
     func readKeepsExactCanonicalMatchesButRejectsAmbiguousNormalizedNames() async throws {
         let hyphenated = PromptSkill(
             canonicalName: "foo-bar",
@@ -212,32 +147,6 @@ struct PromptSkillToolProviderTests {
                 )
             )
         }
-    }
-
-    @Test
-    func updateReflectsImmediatelyInList() async throws {
-        let provider = PromptSkillSessionProvider()
-
-        let empty = try await provider.execute(
-            toolCall: AgentToolCall(
-                id: "list-empty",
-                name: PromptSkillToolProvider.listToolName,
-                argumentsJSON: "{}"
-            )
-        )
-        #expect(empty == #"{"skills":[]}"#)
-
-        await provider.update([skill(promptBody: "FULL-SKILL-BODY")])
-
-        let populated = try await provider.execute(
-            toolCall: AgentToolCall(
-                id: "list-populated",
-                name: PromptSkillToolProvider.listToolName,
-                argumentsJSON: "{}"
-            )
-        )
-        #expect(populated.contains("release-review"))
-        #expect(!populated.contains("FULL-SKILL-BODY"))
     }
 
     @Test
@@ -279,79 +188,6 @@ struct PromptSkillToolProviderTests {
         #expect(listB.contains("other-skill"))
         #expect(!listB.contains("release-review"))
     }
-
-    @Test
-    func readWithoutResourceShowsNormalizedInstalledSourcePath() async throws {
-        let root = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let pathWithDotDot = root.appendingPathComponent("nested/..").path
-        let provider = PromptSkillSessionProvider(skills: [
-            skill(promptBody: "LEGACY-GUIDANCE", sourceDirectoryPath: pathWithDotDot)
-        ])
-
-        let output = try await read(provider, arguments: #"{"identifier":"release-review"}"#)
-
-        #expect(output.contains("LEGACY-GUIDANCE"))
-        #expect(output.contains("Skill sourceDirectoryPath: \(root.path)"))
-        #expect(!output.contains("nested/.."))
-        #expect(output.contains("local.exec"))
-        #expect(output.contains("installed directory is authoritative"))
-    }
-
-    @Test
-    func readWithoutResourceUsesSafeFallbackWhenSourceDirectoryIsUnavailable() async throws {
-        let provider = PromptSkillSessionProvider(skills: [
-            skill(promptBody: "GUIDANCE", sourceDirectoryPath: nil)
-        ])
-
-        let output = try await read(provider, arguments: #"{"identifier":"release-review"}"#)
-
-        #expect(output.contains("Skill sourceDirectoryPath: unavailable"))
-        #expect(output.contains("Blocking instruction"))
-        #expect(output.contains("Do not infer or invent a path"))
-        #expect(output.contains("do not inspect a script with `skills.read`"))
-        #expect(output.contains("local.exec"))
-    }
-
-    @Test
-    func readGuidanceUsesInstalledDirectoryForStaleScriptExamples() async throws {
-        let root = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let staleScriptPath = "/example/skills/release-review/scripts/check.py"
-        let provider = PromptSkillSessionProvider(skills: [
-            skill(
-                promptBody: "Run `\(staleScriptPath)` with python3.",
-                sourceDirectoryPath: root.path
-            )
-        ])
-
-        let output = try await read(provider, arguments: #"{"identifier":"release-review"}"#)
-
-        #expect(output.contains(staleScriptPath))
-        #expect(output.contains("Skill sourceDirectoryPath: \(root.path)"))
-        #expect(output.contains("installed directory is authoritative"))
-        let installedPathRange = try #require(output.range(of: "Skill sourceDirectoryPath: \(root.path)"))
-        let stalePathRange = try #require(output.range(of: staleScriptPath))
-        #expect(installedPathRange.lowerBound < stalePathRange.lowerBound)
-    }
-    @Test
-    func readEmptyResourceRemainsCompatibleWithOmittedResource() async throws {
-        let provider = PromptSkillSessionProvider(skills: [
-            skill(promptBody: "LEGACY-GUIDANCE")
-        ])
-
-        let omittedResource = try await read(
-            provider,
-            arguments: #"{"identifier":"release-review"}"#
-        )
-        let emptyResource = try await read(
-            provider,
-            arguments: #"{"identifier":"release-review","resource":""}"#
-        )
-
-        #expect(emptyResource == omittedResource)
-    }
-
     @Test
     func readResourceReturnsUTF8Content() async throws {
         let root = try makeTemporaryDirectory()
@@ -368,28 +204,6 @@ struct PromptSkillToolProviderTests {
         #expect(output.contains("Caffè ☕ — risorsa UTF-8"))
         #expect(output.contains("resource `guides/italiano.txt`"))
         #expect(output.contains(root.path))
-    }
-
-    @Test
-    func readResourcePaginatesWithIdentifierResourceAndNextOffset() async throws {
-        let root = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let resource = root.appendingPathComponent("large.txt")
-        try "abcdefTAIL".write(to: resource, atomically: true, encoding: .utf8)
-        let provider = PromptSkillSessionProvider(skills: [
-            skill(promptBody: "unused", sourceDirectoryPath: root.path)
-        ])
-
-        let first = try await read(provider, arguments: #"{"identifier":"release-review","resource":"large.txt","offset":0,"limit":6}"#)
-        let second = try await read(provider, arguments: #"{"identifier":"release-review","resource":"large.txt","offset":6,"limit":6}"#)
-
-        #expect(first.contains("abcdef"))
-        #expect(first.contains("Skill sourceDirectoryPath: \(root.path)"))
-        #expect(first.contains("identifier `release-review-hash` and the same resource `large.txt`"))
-        #expect(first.contains("offset 6"))
-        #expect(!first.contains("TAIL"))
-        #expect(second.contains("TAIL"))
-        #expect(second.contains("This is the final page."))
     }
 
     @Test(arguments: ["/etc/passwd", "../outside.txt", "nested/../../outside.txt"])

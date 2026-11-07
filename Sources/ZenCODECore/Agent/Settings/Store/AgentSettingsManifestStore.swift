@@ -18,11 +18,6 @@ public enum AgentSettingsManifestStore {
         try? loadRequired()
     }
 
-    #if DEBUG
-    /// Compatibility hook retained for tests that predate uncached settings reads.
-    static func resetDefaultCacheForTesting() {}
-    #endif
-
     public static func loadRequired() throws -> AgentSettingsManifest {
         try loadRequired(from: settingsURL())
     }

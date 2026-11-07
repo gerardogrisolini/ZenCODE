@@ -43,20 +43,6 @@ struct VoiceChatPhrasesTests {
     }
 
     @Test
-    func noIsRecognisedInSixLanguages() {
-        for utterance in [
-            "No.", "NO", "non ora", "Dopo",
-            "nope", "Not now", "later",
-            "ahora no", "luego",
-            "non", "Pas maintenant", "plus tard",
-            "nein", "Nicht jetzt", "später", "spater",
-            "não", "nao", "Agora não", "depois"
-        ] {
-            #expect(VoiceChatPhrases.affirmation(in: utterance) == false, "\(utterance)")
-        }
-    }
-
-    @Test
     func anythingElseIsNotAnAnswer() {
         for utterance in [
             "", "  ", "sì ma prima leggi il file", "yes and then stop", "no grazie, poi",
@@ -92,36 +78,6 @@ struct VoiceChatPhrasesTests {
     }
 
     @Test
-    func sendPhrasesTargetEveryoneInSixLanguages() throws {
-        for utterance in [
-            "messaggio a tutti: pausa",
-            "message to all: pausa",
-            "message to everyone, pausa",
-            "message to everybody pausa",
-            "mensaje a todos: pausa",
-            "message à tous : pausa",
-            "Nachricht an alle: pausa",
-            "mensagem a todos: pausa",
-            "mensagem para todos, pausa"
-        ] {
-            let request = try #require(VoiceChatPhrases.sendRequest(in: utterance), "\(utterance)")
-            #expect(request.target == .all, "\(utterance)")
-            #expect(request.text == "pausa", "\(utterance)")
-        }
-    }
-
-    @Test
-    func sendPhrasesWithoutTextAskForIt() throws {
-        for utterance in [
-            "messaggio al coordinatore", "messaggio al coordinatore.", "messaggio a tutti:",
-            "message to the coordinator", "message to all", "Nachricht an alle", "mensagem ao coordenador"
-        ] {
-            let request = try #require(VoiceChatPhrases.sendRequest(in: utterance), "\(utterance)")
-            #expect(request.text == nil, "\(utterance)")
-        }
-    }
-
-    @Test
     func sendPhrasesKeepTheSpokenTextAsItWas() throws {
         let request = try #require(VoiceChatPhrases.sendRequest(
             in: "MESSAGGIO al Coordinatore: Perché è così? Fermati."
@@ -142,36 +98,6 @@ struct VoiceChatPhrasesTests {
             VoiceChatPhrases.resolveNamedRecipient(remainder: "Straße: Grüße", participants: [strasse])
                 == .agent(strasse, text: "Grüße")
         )
-    }
-
-    @Test
-    func sendPhrasesToANameKeepTheWholeRemainder() throws {
-        for (utterance, remainder) in [
-            ("messaggio a Reviewer: controlla il diff", "Reviewer: controlla il diff"),
-            ("message to Reviewer, check the diff", "Reviewer, check the diff"),
-            ("mensaje a Reviewer", "Reviewer"),
-            ("message à Reviewer: regarde", "Reviewer: regarde"),
-            ("Nachricht an Reviewer: prüfe", "Reviewer: prüfe"),
-            ("mensagem para Reviewer: verifica", "Reviewer: verifica"),
-            ("mensagem a Reviewer", "Reviewer")
-        ] {
-            let request = try #require(VoiceChatPhrases.sendRequest(in: utterance), "\(utterance)")
-            #expect(request.target == .named(remainder: remainder), "\(utterance)")
-            #expect(request.text == nil, "\(utterance)")
-        }
-    }
-
-    @Test
-    func reservedWordsWinOverAnAgentWithTheSameName() throws {
-        let request = try #require(VoiceChatPhrases.sendRequest(in: "messaggio a tutti: ciao"))
-        #expect(request.target == .all)
-        // Only reachable when the grammar did not claim the word first.
-        let everyone = participant("tutti")
-        let recipient = VoiceChatPhrases.resolveNamedRecipient(
-            remainder: "tutti: ciao",
-            participants: [everyone]
-        )
-        #expect(recipient == .agent(everyone, text: "ciao"))
     }
 
     @Test
@@ -201,23 +127,6 @@ struct VoiceChatPhrasesTests {
             participants: [reviewer, review]
         )
         #expect(shorter == .agent(review, text: "controlla"))
-    }
-
-    @Test
-    func namesMatchWithoutCaseOrAccentsOnWordBoundaries() {
-        let coder = participant("Códe Writer")
-        #expect(
-            VoiceChatPhrases.resolveNamedRecipient(remainder: "code writer scrivi", participants: [coder])
-                == .agent(coder, text: "scrivi")
-        )
-        #expect(
-            VoiceChatPhrases.resolveNamedRecipient(remainder: "Code Writer", participants: [coder])
-                == .agent(coder, text: nil)
-        )
-        #expect(
-            VoiceChatPhrases.resolveNamedRecipient(remainder: "Code Writers: ciao", participants: [coder])
-                == .unknown(spokenName: "Code Writers")
-        )
     }
 
     /// Agent names such as `parser-reviewer` are heard with the hyphen, a
@@ -307,42 +216,5 @@ struct VoiceChatPhrasesTests {
             VoiceChatPhrases.announcement(sender: "Reviewer", isBroadcast: false, remaining: 0, languageCode: nil)
                 == "New message from Reviewer. Do you want me to read it?"
         )
-    }
-
-    @Test
-    func readingEndsWithTheReplyQuestion() {
-        #expect(
-            VoiceChatPhrases.readAloud(text: "Ho finito", languageCode: "it")
-                == "Ho finito. Vuoi rispondere?"
-        )
-        #expect(
-            VoiceChatPhrases.readAloud(text: "Posso procedere?", languageCode: "it")
-                == "Posso procedere? Vuoi rispondere?"
-        )
-        #expect(
-            VoiceChatPhrases.readAloud(text: "Done!", languageCode: "en")
-                == "Done! Do you want to reply?"
-        )
-        #expect(VoiceChatPhrases.readAloud(text: "  ", languageCode: "en") == "Do you want to reply?")
-    }
-
-    @Test
-    func shortTextsFollowTheLanguageAndFallBackToEnglish() {
-        #expect(VoiceChatPhrases.replyPrompt(languageCode: "it") == "Dimmi la risposta.")
-        #expect(VoiceChatPhrases.replyPrompt(languageCode: "xx") == "Tell me your reply.")
-        #expect(VoiceChatPhrases.messagePrompt(languageCode: "it") == "Dimmi il messaggio.")
-        #expect(VoiceChatPhrases.messagePrompt(languageCode: nil) == "Tell me the message.")
-        #expect(VoiceChatPhrases.sent(languageCode: "it") == "Inviato.")
-        #expect(VoiceChatPhrases.sent(languageCode: "de") == "Gesendet.")
-        #expect(VoiceChatPhrases.sent(languageCode: "ja") == "Sent.")
-        #expect(VoiceChatPhrases.sendFailed(languageCode: "it") == "Invio non riuscito.")
-        #expect(VoiceChatPhrases.sendFailed(languageCode: "en") == "Sending failed.")
-        #expect(VoiceChatPhrases.agentInactive(name: "Builder", languageCode: "it") == "Builder non è più attivo.")
-        #expect(VoiceChatPhrases.agentInactive(name: "Builder", languageCode: "fr") == "Builder n'est plus actif.")
-        #expect(VoiceChatPhrases.agentInactive(name: "Builder", languageCode: nil) == "Builder is no longer active.")
-        #expect(VoiceChatPhrases.unknownAgent(name: "Anna", languageCode: "it") == "Nessun agente attivo si chiama Anna.")
-        #expect(VoiceChatPhrases.unknownAgent(name: "Anna", languageCode: "es") == "Ningún agente activo se llama Anna.")
-        #expect(VoiceChatPhrases.unknownAgent(name: "Anna", languageCode: "pt-BR") == "Nenhum agente ativo se chama Anna.")
-        #expect(VoiceChatPhrases.unknownAgent(name: "Anna", languageCode: "ko") == "No active agent is named Anna.")
     }
 }

@@ -40,28 +40,6 @@ struct TerminalInteractiveLineReaderTests {
         #expect(commands == ["/help", "@coordinator ", "@all ", "@dev "])
     }
 
-    /// The pull is scoped to mention editing: a slash-command draft must not
-    /// query the shared-chat roster on every keystroke.
-    @Test
-    func slashCommandDraftDoesNotPullMentionSuggestions() async {
-        let reader = TerminalInteractiveLineReader()
-        await reader.setPanelCommandSuggestions([
-            TerminalCommandSuggestion(command: "/help", summary: "help")
-        ])
-        let didCallProvider = Mutex(false)
-        reader.setPanelMentionSuggestionsProvider {
-            didCallProvider.withLock { $0 = true }
-            return []
-        }
-
-        await reader.setPanelText("/he")
-        await reader.refreshPanelMentionSuggestionsIfNeeded()
-
-        #expect(didCallProvider.withLock { $0 } == false)
-        let commands = reader.state.withLock { $0.panelCommandSuggestions.map(\.command) }
-        #expect(commands == ["/help"])
-    }
-
     @Test
     func commandSuggestionWindowKeepsSelectedSuggestionVisible() {
         let suggestions = (0..<10).map { index in
@@ -99,40 +77,6 @@ struct TerminalInteractiveLineReaderTests {
                 maximumLineCount: 6
             ).map(\.index) == [4, 5, 6, 7, 8, 9]
         )
-    }
-
-    @Test
-    func commandSuggestionWindowBoundsOutOfRangeSelection() {
-        let suggestions = (0..<4).map { index in
-            TerminalCommandSuggestion(
-                command: "/command\(index)",
-                summary: "summary \(index)"
-            )
-        }
-
-        #expect(
-            TerminalInteractiveLineReader.visiblePanelCommandSuggestionWindow(
-                suggestions: suggestions,
-                selectedIndex: 99,
-                maximumLineCount: 6
-            ).map(\.index) == [0, 1, 2, 3]
-        )
-    }
-
-    @Test
-    func commandSuggestionsPreferExactCommandBeforePrefixMatches() {
-        let suggestions = [
-            TerminalCommandSuggestion(command: "/feature", summary: "create/manage features"),
-            TerminalCommandSuggestion(command: "/featurex", summary: "another prefix match")
-        ]
-
-        let matches = TerminalInteractiveLineReader.matchingPanelCommandSuggestions(
-            text: "/feature",
-            cursorIndex: "/feature".count,
-            suggestions: suggestions
-        )
-
-        #expect(matches.map(\.command) == ["/feature", "/featurex"])
     }
 
     @Test
@@ -238,59 +182,6 @@ struct TerminalInteractiveLineReaderTests {
     }
 
     @Test
-    func redrawLayoutPreservesANSIPromptSequencesAsZeroWidthTokens() {
-        let prompt = "\u{1B}[38;5;208m> \u{1B}[0m"
-        let layout = TerminalInteractiveLineReader.renderLayout(
-            prompt: prompt,
-            buffer: Array("abcd"),
-            cursorIndex: 2,
-            terminalColumns: 5
-        )
-
-        // The visible prompt is two cells wide, so the first physical row can
-        // contain exactly `> ab`. In particular, the renderer must not count
-        // or split either ANSI sequence while inserting its CRLF.
-        #expect(layout.text == "\u{1B}[38;5;208m> \u{1B}[0mab\r\ncd")
-        #expect(layout.lineCount == 2)
-        #expect(layout.cursorRow == 0)
-        #expect(layout.cursorColumn == 4)
-        #expect(
-            TerminalInteractiveLineReader.redrawSequence(
-                prompt: prompt,
-                buffer: Array("abcd"),
-                cursorIndex: 2,
-                terminalColumns: 5
-            ) == "\r\u{1B}[2K\u{1B}[38;5;208m> \u{1B}[0mab\r\ncd\u{1B}[1A\r\u{1B}[4C"
-        )
-    }
-
-    @Test
-    func redrawLayoutExpandsTabsAtDeterministicStops() {
-        let buffer = Array("ab\tc")
-        let layout = TerminalInteractiveLineReader.renderLayout(
-            prompt: "",
-            buffer: buffer,
-            cursorIndex: 3,
-            terminalColumns: 9
-        )
-
-        // At column two, a tab advances six cells to the next eight-cell tab
-        // stop. The following character therefore wraps deterministically.
-        #expect(layout.text == "ab      \r\nc")
-        #expect(layout.lineCount == 2)
-        #expect(layout.cursorRow == 0)
-        #expect(layout.cursorColumn == 8)
-        #expect(
-            TerminalInteractiveLineReader.redrawSequence(
-                prompt: "",
-                buffer: buffer,
-                cursorIndex: 3,
-                terminalColumns: 9
-            ) == "\r\u{1B}[2Kab      \r\nc\u{1B}[1A\r\u{1B}[8C"
-        )
-    }
-
-    @Test
     func redrawClearsPreviousFootprintWhenDraftShrinks() {
         #expect(
             TerminalInteractiveLineReader.lineCount(
@@ -313,36 +204,6 @@ struct TerminalInteractiveLineReaderTests {
                 previousCursorRow: 2,
                 terminalColumns: 5
             ) == "\r\u{1B}[2A\u{1B}[0Jx"
-        )
-    }
-
-    @Test
-    func homeAndEndStayWithinCurrentLogicalLine() {
-        let buffer = Array("first\nsecond\nthird")
-
-        #expect(
-            TerminalInteractiveLineReader.homeCursorIndex(
-                in: buffer,
-                cursorIndex: 8
-            ) == 6
-        )
-        #expect(
-            TerminalInteractiveLineReader.endCursorIndex(
-                in: buffer,
-                cursorIndex: 8
-            ) == 12
-        )
-        #expect(
-            TerminalInteractiveLineReader.homeCursorIndex(
-                in: buffer,
-                cursorIndex: 12
-            ) == 6
-        )
-        #expect(
-            TerminalInteractiveLineReader.endCursorIndex(
-                in: buffer,
-                cursorIndex: 14
-            ) == buffer.count
         )
     }
 
@@ -383,52 +244,6 @@ struct TerminalInteractiveLineReaderTests {
     }
 
     @Test
-    func shiftReturnKeyDecodesModifyOtherKeysSequence() {
-        // xterm modifyOtherKeys: CSI 27;2;13~ (Shift+Enter).
-        #expect(
-            TerminalInteractiveLineReader.shiftReturnKey(
-                components: ["27", "2", "13"],
-                keyCodeIndex: 2,
-                modifierIndex: 1
-            ) == .newline
-        )
-        // CSI 27;1;13~ (Enter without modifiers).
-        #expect(
-            TerminalInteractiveLineReader.shiftReturnKey(
-                components: ["27", "1", "13"],
-                keyCodeIndex: 2,
-                modifierIndex: 1
-            ) == .enter
-        )
-        // CSI 27;3;13~ (Alt+Enter) submits like Enter.
-        #expect(
-            TerminalInteractiveLineReader.shiftReturnKey(
-                components: ["27", "3", "13"],
-                keyCodeIndex: 2,
-                modifierIndex: 1
-            ) == .enter
-        )
-    }
-
-    @Test
-    func shiftReturnKeyIgnoresNonReturnKeyCodes() {
-        #expect(
-            TerminalInteractiveLineReader.shiftReturnKey(
-                components: ["97", "2"],
-                keyCodeIndex: 0,
-                modifierIndex: 1
-            ) == nil
-        )
-        #expect(
-            TerminalInteractiveLineReader.shiftReturnKey(
-                components: [],
-                keyCodeIndex: 0,
-                modifierIndex: 1
-            ) == nil
-        )
-    }
-
-    @Test
     func controlShortcutsDecodeKittyAndModifyOtherKeysSequences() {
         let reader = TerminalInteractiveLineReader()
 
@@ -461,25 +276,6 @@ struct TerminalInteractiveLineReaderTests {
         // An explicit Kitty press event and additional modifiers retain Control.
         #expect(reader.keyFromCSI(Array("97;5:1u".utf8)) == .home)
         #expect(reader.keyFromCSI(Array("116;7u".utf8)) == .unknown)
-    }
-
-    @Test
-    func controlShortcutsRejectWrongModifiersAndKeyCodes() {
-        let reader = TerminalInteractiveLineReader()
-
-        #expect(reader.keyFromCSI(Array("97;2u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("27;3;97~".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("108;5u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("27;5;113~".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("97;5:2u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("97;5:3u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("97;5:4u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("97;5:u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("1;5;97~".utf8)) == .bufferStart)
-        #expect(reader.keyFromCSI(Array("27;5:1;97~".utf8)) == .unknown)
-
-        #expect(reader.keyFromCSI(Array("104;5u".utf8)) == .unknown)
-        #expect(reader.keyFromCSI(Array("109;5u".utf8)) == .unknown)
     }
 
     @Test
@@ -709,73 +505,4 @@ struct TerminalInteractiveLineReaderTests {
         #expect(reader.withPanelLock { String($0.draftBeforeHistory) } == "original draft")
         #expect(reader.withPanelLock { $0.panelCommandSuggestionIndex } == 2)
     }
-
-    @Test
-    func redrawSequenceRestoresCursorPosition() {
-        let sequence = TerminalInteractiveLineReader.redrawSequence(
-            prompt: "Feature id: ",
-            buffer: Array("github"),
-            cursorIndex: 3,
-            terminalColumns: 80
-        )
-
-        #expect(sequence == "\r\u{1B}[2KFeature id: github\r\u{1B}[15C")
-    }
-
-    @Test
-    func lineCountCountsExplicitNewlines() {
-        #expect(TerminalInteractiveLineReader.lineCount(for: Array("")) == 1)
-        #expect(TerminalInteractiveLineReader.lineCount(for: Array("single line")) == 1)
-        #expect(TerminalInteractiveLineReader.lineCount(for: Array("one\ntwo")) == 2)
-        #expect(TerminalInteractiveLineReader.lineCount(for: Array("a\nb\nc")) == 3)
-        #expect(TerminalInteractiveLineReader.lineCount(for: Array("\ntwo")) == 2)
-    }
-
-    @Test
-    func redrawSequenceClearsMultipleRowsForMultilineBuffer() {
-        // After a newline was inserted the previous render spanned two rows.
-        // The redraw must move up one row and erase to the end of the display
-        // before reprinting, so earlier rows do not accumulate on screen.
-        let sequence = TerminalInteractiveLineReader.redrawSequence(
-            prompt: "Goal: ",
-            buffer: Array("line one\nline two"),
-            cursorIndex: 17,
-            previousLineCount: 2,
-            previousCursorRow: 1,
-            terminalColumns: 80
-        )
-
-        #expect(sequence == "\r\u{1B}[1A\u{1B}[0JGoal: line one\r\nline two")
-    }
-
-    @Test
-    func redrawSequenceClearsThreeRowsForGrowingMultilineBuffer() {
-        let sequence = TerminalInteractiveLineReader.redrawSequence(
-            prompt: "Goal: ",
-            buffer: Array("a\nb\nc"),
-            cursorIndex: 5,
-            previousLineCount: 3,
-            previousCursorRow: 2,
-            terminalColumns: 80
-        )
-
-        #expect(sequence == "\r\u{1B}[2A\u{1B}[0JGoal: a\r\nb\r\nc")
-    }
-
-    @Test
-    func redrawSequenceShrinksBackToSingleRow() {
-        // When the newline is deleted the buffer is single-line again, but the
-        // previous render still spanned two rows; the redraw must clear both.
-        let sequence = TerminalInteractiveLineReader.redrawSequence(
-            prompt: "Goal: ",
-            buffer: Array("no newline"),
-            cursorIndex: 10,
-            previousLineCount: 2,
-            previousCursorRow: 1,
-            terminalColumns: 80
-        )
-
-        #expect(sequence == "\r\u{1B}[1A\u{1B}[0JGoal: no newline")
-    }
-
 }

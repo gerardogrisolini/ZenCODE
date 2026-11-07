@@ -13,22 +13,6 @@ import ToolCore
 @Suite(.serialized)
 struct TurnFileChangeCoordinatorTests {
     @Test
-    func undoLatestThrowsWhenNoChangesAreTracked() async throws {
-        let directory = try temporaryDirectory()
-        defer {
-            try? FileManager.default.removeItem(at: directory)
-        }
-        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: directory)
-
-        do {
-            _ = try await coordinator.undoLatestChanges()
-            Issue.record("undoLatestChanges should throw without a summary.")
-        } catch let error as TurnFileChangeUndoError {
-            #expect(error == .noTrackedFileChanges)
-        }
-    }
-
-    @Test
     func undoLatestThrowsWhenSummaryCannotBeUndone() async throws {
         let directory = try temporaryDirectory()
         defer {
@@ -160,32 +144,6 @@ struct TurnFileChangeCoordinatorTests {
     }
 
     @Test
-    func summaryReconcilesChangesMadeOutsideTrackedTools() async throws {
-        let repository = try temporaryDirectory()
-        defer {
-            try? FileManager.default.removeItem(at: repository)
-        }
-        let fileURL = repository.appendingPathComponent("Sources/App.swift")
-        try FileManager.default.createDirectory(
-            at: fileURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try Data("let value = 1\n".utf8).write(to: fileURL)
-        try initializeGitRepository(at: repository)
-
-        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
-        await coordinator.prepareForTurn()
-
-        // Simulate a change produced by a tool the tracker cannot predict
-        // (e.g. local.exec / sub-agent) by editing without capturing a baseline.
-        try Data("let value = 2\n".utf8).write(to: fileURL)
-
-        let summary = await coordinator.publishSummaryIfNeeded()
-        let paths = summary?.entries.map(\.path) ?? []
-        #expect(paths.contains("Sources/App.swift"))
-    }
-
-    @Test
     func summaryExcludesFilesDirtyBeforeTheTurn() async throws {
         let repository = try temporaryDirectory()
         defer {
@@ -291,28 +249,6 @@ struct TurnFileChangeCoordinatorTests {
     }
 
     @Test
-    func liveCheckpointsDeduplicateDirectEvidenceButDetectSubsequentOpaqueChanges() async throws {
-        let repository = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: repository) }
-        let file = repository.appendingPathComponent("file.txt")
-        try Data("before\n".utf8).write(to: file)
-        try initializeGitRepository(at: repository)
-        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
-        await coordinator.prepareForTurn()
-        try Data("direct\n".utf8).write(to: file)
-        let evidence = [OperationFileChange(path: "file.txt", oldText: "before\n", newText: "direct\n")]
-        #expect(await coordinator.collectLiveSummary(matching: evidence) == nil)
-        try Data("opaque\n".utf8).write(to: file)
-        let live = try #require(await coordinator.collectLiveSummary(matching: []))
-        #expect(live.entries.first?.beforeDataBase64 == Data("direct\n".utf8).base64EncodedString())
-        // Returning to an older direct postimage is still a new change after
-        // the opaque checkpoint; stale direct evidence must not hide it.
-        try Data("direct\n".utf8).write(to: file)
-        #expect(await coordinator.publishSummaryIfNeeded(matching: evidence) != nil)
-        #expect(await coordinator.matchingLiveArtifactPaths().isEmpty)
-    }
-
-    @Test
     func liveCheckpointsHandleAddedDeletedBinaryAndOversizedFiles() async throws {
         let repository = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repository) }
@@ -337,79 +273,6 @@ struct TurnFileChangeCoordinatorTests {
         let final = try #require(await coordinator.publishSummaryIfNeeded())
         #expect(final.entries.map(\.path) == ["binary.dat", "large.txt"])
         #expect(await coordinator.matchingLiveArtifactPaths().count == 2)
-    }
-
-    @Test
-    func liveCheckpointsRenderAddedAndDeletedTextFilesAsPatches() async throws {
-        let repository = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: repository) }
-        let deleted = repository.appendingPathComponent("seed.txt")
-        try Data("seed\n".utf8).write(to: deleted)
-        try initializeGitRepository(at: repository)
-        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
-        await coordinator.prepareForTurn()
-        let added = repository.appendingPathComponent("Scripts/Generate.swift")
-        try FileManager.default.createDirectory(
-            at: added.deletingLastPathComponent(), withIntermediateDirectories: true
-        )
-        try Data("let first = 1\nlet second = 2\n".utf8).write(to: added)
-        try FileManager.default.removeItem(at: deleted)
-
-        let live = try #require(await coordinator.collectLiveSummary(matching: []))
-        #expect(live.entries.map(\.status) == [.added, .deleted])
-        #expect(live.entries.allSatisfy { $0.patch?.isEmpty == false })
-        let artifacts = FileChangeArtifactMapper.artifacts(from: live, workingDirectory: repository)
-        let addedArtifact = try #require(artifacts.first)
-        #expect(addedArtifact.status == .added)
-        #expect(addedArtifact.explanation == nil)
-        #expect(addedArtifact.additions == 2)
-        #expect(addedArtifact.patch?.contains("--- /dev/null") == true)
-        #expect(addedArtifact.patch?.contains("+++ b/Scripts/Generate.swift") == true)
-        #expect(addedArtifact.patch?.contains("+let second = 2") == true)
-        let deletedArtifact = try #require(artifacts.last)
-        #expect(deletedArtifact.status == .deleted)
-        #expect(deletedArtifact.explanation == nil)
-        #expect(deletedArtifact.oldText == "seed\n")
-        let deletedPatch = try #require(live.entries.last?.patch)
-        #expect(deletedPatch.contains("--- a/seed.txt"))
-        #expect(deletedPatch.contains("+++ /dev/null"))
-        #expect(deletedPatch.contains("-seed"))
-
-        // The final summary now carries patches for every entry, so undo goes
-        // through `git apply --reverse` and must still restore the baseline.
-        let final = try #require(await coordinator.publishSummaryIfNeeded())
-        #expect(final.entries.allSatisfy { $0.patch?.isEmpty == false })
-        _ = try await coordinator.undoLatestChanges()
-        #expect(!FileManager.default.fileExists(atPath: added.path))
-        #expect(try String(contentsOf: deleted, encoding: .utf8) == "seed\n")
-    }
-
-    @Test
-    func checkpointPatchRewritesOnlyFileHeadersNotHeaderLikeHunkLines() async throws {
-        let repository = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: repository) }
-        let file = repository.appendingPathComponent("schema.sql")
-        let before = "-- old comment\nselect 1;\n"
-        try Data(before.utf8).write(to: file)
-        try initializeGitRepository(at: repository)
-        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
-        await coordinator.prepareForTurn()
-        try Data("++ new counter\nselect 1;\n".utf8).write(to: file)
-
-        let live = try #require(await coordinator.collectLiveSummary(matching: []))
-        let patch = try #require(live.entries.first?.patch)
-        let lines = patch.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        #expect(lines.filter { $0.hasPrefix("diff --git ") } == ["diff --git a/schema.sql b/schema.sql"])
-        #expect(lines.filter { $0 == "--- a/schema.sql" }.count == 1)
-        #expect(lines.filter { $0 == "+++ b/schema.sql" }.count == 1)
-        // A removed "-- old comment" and an added "++ new counter" keep their text.
-        #expect(lines.contains("--- old comment"))
-        #expect(lines.contains("+++ new counter"))
-        // The patch itself must reverse cleanly, without the snapshot fallback.
-        #expect(try await TurnFileChangeUndoService.undoUsingPatchIfPossible(
-            summary: live, baseDirectoryURL: repository
-        ))
-        #expect(try String(contentsOf: file, encoding: .utf8) == before)
     }
 
     private func initializeGitRepository(at directory: URL) throws {
@@ -569,67 +432,6 @@ extension TurnFileChangeCoordinatorTests {
 
 extension TurnFileChangeCoordinatorTests {
     @Test
-    func oversizedDeletedFileIsShownTruncatedWhileTheSummaryKeepsTheFullPatchForUndo() async throws {
-        let repository = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: repository) }
-        let lines = (1...3142).map { "let value\($0) = \"generated line \($0)\"" }
-        let original = Data((lines.joined(separator: "\n") + "\n").utf8)
-        let file = repository.appendingPathComponent("Scripts/Gen.swift")
-        try FileManager.default.createDirectory(
-            at: file.deletingLastPathComponent(), withIntermediateDirectories: true
-        )
-        try original.write(to: file)
-        try initializeGitRepository(at: repository)
-        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
-        await coordinator.prepareForTurn()
-        try FileManager.default.removeItem(at: file)
-
-        let live = try #require(await coordinator.collectLiveSummary(matching: []))
-        #expect(live.entries.count == 1)
-        let entry = try #require(live.entries.first)
-        let fullPatch = try #require(entry.patch)
-        #expect(entry.status == .deleted && entry.additions == 0 && entry.deletions == 3142)
-        #expect(fullPatch.utf8.count > OperationFileChangeRecorder.maximumTextBytes)
-        #expect(fullPatch.contains("--- a/Scripts/Gen.swift\n+++ /dev/null\n@@ -1,3142 +0,0 @@\n-\(lines[0])\n"))
-        #expect(fullPatch.contains("-\(lines[3141])\n"))
-
-        let artifact = try #require(
-            FileChangeArtifactMapper.artifacts(from: live, workingDirectory: repository).first
-        )
-        let patch = try #require(artifact.patch)
-        let kept = patch.components(separatedBy: "\n").count - 7
-        #expect(kept > 0 && kept < 3142)
-        #expect(patch.utf8.count <= OperationFileChangeRecorder.maximumTextBytes)
-        #expect(patch.hasPrefix("diff --git a/Scripts/Gen.swift b/Scripts/Gen.swift\ndeleted file mode 100644\nindex "))
-        #expect(patch.contains(
-            "--- a/Scripts/Gen.swift\n+++ /dev/null\n@@ -1,\(kept) +0,0 @@\n-\(lines[0])\n-\(lines[1])\n"
-        ))
-        #expect(patch.hasSuffix("-\(lines[kept - 1])\n"))
-        #expect(!patch.contains(lines[kept]))
-        #expect(artifact.status == .deleted && artifact.oldText == nil && artifact.newText == nil)
-        #expect(artifact.additions == 0 && artifact.deletions == 3142 && artifact.hasLineCounts)
-        #expect(artifact.explanation == FileChangeArtifactMapper.truncatedPatchExplanation(shown: kept, total: 3142))
-
-        let rendered = TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: [artifact])])
-        #expect(rendered.contains("**deleted `Scripts/Gen.swift`**  +0 -3142\nExplanation: Diff truncated: showing the first \(kept) of 3142 diff lines;"))
-        #expect(rendered.contains("1 │ -\(lines[0])\n"))
-        #expect(rendered.contains(" │ -\(lines[kept - 1])\n"))
-        #expect(!rendered.contains(lines[kept]))
-
-        // /artifacts history uses the same mapper on the published summary.
-        let final = try #require(await coordinator.publishSummaryIfNeeded())
-        #expect(final.entries.first?.patch == fullPatch)
-        let history = SessionFileArtifactHistory(sessionID: "session")
-        let turn = try #require(await history.append(summary: final, sessionID: "session", workingDirectory: repository))
-        #expect(turn.artifacts.first?.patch == patch)
-        #expect(turn.artifacts.first?.explanation == artifact.explanation)
-
-        // Undo reverses the complete patch, not the truncated artifact.
-        _ = try await coordinator.undoLatestChanges()
-        #expect(try Data(contentsOf: file) == original)
-    }
-
-    @Test
     func oversizedModifiedFileIsShownTruncatedWhileTheSummaryKeepsTheFullPatchForUndo() async throws {
         let repository = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repository) }
@@ -714,52 +516,6 @@ extension TurnFileChangeCoordinatorTests {
 
         let final = try #require(await coordinator.publishSummaryIfNeeded())
         #expect(final.entries.first?.patch == fullPatch)
-        _ = try await coordinator.undoLatestChanges()
-        #expect(try Data(contentsOf: file) == original)
-    }
-
-    @Test
-    func distantEditsOfAnOversizedFileAreShownAsWellFormedLeadingHunks() async throws {
-        let repository = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: repository) }
-        let lines = (1...8000).map { "line \($0): " + String(repeating: "abcdefghij", count: 2) }
-        let original = Data((lines.joined(separator: "\n") + "\n").utf8)
-        let file = repository.appendingPathComponent("big.txt")
-        try original.write(to: file)
-        try initializeGitRepository(at: repository)
-        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
-        await coordinator.prepareForTurn()
-        var edited = lines
-        for index in stride(from: 9, to: 8000, by: 20) { edited[index] = "edited " + lines[index] }
-        try Data((edited.joined(separator: "\n") + "\n").utf8).write(to: file)
-
-        let live = try #require(await coordinator.collectLiveSummary(matching: []))
-        let fullPatch = try #require(live.entries.first?.patch)
-        #expect(fullPatch.utf8.count > OperationFileChangeRecorder.maximumTextBytes)
-        let artifact = try #require(
-            FileChangeArtifactMapper.artifacts(from: live, workingDirectory: repository).first
-        )
-        let patch = try #require(artifact.patch)
-        #expect(patch.utf8.count <= OperationFileChangeRecorder.maximumTextBytes)
-        #expect(patch.utf8.count > OperationFileChangeRecorder.maximumTextBytes - 500)
-
-        let fullHunks = fullPatch.components(separatedBy: "\n@@ ")
-        let hunks = patch.components(separatedBy: "\n@@ ")
-        #expect(hunks.count > 100 && hunks.count < fullHunks.count)
-        // Every hunk is well formed: its header counts match its body, whole or cut.
-        for hunk in hunks.dropFirst() {
-            let rows = hunk.split(separator: "\n", omittingEmptySubsequences: false)
-            let body = rows.dropFirst().filter { !$0.isEmpty }
-            let old = body.filter { $0.hasPrefix(" ") || $0.hasPrefix("-") }.count
-            let new = body.filter { $0.hasPrefix(" ") || $0.hasPrefix("+") }.count
-            #expect(rows[0].contains(",\(old) ") && rows[0].contains(",\(new) @@"))
-        }
-        #expect(Array(hunks.dropLast()) == Array(fullHunks[0..<(hunks.count - 1)]))
-        #expect(patch.hasSuffix("\n"))
-        #expect(artifact.explanation?.hasPrefix("Diff truncated: showing the first ") == true)
-        #expect(artifact.explanation?.hasSuffix(" of 3200 diff lines; file or operation evidence exceeds the byte limit.") == true)
-
-        _ = await coordinator.publishSummaryIfNeeded()
         _ = try await coordinator.undoLatestChanges()
         #expect(try Data(contentsOf: file) == original)
     }

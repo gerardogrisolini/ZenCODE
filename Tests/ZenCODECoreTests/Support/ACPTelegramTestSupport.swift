@@ -752,7 +752,8 @@ struct ACPTelegramBridgeFixture {
             writer: ACPWriter(sink: wire.sink),
             backendFactory: backend.factory
         )
-        await bridge.setTelegramTransportFactoryForTesting { transport }
+        let host = await bridge.host
+        await { @ChatSessionActor in host.telegramTransportFactory = { transport } }()
         for sessionID in sessionIDs {
             let sessionConfiguration = AgentCoreSessionConfiguration(
                 sessionID: sessionID,
@@ -866,13 +867,6 @@ extension ZenCODEACPBridge {
         } catch {
             Issue.record("installTestSession failed: \(error)")
         }
-    }
-
-    func setTelegramTransportFactoryForTesting(
-        _ factory: (@Sendable () -> any TelegramHTTPTransport)?
-    ) async {
-        telegramTransportFactoryForTesting = factory
-        await host.setTelegramTransportFactoryForTesting(factory)
     }
 
     /// The Telegram channel of the slot of `sessionID`, once `/telegram on`

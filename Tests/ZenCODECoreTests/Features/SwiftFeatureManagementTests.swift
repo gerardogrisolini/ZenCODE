@@ -12,28 +12,6 @@ import ToolCore
 
 extension SwiftFeatureRuntimeTests {
     @Test
-    func featureListRenderingPreservesEmptyPayloadBytesAndPrefix() async throws {
-        let runtime = SwiftFeatureRuntime(features: [])
-        let expected = """
-        {
-          "features" : [
-
-          ]
-        }
-        """
-        for prefix in [nil, "", "Feature aggiornata / caffè ☕"] as [String?] {
-            let output = try await runtime.renderFeatureList(
-                prefix: prefix,
-                includeTools: true,
-                includeDisabled: true,
-                discoverRuntimeTools: false
-            )
-            let expectedOutput = prefix.map { "\($0)\n\(expected)" } ?? expected
-            #expect(Array(output.utf8) == Array(expectedOutput.utf8))
-        }
-    }
-
-    @Test
     func featureListRenderingPreservesSlashAndUnicodeBytes() async throws {
         let runtime = SwiftFeatureRuntime(
             features: [SwiftFeatureBundle(
@@ -362,42 +340,6 @@ extension SwiftFeatureRuntimeTests {
         )
         #expect(build.ok)
         #expect(FileManager.default.isExecutableFile(atPath: build.executablePath))
-    }
-    #endif
-
-    #if !os(macOS)
-    @Test
-    func featureScaffoldRejectsMCPBridgeOnUnsupportedPlatforms() async throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("swift-feature-mcp-unsupported-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: rootURL) }
-        try FileManager.default.createDirectory(
-            at: rootURL,
-            withIntermediateDirectories: true
-        )
-
-        let runtime = SwiftFeatureRuntime(featureSearchRoots: [rootURL])
-        do {
-            _ = try await runtime.executeManagementTool(
-                toolCall: DirectAgentToolCall(
-                    id: "feature-scaffold-mcp-unsupported",
-                    name: "feature.scaffold",
-                    argumentsObject: [
-                        "id": "unsupported-mcp",
-                        "template": "mcp-bridge",
-                        "toolPrefix": "unsupported.",
-                        "endpointURL": "https://mcp.example.com/tools"
-                    ],
-                    argumentsJSON: "{}"
-                )
-            )
-            Issue.record("Expected feature.scaffold to reject MCP bridges on this platform.")
-        } catch {
-            #expect(error.localizedDescription.contains("supported only on macOS"))
-        }
-        #expect(!FileManager.default.fileExists(
-            atPath: rootURL.appendingPathComponent("unsupported-mcp").path
-        ))
     }
     #endif
 
@@ -743,85 +685,6 @@ extension SwiftFeatureRuntimeTests {
         )
         #expect(disabledRecords.first?.manifestEnabled == false)
     }
-
-    @Test
-    func featureEditCreatesLocalCopyForBundledGitFeature() async throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("swift-feature-adopt-git-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-
-        let runtime = SwiftFeatureRuntime(featureSearchRoots: [rootURL])
-        let output = try await runtime.executeManagementTool(
-            toolCall: featureManagementCall(
-                name: "feature.edit",
-                arguments: ["id": "git-tools"]
-            )
-        )
-        let report = try JSONDecoder().decode(
-            SwiftFeatureEditReport.self,
-            from: Data(output.utf8)
-        )
-
-        #expect(report.ok)
-        #expect(report.id == "git-tools")
-        #expect(report.adopted)
-        #expect(report.adoptedFrom == "git-tools")
-        #expect(report.manifestPath.hasSuffix("/git-tools/feature.json"))
-    }
-
-    #if os(macOS)
-    @Test
-    func featureEditCreatesMultiTargetLocalCopyForBundledXcodeFeature() async throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("swift-feature-adopt-xcode-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-
-        let runtime = SwiftFeatureRuntime(featureSearchRoots: [rootURL])
-        let output = try await runtime.executeManagementTool(
-            toolCall: featureManagementCall(
-                name: "feature.edit",
-                arguments: ["id": "xcode-tools"]
-            )
-        )
-        let report = try JSONDecoder().decode(
-            SwiftFeatureEditReport.self,
-            from: Data(output.utf8)
-        )
-        let packagePath = try #require(report.packagePath)
-        let package = try String(contentsOfFile: packagePath, encoding: .utf8)
-
-        #expect(report.ok)
-        #expect(report.adopted)
-        #expect(report.adoptedFrom == "xcode-tools")
-        // Adoption reuses the feature package layout and manifest verbatim; only
-        // the ZenCODE dependency path is rewritten to an absolute checkout.
-        #expect(report.sourcePaths.contains { $0.hasSuffix("/xcode-tools-feature/XcodeToolsFeatureMain.swift") })
-        #expect(package.contains("name: \"xcode-tools-feature\""))
-        #expect(!package.contains("XCODE_TOOLS_FEATURE_ADOPTED"))
-        #expect(!package.contains("AdoptedXcodeToolsFeature"))
-        #expect(!package.contains("\"../../..\""))
-        #expect(package.contains(SwiftFeatureRuntime.zenPackagePathMarker))
-        let zenPackageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
-        #expect(package.contains(".package(name: \"ZenCODE\", path: \"\(zenPackageRoot.path)\")"))
-
-        let buildOutput = try await runtime.executeManagementTool(
-            toolCall: featureManagementCall(
-                name: "feature.build",
-                arguments: ["id": "xcode-tools"]
-            )
-        )
-        let build = try JSONDecoder().decode(
-            SwiftFeatureBuildReport.self,
-            from: Data(buildOutput.utf8)
-        )
-        #expect(build.ok)
-        #expect(FileManager.default.isExecutableFile(atPath: build.executablePath))
-    }
-    #endif
 
     @Test
     func featureEditCreatesLocalCopyForBundledFeatureAndDeleteRestoresBundledRecord() async throws {

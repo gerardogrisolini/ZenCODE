@@ -54,13 +54,6 @@ import ToolCore
 /// reads the controller it drives from the host at each use.
 @ChatSessionActor
 public final class TelegramChannel: ChatInteractionHost {
-    /// External effects a test records instead of performing.
-    enum TelegramWorkEffectForTesting: Sendable {
-        case attachmentDownload
-        case voiceTranscription
-        case sharedChatPublication
-    }
-
     // MARK: - Collaborators
 
     /// The host whose slot the channel belongs to.
@@ -259,8 +252,6 @@ public final class TelegramChannel: ChatInteractionHost {
 
     // MARK: - Test seams
 
-    /// Returning true records and consumes the effect before external I/O.
-    var onTelegramWorkEffectForTesting: (@Sendable (TelegramWorkEffectForTesting) -> Bool)?
     /// Direct turn-message delivery when no progress reporter owns the
     /// linked chat. `nil` in production.
     var onDirectTelegramTurnMessage: (@Sendable (TerminalTelegramTurnPayload, Int64) async -> Bool)?
@@ -271,17 +262,6 @@ public final class TelegramChannel: ChatInteractionHost {
     var onTelegramRoutedSystemMessage: (@Sendable (String, Int64, Int?) async -> Bool)?
     /// Mention picker cards. Production uses the service.
     var onTelegramMentionPickerMessage: (@Sendable (String, Int64, TerminalTelegramReplyMarkup) async -> Int?)?
-    /// Keyboard edits of a selection menu's message, with the new markup
-    /// (`nil` removes the keyboard), the chat, and the message; `nil` in
-    /// production, which edits through the service.
-    var onTelegramReplyMarkupEditForTesting: (@Sendable (TerminalTelegramReplyMarkup?, Int64, Int) async -> Void)?
-    /// Stands in for the turn the channel would run through the host, with
-    /// the prompt, its route, and its purpose; `nil` in production.
-    var onRunTurnForTesting: (@Sendable (String, TerminalTelegramRouteLease, ChatTurnPurpose) async -> Void)?
-    /// Called each time ``beginTurn(adoptingStreamingBlock:liveThought:)``
-    /// waits for the turn that is finishing, before it suspends; `nil` in
-    /// production.
-    var onBeginTurnWaitsForFinishingTurnForTesting: (@ChatSessionActor () -> Void)?
 
     // MARK: - Turn boundaries
 

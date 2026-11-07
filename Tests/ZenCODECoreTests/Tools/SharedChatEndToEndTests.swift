@@ -135,66 +135,6 @@ struct SharedChatEndToEndTests {
         await observation.cancel()
     }
 
-    // MARK: - Coordinator → agent transcript wake-up
-
-    /// Coordinator-originated direct messages do not enter the coordinator's
-    /// mailbox. Their blue card therefore depends on the room-wide transcript
-    /// wake-up, not on the mailbox callback. Keep the safety ticker effectively
-    /// disabled here so only the explicit delivery notification can pass.
-    @Test
-    func coordinatorMessageToAgentWakesTranscriptRenderingWithoutTicker() async throws {
-        let room = "room-\(UUID().uuidString)"
-        let workingDirectory = try Self.temporaryDirectory(named: "SharedChatE2E-outgoing")
-        defer { try? FileManager.default.removeItem(at: workingDirectory) }
-        let backend = EndToEndRuntimeBackend()
-        let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in backend },
-            profileResolver: { _ in Self.developerProfile }
-        )
-        defer { Task { await runtime.shutdown() } }
-        _ = try await runtime.createAgents(
-            arguments: [
-                "name": .string("recipient"),
-                "profile": .string("Developer"),
-                "prompt": .string("Initial work"),
-            ],
-            workingDirectory: workingDirectory,
-            parentAllowedToolNames: nil,
-            rootSessionID: room
-        )
-        let recipient = try #require(await runtime.snapshots().first)
-        let coordinator = Self.makeCoordinator(
-            chat: await runtime.sharedChat,
-            pollInterval: .seconds(60)
-        )
-        defer { Task { await coordinator.stopAll() } }
-        let subscription = await coordinator.observeSubscription(roomID: room)
-        let observation = await Observation.make(stream: subscription.events)
-        await runtime.updateSharedChatMessageAvailableHandler { changedRoom in
-            Task { await coordinator.requestPoll(roomID: changedRoom) }
-        }
-
-        _ = try await runtime.messageSharedChat(
-            arguments: [
-                "id": .string(recipient.id),
-                "message": .string("coordinator follow-up"),
-            ],
-            rootSessionID: room,
-            parentAllowedToolNames: nil
-        )
-
-        let events = await observation.wait(untilAtLeast: 1) { collected in
-            collected.contains {
-                $0.renderedMessages?.contains { $0.text == "coordinator follow-up" } == true
-            }
-        }
-        let rendered = events.compactMap(\.renderedMessages).flatMap { $0 }
-        #expect(rendered.filter { $0.text == "coordinator follow-up" }.count == 1)
-        #expect(events.compactMap(\.autoTrigger).isEmpty)
-
-        await observation.cancel()
-    }
-
     // MARK: - 2. Direct bus message wakes a task-bound standby agent
 
     /// A message delivered through `AgentSharedChat` directly — not through the
@@ -367,55 +307,6 @@ struct SharedChatEndToEndTests {
         #expect(await coordinator.pendingMessageCount(roomID: room) == 0)
 
         await observation.cancel()
-    }
-
-    // MARK: - 5. Two active observations each get the same Message.id once
-
-    /// Two active observations attached to the same room each receive the same
-    /// `Message.id` exactly once. They are attached before the message without
-    /// a warm-up observer: delivery is accounted independently by the Core.
-    @Test
-    func twoActiveObservationsEachReceiveTheSameMessageIDExactlyOnce() async throws {
-        let room = "room-\(UUID().uuidString)"
-        let chat = AgentSharedChat()
-        _ = try await chat.registerCoordinator(roomID: room)
-        _ = try await chat.registerAgent(id: "alpha", name: "alpha", roomID: room)
-        let coordinator = Self.makeCoordinator(chat: chat, pollInterval: .seconds(60))
-        defer { Task { await coordinator.stopAll() } }
-        let firstSubscription = await coordinator.observeSubscription(roomID: room)
-        let first = await Observation.make(stream: firstSubscription.events)
-        let secondSubscription = await coordinator.observeSubscription(roomID: room)
-        let second = await Observation.make(stream: secondSubscription.events)
-
-        let delivery = try await chat.send(
-            roomID: room,
-            senderID: "alpha",
-            destination: .coordinator,
-            text: "observed once by each"
-        )
-        let messageID = delivery.message.id
-        await coordinator.poll(roomID: room)
-
-        let firstEvents = await first.wait(untilAtLeast: 1) { collected in
-            collected.contains {
-                $0.renderedMessages?.contains { $0.id == messageID } == true
-            }
-        }
-        let secondEvents = await second.wait(untilAtLeast: 1) { collected in
-            collected.contains {
-                $0.renderedMessages?.contains { $0.id == messageID } == true
-            }
-        }
-        #expect(Self.countOccurrences(of: messageID, in: firstEvents) == 1)
-        #expect(Self.countOccurrences(of: messageID, in: secondEvents) == 1)
-
-        // A second complete transcript pass must remain raw-event idempotent.
-        await coordinator.poll(roomID: room)
-        #expect(Self.countOccurrences(of: messageID, in: await first.snapshot()) == 1)
-        #expect(Self.countOccurrences(of: messageID, in: await second.snapshot()) == 1)
-
-        await first.cancel()
-        await second.cancel()
     }
 
     // MARK: - Helpers

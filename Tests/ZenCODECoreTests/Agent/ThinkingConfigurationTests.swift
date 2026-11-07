@@ -10,30 +10,6 @@ import ToolCore
 
 struct ThinkingConfigurationTests {
     @Test
-    func thinkingSelectionMaxAndXHighRemainDistinct() throws {
-        let support = ModelThinkingSupport.fromModelMetadata(["reasoning_effort": "max"])?.availableSelections
-        let selections = try #require(support)
-
-        #expect(selections == [.off, .max])
-        #expect(!selections.contains(.xhigh))
-    }
-
-    @Test
-    func modelThinkingSupportEffortIncludesMaxInExpectedOrder() {
-        let support = ModelThinkingSupport.effort(levels: [.max, .low, .high, .xhigh, .medium])
-
-        #expect(support.availableSelections == [.off, .low, .medium, .high, .xhigh, .max])
-    }
-
-    @Test
-    func openRouterReasoningPayloadUsesMaxWhenEffortIsMax() {
-        let selection = ThinkingSelection.openRouterReasoningSelection(from: .object(["effort": .string("max")]))
-
-        #expect(selection == .max)
-        #expect(selection?.openRouterReasoningPayload["effort"] as? String == "max")
-    }
-
-    @Test
     func agentSelectionPayloadMapsMaxAndXHighSeparately() {
         let selectionXHigh = AgentThinkingSelection.xhigh
         let selectionMax = AgentThinkingSelection.max
@@ -54,5 +30,4 @@ struct ThinkingConfigurationTests {
         #expect(selection?.openRouterReasoningPayload["effort"] as? String == "ultra")
         #expect(AgentThinkingSelection.ultra.openRouterReasoningPayload["effort"] as? String == "ultra")
     }
-
 }

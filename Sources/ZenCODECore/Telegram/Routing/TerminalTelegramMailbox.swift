@@ -168,16 +168,4 @@ public struct TerminalTelegramMailbox<Element: Sendable>: AsyncSequence, Sendabl
     func finish() async {
         await storage.finish()
     }
-
-    var bufferedCountForTesting: Int {
-        get async { await storage.buffer.count }
-    }
-
-    var hasBackpressuredProducerForTesting: Bool {
-        get async { await storage.pendingSend != nil }
-    }
-
-    var hasSuspendedReceiverForTesting: Bool {
-        get async { await storage.receiver != nil }
-    }
 }

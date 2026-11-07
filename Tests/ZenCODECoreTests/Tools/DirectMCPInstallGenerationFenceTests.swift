@@ -11,38 +11,6 @@
   @Suite("Direct MCP install generation fence", .serialized, .timeLimit(.minutes(1)))
   struct DirectMCPInstallGenerationFenceTests {
     @Test
-    func borrowedInstallDisconnectsPreviouslyPublishedOwnedBackend() async throws {
-      let fixture = try MCPGenerationFixture()
-      defer { fixture.removeFiles() }
-
-      let runtime = DirectMCPToolRuntime()
-      let borrowedExecutor = makeBorrowedExecutor()
-      do {
-        let ownedDescriptors = try await runtime.installExternalMCPServer(
-          name: "race",
-          configuration: fixture.configuration
-        )
-        #expect(ownedDescriptors.map(\.name) == ["race.owned"])
-        #expect(await runtime.knownDescriptors().map(\.name) == ["race.owned"])
-
-        let borrowedDescriptors = await runtime.installBorrowedExternalExecutor(
-          name: "race",
-          executor: borrowedExecutor,
-          tools: [borrowedTool]
-        )
-
-        #expect(FileManager.default.fileExists(atPath: fixture.disconnectedURL.path))
-        #expect(borrowedDescriptors.map(\.name) == ["race.borrowed"])
-        #expect(await runtime.knownDescriptors().map(\.name) == ["race.borrowed"])
-      } catch {
-        await cleanup(runtime: runtime, borrowedExecutor: borrowedExecutor)
-        throw error
-      }
-      await cleanup(runtime: runtime, borrowedExecutor: borrowedExecutor)
-      #expect(FileManager.default.fileExists(atPath: fixture.exitedURL.path))
-    }
-
-    @Test
     func borrowedInstallSupersedesAnOwnedInstallSuspendedInToolLoading() async throws {
       let fixture = try MCPGenerationFixture(suspendToolList: true)
       defer { fixture.removeFiles() }

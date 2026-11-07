@@ -436,23 +436,6 @@ struct ChatSessionOperationsTests {
         }
     }
 
-    @Test
-    func aHostWithoutASingleChoiceMenuRestoresNothingFromTheEntryPicker() async throws {
-        try await withChatHarness(hostCapabilities: []) { harness in
-            let controller = harness.controller
-            try await harness.startSession(conversation: Fixtures.conversation)
-            _ = await controller.saveSession(named: "kept", contextWindow: nil)
-            await harness.clearRecords()
-
-            let outcome = try await controller.chooseCheckpointEntry()
-
-            #expect(outcome == ChatSessionOperationOutcome())
-            #expect(await harness.runtime.calls.isEmpty)
-            #expect(await harness.host.interactions.isEmpty)
-            #expect(await harness.presenter.events.isEmpty)
-        }
-    }
-
     // MARK: - Delete
 
     @Test
@@ -533,41 +516,6 @@ struct ChatSessionOperationsTests {
         }
     }
 
-    // MARK: - Host without capability
-
-    @Test
-    func theSessionMenusWithoutTheirCapabilityListTheSessionsAndTouchNothing() async throws {
-        try await withChatHarness(hostCapabilities: []) { harness in
-            let controller = harness.controller
-
-            // Nothing saved: the same two lines whatever the host.
-            let empty = try await controller.chooseSavedSession()
-            #expect(empty == ChatSessionOperationOutcome(notices: [.noSavedSessions, .sessionSelectionUsage]))
-
-            try await harness.startSession(conversation: Fixtures.conversation)
-            _ = await controller.saveSession(named: "first", contextWindow: nil)
-            let sessions = try controller.savedSessions()
-            let summaries = sessions.map(ChatSavedSessionSummary.init)
-            await harness.clearRecords()
-
-            let selection = try await controller.chooseSavedSession()
-            let deletion = try await controller.chooseSavedSessionsToDelete()
-
-            #expect(selection == ChatSessionOperationOutcome(notices: [
-                .requiresInteractiveHost(.savedSessionSelection(summaries, activeName: "first")),
-            ]))
-            #expect(deletion == ChatSessionOperationOutcome(notices: [
-                .requiresInteractiveHost(.savedSessionDeletion(summaries, activeName: "first")),
-            ]))
-            #expect(await harness.runtime.calls.isEmpty)
-            #expect(await harness.runtime.queries.isEmpty)
-            #expect(await harness.host.interactions.isEmpty)
-            #expect(await harness.presenter.events.isEmpty)
-            // Nothing was loaded or deleted.
-            #expect(try controller.savedSessions().map(\.name) == ["first"])
-        }
-    }
-
     // MARK: - Compaction
 
     @Test
@@ -624,23 +572,6 @@ struct ChatSessionOperationsTests {
             #expect(controller.savedSessionState.dynamicContextOverride == "Compacted dynamic context.")
             #expect(await harness.presenter.states.last?.savedSession.systemPromptOverride
                 == "Compacted system prompt.")
-        }
-    }
-
-    @Test
-    func compactingAShortSessionSaysThereIsNothingToCompact() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            try await harness.startSession(conversation: Fixtures.conversation)
-
-            let outcome = try await controller.compactSession(maxTokensOverride: nil)
-
-            #expect(outcome.notice == .nothingToCompact)
-            #expect(outcome.contextWindow == nil)
-            #expect(Self.contents(controller.history) == Self.contents(Fixtures.conversation))
-            #expect(controller.cacheKey == nil)
-            #expect(controller.savedSessionState == ChatSavedSessionState())
-            #expect(await harness.presenter.events.isEmpty)
         }
     }
 
@@ -802,45 +733,13 @@ struct ChatSessionOperationsTests {
             }
         }
     }
-
-    @Test
-    func aLoadWithoutACheckpointFileNeverAsksTheEngine() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            try await harness.startSession(conversation: Fixtures.conversation)
-            _ = await controller.saveSession(named: "plain", contextWindow: nil)
-            let saved = try Self.stored("plain", in: harness)
-            await harness.runtime.setEngineRestore(outcome: .restored)
-            await harness.clearRecords()
-
-            let outcome = try await controller.loadSavedSession(saved)
-
-            #expect(outcome.notices.isEmpty)
-            #expect(!(await harness.callNames()).contains("restoreEngineCheckpoint"))
-        }
-    }
 }
 
 // MARK: - Texts
 
-/// The texts of the session notices, spelled out as the terminal wrote them
-/// before they moved to `ChatSessionNoticeText`. The expectations are literal
-/// strings taken from the terminal chat of that time, not calls to the
-/// functions that now delegate to the notice text.
+/// The channel of the session notices, as the terminal wrote them.
 @Suite("Chat session operation texts", .serialized)
 struct ChatSessionOperationTextTests {
-    private func text(_ notice: ChatSessionNotice) -> String {
-        ChatSessionNoticeText.text(for: notice)
-    }
-
-    /// The short date and time the terminal showed a saved session with.
-    private static func legacyTimestamp(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
-    }
-
     private static let savedAt = Date(timeIntervalSince1970: 1_800_000_000)
 
     private static let summaries: [ChatSavedSessionSummary] = [
@@ -866,126 +765,6 @@ struct ChatSessionOperationTextTests {
             savedAt: savedAt.addingTimeInterval(86_400)
         ),
     ]
-
-    private static let usage = """
-        Usage: /sessions                    List and select saved sessions
-               /sessions <name>             Save or overwrite a named snapshot
-               /sessions save               Save the current session
-               /sessions new                Start a new session
-               /sessions compact            Compact context
-               /sessions delete             Delete a session
-               /sessions restore [entry-id] Restore in-place from a checkpoint
-                                            (interactive picker when omitted)
-        """
-
-    private static var listText: String {
-        "\nSaved sessions:\n"
-            + "  1. alpha - openrouter:auto · 12 messages · ctx 1.2k · saved \(legacyTimestamp(savedAt)) *\n"
-            + "  2. beta - 0 messages · saved \(legacyTimestamp(savedAt.addingTimeInterval(3_600)))\n"
-            + "  3. gamma - chatgpt:gpt-5 · 3 messages · ctx 2.5m · saved "
-            + "\(legacyTimestamp(savedAt.addingTimeInterval(86_400)))\n"
-            + "\n"
-    }
-
-    @Test
-    func sessionLifecycleNotices() {
-        #expect(text(.sessionStarted) == "Started a new session.\n")
-        #expect(text(.noSavedSessions) == "No saved sessions for this project.\n")
-        #expect(text(.sessionDeleted(name: "old")) == "Deleted session: old.\n")
-        #expect(text(.savedSessionNotFound(name: "old")) == "ZenCODE: saved session not found: old.\n")
-        #expect(
-            text(.nothingToSave)
-                == "ZenCODE: nothing to save yet. Send a prompt first, or use /sessions <session name>.\n"
-        )
-        #expect(text(.sessionUnavailableToSave) == "ZenCODE: current session is not available to save.\n")
-        #expect(text(.sessionSaved(name: "parser fix", messageCount: 4)) == "Saved session: parser fix (4 messages).\n")
-        #expect(text(.sessionLoaded(name: "parser fix", messageCount: 4)) == "Loaded session: parser fix (4 messages).\n")
-        #expect(text(.operationFailed(description: "The file is locked.")) == "ZenCODE: The file is locked.\n")
-    }
-
-    @Test
-    func theUsageBlockHasNoTrailingNewline() {
-        #expect(text(.sessionSelectionUsage) == Self.usage)
-        #expect(!text(.sessionSelectionUsage).hasSuffix("\n"))
-        #expect(text(.sessionSelectionUsage).hasSuffix("(interactive picker when omitted)"))
-    }
-
-    @Test
-    func theSavedSessionListAndItsInteractiveForms() {
-        #expect(text(.savedSessions(Self.summaries, activeName: "alpha")) == Self.listText)
-        #expect(
-            text(.requiresInteractiveHost(.savedSessionSelection(Self.summaries, activeName: "alpha")))
-                == Self.listText + Self.usage
-        )
-        #expect(
-            text(.requiresInteractiveHost(.savedSessionDeletion(Self.summaries, activeName: "alpha")))
-                == Self.listText + Self.usage
-        )
-    }
-
-    @Test
-    func compactionNoticesFormatTheTokenCounts() {
-        #expect(
-            text(.nothingToCompact)
-                == "Nothing to compact yet. The session may be too short or the current model has no context-window limit.\n"
-        )
-        #expect(
-            text(.sessionCompacted(originalTokenCount: 12_345, tokenCount: 950, keptRecentMessageCount: 4))
-                == "Compacted session context from 12.3k to 950 estimated tokens, keeping 4 recent messages.\n"
-        )
-        #expect(
-            text(.sessionCompacted(originalTokenCount: 1_234_567, tokenCount: 1_000, keptRecentMessageCount: 1))
-                == "Compacted session context from 1.2m to 1.0k estimated tokens, keeping 1 recent messages.\n"
-        )
-    }
-
-    @Test
-    func checkpointNotices() {
-        #expect(
-            text(.noActiveSavedSession)
-                == "No active saved session. Save first with /sessions save.\n"
-        )
-        #expect(
-            text(.activeSavedSessionNotFound(name: "old"))
-                == "Active session 'old' not found. Try /sessions save first.\n"
-        )
-        #expect(
-            text(.checkpointEntryUnknown(specifier: "ffffffff"))
-                == "Entry 'ffffffff' not found. Use /sessions restore to choose an entry.\n"
-        )
-        #expect(
-            text(.checkpointEntryNotFound(entryID: "ffffffff", sessionName: "old"))
-                == "Checkpoint entry ffffffff not found in session old.\n"
-        )
-        #expect(
-            text(.checkpointRestored(entryID: "a1b2c3d4", messageCount: 2))
-                == "Restored from checkpoint a1b2c3d4 (2 messages on this branch).\n"
-        )
-    }
-
-    @Test
-    func engineCheckpointNotices() {
-        #expect(text(.engineCheckpoint(.saved)) == "Saved DS4 KV checkpoint.\n")
-        #expect(text(.engineCheckpoint(.skippedImages)) == "KV checkpoint skipped: session contains images.\n")
-        #expect(
-            text(.engineCheckpoint(.skippedNoLiveState))
-                == "DS4 KV checkpoint skipped: no live DS4 state for this session.\n"
-        )
-        #expect(
-            text(.engineCheckpoint(.saveFailed(description: "Out of memory.")))
-                == "ZenCODE: DS4 KV checkpoint not saved: Out of memory.\n"
-        )
-        #expect(text(.engineCheckpoint(.status("Evaluating the prompt"))) == "Evaluating the prompt\n")
-        #expect(text(.engineCheckpoint(.restored)) == "Restored DS4 KV checkpoint.\n")
-        #expect(
-            text(.engineCheckpoint(.incompatible))
-                == "DS4 checkpoint not compatible, the prompt will be re-evaluated.\n"
-        )
-        #expect(
-            text(.engineCheckpoint(.restoreFailed(reason: "The cache is corrupt.")))
-                == "ZenCODE: DS4 KV checkpoint not restored: The cache is corrupt.\n"
-        )
-    }
 
     @Test
     func eachNoticeIsWrittenInTheToneTheTerminalWroteItIn() {

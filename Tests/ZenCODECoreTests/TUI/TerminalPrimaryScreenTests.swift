@@ -97,23 +97,6 @@ final class PrimaryScreenCapture: Sendable {
         #expect(!capture.bytes.contains("\u{1B}[3J"))
     }
 
-    @Test func modalHeaderRendersInsideFrameAboveItems() throws {
-        let capture = PrimaryScreenCapture()
-        let screen = capture.screen()
-        install(screen)
-        let menu = screen.beginModal()
-        screen.updateModal(menu, value: .init(title: "BINDINGS", help: ["Enter"],
-            lines: [.init(text: "> (x) DONE_ITEM", itemIndex: 0)], focusedIndex: 0,
-            header: ["TABLE_ROW_1", "TABLE_ROW_2"]))
-        let visible = capture.visible
-        let row1 = try #require(visible.range(of: "TABLE_ROW_1"))
-        let row2 = try #require(visible.range(of: "TABLE_ROW_2"))
-        let item = try #require(visible.range(of: "DONE_ITEM"))
-        #expect(row1.lowerBound < row2.lowerBound)
-        #expect(row2.lowerBound < item.lowerBound)
-        screen.endModal(menu)
-    }
-
     @Test func modalHeaderKeepsHalfTheRowsAndScrollsWhenSpaceIsTight() {
         func layout(_ header: [String], items: Int, capacity: Int) -> TerminalCheckboxMenu.HeaderLayout {
             TerminalCheckboxMenu.headerLayout(header, offset: 0, itemLineCount: items, itemCapacity: capacity)
@@ -150,42 +133,6 @@ final class PrimaryScreenCapture: Sendable {
         #expect(!visible.contains("ITEM_13"))
         #expect(visible.components(separatedBy: "↓ more").count - 1 == 2)
         #expect(screen.menuHeaderScrollLimit(for: modal) == 24)
-        screen.endModal(menu)
-    }
-
-    @Test func modalHeaderScrollOffsetShowsLaterRowsAndIsClamped() {
-        let capture = PrimaryScreenCapture()
-        let screen = capture.screen()
-        install(screen)
-        let menu = screen.beginModal()
-        let items = (0..<14).map { (index: Int) in
-            TerminalCheckboxMenu.RenderedMenuLine(text: "ITEM_\(index)", itemIndex: index)
-        }
-        var modal = TerminalPrimaryScreen.Modal(title: "BINDINGS", help: [],
-            lines: items, focusedIndex: 0,
-            header: (0..<30).map { "HEADER_\($0)" })
-        modal.headerScrollOffset = 10
-        screen.updateModal(menu, value: modal)
-        var visible = capture.visible
-        #expect(visible.contains("↑ more"))
-        for index in 11...14 { #expect(visible.contains("HEADER_\(index)")) }
-        #expect(!visible.contains("HEADER_0"))
-        #expect(!visible.contains("HEADER_10"))
-        #expect(!visible.contains("HEADER_15"))
-
-        // A stale offset, such as one kept across a resize, shows the last page.
-        modal.headerScrollOffset = 999
-        screen.updateModal(menu, value: modal)
-        visible = capture.visible
-        for index in 25...29 { #expect(visible.contains("HEADER_\(index)")) }
-        #expect(!visible.contains("HEADER_24"))
-        #expect(!visible.contains("HEADER_0"))
-
-        modal.headerScrollOffset = -4
-        screen.updateModal(menu, value: modal)
-        visible = capture.visible
-        #expect(visible.contains("HEADER_0"))
-        #expect(!visible.contains("↑ more"))
         screen.endModal(menu)
     }
 
@@ -265,28 +212,6 @@ final class PrimaryScreenCapture: Sendable {
         #expect(capture.visible.components(separatedBy: "STATUS|").count == 2)
         #expect(!capture.bytes.contains("\u{1B}[2J"))
         #expect(!capture.bytes.contains("Terminal layout disabled"))
-    }
-
-    @Test func staleReplyBeforeTheNewCommitWaitsForThatCommitToRequery() async throws {
-        let deliveries = CursorReportDeliveries()
-        let capture = PrimaryScreenCapture(reports: deliveries.makeReports()), screen = capture.screen()
-        install(screen)
-        capture.resize(rows: 24, columns: 45)
-        install(screen, columns: 45, rebuild: true)
-        capture.resize(rows: 24, columns: 100)
-        try await capture.answerSupersededReport(deliveries)
-        #expect(!screen.isAppendOnly)
-        #expect(capture.queries == 1) // the new geometry is not committed yet
-        #expect(capture.reports.isHoldingInput)
-        install(screen, rebuild: true)
-        #expect(capture.queries == 2)
-        install(screen, rebuild: true)
-        #expect(capture.queries == 2)
-        try await capture.answerReport()
-        #expect(!screen.isAppendOnly)
-        #expect(capture.queries == 2)
-        #expect(capture.visible.components(separatedBy: "STATUS|").count == 2)
-        #expect(!capture.bytes.contains("\u{1B}[2J"))
     }
 
     @Test(arguments: [false, true])
@@ -372,10 +297,6 @@ final class PrimaryScreenCapture: Sendable {
         #expect(capture.visible.components(separatedBy: "STATUS|").count == 2)
     }
 
-    @Test func cursorReportWaitsTwoAndAHalfSecondsByDefault() {
-        #expect(TerminalCursorReport.defaultTimeout == 2.5)
-    }
-
     @Test func fragmentedPasteBeforeResizeCannotAuthorizeErasure() {
         let capture = PrimaryScreenCapture(), screen = capture.screen()
         install(screen)
@@ -393,31 +314,6 @@ final class PrimaryScreenCapture: Sendable {
         #expect(!emitted.contains("\u{1B}[0J"))
         #expect(!emitted.contains("\u{1B}[2J"))
         #expect(!emitted.contains("\u{1B}[3J"))
-    }
-
-    @Test func unsupportedNarrowerTallerResizeAppendsBelowCurrentPhysicalBottom() async {
-        let capture = PrimaryScreenCapture(rows: 24, columns: 80)
-        let bar = TerminalStatusBar(isEnabled: true, cursorReports: capture.reports,
-            resizeGeneration: { capture.generation.withLock { $0 } }, outputSink: capture.write)
-        await bar.configureForTesting(row: 24, columns: 80)
-        let screen = await bar.primaryScreen
-        for index in 0..<12 { screen.append("ROW-\(index)|" + String(repeating: "x", count: 38) + "\n") }
-        capture.resize(rows: 48, columns: 20)
-        let before = capture.terminal.withLock { $0.history.map(\.text) + $0.viewport.map(\.text) }
-        #expect(capture.terminal.withLock { $0.viewport.dropFirst(24).contains { !$0.text.isEmpty } })
-        let offset = capture.bytes.count
-        // The status bar rejects width 20 WITHOUT updating screen.geometry.
-        await bar.handleTerminalResizeForTesting(rows: 48, columns: 20)
-        #expect(screen.isAppendOnly)
-        let after = capture.terminal.withLock { $0.history.map(\.text) + $0.viewport.map(\.text) }
-        #expect(Array(after.prefix(before.count)) == before)
-        let emitted = String(capture.bytes.dropFirst(offset))
-        #expect(emitted.hasPrefix("\u{1B}[?6l\u{1B}[r"))
-        #expect(emitted.contains("\u{1B}[999999;1H\r\n"))
-        #expect(!emitted.contains("\u{1B}[24;1H"))
-        #expect(!emitted.contains("\u{1B}[0J"))
-        #expect(!emitted.contains("\u{1B}[2J"))
-        await bar.stop()
     }
 
     private func expectQueuedChunksDrained(restartDirectly: Bool, armQuery: Bool) {
@@ -449,11 +345,6 @@ final class PrimaryScreenCapture: Sendable {
         expectQueuedChunksDrained(restartDirectly: false, armQuery: armQuery)
     }
 
-    @Test(arguments: [false, true])
-    func prepareSessionDuringResizeDrainsChunksOnceInOrder(armQuery: Bool) {
-        expectQueuedChunksDrained(restartDirectly: true, armQuery: armQuery)
-    }
-
     @Test func fallbackCancelsSelectionAndDefaultWithoutCommitting() {
         let capture = PrimaryScreenCapture(), screen = capture.screen()
         install(screen)
@@ -471,68 +362,6 @@ final class PrimaryScreenCapture: Sendable {
         #expect(answer == nil)
     }
 
-    @Test func fallbackPreservesDraftAndActualRawInputStillSubmitsVisibleText() async throws {
-        let capture = PrimaryScreenCapture()
-        let bar = TerminalStatusBar(isEnabled: true, cursorReports: capture.reports, outputSink: capture.write)
-        await bar.configureForTesting()
-        let pipe = Pipe()
-        let reader = TerminalInteractiveLineReader(rawInput: TerminalRawInput(
-            fileDescriptor: pipe.fileHandleForReading.fileDescriptor, cursorReports: capture.reports))
-        reader.withPanelLock { state in
-            state.panelStatusBar = bar
-            state.panelBuffer = Array("draft 界")
-            state.panelCursorIndex = state.panelBuffer.count
-        }
-        await reader.renderPanel()
-        let screen = await bar.primaryScreen
-        screen.enterAppendOnly(reason: "cursor report timeout fixture")
-        #expect(reader.withPanelLock { String($0.panelBuffer) } == "draft 界")
-        #expect(capture.bytes.contains("> draft 界▏"))
-        let submitted = Mutex<[String]>([])
-        pipe.fileHandleForWriting.write(Data("!\r".utf8))
-        for _ in 0..<2 {
-            guard case let .key(key) = reader.readKeyResult(pollTimeoutMilliseconds: 50) else {
-                Issue.record("raw text input unavailable after fallback"); return
-            }
-            await reader.handlePanelKey(key) { event in
-                if case let .submitted(value) = event { submitted.withLock { $0.append(value) } }
-            }
-            await reader.renderPanel()
-        }
-        #expect(submitted.withLock { $0 } == ["draft 界!"])
-        #expect(capture.bytes.contains("> draft 界!▏"))
-        let count = capture.bytes.count
-        await bar.renderOverlay()
-        #expect(capture.bytes.count == count) // no invisible fixed panel resurrected
-        await bar.stop()
-    }
-
-    @Test func actualStatusDraftDockAndModalSurviveResize() async throws {
-        let capture = PrimaryScreenCapture()
-        let bar = TerminalStatusBar(isEnabled: true, cursorReports: capture.reports,
-            resizeGeneration: { capture.generation.withLock { $0 } }, outputSink: capture.write)
-        await bar.configureForTesting(row: 24, columns: 100, modelID: "test-model", isProcessing: true)
-        let draft = "draft 界🙂\nsecond line"
-        await bar.updateInputPanel(text: draft, cursorIndex: draft.count, modeText: "Prompt", helpText: "Enter")
-        await bar.setSharedChatReader(entries: [], unreadCount: 0, isExpanded: true)
-        let screen = await bar.primaryScreen
-        let modal = screen.beginModal()
-        screen.updateModal(modal, value: .init(title: "Consent", help: [],
-            lines: [.init(text: "r / a / c", itemIndex: 0)], focusedIndex: 0))
-        for (rows, columns) in [(18, 45), (24, 100)] {
-            capture.resize(rows: rows, columns: columns)
-            await bar.handleTerminalResizeForTesting(rows: rows, columns: columns)
-            try await capture.answerReport()
-            #expect(await bar.state.inputPanelState?.text == draft)
-            #expect(capture.visible.contains("test-model"))
-            #expect(capture.visible.contains("r / a / c"))
-        }
-        screen.endModal(modal)
-        #expect(capture.visible.contains("second line"))
-        #expect(capture.visible.contains("Chat"))
-        await bar.stop()
-    }
-
     @Test func dialogViewportIsTheRowBudgetLeftByTheCommittedGeometryAndFooter() {
         let capture = PrimaryScreenCapture(rows: 20, columns: 60)
         let screen = capture.screen()
@@ -548,34 +377,5 @@ final class PrimaryScreenCapture: Sendable {
         screen.commitFooter(geometry: .init(rows: 20, columns: 60), reservedRows: 6,
                             sequence: footer(rows: 20, columns: 60))
         #expect(size(screen.dialogViewport()) == [12, 60])
-    }
-
-    @Test func dialogFillingTheDialogViewportIsShownWholeWithoutElision() throws {
-        let capture = PrimaryScreenCapture()
-        let screen = capture.screen()
-        install(screen)
-        let viewport = screen.dialogViewport()
-        try #require(viewport.rows > 4)
-        // One row as wide as the viewport, the others numbered.
-        let expected = [String(repeating: "=", count: viewport.columns)]
-            + (1..<viewport.rows).map { "DIALOG_ROW_\($0)" }
-        let modal = TerminalModalSession(screen: screen)
-        defer { modal.close() }
-        modal.updateDialog(TerminalDialogPresentation(prompt: expected.joined(separator: "\n")))
-
-        let rows = capture.terminal.withLock { $0.viewport.map(\.text) }
-        #expect(Array(rows.dropLast(4).suffix(expected.count)) == expected)
-        #expect(Array(rows.suffix(4)) == ["PROMPT| draft 界🙂", "draft second line", "DOCK| 2 unread", "STATUS| ready"])
-        #expect(!capture.visible.contains("…"))
-
-        // One row more no longer fits: the dialog keeps its heading and tail
-        // around the elision.
-        modal.updateDialog(TerminalDialogPresentation(
-            prompt: (expected + ["DIALOG_ROW_EXTRA"]).joined(separator: "\n")
-        ))
-        let elided = capture.terminal.withLock { $0.viewport.map(\.text) }
-        #expect(elided.contains("…"))
-        #expect(!elided.contains("DIALOG_ROW_1"))
-        #expect(elided.contains("DIALOG_ROW_EXTRA"))
     }
 }

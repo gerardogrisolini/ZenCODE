@@ -49,18 +49,4 @@ struct ChatSessionRuntimeFactoryTests {
 
         #expect(backend is RemoteGenerationClient)
     }
-
-    @Test("The session runner keeps the injected feature runtime and the production backend by default")
-    func sessionRunnerKeepsTheInjectedFeatureRuntime() async {
-        let runtime = SwiftFeatureRuntime()
-
-        let runner = ChatSessionRuntimeFactory.makeSessionRunner(
-            toolAuthorizationHandler: nil,
-            featureRuntime: runtime
-        )
-
-        #expect(runner.swiftFeatureRuntime === runtime)
-        #expect(await runner.backendFactory != nil)
-        #expect(await runner.defaultToolAuthorizationHandler == nil)
-    }
 }

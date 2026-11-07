@@ -9,26 +9,6 @@ import Testing
 
 @Suite
 struct ZenCODESetupProviderPresetTests {
-    @Test
-    func setupExposesTheCompleteProviderPresetCatalog() {
-        #expect(
-            SetupProviderPreset.allCases == [
-                .openRouter,
-                .openAIAPI,
-                .anthropicAPI,
-                .zaiAPI,
-                .zaiCodingPlan,
-                .gemini,
-                .deepSeek,
-                .kimi,
-                .nvidiaAPI,
-                .modal,
-                .custom
-            ]
-        )
-        #expect(SetupProviderPreset.custom.isAdvanced)
-        #expect(!SetupProviderPreset.openRouter.isAdvanced)
-    }
 
     @Test
     func hostedPresetContractsUseExpectedProfilesEndpointsAndAuthentication() {
@@ -275,45 +255,6 @@ struct ZenCODESetupProviderPresetTests {
     }
 
     @Test
-    func alreadyConfiguredProvidersCannotBeAddedAgain() throws {
-        let configured: Set<String> = ["openrouter", "chatgpt", "custom"]
-
-        #expect(ZenCODESetupRunner.alreadyConfiguredProviderMessage(for: .remoteAPI(.openAIAPI), configuredProviderIDs: configured) == nil)
-        #expect(ZenCODESetupRunner.alreadyConfiguredProviderMessage(for: .anthropicSubscription, configuredProviderIDs: configured) == nil)
-        #expect(ZenCODESetupRunner.alreadyConfiguredProviderMessage(for: .remoteAPI(.zaiCodingPlan), configuredProviderIDs: ["zai"]) == nil)
-
-        let openRouter = try #require(
-            ZenCODESetupRunner.alreadyConfiguredProviderMessage(for: .remoteAPI(.openRouter), configuredProviderIDs: configured)
-        )
-        #expect(openRouter.contains("OpenRouter is already configured"))
-        #expect(openRouter.contains("'openrouter'"))
-        #expect(openRouter.contains("reconfigure it"))
-        // Custom exists at most once, and so do the subscriptions.
-        #expect(ZenCODESetupRunner.alreadyConfiguredProviderMessage(for: .remoteAPI(.custom), configuredProviderIDs: configured) != nil)
-        let subscription = try #require(
-            ZenCODESetupRunner.alreadyConfiguredProviderMessage(for: .chatGPTSubscription, configuredProviderIDs: configured)
-        )
-        #expect(subscription.contains("ChatGPT Subscription is already configured"))
-    }
-
-    @Test
-    func zaiAPIAndCodingPlanShareTheNominalProviderButKeepDistinctProtocolProfiles() {
-        let api = SetupProviderPreset.zaiAPI
-        let codingPlan = SetupProviderPreset.zaiCodingPlan
-
-        #expect(api.providerProfileID == .zAI)
-        #expect(codingPlan.providerProfileID == .zAI)
-        #expect(api.providerProfileID != .custom)
-        #expect(codingPlan.providerProfileID != .custom)
-        #expect(api.protocolProfileID == .openAIChatCompletions)
-        #expect(codingPlan.protocolProfileID == .zaiCodingPlan)
-        #expect(api.protocolProfileID != codingPlan.protocolProfileID)
-        #expect(api.protocolProfileID.chatEndpoint == .chatCompletions)
-        #expect(codingPlan.protocolProfileID.chatEndpoint == .chatCompletions)
-        #expect(api.baseURL != codingPlan.baseURL)
-    }
-
-    @Test
     func anthropicDirectAPIHasNativeMessagesPresetDistinctFromSubscription() {
         #expect(SetupAnthropicProviderOption.api != .subscription)
         let preset = SetupProviderPreset.anthropicAPI
@@ -426,25 +367,4 @@ struct ZenCODESetupProviderPresetTests {
         #expect(optional.allowEmpty)
         #expect(optional.label == "New API key (empty clears it)")
     }
-
-    @Test
-    func subscriptionCandidateDefaultsMatchExactlyOrFallBack() {
-        let candidates = ["fixture-one", "fixture-two"].map { modelID in
-            ZenCODESetupRunner.SubscriptionModelCandidate(
-                manifestID: "chatgpt:\(modelID)", modelID: modelID, title: modelID,
-                detail: "fixture", contextWindowTokenLimit: nil, thinkingSupport: nil
-            )
-        }
-        let cases: [(String, String, Set<Int>)] = [("other", candidates[1].modelID, [1]), (candidates[1].manifestID, "other", [1]), ("other", candidates[1].modelID.uppercased(), [0])]
-        for (id, modelID, expected) in cases {
-            #expect(ZenCODESetupRunner.subscriptionModelSelectionDefaultIndexes(candidates: candidates, defaultModels: [subscriptionDefaultModel(id: id, modelID: modelID)]) == expected)
-        }
-        #expect(ZenCODESetupRunner.subscriptionModelSelectionDefaultIndexes(candidates: [], defaultModels: []).isEmpty)
-    }
-
-    private func subscriptionDefaultModel(id: String, modelID: String) -> AgentSettingsModelManifest {
-        let provider = AgentRemoteProvider(name: "Test", baseURL: "https://example.test", modelID: modelID)
-        return AgentSettingsModelManifest(id: id, kind: .remoteAPI, title: nil, llmID: id, modelID: modelID, providerID: provider.id, provider: provider, configuredContextWindowLimit: nil, generationParameterOverrides: nil, thinkingOptions: nil, defaultThinkingSelection: nil)
-    }
-
 }

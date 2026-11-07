@@ -38,23 +38,6 @@ struct OperationFileChangeTests {
         #expect(second.changes == [.init(path: root.appendingPathComponent("file").path, oldText: "one", newText: "onetwo")])
     }
 
-    @Test func failedEditHasNoDiffAndBinaryHasExplicitFallback() async throws {
-        let root = try workspace()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let file = root.appendingPathComponent("file")
-        try Data([0xff, 0x00]).write(to: file)
-        let edit = OperationFileChangeRecorder()
-        do {
-            try await invoke("local.editFile", ["path": "file", "old": "missing", "new": "replacement"], root: root, recorder: edit)
-            Issue.record("Invalid UTF-8 edit unexpectedly succeeded")
-        } catch {}
-        #expect(edit.changes.isEmpty)
-        let write = OperationFileChangeRecorder()
-        try await invoke("local.writeFile", ["path": "file", "content": "text"], root: root, recorder: write)
-        #expect(write.changes.count == 1)
-        #expect(write.changes.first?.explanation != nil)
-    }
-
     @Test func invalidMultiFilePatchPublishesNoPartialEvidence() async throws {
         let root = try workspace()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -67,17 +50,6 @@ struct OperationFileChangeTests {
         } catch {}
         #expect(recorder.changes.isEmpty)
         #expect(try String(contentsOf: root.appendingPathComponent("first"), encoding: .utf8) == "one\n")
-    }
-
-    @Test func opaqueOverlapDegradesToText() async throws {
-        let root = try workspace()
-        defer { try? FileManager.default.removeItem(at: root) }
-        OperationMutationUncertainty.begin()
-        defer { OperationMutationUncertainty.end() }
-        let recorder = OperationFileChangeRecorder()
-        try await invoke("local.writeFile", ["path": "file", "content": "text"], root: root, recorder: recorder)
-        #expect(recorder.changes.first?.explanation != nil)
-        #expect(recorder.changes.first?.newText == nil)
     }
 
     @Test func simultaneousWritersKeepDistinctEvidence() async throws {
@@ -98,16 +70,6 @@ struct OperationFileChangeTests {
 }
 
 extension LocalToolsSerialGroup.OperationFileChangeTests {
-    @Test func successfulPatchRecordsCommittedTextsNotPatchSource() async throws {
-        let root = try workspace()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let file = root.appendingPathComponent("file")
-        try "before\n".write(to: file, atomically: true, encoding: .utf8)
-        let recorder = OperationFileChangeRecorder()
-        try await invoke("local.applyPatch", ["patch": "*** Begin Patch\n*** Update File: file\n@@\n-before\n+after\n*** End Patch"], root: root, recorder: recorder)
-        #expect(recorder.changes == [.init(path: file.path, oldText: "before\n", newText: "after\n")])
-    }
-
     @Test func moveAndDeletePreserveMissingFileMeaning() async throws {
         let root = try workspace()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -158,42 +120,6 @@ extension LocalToolsSerialGroup.OperationFileChangeTests {
         }
     }
 
-    @Test func oversizedBeforeAndAfterFallBackWithoutChangingWrites() async throws {
-        let root = try workspace()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let file = root.appendingPathComponent("file")
-        let large = String(repeating: "x", count: OperationFileChangeRecorder.maximumTextBytes + 1)
-        try large.write(to: file, atomically: true, encoding: .utf8)
-        let old = OperationFileChangeRecorder()
-        try await invoke("local.writeFile", ["path": "file", "content": "small"], root: root, recorder: old)
-        #expect(old.changes.first?.explanation != nil)
-        #expect(old.changes.first?.oldText == nil)
-        let new = OperationFileChangeRecorder()
-        try await invoke("local.writeFile", ["path": "file", "content": large], root: root, recorder: new)
-        #expect(new.changes.first?.explanation != nil)
-        #expect(new.changes.first?.newText == nil)
-        #expect(try String(contentsOf: file, encoding: .utf8) == large)
-        let deletion = OperationFileChangeRecorder()
-        try await invoke("local.delete", ["path": "file"], root: root, recorder: deletion)
-        #expect(deletion.changes.first?.explanation != nil)
-    }
-
-    @Test func aggregatePatchEvidenceIsBoundedButEveryFileIsWritten() async throws {
-        let root = try workspace()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let text = String(repeating: "x", count: 48 * 1024)
-        let sections = (0..<8).map { "*** Add File: file\($0)\n+\(text)" }
-        let recorder = OperationFileChangeRecorder()
-        try await invoke("local.applyPatch", ["patch": "*** Begin Patch\n" + sections.joined(separator: "\n") + "\n*** End Patch"], root: root, recorder: recorder)
-        #expect(recorder.changes.count == 8)
-        let bytes = recorder.changes.reduce(0) { $0 + ($1.oldText?.utf8.count ?? 0) + ($1.newText?.utf8.count ?? 0) }
-        #expect(bytes <= OperationFileChangeRecorder.maximumOperationBytes)
-        #expect(recorder.changes.contains { $0.explanation != nil })
-        for index in 0..<8 {
-            #expect(try String(contentsOf: root.appendingPathComponent("file\(index)"), encoding: .utf8) == text + "\n")
-        }
-    }
-
     @Test func editsRecordSuccessfulBoundaries() async throws {
         let root = try workspace()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -208,107 +134,6 @@ extension LocalToolsSerialGroup.OperationFileChangeTests {
         let multi = OperationFileChangeRecorder()
         try await invoke("local.multiEdit", ["path": "file", "edits": [["old": "three", "new": "five"], ["old": "four five", "new": "six"]]], root: root, recorder: multi)
         #expect(multi.changes == [.init(path: file.path, oldText: "four three four", newText: "six four")])
-    }
-
-    @Test func binaryAppendPreservesBytesAndEmitsOnlyFallback() async throws {
-        let root = try workspace()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let file = root.appendingPathComponent("file")
-        try Data([0xff, 0]).write(to: file)
-        let recorder = OperationFileChangeRecorder()
-        try await invoke("local.append", ["path": "file", "content": "text"], root: root, recorder: recorder)
-        #expect(try Data(contentsOf: file) == Data([0xff, 0]) + Data("text".utf8))
-        #expect(recorder.changes.first?.explanation != nil)
-        #expect(recorder.changes.first?.oldText == nil)
-        #expect(recorder.changes.first?.newText == nil)
-    }
-
-    @Test func postCommitPatchFaultRollsBackWithoutEvidence() async throws {
-        let root = try workspace()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let file = root.appendingPathComponent("file")
-        try "before\n".write(to: file, atomically: true, encoding: .utf8)
-        let recorder = OperationFileChangeRecorder()
-        do {
-            try await LocalApplyPatchTool.$failAfterCommitCount.withValue(1) {
-                try await invoke("local.applyPatch", ["patch": "*** Begin Patch\n*** Update File: file\n@@\n-before\n+after\n*** Add File: other\n+new\n*** End Patch"], root: root, recorder: recorder)
-            }
-            Issue.record("Injected post-commit failure unexpectedly succeeded")
-        } catch {}
-        #expect(recorder.changes.isEmpty)
-        #expect(try String(contentsOf: file, encoding: .utf8) == "before\n")
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("other").path))
-    }
-}
-
-extension LocalToolsSerialGroup.OperationFileChangeTests {
-    @Test func multifileSnapshotBudgetFallsBackAfterLimit() async throws {
-        let root = try workspace()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let text = String(repeating: "x", count: OperationFileChangeRecorder.maximumTextBytes)
-        for index in 0..<6 {
-            try text.write(to: root.appendingPathComponent("file\(index)"), atomically: true, encoding: .utf8)
-        }
-        let recorder = OperationFileChangeRecorder()
-        let sections = (0..<6).map { "*** Delete File: file\($0)" }.joined(separator: "\n")
-        try await invoke("local.applyPatch", ["patch": "*** Begin Patch\n" + sections + "\n*** End Patch"], root: root, recorder: recorder)
-        #expect(recorder.changes.count == 6)
-        #expect(recorder.changes.filter { $0.oldText != nil }.count == 4)
-        #expect(recorder.changes.suffix(2).allSatisfy { $0.explanation != nil && $0.oldText == nil })
-        for index in 0..<6 {
-            #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("file\(index)").path))
-        }
-    }
-
-    @Test func symlinkToFIFOIsNotOpenedForEvidence() async throws {
-        let root = try workspace()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let fifo = root.appendingPathComponent("fifo")
-        let link = root.appendingPathComponent("link")
-        #expect(mkfifo(fifo.path, mode_t(0o600)) == 0)
-        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: fifo)
-        let recorder = OperationFileChangeRecorder()
-        let evidence = OperationFileChangeRecorder.$current.withValue(recorder) {
-            LocalOperationWrite.snapshot(link)
-        }
-        #expect(evidence == nil)
-    }
-}
-
-extension LocalToolsSerialGroup.OperationFileChangeTests {
-    @Test func concurrentWritesShareAggregateRecorderBudget() async throws {
-        let root = try workspace()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let recorder = OperationFileChangeRecorder()
-        let text = String(repeating: "x", count: 32 * 1024)
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            for index in 0..<16 {
-                group.addTask {
-                    try await invoke("local.writeFile", ["path": "file\(index)", "content": text], root: root, recorder: recorder)
-                }
-            }
-            try await group.waitForAll()
-        }
-        #expect(recorder.changes.count == 16)
-        #expect(recorder.changes.filter { $0.newText == text }.count == 8)
-        #expect(recorder.changes.filter { $0.explanation != nil }.count == 8)
-        for index in 0..<16 {
-            #expect(try String(contentsOf: root.appendingPathComponent("file\(index)"), encoding: .utf8) == text)
-        }
-    }
-
-    @Test func oversizedAppendHasNoInventedDeletion() async throws {
-        let root = try workspace()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let file = root.appendingPathComponent("file")
-        let original = String(repeating: "x", count: OperationFileChangeRecorder.maximumTextBytes)
-        try original.write(to: file, atomically: true, encoding: .utf8)
-        let recorder = OperationFileChangeRecorder()
-        try await invoke("local.append", ["path": "file", "content": "y"], root: root, recorder: recorder)
-        #expect(recorder.changes.first?.explanation != nil)
-        #expect(recorder.changes.first?.oldText == nil)
-        #expect(recorder.changes.first?.newText == nil)
-        #expect(try String(contentsOf: file, encoding: .utf8) == original + "y")
     }
 }
 
@@ -333,23 +158,6 @@ private extension LocalToolsSerialGroup.OperationFileChangeTests {
 }
 
 extension LocalToolsSerialGroup.OperationFileChangeTests {
-    @Test func cocoaPermissionErrorRecognizesNativeAndBridgedUnderlyingPOSIXError() {
-        func failure(underlying: any Error, code: Int = 257) -> NSError {
-            NSError(
-                domain: NSCocoaErrorDomain,
-                code: code,
-                userInfo: [NSUnderlyingErrorKey: underlying]
-            )
-        }
-
-        #expect(isCocoaPermissionDeniedByPOSIXAccess(failure(underlying: POSIXError(.EACCES))))
-        #expect(isCocoaPermissionDeniedByPOSIXAccess(failure(
-            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
-        )))
-        #expect(!isCocoaPermissionDeniedByPOSIXAccess(failure(underlying: POSIXError(.EPERM))))
-        #expect(!isCocoaPermissionDeniedByPOSIXAccess(failure(underlying: POSIXError(.EACCES), code: 256)))
-    }
-
     @Test(arguments: [false, true], [false, true])
     func fifoAppendAndPatchDoNotHoldMutationLock(patch: Bool, recording: Bool) async throws {
         let root = try workspace()

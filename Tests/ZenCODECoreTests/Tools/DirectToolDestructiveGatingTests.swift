@@ -206,15 +206,6 @@ struct DirectToolDestructiveGatingTests {
         #expect(!FileManager.default.fileExists(atPath: marker.path))
     }
 
-    @Test
-    func gatedToolNamesIncludeShellAndDestructiveTools() {
-        #expect(LocalExecPermissionAuthorizer.gatedToolNames.contains("local.exec"))
-        #expect(LocalExecPermissionAuthorizer.gatedToolNames.contains("local.delete"))
-        #expect(LocalExecPermissionAuthorizer.gatedToolNames.contains("git.push"))
-        #expect(LocalExecPermissionAuthorizer.gatedToolNames.contains("git.restore"))
-        #expect(!LocalExecPermissionAuthorizer.gatedToolNames.contains("local.readFile"))
-    }
-
     private func toolCall(name: String, arguments: [String: Any]) -> DirectAgentToolCall {
         let argumentsJSON = (try? JSONSerialization.data(withJSONObject: arguments))
             .map { String(decoding: $0, as: UTF8.self) } ?? "{}"

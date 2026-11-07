@@ -149,19 +149,6 @@ extension TerminalStatusBar {
         }
     }
 
-    /// Test seam for resize lifecycle tests; production obtains geometry from
-    /// the controlling terminal before reaching the shared implementation.
-    func handleTerminalResizeForTesting(
-        generation: Int = 0,
-        rows: Int,
-        columns: Int
-    ) async {
-        await handleTerminalResize(
-            generation: generation,
-            geometry: (rows: rows, columns: columns)
-        )
-    }
-
     static func currentTerminalGeometry(
         fileDescriptor: Int32
     ) -> (rows: Int, columns: Int)? {

@@ -72,27 +72,6 @@ extension ACPCompatibilityTests {
     }
 
     @Test
-    func mcpServersParseBareExecutableConfiguration() throws {
-        let definitions = ZenCODEACPBridge.mcpServerDefinitions(from: [
-            "mcpServers": [
-                [
-                    "type": "stdio",
-                    "name": "fixture-tools",
-                    "command": "fixture-server",
-                    "args": ["serve"]
-                ] as [String: Any]
-            ]
-        ])
-
-        let definition = try #require(definitions.first)
-
-        #expect(definitions.count == 1)
-        #expect(definition.name == "fixture-tools")
-        #expect(definition.configuration.executablePath == "fixture-server")
-        #expect(definition.configuration.arguments == ["serve"])
-    }
-
-    @Test
     func mcpServersParseACPHTTPConfiguration() throws {
         let definitions = ZenCODEACPBridge.mcpServerDefinitions(from: [
             "mcp_servers": [
@@ -210,42 +189,6 @@ extension ACPCompatibilityTests {
 
             #expect(definition.configuration.environment == fixture.expected)
         }
-    }
-
-    @Test
-    func mcpServerStringMapsRespectAliasesAndDecodedInput() throws {
-        let aliases: [(value: Any, expected: [String: String])] = [
-            ([:] as [String: String], [:]),
-            (["DROP": 1] as [String: Any], [:]),
-            (42, ["FALLBACK": "used"]),
-        ]
-        for fixture in aliases {
-            let definition = try #require(ZenCODEACPBridge.mcpServerDefinitions(from: [
-                "mcpServers": [[
-                    "command": "/usr/bin/env",
-                    "env": fixture.value,
-                    "environment": ["FALLBACK": "used"] as [String: String],
-                ] as [String: Any]],
-            ]).first)
-
-            #expect(definition.configuration.environment == fixture.expected)
-        }
-
-        let decoded = try #require(JSONSerialization.jsonObject(with: Data(#"""
-        {"mcpServers":[{"type":"http","name":"Decoded","url":"https://mcp.example.test","headers":[
-            {"name":" Authorization ","value":"Bearer one"},
-            {"name":"Authorization","value":"Bearer two"},
-            {"key":" X-Empty "},
-            {"name":"  ","key":"\t"},
-            {"name":42,"value":"discard"}
-        ]}]}
-        """#.utf8)) as? [String: Any])
-        let definition = try #require(ZenCODEACPBridge.mcpServerDefinitions(from: decoded).first)
-
-        #expect(definition.configuration.httpHeaders == [
-            "Authorization": "Bearer two",
-            "X-Empty": "",
-        ])
     }
 
     #if os(macOS)

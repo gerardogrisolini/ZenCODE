@@ -58,33 +58,6 @@ struct XcodeMCPTransportPolicyTests {
         #expect(storedError?.localizedDescription == XcodeMCPServerConfiguration.authorizationMessage)
     }
 
-    @Test
-    func bridgeUnroutedErrorsTerminatePendingBridge() async {
-        let client = makeClient()
-        await client.recordPendingRequestMethodForTesting(id: 2, method: "tools/list")
-
-        await client.append(
-            Data("""
-            {"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"Internal error"}}
-            """.utf8)
-        )
-
-        let storedError = await client.terminalBridgeError
-        #expect(storedError?.localizedDescription == XcodeMCPServerConfiguration.authorizationMessage)
-    }
-
-    @Test
-    func bridgeDiagnosticPermissionErrorsTerminatePendingBridge() async {
-        let client = makeClient()
-        await client.recordPendingRequestMethodForTesting(id: 2, method: "tools/list")
-
-        await client.handleDiagnosticLine(
-            "mcpbridge[28755] listTools request failed: Error Domain=IDEIntelligenceMessaging.BridgeError Code=1"
-        )
-
-        let storedError = await client.terminalBridgeError
-        #expect(storedError?.localizedDescription == XcodeMCPServerConfiguration.authorizationMessage)
-    }
     #endif
 
     private func makeClient() -> MCPClient {

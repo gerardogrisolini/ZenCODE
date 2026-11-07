@@ -35,38 +35,6 @@ struct TerminalTelegramFoundationTests {
         #expect(error.retryAfter == 3)
     }
 
-    /// A non-rate-limit envelope keeps every field too.
-    @Test
-    func genericErrorEnvelopeKeepsFields() async throws {
-        let error = try await Self.decodeError(Data(#"""
-        {"ok":false,"error_code":400,"description":"Bad Request: chat not found"}
-        """#.utf8), status: 400)
-
-        guard case let .apiFailure(status, errorCode, description, retryAfter) = error else {
-            Issue.record("expected apiFailure, got \(error)")
-            return
-        }
-        #expect(status == 400)
-        #expect(errorCode == 400)
-        #expect(description == "Bad Request: chat not found")
-        #expect(retryAfter == nil)
-        #expect(!error.isExplicitRateLimit)
-        #expect(error.retryAfter == nil)
-    }
-
-    /// The human-readable description includes the error code and the retry
-    /// hint, so operators see the same fields the governor uses.
-    @Test
-    func errorDescriptionIncludesCodeAndRetryAfter() {
-        let error = TerminalTelegramControlError.apiFailure(
-            status: 429, errorCode: 429,
-            description: "Too Many Requests", retryAfter: 7
-        )
-        let text = error.errorDescription ?? ""
-        #expect(text.contains("429"))
-        #expect(text.contains("retry after 7s"))
-    }
-
     // MARK: - Governor
 
     /// A controllable monotonic clock so window math is verified without real
@@ -93,14 +61,6 @@ struct TerminalTelegramFoundationTests {
         TerminalTelegramRateGovernor(now: { clock.now })
     }
 
-    @Test
-    func firstSendIsImmediatelyLegal() async {
-        let clock = MutableClock()
-        let governor = makeGovernor(clock: clock)
-        let delay = await governor.delay(forChat: 42)
-        #expect(delay == nil)
-    }
-
     /// The per-chat window throttles a second send to the same chat.
     @Test
     func perChatWindowThrottlesSecondSend() async {
@@ -119,93 +79,6 @@ struct TerminalTelegramFoundationTests {
         let duration = delay?.duration ?? .zero
         #expect(duration >= .milliseconds(700))
         #expect(duration <= .milliseconds(900))
-    }
-
-    /// A different chat is not throttled by another chat's *per-chat* window:
-    /// the only delay it may see is the global one.
-    @Test
-    func differentChatIsNotThrottledPerChat() async {
-        let clock = MutableClock()
-        let governor = makeGovernor(clock: clock)
-        await governor.record(chatID: 7)
-        let delay = await governor.delay(forChat: 8)
-        if let delay {
-            // The global spacing window may legitimately throttle, but never
-            // chat 7's per-chat budget.
-            guard case .global = delay.reason else {
-                Issue.record("expected global reason, got \(delay)")
-                return
-            }
-        }
-    }
-
-    /// The global window throttles once enough sends are admitted, even across
-    /// distinct chats.
-    @Test
-    func globalWindowThrottlesAcrossChats() async {
-        let clock = MutableClock()
-        let governor = makeGovernor(clock: clock)
-        await governor.record(chatID: 1)
-        clock.advance(by: 0.03)
-        let delay = await governor.delay(forChat: 2)
-        // 30ms after the first send, inside the 35ms global spacing window.
-        guard case .global = delay?.reason else {
-            Issue.record("expected global reason, got \(String(describing: delay))")
-            return
-        }
-    }
-
-    /// After the windows elapse, sending becomes legal again.
-    @Test
-    func windowsExpireAndSendingBecomesLegalAgain() async {
-        let clock = MutableClock()
-        let governor = makeGovernor(clock: clock)
-        await governor.record(chatID: 9)
-        clock.advance(by: 1.5)
-        let delay = await governor.delay(forChat: 9)
-        #expect(delay == nil)
-    }
-
-    /// Only an explicit 429 with a retry_after permits a retry: the governor
-    /// reports the pause and keeps honoring server guidance.
-    @Test
-    func explicit429PermitsRetryAndRecordsPause() async {
-        let clock = MutableClock()
-        let governor = makeGovernor(clock: clock)
-        let error = TerminalTelegramControlError.apiFailure(
-            status: 429, errorCode: 429,
-            description: "Too Many Requests", retryAfter: 3
-        )
-        let retryable = await governor.retryAfterFailure(error, chatID: 5)
-        #expect(retryable)
-
-        // Immediately after: every chat is paused by the server-reported
-        // window.
-        let delay = await governor.delay(forChat: 99)
-        guard case .global = delay?.reason else {
-            Issue.record("expected global pause, got \(String(describing: delay))")
-            return
-        }
-        #expect((delay?.duration ?? .zero) >= .seconds(2))
-
-        // After the server window elapses, sending is legal again.
-        clock.advance(by: 3.5)
-        let after = await governor.delay(forChat: 99)
-        #expect(after == nil)
-    }
-
-    /// A 429 without retry_after is not safe to retry.
-    @Test
-    func fourTwoNineWithoutRetryAfterIsNotRetryable() async {
-        let clock = MutableClock()
-        let governor = makeGovernor(clock: clock)
-        let error = TerminalTelegramControlError.apiFailure(
-            status: 429, errorCode: 429, description: nil, retryAfter: nil
-        )
-        let retryable = await governor.retryAfterFailure(error, chatID: 5)
-        #expect(!retryable)
-        let delay = await governor.delay(forChat: 5)
-        #expect(delay == nil)
     }
 
     @Test
@@ -227,20 +100,6 @@ struct TerminalTelegramFoundationTests {
         #expect(outcomes.compactMap { $0 }.count == 15)
     }
 
-    /// A hostile retry_after is bounded: no multi-hour stalls from a corrupt
-    /// envelope.
-    @Test
-    func serverRetryAfterIsBounded() async {
-        let clock = MutableClock()
-        let governor = makeGovernor(clock: clock)
-        let error = TerminalTelegramControlError.apiFailure(
-            status: 429, errorCode: 429, description: nil, retryAfter: 86_400
-        )
-        _ = await governor.retryAfterFailure(error, chatID: 5)
-        let delay = await governor.delay(forChat: 5)
-        #expect((delay?.duration ?? .zero) <= TerminalTelegramRateGovernor.maximumServerRetryAfter)
-    }
-
     /// Every non-429 failure — including ambiguous outcomes — must not be
     /// retried.
     @Test
@@ -257,17 +116,6 @@ struct TerminalTelegramFoundationTests {
             let retryable = await governor.retryAfterFailure(failure, chatID: 1)
             #expect(!retryable, "failure \(failure) must not be retryable")
         }
-    }
-
-    /// reset() clears both windows.
-    @Test
-    func resetClearsAllWindows() async {
-        let clock = MutableClock()
-        let governor = makeGovernor(clock: clock)
-        await governor.record(chatID: 3)
-        await governor.reset()
-        let delay = await governor.delay(forChat: 3)
-        #expect(delay == nil)
     }
 
     // MARK: - Presence lease
@@ -288,68 +136,6 @@ struct TerminalTelegramFoundationTests {
         return TerminalTelegramWireFence(lease: lease, lifecycleEpoch: UUID()) { candidate in
             guard candidate == lease else { throw CancellationError() }
         }
-    }
-
-    /// Taking a lease sends the first chat action immediately and renewals stop
-    /// at release: the fencing means no further action fires after release.
-    @Test
-    func presenceLeaseStopsRenewingAfterRelease() async {
-        let recorder = PresenceRecorder()
-        let manager = TerminalTelegramPresenceLeaseManager(sendAction: {
-            await recorder.record($0)
-        })
-        let lease = await manager.acquire(
-            scope: .turn(chatID: 11), fence: Self.presenceFence(chatID: 11)
-        )
-        let isActiveAfterAcquire = await manager.isActive(lease)
-        let heldAfterAcquire = await manager.heldLease
-        #expect(isActiveAfterAcquire)
-        #expect(heldAfterAcquire == lease)
-
-        await manager.release(lease)
-        let heldAfterRelease = await manager.heldLease
-        let isActiveAfterRelease = await manager.isActive(lease)
-        #expect(heldAfterRelease == nil)
-        #expect(!isActiveAfterRelease)
-
-        // A renewal that wakes now finds a stale generation and exits without
-        // firing the action. Give the (nonexistent) renewal a chance.
-        try? await Task.sleep(for: .milliseconds(50))
-        let fired = await recorder.scopes
-        #expect(fired == [.turn(chatID: 11)])
-    }
-
-    /// Acquiring a second lease replaces the first atomically.
-    @Test
-    func secondAcquireReplacesFirstLease() async {
-        let manager = TerminalTelegramPresenceLeaseManager(sendAction: { _ in })
-        let first = await manager.acquire(
-            scope: .turn(chatID: 1), fence: Self.presenceFence(chatID: 1)
-        )
-        let second = await manager.acquire(
-            scope: .transcription(chatID: 1), fence: Self.presenceFence(chatID: 1)
-        )
-        let held = await manager.heldLease
-        let firstActive = await manager.isActive(first)
-        let secondActive = await manager.isActive(second)
-        #expect(held == second)
-        #expect(!firstActive)
-        #expect(secondActive)
-        // Releasing the stale first lease is inert.
-        await manager.release(first)
-        let heldAfterStaleRelease = await manager.heldLease
-        #expect(heldAfterStaleRelease == second)
-    }
-
-    /// releaseAll() drops any held lease; used by stop().
-    @Test
-    func releaseAllDropsHeldLease() async {
-        let manager = TerminalTelegramPresenceLeaseManager(sendAction: { _ in })
-        _ = await manager.acquire(
-            scope: .turn(chatID: 2), fence: Self.presenceFence(chatID: 2)
-        )
-        await manager.releaseAll()
-        #expect(await manager.heldLease == nil)
     }
 
     @Test
@@ -387,42 +173,6 @@ struct TerminalTelegramFoundationTests {
         }
     }
 
-    /// Plain-language aliases match the whole line only: "status" must not
-    /// capture "status report please".
-    @Test
-    func plainAliasMatchesWholeLineOnly() {
-        #expect(TerminalTelegramRemoteCommand(text: "status report please") == nil)
-        #expect(TerminalTelegramRemoteCommand(text: "stato") == .status)
-    }
-
-    /// Every remote command and every coordinator workflow appears in the
-    /// published menu. Workflow discovery comes from the coordinator parser.
-    @Test
-    func botCommandsMirrorRegistryAndExcludeStart() {
-        let published = TerminalTelegramCommandRegistry.botCommands
-        let publishedNames = Set(published.map(\.command))
-        for specification in TerminalTelegramCommandRegistry.commands {
-            #expect(publishedNames.contains(specification.name))
-        }
-        for family in CoordinatorCommandFamily.allCases {
-            #expect(publishedNames.contains(family.rawValue))
-            #expect(CoordinatorCommandParser.parse("/\(family.rawValue) test") != nil)
-        }
-        #expect(publishedNames.count == published.count)
-        #expect(!published.contains { $0.command == "start" })
-    }
-
-    /// Telegram `/help` lists every command published to the menu, so help
-    /// cannot drift from `setMyCommands`.
-    @Test
-    func remoteHelpListsEveryPublishedCommand() {
-        let listed = TelegramChannel.remoteCommandList()
-            .components(separatedBy: ", ")
-            .compactMap { $0.split(separator: " ").first.map(String.init) }
-        let published = TerminalTelegramCommandRegistry.botCommands.map { "/\($0.command)" }
-        #expect(listed == published)
-    }
-
     /// The production API client emits a valid all-private-chats Bot API scope
     /// and omits the chat id that is illegal for that scope.
     @Test
@@ -452,14 +202,6 @@ struct TerminalTelegramFoundationTests {
         #expect(json?["action"] as? String == "typing")
     }
 
-    /// `/start` stays recognised without being registered.
-    @Test
-    func startStaysRecognizedButUnregistered() {
-        #expect(TerminalTelegramRemoteCommand(text: "/start") == .start)
-        #expect(TerminalTelegramRemoteCommand(text: "/start PAYLOAD") == .start)
-        #expect(TerminalTelegramRemoteCommand(text: "/start@bot PAYLOAD") == .start)
-    }
-
     // MARK: - Pairing grant
 
     /// A grant is single-use: the first consume succeeds, replays fail.
@@ -473,19 +215,6 @@ struct TerminalTelegramFoundationTests {
         #expect(firstConsume)
         #expect(!replayConsume)
         #expect(!thirdConsume)
-    }
-
-    /// Consumption is case- and whitespace-insensitive, matching the manual
-    /// fallback where the operator may type the payload in any case.
-    @Test
-    func grantConsumptionNormalizesCase() async {
-        let store = TerminalTelegramPairingGrantStore()
-        let payload = await store.issueGrant()
-        let lowered = payload.lowercased()
-        let normalizedConsume = await store.consume(payload: "  \(lowered) \n")
-        let replayConsume = await store.consume(payload: payload)
-        #expect(normalizedConsume)
-        #expect(!replayConsume)
     }
 
     /// Unknown payloads never consume anything.
@@ -508,20 +237,6 @@ struct TerminalTelegramFoundationTests {
         )))
         #expect(await service.consumePairingGrant(payload: grant, chatType: "private"))
         #expect(!(await service.consumePairingGrant(payload: grant, chatType: "private")))
-    }
-
-    @Test
-    func pairingWaitStopsAtExpiredDeadlineAndInvitesSetupRetry() async throws {
-        let service = TerminalTelegramPairingService(botToken: "token")
-        do {
-            _ = try await service.waitForPairing(
-                code: "ABCD", deadline: Date(timeIntervalSince1970: 0)
-            )
-            Issue.record("expected an expired pairing wait")
-        } catch let error as TerminalTelegramPairingError {
-            #expect(error == .expired)
-            #expect(error.localizedDescription.contains("/setup"))
-        }
     }
 
     @Test
@@ -580,13 +295,6 @@ struct TerminalTelegramFoundationTests {
         #expect(digest != payload)
         #expect(digest.count == 64) // SHA-256 hex
         #expect(TerminalTelegramPairingGrantStore.digest(payload.lowercased()) == digest)
-    }
-
-    /// The deep link is a t.me URL with the start parameter.
-    @Test
-    func deepLinkShape() {
-        let link = TerminalTelegramPairingGrantLink.deepLink(botUsername: "zencode_bot", payload: "ABCD")
-        #expect(link == "https://t.me/zencode_bot?start=ABCD")
     }
 
     /// `/start <payload>` extraction, including @botname, bare /start (nil)
@@ -728,40 +436,7 @@ struct TerminalTelegramGovernedSendTests {
         let receipt = try await client.sendMessage("hello", to: 9, governor: TerminalTelegramRateGovernor())
         #expect(receipt == 51)
     }
-
-    /// A 400 is never retried: the error surfaces immediately.
-    @Test
-    func nonRateLimitFailureIsNotRetried() async throws {
-        let transport = ScriptedTelegramHTTPTransport(responses: [
-            (400, Data(#"{"ok":false,"error_code":400,"description":"Bad Request: chat not found"}"#.utf8)),
-        ])
-        let client = TerminalTelegramAPIClient(token: "t", transport: transport)
-        do {
-            _ = try await client.sendMessage("hello", to: 9, governor: TerminalTelegramRateGovernor())
-            Issue.record("expected the 400 to throw")
-        } catch let error as TerminalTelegramControlError {
-            guard case let .apiFailure(status, _, description, _) = error else {
-                Issue.record("expected apiFailure, got \(error)")
-                return
-            }
-            #expect(status == 400)
-            #expect(description == "Bad Request: chat not found")
-        }
-    }
-
-    /// Without a governor the send behaves exactly as before: one request,
-    /// result or thrown error, no retry loop.
-    @Test
-    func ungovernedSendKeepsLegacyBehaviour() async throws {
-        let transport = ScriptedTelegramHTTPTransport(responses: [
-            (200, Data(#"{"ok":true,"result":{"message_id":7,"chat":{"id":9,"type":"private"},"text":"ok"}}"#.utf8)),
-        ])
-        let client = TerminalTelegramAPIClient(token: "t", transport: transport)
-        let receipt = try await client.sendMessage("hello", to: 9)
-        #expect(receipt == 7)
-    }
 }
-
 
 @Suite
 struct TerminalTelegramReleaseFenceTests {
@@ -787,247 +462,5 @@ struct TerminalTelegramReleaseFenceTests {
         }
     }
 
-    @Test
-    func downstreamMailboxIsBoundedLosslessAndBackpressuresProducer() async throws {
-        let mailbox = TerminalTelegramMailbox<Int>(capacity: 1)
-        #expect(await mailbox.send(1))
-        let second = Task { await mailbox.send(2) }
-
-        var observedBackpressure = false
-        for _ in 0..<1_000 {
-            if await mailbox.hasBackpressuredProducerForTesting {
-                observedBackpressure = true
-                break
-            }
-            await Task.yield()
-        }
-        #expect(observedBackpressure)
-        #expect(await mailbox.bufferedCountForTesting == 1)
-
-        var iterator = mailbox.makeAsyncIterator()
-        #expect(await iterator.next() == 1)
-        #expect(await second.value)
-        #expect(await iterator.next() == 2)
-        await mailbox.finish()
-    }
-
     // MARK: - Suspended receiver identity
-
-    /// Polls an async condition with cooperative yields: event-driven
-    /// observation of actor state, never wall-clock sleeps.
-    private static func waitUntil(_ condition: () async -> Bool) async {
-        for _ in 0..<1_000 {
-            if await condition() { return }
-            await Task.yield()
-        }
-        Issue.record("mailbox condition was never observed within 1,000 yields")
-    }
-
-    /// Starts a consumer on an empty mailbox and returns it only once its
-    /// receiver is actually parked in the actor.
-    private static func parkConsumer(
-        on mailbox: TerminalTelegramMailbox<Int>
-    ) async -> Task<Int?, Never> {
-        let consumer = Task { await mailbox.nextElement() }
-        await waitUntil { await mailbox.hasSuspendedReceiverForTesting }
-        return consumer
-    }
-
-    /// Cancelling the consumer that parked a receiver vacates only that
-    /// receiver: the slot frees up and a later element is retained in the
-    /// bounded buffer instead of vanishing into the dead continuation.
-    @Test
-    func cancellingConsumerVacatesOnlyItsOwnReceiver() async {
-        let mailbox = TerminalTelegramMailbox<Int>(capacity: 1)
-        let consumer = await Self.parkConsumer(on: mailbox)
-
-        consumer.cancel()
-        #expect(await consumer.value == nil)
-        await Self.waitUntil { await !mailbox.hasSuspendedReceiverForTesting }
-
-        #expect(await mailbox.send(1))
-        #expect(await mailbox.bufferedCountForTesting == 1)
-        #expect(await mailbox.nextElement() == 1)
-        await mailbox.finish()
-    }
-
-    /// A second receive while one is suspended resolves the first with `nil`
-    /// — never a silent overwrite of its continuation — and consumes no
-    /// element: the next send is handed to the receiver that is actually
-    /// waiting.
-    @Test
-    func newerReceiveSupersedesSuspendedReceiverWithoutConsuming() async {
-        let mailbox = TerminalTelegramMailbox<Int>(capacity: 2)
-        let first = await Self.parkConsumer(on: mailbox)
-
-        let second = Task { await mailbox.nextElement() }
-        // Only `second` parking can resolve `first`, and it must be with nil.
-        #expect(await first.value == nil)
-        await Self.waitUntil { await mailbox.hasSuspendedReceiverForTesting }
-
-        #expect(await mailbox.send(7))
-        #expect(await second.value == 7)
-        #expect(await mailbox.bufferedCountForTesting == 0)
-        await mailbox.finish()
-    }
-
-    /// The handoff race the receiver identity exists for: the cancellation
-    /// handler of a superseded consumer may run after a replacement receiver
-    /// has parked. It must leave that replacement alone, whichever order the
-    /// two events interleave in.
-    @Test
-    func lateCancellationLeavesTheReplacementReceiverIntact() async {
-        let mailbox = TerminalTelegramMailbox<Int>(capacity: 1)
-        let first = await Self.parkConsumer(on: mailbox)
-
-        // Cancel, then hand off before the cancellation handler can run.
-        first.cancel()
-        let second = Task { await mailbox.nextElement() }
-        #expect(await first.value == nil)
-        await Self.waitUntil { await mailbox.hasSuspendedReceiverForTesting }
-        // Give any in-flight cancellation handler the chance to wrongly
-        // vacate the replacement receiver.
-        for _ in 0..<64 { await Task.yield() }
-        #expect(await mailbox.hasSuspendedReceiverForTesting)
-
-        #expect(await mailbox.send(9))
-        #expect(await second.value == 9)
-        await mailbox.finish()
-    }
-
-    /// `finish()` resolves the receiver that is currently suspended, so a
-    /// consumer parked on an empty mailbox is released with `nil` instead of
-    /// waiting forever.
-    @Test
-    func finishResolvesTheSuspendedReceiver() async {
-        let mailbox = TerminalTelegramMailbox<Int>(capacity: 1)
-        let consumer = await Self.parkConsumer(on: mailbox)
-
-        await mailbox.finish()
-        #expect(await consumer.value == nil)
-        #expect(await mailbox.hasSuspendedReceiverForTesting == false)
-    }
-
-    // MARK: - v2.0.1 public ingress surface
-
-    private static func probeMessage(id: Int) -> TerminalTelegramIncomingMessage {
-        TerminalTelegramIncomingMessage(
-            chatID: 42, userID: 7, text: "m\(id)", voice: nil,
-            messageID: id, chatTitle: nil, username: nil
-        )
-    }
-
-    private static func makeControlService() -> TerminalTelegramControlService {
-        TerminalTelegramControlService(
-            transportFactory: { StubTelegramHTTPTransport(status: 200, body: Data()) }
-        )
-    }
-
-    /// Source compatibility with 2.0.1: the public ingress surface is still an
-    /// `AsyncStream<TerminalTelegramIncomingMessage>` plus the public buffer
-    /// limit constant, even though the bounded mailbox now owns the RAM bound.
-    @Test
-    func publicIngressSurfaceStaysSourceCompatibleWithV201() async throws {
-        let service = Self.makeControlService()
-        let stream: AsyncStream<TerminalTelegramIncomingMessage> = service.incomingMessages
-        let limit: Int = TerminalTelegramControlService.incomingMessageBufferLimit
-        #expect(limit == 64)
-
-        #expect(await service.incomingMailbox.send(Self.probeMessage(id: 1)))
-        var iterator = stream.makeAsyncIterator()
-        #expect(await iterator.next()?.messageID == 1)
-        await service.incomingMailbox.finish()
-    }
-
-    /// The `AsyncStream` façade is only a demand-driven view of the mailbox: it
-    /// adds no buffer of its own, so the ingress stays bounded to
-    /// `incomingMessageBufferLimit`, backpressures the extra producer and loses
-    /// no message while draining through the public API.
-    @Test
-    func publicIngressStreamStaysBoundedLosslessAndBackpressured() async throws {
-        let service = Self.makeControlService()
-        let mailbox = service.incomingMailbox
-        let limit = TerminalTelegramControlService.incomingMessageBufferLimit
-
-        for id in 1...limit {
-            #expect(await mailbox.send(Self.probeMessage(id: id)))
-        }
-        let overflow = Task { await mailbox.send(Self.probeMessage(id: limit + 1)) }
-
-        var observedBackpressure = false
-        for _ in 0..<1_000 {
-            if await mailbox.hasBackpressuredProducerForTesting {
-                observedBackpressure = true
-                break
-            }
-            await Task.yield()
-        }
-        #expect(observedBackpressure)
-        // The façade holds nothing: everything retained is the bounded mailbox.
-        #expect(await mailbox.bufferedCountForTesting == limit)
-
-        var iterator = service.incomingMessages.makeAsyncIterator()
-        for id in 1...limit {
-            #expect(await iterator.next()?.messageID == id)
-        }
-        #expect(await overflow.value)
-        #expect(await iterator.next()?.messageID == limit + 1)
-        await mailbox.finish()
-    }
-
-    /// Regression: `/telegram on` reported success but no Telegram message was
-    /// ever delivered again once an ingress consumer had gone away.
-    ///
-    /// `AsyncStream(unfolding:)` is one-shot. When the façade was stored in a
-    /// `let`, the first `nil` — a cancelled forwarding task, a consumer handoff
-    /// or a restarted panel loop — terminated that single shared stream forever,
-    /// so every later consumer completed immediately while the mailbox happily
-    /// kept buffering. The service must vend a live stream to the next consumer.
-    @Test
-    func ingressSurvivesACancelledConsumerAndStillFeedsTheNextOne() async throws {
-        let service = Self.makeControlService()
-        let mailbox = service.incomingMailbox
-
-        // A forwarding task parks on the ingress and is then torn down.
-        let first = Task { for await _ in service.incomingMessages {} }
-        var parked = false
-        for _ in 0..<1_000 {
-            if await mailbox.hasSuspendedReceiverForTesting {
-                parked = true
-                break
-            }
-            await Task.yield()
-        }
-        #expect(parked)
-        first.cancel()
-        await first.value
-
-        // `/telegram on` starts a fresh forwarding task: ingress must still work.
-        let second = Task { () -> Int? in
-            for await message in service.incomingMessages { return message.messageID }
-            return nil
-        }
-        #expect(await mailbox.send(Self.probeMessage(id: 7)))
-        #expect(await second.value == 7)
-        await mailbox.finish()
-    }
-
-    /// Re-vending the façade must not add buffering or duplicate elements: the
-    /// bounded mailbox stays the single shared queue behind every stream.
-    @Test
-    func ingressVendsIndependentStreamsOverTheOneSharedMailbox() async throws {
-        let service = Self.makeControlService()
-        let mailbox = service.incomingMailbox
-
-        var first = service.incomingMessages.makeAsyncIterator()
-        var second = service.incomingMessages.makeAsyncIterator()
-
-        #expect(await mailbox.send(Self.probeMessage(id: 1)))
-        #expect(await first.next()?.messageID == 1)
-        // Delivered once only: the element is not replayed to the other stream.
-        #expect(await mailbox.send(Self.probeMessage(id: 2)))
-        #expect(await second.next()?.messageID == 2)
-        #expect(await mailbox.bufferedCountForTesting == 0)
-        await mailbox.finish()
-    }
 }

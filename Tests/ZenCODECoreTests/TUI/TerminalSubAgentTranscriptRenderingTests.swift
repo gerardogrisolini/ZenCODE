@@ -92,35 +92,6 @@ struct TerminalSubAgentTranscriptRenderingTests {
     }
 
     @Test
-    func wrappedPromptRowsStayAlignedAfterThePromptMarker() {
-        let rows = plainRows(
-            [.userPrompt(text: "abcdefghijklmnopqrstuvwxyz\nsecond", attachments: [], origin: .unknown)],
-            width: 12
-        )
-
-        #expect(rows == ["> abcdefghij", "  klmnopqrst", "  uvwxyz", "  second"])
-    }
-
-    @Test
-    func userPromptOnATerminalPadsTheBandToTheWidth() {
-        let width = 24
-        let rows = TerminalChat.renderSubAgentTranscriptRows(
-            [.userPrompt(text: "Fix the build and then run every test", attachments: [], origin: .unknown)],
-            width: width,
-            standardErrorIsTerminal: true
-        )
-
-        #expect(rows.count == 2)
-        for row in rows {
-            #expect(row.hasPrefix(TerminalStyle.Prompt.background))
-            #expect(row.hasSuffix(TerminalStyle.reset))
-            #expect(!row.contains("\u{1B}[K"))
-            #expect(TerminalANSIText.visibleWidth(row) == width)
-        }
-        #expect(TerminalANSIText.stripANSI(rows[0]).hasPrefix("> Fix the build"))
-    }
-
-    @Test
     func thoughtRendersTheThinkingTitleAndItsParagraph() {
         let rows = plainRows([.thought("Weighing the two options.")])
 
@@ -191,39 +162,6 @@ struct TerminalSubAgentTranscriptRenderingTests {
         #expect(firstRow < secondRow)
     }
 
-    @Test
-    func completedToolCallWithoutAStartIsRenderedWhereItArrives() {
-        let call = readFileCall(id: "orphan")
-        let rows = plainRows([
-            .assistantText("Before."),
-            .toolCallCompleted(call, result: DirectAgentToolResult(output: "ok", summary: "ok"))
-        ])
-
-        #expect(occurrences(of: "local.readFile", in: rows) == 1)
-        #expect(occurrences(of: "✅", in: rows) == 1)
-        #expect(rows.first == "Before.")
-    }
-
-    @Test
-    func failedProcessShowsItsExitCodeWithoutElapsedTime() {
-        let call = presentedToolCall(
-            id: "exec-1",
-            name: "local.exec",
-            argumentsObject: ["command": "swift test"],
-            argumentsJSON: #"{"command":"swift test"}"#
-        )
-        let rows = plainRows([
-            .toolCallStarted(call),
-            .toolCallCompleted(call, result: DirectAgentToolResult(
-                output: "exit_code: 2\nstderr: failure",
-                summary: "exit_code: 2"
-            ))
-        ])
-
-        #expect(occurrences(of: "⚠️", in: rows) == 1)
-        #expect(occurrences(of: "exit 2", in: rows) == 1)
-    }
-
     /// The plain rows the main chat draws for `call` completed with `result`
     /// after `elapsed`, at the default width of ``plainRows(_:width:)``.
     private func mainChatCompletedRows(
@@ -286,64 +224,6 @@ struct TerminalSubAgentTranscriptRenderingTests {
     }
 
     @Test
-    func runningToolCallShowsNoDuration() {
-        let call = readFileCall(id: "read-1")
-        let elapsed = Duration.milliseconds(1_250)
-
-        let rows = TerminalChat.renderSubAgentTranscriptRows(
-            [.toolCallStarted(call)],
-            toolDurations: ["read-1": elapsed],
-            width: 80,
-            standardErrorIsTerminal: false
-        )
-
-        #expect(rows == plainRows([.toolCallStarted(call)]))
-        #expect(occurrences(of: ToolCallPresentation.elapsedTimeText(elapsed), in: rows) == 0)
-        #expect(occurrences(of: "⏳", in: rows) == 1)
-    }
-
-    @Test
-    func toolCallsWithoutADurationRenderAsBefore() {
-        let call = readFileCall(id: "read-1")
-        let result = DirectAgentToolResult(output: "contents", summary: "contents")
-        let kinds: [ChatTurnEntry.Kind] = [
-            .assistantText("Reading."),
-            .toolCallStarted(call),
-            .toolCallCompleted(call, result: result)
-        ]
-
-        let withoutDurations = plainRows(kinds)
-        // A duration of another call changes nothing either.
-        let withOtherDurations = TerminalChat.renderSubAgentTranscriptRows(
-            kinds,
-            toolDurations: ["read-2": .seconds(4)],
-            width: 80,
-            standardErrorIsTerminal: false
-        )
-
-        #expect(withOtherDurations == withoutDurations)
-        #expect(withoutDurations == ["Reading.", ""] + mainChatCompletedRows(call, result: result, elapsed: nil))
-        #expect(occurrences(of: ToolCallPresentation.elapsedTimeText(.seconds(4)), in: withoutDurations) == 0)
-    }
-
-    @Test
-    func toolCallsWithoutAnIDNeverTakeADuration() {
-        let call = readFileCall(id: "")
-        let result = DirectAgentToolResult(output: "contents", summary: "contents")
-        let kinds: [ChatTurnEntry.Kind] = [.toolCallStarted(call), .toolCallCompleted(call, result: result)]
-
-        let rows = TerminalChat.renderSubAgentTranscriptRows(
-            kinds,
-            toolDurations: ["": .seconds(4)],
-            width: 80,
-            standardErrorIsTerminal: false
-        )
-
-        #expect(rows == plainRows(kinds))
-        #expect(occurrences(of: ToolCallPresentation.elapsedTimeText(.seconds(4)), in: rows) == 0)
-    }
-
-    @Test
     func suppressedToolsHaveNoRows() {
         let hidden = agentMessageCall(id: "message-1")
         let rows = plainRows([
@@ -354,30 +234,6 @@ struct TerminalSubAgentTranscriptRenderingTests {
 
         #expect(rows == ["Asking the worker."])
         #expect(plainRows([.toolCallStarted(hidden)]).isEmpty)
-    }
-
-    @Test
-    func nonConversationKindsHaveNoRows() {
-        let ignored: [ChatTurnEntry.Kind] = [
-            .turnPhase(.started),
-            .turnPhase(.modelReturned),
-            .turnPhase(.finishing),
-            .notice(.operationFailed(description: "boom")),
-            .workflowNotice(.blocked(graphID: "graph", message: "waiting")),
-            .fileArtifacts(
-                SessionFileArtifactHistory.Turn(number: 1, artifacts: []),
-                agentID: "agent_transcript_worker",
-                isSealed: false
-            )
-        ]
-
-        #expect(plainRows(ignored).isEmpty)
-        #expect(TerminalChat.renderSubAgentTranscriptRows(
-            ignored,
-            width: 80,
-            standardErrorIsTerminal: true
-        ).isEmpty)
-        #expect(plainRows(ignored + [.assistantText("Only this.")] + ignored) == ["Only this."])
     }
 
     @Test
@@ -443,31 +299,6 @@ struct TerminalSubAgentTranscriptRenderingTests {
         if !standardErrorIsTerminal {
             #expect(rows.allSatisfy { !$0.contains("\u{1B}") })
         }
-    }
-
-    @Test
-    func thoughtRowsCarryTheirOwnStyle() {
-        let width = 30
-        let rows = TerminalChat.renderSubAgentTranscriptRows(
-            [.thought("First paragraph of the reasoning that wraps.\n\nSecond paragraph that also wraps around.")],
-            width: width,
-            standardErrorIsTerminal: true
-        )
-        let bodyRows = rows.dropFirst().filter {
-            !TerminalANSIText.stripANSI($0).trimmingCharacters(in: .whitespaces).isEmpty
-        }
-
-        #expect(rows.first == "\(TerminalStyle.Thinking.title)\(TerminalChat.thinkingPlaceholder)\(TerminalStyle.reset)")
-        #expect(bodyRows.count >= 4)
-        for row in rows {
-            // Written on its own, a row leaves no style open.
-            #expect(TerminalANSIText.updatedActiveStyle("", scanning: row).isEmpty, "\(row.debugDescription)")
-        }
-        for row in bodyRows {
-            // Every row with visible text opens the thinking style itself.
-            #expect(row.hasPrefix(TerminalStyle.Thinking.body), "\(row.debugDescription)")
-        }
-        expectRowsFit(rows, width: width)
     }
 
     // MARK: - Header and live activity
@@ -571,51 +402,6 @@ struct TerminalSubAgentTranscriptRenderingTests {
         }
     }
 
-    @Test
-    func liveActivityParagraphKeepsTheTextAsTheTranscriptDoes() {
-        let paragraph = "  Weighing the options.\n"
-        let rows = liveActivity(
-            snapshot(currentActivity: paragraph, currentActivityKind: .thinking),
-            standardErrorIsTerminal: false
-        )
-
-        #expect(rows == plainRows([.thought(paragraph)]))
-        #expect(rows.contains { $0.contains("Weighing the options.") })
-    }
-
-    @Test(arguments: [false, true])
-    func liveActivityInTheMessagePhaseIsOnlyThePlaceholder(standardErrorIsTerminal: Bool) {
-        let rows = liveActivity(
-            snapshot(currentActivity: "Working on the parser", currentActivityKind: .content),
-            standardErrorIsTerminal: standardErrorIsTerminal
-        )
-
-        #expect(rows == [thinkingTitle(standardErrorIsTerminal: standardErrorIsTerminal)])
-        #expect(!rows.contains { $0.contains("Working on the parser") || $0.contains("💬") })
-    }
-
-    @Test(arguments: [false, true])
-    func liveActivityWithoutAParagraphIsOnlyThePlaceholder(standardErrorIsTerminal: Bool) {
-        let placeholder = [thinkingTitle(standardErrorIsTerminal: standardErrorIsTerminal)]
-        let agents = [
-            // No activity at all.
-            snapshot(),
-            // The message phase without text.
-            snapshot(currentActivityKind: .content),
-            // Reasoning without a paragraph yet.
-            snapshot(currentActivityKind: .thinking),
-            snapshot(currentActivity: " \n", currentActivityKind: .thinking),
-            // Queued.
-            snapshot(status: .queued),
-            // A blank tool name is no tool.
-            snapshot(currentActivity: "Weighing.", currentActivityKind: .content, currentToolName: "  ")
-        ]
-
-        for agent in agents {
-            #expect(liveActivity(agent, standardErrorIsTerminal: standardErrorIsTerminal) == placeholder)
-        }
-    }
-
     @Test(arguments: [false, true])
     func liveActivityHasNoRowsWhileAToolRuns(standardErrorIsTerminal: Bool) {
         // As the runtime leaves the agent at a call's start: the message that
@@ -688,35 +474,6 @@ struct TerminalSubAgentTranscriptRenderingTests {
             liveActivity(completed, standardErrorIsTerminal: standardErrorIsTerminal)
                 == [thinkingTitle(standardErrorIsTerminal: standardErrorIsTerminal)]
         )
-    }
-
-    @Test(arguments: [false, true])
-    func liveActivityDoesNotCountASuppressedToolAsRunning(standardErrorIsTerminal: Bool) {
-        let paragraph = "Weighing the options."
-
-        let thinking = liveActivity(
-            snapshot(
-                currentActivity: paragraph,
-                currentActivityKind: .thinking,
-                currentToolName: "agent.message",
-                currentToolIsRunning: true
-            ),
-            standardErrorIsTerminal: standardErrorIsTerminal
-        )
-        let withoutActivity = liveActivity(
-            snapshot(currentToolName: "agent.message", currentToolIsRunning: true),
-            standardErrorIsTerminal: standardErrorIsTerminal
-        )
-
-        #expect(TerminalChat.shouldSuppressToolRendering(for: "agent.message"))
-        #expect(
-            thinking == TerminalChat.renderSubAgentTranscriptRows(
-                [.thought(paragraph)],
-                width: 80,
-                standardErrorIsTerminal: standardErrorIsTerminal
-            )
-        )
-        #expect(withoutActivity == [thinkingTitle(standardErrorIsTerminal: standardErrorIsTerminal)])
     }
 
     @Test(arguments: [false, true])

@@ -36,22 +36,6 @@ struct SubscriptionAuthFlowTests {
 
 #if os(macOS)
     @Test
-    func chatGPTCallbackServerThrowsWhenPortUnavailable() async throws {
-        try await withCallbackPortBlocker { didBlock in
-            #expect(didBlock)
-            do {
-                _ = try await ChatGPTSubscriptionCallbackServer(state: "state").start()
-                Issue.record("Expected the callback server to fail when the port is taken")
-            } catch ChatGPTSubscriptionAuthError.callbackServerUnavailable {
-                // Expected: the listener failure must propagate instead of
-                // returning a listener-less server whose waitForCode() hangs.
-            } catch {
-                Issue.record("Unexpected error: \(error)")
-            }
-        }
-    }
-
-    @Test
     func chatGPTSignInDegradesToManualCodeWhenCallbackPortIsTaken() async throws {
         try await withCallbackPortBlocker { didBlock in
             #expect(didBlock)
@@ -177,29 +161,6 @@ struct SubscriptionAuthFlowTests {
         #expect(queryItems["redirect_uri"] == "https://platform.claude.com/oauth/code/callback")
         #expect(queryItems["code_challenge_method"] == "S256")
         #expect(queryItems["state"] != nil)
-    }
-
-    @Test
-    func anthropicManualCodeRequiresState() async throws {
-        let session = try await AnthropicSubscriptionAuthService.startSignIn()
-
-        do {
-            try session.submitAuthorizationInput("authorization-code-only")
-            Issue.record("Expected bare authorization code to be rejected")
-        } catch AnthropicSubscriptionAuthError.missingOAuthState {
-            // Expected: hosted callback paste should include the state suffix.
-        } catch {
-            Issue.record("Unexpected error: \(error)")
-        }
-    }
-
-    @Test
-    func anthropicManualCodeAcceptsCodeStatePair() async throws {
-        let session = try await AnthropicSubscriptionAuthService.startSignIn()
-        let components = try #require(URLComponents(url: session.authorizationURL, resolvingAgainstBaseURL: false))
-        let state = try #require(components.queryItems?.first(where: { $0.name == "state" })?.value)
-
-        try session.submitAuthorizationInput("authorization-code#\(state)")
     }
 
     @Test

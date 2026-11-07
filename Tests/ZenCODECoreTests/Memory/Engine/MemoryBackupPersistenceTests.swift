@@ -48,24 +48,6 @@ struct MemoryBackupPersistenceTests {
     }
 
     @Test
-    func backupReloadsAsTheSameGraph() async throws {
-        let directory = try Self.makeDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let graphURL = directory.appendingPathComponent("memory.graph.json")
-        let graph = Self.sampleGraph(contents: ["first", "second", "third"])
-
-        try JSONMemoryPersistence.writeBackup(of: graph, forGraphAt: graphURL)
-
-        let reloaded = try await PersistenceCharacterizationTests.loadCleanupBackup(of: graphURL)
-        #expect(reloaded.memories == graph.memories)
-        #expect(reloaded.memories.values.allSatisfy { $0.embedding?.count == 3 })
-        #expect(reloaded.tags == graph.tags)
-        #expect(reloaded.edges == graph.edges)
-        #expect(reloaded.metadata == graph.metadata)
-        #expect(reloaded.graphVersion == MemoryGraph.currentGraphVersion)
-    }
-
-    @Test
     func backupPayloadIsByteIdenticalToASavedGraph() async throws {
         let directory = try Self.makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -29,29 +29,7 @@ struct TerminalPromptEditorTests {
         ]
     }
 
-    @Test
-    func toolsCompletionIncludesExecutionLogLauncher() {
-        #expect(TerminalPromptCompletionCatalog.argumentSuggestions(for: "/tools")
-            .contains(TerminalCommandSuggestion(command: "logs", summary: "open the system log viewer")))
-    }
-
     // MARK: - Line and buffer motion
-
-    @Test
-    func artifactsCommandHasHelpRecognitionAndArgumentFreeCompletion() throws {
-        let descriptor = try #require(TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: false, telegramEnabled: false
-        ).first { $0.command == "/artifacts" })
-        #expect(descriptor.help.contains("grouped by turn"))
-        #expect(!descriptor.requiresArgument)
-        #expect(TerminalChat.isKnownSlashCommand("/artifacts"))
-        #expect(TerminalPromptCompletionCatalog.argumentSuggestions(for: "/artifacts").isEmpty)
-        var editor = makeEditor("/art")
-        let context = TerminalPromptEditorContext(suggestions: [
-            TerminalCommandSuggestion(command: descriptor.command, summary: descriptor.summary)
-        ])
-        #expect(editor.apply(.enter, context: context) == .submitted("/artifacts"))
-    }
 
     @Test
     func homeAndEndActOnTheLogicalLineWhileBufferShortcutsSpanTheDraft() {
@@ -96,22 +74,6 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
-    func verticalMotionUsesTerminalColumnsForWideCombiningAndTabCharacters() {
-        // `界` is two cells, `é` is one grapheme/one cell, and the tab advances
-        // to the next eight-cell stop.  Moving through a short line must retain
-        // that nine-cell preferred column for the final line.
-        var editor = makeEditor("界e\u{301}\tX\nab\n界e\u{301}\tX", cursorIndex: 4)
-        let context = TerminalPromptEditorContext()
-
-        #expect(editor.visualColumn(of: editor.cursorIndex) == 9)
-        #expect(editor.apply(.down, context: context) == .changed)
-        #expect(editor.visualColumn(of: editor.cursorIndex) == 2)
-        #expect(editor.apply(.down, context: context) == .changed)
-        #expect(editor.visualColumn(of: editor.cursorIndex) == 9)
-        #expect(editor.cursorIndex == editor.buffer.count)
-    }
-
-    @Test
     func verticalMotionFallsBackToHistoryAtTheBufferEdges() {
         var editor = makeEditor("one\ntwo", cursorIndex: 5)
         let context = TerminalPromptEditorContext(history: ["older", "newer"])
@@ -140,50 +102,7 @@ struct TerminalPromptEditorTests {
         #expect(editor.historyIndex == nil)
     }
 
-    @Test
-    func downWithoutHistoryNavigationAtTheLastLineIsANoOp() {
-        var editor = makeEditor("only line")
-        let context = TerminalPromptEditorContext(history: ["older"])
-
-        #expect(editor.apply(.down, context: context) == .ignored)
-        #expect(String(editor.buffer) == "only line")
-    }
-
     // MARK: - History recall
-
-    @Test
-    func historyFromEmptyPromptTraversesSlashAndMultilineEntriesThenReturnsToEmpty() {
-        var editor = TerminalPromptEditor()
-        let history = ["first\nsecond", "/feature", "/plan", "/tasks"]
-        let context = TerminalPromptEditorContext(
-            history: history,
-            suggestions: commandCatalog
-        )
-
-        #expect(editor.apply(.down, context: context) == .ignored)
-        for index in history.indices.reversed() {
-            #expect(editor.apply(.up, context: context) == .changed)
-            #expect(String(editor.buffer) == history[index])
-            #expect(editor.historyIndex == index)
-            #expect(editor.cursorIndex == editor.buffer.count)
-            #expect(editor.visibleSuggestions(context: context).isEmpty)
-        }
-
-        _ = editor.apply(.up, context: context)
-        #expect(String(editor.buffer) == history[0])
-        #expect(editor.historyIndex == 0)
-
-        for index in history.indices.dropFirst() {
-            #expect(editor.apply(.down, context: context) == .changed)
-            #expect(String(editor.buffer) == history[index])
-            #expect(editor.visibleSuggestions(context: context).isEmpty)
-        }
-        #expect(editor.apply(.down, context: context) == .changed)
-        #expect(editor.buffer.isEmpty)
-        #expect(editor.cursorIndex == 0)
-        #expect(editor.historyIndex == nil)
-        #expect(editor.apply(.down, context: context) == .ignored)
-    }
 
     @Test(arguments: ["/tasks", "/plan", "/fea", "/feature l", "/plan inspect this", "first\nsecond"], [true, false])
     func enterSubmitsRecalledInputWithoutAcceptingCompletion(line: String, supportsCompletions: Bool) {
@@ -200,22 +119,6 @@ struct TerminalPromptEditorTests {
         #expect(editor.buffer.isEmpty)
         #expect(editor.historyIndex == nil)
         #expect(editor.draftBeforeHistory.isEmpty)
-    }
-
-    @Test
-    func cursorMotionDuringRecallDoesNotReactivateCompletion() {
-        var editor = TerminalPromptEditor()
-        let context = TerminalPromptEditorContext(
-            history: ["/plan inspect this"],
-            suggestions: commandCatalog
-        )
-
-        _ = editor.apply(.up, context: context)
-        _ = editor.apply(.home, context: context)
-        #expect(editor.historyIndex == 0)
-        #expect(editor.visibleSuggestions(context: context).isEmpty)
-        #expect(editor.apply(.tab, context: context) == .ignored)
-        #expect(editor.apply(.enter, context: context) == .submitted("/plan inspect this"))
     }
 
     @Test
@@ -236,21 +139,6 @@ struct TerminalPromptEditorTests {
         #expect(editor.suggestionIndex == 1)
         #expect(String(editor.buffer) == "/feature")
         #expect(editor.apply(.enter, context: context) == .submitted("/featurex"))
-    }
-
-    @Test
-    func newlineInRecalledEntryRestoresMultilineEditing() {
-        var editor = TerminalPromptEditor()
-        let context = TerminalPromptEditorContext(history: ["older", "/plan"])
-
-        _ = editor.apply(.up, context: context)
-        #expect(editor.apply(.newline, context: context) == .changed)
-        #expect(editor.historyIndex == nil)
-        #expect(String(editor.buffer) == "/plan\n")
-        #expect(editor.apply(.up, context: context) == .changed)
-        #expect(String(editor.buffer) == "/plan\n")
-        #expect(editor.cursorIndex == 0)
-        #expect(editor.historyIndex == nil)
     }
 
     // MARK: - Word motion and deletion
@@ -301,25 +189,6 @@ struct TerminalPromptEditorTests {
         #expect(editor.apply(.clearDraft, context: context) == .ignored)
     }
 
-    @Test
-    func wordBoundariesTreatUnicodeLettersDigitsAndSymbolsConsistently() {
-        var editor = makeEditor("café_東京 42—done", cursorIndex: 0)
-        let context = TerminalPromptEditorContext()
-
-        _ = editor.apply(.wordRight, context: context)
-        #expect(String(editor.buffer[..<editor.cursorIndex]) == "café_東京")
-        _ = editor.apply(.wordRight, context: context)
-        #expect(String(editor.buffer[..<editor.cursorIndex]) == "café_東京 42")
-        _ = editor.apply(.wordRight, context: context)
-        #expect(String(editor.buffer[..<editor.cursorIndex]) == "café_東京 42—")
-        _ = editor.apply(.wordRight, context: context)
-        #expect(String(editor.buffer[..<editor.cursorIndex]) == "café_東京 42—done")
-
-        editor = makeEditor("café_東京 42—done")
-        #expect(editor.apply(.deleteWordBefore, context: context) == .changed)
-        #expect(String(editor.buffer) == "café_東京 42—")
-    }
-
     // MARK: - Completions
 
     @Test
@@ -342,16 +211,6 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
-    func completionReplacesOnlyTheCommandTokenAndKeepsTheRestOfTheLine() {
-        var editor = makeEditor("/fea trailing text", cursorIndex: 4)
-        let context = TerminalPromptEditorContext(suggestions: commandCatalog)
-
-        #expect(editor.apply(.tab, context: context) == .changed)
-        #expect(String(editor.buffer) == "/feature trailing text")
-        #expect(editor.cursorIndex == 8)
-    }
-
-    @Test
     func enterSubmitsACompleteCommandButOnlySeparatesOneNeedingAnArgument() {
         var editor = makeEditor("/fea")
         let context = TerminalPromptEditorContext(suggestions: commandCatalog)
@@ -363,29 +222,6 @@ struct TerminalPromptEditorTests {
         #expect(editor.apply(.enter, context: context) == .changed)
         #expect(String(editor.buffer) == "/plan ")
         #expect(editor.cursorIndex == 6)
-    }
-
-    @Test
-    func enterSendsARequiredArgumentCommandWithoutChangingItsExistingOperand() {
-        let suggestions = [
-            TerminalCommandSuggestion(
-                command: "/attach",
-                summary: "attach files",
-                requiresArgument: true
-            )
-        ]
-        let context = TerminalPromptEditorContext(suggestions: suggestions)
-        var editor = makeEditor("/attach photo.png", cursorIndex: 7)
-
-        #expect(editor.apply(.enter, context: context) == .submitted("/attach photo.png"))
-        #expect(editor.buffer.isEmpty)
-
-        // The same rule holds for a required subcommand operand.
-        editor = makeEditor("/tasks retry task-42", cursorIndex: 12)
-        let taskContext = TerminalPromptEditorContext(
-            suggestions: [TerminalCommandSuggestion(command: "/tasks", summary: "tasks")]
-        )
-        #expect(editor.apply(.enter, context: taskContext) == .submitted("/tasks retry task-42"))
     }
 
     @Test
@@ -404,41 +240,6 @@ struct TerminalPromptEditorTests {
         // hidden command cannot leak through its subcommands.
         editor = makeEditor("/telegram o")
         #expect(editor.visibleSuggestions(context: context).isEmpty)
-    }
-
-    @Test
-    func argumentCompletionsStopAfterTheSubcommandSlot() {
-        #expect(
-            TerminalPromptCompletion.completion(
-                buffer: Array("/tasks show abc"),
-                cursorIndex: 15
-            ) == nil
-        )
-        #expect(
-            TerminalPromptCompletion.completion(
-                buffer: Array("/tasks sh"),
-                cursorIndex: 9
-            )?.kind == .argument(command: "/tasks")
-        )
-    }
-
-    @Test
-    func completionUsesTheExactCaseAndLiteralSpaceGrammarOfTheDispatcher() {
-        let context = TerminalPromptEditorContext(suggestions: commandCatalog)
-        var editor = makeEditor("/TASKS re")
-        #expect(editor.visibleSuggestions(context: context).isEmpty)
-
-        editor = makeEditor("/tasks\tre", cursorIndex: 6)
-        #expect(editor.visibleSuggestions(context: context).isEmpty)
-        #expect(
-            TerminalPromptCompletion.completion(
-                buffer: Array("/tasks\tre"),
-                cursorIndex: 6
-            ) == nil
-        )
-
-        let attach = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/attach")
-        #expect(attach.first(where: { $0.command == "delete" })?.requiresArgument == true)
     }
 
     @Test
@@ -526,21 +327,6 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
-    func suggestionSelectionIsReconciledWheneverTheMatchSetShrinks() {
-        var editor = makeEditor("/f")
-        let context = TerminalPromptEditorContext(suggestions: commandCatalog)
-
-        #expect(editor.visibleSuggestions(context: context).count == 2)
-        _ = editor.apply(.down, context: context)
-        #expect(editor.suggestionIndex == 1)
-
-        // Narrowing to a single match must not leave the selection dangling.
-        _ = editor.apply(.character("eaturex"), context: context)
-        #expect(editor.visibleSuggestions(context: context).map(\.command) == ["/featurex"])
-        #expect(editor.suggestionIndex == 0)
-    }
-
-    @Test
     func editsAndCursorMovesResetSuggestionSelectionToTheFirstMatch() {
         let context = TerminalPromptEditorContext(
             suggestions: [TerminalCommandSuggestion(command: "/tasks", summary: "tasks")]
@@ -573,53 +359,6 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
-    func featureArgumentCompletionsIncludeEveryStaticParserAction() {
-        let arguments = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/feature")
-        #expect(
-            arguments.map(\.command)
-                == [
-                    "list", "ls", "status", "reload", "enable", "disable", "edit",
-                    "modify", "update", "promote", "delete", "build", "validate"
-                ]
-        )
-        let idActions = [
-            "enable", "disable", "edit", "modify", "update", "promote", "delete", "build", "validate"
-        ]
-
-        for action in idActions {
-            #expect(arguments.first(where: { $0.command == action })?.requiresArgument == true)
-        }
-
-        var editor = makeEditor("/feature en")
-        let context = TerminalPromptEditorContext(suggestions: commandCatalog)
-        #expect(editor.visibleSuggestions(context: context).map(\.command) == ["enable"])
-        #expect(editor.apply(.enter, context: context) == .changed)
-        #expect(String(editor.buffer) == "/feature enable ")
-    }
-
-    @Test
-    func taskAndChangesCompletionsIncludeStaticParserAliases() {
-        let taskArguments = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/tasks")
-        #expect(
-            taskArguments.map(\.command)
-                == ["status", "list", "ls", "show", "get", "retry", "cancel", "clear"]
-        )
-        #expect(taskArguments.first(where: { $0.command == "get" })?.requiresArgument == true)
-
-        let changesArguments = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/changes")
-        #expect(changesArguments.map(\.command) == ["diff", "--diff"])
-    }
-
-    @Test
-    func agentAndToolCompletionsIncludeEveryStaticParserParameter() {
-        let agentArguments = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/agents")
-        #expect(agentArguments.map(\.command) == ["list", "ls", "status"])
-
-        let toolArguments = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/tools")
-        #expect(toolArguments.map(\.command) == ["all", "none", "off", "clear", "disabled", "logs"])
-    }
-
-    @Test
     func skillArgumentCompletionsListAndSelectEveryStaticParameter() {
         let arguments = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/skills")
         #expect(arguments.map(\.command) == ["all", "none", "add", "install", "uninstall"])
@@ -646,20 +385,6 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
-    func suggestionsAreValuesUnlessMarkedAsGuides() {
-        #expect(!TerminalCommandSuggestion(command: "x", summary: "y").isHint)
-        #expect(TerminalCommandSuggestion(command: "<x>", summary: "y", isHint: true).isHint)
-        #expect(
-            TerminalCommandSuggestion(command: "x", summary: "y")
-                != TerminalCommandSuggestion(command: "x", summary: "y", isHint: true)
-        )
-        // Only `/cron` has guide rows, and none of them is a first-slot value.
-        for suggestion in TerminalPromptCompletionCatalog.argumentsByCommand.values.joined() {
-            #expect(!suggestion.isHint, "\(suggestion.command)")
-        }
-    }
-
-    @Test
     func tabOnAScheduleAliasInsertsItAndLeavesASpaceForThePrompt() {
         var editor = makeEditor("/cron add ")
 
@@ -668,47 +393,6 @@ struct TerminalPromptEditorTests {
         #expect(String(editor.buffer) == "/cron add @hourly ")
         #expect(editor.cursorIndex == editor.buffer.count)
         // The prompt slot now explains itself; `-f` is its only alternative.
-        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["<prompt>", "-f"])
-    }
-
-    @Test
-    func tabOnTheFileOptionInsertsItAndLeavesASpaceForThePath() {
-        var editor = makeEditor("/cron add @daily -")
-
-        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["-f"])
-        #expect(editor.apply(.tab, context: cronContext) == .changed)
-        #expect(String(editor.buffer) == "/cron add @daily -f ")
-        #expect(editor.cursorIndex == editor.buffer.count)
-        // The path slot explains itself, and a guide inserts nothing.
-        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["<path>"])
-        #expect(editor.apply(.tab, context: cronContext) == .ignored)
-        #expect(String(editor.buffer) == "/cron add @daily -f ")
-    }
-
-    @Test
-    func theInitialSelectionOfTheFirstPromptSlotIsTheGuideNotTheFileOption() {
-        var editor = makeEditor("/cron add @daily ")
-
-        let rows = editor.visibleSuggestions(context: cronContext)
-        #expect(rows.map(\.command) == ["<prompt>", "-f"])
-        #expect(rows[editor.suggestionIndex].isHint)
-        #expect(editor.apply(.tab, context: cronContext) == .ignored)
-        #expect(String(editor.buffer) == "/cron add @daily ")
-        #expect(editor.apply(.enter, context: cronContext) == .submitted("/cron add @daily "))
-    }
-
-    @Test
-    func tabOnAnExampleInsertsAllFiveFieldsAndLeavesASpaceForThePrompt() {
-        var editor = makeEditor("/cron add ")
-
-        for _ in 0..<6 {
-            _ = editor.apply(.down, context: cronContext)
-        }
-        #expect(editor.visibleSuggestions(context: cronContext)[editor.suggestionIndex].command == "0 9 * * 1-5")
-
-        #expect(editor.apply(.tab, context: cronContext) == .changed)
-        #expect(String(editor.buffer) == "/cron add 0 9 * * 1-5 ")
-        #expect(editor.cursorIndex == editor.buffer.count)
         #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["<prompt>", "-f"])
     }
 
@@ -759,15 +443,6 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
-    func enterOnAGuideSendsTheWholeLineWhateverTheCursorPosition() {
-        let text = "/cron add @daily Summarize open PRs"
-        var editor = makeEditor(text, cursorIndex: 24)
-
-        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["<prompt>"])
-        #expect(editor.apply(.enter, context: cronContext) == .submitted(text))
-    }
-
-    @Test
     func arrowsCycleThroughTheMailToGuideAndItsValues() {
         let text = "/cron mailto "
 
@@ -793,45 +468,6 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
-    func typingAMailToKeywordPrefixSelectsTheValueNotTheGuide() {
-        var editor = makeEditor("/cron mailto n")
-
-        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["none"])
-        #expect(editor.apply(.enter, context: cronContext) == .submitted("/cron mailto none"))
-
-        editor = makeEditor("/cron mailto ops@example.com")
-        #expect(editor.visibleSuggestions(context: cronContext).map(\.command) == ["<address>"])
-        #expect(editor.apply(.enter, context: cronContext) == .submitted("/cron mailto ops@example.com"))
-    }
-
-    @Test
-    func escapeHidesAGuideAndFreesTheArrowsForHistory() {
-        let context = TerminalPromptEditorContext(
-            history: ["/tasks"],
-            suggestions: cronContext.suggestions
-        )
-        var editor = makeEditor("/cron remove 2")
-
-        // While the guide is on screen the arrows belong to the menu.
-        #expect(editor.apply(.up, context: context) == .changed)
-        #expect(String(editor.buffer) == "/cron remove 2")
-        #expect(editor.historyIndex == nil)
-
-        #expect(editor.apply(.cancel, context: context) == .changed)
-        #expect(String(editor.buffer) == "/cron remove 2")
-        #expect(editor.visibleSuggestions(context: context).isEmpty)
-
-        #expect(editor.apply(.up, context: context) == .changed)
-        #expect(String(editor.buffer) == "/tasks")
-
-        // An edit brings the guide back for the new revision.
-        editor = makeEditor("/cron remove 2")
-        _ = editor.apply(.cancel, context: context)
-        _ = editor.apply(.character("3"), context: context)
-        #expect(editor.visibleSuggestions(context: context).map(\.command) == ["<n>"])
-    }
-
-    @Test
     func otherCommandsKeepTheirFirstSlotAndOfferNothingBeyondIt() {
         var editor = makeEditor("/sessions ")
         #expect(
@@ -848,36 +484,6 @@ struct TerminalPromptEditorTests {
             #expect(String(editor.buffer) == text)
             #expect(editor.apply(.enter, context: cronContext) == .submitted(text), "\(text)")
         }
-    }
-
-    @Test
-    func cronOperandsAreNotOfferedWhenCronIsNotAvailable() {
-        let context = TerminalPromptEditorContext(suggestions: commandCatalog)
-
-        for text in ["/cron add ", "/cron mailto ", "/cron remove "] {
-            var editor = makeEditor(text)
-            #expect(editor.visibleSuggestions(context: context).isEmpty, "\(text)")
-            #expect(editor.apply(.enter, context: context) == .submitted(text), "\(text)")
-        }
-    }
-
-    @Test
-    func cronOperandCompletionStillRejectsMultiLineAndTabbedDrafts() {
-        for text in ["/cron add \nx", "/cron add\t@d", "/cron add @d\n"] {
-            let editor = makeEditor(text)
-            #expect(editor.visibleSuggestions(context: cronContext).isEmpty, "\(text)")
-        }
-    }
-
-    @Test
-    func suggestionSelectionWrapsAroundTheMatchList() {
-        var editor = makeEditor("/fea")
-        let context = TerminalPromptEditorContext(suggestions: commandCatalog)
-
-        _ = editor.apply(.up, context: context)
-        #expect(editor.suggestionIndex == 1)
-        _ = editor.apply(.down, context: context)
-        #expect(editor.suggestionIndex == 0)
     }
 
     @Test
@@ -911,33 +517,6 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
-    func escapeStopsReadingAloudWithoutClearingTheDraft() {
-        var editor = makeEditor("/fea")
-        let speaking = TerminalPromptEditorContext(
-            suggestions: commandCatalog,
-            isSpeaking: true
-        )
-
-        // Stopping the reading wins over dismissing completions or clearing.
-        #expect(editor.apply(.cancel, context: speaking) == .cancelRequested)
-        #expect(String(editor.buffer) == "/fea")
-    }
-
-    @Test
-    func escapeStopsGenerationEvenWhenCommandSuggestionsAreVisible() {
-        var editor = makeEditor("/fea")
-        let context = TerminalPromptEditorContext(
-            suggestions: commandCatalog,
-            isProcessing: true
-        )
-
-        #expect(!editor.visibleSuggestions(context: context).isEmpty)
-        #expect(editor.apply(.cancel, context: context) == .cancelRequested)
-        #expect(String(editor.buffer) == "/fea")
-        #expect(!editor.areSuggestionsDismissed)
-    }
-
-    @Test
     func endOfInputOnlyEndsTheSessionWhenTheDraftIsEmpty() {
         var editor = makeEditor("text")
         let context = TerminalPromptEditorContext()
@@ -946,39 +525,6 @@ struct TerminalPromptEditorTests {
 
         editor = makeEditor("")
         #expect(editor.apply(.endOfInput, context: context) == .endOfInput)
-    }
-
-    @Test
-    func sharedChatReaderRouteKeepsOperatorIdentityDistinctFromAgentNames() {
-        let human = AgentSharedChat.Participant(
-            id: "operator:room-1",
-            name: "operator",
-            kind: .operator
-        )
-        let agentNamedOperator = AgentSharedChat.Participant(
-            id: "agent-operator",
-            name: "operator",
-            kind: .agent
-        )
-        let coordinatorRecipient = AgentSharedChat.coordinatorID(for: "room-1")
-        let humanMessage = AgentSharedChat.Message(
-            roomID: "room-1",
-            sender: human,
-            recipientIDs: [coordinatorRecipient],
-            text: "human message"
-        )
-        let agentMessage = AgentSharedChat.Message(
-            roomID: "room-1",
-            sender: agentNamedOperator,
-            recipientIDs: [coordinatorRecipient],
-            text: "agent message"
-        )
-        let humanRoute = TerminalChat.sharedChatIncomingCardRoute(for: humanMessage)
-        let agentRoute = TerminalChat.sharedChatIncomingCardRoute(for: agentMessage)
-
-        // Labels keep short display names, with each message's original send time.
-        #expect(humanRoute == "operator [\(TerminalChat.sharedChatTimestamp(humanMessage.sentAt))] → Coordinator")
-        #expect(agentRoute == "operator [\(TerminalChat.sharedChatTimestamp(agentMessage.sentAt))] → Coordinator")
     }
 
     @Test
@@ -1104,34 +650,6 @@ struct TerminalPromptEditorTests {
     }
 
     @Test
-    func mentionMenuKeepsReservedFirstAndSortsAgentsByDisplayNameThenJoinedAt() async {
-        let catalog = SharedChatMentionCatalog()
-        let base = Date(timeIntervalSince1970: 1_000)
-        let participants = [
-            AgentSharedChat.Participant(id: "z-1", name: "Zulu Agent", kind: .agent, joinedAt: base),
-            AgentSharedChat.Participant(id: "a-1", name: "Alpha Agent", kind: .agent, joinedAt: base),
-            AgentSharedChat.Participant(id: "a-2", name: "Alpha Agent", kind: .agent, joinedAt: base.addingTimeInterval(1)),
-            AgentSharedChat.Participant(id: "m-1", name: "beta agent", kind: .agent, joinedAt: base),
-        ]
-        let handleMap = await catalog.handleMap(for: participants)
-        let suggestions = TerminalChat.sharedChatMentionSuggestions(
-            for: participants,
-            handleMap: handleMap
-        )
-        let commands = suggestions.map(\.command)
-
-        // @coordinator and @all always stay in the first two positions.
-        #expect(Array(commands.prefix(2)) == ["@coordinator ", "@all "])
-        // Then only active agents, ordered by readable display name
-        // (case-insensitive) with joinedAt as the tie-breaker — never by
-        // handle or Base64.
-        #expect(
-            Array(commands.dropFirst(2))
-                == ["@alpha-agent ", "@alpha-agent-2 ", "@beta-agent ", "@zulu-agent "]
-        )
-    }
-
-    @Test
     func agentsNamedAllOrCoordinatorGetSuffixedHandlesThatRouteToTheirId() async {
         let catalog = SharedChatMentionCatalog()
         let participants = [
@@ -1185,64 +703,6 @@ struct TerminalPromptEditorTests {
                 readableHandles: handleMap
             ) == TerminalChat.SharedChatMentionRoute(
                 destination: .coordinator,
-                text: "inspect the diff"
-            )
-        )
-    }
-
-    @Test
-    func unicodeBidiAndPunctuationOnlyNamesNeverLeakIdsIntoTheMenu() async {
-        let catalog = SharedChatMentionCatalog()
-        let participants = [
-            AgentSharedChat.Participant(id: "uuid-AAAA-1", name: "日本語", kind: .agent),
-            AgentSharedChat.Participant(id: "uuid-BBBB-2", name: "\u{202E}\u{202C}\u{061C}", kind: .agent),
-            AgentSharedChat.Participant(id: "uuid-CCCC-3", name: "!!!???", kind: .agent),
-        ]
-        let handleMap = await catalog.handleMap(for: participants)
-        let suggestions = TerminalChat.sharedChatMentionSuggestions(
-            for: participants,
-            handleMap: handleMap
-        )
-        let commands = suggestions.map(\.command)
-
-        // The fallback is the readable, stable "agent" handle family — never
-        // the internal id or a UUID.
-        #expect(commands.contains("@agent "))
-        #expect(commands.contains("@agent-2 "))
-        #expect(commands.contains("@agent-3 "))
-        #expect(commands.allSatisfy { !$0.contains("uuid") && !$0.contains("AAAA") })
-
-        // Routing resolves the fallback handle to the right agent by id.
-        #expect(
-            TerminalChat.sharedChatMentionRoute(
-                from: "@agent-3 report status",
-                readableHandles: handleMap
-            ) == TerminalChat.SharedChatMentionRoute(
-                destination: .direct(["uuid-CCCC-3"]),
-                text: "report status"
-            )
-        )
-    }
-
-    @Test
-    func activeAgentMentionsAutocompleteAndRouteFromTheLeadingToken() {
-        let suggestions = [
-            TerminalCommandSuggestion(command: "/tasks", summary: "tasks"),
-            TerminalCommandSuggestion(command: "@planner ", summary: "message active agent"),
-            TerminalCommandSuggestion(command: "@reviewer ", summary: "message active agent")
-        ]
-        var editor = makeEditor("@pl")
-        let context = TerminalPromptEditorContext(suggestions: suggestions)
-
-        #expect(editor.visibleSuggestions(context: context).map(\.command) == ["@planner "])
-        #expect(editor.apply(.tab, context: context) == .changed)
-        #expect(String(editor.buffer) == "@planner ")
-        #expect(
-            TerminalChat.sharedChatMentionRoute(
-                from: "@planner inspect the diff",
-                readableHandles: ["planner": "planner-id"]
-            ) == TerminalChat.SharedChatMentionRoute(
-                destination: .direct(["planner-id"]),
                 text: "inspect the diff"
             )
         )

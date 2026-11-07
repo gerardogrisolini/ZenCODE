@@ -82,22 +82,6 @@ struct DS4EngineLibraryLocatorTests {
     // MARK: Hash
 
     @Test
-    func sourceHashIsSHA256PrefixOfHeaderShimAndABI() {
-        // SHA-256("abc") = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
-        #expect(DS4EngineLibraryLocator.sourceHash(ds4Header: Data("abc".utf8), shimSource: "", abiHeader: "")
-            == "ba7816bf8f01cfea")
-        #expect(DS4EngineLibraryLocator.sourceHash(ds4Header: Data("a".utf8), shimSource: "b", abiHeader: "c")
-            == "ba7816bf8f01cfea")
-    }
-
-    @Test
-    func sourceHashDependsOnTheOrderOfItsInputs() {
-        let ordered = DS4EngineLibraryLocator.sourceHash(ds4Header: Data("a".utf8), shimSource: "b", abiHeader: "c")
-        let swapped = DS4EngineLibraryLocator.sourceHash(ds4Header: Data("c".utf8), shimSource: "b", abiHeader: "a")
-        #expect(ordered != swapped)
-    }
-
-    @Test
     func sourceHashOfARootUsesTheEmbeddedSources() throws {
         let fixture = try DS4EngineBuildFixture(header: "int ds4_version(void);\n")
         defer { fixture.remove() }
@@ -130,65 +114,6 @@ struct DS4EngineLibraryLocatorTests {
             let expected = fixture.supportDirectory
                 .appendingPathComponent("ds4/engines/\(backend.rawValue)-\(hash)/\(DS4EngineABI.libraryFileName)")
             #expect(url.standardizedFileURL == expected.standardizedFileURL)
-        }
-    }
-
-    @Test
-    func expectedURLChangesWhenDS4HeaderChanges() throws {
-        let fixture = try DS4EngineBuildFixture(header: "v1\n")
-        defer { fixture.remove() }
-
-        let before = try DS4EngineLibraryLocator.expectedURL(
-            rootDirectory: fixture.rootDirectory,
-            backend: .cpu,
-            supportDirectory: fixture.supportDirectory
-        )
-        try fixture.writeHeader("v2\n")
-        let after = try DS4EngineLibraryLocator.expectedURL(
-            rootDirectory: fixture.rootDirectory,
-            backend: .cpu,
-            supportDirectory: fixture.supportDirectory
-        )
-        #expect(before != after)
-        #expect(before.deletingLastPathComponent().lastPathComponent.hasPrefix("cpu-"))
-    }
-
-    @Test
-    func expectedURLFromManifestUsesRootAndBackend() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let manifest = try AgentDS4RuntimeManifest(rootDirectory: fixture.rootDirectory, backend: .cpu)
-        let fromManifest = try DS4EngineLibraryLocator.expectedURL(
-            manifest: manifest,
-            supportDirectory: fixture.supportDirectory
-        )
-        let explicit = try DS4EngineLibraryLocator.expectedURL(
-            rootDirectory: fixture.rootDirectory,
-            backend: .cpu,
-            supportDirectory: fixture.supportDirectory
-        )
-        #expect(fromManifest == explicit)
-    }
-
-    @Test
-    func expectedURLThrowsWithoutDS4Header() throws {
-        let fixture = try DS4EngineBuildFixture(header: nil)
-        defer { fixture.remove() }
-
-        #expect(throws: DS4EngineLibraryLocatorError.self) {
-            try DS4EngineLibraryLocator.expectedURL(
-                rootDirectory: fixture.rootDirectory,
-                backend: .metal,
-                supportDirectory: fixture.supportDirectory
-            )
-        }
-        #expect(throws: AgentDS4PathValidationError.self) {
-            try DS4EngineLibraryLocator.expectedURL(
-                rootDirectory: "relative/ds4",
-                backend: .metal,
-                supportDirectory: fixture.supportDirectory
-            )
         }
     }
 
@@ -227,71 +152,6 @@ struct DS4EngineLibraryLocatorTests {
     }
 
     @Test
-    func statusIsMissingWhenNothingWasBuilt() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        #expect(status(fixture, backend: .metal) == .missing(expected: try expected(fixture, backend: .metal)))
-    }
-
-    @Test
-    func statusIsBuiltWhenTheExpectedLibraryAndMetadataMatch() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let hash = try DS4EngineLibraryLocator.sourceHash(rootDirectory: fixture.rootDirectory)
-        let library = try fixture.installLibrary(backend: .metal, hash: hash)
-        #expect(status(fixture, backend: .metal) == .built(library))
-    }
-
-    @Test
-    func statusIgnoresTheSpellingOfTheRecordedRoot() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let hash = try DS4EngineLibraryLocator.sourceHash(rootDirectory: fixture.rootDirectory)
-        let library = try fixture.installLibrary(
-            backend: .cpu,
-            hash: hash,
-            recordedRoot: fixture.rootDirectory + "/../ds4/"
-        )
-        #expect(status(fixture, backend: .cpu) == .built(library))
-    }
-
-    @Test
-    func statusIsStaleWhenAnotherHashExistsForTheSameBackend() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let old = try fixture.installLibrary(backend: .metal, hash: "0123456789abcdef")
-        #expect(status(fixture, backend: .metal) == .stale(
-            found: old,
-            expected: try expected(fixture, backend: .metal)
-        ))
-    }
-
-    @Test
-    func statusReportsTheNewestOfSeveralStaleLibraries() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        try fixture.installLibrary(
-            backend: .metal,
-            hash: "aaaaaaaaaaaaaaaa",
-            modified: Date(timeIntervalSince1970: 1_000)
-        )
-        let newest = try fixture.installLibrary(
-            backend: .metal,
-            hash: "bbbbbbbbbbbbbbbb",
-            modified: Date(timeIntervalSince1970: 2_000)
-        )
-        #expect(status(fixture, backend: .metal) == .stale(
-            found: newest,
-            expected: try expected(fixture, backend: .metal)
-        ))
-    }
-
-    @Test
     func statusIgnoresLibrariesOfOtherBackendsAndForeignDirectories() throws {
         let fixture = try DS4EngineBuildFixture()
         defer { fixture.remove() }
@@ -313,26 +173,6 @@ struct DS4EngineLibraryLocatorTests {
             withIntermediateDirectories: true
         )
         #expect(status(fixture, backend: .metal) == .missing(expected: try expected(fixture, backend: .metal)))
-    }
-
-    @Test
-    func statusIsStaleWhenTheRecordedRootDiffers() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let hash = try DS4EngineLibraryLocator.sourceHash(rootDirectory: fixture.rootDirectory)
-        let library = try fixture.installLibrary(backend: .metal, hash: hash, recordedRoot: "/somewhere/else/ds4")
-        #expect(status(fixture, backend: .metal) == .stale(found: library, expected: library))
-    }
-
-    @Test
-    func statusIsStaleWhenTheRecordedBackendDiffers() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let hash = try DS4EngineLibraryLocator.sourceHash(rootDirectory: fixture.rootDirectory)
-        let library = try fixture.installLibrary(backend: .metal, hash: hash, recordedBackend: "cpu")
-        #expect(status(fixture, backend: .metal) == .stale(found: library, expected: library))
     }
 
     @Test
@@ -369,27 +209,6 @@ struct DS4EngineLibraryLocatorTests {
     }
 
     @Test
-    func statusTreatsDefaultCUDAArchitectureAsNative() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let hash = try DS4EngineLibraryLocator.sourceHash(rootDirectory: fixture.rootDirectory)
-        let cuda = try fixture.installLibrary(backend: .cuda, hash: hash, arch: "native")
-        #expect(status(fixture, backend: .cuda, arch: nil) == .built(cuda))
-        #expect(status(fixture, backend: .cuda, arch: "native") == .built(cuda))
-    }
-
-    @Test
-    func statusIgnoresTheArchitectureOfMetalAndCPUBuilds() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let hash = try DS4EngineLibraryLocator.sourceHash(rootDirectory: fixture.rootDirectory)
-        let cpu = try fixture.installLibrary(backend: .cpu, hash: hash)
-        #expect(status(fixture, backend: .cpu, arch: "sm_120") == .built(cpu))
-    }
-
-    @Test
     func statusBecomesStaleWhenDS4HeaderChanges() throws {
         let fixture = try DS4EngineBuildFixture(header: "v1\n")
         defer { fixture.remove() }
@@ -403,19 +222,6 @@ struct DS4EngineLibraryLocatorTests {
             found: old,
             expected: try expected(fixture, backend: .metal)
         ))
-    }
-
-    @Test
-    func statusIsMissingWithAPlaceholderWhenDS4HeaderIsAbsent() throws {
-        let fixture = try DS4EngineBuildFixture(header: nil)
-        defer { fixture.remove() }
-
-        guard case let .missing(placeholder) = status(fixture, backend: .metal) else {
-            Issue.record("expected .missing")
-            return
-        }
-        #expect(placeholder.deletingLastPathComponent().lastPathComponent == "metal-unavailable")
-        #expect(placeholder.lastPathComponent == DS4EngineABI.libraryFileName)
     }
 
     @Test

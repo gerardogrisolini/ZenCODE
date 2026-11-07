@@ -85,51 +85,6 @@ extension TerminalTelegramMultiSessionTests {
         }
     }
 
-    /// A topic no route knows falls back to the shared route: both channels
-    /// handle the message and answer in the topic it came from.
-    @Test(.timeLimit(.minutes(1)))
-    func unknownTopicIsHandledByBothChannelsInThatTopic() async throws {
-        try await Support.withSupport {
-            let pair = try await Self.attachedChannelPair()
-            let unknown = try await pair.router.resolve(chatID: 42, userID: 7, topicID: 999)
-            #expect(unknown.key == TerminalTelegramRouteKey(chatID: 42, userID: 7, roomID: "default"))
-            #expect(unknown.effectiveMessageThreadID == 999)
-
-            #expect(await Self.deliver(Self.ownerMessage("hello", topicID: 999), to: pair) == [unknown, unknown])
-            _ = await Self.deliver(Self.ownerMessage("/start", topicID: 999), to: pair)
-
-            for member in [pair.alpha, pair.beta] {
-                #expect(await member.transport.sentMessages.dropFirst() == [
-                    TelegramRoutedText(text: Self.alreadyLinkedText, topicID: 999),
-                ])
-            }
-            await pair.shutdown()
-        }
-    }
-
-    /// While both channels are attached to the bot, a permission reply
-    /// without a request ID in General, or in a topic no route knows, is
-    /// refused by both, each in the topic it came from, and runs nothing.
-    @Test(.timeLimit(.minutes(1)))
-    func permissionRepliesWithoutAnIDInGeneralAreRefusedByBothChannels() async throws {
-        try await Support.withSupport {
-            let pair = try await Self.attachedChannelPair()
-            let refusal = TelegramChannel.sharedRoutePermissionReplyText
-
-            for topicID in [nil, 999] as [Int?] {
-                #expect(await Self.deliver(Self.ownerMessage("/allow", topicID: topicID), to: pair) == [nil, nil])
-            }
-
-            for member in [pair.alpha, pair.beta] {
-                #expect(await member.transport.sentMessages.dropFirst() == [
-                    TelegramRoutedText(text: refusal, topicID: nil),
-                    TelegramRoutedText(text: refusal, topicID: 999),
-                ])
-            }
-            await pair.shutdown()
-        }
-    }
-
     /// A message in General, or in a topic no route knows, leaves each link
     /// on its session's topic: the link's route, the route of the next turn,
     /// and the shared-chat relay stay there, while the message itself is

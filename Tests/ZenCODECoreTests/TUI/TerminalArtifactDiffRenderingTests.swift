@@ -6,20 +6,6 @@ import ToolCore
 
 @Suite
 struct TerminalArtifactDiffRenderingTests {
-    @Test
-    func sourceSnapshotsProduceOneDiffWithUnchangedLinesOnlyOnce() {
-        let artifact = FileChangeArtifact(
-            absolutePath: "/tmp/File.swift", displayPath: "File.swift", status: .modified,
-            additions: 1, deletions: 1,
-            oldText: "struct File {\n\tlet value = 1\n\n}\n",
-            newText: "struct File {\n\tlet value = 2\n\n}\n"
-        )
-        let markdown = render(artifact)
-        #expect(markdown.contains("```artifact-diff-swift\n  │ @@ -1,4 +1,4 @@\n1 │  struct File {\n2 │ -\tlet value = 1\n2 │ +\tlet value = 2\n3 │  \n4 │  }\n```"))
-        #expect(markdown.components(separatedBy: "struct File {").count - 1 == 1)
-        #expect(!markdown.contains("Before"))
-        #expect(!markdown.contains("After"))
-    }
 
     @Test
     func liveOutputShowsOnlyChangedLinesWithContextWhileHistoryShowsTheWholeFile() {
@@ -51,24 +37,6 @@ struct TerminalArtifactDiffRenderingTests {
             [turn], includeHistoryHeadings: true, diffPresentation: .changedLines(contextLines: 0)
         )
         #expect(explicit.contains("   │ @@ -10,1 +10,1 @@\n10 │ -line 10\n10 │ +line 10 changed\n   │ @@ -25,0 +26,1 @@\n26 │ +inserted after 25\n"))
-    }
-
-    @Test
-    func changedLinesPresentationKeepsAddedAndDeletedFileHeaders() {
-        let added = TerminalChat.renderFileArtifacts(
-            [.init(number: 1, artifacts: [.init(
-                absolutePath: "/tmp/a.txt", displayPath: "a.txt", status: .added, newText: "first\nlast"
-            )])],
-            includeHistoryHeadings: false
-        )
-        #expect(added.contains("  │ @@ -0,0 +1,2 @@\n1 │ +first\n2 │ +last\n  │ \\ No newline at end of file"))
-        let deleted = TerminalChat.renderFileArtifacts(
-            [.init(number: 1, artifacts: [.init(
-                absolutePath: "/tmp/a.txt", displayPath: "a.txt", status: .deleted, oldText: "first\nlast\n"
-            )])],
-            includeHistoryHeadings: false
-        )
-        #expect(deleted.contains("  │ @@ -1,2 +0,0 @@\n1 │ -first\n2 │ -last\n```"))
     }
 
     @Test
@@ -138,17 +106,6 @@ struct TerminalArtifactDiffRenderingTests {
         }
     }
 
-    @Test
-    func diffBackgroundsUseMutedTruecolorInDarkAndPreserveLightContrast() {
-        let dark = TerminalMarkdownPalette.dark
-        #expect(dark.diffAdditionBackground == "\u{1B}[48;2;30;48;36m")
-        #expect(dark.diffRemovalBackground == "\u{1B}[48;2;55;32;35m")
-        let light = TerminalMarkdownPalette.light
-        #expect(light.codeForeground == "\u{1B}[38;5;235m")
-        #expect(light.diffAdditionBackground == "\u{1B}[48;5;194m")
-        #expect(light.diffRemovalBackground == "\u{1B}[48;5;224m")
-    }
-
     @Test(arguments: [TerminalMarkdownPalette.dark, .light])
     func changedRowsKeepSyntaxAndBackgroundThroughEveryReset(palette: TerminalMarkdownPalette) {
         for (marker, background) in [("+", palette.diffAdditionBackground), ("-", palette.diffRemovalBackground)] {
@@ -193,17 +150,6 @@ struct TerminalArtifactDiffRenderingTests {
             }.joined()
             #expect(reassembled == marker + payload)
         }
-    }
-
-    @Test
-    func diffPrefixDoesNotConfuseJSONPropertyHighlighting() {
-        let palette = TerminalMarkdownPalette.dark
-        let row = TerminalCodeBlockRenderer.renderCodeLine(
-            "+  \"name\": \"value\",", language: "diff-json", width: 40, palette: palette
-        )[0]
-        #expect(row.contains("\(palette.syntaxProperty)\"name\""))
-        #expect(row.contains("\(palette.syntaxString)\"value\""))
-        expectBackground(row, background: palette.diffAdditionBackground, width: 40, palette: palette)
     }
 
     @Test

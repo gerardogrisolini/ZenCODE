@@ -612,27 +612,6 @@ public actor TerminalStatusBar {
         return max(0, state.row - reservedBottomRowsLocked(state: &state))
     }
 
-    // MARK: - Test support
-
-    /// Configures terminal geometry and optional status fields without rendering,
-    /// so tests can control initial state before exercising the render cache.
-    func configureForTesting(
-        row: Int = 24,
-        columns: Int = 100,
-        modelID: String? = nil,
-        agentName: String? = nil,
-        isProcessing: Bool = false,
-        isResizePending: Bool = false
-    ) {
-        state.isStarted = true
-        state.row = row
-        state.columns = columns
-        state.latestModelID = modelID
-        state.latestAgentName = agentName
-        state.isProcessing = isProcessing
-        state.isResizePending = isResizePending
-    }
-
     /// Renders the status-only overlay using the actor's current state. Exposed
     /// for testing the render cache (identical renders must be suppressed).
     func renderStatusOverlay() {

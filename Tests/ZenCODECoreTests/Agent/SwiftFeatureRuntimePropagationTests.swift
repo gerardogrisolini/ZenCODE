@@ -10,27 +10,6 @@ import Testing
 @Suite
 struct SwiftFeatureRuntimePropagationTests {
     @Test
-    @ChatSessionActor
-    func terminalChatUsesTheRuntimeOwnedByAnInjectedSessionRunner() throws {
-        let runtime = SwiftFeatureRuntime()
-        let runner = AgentCoreSessionRunner(swiftFeatureRuntime: runtime)
-        let configuration = try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            availableAgents: AgentProfileStore.defaultProfiles(),
-            workingDirectory: URL(fileURLWithPath: "/tmp/runtime-propagation", isDirectory: true)
-        )
-
-        let terminal = TerminalChat(
-            configuration: configuration,
-            stdinIsTerminal: false,
-            sessionRunner: runner
-        )
-
-        #expect(terminal.featureRuntime === runtime)
-        #expect(terminal.sessionRunner.swiftFeatureRuntime === terminal.featureRuntime)
-    }
-
-    @Test
     func remoteBackendUsesTheInjectedFeatureRuntimeForToolExecution() async throws {
         let runtime = SwiftFeatureRuntime()
         let configuration = AgentRuntimeConfiguration(

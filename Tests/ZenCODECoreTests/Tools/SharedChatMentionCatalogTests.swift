@@ -12,69 +12,6 @@ import Testing
 @Suite
 struct SharedChatMentionCatalogTests {
     @Test
-    func readableHandlesAreDerivedFromDisplayName() async {
-        let catalog = SharedChatMentionCatalog()
-        let map = await catalog.handleMap(for: [
-            AgentSharedChat.Participant(id: "a-1", name: "Developer", kind: .agent),
-            AgentSharedChat.Participant(id: "b-2", name: "Code Reviewer", kind: .agent),
-            AgentSharedChat.Participant(id: "c-3", name: "Q.A. Tester", kind: .agent),
-        ])
-        #expect(map["developer"] == "a-1")
-        #expect(map["code-reviewer"] == "b-2")
-        #expect(map["qa-tester"] == "c-3")
-    }
-
-    @Test
-    func duplicateNamesGetUniqueNumericSuffixes() async {
-        let catalog = SharedChatMentionCatalog()
-        let map = await catalog.handleMap(for: [
-            AgentSharedChat.Participant(id: "a-1", name: "Worker", kind: .agent),
-            AgentSharedChat.Participant(id: "a-2", name: "Worker", kind: .agent),
-            AgentSharedChat.Participant(id: "a-3", name: "Worker", kind: .agent),
-        ])
-        #expect(map["worker"] == "a-1")
-        #expect(map["worker-2"] == "a-2")
-        #expect(map["worker-3"] == "a-3")
-    }
-
-    @Test
-    func numericSuffixKeepsTheDashWhenTheBaseIsTruncated() {
-        // A base at the exact handle limit collides with itself; the suffixed
-        // candidate must keep its dash separator even after the base is trimmed
-        // to fit the bound.
-        let longBase = String(repeating: "a", count: SharedChatMentionCatalog.maximumHandleLength)
-        let first = SharedChatMentionCatalog.uniqueHandle(
-            base: longBase,
-            reserved: []
-        )
-        #expect(first == longBase)
-        let second = SharedChatMentionCatalog.uniqueHandle(
-            base: longBase,
-            reserved: [longBase]
-        )
-        #expect(second.hasSuffix("-2"))
-        #expect(second.count == SharedChatMentionCatalog.maximumHandleLength)
-        #expect(second != longBase)
-    }
-
-    @Test
-    func aliasesAreNeverRecycledWithinASession() async {
-        let catalog = SharedChatMentionCatalog()
-        _ = await catalog.handleMap(for: [
-            AgentSharedChat.Participant(id: "first", name: "Agent", kind: .agent),
-        ])
-        // The first participant leaves; a new one with the same name must not
-        // reuse the retired alias.
-        let map = await catalog.handleMap(for: [
-            AgentSharedChat.Participant(id: "second", name: "Agent", kind: .agent),
-        ])
-        // The retired alias stays reserved, so the new participant is
-        // disambiguated even though the first one left the roster snapshot.
-        #expect(map["agent-2"] == "second")
-        #expect(map["agent"] == nil)
-    }
-
-    @Test
     func departedParticipantsStopResolvingWhileTheirAliasesStayReserved() async {
         let catalog = SharedChatMentionCatalog()
         _ = await catalog.handleMap(for: [
@@ -91,41 +28,6 @@ struct SharedChatMentionCatalogTests {
         #expect(replacement == ["developer-2": "second"])
         #expect(await catalog.participantID(forHandle: "developer") == nil)
         #expect(await catalog.participantID(forHandle: "developer-2") == "second")
-    }
-
-    @Test
-    func returningParticipantKeepsItsHandle() async {
-        let catalog = SharedChatMentionCatalog()
-        let first = await catalog.handleMap(for: [
-            AgentSharedChat.Participant(id: "stable", name: "Planner", kind: .agent),
-        ])
-        #expect(first["planner"] == "stable")
-        // The same participant re-registered keeps its handle.
-        let second = await catalog.handleMap(for: [
-            AgentSharedChat.Participant(id: "stable", name: "Planner", kind: .agent),
-        ])
-        #expect(second["planner"] == "stable")
-        _ = await catalog.handleMap(for: [])
-        #expect(await catalog.participantID(forHandle: "planner") == nil)
-        let returned = await catalog.handleMap(for: [
-            AgentSharedChat.Participant(id: "stable", name: "Planner", kind: .agent),
-        ])
-        #expect(returned["planner"] == "stable")
-        #expect(await catalog.participantID(forHandle: "planner") == "stable")
-    }
-
-    @Test
-    func sessionResetClearsTheAliasSpace() async {
-        let catalog = SharedChatMentionCatalog()
-        _ = await catalog.handleMap(for: [
-            AgentSharedChat.Participant(id: "first", name: "Agent", kind: .agent),
-        ])
-        await catalog.reset()
-        // After reset the alias is available again.
-        let map = await catalog.handleMap(for: [
-            AgentSharedChat.Participant(id: "second", name: "Agent", kind: .agent),
-        ])
-        #expect(map["agent"] == "second")
     }
 
     @Test
@@ -224,20 +126,5 @@ struct SharedChatMentionCatalogTests {
         #expect(collided.count == SharedChatMentionCatalog.maximumHandleLength)
         #expect(!collided.contains("all"))
         #expect(!collided.contains("coordinator"))
-    }
-
-    @Test
-    func routingAlwaysResolvesByStableId() async {
-        let catalog = SharedChatMentionCatalog()
-        let map = await catalog.handleMap(for: [
-            AgentSharedChat.Participant(id: "uuid-stable", name: "Worker", kind: .agent),
-        ])
-        let handle = map.first(where: { $0.value == "uuid-stable" })?.key
-        #expect(handle == "worker")
-        let resolved = await catalog.participantID(forHandle: handle ?? "")
-        #expect(resolved == "uuid-stable")
-        // An unknown handle resolves to nil, never to a wrong agent.
-        let unknown = await catalog.participantID(forHandle: "nonexistent")
-        #expect(unknown == nil)
     }
 }

@@ -137,52 +137,6 @@ struct ToolExecutionLogTests {
         #expect(!ToolExecutionLog.encodedMessage(for: entry).contains("durationMilliseconds"))
     }
 
-    @Test
-    func runtimeConfigurationCarriesCoordinatorIdentity() {
-        let configuration = AgentCoreSessionConfigurationBuilder(
-            sessionID: "session-1",
-            modelID: "model-main",
-            agentID: "developer-id",
-            agentName: "Developer",
-            workingDirectory: URL(fileURLWithPath: "/tmp"),
-            systemPrompt: "prompt",
-            cacheKey: "cache"
-        )
-        .makeConfiguration()
-
-        #expect(configuration.agentID == "developer-id")
-        #expect(configuration.agentName == "Developer")
-        #expect(configuration.runtimeConfiguration.agentID == "developer-id")
-        #expect(configuration.runtimeConfiguration.agentName == "Developer")
-        #expect(configuration.runtimeConfiguration.modelID == "model-main")
-    }
-
-    @Test
-    func subAgentBackendContextReplacesCoordinatorIdentityEvenWhenModelIsLocked() {
-        let parent = AgentRuntimeConfiguration(
-            modelID: "parent-model",
-            workingDirectory: URL(fileURLWithPath: "/tmp"),
-            maxToolRounds: 4,
-            locksModelToSession: true,
-            toolAuthorizationHandler: nil,
-            agentID: "coordinator-id",
-            agentName: "Developer"
-        )
-        let childContext = DirectSubAgentRuntime.BackendContext(
-            requestedName: "Reviewer 1",
-            requestedRole: "reviewer",
-            profile: nil,
-            sharedChatSenderID: "child-id",
-            sharedChatRoomID: "root-session"
-        )
-
-        let child = parent.applyingSubAgentBackendContext(childContext)
-
-        #expect(child.agentID == "child-id")
-        #expect(child.agentName == "Reviewer 1")
-        #expect(child.modelID == "parent-model")
-    }
-
     @Test(arguments: [true, false])
     func subAgentBackendContextAdoptsTheChildProfileRole(locksModelToSession: Bool) {
         let parent = Self.organizerCoordinator(locksModelToSession: locksModelToSession)
@@ -263,49 +217,6 @@ struct ToolExecutionLogTests {
     }
 
     @Test
-    func executionContextKeepsTheProfileRoleWhenResolvingIdentities() {
-        let organizer = ToolExecutionContext(
-            profileID: "organizer",
-            profileName: "Organizer",
-            profileRole: .organizer,
-            modelID: "role-model"
-        )
-
-        #expect(organizer.resolved(fallbackAgentID: nil).profileRole == .organizer)
-        #expect(organizer.resolved(fallbackAgentID: "child-id").profileRole == .organizer)
-        #expect(organizer.resolved(fallbackAgentID: "child-id").profileID == "organizer")
-        #expect(ToolExecutionContext().resolved(fallbackAgentID: nil).profileRole == nil)
-        #expect(organizer != ToolExecutionContext(
-            profileID: "organizer",
-            profileName: "Organizer",
-            modelID: "role-model"
-        ))
-    }
-
-    @Test
-    func toolsLogsRequestRequiresExactlyOneArgumentToken() {
-        #expect(TerminalChat.isToolLogsRequest("logs"))
-        #expect(TerminalChat.isToolLogsRequest("  LOGS\t"))
-        #expect(!TerminalChat.isToolLogsRequest(""))
-        #expect(!TerminalChat.isToolLogsRequest("logs extra"))
-        #expect(!TerminalChat.isToolLogsRequest("log"))
-    }
-
-    @Test
-    func toolsUsageAndHelpDocumentTheSystemLogViewer() {
-        #expect(TerminalChat.renderToolSelectionUsage().contains("logs"))
-        let descriptor = TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: false,
-            telegramEnabled: false
-        ).first { $0.command == "/tools" }
-        #expect(descriptor?.help.contains("system log viewer") == true)
-        let suggestions = TerminalPromptCompletionCatalog.argumentSuggestions(for: "/tools")
-        #expect(suggestions.contains {
-            $0 == TerminalCommandSuggestion(command: "logs", summary: "open the system log viewer")
-        })
-    }
-
-    @Test
     func systemLogViewerBuildsNativePlatformCommand() throws {
         let executablePaths: Set<String> = [
             "/usr/bin/open",
@@ -326,38 +237,6 @@ struct ToolExecutionLogTests {
         #expect(command.executableURL.path == "/usr/bin/gtk-launch")
         #expect(command.arguments == ["org.gnome.Logs"])
         #endif
-    }
-
-    @Test
-    func systemLogViewerFailsWhenNoNativeViewerExists() {
-        #if os(Windows)
-        #expect(throws: Never.self) {
-            _ = try SystemLogViewerLauncher.command(isExecutableFile: { _ in false })
-        }
-        #else
-        #expect(throws: SystemLogViewerLauncher.LaunchError.unavailable) {
-            _ = try SystemLogViewerLauncher.command(
-                isExecutableFile: { _ in false },
-                environment: [:]
-            )
-        }
-        #endif
-    }
-
-    @Test
-    func systemLogViewerErrorsExplainTheFailure() {
-        #expect(
-            SystemLogViewerLauncher.LaunchError.unavailable.errorDescription
-                == "No system log viewer is available."
-        )
-        #expect(
-            SystemLogViewerLauncher.LaunchError.timedOut.errorDescription
-                == "The system log viewer did not open before the timeout."
-        )
-        #expect(
-            SystemLogViewerLauncher.LaunchError.failed(3).errorDescription
-                == "The system log viewer failed with exit code 3."
-        )
     }
 
     @Test

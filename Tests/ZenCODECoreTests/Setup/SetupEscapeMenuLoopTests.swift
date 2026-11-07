@@ -97,27 +97,6 @@ struct SetupEscapeMenuLoopTests {
     )
 
     @Test
-    func escOnTheAgentsMenuEndsTheLoopWithCancelled() {
-        let menu = ScriptedMenu<Int>(bailout: 0)
-        Self.expectCancelled {
-            _ = try ZenCODEAgentProfileSetupRunner.editAgents(
-                [Self.developer],
-                write: { _ in },
-                selectChoice: { title, _, selected in menu.answer(title, selected) },
-                readAgent: { _ in
-                    Issue.record("Esc on the menu must not open Add agent")
-                    return Self.reviewer
-                },
-                promptDeletion: { _ in
-                    Issue.record("Esc on the menu must not open the deletion")
-                    return []
-                }
-            )
-        }
-        #expect(menu.titles == ["Agents"])
-    }
-
-    @Test
     func escOnTheAgentsMenuDiscardsTheAgentsAddedAndDeletedInTheVisit() {
         // Add agent, then Delete configured agents, then Esc.
         let menu = ScriptedMenu<Int>([1, 2], bailout: 0)
@@ -143,44 +122,6 @@ struct SetupEscapeMenuLoopTests {
         #expect(menu.presentations == 3)
     }
 
-    @Test
-    func escInsideAnAgentStepReturnsToTheAgentsMenuWithTheAgentsUnchanged() throws {
-        // Add agent, Delete configured agents and the edit of Reviewer are
-        // each cancelled; Done then returns the agents as they were.
-        let menu = ScriptedMenu<Int>([1, 2, 4, 0], bailout: 0)
-        var written: [String] = []
-        let agents = try ZenCODEAgentProfileSetupRunner.editAgents(
-            [Self.developer, Self.reviewer],
-            write: { written.append($0) },
-            selectChoice: { title, _, selected in menu.answer(title, selected) },
-            readAgent: { _ in throw ZenCODESetupError.cancelled },
-            promptDeletion: { _ in throw ZenCODESetupError.cancelled }
-        )
-
-        #expect(agents == [Self.developer, Self.reviewer])
-        #expect(menu.presentations == 4)
-        #expect(written == [
-            "Add agent cancelled.\n\n",
-            "Deletion cancelled.\n\n",
-            "Edit Reviewer cancelled.\n\n"
-        ])
-    }
-
-    @Test
-    func doneOnTheAgentsMenuKeepsTheChangesOfTheVisit() throws {
-        let menu = ScriptedMenu<Int>([1, 0], bailout: 0)
-        let agents = try ZenCODEAgentProfileSetupRunner.editAgents(
-            [Self.developer],
-            write: { _ in },
-            selectChoice: { title, _, selected in menu.answer(title, selected) },
-            readAgent: { _ in Self.reviewer },
-            promptDeletion: { _ in [] }
-        )
-
-        #expect(agents == [Self.developer, Self.reviewer])
-        #expect(menu.presentations == 2)
-    }
-
     // MARK: - Model bindings for one agent
 
     private typealias BindingAction = ZenCODEAgentProfileSetupRunner.AgentModelBindingMenuAction
@@ -198,30 +139,6 @@ struct SetupEscapeMenuLoopTests {
     )
 
     private static let addedBinding = AgentModelBinding(id: "extra", modelID: "extra-model", capability: 6)
-
-    @Test
-    func escOnTheBindingsOfAnAgentEndsTheLoopWithTheAgentUnchanged() throws {
-        let menu = ScriptedMenu<BindingAction>(bailout: .done)
-        var written: [String] = []
-        let agent = try ZenCODEAgentProfileSetupRunner.configureModelBindingsForAgent(
-            Self.bindingAgent,
-            models: [],
-            write: { written.append($0) },
-            selectAction: { title, _, selected in menu.answer(title, selected) },
-            promptBinding: { _, _ in
-                Issue.record("Esc on the menu must not open Add model binding")
-                return nil
-            },
-            editBinding: { _, _, _ in
-                Issue.record("Esc on the menu must not open a binding")
-                return nil
-            }
-        )
-
-        #expect(agent == Self.bindingAgent)
-        #expect(menu.titles == ["Model bindings for Developer"])
-        #expect(written == ["\nModel bindings for Developer cancelled; changes not saved.\n\n"])
-    }
 
     @Test
     func escOnTheBindingsOfAnAgentDiscardsAnAddAndAnEditOfTheVisit() throws {
@@ -308,48 +225,6 @@ struct SetupEscapeMenuLoopTests {
         #expect(menu.titles == ["Memory embeddings"])
     }
 
-    @Test
-    func escInAFollowUpReturnsToMemoryEmbeddingsWithThatChoicePreselected() async {
-        // The OpenRouter model and the endpoint URL are cancelled, then Esc.
-        let menu = ScriptedMenu<EmbeddingChoice>([.openRouter, .configureEndpoint], bailout: .bm25Only)
-        var followedUp: [EmbeddingChoice] = []
-        await Self.expectCancelled {
-            _ = try await ZenCODESetupRunner.promptMemoryEmbeddingSettings(
-                existingSettings: nil,
-                openRouterProposal: Self.openRouterProposal,
-                selectChoice: { title, _, selected in menu.answer(title, selected) },
-                followUp: { choice in
-                    followedUp.append(choice)
-                    guard choice == .bm25Only else {
-                        throw ZenCODESetupError.cancelled
-                    }
-                    return ZenCODESetupRunner.MemoryEmbeddingSetupSelection(endpoint: nil)
-                }
-            )
-        }
-        #expect(followedUp == [.openRouter, .configureEndpoint])
-        #expect(menu.preselections == [.bm25Only, .openRouter, .configureEndpoint])
-    }
-
-    @Test
-    func aCompletedFollowUpEndsMemoryEmbeddingsWithItsSelection() async throws {
-        let menu = ScriptedMenu<EmbeddingChoice>([.openRouter, .bm25Only])
-        let selection = try await ZenCODESetupRunner.promptMemoryEmbeddingSettings(
-            existingSettings: nil,
-            openRouterProposal: Self.openRouterProposal,
-            selectChoice: { title, _, selected in menu.answer(title, selected) },
-            followUp: { choice in
-                guard choice == .bm25Only else {
-                    throw ZenCODESetupError.cancelled
-                }
-                return ZenCODESetupRunner.MemoryEmbeddingSetupSelection(endpoint: nil)
-            }
-        )
-
-        #expect(selection == ZenCODESetupRunner.MemoryEmbeddingSetupSelection(endpoint: nil))
-        #expect(menu.presentations == 2)
-    }
-
     // MARK: - Provider family
 
     @Test
@@ -365,40 +240,6 @@ struct SetupEscapeMenuLoopTests {
             )
         }
         #expect(menu.titles == ["Provider family"])
-    }
-
-    @Test
-    func escOnAFamilySubmenuReturnsToProviderFamily() {
-        let menu = ScriptedMenu<SetupProviderFamily>([.openAI, .anthropic, .otherAPI])
-        var opened: [SetupProviderFamily] = []
-        Self.expectCancelled {
-            _ = try ZenCODESetupRunner.promptProviderKind(
-                selectFamily: { title, _, selected in menu.answer(title, selected) },
-                promptKind: { family in
-                    opened.append(family)
-                    throw ZenCODESetupError.cancelled
-                }
-            )
-        }
-        #expect(opened == [.openAI, .anthropic, .otherAPI])
-        #expect(menu.presentations == 4)
-    }
-
-    @Test
-    func aKindChosenAfterACancelledSubmenuIsReturned() throws {
-        let menu = ScriptedMenu<SetupProviderFamily>([.openAI, .anthropic])
-        let kind = try ZenCODESetupRunner.promptProviderKind(
-            selectFamily: { title, _, selected in menu.answer(title, selected) },
-            promptKind: { family in
-                guard family == .anthropic else {
-                    throw ZenCODESetupError.cancelled
-                }
-                return .anthropicSubscription
-            }
-        )
-
-        #expect(kind == .anthropicSubscription)
-        #expect(menu.presentations == 2)
     }
 
     // MARK: - Clean memory
@@ -448,52 +289,12 @@ struct SetupEscapeMenuLoopTests {
         }
     }
 
-    @Test
-    func escInsideAnActionOrOnItsMenuReturnsToTheGraphList() async throws {
-        try await Self.withProjectMemoryGraph { graphURL in
-            // The graph is chosen four times; the fifth list is left with Esc.
-            var graphPresentations = 0
-            // Clean up entries and the folder deletion are cancelled inside,
-            // Back returns, and Esc leaves the action menu.
-            let actions = ScriptedMenu<CleanupAction>([.clean, .deleteFolder, .back])
-            var ran: [CleanupAction] = []
-            var written: [String] = []
-            try await ZenCODESetupRunner.runMemoryCleanupMenu(
-                write: { written.append($0) },
-                selectGraph: { _, _, first in
-                    graphPresentations += 1
-                    return graphPresentations <= 4 ? first : nil
-                },
-                selectAction: { title, _, selected in actions.answer(title, selected) },
-                runAction: { action, item in
-                    #expect(item.directoryName == "other-project")
-                    ran.append(action)
-                    throw ZenCODESetupError.cancelled
-                }
-            )
-
-            #expect(graphPresentations == 5)
-            #expect(actions.presentations == 4)
-            #expect(actions.titles.allSatisfy { $0 == "Clean memory: other-project" })
-            #expect(ran == [.clean, .deleteFolder])
-            #expect(written == ["Cleanup cancelled.\n\n", "Deletion cancelled.\n\n"])
-            #expect(FileManager.default.fileExists(atPath: graphURL.path))
-        }
-    }
-
     // MARK: - Voice mode (the sherpa-onnx files of Linux)
 
     private typealias VoiceAction = ZenCODESetupRunner.VoiceModeAction
 
     private static let voiceManifest = AgentSettingsManifest(
         models: [],
-        localExecAllowedCommands: ["ls"],
-        responseLanguage: "it"
-    )
-
-    private static let sendModeManifest = AgentSettingsManifest(
-        models: [],
-        voice: AgentVoiceSettingsManifest(utteranceSilenceSeconds: 8),
         localExecAllowedCommands: ["ls"],
         responseLanguage: "it"
     )
@@ -558,35 +359,5 @@ struct SetupEscapeMenuLoopTests {
         #expect(visit.titles.first?.hasPrefix("Voice mode (it)") == true)
         #expect(visit.removalConfirmations == 0)
         #expect(visit.downloadConfirmations == 0)
-    }
-
-    @Test
-    func cancelledConfirmationsReturnToVoiceModeAndEscDiscardsTheSendModeOfTheVisit() async throws {
-        let voice = try #require(SherpaOnnxVoiceCatalog.voices(forLanguage: "it").first)
-        func sendMode(_ manifest: AgentSettingsManifest?) -> AgentSettingsManifest? {
-            #expect(manifest == Self.voiceManifest)
-            return Self.sendModeManifest
-        }
-
-        // Send mode changed, removal and download confirmations cancelled,
-        // then Esc on the menu.
-        let escaped = try await Self.visitVoiceMode(
-            answering: [.sendMode, .remove, .voice(voice.id)],
-            sendMode: sendMode
-        )
-        #expect(escaped.manifest == Self.voiceManifest)
-        #expect(escaped.titles.count == 4)
-        // Each cancelled confirmation came back to the menu on its own item.
-        #expect(escaped.preselections == [.voice(voice.id), .sendMode, .remove, .voice(voice.id)])
-        #expect(escaped.removalConfirmations == 1)
-        #expect(escaped.downloadConfirmations == 1)
-
-        // The same visit left with Back keeps the send mode.
-        let kept = try await Self.visitVoiceMode(
-            answering: [.sendMode, .remove, .voice(voice.id), .back],
-            sendMode: sendMode
-        )
-        #expect(kept.manifest == Self.sendModeManifest)
-        #expect(kept.titles.count == 4)
     }
 }

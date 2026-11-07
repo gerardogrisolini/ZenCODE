@@ -98,62 +98,16 @@ struct ChatGPTSubscriptionWebSocketTaskRaceTests {
             ChatGPTSubscriptionWebSocketCloseCode.goingAway
         ])
     }
-
-    @Test
-    func resumeAndCancelCancelThePublishedConnectionTask() async {
-        let probe = ChatGPTSubscriptionWebSocketTaskCancellationProbe()
-        let task = ChatGPTSubscriptionNIOWebSocketTask(connector: {
-            await probe.connectorDidStart()
-            await probe.waitForCancellationCheck()
-            do {
-                try Task.checkCancellation()
-            } catch {
-                await probe.connectorWasCancelled()
-                throw error
-            }
-            fatalError("A cancelled WebSocket connector must not remain running")
-        })
-
-        task.resume()
-        await probe.waitForConnectorStart()
-        task.cancel(with: nil, reason: nil)
-        await probe.allowCancellationCheck()
-
-        // The connector itself acknowledges cancellation before the assertion.
-        #expect(await probe.waitForConnectorCancellation())
-        #expect(await probe.wasCancelled)
-        #expect(task.state == .canceling)
-    }
 }
 
 private actor ChatGPTSubscriptionWebSocketTaskCancellationProbe {
-    private var hasStarted = false
     private var cancellationCheckAllowed = false
     private var cancelled = false
-    private var startWaiters: [CheckedContinuation<Void, Never>] = []
     private var checkWaiters: [CheckedContinuation<Void, Never>] = []
     private var cancellationWaiters: [CheckedContinuation<Bool, Never>] = []
 
     var wasCancelled: Bool {
         cancelled
-    }
-
-    func connectorDidStart() {
-        hasStarted = true
-        let waiters = startWaiters
-        startWaiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
-        }
-    }
-
-    func waitForConnectorStart() async {
-        guard !hasStarted else {
-            return
-        }
-        await withCheckedContinuation { continuation in
-            startWaiters.append(continuation)
-        }
     }
 
     func allowCancellationCheck() {

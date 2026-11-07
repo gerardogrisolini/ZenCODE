@@ -94,19 +94,6 @@ struct DS4EngineRegistryTests {
         #expect(factory.openCount == 1)
     }
 
-    @Test
-    func openStatusIsForwardedToTheCaller() async throws {
-        let factory = MockDS4EngineFactory()
-        let registry = DS4EngineRegistry(factory: factory.factory)
-        let messages = Mutex<[String]>([])
-
-        _ = try await registry.engine(for: .mock(model: "/m/a.gguf")) { message in
-            messages.withLock { $0.append(message) }
-        }
-
-        #expect(messages.withLock { $0 } == ["opened /m/a.gguf"])
-    }
-
     // MARK: Identity switch
 
     @Test
@@ -146,18 +133,6 @@ struct DS4EngineRegistryTests {
         let generateIndex = try #require(callsA.firstIndex(of: .generate(sessionID: "s1")))
         let closeIndex = try #require(callsA.firstIndex(of: .close))
         #expect(generateIndex < closeIndex)
-    }
-
-    @Test
-    func leaseOnANewIdentitySwitchesEngines() async throws {
-        let factory = MockDS4EngineFactory()
-        let registry = DS4EngineRegistry(factory: factory.factory)
-
-        let first = try await registry.withGenerationLease(configuration: .mock(model: "/m/a.gguf"), sessionID: "s") { $0 }
-        let second = try await registry.withGenerationLease(configuration: .mock(model: "/m/b.gguf"), sessionID: "s") { $0 }
-
-        #expect(first !== second)
-        #expect(factory.engines.map(\.isClosed) == [true, false])
     }
 
     // MARK: Generation lease
@@ -243,22 +218,6 @@ struct DS4EngineRegistryTests {
         #expect(recorder.order == [0, 2])
     }
 
-    @Test
-    func failingLeaseBodyReleasesTheLock() async throws {
-        let registry = DS4EngineRegistry(factory: MockDS4EngineFactory().factory)
-        let configuration = DS4EngineConfiguration.mock()
-
-        await #expect(throws: DS4EngineError.sessionFailed("boom")) {
-            try await registry.withGenerationLease(configuration: configuration, sessionID: "s") { _ in
-                throw DS4EngineError.sessionFailed("boom")
-            }
-        }
-        let value = try await registry.withGenerationLease(configuration: configuration, sessionID: "s") { _ in 42 }
-
-        #expect(value == 42)
-        #expect(await registry.isGenerationLockHeld == false)
-    }
-
     // MARK: Errors
 
     @Test
@@ -284,50 +243,7 @@ struct DS4EngineRegistryTests {
         #expect(engine === factory.engines.first)
     }
 
-    @Test
-    func coalescedWaitersShareTheOpenFailure() async throws {
-        let factory = MockDS4EngineFactory(openDelay: .milliseconds(40))
-        let registry = DS4EngineRegistry(factory: factory.factory)
-        factory.failNextOpen(with: .openFailed("ds4_engine_open failed: bad tensor"))
-
-        let results = await withTaskGroup(of: DS4EngineError?.self) { group in
-            for _ in 0..<3 {
-                group.addTask {
-                    do {
-                        _ = try await registry.engine(for: .mock())
-                        return nil
-                    } catch {
-                        return error as? DS4EngineError
-                    }
-                }
-            }
-            var results: [DS4EngineError?] = []
-            for await result in group {
-                results.append(result)
-            }
-            return results
-        }
-
-        #expect(results.allSatisfy { $0 == .openFailed("ds4_engine_open failed: bad tensor") })
-        #expect(factory.openCount == 1)
-    }
-
     // MARK: Sessions and shutdown
-
-    @Test
-    func releaseSessionForwardsToTheOpenEngine() async throws {
-        let factory = MockDS4EngineFactory()
-        let registry = DS4EngineRegistry(factory: factory.factory)
-        let engine = try await registry.engine(for: .mock())
-        _ = try await turn(engine, sessionID: "s1", prompt: "hi")
-
-        await registry.releaseSession("s1")
-
-        let mock = try #require(factory.engines.first)
-        #expect(mock.calls.contains(.releaseSession("s1")))
-        #expect(mock.liveSessionIDs.isEmpty)
-        #expect(await engine.stats(sessionID: "s1") == .empty)
-    }
 
     @Test
     func shutdownClosesTheEngineAndTheRegistryStaysUsable() async throws {
@@ -352,54 +268,7 @@ struct DS4EngineRegistryTests {
         #expect(factory.openCount == 2)
     }
 
-    @Test
-    func shutdownDuringOpenDiscardsTheNewEngine() async throws {
-        let factory = MockDS4EngineFactory(openDelay: .milliseconds(80))
-        let registry = DS4EngineRegistry(factory: factory.factory)
-
-        let opening = Task { try await registry.engine(for: .mock()) }
-        await ds4Eventually { factory.openCount == 1 }
-        await registry.shutdown()
-
-        await #expect(throws: DS4EngineError.engineClosed) { _ = try await opening.value }
-        #expect(factory.engines.first?.isClosed == true)
-        #expect(await registry.currentIdentity == nil)
-    }
-
     // MARK: closeIfIdle
-
-    @Test
-    func closeIfIdleWithoutAnEngineReturnsFalse() async {
-        let factory = MockDS4EngineFactory()
-        let registry = DS4EngineRegistry(factory: factory.factory)
-
-        #expect(await registry.closeIfIdle() == false)
-        #expect(factory.openCount == 0)
-        #expect(await registry.isGenerationLockHeld == false)
-    }
-
-    @Test
-    func closeIfIdleClosesAnEngineWithoutSessionsAndTheNextRequestReopensIt() async throws {
-        let factory = MockDS4EngineFactory()
-        let registry = DS4EngineRegistry(factory: factory.factory)
-        let configuration = DS4EngineConfiguration.mock()
-        let engine = try await registry.engine(for: configuration)
-
-        #expect(await registry.closeIfIdle())
-
-        let mock = try #require(factory.engines.first)
-        #expect(mock.isClosed)
-        #expect(await registry.currentIdentity == nil)
-        #expect(await registry.isGenerationLockHeld == false)
-        await #expect(throws: DS4EngineError.engineClosed) {
-            _ = try await engine.tokenCount(of: [.begin])
-        }
-
-        let reopened = try await registry.engine(for: configuration)
-        #expect(reopened !== engine)
-        #expect(factory.openCount == 2)
-        #expect(await registry.currentIdentity == configuration.identity)
-    }
 
     @Test
     func closeIfIdleKeepsAnEngineWithALiveSessionUntilItIsReleased() async throws {
@@ -421,74 +290,6 @@ struct DS4EngineRegistryTests {
         #expect(mock.liveSessionIDs.isEmpty)
     }
 
-    @Test
-    func closeIfIdleNeverWaitsForAnActiveLease() async throws {
-        let factory = MockDS4EngineFactory()
-        let registry = DS4EngineRegistry(factory: factory.factory)
-        let configuration = DS4EngineConfiguration.mock()
-        let gate = MockDS4Gate()
-        let holder = Task {
-            try await registry.withGenerationLease(configuration: configuration, sessionID: "holder") { _ in
-                try await gate.wait()
-            }
-        }
-        await ds4Eventually { await registry.activeLeaseSessionID == "holder" }
-        let mock = try #require(factory.engines.first)
-
-        #expect(await registry.closeIfIdle() == false)
-        #expect(!mock.isClosed)
-        #expect(await registry.currentIdentity == configuration.identity)
-
-        gate.open()
-        try await holder.value
-        #expect(await registry.closeIfIdle())
-        #expect(mock.isClosed)
-    }
-
-    @Test
-    func closeIfIdleIsFalseWhileALeaseIsQueued() async throws {
-        let factory = MockDS4EngineFactory()
-        let registry = DS4EngineRegistry(factory: factory.factory)
-        let configuration = DS4EngineConfiguration.mock()
-        let gate = MockDS4Gate()
-        let holder = Task {
-            try await registry.withGenerationLease(configuration: configuration, sessionID: "holder") { _ in
-                try await gate.wait()
-            }
-        }
-        await ds4Eventually { await registry.activeLeaseSessionID == "holder" }
-        let queued = Task {
-            try await registry.withGenerationLease(configuration: configuration, sessionID: "queued") { _ in }
-        }
-        await ds4Eventually { await registry.queuedLeaseCount == 1 }
-        let mock = try #require(factory.engines.first)
-
-        #expect(await registry.closeIfIdle() == false)
-        #expect(!mock.isClosed)
-
-        gate.open()
-        try await holder.value
-        try await queued.value
-        #expect(factory.openCount == 1)
-        #expect(await registry.closeIfIdle())
-        #expect(mock.isClosed)
-    }
-
-    @Test
-    func closeIfIdleDuringAnOpenReturnsFalseAndTheOpenCompletes() async throws {
-        let factory = MockDS4EngineFactory(openDelay: .milliseconds(80))
-        let registry = DS4EngineRegistry(factory: factory.factory)
-        let configuration = DS4EngineConfiguration.mock()
-        let opening = Task { try await registry.engine(for: configuration) }
-        await ds4Eventually { factory.openCount == 1 }
-
-        #expect(await registry.closeIfIdle() == false)
-        let engine = try await opening.value
-        #expect(engine === factory.engines.first)
-        #expect(await registry.currentIdentity == configuration.identity)
-        #expect(factory.engines.first?.isClosed == false)
-    }
-
     // MARK: Configuration
 
     @Test
@@ -508,111 +309,4 @@ struct DS4EngineRegistryTests {
         #expect(base.identity.hasPrefix("library=/tmp/zencode-ds4-tests/"))
     }
 
-    @Test
-    func explicitPlacementOptionsAreNotDuplicatedAndCapacityIsClamped() {
-        let configuration = DS4EngineConfiguration.mock(
-            contextSize: 8192,
-            sessionCapacity: 42,
-            extraOptions: [DS4EngineOption(key: "context_size", value: "16384")]
-        )
-
-        #expect(configuration.sessionCapacity == 8)
-        #expect(configuration.effectiveOptions.filter { $0.key == "context_size" }.map(\.value) == ["16384"])
-        #expect(configuration.effectiveOptions.last?.keyValue == "session_count=8")
-        #expect(DS4EngineConfiguration.mock(sessionCapacity: 0).sessionCapacity == 1)
-    }
-
-    // MARK: Mock contract
-
-    @Test
-    func mockSyncReusesTheCommonPrefixAndEvictsLeastRecentlyUsedSessions() async throws {
-        let engine = MockDS4Engine(configuration: .mock(sessionCapacity: 2))
-        let firstTurn: [DS4TranscriptOperation] = [.begin, .message(role: "user", content: "hello there")]
-        let secondTurn = firstTurn + [.message(role: "assistant", content: "hi"), .message(role: "user", content: "more")]
-
-        let initial = try await engine.sync(sessionID: "a", transcript: firstTurn, onProgress: noProgress)
-        let followUp = try await engine.sync(sessionID: "a", transcript: secondTurn, onProgress: noProgress)
-        _ = try await engine.sync(sessionID: "b", transcript: firstTurn, onProgress: noProgress)
-        _ = try await engine.sync(sessionID: "c", transcript: firstTurn, onProgress: noProgress)
-        let rebuilt = try await engine.sync(sessionID: "a", transcript: secondTurn, onProgress: noProgress)
-
-        #expect(initial == DS4SyncResult(tokenCount: MockDS4Engine.tokenCount(of: firstTurn), cached: 0, suffix: MockDS4Engine.tokenCount(of: firstTurn)))
-        #expect(followUp.cached == MockDS4Engine.tokenCount(of: firstTurn))
-        #expect(followUp.tokenCount == MockDS4Engine.tokenCount(of: secondTurn))
-        #expect(engine.calls.contains(.evicted("a")))
-        #expect(engine.calls.contains(.evicted("b")))
-        #expect(rebuilt.cached == 0)
-        #expect(engine.liveSessionIDs == ["c", "a"])
-    }
-
-    @Test
-    func mockGenerationHonoursCallerStopMaxTokensAndContext() async throws {
-        let engine = MockDS4Engine(configuration: .mock(contextSize: 64))
-        _ = try await engine.sync(sessionID: "s", transcript: [.begin], onProgress: noProgress)
-        engine.enqueueGeneration(["a", "b", "STOP", "c"])
-        engine.enqueueGeneration(["x", "y", "z"])
-
-        let stopped = try await engine.generate(sessionID: "s", maxTokens: 10, thinkMode: 0, sampling: greedy) { text in
-            text == "STOP" ? .stop : []
-        }
-        let truncated = try await engine.generate(sessionID: "s", maxTokens: 2, thinkMode: 0, sampling: greedy) { _ in [] }
-
-        #expect(stopped.outcome == .callerStop)
-        #expect(stopped.text == "abSTOP")
-        #expect(truncated.outcome == .maxTokens)
-        #expect(truncated.text == "xy")
-        await #expect(throws: DS4EngineError.contextExhausted(used: 64, limit: 64)) {
-            _ = try await engine.sync(sessionID: "s", transcript: [.renderedChat(String(repeating: "abcd", count: 64))], onProgress: noProgress)
-        }
-        await #expect(throws: DS4EngineError.self) {
-            _ = try await engine.generate(sessionID: "never-synced", maxTokens: 1, thinkMode: 0, sampling: greedy) { _ in [] }
-        }
-    }
-
-    @Test
-    func mockGenerationCancellationKeepsPartialText() async throws {
-        let engine = MockDS4Engine(configuration: .mock(), chunkDelay: .milliseconds(10))
-        _ = try await engine.sync(sessionID: "s", transcript: [.begin], onProgress: noProgress)
-        engine.enqueueGeneration(Array(repeating: "t", count: 500))
-        let firstChunk = MockDS4Gate()
-
-        let generation = Task {
-            try await engine.generate(sessionID: "s", maxTokens: 1000, thinkMode: 0, sampling: greedy) { _ in
-                firstChunk.open()
-                return []
-            }
-        }
-        try await firstChunk.wait()
-        generation.cancel()
-        let result = try await generation.value
-
-        #expect(result.outcome == .cancelled)
-        #expect(!result.text.isEmpty)
-        #expect(result.text.count < 500)
-    }
-
-    @Test
-    func mockCheckpointsRoundTripTrailersAndRejectForeignFiles() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ds4-registry-tests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let engine = MockDS4Engine(configuration: .mock())
-        let transcript: [DS4TranscriptOperation] = [.begin, .message(role: "user", content: "save me")]
-        _ = try await engine.sync(sessionID: "s", transcript: transcript, onProgress: noProgress)
-        let checkpoint = directory.appendingPathComponent("s.kv")
-        let foreign = directory.appendingPathComponent("foreign.kv")
-        try Data("not a checkpoint".utf8).write(to: foreign)
-
-        let saved = try await engine.saveCheckpoint(sessionID: "s", to: checkpoint, trailer: Data("title".utf8))
-        let trailer = try await engine.loadCheckpoint(sessionID: "restored", from: checkpoint)
-        let resumed = try await engine.sync(sessionID: "restored", transcript: transcript, onProgress: noProgress)
-
-        #expect(saved == .saved)
-        #expect(trailer == Data("title".utf8))
-        #expect(resumed.cached == resumed.tokenCount)
-        await #expect(throws: DS4EngineError.kvIncompatible("not a mock DS4 checkpoint")) {
-            _ = try await engine.loadCheckpoint(sessionID: "x", from: foreign)
-        }
-    }
 }

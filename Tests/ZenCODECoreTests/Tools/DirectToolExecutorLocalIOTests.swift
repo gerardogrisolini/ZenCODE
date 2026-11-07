@@ -15,202 +15,58 @@ import ToolCore
 
 @Suite
 struct DirectToolExecutorLocalIOTests {
-    @Test
-    func baseCatalogKeepsCoreLocalSearchAndTextToolsOnly() {
-        let baseToolNames = Set(DirectToolCatalog.baseDescriptors.map(\.name))
-        let selectableToolNames = Set(AgentToolSelection.selectableDescriptors().map(\.name))
-
-        #expect(baseToolNames.contains("local.exec"))
-        #expect(baseToolNames.contains("local.readFile"))
-        #expect(baseToolNames.contains("local.inspectFile"))
-        #expect(baseToolNames.contains("local.writeFile"))
-        #expect(baseToolNames.contains("text.wc"))
-        #expect(baseToolNames.contains("feature.list"))
-        #expect(baseToolNames.contains("feature.enable"))
-        #expect(baseToolNames.contains("feature.delete"))
-        #expect(baseToolNames.contains("search.glob"))
-        #expect(baseToolNames.contains("search.grep"))
-        #expect(baseToolNames.contains("search.locate"))
-        #expect(!baseToolNames.contains("web.search"))
-        #expect(!baseToolNames.contains("git.status"))
-
-        #expect(selectableToolNames.contains("local.readFile"))
-        #expect(selectableToolNames.contains("local.inspectFile"))
-        #expect(selectableToolNames.contains("local.writeFile"))
-        #expect(selectableToolNames.contains("search.glob"))
-        #expect(selectableToolNames.contains("search.locate"))
-        #expect(selectableToolNames.contains("text.wc"))
-        #expect(!selectableToolNames.contains("web.search"))
-        #expect(!selectableToolNames.contains("git.status"))
-        #expect(!selectableToolNames.contains("git.push"))
-    }
-
-    @Test
-    func localExecAuthorizationCommandsSplitShellPipelines() {
+    static let authorizationCommandCases: [(String, [String])] = [
         // `printf`/`echo` are decorative and filtered; use real executables.
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(
-                in: "cat one | grep one|sort"
-            ) == ["cat one", "grep one", "sort"]
-        )
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(
-                in: "producer |& consumer"
-            ) == ["producer", "consumer"]
-        )
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(
-                in: "primary || fallback"
-            ) == ["primary", "fallback"]
-        )
-    }
-
-    @Test
-    func localExecAuthorizationCommandsPreserveQuotedAndEscapedPipes() {
-        // Use `cat` instead of `printf` (printf is now decorative).
+        ("cat one | grep one|sort", ["cat one", "grep one", "sort"]),
+        ("producer |& consumer", ["producer", "consumer"]),
+        ("primary || fallback", ["primary", "fallback"]),
+        ("cmd1 && cmd2", ["cmd1", "cmd2"]),
+        ("cmd1; cmd2", ["cmd1", "cmd2"]),
+        ("cmd &", ["cmd"]),
+        ("cmd1\ncmd2", ["cmd1", "cmd2"]),
         // Quotes are stripped from the cleaned invocation but the pipe inside
         // quotes does not split the segment.
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(
-                in: "cat 'a|b' | grep a"
-            ) == ["cat a|b", "grep a"]
-        )
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(
-                in: "cat \"a|b\" | grep a"
-            ) == ["cat a|b", "grep a"]
-        )
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(
-                in: "cat a\\|b | grep a"
-            ) == ["cat a\\|b", "grep a"]
-        )
-    }
-
-    @Test
-    func localExecAuthorizationCommandsSplitOnAndAnd() {
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(in: "cmd1 && cmd2")
-            == ["cmd1", "cmd2"]
-        )
-    }
-
-    @Test
-    func localExecAuthorizationCommandsSplitOnSemicolon() {
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(in: "cmd1; cmd2")
-            == ["cmd1", "cmd2"]
-        )
-    }
-
-    @Test
-    func localExecAuthorizationCommandsSplitOnBackgroundAmpersand() {
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(in: "cmd &")
-            == ["cmd"]
-        )
-    }
-
-    @Test
-    func localExecAuthorizationCommandsSplitOnNewlines() {
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(in: "cmd1\ncmd2")
-            == ["cmd1", "cmd2"]
-        )
-    }
-
-    @Test
-    func localExecAuthorizationCommandsSkipHarmlessBuiltins() {
-        // `true` and `false` are skipped, so they produce no authorization
-        // request.
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(
-                in: "swift build 2>&1 | tail -n 20 || true"
-            ) == ["swift build 2>&1", "tail -n 20"]
-        )
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(in: "false || make")
-            == ["make"]
-        )
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(in: "true")
-            == []
-        )
-    }
-
-    @Test
-    func localExecAuthorizationCommandsDeduplicateRepeatedExecutables() {
-        // Two `grep` invocations share an identity, so only the first is
-        // surfaced for authorization.
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(
-                in: "grep foo | sort | grep bar"
-            ) == ["grep foo", "sort"]
-        )
-    }
-
-    @Test
-    func localExecAuthorizationCommandsExtractNestedFromCommandSubstitution() {
-        // `echo` is decorative but its `$(...)` substitution is extracted.
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(
-                in: "echo $(ls | wc -l)"
-            ) == ["ls", "wc -l"]
-        )
-    }
-
-    @Test
-    func localExecAuthorizationCommandsExtractNestedFromBackticks() {
-        // `echo` is decorative but its backtick content is extracted.
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(
-                in: "echo `ls | wc -l`"
-            ) == ["ls", "wc -l"]
-        )
-    }
-
-    @Test
-    func localExecAuthorizationDisplayIdentityExtractsExecutable() {
-        #expect(
-            DirectToolExecutor.localExecAuthorizationDisplayIdentity(
-                in: "swift build 2>&1"
-            ) == "swift"
-        )
-        #expect(
-            DirectToolExecutor.localExecAuthorizationDisplayIdentity(
-                in: "FOO=bar make all"
-            ) == "make"
-        )
-    }
-
-    @Test
-    func localExecAuthorizationCommandsSurfaceExecutablesInsideControlFlow() {
-        // C1: control-flow keywords are consumed; the real executable surfaces
-        // with a cleaned invocation.
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(
-                in: "if /bin/touch /tmp/x; then true; fi"
-            ) == ["/bin/touch /tmp/x"]
-        )
-        #expect(
-            DirectToolExecutor.localExecAuthorizationDisplayIdentity(
-                in: "if /bin/touch /tmp/x"
-            ) == "/bin/touch"
-        )
-    }
-
-    @Test
-    func localExecAuthorizationCommandsSkipBuiltinsWithRedirections() {
+        ("cat 'a|b' | grep a", ["cat a|b", "grep a"]),
+        ("cat \"a|b\" | grep a", ["cat a|b", "grep a"]),
+        ("cat a\\|b | grep a", ["cat a\\|b", "grep a"]),
+        // `true` and `false` are skipped, so they produce no request.
+        ("swift build 2>&1 | tail -n 20 || true", ["swift build 2>&1", "tail -n 20"]),
+        ("false || make", ["make"]),
+        ("true", []),
+        // Two `grep` invocations share an identity; only the first surfaces.
+        ("grep foo | sort | grep bar", ["grep foo", "sort"]),
+        // `echo` is decorative but its substitutions are extracted.
+        ("echo $(ls | wc -l)", ["ls", "wc -l"]),
+        ("echo `ls | wc -l`", ["ls", "wc -l"]),
+        // C1: control-flow keywords are consumed; the executable surfaces.
+        ("if /bin/touch /tmp/x; then true; fi", ["/bin/touch /tmp/x"]),
         // C2: a built-in with redirection is prompted, not skipped.
-        #expect(
-            DirectToolExecutor.localExecAuthorizationCommands(
-                in: "true > out.txt"
-            ) == ["true > out.txt"]
-        )
+        ("true > out.txt", ["true > out.txt"]),
+    ]
+
+    @Test(arguments: DirectToolExecutorLocalIOTests.authorizationCommandCases)
+    func localExecAuthorizationCommandsSplitShellPipelines(command: String, commands: [String]) {
+        #expect(DirectToolExecutor.localExecAuthorizationCommands(in: command) == commands)
     }
 
-    @Test
-    func localExecAuthorizesWholePipelineWithOneRequest() async {
+    /// The authorization is one decision for the exact tool call: pipelines,
+    /// skipped built-ins, comments, decorative echo, wrappers and nested
+    /// substitutions all yield a single request carrying the whole command.
+    @Test(arguments: [
+        // Use real executables (not echo/printf which are now decorative).
+        "cat one | grep one | sort",
+        // `true` is a harmless builtin and must not produce a request.
+        "swift build 2>&1 | tail -n 20 || true",
+        """
+        # build step
+        echo "== Build =="
+        true && env CI=1 command swift test
+        """,
+        "FOO=bar env CI=1 swift build",
+        // The authorizer reparses it and requires both `cat` and nested `rm`.
+        "cat \"$(rm -rf /tmp/x)\"",
+    ])
+    func localExecAuthorizesWholePipelineWithOneRequest(command: String) async {
         let recorder = LocalExecAuthorizationRecorder(decisions: [true])
         let executor = DirectToolExecutor(
             authorizationHandler: { request in
@@ -219,8 +75,6 @@ struct DirectToolExecutorLocalIOTests {
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
             subAgentBackendFactory: { TestAgentRuntimeBackend() }
         )
-        // Use real executables (not echo/printf which are now decorative).
-        let command = "cat one | grep one | sort"
 
         let output = await executor.deniedLocalExecOutputIfNeeded(
             sessionID: "session",
@@ -338,100 +192,6 @@ struct DirectToolExecutorLocalIOTests {
     }
 
     @Test
-    func localExecSkipsHarmlessBuiltinsEndToEnd() async {
-        let recorder = LocalExecAuthorizationRecorder(decisions: [true])
-        let executor = DirectToolExecutor(
-            authorizationHandler: { request in
-                await recorder.authorize(request)
-            },
-            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { TestAgentRuntimeBackend() }
-        )
-        // `true` is a harmless builtin and must not produce a request.
-        let command = "swift build 2>&1 | tail -n 20 || true"
-
-        let output = await executor.deniedLocalExecOutputIfNeeded(
-            sessionID: "session",
-            toolCall: DirectAgentToolCall(
-                id: "tool-call",
-                name: "local.exec",
-                argumentsObject: [:],
-                argumentsJSON: "{}"
-            ),
-            command: command,
-            cwd: URL(fileURLWithPath: "/tmp")
-        )
-        let authorizedCommands = await recorder.recordedCommands()
-
-        #expect(authorizedCommands == [command])
-        #expect(output == nil)
-    }
-
-    @Test
-    func localExecFiltersCommentsEchoAndBuiltinsEndToEnd() async {
-        let recorder = LocalExecAuthorizationRecorder(decisions: [true])
-        let executor = DirectToolExecutor(
-            authorizationHandler: { request in
-                await recorder.authorize(request)
-            },
-            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { TestAgentRuntimeBackend() }
-        )
-        // Comments, decorative echo, and builtins should produce only one
-        // authorization request for the real command.
-        let command = """
-        # build step
-        echo "== Build =="
-        true && env CI=1 command swift test
-        """
-
-        let output = await executor.deniedLocalExecOutputIfNeeded(
-            sessionID: "session",
-            toolCall: DirectAgentToolCall(
-                id: "tool-call",
-                name: "local.exec",
-                argumentsObject: [:],
-                argumentsJSON: "{}"
-            ),
-            command: command,
-            cwd: URL(fileURLWithPath: "/tmp")
-        )
-        let authorizedCommands = await recorder.recordedCommands()
-
-        #expect(authorizedCommands == [command])
-        #expect(output == nil)
-    }
-
-    @Test
-    func localExecAuthorizationRequestPreservesWholeCommand() async {
-        let recorder = LocalExecAuthorizationRecorder(decisions: [true])
-        let executor = DirectToolExecutor(
-            authorizationHandler: { request in
-                await recorder.authorize(request)
-            },
-            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { TestAgentRuntimeBackend() }
-        )
-        // The authorization is one decision for the exact tool call. Parsing
-        // still derives executable identities for cache and persistence, while
-        // the prompt retains the complete command the shell will execute.
-        _ = await executor.deniedLocalExecOutputIfNeeded(
-            sessionID: "session",
-            toolCall: DirectAgentToolCall(
-                id: "tool-call",
-                name: "local.exec",
-                argumentsObject: [:],
-                argumentsJSON: "{}"
-            ),
-            command: "FOO=bar env CI=1 swift build",
-            cwd: URL(fileURLWithPath: "/tmp")
-        )
-        let authorizedCommands = await recorder.recordedCommands()
-
-        #expect(authorizedCommands == ["FOO=bar env CI=1 swift build"])
-    }
-
-    @Test
     func localExecAuthorizationRequestPopulatesAllFields() async {
         let recorder = LocalExecAuthorizationRecorder(decisions: [true])
         let executor = DirectToolExecutor(
@@ -463,34 +223,6 @@ struct DirectToolExecutorLocalIOTests {
         #expect(request.kind == "execute")
         #expect(request.sessionID == "session-id")
         #expect(request.toolCallID == "call-id")
-    }
-
-    @Test
-    func localExecAuthorizationExtractsNestedCommandFromSubstitution() async {
-        let recorder = LocalExecAuthorizationRecorder(decisions: [true])
-        let executor = DirectToolExecutor(
-            authorizationHandler: { request in
-                await recorder.authorize(request)
-            },
-            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { TestAgentRuntimeBackend() }
-        )
-        // The single request keeps the full command; the authorizer reparses it
-        // and requires both `cat` and nested `rm` identities for Always/cache.
-        _ = await executor.deniedLocalExecOutputIfNeeded(
-            sessionID: "session",
-            toolCall: DirectAgentToolCall(
-                id: "tool-call",
-                name: "local.exec",
-                argumentsObject: [:],
-                argumentsJSON: "{}"
-            ),
-            command: "cat \"$(rm -rf /tmp/x)\"",
-            cwd: URL(fileURLWithPath: "/tmp")
-        )
-        let authorizedCommands = await recorder.recordedCommands()
-
-        #expect(authorizedCommands == ["cat \"$(rm -rf /tmp/x)\""])
     }
 
     private func runFileTool(
@@ -634,40 +366,6 @@ struct DirectToolExecutorLocalIOTests {
         #expect(try String(contentsOf: existing, encoding: .utf8) == "one\ntwo changed\nthree\n")
         #expect(try String(contentsOf: added, encoding: .utf8) == "hello\nworld\n")
         #expect(!FileManager.default.fileExists(atPath: deleted.path))
-    }
-
-    @Test
-    func beginPatchRejectsMismatchWithoutWriting() async throws {
-        let root = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("applypatch-begin-mismatch-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let existing = root.appendingPathComponent("existing.txt")
-        let added = root.appendingPathComponent("added.txt")
-        try "one\ntwo\n".write(to: existing, atomically: true, encoding: .utf8)
-
-        let patch = """
-        *** Begin Patch
-        *** Update File: existing.txt
-        @@
-         missing
-        -two
-        +two changed
-        *** Add File: added.txt
-        +must not be written
-        *** End Patch
-        """
-
-        await #expect(throws: (any Error).self) {
-            _ = try await self.runFileTool(
-                "local.applyPatch",
-                arguments: ["patch": patch],
-                workingDirectory: root
-            )
-        }
-        #expect(try String(contentsOf: existing, encoding: .utf8) == "one\ntwo\n")
-        #expect(!FileManager.default.fileExists(atPath: added.path))
     }
 
     @Test

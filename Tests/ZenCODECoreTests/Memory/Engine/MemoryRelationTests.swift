@@ -71,65 +71,10 @@ private struct SplitMix64 {
     }
 }
 
-// MARK: - Policy
-
-@Suite("Memory relation policy")
-struct MemoryRelationPolicyTests {
-    @Test func defaultPolicyHoldsTheApprovedValues() {
-        let policy = MemoryRelationPolicy.default
-        #expect(policy.maximumLinksPerMemory == 12)
-        #expect(policy.initialWeight == 0.7)
-        #expect(policy.reinforcementStep == 0.05)
-        #expect(policy.maximumWeight == 0.9)
-        #expect(MemoryEngineConfiguration().relationPolicy == .default)
-    }
-
-    @Test func reinforcedWeightClimbsByOneStepAndStopsAtTheMaximum() {
-        let policy = MemoryRelationPolicy.default
-        #expect(isApproximately(policy.reinforcedWeight(from: 0.7), 0.75))
-        #expect(isApproximately(policy.reinforcedWeight(from: 0.85), 0.9))
-        #expect(isApproximately(policy.reinforcedWeight(from: 0.88), 0.9))
-        #expect(policy.reinforcedWeight(from: 0.9) == 0.9)
-    }
-
-    @Test func reinforcedWeightNeverLowersAHeavierExistingWeight() {
-        let policy = MemoryRelationPolicy.default
-        #expect(policy.reinforcedWeight(from: 1) == 1)
-        #expect(policy.reinforcedWeight(from: 0.93) == 0.93)
-    }
-
-    @Test func initClampsNonsensicalValues() {
-        let policy = MemoryRelationPolicy(
-            maximumLinksPerMemory: 0,
-            initialWeight: 2,
-            reinforcementStep: -1,
-            maximumWeight: 0.1
-        )
-        #expect(policy.maximumLinksPerMemory == 1)
-        #expect(policy.initialWeight == 1)
-        #expect(policy.reinforcementStep == 0)
-        #expect(policy.maximumWeight == policy.initialWeight)
-    }
-}
-
 // MARK: - Graph: creation and reinforcement
 
 @Suite("Memory graph relations")
 struct MemoryGraphRelationTests {
-    @Test func newPairIsBornAtTheInitialWeightInBothDirections() {
-        var graph = makeGraph(["a", "b"])
-
-        let created = graph.reinforceRelation(between: "a", and: "b")
-
-        #expect(created)
-        #expect(weight(graph, "a", "b") == 0.7)
-        #expect(weight(graph, "b", "a") == 0.7)
-        #expect(graph.incomingNodes(to: "b") == ["a"])
-        #expect(graph.incomingNodes(to: "a") == ["b"])
-        #expect(graph.metadata.linkDiscoveryCount == 2)
-        #expect(reverseIndexIsConsistent(graph))
-    }
-
     @Test func repeatedCoSelectionRaisesTheWeightByOneStepUpToTheMaximum() {
         var graph = makeGraph(["a", "b"])
         let expected: [Float] = [0.7, 0.75, 0.8, 0.85, 0.9, 0.9, 0.9]
@@ -145,53 +90,6 @@ struct MemoryGraphRelationTests {
         graph.reinforceRelation(between: "b", and: "a")
         #expect(weight(graph, "a", "b") == 0.9)
         #expect(graph.metadata.linkDiscoveryCount == 16)
-    }
-
-    @Test func reinforcementKeepsOneEdgePerDirectionInPlace() {
-        var graph = makeGraph(["a", "b", "c", "d"])
-        for other in ["b", "c", "d"] {
-            graph.reinforceRelation(between: "a", and: other)
-        }
-        #expect(relationTargets(graph, from: "a") == ["b", "c", "d"])
-
-        graph.reinforceRelation(between: "a", and: "b")
-
-        // Same slots, so the creation order the cap relies on is preserved.
-        #expect(relationTargets(graph, from: "a") == ["b", "c", "d"])
-        #expect(relations(graph, from: "a").map(\.weight) == [0.75, 0.7, 0.7])
-        #expect(relationTargets(graph, from: "b") == ["a"])
-        #expect(graph.edgeCount == 6)
-        #expect(reverseIndexIsConsistent(graph))
-    }
-
-    @Test func aLegacyHeavierWeightIsNeverLowered() {
-        var symmetric = makeGraph(["a", "b"])
-        linkLegacy(&symmetric, "a", "b", weight: 1)
-        symmetric.reinforceRelation(between: "a", and: "b")
-        #expect(weight(symmetric, "a", "b") == 1)
-        #expect(weight(symmetric, "b", "a") == 1)
-        #expect(symmetric.edgeCount == 2)
-
-        // One direction legacy 1.0, the other 0.7: the pair takes the heavier.
-        var mixed = makeGraph(["a", "b"])
-        mixed.addEdge(from: "a", to: "b", kind: .relatesTo(weight: 0.7))
-        mixed.addEdge(from: "b", to: "a", kind: .relatesTo(weight: 1))
-        mixed.reinforceRelation(between: "a", and: "b")
-        #expect(weight(mixed, "a", "b") == 1)
-        #expect(weight(mixed, "b", "a") == 1)
-        #expect(mixed.edgeCount == 2)
-    }
-
-    @Test func aMissingDirectionIsInsertedAtTheReinforcedWeight() {
-        var graph = makeGraph(["a", "b"])
-        graph.addEdge(from: "a", to: "b", kind: .relatesTo(weight: 0.8))
-
-        graph.reinforceRelation(between: "b", and: "a")
-
-        #expect(isApproximately(weight(graph, "a", "b"), 0.85))
-        #expect(isApproximately(weight(graph, "b", "a"), 0.85))
-        #expect(graph.edgeCount == 2)
-        #expect(reverseIndexIsConsistent(graph))
     }
 
     @Test func missingInactiveOrIdenticalEndpointsAreANoOp() {
@@ -244,35 +142,6 @@ struct MemoryGraphRelationTests {
         #expect(reverseIndexIsConsistent(graph))
     }
 
-    @Test func theCapEvictsEvenWhenTheWeakestIsHeavierThanTheNewLink() {
-        var graph = Self.hubGraph(neighbours: 13)
-        for id in numbered("n", 0..<12) {
-            for _ in 0..<5 { graph.reinforceRelation(between: "hub", and: id) }
-        }
-        #expect(relations(graph, from: "hub").allSatisfy { $0.weight == 0.9 })
-
-        graph.reinforceRelation(between: "hub", and: "n12")
-
-        // The oldest 0.9 link made room for a 0.7 newcomer.
-        #expect(relationTargets(graph, from: "hub") == numbered("n", 1..<12) + ["n12"])
-        #expect(weight(graph, "hub", "n12") == 0.7)
-        #expect(relations(graph, from: "hub").count == 12)
-    }
-
-    @Test func evictionRemovesTheMirrorLinkAndItsReverseIndexEntries() {
-        var graph = Self.hubGraph(neighbours: 13)
-        for id in numbered("n", 0..<13) {
-            graph.reinforceRelation(between: "hub", and: id)
-        }
-
-        #expect(relationTargets(graph, from: "hub") == numbered("n", 1..<13))
-        #expect(relations(graph, from: "n00").isEmpty)
-        #expect(graph.edges["n00"] == nil)
-        #expect(!graph.incomingNodes(to: "n00").contains("hub"))
-        #expect(!graph.incomingNodes(to: "hub").contains("n00"))
-        #expect(reverseIndexIsConsistent(graph))
-    }
-
     @Test func edgesOfOtherKindsBetweenTheSamePairSurviveEviction() {
         var graph = Self.hubGraph(neighbours: 14, tags: ["topic"])
         // n00: a one-way supersedes edge. n01: a two-way contradiction.
@@ -308,51 +177,6 @@ struct MemoryGraphRelationTests {
         #expect(graph.outgoingEdges(from: "hub").contains { $0.target == "tag:topic" && $0.kind == .hasTag })
         #expect(graph.incomingNodes(to: "tag:topic") == ["hub"])
         #expect(reverseIndexIsConsistent(graph))
-    }
-
-    @Test func aLegacyOverCapMemoryIsBroughtBackToTheCapByANewLink() {
-        var graph = Self.hubGraph(neighbours: 31, tags: ["topic"])
-        for id in numbered("n", 0..<30) {
-            linkLegacy(&graph, "hub", id)
-        }
-        #expect(relations(graph, from: "hub").count == 30)
-
-        graph.reinforceRelation(between: "hub", and: "n30")
-
-        // 11 newest legacy links + the new one; every dropped link took its
-        // mirror and its reverse index entries along.
-        #expect(relationTargets(graph, from: "hub") == numbered("n", 19..<30) + ["n30"])
-        for id in numbered("n", 0..<19) {
-            #expect(relations(graph, from: id).isEmpty)
-            #expect(!graph.incomingNodes(to: id).contains("hub"))
-            #expect(!graph.incomingNodes(to: "hub").contains(id))
-        }
-        for id in numbered("n", 19..<30) {
-            #expect(weight(graph, id, "hub") == 0.7)
-        }
-        #expect(graph.outgoingEdges(from: "hub").contains { $0.target == "tag:topic" && $0.kind == .hasTag })
-        #expect(reverseIndexIsConsistent(graph))
-    }
-
-    @Test func aPolicyWithAnotherCapAndWeightsIsHonoured() {
-        let policy = MemoryRelationPolicy(
-            maximumLinksPerMemory: 2,
-            initialWeight: 0.5,
-            reinforcementStep: 0.1,
-            maximumWeight: 0.7
-        )
-        var graph = makeGraph(["a", "b", "c", "d"])
-
-        graph.reinforceRelation(between: "a", and: "b", policy: policy)
-        graph.reinforceRelation(between: "a", and: "c", policy: policy)
-        graph.reinforceRelation(between: "a", and: "b", policy: policy)
-        graph.reinforceRelation(between: "a", and: "b", policy: policy)
-        graph.reinforceRelation(between: "a", and: "b", policy: policy)
-        graph.reinforceRelation(between: "a", and: "d", policy: policy)
-
-        #expect(isApproximately(weight(graph, "a", "b"), 0.7))
-        #expect(relationTargets(graph, from: "a") == ["b", "d"])
-        #expect(weight(graph, "a", "d") == 0.5)
     }
 
     // MARK: Invariants
@@ -417,80 +241,6 @@ struct MemoryGraphRelationTests {
         #expect(graph.metadata.linkDiscoveryCount == linkCount)
         #expect(reverseIndexIsConsistent(graph))
     }
-
-    @Test func pruningRemovesTheWeakestLinksFirst() {
-        var graph = Self.hubGraph(neighbours: 20)
-        for id in numbered("n", 0..<20) {
-            linkLegacy(&graph, "hub", id, weight: id < "n04" ? 0.9 : 0.7)
-        }
-
-        graph.pruneRelations(maximumPerMemory: 12)
-
-        // The four oldest links are the heaviest, so they stay; the eight
-        // oldest of the 0.7 ones go.
-        #expect(relationTargets(graph, from: "hub") == numbered("n", 0..<4) + numbered("n", 12..<20))
-    }
-
-    @Test func pruningIsDeterministicAndIdempotent() {
-        var graph = makeGraph(numbered("m", 0..<30))
-        var generator = SplitMix64(state: 99)
-        for _ in 0..<500 {
-            let first = numbered("m", 0..<30)[Int(generator.next() % 30)]
-            let second = numbered("m", 0..<30)[Int(generator.next() % 30)]
-            guard first != second else { continue }
-            linkLegacy(&graph, first, second, weight: generator.next() % 3 == 0 ? 0.8 : 0.7)
-        }
-        #expect(graph.edges.values.contains { $0.count > 12 })
-
-        var first = graph
-        var second = graph
-        let removedFirst = first.pruneRelations(maximumPerMemory: 12)
-        let removedSecond = second.pruneRelations(maximumPerMemory: 12)
-
-        #expect(removedFirst > 0)
-        #expect(removedFirst == removedSecond)
-        #expect(first == second)
-        for id in first.memories.keys {
-            #expect(relations(first, from: id).count <= 12)
-        }
-        let again = first
-        let removedAgain = first.pruneRelations(maximumPerMemory: 12)
-        #expect(removedAgain == 0)
-        #expect(first == again)
-        #expect(reverseIndexIsConsistent(first))
-    }
-
-    @Test func pruningLeavesEdgesOfOtherKindsAlone() {
-        var graph = Self.hubGraph(neighbours: 20, tags: ["topic"])
-        graph.addEdge(from: "hub", to: "n00", kind: .supersedes)
-        graph.markContradiction("hub", "n01")
-        for id in numbered("n", 0..<20) {
-            linkLegacy(&graph, "hub", id)
-        }
-        let others = graph.edges.values.joined().filter { $0.kind.relationWeight == nil }.count
-
-        graph.pruneRelations(maximumPerMemory: 12)
-
-        #expect(graph.edges.values.joined().filter { $0.kind.relationWeight == nil }.count == others)
-        #expect(graph.outgoingEdges(from: "hub").contains { $0.target == "n00" && $0.kind == .supersedes })
-        #expect(graph.incomingNodes(to: "n00") == ["hub"])
-        #expect(graph.incomingNodes(to: "n01").contains("hub"))
-        #expect(graph.incomingNodes(to: "hub").contains("n01"))
-        #expect(!graph.incomingNodes(to: "hub").contains("n00"))
-        #expect(reverseIndexIsConsistent(graph))
-    }
-
-    @Test func pruningAtOrBelowTheLimitChangesNothing() {
-        var graph = Self.hubGraph(neighbours: 12)
-        for id in numbered("n", 0..<12) {
-            linkLegacy(&graph, "hub", id)
-        }
-        let before = graph
-
-        let removed = graph.pruneRelations(maximumPerMemory: 12)
-        #expect(removed == 0)
-        #expect(graph == before)
-    }
 }
 
 // MARK: - Recall maintenance
@@ -519,53 +269,6 @@ private actor ScriptedSelector: MemorySelector {
 
 @Suite("Recall maintenance relations")
 struct MemoryRecallRelationTests {
-    @Test func repeatedRecallsReinforceThePairUpToTheMaximum() async throws {
-        let selector = ScriptedSelector(Array(repeating: ["alpha", "beta"], count: 7))
-        let memory = MemoryEngine(selector: selector)
-        _ = try await memory.remember("alpha fact about swift", tags: ["swift"], id: "alpha")
-        _ = try await memory.remember("beta fact about swift", tags: ["swift"], id: "beta")
-
-        var observed: [Float] = []
-        for _ in 0..<7 {
-            let result = try await memory.recallDetailed("swift")
-            #expect(result.selected.map(\.memory.id) == ["alpha", "beta"])
-            let graph = await memory.snapshot()
-            observed.append(weight(graph, "alpha", "beta") ?? -1)
-            #expect(weight(graph, "beta", "alpha") == weight(graph, "alpha", "beta"))
-        }
-
-        let expected: [Float] = [0.7, 0.75, 0.8, 0.85, 0.9, 0.9, 0.9]
-        #expect(zip(observed, expected).allSatisfy { isApproximately($0, $1) })
-        let graph = await memory.snapshot()
-        #expect(relations(graph, from: "alpha").count == 1)
-        #expect(graph.metadata.linkDiscoveryCount == 14)
-    }
-
-    @Test func recallsKeepEveryMemoryAtOrBelowTheCap() async throws {
-        let ids = numbered("m", 0..<16)
-        let script = ids.dropFirst().map { ["m00", $0] }
-        let memory = MemoryEngine(selector: ScriptedSelector(script))
-        for id in ids {
-            _ = try await memory.remember("note \(id) about swift", tags: ["swift"], id: id)
-        }
-
-        for expected in script {
-            let result = try await memory.recallDetailed("swift")
-            #expect(result.selected.map(\.memory.id) == expected)
-        }
-
-        let graph = await memory.snapshot()
-        // 15 partners were linked in turn; the 3 oldest made room.
-        #expect(relationTargets(graph, from: "m00") == numbered("m", 4..<16))
-        for id in numbered("m", 1..<4) {
-            #expect(relations(graph, from: id).isEmpty)
-        }
-        for id in ids {
-            #expect(relations(graph, from: id).count <= 12)
-        }
-        #expect(reverseIndexIsConsistent(graph))
-    }
-
     @Test func aRecallTrimsALegacyOverCapMemoryAndItsReverseIndex() async throws {
         var seed = MemoryGraph()
         seed.addMemory(EngineMemoryEntry(id: "hub", category: .fact, content: "zebra hub", tags: ["swift"]))

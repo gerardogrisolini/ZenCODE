@@ -53,10 +53,6 @@ extension TerminalInteractiveLineReader {
 
     private func drainPanelRenders() async {
         while let snapshot = takeNextPanelRenderSnapshot() {
-            let beforeUpdate = withPanelLock { state in
-                state.panelRenderBeforeUpdateForTesting
-            }
-            await beforeUpdate?()
             await snapshot.statusBar?.updateInputPanel(
                 text: snapshot.text,
                 cursorIndex: snapshot.cursorIndex,

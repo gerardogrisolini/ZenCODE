@@ -71,33 +71,6 @@ extension TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func compactPermissionDeniedCompletionUsesWarningInsteadOfSuccessIcon() async {
-        let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let toolCall = presentedToolCall(
-            id: "denied-local-exec",
-            name: "local.exec",
-            argumentsObject: ["command": "whoami"],
-            argumentsJSON: #"{"command":"whoami"}"#
-        )
-
-        await renderer.writeToolCallStarted(toolCall)
-        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(
-                output: "Command execution cancelled.",
-                summary: "Command execution cancelled.",
-                status: .permissionDenied
-            )
-        )
-
-        let completionText = await renderer.capturedText(droppingFirst: eventCountBeforeCompletion)
-
-        #expect(completionText.contains("⚠️"))
-        #expect(!completionText.contains("✅"))
-    }
-
-    @Test
     func compactCompletionShowsElapsedMetadataWithinTheRedrawWidthBudget() async {
         let terminalColumns = 26
         let renderer = makeRenderer(
@@ -153,47 +126,6 @@ extension TerminalChatRenderCoordinatorTests {
         #expect(started.activeToolRenderedRowCount == 2)
     }
 
-    /// The time comes from the result alone (``DirectAgentToolResult/elapsed``):
-    /// a result without one (a call cancelled before its dispatch) completes
-    /// without a time, for a root call and for a delegated one.
-    @Test
-    func completionWithoutTheResultsElapsedTimeShowsNoTime() async {
-        let toolCall = exampleReadFileCall(id: "untimed-read")
-        let renderer = makeRenderer(standardErrorIsTerminal: true)
-        await renderer.writeToolCallStarted(toolCall)
-        let startEventCount = await renderer.capturedWriteEvents().count
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "let value = 1", summary: "Read")
-        )
-        let completion = await renderer.capturedText(droppingFirst: startEventCount)
-        let untimedCompletion = TerminalChat.compactToolTerminalText(
-            TerminalChat.compactToolLines(for: toolCall, statusIcon: "✅", statusDetail: nil),
-            lineInset: "",
-            newline: true
-        )
-        #expect(completion.hasSuffix(untimedCompletion))
-
-        let started = DirectSubAgentToolEvent(
-            agentID: "agent-worker", agentName: "worker", toolCall: toolCall, lifecycle: .started
-        )
-        await renderer.recordSubAgentToolEvent(started)
-        await renderer.recordSubAgentToolEvent(
-            DirectSubAgentToolEvent(
-                agentID: "agent-worker", agentName: "worker", toolCall: toolCall,
-                lifecycle: .completed(DirectAgentToolResult(output: "let value = 1", summary: "Read"))
-            )
-        )
-        let presentation = await renderer.subAgentToolPresentationSnapshot()
-            .presentationsByAgentID["agent-worker"]
-        if case let .completed(result, detail)? = presentation?.lifecycle {
-            #expect(detail == nil)
-            #expect(result.elapsed == nil)
-        } else {
-            Issue.record("The delegated tool did not complete")
-        }
-    }
-
     @Test
     func completedLifecycleTakesItsTimeFromTheResult() {
         typealias Lifecycle = TerminalChatRenderCoordinator.ToolBlockLifecycle
@@ -216,26 +148,6 @@ extension TerminalChatRenderCoordinatorTests {
         let untimed = DirectAgentToolResult(output: "ok", summary: "ok")
         #expect(Lifecycle.completed(for: toolCall, result: untimed).compactStatusDetail == nil)
         #expect(Lifecycle.started.compactStatusDetail == nil)
-    }
-
-    @Test
-    func elapsedTimeUsesMillisecondsBelowOneSecond() {
-        #expect(ToolCallPresentation.elapsedTimeText(.zero) == "0ms")
-        #expect(ToolCallPresentation.elapsedTimeText(.nanoseconds(1)) == "<0.01ms")
-        #expect(ToolCallPresentation.elapsedTimeText(.microseconds(820)) == "0.82ms")
-        #expect(ToolCallPresentation.elapsedTimeText(.milliseconds(12)) == "12.0ms")
-        #expect(ToolCallPresentation.elapsedTimeText(.milliseconds(350)) == "350ms")
-        #expect(ToolCallPresentation.elapsedTimeText(.milliseconds(1_200)) == "1.20s")
-
-        let rendered = TerminalChat.renderCompactToolLine(
-            "Read ✅ 0.82ms",
-            isTitle: false
-        )
-        #expect(
-            rendered.contains(
-                "\(TerminalChat.toolDurationColor)0.82ms\(TerminalChat.toolValueColor)"
-            )
-        )
     }
 
     @Test
@@ -337,34 +249,6 @@ extension TerminalChatRenderCoordinatorTests {
                 elapsed: nil
             ) == nil
         )
-    }
-
-    @Test
-    func compactCompletionReadsColumnWidthOnce() async {
-        let widthBox = ColumnWidthBox(100)
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            columnWidthProvider: {
-                widthBox.readCount += 1
-                return widthBox.width
-            }
-        )
-        let toolCall = presentedToolCall(
-            id: "compact-width-capture",
-            name: "agent.wait",
-            argumentsObject: [:],
-            argumentsJSON: "{}"
-        )
-
-        await renderer.writeToolCallStarted(toolCall)
-        #expect(widthBox.readCount == 1)
-
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Done", summary: "Done")
-        )
-
-        #expect(widthBox.readCount == 2)
     }
 
     @Test

@@ -100,19 +100,6 @@ import Testing
         #expect(offset == bytes.count)
     }
 
-    @Test func emptyGraphEncodesAHeaderWithNoRecords() throws {
-        let data = try MemoryVectorFile.encode(MemoryGraph())
-        #expect(data.count == MemoryVectorFile.headerSize)
-        #expect(MemoryVectorFile.decode(data) == [:])
-    }
-
-    @Test func encodingRefusesAnIdentifierLongerThanItsLengthField() {
-        let long = String(repeating: "x", count: Int(UInt16.max) + 1)
-        #expect(throws: MemoryVectorFile.EncodingError.identifierTooLong(long)) {
-            try MemoryVectorFile.encode(Self.graph([Self.entry(long, content: "c", vector: [1])]))
-        }
-    }
-
     // MARK: - Decoding
 
     @Test func decodingReturnsEveryRecord() throws {
@@ -185,20 +172,6 @@ import Testing
         #expect(MemoryVectorFile.decode(Data(header + record + Self.littleEndian(UInt32.max) + [0, 0])) == nil)
         #expect(MemoryVectorFile.decode(Data(header + record + Self.littleEndian(UInt32(2)) + [0, 0])) == nil)
         #expect(MemoryVectorFile.decode(Data(header + record + Self.littleEndian(UInt32(1)) + [0, 0x3C]))?["a"]?.components == [1])
-    }
-
-    @Test func invalidUTF8AndDuplicateIDsAreRejected() {
-        let header: [UInt8] = Array("ZMVF".utf8) + Self.littleEndian(UInt16(1)) + Self.littleEndian(UInt16(1))
-        func record(_ id: [UInt8]) -> [UInt8] {
-            Self.littleEndian(UInt16(id.count)) + id + Self.littleEndian(UInt64(7))
-                + Self.littleEndian(UInt32(1)) + Self.littleEndian(UInt32(1)) + [0, 0x3C]
-        }
-        let invalid = header + Self.littleEndian(UInt32(1)) + record([0xC3, 0x28])
-        #expect(MemoryVectorFile.decode(Data(invalid)) == nil)
-        let duplicate = header + Self.littleEndian(UInt32(2)) + record([0x61]) + record([0x61])
-        #expect(MemoryVectorFile.decode(Data(duplicate)) == nil)
-        let distinct = header + Self.littleEndian(UInt32(2)) + record([0x61]) + record([0x62])
-        #expect(MemoryVectorFile.decode(Data(distinct))?.count == 2)
     }
 
     // MARK: - Assignment

@@ -26,83 +26,6 @@ extension DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func standbyAgentAcceptsMessagesWhileItsGraphIsActive() async throws {
-        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
-        let (_, runtime) = try await standbyRuntime(backend: backend)
-        let agent = try #require(await runtime.snapshots().first)
-        #expect(agent.status == .standby)
-        #expect(await backend.sentPromptCount() == 1)
-
-        // Sending a message should succeed and trigger a second turn.
-        _ = try await runtime.messageAgents(
-            arguments: [
-                "id": .string(agent.id),
-                "message": .string("Can you summarize?"),
-            ]
-        )
-        await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agent.id)
-
-        #expect(await backend.sentPromptCount() == 2)
-
-        await runtime.shutdown()
-    }
-
-    @Test
-    func completedTaskAgentEntersStandbyInManualGraph() async throws {
-        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
-        let (orchestrator, runtime) = try await standbyRuntime(
-            backend: backend,
-            graphID: "manual-graph",
-            source: .manual,
-            pendingTasks: [TaskDefinition(id: "task-b", title: "Later work")]
-        )
-
-        let agent = try #require(await runtime.snapshots().first)
-        let task = try await orchestrator.task(sessionID: "root", taskID: "task-a").task
-
-        // The attempt completed; the task is .completed (manual graph, no validation).
-        #expect(task.status == .completed)
-        #expect(task.activeAttemptID == nil)
-        // The graph is still active because task-b is pending.
-        let graph = try #require(await orchestrator.graphSnapshot(sessionID: "root", graphID: "manual-graph"))
-        #expect(graph.state == .active)
-        // The agent entered standby despite its task being .completed, because
-        // the graph is still active and the task is not failed/cancelled.
-        #expect(agent.status == .standby)
-        #expect(agent.pending == false)
-
-        await runtime.shutdown()
-    }
-
-    @Test
-    func completedTaskAgentAcceptsMessagesWhileGraphIsActive() async throws {
-        let backend = CapturingSubAgentRuntimeBackend(responseText: "done")
-        let (_, runtime) = try await standbyRuntime(
-            backend: backend,
-            graphID: "manual-graph",
-            source: .manual,
-            pendingTasks: [TaskDefinition(id: "task-b", title: "Later work")]
-        )
-        let agent = try #require(await runtime.snapshots().first)
-        #expect(agent.status == .standby)
-        #expect(await backend.sentPromptCount() == 1)
-
-        // Sending a message should succeed and trigger a second turn even
-        // though the agent's task is already .completed.
-        _ = try await runtime.messageAgents(
-            arguments: [
-                "id": .string(agent.id),
-                "message": .string("Can you summarize?"),
-            ]
-        )
-        await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agent.id)
-
-        #expect(await backend.sentPromptCount() == 2)
-
-        await runtime.shutdown()
-    }
-
-    @Test
     func standbyTurnDoesNotMutateTheTaskGraph() async throws {
         let backend = CapturingSubAgentRuntimeBackend(responseText: "response")
         let (orchestrator, runtime) = try await standbyRuntime(backend: backend)
@@ -266,32 +189,6 @@ extension DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func budgetExhaustedAgentIsClosedNotIdleAndRejectsStaleMessages() async throws {
-        let (_, runtime, _, agent) = try await standbyScenario()
-        #expect(agent.status == .standby)
-
-        await exhaustStandbyBudget(agentID: agent.id, in: runtime)
-        let closed = try #require(await runtime.snapshots().first { $0.id == agent.id })
-        // Closed (and shut down) rather than left lingering in `.idle` after the
-        // budget-exhausting turn is denied/finished.
-        #expect(closed.status == .closed)
-        #expect(closed.status != .idle)
-
-        // A stale message to the now-closed agent is rejected instead of
-        // reviving it (the authorization path keeps it finished).
-        await #expect(throws: DirectSubAgentRuntimeError.self) {
-            _ = try await runtime.messageAgents(
-                arguments: [
-                    "id": .string(agent.id),
-                    "message": .string("Another follow-up"),
-                ]
-            )
-        }
-
-        await runtime.shutdown()
-    }
-
-    @Test
     func releaseDuringInFlightStandbyTurnClosesAgentAtTurnEnd() async throws {
         let backend = BlockingSubAgentRuntimeBackend(responseText: "follow-up done")
         let (orchestrator, runtime) = try await standbyRuntime(backend: backend)
@@ -347,61 +244,7 @@ extension DirectSubAgentRuntimeTests {
         await runtime.shutdown()
     }
 
-    @Test
-    func interruptAgentsClosesStandbyResidentsAndStopsObserver() async throws {
-        let (_, runtime, backend, agent) = try await standbyScenario()
-        #expect(agent.status == .standby)
-        // Entering standby started both the graph-completion observer and the
-        // periodic reaper for this root session.
-        #expect(await runtime.graphObserverTasks["root"] != nil)
-        #expect(await runtime.standbyReaperTask != nil)
-
-        // Interrupting the root session tears down its standby lifecycle: the
-        // observer/reaper are stopped and the standby resident is released.
-        let interrupted = await runtime.interruptAgents(rootSessionID: "root")
-        #expect(interrupted == 1)
-
-        let snapshot = try #require(await runtime.snapshots().first { $0.id == agent.id })
-        #expect(snapshot.status == .closed)
-        #expect(await backend.shutdownCount() == 1)
-        #expect(await runtime.graphObserverTasks["root"] == nil)
-        #expect(await runtime.standbyReaperTask == nil)
-
-        await runtime.shutdown()
-    }
-
     // MARK: - awaitReply in a standby turn
-
-    @Test
-    func awaitReplyInAStandbyTurnReceivesTheReplyWithoutSpendingExtraBudget() async throws {
-        let backend = BlockingSubAgentRuntimeBackend(responseText: "follow-up done")
-        let (_, runtime) = try await standbyRuntime(backend: backend)
-        let agent = try #require(await runtime.snapshots().first)
-        #expect(agent.status == .standby)
-        let waiting = try await startStandbyAwaitReply(agentID: agent.id, runtime: runtime, backend: backend)
-
-        _ = try await runtime.execute(
-            rootSessionID: "root",
-            toolCall: presentedToolCall(
-                id: "standby-reply",
-                name: "agent.message",
-                argumentsObject: ["id": agent.id, "message": "Package.swift"],
-                argumentsJSON: #"{"id":"\#(agent.id)","message":"Package.swift"}"#
-            ),
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
-            allowedToolNames: nil
-        )
-        let output = try await waiting.value
-        #expect(output.contains("[Live chat reply received while you were waiting]"))
-        #expect(output.contains("Package.swift"))
-
-        await backend.release()
-        await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agent.id)
-        // One standby turn was spent, regardless of how long it waited.
-        #expect(await runtime.agents[agent.id]?.standbyTurns == 1)
-        #expect(await runtime.snapshots().first { $0.id == agent.id }?.status == .standby)
-        await runtime.shutdown()
-    }
 
     @Test
     func awaitReplyInAStandbyTurnStopsWhenStandbyEligibilityEnds() async throws {

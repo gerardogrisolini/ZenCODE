@@ -107,38 +107,6 @@ struct ToolPresentationResolverTests {
     }
 
     @Test
-    func missingPresentationIsGenericAndSafeForUnknownTools() throws {
-        let call = DirectAgentToolCall(
-            id: "unknown",
-            name: "thirdparty.arbitrary",
-            argumentsObject: ["query": "value"],
-            argumentsJSON: "{}"
-        )
-        let result = DirectAgentToolResult(output: "output", summary: "done")
-
-        let compact = ToolPresentationResolver.resolve(
-            call: call,
-            result: result,
-            mode: .compact
-        )
-        let expanded = ToolPresentationResolver.resolve(
-            call: call,
-            result: result,
-            mode: .expanded
-        )
-
-        #expect(compact.title == "thirdparty.arbitrary")
-        #expect(compact.kind == .other)
-        #expect(compact.elements == [.summary(label: "summary", text: "done")])
-        #expect(expanded.elements.count == 2)
-        guard case let .parameters(_, parameters) = expanded.elements[0] else {
-            Issue.record("Expected generic parameters")
-            return
-        }
-        #expect(parameters.objectValue?["query"] == .string("value"))
-    }
-
-    @Test
     func remoteCatalogAttachesDescriptorMetadataBeforeEventsWithoutSendingItToModel() throws {
         let sentinel = "PRESENTATION_RUNTIME_ONLY_SENTINEL"
         let definition = ToolPresentationDefinition(
@@ -236,28 +204,6 @@ struct ToolPresentationResolverTests {
 
         // Union type ["string","null"] flattened to "string"
         #expect(description["type"] as? String == "string")
-    }
-
-    @Test
-    func chatCompletionsPayloadDefaultsEmptyItemsSchema() throws {
-        let schema = #"{"type":"object","properties":{"evidence":{"type":"array","items":{}}}}"#
-        let catalog = RemoteToolWireCatalog(
-            descriptors: [
-                DirectToolDescriptor(
-                    name: "tasks.update",
-                    description: "Update a task.",
-                    inputSchema: schema
-                )
-            ]
-        )
-        let payload = try #require(catalog.chatCompletionToolPayloads.first)
-        let function = try #require(payload["function"] as? [String: Any])
-        let parameters = try #require(function["parameters"] as? [String: Any])
-        let properties = try #require(parameters["properties"] as? [String: Any])
-        let evidence = try #require(properties["evidence"] as? [String: Any])
-        let items = try #require(evidence["items"] as? [String: Any])
-
-        #expect(items["type"] as? String == "string")
     }
 
     @Test

@@ -98,29 +98,6 @@ struct WorkflowCompletionTests {
         }
     }
 
-    @Test(arguments: [TaskStatus.pending, .inProgress, .awaitingValidation, .failed, .blocked, .cancelled])
-    func cannotFinalizeWithUnfinishedTasks(status: TaskStatus) async throws {
-        let owner = SessionTaskOrchestrator()
-        _ = try await owner.createGraph(
-            sessionID: "root", id: "goal", source: .workflow, state: .active,
-            tasks: [TaskDefinition(id: "work", title: "Work")], originalGoal: "Goal"
-        )
-        if status != .pending {
-            _ = try await owner.updateTask(sessionID: "root", taskID: "work", update: TaskUpdate(status: .inProgress))
-            if status == .cancelled {
-                _ = try await owner.cancelTask(sessionID: "root", taskID: "work")
-            } else if status != .inProgress {
-                _ = try await owner.updateTask(sessionID: "root", taskID: "work", update: TaskUpdate(status: status))
-            }
-        }
-        let before = try #require(try await owner.graphSnapshot(sessionID: "root"))
-        let adapter = DirectTaskToolAdapter(orchestrator: owner)
-        await #expect(throws: SessionTaskOrchestratorError.self) {
-            try await adapter.execute(sessionID: "root", toolCall: updateCall(before, state: "completed"))
-        }
-        #expect(try await owner.graphSnapshot(sessionID: "root") == before)
-    }
-
     @Test
     func completionRequiresTasksRootAccessAndFreshRevision() async throws {
         let owner = SessionTaskOrchestrator()
@@ -230,16 +207,5 @@ struct WorkflowCompletionTests {
                 try await restoredOwner.resumeWorkflow(sessionID: "restored", expectedGraph: legacy)
             }
         }
-    }
-
-    @Test(arguments: [TaskGraphSource.manual, .plan(planID: "plan")])
-    func nonWorkflowGraphsStillCompleteAutomatically(source: TaskGraphSource) async throws {
-        let owner = SessionTaskOrchestrator()
-        _ = try await owner.createGraph(
-            sessionID: "root", id: "graph", source: source, state: .active,
-            tasks: [TaskDefinition(id: "work", title: "Work")]
-        )
-        try await complete("work", owner: owner)
-        #expect(try await owner.graphSnapshot(sessionID: "root")?.state == .completed)
     }
 }

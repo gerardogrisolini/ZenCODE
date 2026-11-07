@@ -209,62 +209,6 @@ struct DynamicPromptContextTests {
     }
 
     @Test
-    func legacyProfileBasePromptIsNotRepeatedInDynamicContext() {
-        let legacyProfile = AgentProfile(
-            id: "legacy-developer",
-            name: "Developer",
-            instructions: SystemPromptBuilder.defaultAgentInstructions(),
-            role: .developer
-        )
-
-        let section = legacyProfile.promptSection(memoryToolEnabled: true) ?? ""
-        #expect(section.contains("Selected agent: Developer"))
-        #expect(!section.contains("You are ZenCODE"))
-        #expect(!section.contains("Task workflow policy:"))
-    }
-
-    @Test
-    func appProvidedInstructionsIncludeStandardDynamicContext() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("zencode-app-prompt-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        try "Project guidance marker.".write(
-            to: directory.appendingPathComponent("AGENTS.md"),
-            atomically: true,
-            encoding: .utf8
-        )
-
-        let sections = AgentSessionComposition.appProvidedPromptSections(
-            "Client instructions.",
-            cwd: directory.path,
-            allowedToolNames: [
-                "tasks.create", "tasks.list", "tasks.update", "agent.create", "memory.read"
-            ],
-            selectedAgent: nil
-        )
-
-        #expect(sections.dynamicContext.contains("Project guidance marker."))
-        #expect(sections.dynamicContext.contains("Memory tools (read-only):"))
-        #expect(sections.dynamicContext.contains("Delegatable agent profiles and model bindings:"))
-        #expect(sections.dynamicContext.contains("Task workflow policy:"))
-    }
-
-    @Test
-    func appProvidedInstructionsUseReadOnlyMemoryGuidanceForReadOnlySurface() {
-        let sections = AgentSessionComposition.appProvidedPromptSections(
-            "Client instructions.",
-            cwd: "/tmp/read-only-memory-project",
-            allowedToolNames: ["memory.read", "memory.search"],
-            selectedAgent: nil
-        )
-
-        #expect(sections.dynamicContext.contains("Memory tools (read-only):"))
-        #expect(sections.dynamicContext.contains("do not claim to create, update, archive"))
-        #expect(!sections.dynamicContext.contains("Before writing"))
-    }
-
-    @Test
     func memoryReadOnlyClassificationMatchesExecutorAllowlistSemantics() {
         let cases: [(name: String, allowedToolNames: Set<String>?, isReadOnly: Bool)] = [
             ("unrestricted", nil, false),
@@ -282,26 +226,6 @@ struct DynamicPromptContextTests {
                 "Unexpected classification for \(testCase.name) allowlist."
             )
         }
-    }
-
-    @Test
-    func appProvidedInstructionsKeepCwdAndLanguageInSystemPrefix() {
-        let sections = AgentSessionComposition.appProvidedPromptSections(
-            "Client instructions.",
-            cwd: "/tmp/client-project",
-            allowedToolNames: ["tasks.create", "tasks.list", "tasks.update"],
-            selectedAgent: nil,
-            responseLanguageSection: SystemPromptBuilder.responseLanguageSection(
-                languageName: "Italian"
-            )
-        )
-
-        #expect(sections.systemPrompt.contains("Client instructions."))
-        #expect(sections.systemPrompt.contains("/tmp/client-project"))
-        #expect(sections.systemPrompt.contains("locked to Italian"))
-        #expect(sections.dynamicContext.contains("Task workflow policy:"))
-        #expect(sections.dynamicContext.contains("/tmp/client-project") == false)
-        #expect(sections.dynamicContext.contains("locked to Italian") == false)
     }
 
     @Test

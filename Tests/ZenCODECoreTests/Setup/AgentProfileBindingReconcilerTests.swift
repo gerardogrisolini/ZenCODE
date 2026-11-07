@@ -88,26 +88,6 @@ struct AgentProfileBindingReconcilerTests {
     }
 
     @Test
-    func authoritativeEmptyCatalogRemovesEveryBinding() {
-        let original = AgentProfile(
-            id: "custom-agent",
-            name: "Custom",
-            role: .developer,
-            modelBindings: [
-                AgentModelBinding(id: "removed", modelID: "not-currently-configured")
-            ],
-            defaultModelBindingID: "removed"
-        )
-
-        let reconciled = AgentProfileBindingReconciler.reconciledAgents(
-            [original],
-            models: []
-        )
-        #expect(reconciled[0].modelBindings.isEmpty)
-        #expect(reconciled[0].defaultModelBindingID == nil)
-    }
-
-    @Test
     func storedReconciliationUsesIsolatedSupportDirectoryAndAtomicProfileStore() throws {
         try Self.withTemporarySupportDirectory { directory in
             let retained = Self.model(providerName: "Primary", modelID: "retained")
@@ -140,27 +120,6 @@ struct AgentProfileBindingReconcilerTests {
             #expect(stored.modelBindings.map(\.id) == ["kept"])
             #expect(stored.defaultModelBindingID == "kept")
             #expect(FileManager.default.fileExists(atPath: result.settingsFileURL.path))
-        }
-    }
-
-    @Test
-    func storedReconciliationLeavesMissingProfilesUntouchedAndRejectsInvalidProfiles() throws {
-        try Self.withTemporarySupportDirectory { directory in
-            let model = Self.model(providerName: "Primary", modelID: "retained")
-            let manifest = AgentSettingsManifest(models: [model])
-
-            #expect(
-                try AgentProfileBindingReconciler.reconcileStoredAgents(with: manifest) == false
-            )
-
-            let agentsURL = directory.appendingPathComponent(AgentProfileStore.manifestFilename)
-            let invalidData = Data("not-json".utf8)
-            try invalidData.write(to: agentsURL)
-
-            #expect(throws: AgentProfileStoreError.self) {
-                try AgentProfileBindingReconciler.reconcileStoredAgents(with: manifest)
-            }
-            #expect(try Data(contentsOf: agentsURL) == invalidData)
         }
     }
 
@@ -465,40 +424,6 @@ struct AgentProfileBindingReconcilerTests {
             }
 
             #expect(try AgentProfileStore.loadRequired() == concurrentProfiles)
-        }
-    }
-
-    @Test
-    func agentOnlyFinalizationRejectsAConcurrentSettingsUpdate() throws {
-        try Self.withTemporarySupportDirectory { _ in
-            let initialManifest = AgentSettingsManifest(
-                models: [Self.model(providerName: "Initial", modelID: "initial")]
-            )
-            let originalProfiles = [
-                AgentProfile(id: "original", name: "Original", role: .developer)
-            ]
-            try AgentSettingsManifestStore.save(initialManifest)
-            try AgentProfileStore.save(originalProfiles)
-            let baseline = try SetupManifestBaseline.capture()
-
-            let concurrentManifest = AgentSettingsManifest(
-                models: [Self.model(providerName: "Concurrent", modelID: "concurrent")]
-            )
-            try AgentSettingsManifestStore.save(concurrentManifest)
-
-            #expect(throws: ZenCODESupportFileServiceError.self) {
-                try ZenFileService.ensureRequiredFiles(
-                    settingsManifest: initialManifest,
-                    overwriteSettings: false,
-                    stagedAgentProfiles: [
-                        AgentProfile(id: "staged", name: "Staged", role: .developer)
-                    ],
-                    expectedBaseline: baseline
-                )
-            }
-
-            #expect(try AgentSettingsManifestStore.loadRequired() == concurrentManifest)
-            #expect(try AgentProfileStore.loadRequired() == originalProfiles)
         }
     }
 

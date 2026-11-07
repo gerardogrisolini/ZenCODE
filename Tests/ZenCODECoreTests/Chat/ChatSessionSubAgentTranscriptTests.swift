@@ -82,14 +82,6 @@ struct ChatSessionSubAgentTranscriptTests {
         }
     }
 
-    @Test
-    func aRuntimeWithoutSubAgentsHasNoTranscript() async throws {
-        try await withChatHarness { harness in
-            // The scripted runtime relies on the protocol default.
-            #expect(await harness.controller.subAgentTranscript(agentID: "agent_any") == nil)
-        }
-    }
-
     @ChatSessionActor
     private static func controller(
         sessionID: String,

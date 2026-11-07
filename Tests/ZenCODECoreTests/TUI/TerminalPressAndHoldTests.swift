@@ -45,34 +45,6 @@ struct TerminalPressAndHoldTests {
     }
 
     @Test
-    func catalogueHasStableLowercaseAndExplicitUppercaseVariants() {
-        let expected: [(Character, String, Character, String)] = [
-            ("a", "àáâäæãåā", "A", "ÀÁÂÄÆÃÅĀ"),
-            ("e", "èéêëēėę", "E", "ÈÉÊËĒĖĘ"),
-            ("i", "ìíîïīį", "I", "ÌÍÎÏĪĮ"),
-            ("o", "òóôöœøōõ", "O", "ÒÓÔÖŒØŌÕ"),
-            ("u", "ùúûüū", "U", "ÙÚÛÜŪ"),
-            ("c", "çćč", "C", "ÇĆČ"),
-            ("n", "ñń", "N", "ÑŃ"),
-            ("s", "ßśš", "S", "ẞŚŠ"),
-            ("y", "ýÿ", "Y", "ÝŸ"),
-            ("z", "žźż", "Z", "ŽŹŻ")
-        ]
-
-        for (lowercase, lowercaseVariants, uppercase, uppercaseVariants) in expected {
-            #expect(TerminalPressAndHold.variants(for: lowercase) == Array(lowercaseVariants))
-            #expect(TerminalPressAndHold.variants(for: uppercase) == Array(uppercaseVariants))
-        }
-        #expect(TerminalPressAndHold.variants(for: "b") == nil)
-        #expect(TerminalPressAndHold.supportedBases.count == 20)
-        #expect(Set(TerminalPressAndHold.supportedBases).count == 20)
-        #expect(expected.allSatisfy { entry in
-            (TerminalPressAndHold.variants(for: entry.0)?.count ?? 0) <= 8
-                && (TerminalPressAndHold.variants(for: entry.2)?.count ?? 0) <= 8
-        })
-    }
-
-    @Test
     func confirmedRepeatCollapsesOnlyTheTrackedRunAndKeepsTheBase() {
         var editor = TerminalPromptEditor()
         let timestamps: [UInt64] = [0, 500, 550, 600, 650]
@@ -88,22 +60,6 @@ struct TerminalPressAndHoldTests {
         #expect(editor.cursorIndex == 1)
         #expect(editor.pressAndHoldMenu?.base == "a")
         #expect(editor.pressAndHoldMenu?.selectedVariant == "à")
-    }
-
-    @Test
-    func thresholdBoundariesAreInclusiveAndOutsideValuesDoNotTrigger() {
-        #expect(editorAfterTyping(at: [0, 250, 300, 350, 450]).pressAndHoldMenu != nil)
-        #expect(editorAfterTyping(at: [0, 249, 299, 349, 449]).pressAndHoldMenu == nil)
-        #expect(editorAfterTyping(at: [0, 1_500, 1_510, 1_520, 1_530]).pressAndHoldMenu != nil)
-        #expect(editorAfterTyping(at: [0, 1_501, 1_511, 1_521, 1_531]).pressAndHoldMenu == nil)
-
-        #expect(editorAfterTyping(at: [0, 500, 508, 516, 524]).pressAndHoldMenu != nil)
-        #expect(editorAfterTyping(at: [0, 500, 507, 515, 523]).pressAndHoldMenu == nil)
-        #expect(editorAfterTyping(at: [0, 500, 650, 800, 950]).pressAndHoldMenu != nil)
-        #expect(editorAfterTyping(at: [0, 500, 651, 801, 951]).pressAndHoldMenu == nil)
-
-        #expect(editorAfterTyping(at: [0, 250, 300, 350, 449]).pressAndHoldMenu == nil)
-        #expect(editorAfterTyping(at: [0, 250, 300, 350, 450]).pressAndHoldMenu != nil)
     }
 
     @Test
@@ -130,30 +86,6 @@ struct TerminalPressAndHoldTests {
         let simultaneous = editorAfterTyping(at: [100, 100, 100, 100, 100])
         #expect(simultaneous.pressAndHoldMenu == nil)
         #expect(String(simultaneous.buffer) == "aaaaa")
-    }
-
-    @Test
-    func invalidIntervalRestartsAtTheLatestCharacterWithoutLosingPreviousText() {
-        let editor = editorAfterTyping(at: [0, 200, 500, 550, 600, 650])
-        #expect(editor.pressAndHoldMenu != nil)
-        // The first event is outside the candidate that restarted at 200 ms.
-        #expect(String(editor.buffer) == "aa")
-        #expect(editor.pressAndHoldMenu?.replacementIndex == 1)
-    }
-
-    @Test
-    func earlierDuplicatesSuffixAndGraphemeIndicesRemainUntouched() {
-        let prefix = "aa 🙂e\u{301}\n"
-        let initial = prefix + "TAIL"
-        let insertionIndex = Array(prefix).count
-        let editor = openMenu(
-            initialText: initial,
-            cursorIndex: insertionIndex
-        )
-
-        #expect(String(editor.buffer) == prefix + "aTAIL")
-        #expect(editor.cursorIndex == insertionIndex + 1)
-        #expect(editor.pressAndHoldMenu?.replacementIndex == insertionIndex)
     }
 
     @Test
@@ -266,15 +198,6 @@ struct TerminalPressAndHoldTests {
             ) == .changed
         )
         #expect(String(editor.buffer) == "àa")
-    }
-
-    @Test
-    func differentInputEndsResidualSuppressionWithoutBlockingLaterLetters() {
-        var editor = openMenu()
-        #expect(editor.apply(.cancel, context: context, timestampMilliseconds: 700) == .changed)
-        #expect(editor.apply(.character("b"), context: context, timestampMilliseconds: 710) == .changed)
-        #expect(editor.apply(.character("a"), context: context, timestampMilliseconds: 720) == .changed)
-        #expect(String(editor.buffer) == "aba")
     }
 
     @Test

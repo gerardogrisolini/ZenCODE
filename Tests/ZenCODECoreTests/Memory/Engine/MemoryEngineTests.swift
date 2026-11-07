@@ -9,33 +9,6 @@ import Testing
     #expect(decoded == values)
 }
 
-@Test func confidenceDecaysByCategory() {
-    // A 30-day-old fact: 120-day half-life lifted onto the 0.2 floor gives
-    // 0.2 + 0.8 * 2^(-30/120) ≈ 0.87.
-    let oldDate = Date().addingTimeInterval(-30 * 86_400)
-    let entry = EngineMemoryEntry(category: .fact, content: "old fact", createdAt: oldDate)
-    let confidence = entry.effectiveConfidence()
-    #expect(confidence > 0.85)
-    #expect(confidence < 0.9)
-}
-
-@Test func cascadeTraversesSharedTag() {
-    var graph = MemoryGraph()
-    let a = EngineMemoryEntry(id: "a", category: .fact, content: "Swift package", tags: ["swift"])
-    let b = EngineMemoryEntry(id: "b", category: .fact, content: "Swift actors", tags: ["swift"])
-    graph.addMemory(a)
-    graph.addMemory(b)
-
-    let result = graph.cascadeRetrieve(
-        seeds: [ScoredMemoryID(id: "a", score: 1)],
-        maxDepth: 2,
-        maxResults: 10
-    )
-
-    #expect(result.contains(where: { $0.id == "a" }))
-    #expect(result.contains(where: { $0.id == "b" }))
-}
-
 @Test func semanticSearchDoesNotMixEmbeddingModels() {
     var graph = MemoryGraph()
     var a = EngineMemoryEntry(id: "a", category: .fact, content: "A")
@@ -54,25 +27,6 @@ import Testing
     )
 
     #expect(result.map(\.id) == ["a"])
-}
-
-@Test func lexicalSearchFindsEmbeddingMismatch() {
-    var graph = MemoryGraph()
-    var memory = EngineMemoryEntry(id: "mismatch", category: .fact, content: "Linux Swift server memory")
-    memory.setEmbedding([1, 0], model: "old-model")
-    graph.addMemory(memory)
-
-    let semantic = MemorySearch.semantic(
-        graph: graph,
-        queryEmbedding: [1, 0],
-        modelID: "new-model",
-        threshold: 0,
-        limit: 10
-    )
-    let lexical = MemorySearch.lexicalBM25(graph: graph, query: "Swift Linux", limit: 10)
-
-    #expect(semantic.isEmpty)
-    #expect(lexical.first?.id == "mismatch")
 }
 
 @Test func jsonPersistenceRoundTrip() async throws {

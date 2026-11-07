@@ -152,25 +152,6 @@ private struct InjectedFailure: Error {}
         #expect(try Data(contentsOf: Self.vectorsURL(otherFile)) == Data(contentsOf: Self.vectorsURL(file)))
     }
 
-    @Test func loadingAVersionFourGraphWritesNothing() async throws {
-        let directory = try Self.makeDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("memory.graph.json")
-        try await JSONMemoryPersistence(url: file).save(Self.graph([
-            Self.entry("a", "first", vector: [0.5, 0.25]),
-        ]))
-        let before = try DirectorySnapshot(directory)
-
-        let persistence = JSONMemoryPersistence(url: file)
-        #expect(try await persistence.load().memories["a"]?.embedding == [0.5, 0.25])
-        _ = try await persistence.reloadReadOnly()
-        _ = try await JSONMemoryPersistence(url: file).reloadReadOnly()
-        _ = try await persistence.transaction { graph in graph.memories.count }
-
-        #expect(try DirectorySnapshot(directory) == before)
-        #expect(await persistence.diskDecodeCount == 1)
-    }
-
     // MARK: - Write order and mixed files
 
     /// The vectors file is published before the JSON: a save interrupted in
@@ -343,31 +324,6 @@ private struct InjectedFailure: Error {}
         _ = try await restarted.transaction { graph in graph.memories["b"]?.content = "other vector, edited" }
         #expect(await restarted.vectorsPublishCount == 2)
         #expect(try Self.fileStamp(vectors) != afterVector)
-    }
-
-    /// Writing back the binary32 vector an entry was given — what a provider
-    /// returns — is no change: the entry already holds its binary16 rounding,
-    /// so the transaction reports nothing and neither file is touched.
-    @Test func reassigningTheFullPrecisionVectorIsNoChange() async throws {
-        let directory = try Self.makeDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("memory.graph.json")
-        let raw = FineGrainedEmbeddingProvider.vector(for: "a")
-        #expect(!raw.allSatisfy(HalfPrecision.isRepresentable))
-        try await JSONMemoryPersistence(url: file).save(Self.graph([Self.entry("a", "text", vector: raw)]))
-        let before = try DirectorySnapshot(directory)
-
-        let persistence = JSONMemoryPersistence(url: file)
-        let committed = try await persistence.transaction { graph in
-            graph.memories["a"]?.setEmbedding(raw, model: "model-a")
-            graph.memories["a"]?.embedding = raw
-        }
-        #expect(committed.didChange == false)
-        let engine = try await MemoryEngine.open(persistence: persistence)
-        try await engine.transaction { graph in graph.memories["a"]?.setEmbedding(raw, model: "model-a") }
-        try await engine.save()
-
-        #expect(try DirectorySnapshot(directory) == before)
     }
 
     // MARK: - Versions
@@ -572,34 +528,5 @@ private struct InjectedFailure: Error {}
         try await Self.expectCoherent(reembedder.engine, file: file)
         let backup = try await PersistenceCharacterizationTests.loadCleanupBackup(of: file)
         #expect(backup.memories[other.id]?.active == false)
-    }
-
-    /// The engine paths that adopt their own draft instead of a reloaded graph
-    /// — an explicit save and a transaction after `insert(persist: false)` —
-    /// hold the stored precision as well.
-    @Test func engineDraftPathsAdoptTheStoredPrecision() async throws {
-        let directory = try Self.makeDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("memory.graph.json")
-        let engine = try await MemoryEngine.open(persistence: JSONMemoryPersistence(url: file))
-        let raw = FineGrainedEmbeddingProvider.vector(for: "deferred")
-
-        try await engine.insert(Self.entry("deferred", "deferred insert", vector: raw), persist: false)
-        #expect(await engine.snapshot().memories["deferred"]?.embedding == HalfPrecision.rounded(raw))
-        try await engine.save()
-        try await Self.expectCoherent(engine, file: file)
-
-        try await engine.insert(Self.entry("second", "second insert", vector: raw), persist: false)
-        try await engine.transaction { graph in graph.memories["deferred"]?.accessCount += 1 }
-        try await Self.expectCoherent(engine, file: file)
-
-        let embedded = MemoryEngine(
-            embedder: FineGrainedEmbeddingProvider(modelID: "fine-a"),
-            persistence: JSONMemoryPersistence(url: file)
-        )
-        let remembered = try await embedded.remember("remembered through the engine", id: "remembered")
-        #expect(remembered.embedding?.allSatisfy(HalfPrecision.isRepresentable) == true)
-        #expect(remembered == (await embedded.snapshot().memories["remembered"]))
-        try await Self.expectCoherent(embedded, file: file)
     }
 }

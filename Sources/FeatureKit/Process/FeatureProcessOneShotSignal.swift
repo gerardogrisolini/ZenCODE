@@ -115,26 +115,6 @@ final class FeatureProcessOneShotSignal<Value: Sendable>: Sendable {
     }
 }
 
-extension FeatureProcessOneShotSignal {
-    /// Test seam: number of continuations currently suspended on this signal.
-    var pendingWaiterCountForTesting: Int {
-        state.withLock { $0.waiters.count }
-    }
-
-    /// Test seam: number of cancellation tickets awaiting consumption by a late
-    /// `register`. Must be zero once the signal is resolved.
-    var cancellationTicketCountForTesting: Int {
-        state.withLock { $0.cancelledWaiters.count }
-    }
-
-    /// Test seam: deterministically reproduces the resolve/cancel interleaving by
-    /// invoking the cancellation handler for a waiter identity that is no longer
-    /// registered.
-    func simulateCancellationForTesting(waiterID: UUID) {
-        cancelWaiter(waiterID)
-    }
-}
-
 /// Exit-code signal for a spawned feature process.
 typealias FeatureProcessExitSignal = FeatureProcessOneShotSignal<Int32>
 

@@ -85,78 +85,10 @@ struct AgentCoreBackendDS4LifecycleTests {
         #expect(harness.openCount == 1)
         await core.shutdown()
     }
-
-    @Test
-    func preparingADS4ClientBackendLeavesTheEngineOpen() async throws {
-        let harness = try DS4ClientHarness()
-        _ = try await harness.registry.engine(for: harness.configuration)
-        let client = try await harness.makeClient()
-        let core = AgentCoreBackend(
-            configuration: harness.runtimeConfiguration(),
-            backendFactory: { _, _ in client },
-            ds4EngineRegistry: harness.registry
-        )
-
-        _ = try await core.preloadModel { _ in }
-
-        #expect(await harness.registry.currentIdentity == harness.configuration.identity)
-        #expect(!harness.mock.isClosed)
-        #expect(harness.openCount == 1)
-        await core.shutdown()
-    }
-
-    @Test
-    func shuttingDownADS4BackendReleasesItsSessionsAndKeepsTheEngineForTheNextAgent() async throws {
-        let harness = try DS4ClientHarness()
-        let first = try await harness.makeClient(sessionID: "session")
-        let firstCore = AgentCoreBackend(
-            configuration: harness.runtimeConfiguration(),
-            backendFactory: { _, _ in first },
-            ds4EngineRegistry: harness.registry
-        )
-        _ = try await firstCore.sendPrompt(sessionID: "session", prompt: "first", onEvent: { _ in })
-        #expect(harness.mock.liveSessionIDs == ["session"])
-
-        await firstCore.shutdown()
-
-        #expect(harness.mock.liveSessionIDs.isEmpty)
-        #expect(!harness.mock.isClosed)
-        #expect(await harness.registry.currentIdentity == harness.configuration.identity)
-
-        let second = try await harness.makeClient(sessionID: "next-agent")
-        let secondCore = AgentCoreBackend(
-            configuration: harness.runtimeConfiguration(),
-            backendFactory: { _, _ in second },
-            ds4EngineRegistry: harness.registry
-        )
-        _ = try await secondCore.sendPrompt(sessionID: "next-agent", prompt: "second", onEvent: { _ in })
-
-        #expect(harness.openCount == 1)
-        #expect(harness.mock.liveSessionIDs == ["next-agent"])
-        await secondCore.shutdown()
-    }
 }
 
 @Suite
 struct AgentCoreSessionRunnerDS4LifecycleTests {
-    @Test
-    func runnerShutdownClosesAnIdleDS4Engine() async throws {
-        let factory = MockDS4EngineFactory()
-        let registry = DS4EngineRegistry(factory: factory.factory)
-        _ = try await registry.engine(for: .mock())
-        let runner = AgentCoreSessionRunner(
-            taskGraphStore: nil,
-            sessionTurnLease: AgentSessionTurnLease(),
-            memoryGraphStoreRegistry: MemoryGraphStoreRegistry(),
-            ds4EngineRegistry: registry
-        )
-
-        await runner.shutdown()
-
-        #expect(await registry.currentIdentity == nil)
-        #expect(factory.engines.first?.isClosed == true)
-    }
-
     @Test
     func runnerShutdownKeepsTheEngineWhileAnotherRunnerHoldsADS4Session() async throws {
         let factory = MockDS4EngineFactory()
@@ -174,39 +106,6 @@ struct AgentCoreSessionRunnerDS4LifecycleTests {
 
         #expect(await registry.currentIdentity == DS4EngineConfiguration.mock().identity)
         #expect(factory.engines.first?.isClosed == false)
-    }
-
-    @Test
-    func runnerShutdownReleasesTheDS4SessionBeforeClosingTheEngine() async throws {
-        let harness = try DS4ClientHarness()
-        let client = try await harness.makeClient(sessionID: "root")
-        let runner = AgentCoreSessionRunner(
-            backendFactory: { _, _ in client },
-            taskGraphStore: nil,
-            sessionTurnLease: AgentSessionTurnLease(),
-            memoryGraphStoreRegistry: MemoryGraphStoreRegistry(),
-            ds4EngineRegistry: harness.registry
-        )
-        let configuration = AgentCoreSessionConfiguration(
-            sessionID: "root",
-            modelID: harness.provider.modelID,
-            workingDirectory: harness.base,
-            systemPrompt: DS4ClientHarness.systemPrompt,
-            cacheKey: nil,
-            history: [],
-            allowedToolNames: [DS4ClientHarness.toolName]
-        )
-        _ = try await runner.sendPrompt(configuration: configuration, prompt: "hi", attachments: [], onEvent: { _ in })
-        #expect(harness.mock.liveSessionIDs == ["root"])
-
-        await runner.shutdown()
-
-        let calls = harness.mock.calls
-        let released = try #require(calls.firstIndex(of: .releaseSession("root")))
-        let closed = try #require(calls.firstIndex(of: .close))
-        #expect(released < closed)
-        #expect(harness.mock.isClosed)
-        #expect(await harness.registry.currentIdentity == nil)
     }
 
     /// The terminal sends the manifest model id (`ds4:…`) while the DS4

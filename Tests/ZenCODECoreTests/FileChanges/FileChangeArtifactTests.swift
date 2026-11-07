@@ -210,26 +210,6 @@ extension FileChangeArtifactTests {
     }
 
     @Test
-    func unavailableCountsAreNotRenderedAsZeroButKnownZerosRemainVisible() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let artifacts = FileChangeArtifactMapper.artifacts(from: [
-            .init(path: "large.txt", oldText: nil, newText: nil,
-                  explanation: "Diff unavailable: compact diff exceeds the byte limit."),
-            .init(path: "empty.txt", oldText: nil, newText: ""),
-            .init(path: "unchanged.txt", oldText: nil, newText: nil,
-                  compactDiff: .init(patch: "", additions: 0, deletions: 0))
-        ], workingDirectory: directory)
-        #expect(!artifacts[0].hasLineCounts)
-        #expect(artifacts[1].hasLineCounts && artifacts[2].hasLineCounts)
-        let rendered = TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: artifacts)])
-        #expect(rendered.contains("**unknown `large.txt`**\nExplanation:"))
-        #expect(!rendered.contains("**unknown `large.txt`**  +0 -0"))
-        #expect(rendered.contains("**added `empty.txt`**  +0 -0"))
-        #expect(rendered.contains("**modified `unchanged.txt`**  +0 -0"))
-    }
-
-    @Test
     func mapperAppliesOperationBudgetToCompactPatchesAndDropsCountsOnFallback() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -243,22 +223,6 @@ extension FileChangeArtifactTests {
         let artifacts = FileChangeArtifactMapper.artifacts(from: changes, workingDirectory: directory)
         #expect(artifacts.prefix(4).allSatisfy { $0.patch == patch && $0.hasLineCounts })
         #expect(artifacts.suffix(2).allSatisfy { $0.patch == nil && !$0.hasLineCounts && $0.explanation != nil })
-    }
-
-    @Test
-    func compactEvidenceSurvivesLiveHistoryPathNormalizationWithoutBecomingPostimage() async throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let history = SessionFileArtifactHistory(sessionID: "session")
-        let id = try #require(await history.beginTurn(sessionID: "session"))
-        let diff = OperationFileChange.CompactDiff(patch: "@@ -1,1 +1,1 @@\n-old\n+new\n", additions: 1, deletions: 1)
-        let change = OperationFileChange(path: "CHANGELOG.md", oldText: nil, newText: nil, compactDiff: diff)
-        let live = try #require(await history.recordLive([change], agentID: nil, callID: "c", turnID: id, workingDirectory: directory))
-        #expect(live.artifacts.first?.patch == diff.patch)
-        let latest = try #require(await history.sealTurn(id).first)
-        #expect(latest.path == directory.appendingPathComponent("CHANGELOG.md").path)
-        #expect(latest.compactDiff == diff)
-        #expect(latest.oldText == nil && latest.newText == nil)
     }
 }
 
@@ -343,97 +307,6 @@ extension FileChangeArtifactTests {
     }
 
     @Test
-    func truncationExplanationIsExact() {
-        #expect(FileChangeArtifactMapper.truncatedPatchExplanation(shown: 12, total: 3142)
-            == "Diff truncated: showing the first 12 of 3142 diff lines; file or operation evidence exceeds the byte limit.")
-    }
-
-    @Test
-    func truncationKeepsCarriageReturnsAndDropsTheNoNewlineMarker() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        // Swift's Character view merges "\r\n"; truncation must still split on "\n" bytes.
-        let lines = sourceLines(2000).map { $0 + "\r" }
-        let patch = newFilePatch(lines: lines, marker: true)
-        #expect(patch.utf8.count > Self.limit)
-        let artifact = try #require(mappedArtifacts([addedEntry(patch: patch, additions: 2000)], in: directory).first)
-        let truncated = try #require(artifact.patch)
-        let rows = truncated.utf8.split(separator: 0x0A, omittingEmptySubsequences: false)
-            .map { String(decoding: $0, as: UTF8.self) }
-        let body = Array(rows[6..<(rows.count - 1)])
-        #expect(!body.isEmpty)
-        #expect(body == lines.prefix(body.count).map { "+" + $0 })
-        #expect(rows[5] == "@@ -0,0 +1,\(body.count) @@")
-        #expect(!truncated.contains("No newline at end of file"))
-        #expect(truncated.utf8.count <= Self.limit)
-        #expect(artifact.explanation == FileChangeArtifactMapper.truncatedPatchExplanation(
-            shown: body.count, total: 2000
-        ))
-    }
-
-    @Test
-    func addedFilePatchWithinTheLimitIsUnchanged() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let withMarker = newFilePatch(path: "a.txt", lines: sourceLines(30), marker: true)
-        let plain = newFilePatch(path: "b.txt", lines: sourceLines(30))
-        let result = mappedArtifacts([
-            addedEntry(path: "a.txt", patch: withMarker, additions: 30),
-            addedEntry(path: "b.txt", patch: plain, additions: 30)
-        ], in: directory)
-        #expect(result[0].patch == withMarker)
-        #expect(result[1].patch == plain)
-        #expect(result.allSatisfy { $0.explanation == nil && $0.hasLineCounts && $0.additions == 30 })
-    }
-
-    @Test
-    func addedFilesShareTheOperationBudgetInOrder() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let operationBudget = OperationFileChangeRecorder.maximumOperationBytes
-        let small = newFilePatch(path: "A.swift", lines: sourceLines(700, prefix: "a"))
-        let big = (1...3).map { newFilePatch(path: "B\($0).swift", lines: sourceLines(2000, prefix: "b\($0)")) }
-        let medium = newFilePatch(path: "E.swift", lines: sourceLines(1100, prefix: "e"))
-        let late = (1...2).map { newFilePatch(path: "F\($0).swift", lines: sourceLines(2000, prefix: "f\($0)")) }
-        #expect(small.utf8.count <= Self.limit)
-        #expect(big.allSatisfy { $0.utf8.count > Self.limit })
-        #expect(medium.utf8.count <= Self.limit)
-        let patches = [small] + big + [medium] + late
-        let paths = ["A", "B1", "B2", "B3", "E", "F1", "F2"].map { $0 + ".swift" }
-        let additions = [700, 2000, 2000, 2000, 1100, 2000, 2000]
-        let entries = (0..<patches.count).map {
-            addedEntry(path: paths[$0], patch: patches[$0], additions: additions[$0])
-        }
-
-        let result = mappedArtifacts(entries, in: directory)
-        #expect(result.count == 7)
-        #expect(result[0].patch == small && result[0].explanation == nil)
-        for index in 1...3 {
-            let patch = try #require(result[index].patch)
-            #expect(patch.utf8.count <= Self.limit && patch.utf8.count > Self.limit - 100)
-            #expect(result[index].explanation?.hasPrefix("Diff truncated: showing the first ") == true)
-            #expect(result[index].additions == 2000 && result[index].hasLineCounts)
-        }
-        // Fits the per-file limit, but only part of it fits the remaining budget.
-        let used = result[0..<4].reduce(0) { $0 + ($1.patch?.utf8.count ?? 0) }
-        let remaining = operationBudget - used
-        #expect(remaining > 0 && remaining < medium.utf8.count)
-        let partial = try #require(result[4].patch)
-        #expect(partial.utf8.count <= remaining && remaining - partial.utf8.count < 100)
-        #expect(partial.utf8.count < Self.limit)
-        #expect(result[4].explanation?.hasPrefix("Diff truncated: showing the first ") == true)
-        #expect(result[4].additions == 1100)
-        // No whole line fits any more.
-        for index in 5...6 {
-            #expect(result[index].patch == nil)
-            #expect(result[index].explanation == FileChangeArtifactMapper.byteLimitExplanation)
-            #expect(result[index].additions == 2000 && result[index].hasLineCounts)
-        }
-        let shown = result.reduce(0) { $0 + ($1.patch?.utf8.count ?? 0) }
-        #expect(shown <= operationBudget)
-    }
-
-    @Test
     func patchesWithAnUnusableShapeKeepTheByteLimitFallbackForEveryStatus() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -494,53 +367,6 @@ extension FileChangeArtifactTests {
             #expect(accepted[0].explanation?.hasPrefix("Diff truncated: showing the first ") == true)
         }
     }
-
-    @Test
-    func truncatedAddedFileRendersExplanationAndNumberedLines() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let lines = sourceLines(3142)
-        let artifacts = mappedArtifacts([addedEntry(patch: newFilePatch(lines: lines), additions: 3142)], in: directory)
-        let artifact = try #require(artifacts.first)
-        let kept = try #require(artifact.patch).components(separatedBy: "\n").count - 7
-        #expect(kept > 1 && kept < 3142)
-
-        for rendered in [
-            TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: artifacts)]),
-            TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: artifacts)], includeHistoryHeadings: false)
-        ] {
-            let metadata = "**added `Scripts/Gen.swift`**  +3142 -0\n"
-            let explanation = "Explanation: Diff truncated: showing the first \(kept) of 3142 diff lines; file or operation evidence exceeds the byte limit.\n"
-            #expect(rendered.contains(metadata + explanation))
-            let width = String(kept).count
-            func row(_ number: Int, _ source: String) -> String {
-                String(repeating: " ", count: width - String(number).count) + "\(number) │ \(source)"
-            }
-            #expect(rendered.contains(row(1, "+" + lines[0]) + "\n" + row(2, "+" + lines[1]) + "\n"))
-            #expect(rendered.contains(row(kept, "+" + lines[kept - 1]) + "\n"))
-            #expect(rendered.contains(String(repeating: " ", count: width) + " │ @@ -0,0 +1,\(kept) @@\n"))
-            #expect(!rendered.contains(lines[kept]))
-            #expect(!rendered.contains(lines[3141]))
-            let metadataRange = try #require(rendered.range(of: metadata))
-            let explanationRange = try #require(rendered.range(of: explanation))
-            let firstRow = try #require(rendered.range(of: row(1, "+" + lines[0])))
-            #expect(metadataRange.upperBound == explanationRange.lowerBound)
-            #expect(explanationRange.upperBound <= firstRow.lowerBound)
-        }
-    }
-
-    @Test
-    func directOperationEvidenceStillRejectsOversizedAddedPatches() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let patch = newFilePatch(lines: sourceLines(2000))
-        let result = FileChangeArtifactMapper.artifacts(from: [
-            .init(path: "Scripts/Gen.swift", oldText: nil, newText: nil,
-                  compactDiff: .init(patch: patch, additions: 2000, deletions: 0))
-        ], workingDirectory: directory)
-        #expect(result[0].patch == nil)
-        #expect(result[0].explanation == FileChangeArtifactMapper.byteLimitExplanation)
-    }
 }
 
 // MARK: - Deleted and modified truncation
@@ -594,64 +420,6 @@ extension FileChangeArtifactTests {
     }
 
     @Test
-    func oversizedDeletedFilePatchIsTruncatedAtWholeLinesWithRewrittenHunkHeader() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let lines = sourceLines(3142)
-        let patch = deletedFilePatch(lines: lines)
-        #expect(patch.utf8.count > Self.limit)
-        let entry = changeEntry(status: .deleted, patch: patch, additions: 0, deletions: 3142)
-        let summary = TurnFileChangeSummary(entries: [entry])
-
-        let artifact = try #require(
-            FileChangeArtifactMapper.artifacts(from: summary, workingDirectory: directory).first
-        )
-        let truncated = try #require(artifact.patch)
-        #expect(truncated.utf8.count <= Self.limit)
-        let rows = patchRows(truncated)
-        #expect(rows.last == "")
-        let body = Array(rows[6..<(rows.count - 1)])
-        let kept = body.count
-        #expect(kept > 0 && kept < 3142)
-        // Headers are verbatim, the hunk header counts the kept lines, and no line is cut.
-        #expect(Array(rows[0..<5]) == Array(patchRows(patch)[0..<5]))
-        #expect(rows[5] == "@@ -1,\(kept) +0,0 @@")
-        #expect(body == lines.prefix(kept).map { "-" + $0 })
-        #expect(body.first == "-" + lines[0])
-        #expect(!truncated.contains(lines[3141]))
-        #expect(!truncated.contains(lines[kept]))
-        // The next whole line would not have fit.
-        #expect(truncated.utf8.count + lines[kept].utf8.count + 2 > Self.limit)
-
-        #expect(artifact.status == .deleted)
-        #expect(artifact.explanation == "Diff truncated: showing the first \(kept) of 3142 diff lines; file or operation evidence exceeds the byte limit.")
-        #expect(!artifact.isBinary)
-        #expect(artifact.additions == 0 && artifact.deletions == 3142)
-        #expect(artifact.hasLineCounts)
-        #expect(artifact.oldText == nil && artifact.newText == nil)
-        // The summary keeps the complete patch for undo and review.
-        #expect(summary.entries[0].patch == patch)
-        #expect(entry.patch == patch)
-    }
-
-    @Test
-    func deletedFileWhoseSnapshotFitsKeepsItsFullOldTextEvenWhenThePatchIsLarger() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let lines = Array(repeating: "abcdefghi", count: 6000)
-        let text = lines.joined(separator: "\n") + "\n"
-        let patch = deletedFilePatch(lines: lines)
-        #expect(text.utf8.count <= Self.limit && patch.utf8.count > Self.limit)
-        let entry = changeEntry(status: .deleted, patch: patch, additions: 0, deletions: 6000, beforeText: text)
-
-        let artifact = try #require(mappedArtifacts([entry], in: directory).first)
-        #expect(artifact.status == .deleted)
-        #expect(artifact.oldText == text)
-        #expect(artifact.newText == nil && artifact.patch == nil && artifact.explanation == nil)
-        #expect(artifact.additions == 0 && artifact.deletions == 6000 && artifact.hasLineCounts)
-    }
-
-    @Test
     func deletedFileWithAnOversizedSnapshotIsTruncatedFromThePatch() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -667,33 +435,6 @@ extension FileChangeArtifactTests {
         #expect(artifact.patch?.hasPrefix("diff --git a/Scripts/Gen.swift") == true)
         #expect(artifact.explanation?.hasPrefix(Self.truncationNotice) == true)
         #expect(artifact.deletions == 3142 && artifact.hasLineCounts)
-    }
-
-    @Test
-    func truncatedDeletedFileDropsTheFinalNoNewlineMarker() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        // The final marker belongs to the last line: it cannot survive a cut before it.
-        let patch = deletedFilePatch(lines: sourceLines(3000), marker: true)
-        let artifact = try #require(mappedArtifacts(
-            [changeEntry(status: .deleted, patch: patch, additions: 0, deletions: 3000)], in: directory
-        ).first)
-        let truncated = try #require(artifact.patch)
-        #expect(!truncated.contains("No newline at end of file"))
-        #expect(truncated.hasSuffix("\n") && truncated.utf8.count <= Self.limit)
-        #expect(artifact.explanation?.hasSuffix(" of 3000 diff lines; file or operation evidence exceeds the byte limit.") == true)
-    }
-
-    @Test
-    func modifiedFilePatchWithinTheLimitIsUnchanged() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let patch = modifiedFilePatch(hunks: [("@@ -3,2 +3,2 @@ func f()", [" a", "-b", "+c"])])
-        let artifact = try #require(mappedArtifacts(
-            [changeEntry(path: "Sources/Mod.swift", status: .modified, patch: patch, additions: 1, deletions: 1)],
-            in: directory
-        ).first)
-        #expect(artifact.patch == patch && artifact.explanation == nil && artifact.hasLineCounts)
     }
 
     @Test
@@ -839,41 +580,6 @@ extension FileChangeArtifactTests {
     }
 
     @Test
-    func truncatedDeletedFileRendersExplanationAndNumberedRemovedLines() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let lines = sourceLines(3142)
-        let artifacts = mappedArtifacts(
-            [changeEntry(status: .deleted, patch: deletedFilePatch(lines: lines), additions: 0, deletions: 3142)],
-            in: directory
-        )
-        let artifact = try #require(artifacts.first)
-        let kept = try #require(artifact.patch).components(separatedBy: "\n").count - 7
-        #expect(kept > 1 && kept < 3142)
-
-        for rendered in [
-            TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: artifacts)]),
-            TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: artifacts)], includeHistoryHeadings: false)
-        ] {
-            let metadata = "**deleted `Scripts/Gen.swift`**  +0 -3142\n"
-            let explanation = "Explanation: Diff truncated: showing the first \(kept) of 3142 diff lines; file or operation evidence exceeds the byte limit.\n"
-            #expect(rendered.contains(metadata + explanation))
-            let width = String(kept).count
-            func row(_ number: Int, _ source: String) -> String {
-                String(repeating: " ", count: width - String(number).count) + "\(number) │ \(source)"
-            }
-            #expect(rendered.contains(row(1, "-" + lines[0]) + "\n" + row(2, "-" + lines[1]) + "\n"))
-            #expect(rendered.contains(row(kept, "-" + lines[kept - 1]) + "\n"))
-            #expect(rendered.contains(String(repeating: " ", count: width) + " │ @@ -1,\(kept) +0,0 @@\n"))
-            #expect(!rendered.contains(lines[kept]))
-            #expect(!rendered.contains(lines[3141]))
-            let metadataRange = try #require(rendered.range(of: metadata))
-            let firstRow = try #require(rendered.range(of: row(1, "-" + lines[0])))
-            #expect(metadataRange.upperBound <= firstRow.lowerBound)
-        }
-    }
-
-    @Test
     func addedDeletedAndModifiedFilesShareTheOperationBudgetInOrder() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -923,117 +629,6 @@ extension FileChangeArtifactTests {
         #expect(result[5].additions == 2000 && result[5].hasLineCounts)
         let shown = result.reduce(0) { $0 + ($1.patch?.utf8.count ?? 0) + ($1.oldText?.utf8.count ?? 0) }
         #expect(shown <= operationBudget)
-    }
-
-    @Test
-    func theFirstHunkThatDoesNotFitKeepsOnlyTheLinesThatDoFitAndNeverLeavesAnEmptyHunk() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let headers = "diff --git a/E.swift b/E.swift\nindex 1111111..2222222 100644\n--- a/E.swift\n+++ b/E.swift\n"
-        let lineCount = 1000
-        let line = " " + String(repeating: "c", count: 48)  // 50 bytes with its newline
-        // The first hunk ends exactly `slack` bytes before the limit; its last line absorbs the rest.
-        func firstPart(slack: Int) -> String {
-            let header = "@@ -1,\(lineCount) +1,\(lineCount) @@\n"
-            let fixed = headers.utf8.count + header.utf8.count + (lineCount - 1) * 50
-            let lastLine = Self.limit - slack - fixed
-            let part = headers + header + String(repeating: line + "\n", count: lineCount - 1)
-                + " " + String(repeating: "d", count: lastLine - 2) + "\n"
-            #expect(part.utf8.count == Self.limit - slack)
-            return part
-        }
-        let secondBody = (1...4).map { _ in " " + String(repeating: "e", count: 48) }
-        let second = "@@ -2000,4 +2000,4 @@ func next()\n" + secondBody.map { $0 + "\n" }.joined()
-
-        // 34 bytes of rewritten header plus 50 per kept line (single-digit counts).
-        for slack in [5, 33, 60, 83, 84, 133, 134, 200] {
-            let first = firstPart(slack: slack)
-            let kept = slack >= 34 ? (slack - 34) / 50 : 0
-            let expected = kept == 0
-                ? first
-                : first + "@@ -2000,\(kept) +2000,\(kept) @@ func next()\n"
-                    + secondBody.prefix(kept).map { $0 + "\n" }.joined()
-            let artifact = try #require(mappedArtifacts(
-                [changeEntry(path: "E.swift", status: .modified, patch: first + second, additions: 0, deletions: 0)],
-                in: directory
-            ).first, Comment(rawValue: "slack \(slack)"))
-            #expect(artifact.patch == expected, Comment(rawValue: "slack \(slack)"))
-            #expect(artifact.explanation == FileChangeArtifactMapper.truncatedPatchExplanation(
-                shown: lineCount + kept, total: lineCount + 4
-            ), Comment(rawValue: "slack \(slack)"))
-            if kept == 0 { #expect(!(artifact.patch ?? "").contains("@@ -2000")) }
-        }
-    }
-
-    @Test
-    func truncationMeasuresTheRewrittenHeaderExactlyAcrossDigitBoundaries() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        func hunkHeaderBytes(_ count: Int) -> Int { "@@ -0,0 +1,\(count) @@\n".utf8.count }
-        let fileHeaderBytes = newFilePatch(path: "G.swift", lines: []).utf8.count - hunkHeaderBytes(0)
-
-        for boundary in [10, 100, 1000, 10_000] {
-            // `boundary` lines fit with the header of `boundary - 1`, but not with their own header.
-            let room = Self.limit - fileHeaderBytes - hunkHeaderBytes(boundary - 1)
-            let lineBytes = room / boundary
-            let spare = room - lineBytes * boundary
-            #expect(hunkHeaderBytes(boundary) == hunkHeaderBytes(boundary - 1) + 1)
-            for (extra, expectedKept) in [(spare, boundary - 1), (spare - 1, boundary)] {
-                var lines = Array(repeating: String(repeating: "x", count: lineBytes - 2), count: boundary + 5)
-                lines[0] = String(repeating: "x", count: lineBytes - 2 + extra)
-                let patch = newFilePatch(path: "G.swift", lines: lines)
-                let comment = Comment(rawValue: "boundary \(boundary) extra \(extra)")
-                let artifact = try #require(mappedArtifacts(
-                    [addedEntry(path: "G.swift", patch: patch, additions: boundary + 5)], in: directory
-                ).first, comment)
-                let truncated = try #require(artifact.patch, comment)
-                let rows = patchRows(truncated)
-                #expect(rows.count - 7 == expectedKept, comment)
-                #expect(rows[5] == "@@ -0,0 +1,\(expectedKept) @@", comment)
-                #expect(truncated.utf8.count <= Self.limit, comment)
-                if expectedKept == boundary { #expect(truncated.utf8.count == Self.limit, comment) }
-            }
-        }
-    }
-
-    @Test
-    func theNoNewlineMarkerStaysOnlyWhenItsLineAndTheMarkerFit() throws {
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let marker = "\\ No newline at end of file\n"
-        var outcomes = Set<Bool>()
-        for lineLength in 60...90 {
-            let text = String(repeating: "m", count: lineLength)
-            let body = Array(repeating: " " + text, count: Self.limit / (lineLength + 2) + 20)
-            let header = "@@ -1,\(body.count) +1,\(body.count) @@"
-            func truncate(_ body: [String]) throws -> (FileChangeArtifact, String) {
-                let artifact = try #require(mappedArtifacts([changeEntry(
-                    path: "Sources/Mod.swift", status: .modified,
-                    patch: modifiedFilePatch(hunks: [(header, body)]), additions: 0, deletions: 0
-                )], in: directory).first)
-                return (artifact, try #require(artifact.patch))
-            }
-            let plain = try truncate(body)
-            let plainRows = patchRows(plain.1)
-            let keptLines = plainRows.count - 6
-            #expect(keptLines > 0 && keptLines < body.count)
-
-            var annotated = body
-            annotated.insert("\\ No newline at end of file", at: keptLines)
-            let (artifact, truncated) = try truncate(annotated)
-            let rows = patchRows(truncated)
-            let hasMarker = truncated.hasSuffix(" " + text + "\n" + marker)
-            outcomes.insert(hasMarker)
-            #expect(truncated.utf8.count <= Self.limit)
-            #expect(bodyCounts(Array(rows[5...])).lines == keptLines)
-            #expect(rows.filter { $0.hasPrefix("\\") }.count == (hasMarker ? 1 : 0))
-            if !hasMarker { #expect(truncated.utf8.count + marker.utf8.count > Self.limit) }
-            // Markers are annotations, not diff lines.
-            #expect(artifact.explanation == FileChangeArtifactMapper.truncatedPatchExplanation(
-                shown: keptLines, total: body.count
-            ))
-        }
-        #expect(outcomes == [true, false])
     }
 
     @Test

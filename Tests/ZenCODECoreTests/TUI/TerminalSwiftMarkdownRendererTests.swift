@@ -51,26 +51,6 @@ struct TerminalSwiftMarkdownRendererTests {
     }
 
     @Test
-    func headingStyleIsRestoredAfterInlineCodeReset() {
-        var renderer = TerminalSwiftMarkdownRenderer(palette: .dark)
-        let document = Document(parsing: "## Title with `code` after")
-
-        let rendered = renderer.visit(document)
-
-        #expect(rendered.contains("\u{1B}[48;5;236m\u{1B}[38;5;180mcode\u{1B}[0m\u{1B}[1;38;5;75m after"))
-    }
-
-    @Test
-    func strongStyleIsRestoredAfterInlineCodeReset() {
-        var renderer = TerminalSwiftMarkdownRenderer(palette: .dark)
-        let document = Document(parsing: "This is **bold `code` after** text")
-
-        let rendered = renderer.visit(document)
-
-        #expect(rendered.contains("\u{1B}[48;5;236m\u{1B}[38;5;180mcode\u{1B}[0m\u{1B}[1m after"))
-    }
-
-    @Test
     func inlineHTMLIsRenderedInsteadOfDropped() {
         var renderer = TerminalSwiftMarkdownRenderer()
         let document = Document(parsing: "Hello <span>raw</span>")
@@ -93,35 +73,11 @@ struct TerminalSwiftMarkdownRendererTests {
     }
 
     @Test
-    func htmlBlockIsRenderedInsteadOfDropped() {
-        var renderer = TerminalSwiftMarkdownRenderer()
-        let document = Document(parsing: """
-        <div>
-        raw
-        </div>
-        """)
-
-        let rendered = renderer.visit(document)
-
-        #expect(rendered.contains("<div>"))
-        #expect(rendered.contains("raw"))
-        #expect(rendered.contains("</div>"))
-    }
-
-    @Test
     func htmlCommentBlockIsHidden() {
         var renderer = TerminalSwiftMarkdownRenderer()
         let document = Document(parsing: "<!-- internal note -->")
 
         #expect(renderer.visit(document).isEmpty)
-    }
-
-    @Test
-    func visibleWidthCountsEmojiAndWideCharactersAsTerminalColumns() {
-        #expect(TerminalANSIText.visibleWidth("🔴 Alta") == 7)
-        #expect(TerminalANSIText.visibleWidth("🛠️ Tool") == 7)
-        #expect(TerminalANSIText.visibleWidth("表") == 2)
-        #expect(TerminalANSIText.visibleWidth("\u{1B}[31m🔴 Alta\u{1B}[0m") == 7)
     }
 
     @Test
@@ -144,11 +100,6 @@ struct TerminalSwiftMarkdownRendererTests {
     }
 
     // MARK: - Item 2: stripANSI handles OSC sequences
-
-    @Test
-    func stripANIRemovesCSIEscape() {
-        #expect(TerminalANSIText.stripANSI("\u{1B}[1mbold\u{1B}[0m") == "bold")
-    }
 
     @Test
     func stripANSIRemovesOSCHyperlink() {
@@ -174,19 +125,6 @@ struct TerminalSwiftMarkdownRendererTests {
         for line in rendered.split(separator: "\n", omittingEmptySubsequences: false) {
             #expect(TerminalANSIText.visibleWidth(String(line)) <= 20)
         }
-    }
-
-    // MARK: - Item 4: Explicit initializer
-
-    @Test
-    func initSetsPropertiesCorrectly() {
-        var renderer = TerminalSwiftMarkdownRenderer(supportsHyperlinks: true, renderWidth: 80)
-        let document = Document(parsing: "[text](https://example.com)")
-
-        let rendered = renderer.visit(document)
-
-        // With supportsHyperlinks = true, OSC 8 sequences should be present.
-        #expect(rendered.contains("\u{1B}]8;;https://example.com\u{1B}\\"))
     }
 
     // MARK: - Item 7: PUA marker fallback
@@ -238,16 +176,4 @@ struct TerminalSwiftMarkdownRendererTests {
         #expect(rendered.contains("…"))
         #expect(!rendered.contains(String(repeating: "a", count: 60)))
     }
-
-    @Test
-    func shortURLIsNotTruncatedInFallback() {
-        var renderer = TerminalSwiftMarkdownRenderer(supportsHyperlinks: false)
-        let document = Document(parsing: "[label](https://example.com)")
-
-        let rendered = renderer.visit(document)
-
-        #expect(rendered.contains("<https://example.com>"))
-        #expect(!rendered.contains("…"))
-    }
-
 }

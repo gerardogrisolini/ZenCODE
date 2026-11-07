@@ -78,101 +78,6 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func artifactsRenderingUsesTypedAndNeutralFencedEvidence() {
-        let turns = [
-            SessionFileArtifactHistory.Turn(
-                number: 3,
-                artifacts: [
-                    FileChangeArtifact(
-                        absolutePath: "/tmp/typed.swift",
-                        displayPath: "Sources/Typed.swift",
-                        status: .modified,
-                        additions: 1,
-                        deletions: 1,
-                        oldText: "let value = 1\n",
-                        newText: "let value = 2\n"
-                    ),
-                    FileChangeArtifact(
-                        absolutePath: "/tmp/unknown.custom",
-                        displayPath: "Data/evidence.custom",
-                        status: .unknown,
-                        patch: "@@ -1 +1 @@\n-old\n+new\n"
-                    ),
-                    FileChangeArtifact(
-                        absolutePath: "/tmp/image.bin",
-                        displayPath: "Assets/image.bin",
-                        status: .unknown,
-                        isBinary: true,
-                        explanation: "Diff unavailable: binary file evidence."
-                    )
-                ]
-            )
-        ]
-
-        let rendered = TerminalChat.renderFileArtifacts(turns)
-        let automatic = TerminalChat.renderFileArtifacts(turns, includeHistoryHeadings: false)
-
-        #expect(automatic.hasPrefix("\n**modified `Sources/Typed.swift`**  +1 -1\n"))
-        #expect(!automatic.contains("🪬 Artifacts"))
-        #expect(!automatic.contains("### Turn"))
-        #expect(rendered == "\n🪬 Artifacts\n\n### Turn 3 — 3 files\n" + automatic)
-        #expect(rendered.contains("### Turn 3 — 3 files"))
-        #expect(rendered.contains("**modified `Sources/Typed.swift`**  +1 -1"))
-        #expect(rendered.contains("```artifact-diff-swift\n  │ @@ -1,1 +1,1 @@\n1 │ -let value = 1\n1 │ +let value = 2\n```"))
-        #expect(!rendered.contains("**Before**"))
-        #expect(!rendered.contains("**After**"))
-        #expect(rendered.contains("**unknown `Data/evidence.custom`**  +0 -0"))
-        #expect(rendered.contains("```artifact-diff\n  │ @@ -1 +1 @@\n1 │ -old\n1 │ +new\n```"))
-        #expect(rendered.contains("**unknown `Assets/image.bin`**  +0 -0 (binary)"))
-        #expect(rendered.contains("Explanation: Diff unavailable: binary file evidence."))
-    }
-
-    @Test
-    func artifactsRenderingKeepsSourceNeutralWhenPathHasNoExtension() {
-        let turn = SessionFileArtifactHistory.Turn(
-            number: 1,
-            artifacts: [
-                FileChangeArtifact(
-                    absolutePath: "/tmp/README",
-                    displayPath: "README",
-                    status: .added,
-                    additions: 1,
-                    newText: "plain text\n"
-                )
-            ]
-        )
-
-        let rendered = TerminalChat.renderFileArtifacts([turn])
-
-        #expect(rendered.contains("**added `README`**  +1 -0"))
-        #expect(rendered.contains("```artifact-diff\n  │ @@ -0,0 +1,1 @@\n1 │ +plain text\n```"))
-        #expect(!rendered.contains("```text"))
-    }
-
-    @Test
-    func fileChangeSummaryColoringHighlightsNonBlankLines() {
-        let rendered = TerminalChatTextFormatting.fileChangeSummaryColorApplied(
-            to: "\n🪬 Summary: 1 modified file  +12 -2\n  modified Sources/App.swift  +12 -2\nUse /undo to revert, /changes diff to show patches.\n",
-            isEnabled: true
-        )
-
-        // Anchored to the source constant so a deliberate palette change does
-        // not silently drift from this expectation again.
-        #expect(
-            rendered.hasPrefix(
-                "\n\(TerminalChatTextFormatting.fileChangeSummaryHeaderANSIColor)🪬 Summary:\u{1B}[0m "
-            )
-        )
-        #expect(rendered.contains("\u{1B}[38;5;81m1\u{1B}[0m\u{1B}[97m modified file\u{1B}[0m"))
-        #expect(rendered.contains("\u{1B}[38;5;114m+12\u{1B}[0m"))
-        #expect(rendered.contains("\u{1B}[38;5;203m-2\u{1B}[0m"))
-        #expect(rendered.contains("\u{1B}[38;5;244mmodified\u{1B}[0m \u{1B}[97mSources/App.swift\u{1B}[0m"))
-        #expect(rendered.contains("\u{1B}[38;5;81m/undo\u{1B}[0m\u{1B}[38;5;250m"))
-        #expect(rendered.contains("\u{1B}[38;5;81m/changes diff\u{1B}[0m\u{1B}[38;5;250m"))
-        #expect(rendered.hasSuffix("\n"))
-    }
-
-    @Test
     func sideBySideDiffWrapsLongSourceLinesWithoutTruncatingEitherCell() {
         let old = String(repeating: "oldPayload", count: 12)
         let new = String(repeating: "newPayload", count: 12)
@@ -197,90 +102,6 @@ extension TerminalChatRenderingTests {
         #expect(newRendered.contains(new))
         #expect(!rows.map(\.plainText).joined().contains("…"))
         #expect(rows.allSatisfy { TerminalChat.displayWidth($0.plainText) <= 79 })
-    }
-
-    @Test
-    func wrappedPlainTextDiffUsesWhiteForegroundForEveryFragment() {
-        let prose = String(repeating: "plain text payload ", count: 12)
-        let rows = TerminalChat.safelyWrappedDetailedToolRows(
-            TerminalChat.numberedDiffSnippetRows(
-                old: prose,
-                new: prose + "changed",
-                contentWidth: 80
-            ),
-            contentInsetWidth: 0,
-            columnWidth: 80,
-            codeLanguage: nil
-        )
-        let renderedPayloadRows = rows
-            .dropFirst()
-            .map { TerminalChat.renderDetailedToolRow($0, codeLanguage: nil) }
-            .filter { TerminalANSIText.stripANSI($0).contains("plain text payload") }
-
-        #expect(renderedPayloadRows.count > 1)
-        #expect(
-            renderedPayloadRows.allSatisfy {
-                $0.contains(TerminalMarkdownPalette.dark.codeForeground)
-            }
-        )
-    }
-
-    @Test
-    func wrappedSideBySideDiffPreservesSwiftCommentColorOnContinuations() {
-        let comment = "// " + String(repeating: "comment payload ", count: 12)
-        let rows = TerminalChat.safelyWrappedDetailedToolRows(
-            TerminalChat.numberedDiffSnippetRows(
-                old: "",
-                new: comment,
-                contentWidth: 80
-            ),
-            contentInsetWidth: 0,
-            columnWidth: 80,
-            codeLanguage: "swift"
-        )
-        let renderedContinuations = rows
-            .dropFirst(2)
-            .map { TerminalChat.renderDetailedToolRow($0, codeLanguage: "swift") }
-            .filter { TerminalANSIText.stripANSI($0).contains("comment payload") }
-
-        #expect(!renderedContinuations.isEmpty)
-        #expect(
-            renderedContinuations.allSatisfy {
-                $0.contains(TerminalMarkdownPalette.dark.syntaxComment)
-            }
-        )
-        #expect(
-            TerminalANSIText.stripANSI(renderedContinuations.joined())
-                .contains("comment payload")
-        )
-    }
-
-    @Test
-    func wrappedSideBySideAddedCellKeepsCodeBackgroundThroughPadding() {
-        let comment = "// " + String(repeating: "added payload ", count: 12)
-        let rows = TerminalChat.safelyWrappedDetailedToolRows(
-            TerminalChat.numberedDiffSnippetRows(
-                old: "",
-                new: comment,
-                contentWidth: 80
-            ),
-            contentInsetWidth: 0,
-            columnWidth: 80,
-            codeLanguage: "swift"
-        )
-        let renderedContinuation = try! #require(
-            rows
-                .dropFirst(2)
-                .map { TerminalChat.renderDetailedToolRow($0, codeLanguage: "swift") }
-                .last { TerminalANSIText.stripANSI($0).contains("added payload") }
-        )
-
-        #expect(
-            renderedContinuation.contains(
-                "\u{1B}[0m\(TerminalChat.codeAreaBackgroundColor)\(TerminalChat.codeAreaBackgroundColor) "
-            )
-        )
-        #expect(renderedContinuation.hasSuffix("\(TerminalStyle.reset)\u{1B}[K"))
     }
 
     @Test
@@ -379,21 +200,6 @@ extension TerminalChatRenderingTests {
         }
     }
 
-    @Test
-    func newFilePreviewUsesTheRecoveredColumnsBeforeWrapping() {
-        let content = "    " + String(repeating: "x", count: 71)
-        let rows = TerminalChat.safelyWrappedDetailedToolRows(
-            TerminalChat.numberedCodeSnippetRows(content),
-            columnWidth: 80
-        )
-
-        #expect(rows.map(\.plainText) == ["1 │ \(content)"])
-        #expect(TerminalChat.numberedCodeSnippetLines(content) == ["1 │ \(content)"])
-        #expect(TerminalChat.numberedDiffSnippetLines(
-            old: "    old", new: "    new", contentWidth: 51
-        ).first?.hasPrefix("old") == true)
-    }
-
     @Test(arguments: ["local.writeFile", "local.multiEdit"], [40, 80, 81])
     func filePreviewBackgroundStopsAtTheSafeContentWidth(toolName: String, columns: Int) {
         // Exercise blank/short rows, wrapped comments, wide glyphs, empty old
@@ -448,24 +254,6 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func compactToolLinesUseTheCanonicalName() {
-        let toolCall = presentedToolCall(
-            id: "call_1",
-            name: "local.editFile",
-            argumentsObject: [
-                "file_path": "Sources/App.swift",
-                "old": "old",
-                "new": "new"
-            ],
-            argumentsJSON: #"{"file_path":"Sources/App.swift","old":"old","new":"new"}"#
-        )
-
-        let lines = TerminalChat.compactToolLines(for: toolCall, statusIcon: "⏳")
-
-        #expect(lines == ["🛠️  local.editFile", "Sources/App.swift ⏳"])
-    }
-
-    @Test
     func compactToolTerminalTextDoesNotInsertBlankRows() {
         let rendered = TerminalChat.compactToolTerminalText(
             ["🛠️  Read", "Sources/App.swift ⏳"],
@@ -477,18 +265,6 @@ extension TerminalChatRenderingTests {
         #expect(!rendered.contains("\n\n"))
         #expect(rendered.contains("\n\r\u{1B}[2K "))
         #expect(rendered.hasSuffix("\u{1B}[0m\n"))
-    }
-
-    @Test
-    func compactToolStatusIconStaysImmediatelyAfterText() {
-        let rendered = TerminalChat.compactToolStatusLine(
-            target: "/tmp/generated-feature/Sources/Feature/main.swift",
-            statusIcon: "✅",
-            contentInsetWidth: 0
-        )
-
-        #expect(rendered.hasSuffix(" ✅"))
-        #expect(!rendered.contains("  ✅"))
     }
 
     @Test

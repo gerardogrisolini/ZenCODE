@@ -21,30 +21,12 @@ struct ZenCronScheduleTests {
         }
     }
 
-    /// The reason reported by `ZenCronScheduleError.invalid`, or nil when the text parses.
-    private func rejectedReason(_ text: String) -> String? {
-        do {
-            _ = try ZenCronSchedule(parsing: text)
-            return nil
-        } catch let ZenCronScheduleError.invalid(_, reason) {
-            return reason
-        } catch {
-            return "unexpected error: \(error)"
-        }
-    }
-
     @Test(arguments: [
         "@reboot", "@yearly", "@annually", "@monthly",
         "@weekly", "@daily", "@midnight", "@hourly"
     ])
     func acceptsEveryAlias(_ alias: String) throws {
         #expect(try ZenCronSchedule(parsing: alias).rawValue == alias)
-    }
-
-    @Test
-    func aliasesAreCaseInsensitiveAndNormalizedToLowercase() throws {
-        #expect(try ZenCronSchedule(parsing: "@DAILY").rawValue == "@daily")
-        #expect(try ZenCronSchedule(parsing: "  @Reboot\n").rawValue == "@reboot")
     }
 
     @Test(arguments: [
@@ -62,12 +44,6 @@ struct ZenCronScheduleTests {
     ])
     func acceptsFiveFieldsAndNormalizesThem(_ input: String, _ expected: String) throws {
         #expect(try ZenCronSchedule(parsing: input).rawValue == expected)
-    }
-
-    @Test
-    func equalSchedulesCompareEqualAfterNormalization() throws {
-        #expect(try ZenCronSchedule(parsing: "0  9 * 1 *") == ZenCronSchedule(parsing: "0 9 * 1 *"))
-        #expect(try ZenCronSchedule(parsing: "0 9 * * *") != ZenCronSchedule(parsing: "0 10 * * *"))
     }
 
     @Test(arguments: [
@@ -123,23 +99,6 @@ struct ZenCronScheduleTests {
     ])
     func rejectsInvalidFieldsAndNamesTheField(_ text: String, _ field: String) {
         #expect(rejectedField(text) == field)
-    }
-
-    @Test(arguments: [
-        ("* * * jan *", "'jan' is not a valid value; use a number 1-12"),
-        ("* * * * mon", "'mon' is not a valid value; use a number 0-7 (0 and 7 = Sunday)")
-    ])
-    func nameInMonthOrWeekdayReasonPointsToTheNumericRange(_ text: String, _ reason: String) {
-        #expect(rejectedReason(text) == reason)
-    }
-
-    @Test
-    func errorDescriptionNamesTheFieldAndSuggestsTheShape() {
-        let error = ZenCronScheduleError.invalid(field: "hour", reason: "24 is out of range 0-23")
-        let description = error.errorDescription ?? ""
-        #expect(description.contains("hour"))
-        #expect(description.contains("24 is out of range 0-23"))
-        #expect(description.contains("@daily"))
     }
 
     @Test

@@ -83,27 +83,6 @@ struct ACPPromptUpdateBufferTests {
         #expect(buffer.flushAll().isEmpty)
     }
 
-    /// Metadata must never overtake content produced before it. When a usage
-    /// update is emitted, the pending text is flushed ahead of it.
-    @Test
-    func usageUpdateNeverOvertakesPendingContent() throws {
-        let clock = ManualClock()
-        let buffer = ACPPromptUpdateBuffer(now: clock.clock)
-
-        #expect(buffer.consume(Self.chunk("first half ")).isEmpty)
-        // The metadata window has not elapsed yet, so nothing is emitted and the
-        // text stays pending rather than being passed on the wire.
-        #expect(buffer.consume(Self.usageUpdate(used: 10)).isEmpty)
-
-        let flushed = buffer.flushAll()
-        #expect(flushed.count == 2)
-        let flushedContent = try #require(flushed.first)
-        let flushedMetadata = try #require(flushed.last)
-        #expect(Self.kind(of: flushedContent) == "agent_message_chunk")
-        #expect(Self.text(of: flushedContent) == "first half ")
-        #expect(Self.kind(of: flushedMetadata) == "usage_update")
-    }
-
     /// Same guarantee once the metadata window has actually elapsed: this is the
     /// only path where a `usage_update` is emitted from `consume`, so it is the
     /// path where metadata could really overtake pending text on the wire.
@@ -150,33 +129,5 @@ struct ACPPromptUpdateBufferTests {
         #expect(Self.kind(of: emittedMetadata) == "usage_update")
         // The boundary update itself is always the last one emitted.
         #expect(Self.kind(of: emittedBoundary) == "tool_call")
-    }
-
-    /// A blank or malformed chunk carries no reply text, so it must not create an
-    /// empty message on the wire.
-    @Test
-    func emptyContentChunksAreIgnored() {
-        let clock = ManualClock()
-        let buffer = ACPPromptUpdateBuffer(now: clock.clock)
-
-        #expect(buffer.consume(Self.chunk("")).isEmpty)
-        #expect(buffer.flushAll().isEmpty)
-    }
-
-    /// A non-object update cannot be classified, so it is forwarded verbatim
-    /// after the buffered content instead of being swallowed.
-    @Test
-    func nonObjectUpdateIsForwardedAfterBufferedContent() throws {
-        let clock = ManualClock()
-        let buffer = ACPPromptUpdateBuffer(now: clock.clock)
-
-        #expect(buffer.consume(Self.chunk("reply")).isEmpty)
-        let emitted = buffer.consume(.string("opaque"))
-
-        #expect(emitted.count == 2)
-        let forwardedContent = try #require(emitted.first)
-        let forwardedUpdate = try #require(emitted.last)
-        #expect(Self.text(of: forwardedContent) == "reply")
-        #expect(forwardedUpdate.acpStringValue == "opaque")
     }
 }

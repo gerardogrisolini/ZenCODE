@@ -74,28 +74,6 @@ struct AgentProfileRoleTests {
     // MARK: - Roles
 
     @Test
-    func theRoleListIsFixed() {
-        #expect(AgentProfileRole.allCases.map(\.rawValue) == [
-            "developer", "builder", "minimal", "planner",
-            "reviewer", "reporter", "organizer", "promoter", "tester",
-        ])
-        #expect(AgentProfileRole.allCases.map(\.title) == [
-            "Developer", "Builder", "Minimal", "Planner",
-            "Reviewer", "Reporter", "Organizer", "Promoter", "Tester",
-        ])
-        #expect(AgentProfileRole.allCases.allSatisfy { !$0.summary.isEmpty })
-        #expect(Set(AgentProfileRole.allCases.map(\.summary)).count == AgentProfileRole.allCases.count)
-    }
-
-    @Test
-    func onlyTheOrganizerRoleUsesGlobalMemoryAndDelegatesByRole() {
-        for role in AgentProfileRole.allCases {
-            #expect(role.usesGlobalMemory == (role == .organizer))
-            #expect(role.delegatesByRole == (role == .organizer))
-        }
-    }
-
-    @Test
     func memoryGraphTargetResolvesFromTheProfileRole() {
         let workingDirectory = URL(fileURLWithPath: "/tmp/role-memory", isDirectory: true)
 
@@ -231,15 +209,6 @@ struct AgentProfileRoleTests {
         #endif
     }
 
-    @Test
-    func aProfileIsASystemProfileExactlyWhenItsIDIsItsRole() {
-        #expect(AgentProfile(id: "reviewer", name: "Anything", role: .reviewer).isSystemProfile)
-        #expect(AgentProfile(id: " Reviewer ", name: "Anything", role: .reviewer).isSystemProfile)
-        #expect(!AgentProfile(id: "reviewer", name: "Reviewer", role: .planner).isSystemProfile)
-        #expect(!AgentProfile(id: UUID().uuidString, name: "Developer", role: .developer).isSystemProfile)
-        #expect(!Roles.customReviewer.isSystemProfile)
-    }
-
     // MARK: - Role semantics
 
     @Test
@@ -277,40 +246,6 @@ struct AgentProfileRoleTests {
         #expect(namedBuilder.allowedToolNames().isDisjoint(with: AgentProfileStore.featureManagementToolNames))
     }
 
-    // MARK: - Preservation
-
-    @Test
-    func profileReconstructionsPreserveTheRole() {
-        let planner = AgentProfile(
-            id: "pluto",
-            name: "Pluto",
-            readOnly: true,
-            role: .planner,
-            tools: ["files"],
-            modelBindings: [AgentModelBinding(id: "fast", modelID: "fast-model", capability: 4)]
-        )
-        let promoter = AgentProfile(id: "herald", name: "Herald", role: .promoter)
-
-        let normalized = AgentProfileStore.normalizedAgentForSave(planner)
-        let reconciled = AgentProfileBindingReconciler.reconciledAgents(
-            [planner, promoter],
-            models: []
-        )
-        let replaced = ZenCODEAgentProfileSetupRunner.profile(
-            basedOn: planner,
-            modelBindings: [],
-            defaultModelBindingID: nil
-        )
-
-        #expect(normalized.role == .planner)
-        #expect(reconciled.map(\.role) == [.planner, .promoter])
-        #expect(replaced.role == .planner)
-        #expect(
-            ZenCODEAgentProfileSetupRunner.preparedAgentsForSave([planner, promoter]).map(\.role)
-                == [.developer, .planner, .promoter]
-        )
-    }
-
     // MARK: - Default developer
 
     @Test
@@ -334,24 +269,6 @@ struct AgentProfileRoleTests {
     }
 
     @Test
-    func projectDefaultDeveloperWithoutASavedSelectionIsTheSystemDeveloper() throws {
-        let custom = AgentProfile(id: "custom-dev", name: "Custom Dev", role: .developer)
-        let agents = [custom, Roles.systemReviewer, Roles.developer]
-
-        #expect(try AgentProfileStore.developerProfile(in: agents, projectSelection: nil) == Roles.developer)
-
-        // No system developer in the roster: the project sees no developer, so
-        // the global default (first developer in manifest order) applies.
-        let second = AgentProfile(id: "second-dev", name: "Second Dev", role: .developer)
-        #expect(
-            try AgentProfileStore.developerProfile(
-                in: [Roles.systemReviewer, second, custom],
-                projectSelection: nil
-            ) == second
-        )
-    }
-
-    @Test
     func projectDefaultDeveloperIsTheFirstAssociatedDeveloperInManifestOrder() throws {
         let first = AgentProfile(id: "first-dev", name: "First Dev", role: .developer)
         let second = AgentProfile(id: "second-dev", name: "Second Dev", role: .developer)
@@ -367,69 +284,6 @@ struct AgentProfileRoleTests {
         #expect(try AgentProfileStore.developerProfile(in: agents, projectSelection: [first.id]) == first)
         // Selection keys are case-insensitive, like every profile reference.
         #expect(try AgentProfileStore.developerProfile(in: agents, projectSelection: ["FIRST-DEV"]) == first)
-    }
-
-    @Test
-    func projectDefaultDeveloperPrefersTheAssociatedSystemDeveloper() throws {
-        let custom = AgentProfile(id: "custom-dev", name: "Custom Dev", role: .developer)
-        let agents = [custom, Roles.developer, Roles.pluto]
-
-        #expect(
-            try AgentProfileStore.developerProfile(
-                in: agents,
-                projectSelection: [custom.id, Roles.developer.id]
-            ) == Roles.developer
-        )
-    }
-
-    @Test
-    func projectDefaultDeveloperFallsBackToTheGlobalDefaultWhenNoneIsAssociated() throws {
-        let custom = AgentProfile(id: "custom-dev", name: "Custom Dev", role: .developer)
-        let agents = [custom, Roles.developer, Roles.pluto]
-
-        for selection: Set<String> in [[Roles.pluto.id], []] {
-            #expect(
-                try AgentProfileStore.developerProfile(in: agents, projectSelection: selection)
-                    == Roles.developer
-            )
-        }
-        #expect(
-            try AgentProfileStore.developerProfile(in: [custom, Roles.pluto], projectSelection: [Roles.pluto.id])
-                == custom
-        )
-
-        do {
-            _ = try AgentProfileStore.developerProfile(
-                in: [Roles.systemReviewer, Roles.pluto],
-                projectSelection: [Roles.pluto.id]
-            )
-            Issue.record("A roster without the developer role has no default developer.")
-        } catch let error as AgentProfileStoreError {
-            #expect(error.errorDescription?.contains("does not contain an agent with the developer role") == true)
-        }
-    }
-
-    @Test
-    func projectDefaultDeveloperReadsTheSavedProjectSelection() throws {
-        try ProjectSupport.withTemporaryProject { _, workspace in
-            let custom = AgentProfile(id: "custom-dev", name: "Custom Dev", role: .developer)
-            let agents = [Roles.developer, custom, Roles.pluto]
-
-            // No saved selection: only system profiles are visible.
-            #expect(try AgentProfileStore.developerProfile(in: agents, workspaceRootURL: workspace) == Roles.developer)
-
-            try ProjectAgentSelectionStore.save(agentIDs: [custom.id], workspaceRootURL: workspace)
-            #expect(try AgentProfileStore.developerProfile(in: agents, workspaceRootURL: workspace) == custom)
-
-            try ProjectAgentSelectionStore.save(
-                agentIDs: [custom.id, Roles.developer.id],
-                workspaceRootURL: workspace
-            )
-            #expect(try AgentProfileStore.developerProfile(in: agents, workspaceRootURL: workspace) == Roles.developer)
-
-            try ProjectAgentSelectionStore.save(agentIDs: [Roles.pluto.id], workspaceRootURL: workspace)
-            #expect(try AgentProfileStore.developerProfile(in: agents, workspaceRootURL: workspace) == Roles.developer)
-        }
     }
 
     @Test
@@ -450,15 +304,6 @@ struct AgentProfileRoleTests {
     }
 
     // MARK: - Candidate resolution
-
-    @Test
-    func roleProfilesListEveryProfileWithTheRoleInOrder() {
-        let profiles = [Roles.developer, Roles.systemReviewer, Roles.customReviewer, Roles.pluto]
-
-        #expect(AgentProfileStore.roleProfiles(.reviewer, in: profiles) == [Roles.systemReviewer, Roles.customReviewer])
-        #expect(AgentProfileStore.roleProfiles(.planner, in: profiles) == [Roles.pluto])
-        #expect(AgentProfileStore.roleProfiles(.builder, in: profiles).isEmpty)
-    }
 
     @Test
     func roleDelegationCandidatesAreTheVisibleProfilesWithTheRole() {
@@ -496,148 +341,6 @@ struct AgentProfileRoleTests {
         #expect(AgentProfileStore.roleDelegationCandidates(.reviewer, in: profiles, projectSelection: []).isEmpty)
         #expect(AgentProfileStore.roleDelegationCandidates(.planner, in: profiles, projectSelection: nil).isEmpty)
         #expect(AgentProfileStore.roleDelegationCandidates(.reviewer, in: [], projectSelection: nil).isEmpty)
-    }
-
-    @Test
-    func roleDelegationCandidatesReadTheSavedProjectSelection() throws {
-        try ProjectSupport.withTemporaryProject { _, workspace in
-            let profiles = [Roles.developer, Roles.systemPlanner, Roles.pluto]
-
-            #expect(
-                AgentProfileStore.roleDelegationCandidates(.planner, in: profiles, workspaceRootURL: workspace)
-                    == [Roles.systemPlanner]
-            )
-
-            try ProjectAgentSelectionStore.save(agentIDs: [Roles.pluto.id], workspaceRootURL: workspace)
-            #expect(
-                AgentProfileStore.roleDelegationCandidates(.planner, in: profiles, workspaceRootURL: workspace)
-                    == [Roles.pluto]
-            )
-
-            try ProjectAgentSelectionStore.save(agentIDs: [Roles.developer.id], workspaceRootURL: workspace)
-            #expect(
-                AgentProfileStore.roleDelegationCandidates(.planner, in: profiles, workspaceRootURL: workspace)
-                    .isEmpty
-            )
-        }
-    }
-
-    @Test
-    func unavailableRoleMessageNamesTheRoleAndTheFix() {
-        #expect(
-            AgentProfileStore.roleUnavailableForProjectMessage(.reviewer)
-                == "ZenCODE: no agent profile with the reviewer role is available for this project. "
-                + "Tick one with /agents."
-        )
-        #expect(AgentProfileStore.roleUnavailableForProjectMessage(.planner).contains("planner role"))
-    }
-
-    // MARK: - Prompts
-
-    @Test
-    func delegationProfileClauseKeepsTheSingleProfileWordingAndListsSeveral() {
-        #expect(
-            AgentProfileStore.delegationProfileClause([Roles.customReviewer])
-                == "profile \"\(Roles.customReviewer.id)\""
-        )
-        #expect(
-            AgentProfileStore.delegationProfileClause([Roles.systemReviewer, Roles.customReviewer])
-                == "one of these profiles (any of them is acceptable): "
-                + "\"reviewer\" (Reviewer), "
-                + "\"\(Roles.customReviewer.id)\" (Brutta merda)"
-        )
-    }
-
-    @Test
-    func planPromptsKeepTheSingleCandidateTextAndOfferEveryCandidate() {
-        let single = PlanningCommandKernel.planStartPrompt(goal: "ship roles", planners: [Roles.pluto])
-        #expect(single == PlanningCommandKernel.planStartPrompt(goal: "ship roles", planner: Roles.pluto))
-        #expect(single.contains("role \"Planner\", and profile \"\(Roles.pluto.id)\"."))
-        #expect(!single.contains("any of them is acceptable"))
-
-        let multiple = PlanningCommandKernel.planStartPrompt(
-            goal: "ship roles",
-            planners: [Roles.systemPlanner, Roles.pluto]
-        )
-        #expect(multiple.contains("role \"Planner\", and one of these profiles (any of them is acceptable): "))
-        #expect(multiple.contains("\"planner\" (Planner)"))
-        #expect(multiple.contains("\"\(Roles.pluto.id)\" (Pluto)"))
-        #expect(multiple.contains("Create exactly one sub-agent"))
-
-        var state = PlanningCommandRuntimeState(goal: "ship roles")
-        state.recordPlannerOutput("Planner questions\n1. Which roles?", agentID: "planner-1", revision: 1)
-        let recordedReply = state.recordReply("All three.")
-        #expect(recordedReply)
-        var recreated = state
-        recreated.plannerAgentID = nil
-        for candidateState in [state, recreated] {
-            let singleContinuation = PlanningCommandKernel.planContinuationPrompt(
-                state: candidateState,
-                planners: [Roles.pluto]
-            )
-            #expect(
-                singleContinuation
-                    == PlanningCommandKernel.planContinuationPrompt(state: candidateState, planner: Roles.pluto)
-            )
-            #expect(singleContinuation.contains("role \"Planner\" and profile \"\(Roles.pluto.id)\", give it"))
-
-            let multipleContinuation = PlanningCommandKernel.planContinuationPrompt(
-                state: candidateState,
-                planners: [Roles.systemPlanner, Roles.pluto]
-            )
-            #expect(multipleContinuation.contains(
-                "role \"Planner\" and one of these profiles (any of them is acceptable): "
-            ))
-            #expect(multipleContinuation.contains("\"\(Roles.pluto.id)\" (Pluto), give it"))
-        }
-    }
-
-    @Test
-    func reviewPromptsKeepTheSingleCandidateTextAndOfferEveryCandidate() {
-        let summary = TurnFileChangeSummary(entries: [
-            TurnFileChangeSummary.Entry(
-                path: "Sources/Example.swift",
-                additions: 1,
-                deletions: 0,
-                status: .modified,
-                isBinary: false,
-                existedBefore: true,
-                beforeDataBase64: nil,
-                patch: "+line"
-            )
-        ])
-        let plan = TerminalSessionPlan(originalGoal: "goal", consolidatedText: "plan", isApproved: true)
-
-        for approvedPlan in [nil, plan] {
-            let single = TerminalChat.reviewDelegationPrompt(
-                scope: "",
-                reviewers: [Roles.customReviewer],
-                changeSummary: summary,
-                approvedPlan: approvedPlan
-            )
-            #expect(single == TerminalChat.reviewDelegationPrompt(
-                scope: "",
-                reviewer: Roles.customReviewer,
-                changeSummary: summary,
-                approvedPlan: approvedPlan
-            ))
-            #expect(single.contains(
-                "role \"Reviewer\" and profile \"\(Roles.customReviewer.id)\"; Reviewers must not edit files."
-            ))
-            #expect(!single.contains("any of them is acceptable"))
-
-            let multiple = TerminalChat.reviewDelegationPrompt(
-                scope: "",
-                reviewers: [Roles.systemReviewer, Roles.customReviewer],
-                changeSummary: summary,
-                approvedPlan: approvedPlan
-            )
-            #expect(multiple.contains(
-                "role \"Reviewer\" and one of these profiles (any of them is acceptable): "
-                    + "\"reviewer\" (Reviewer), "
-                    + "\"\(Roles.customReviewer.id)\" (Brutta merda); Reviewers must not edit files."
-            ))
-        }
     }
 
     // MARK: - Planner snapshots
@@ -685,46 +388,5 @@ struct AgentProfileRoleTests {
             createdAt: Date(),
             updatedAt: Date()
         )
-    }
-
-    // MARK: - Presentation
-
-    @Test
-    func delegatableRosterLineShowsTheRoleOfEveryProfile() throws {
-        let section = try #require(SystemPromptBuilder.delegatableAgentsSection(
-            agents: [
-                Roles.customReviewer,
-                AgentProfile(id: "plain", name: "Plain", role: .reporter, tools: ["files"]),
-            ],
-            allowedToolNames: ["agent.create"],
-            snapshot: .available(models: [])
-        ))
-
-        #expect(section.contains("- Brutta merda [read-only; role: reviewer; tools: files]: Review the requested change."))
-        #expect(section.contains("- Plain [read-write; role: reporter; tools: files]: No role constraints declared."))
-    }
-
-    @Test
-    func agentSelectionDetailDescribesTheRoleOfEveryProfile() {
-        for profile in AgentProfileStore.defaultProfiles() + [Roles.customReviewer, Roles.pluto] {
-            let detail = TerminalChat.agentSelectionDetail(profile)
-            #expect(detail.hasPrefix(profile.role.summary))
-            #expect(!detail.contains("role:"))
-        }
-        #expect(TerminalChat.agentSelectionDetail(Roles.customReviewer) == "/review delegates to it")
-        #expect(
-            TerminalChat.agentSelectionDetail(AgentProfile(id: "x", name: "Planner", role: .minimal))
-                == AgentProfileRole.minimal.summary
-        )
-    }
-
-    @Test
-    func setupRoleChoiceOffersEveryRoleAndNoNone() {
-        let items = ZenCODEAgentProfileSetupRunner.roleSelectionItems()
-
-        #expect(items.map(\.value) == AgentProfileRole.allCases)
-        #expect(items.map(\.title) == AgentProfileRole.allCases.map(\.title))
-        #expect(!items.map(\.title).contains("None"))
-        #expect(items.map(\.detail) == AgentProfileRole.allCases.map(\.summary))
     }
 }

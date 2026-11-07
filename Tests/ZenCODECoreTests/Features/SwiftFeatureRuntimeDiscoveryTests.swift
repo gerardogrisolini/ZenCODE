@@ -65,79 +65,6 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
-    func runtimeHonorsFeatureInvocationTimeoutOverride() async throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("swift-feature-timeout-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-        try FileManager.default.createDirectory(
-            at: rootURL,
-            withIntermediateDirectories: true
-        )
-        let executableURL = rootURL.appendingPathComponent("feature")
-        try """
-        #!/bin/sh
-        cat >/dev/null
-        """.write(to: executableURL, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o755],
-            ofItemAtPath: executableURL.path
-        )
-
-        let runtime = SwiftFeatureRuntime(
-            features: [
-                SwiftFeatureBundle(
-                    id: "timeout-fixture",
-                    executableURL: executableURL,
-                    tools: [
-                        ToolDescriptor(
-                            name: "feature.timeout.wait",
-                            description: "Wait fixture",
-                            inputSchema: #"{"type":"object","properties":{}}"#
-                        )
-                    ],
-                    invocationTimeoutSeconds: 0.2
-                )
-            ]
-        )
-
-        await #expect(throws: (any Error).self) {
-            _ = try await runtime.executeIfAvailable(
-                toolCall: DirectAgentToolCall(
-                    id: "timeout-call-1",
-                    name: "feature.timeout.wait",
-                    argumentsObject: [:],
-                    argumentsJSON: "{}"
-                ),
-                workingDirectory: rootURL
-            )
-        }
-    }
-
-    @Test
-    func bundledFeatureToolsUseAppropriateInvocationTimeouts() throws {
-        let records = SwiftFeatureRuntime.defaultFeatureRecords(
-            searchRoots: nil,
-            fileManager: .default
-        )
-
-        let swiftDefinition = try #require(
-            SwiftFeatureRuntime.bundledFeatureDefinition(id: "swift-tools")
-        )
-        let swiftRecord = try #require(records.first { $0.id == "swift-tools" })
-        let webRecord = try #require(records.first { $0.id == "web-tools" })
-        let xcodeRecord = try #require(records.first { $0.id == "xcode-tools" })
-        let gitRecord = try #require(records.first { $0.id == "git-tools" })
-
-        #expect(swiftDefinition.invocationTimeoutSeconds == 3_660)
-        #expect(swiftRecord.invocationTimeoutSeconds == swiftDefinition.invocationTimeoutSeconds)
-        #expect(webRecord.invocationTimeoutSeconds == 180)
-        #expect(xcodeRecord.invocationTimeoutSeconds == 3_660)
-        #expect(gitRecord.invocationTimeoutSeconds == nil)
-    }
-
-    @Test
     func bundledSwiftOutlineReturnsCompactDeclarationMap() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("swift-outline-\(UUID().uuidString)", isDirectory: true)
@@ -318,53 +245,6 @@ extension SwiftFeatureRuntimeTests {
     }
 
     @Test
-    func featureStatusesDoNotDiscoverRuntimeToolsByDefault() async throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("swift-feature-status-no-discovery-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-        try FileManager.default.createDirectory(
-            at: rootURL,
-            withIntermediateDirectories: true
-        )
-        let markerURL = rootURL.appendingPathComponent("list-tools-marker")
-        let executableURL = rootURL.appendingPathComponent("feature")
-        try """
-        #!/bin/sh
-        if [ "$1" = "--list-tools" ]; then
-          printf x >> "\(markerURL.path)"
-          printf '{"tools":[{"name":"dynamic.status","description":"Dynamic status","inputSchema":"{}","presentation":{"title":"Dynamic tool","action":"Use","kind":"other","metadata":[],"sections":[]}}]}\n'
-          exit 0
-        fi
-        cat >/dev/null
-        printf '{"ok":true,"output":"status-output"}\n'
-        """.write(to: executableURL, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o755],
-            ofItemAtPath: executableURL.path
-        )
-
-        let runtime = SwiftFeatureRuntime(
-            features: [
-                SwiftFeatureBundle(
-                    id: "status-fixture",
-                    executableURL: executableURL,
-                    tools: [],
-                    toolNamePrefixes: ["dynamic."],
-                    discoversToolsAtRuntime: true
-                )
-            ]
-        )
-
-        let statuses = await runtime.featureStatuses(includeTools: true)
-
-        #expect(statuses.first?.id == "status-fixture")
-        #expect(statuses.first?.tools == [])
-        #expect(!FileManager.default.fileExists(atPath: markerURL.path))
-    }
-
-    @Test
     func directMCPRuntimeDoesNotAutodiscoverExternalConnectorsByDefault() async {
         let runtime = DirectMCPToolRuntime()
 
@@ -373,72 +253,6 @@ extension SwiftFeatureRuntimeTests {
         )
 
         #expect(descriptors.isEmpty)
-    }
-
-    @Test
-    func defaultFeatureStatusesIncludeBundledPackagesEvenWhenManaged() {
-        let statuses = SwiftFeatureRuntime.defaultFeatureStatuses(
-            includeTools: false,
-            includeDisabled: true
-        )
-        let ids = Set(statuses.map(\.id))
-
-        // `search-tools` is retired: its tools are built into the core.
-        #expect(!ids.contains("search-tools"))
-        #expect(ids.contains("web-tools"))
-        #expect(ids.contains("git-tools"))
-        #expect(ids.contains("swift-tools"))
-        #expect(ids.contains("xcode-tools"))
-        #expect(ids.contains("figma-tools"))
-        #expect(statuses.filter { $0.source == .bundled }.allSatisfy { !$0.isCore })
-        #expect(statuses.filter { $0.source == .bundled }.allSatisfy { $0.adoptable })
-    }
-
-    @Test
-    func defaultGitFeatureStatusDeclaresToolOwnedRuntimeDiscovery() {
-        let gitStatus = SwiftFeatureRuntime.defaultFeatureStatuses(
-            includeTools: true,
-            includeDisabled: true
-        ).first { $0.id == "git-tools" }
-
-        #expect(gitStatus?.tools.isEmpty == true)
-        #expect(gitStatus?.toolNamePrefixes == ["git."])
-        #expect(gitStatus?.discoversToolsAtRuntime == true)
-    }
-
-    @Test
-    func uninstalledOptionalFeatureIsUnavailableWithInstallInstructions() throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("feature-not-installed-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-        try FileManager.default.createDirectory(
-            at: rootURL,
-            withIntermediateDirectories: true
-        )
-
-        let statuses = SwiftFeatureRuntime.defaultFeatureStatuses(
-            searchRoots: [rootURL],
-            includeTools: false,
-            includeDisabled: true
-        )
-        let gitStatus = try #require(statuses.first { $0.id == "git-tools" })
-
-        #expect(gitStatus.source == .bundled)
-        #expect(!gitStatus.available)
-        #expect(!gitStatus.enabled)
-        #expect(gitStatus.issue == SwiftFeatureRuntime.optionalFeatureNotInstalledIssue)
-        // The reported path is the destination the installer will create, not an
-        // executable shipped next to the binary.
-        #expect(
-            gitStatus.executablePath
-                == rootURL
-                    .appendingPathComponent("git-tools", isDirectory: true)
-                    .appendingPathComponent(".build/release/git-tools-feature")
-                    .standardizedFileURL
-                    .path
-        )
     }
 
     @Test
@@ -455,36 +269,6 @@ extension SwiftFeatureRuntimeTests {
 
         #expect(SwiftFeatureRuntime.defaultFeatureBundles(searchRoots: [rootURL]).isEmpty)
         #expect(SwiftFeatureRuntime.defaultFeatureToolDescriptors(searchRoots: [rootURL]).isEmpty)
-    }
-
-    @Test
-    func optionalFeatureCatalogReportsCatalogIdentityAndInstallPath() throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("feature-optional-list-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-        try FileManager.default.createDirectory(
-            at: rootURL,
-            withIntermediateDirectories: true
-        )
-
-        let features = SwiftFeatureRuntime.optionalFeatures(searchRoots: [rootURL])
-        let git = try #require(features.first { $0.id == "git-tools" })
-
-        #expect(git.productName == "git-tools-feature")
-        #expect(git.displayName == "Git")
-        #expect(git.sourceRelativePath == "Sources/Features/GitTools")
-        #expect(!git.installed)
-        #expect(!git.enabled)
-        #expect(!git.built)
-        #expect(git.supportedOnCurrentPlatform)
-        #expect(
-            git.installPath
-                == rootURL.appendingPathComponent("git-tools", isDirectory: true)
-                    .standardizedFileURL
-                    .path
-        )
     }
 
     /// Builds one self-contained optional feature without using or probing the

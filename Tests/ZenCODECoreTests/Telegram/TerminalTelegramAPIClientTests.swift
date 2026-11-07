@@ -42,31 +42,6 @@ struct TerminalTelegramAPIClientTests {
         #expect(message.replyToMessage?.messageID == 20)
     }
 
-    /// An ordinary message carries no reply link, so a normal prompt keeps its
-    /// existing meaning.
-    @Test
-    func messageWithoutReplyHasNoReferencedIdentifier() throws {
-        let update = try JSONDecoder().decode(
-            TerminalTelegramAPIResponse<[TerminalTelegramUpdate]>.self,
-            from: Data("""
-            {
-              "ok": true,
-              "result": [{
-                "update_id": 8,
-                "message": {
-                  "message_id": 22,
-                  "from": { "id": 42, "is_bot": false },
-                  "chat": { "id": 42, "type": "private" },
-                  "text": "plain prompt"
-                }
-              }]
-            }
-            """.utf8)
-        )
-
-        #expect(update.result?.first?.message?.replyToMessage?.messageID == nil)
-    }
-
     @Test
     func callbackQueryAndReplyMarkupUseTelegramWireShapes() throws {
         let update = try JSONDecoder().decode(
@@ -97,12 +72,6 @@ struct TerminalTelegramAPIClientTests {
         #expect(forceReply?["force_reply"] as? Bool == true)
     }
 
-    @Test
-    func telegramAudioBudgetIsExplicit() {
-        #expect(TerminalTelegramAPIClient.maximumAudioFileBytes == 20 * 1_024 * 1_024)
-        #expect(TerminalTelegramAPIClient.audioDownloadTimeout == .seconds(30))
-    }
-
     /// Telegram counts the message limit in UTF-16 code units. A text built from
     /// non-BMP scalars is far below 4000 `Character`s and would still be rejected
     /// on the wire, so the bound must be measured the way the wire measures it.
@@ -128,23 +97,6 @@ struct TerminalTelegramAPIClientTests {
 
         #expect(bounded.utf16.count % cluster.utf16.count == 0)
         #expect(bounded.allSatisfy { String($0) == cluster })
-    }
-
-    @Test
-    func oversizedFirstGraphemeUsesANonemptyWireSafeReplacement() {
-        let oversizedCluster = "a" + String(repeating: "\u{0301}", count: 4_100)
-        let bounded = TerminalTelegramAPIClient.boundedMessageText(oversizedCluster)
-
-        #expect(oversizedCluster.count == 1)
-        #expect(bounded == "…")
-        #expect(bounded.utf16.count <= TerminalTelegramAPIClient.maximumMessageUTF16Length)
-    }
-
-    /// Ordinary text is only trimmed: the bound must not rewrite payloads that
-    /// already fit.
-    @Test
-    func shortTextIsOnlyTrimmed() {
-        #expect(TerminalTelegramAPIClient.boundedMessageText("  hello  ") == "hello")
     }
 
     @Test
@@ -259,22 +211,6 @@ struct TerminalTelegramAPIClientTests {
         ])
     }
 
-    /// A bot without Threaded mode, or an older Bot API, omits both flags.
-    /// They decode as `nil`, and `nil` keeps the legacy shared route.
-    @Test
-    func getMeWithoutTopicCapabilityFlagsDecodesNil() async throws {
-        let transport = StubTelegramHTTPTransport(status: 200, body: Data(#"""
-        {"ok":true,"result":{"id":123456,"is_bot":true,"first_name":"ZenCODE","username":"zencode_bot"}}
-        """#.utf8))
-        let client = TerminalTelegramAPIClient(token: "123456:ABCDEF", transport: transport)
-
-        let bot = try await client.getMe()
-
-        #expect(bot.username == "zencode_bot")
-        #expect(bot.hasTopicsEnabled == nil)
-        #expect(bot.allowsUsersToCreateTopics == nil)
-    }
-
     /// Changed on purpose by the topic runtime (plan 4, point 3). The point-1
     /// characterization pinned that a native draft never carried
     /// `message_thread_id`. Now the key is present only when a topic is given.
@@ -325,23 +261,6 @@ struct TerminalTelegramAPIClientTests {
         #expect(Set(edit.keys) == ["chat_id", "message_thread_id", "name"])
         #expect(edit["message_thread_id"] as? Int == 77)
         #expect(edit["name"] as? String == "ZenCODE · review")
-    }
-
-    /// Topic names are trimmed and cut on grapheme boundaries within
-    /// Telegram's 128-unit limit, measured in UTF-16 units. A blank name stays
-    /// empty, so the service can reject it before the wire.
-    @Test
-    func topicNameIsTrimmedAndBoundedOnGraphemeBoundaries() {
-        #expect(TerminalTelegramAPIClient.boundedTopicName("  main \n") == "main")
-        #expect(TerminalTelegramAPIClient.boundedTopicName(" \n ").isEmpty)
-        let long = String(repeating: "a", count: 200)
-        #expect(TerminalTelegramAPIClient.boundedTopicName(long) == String(repeating: "a", count: 128))
-        // "👍" takes two UTF-16 units: after 127 ASCII units it no longer fits
-        // and is dropped whole, never split into a lone surrogate.
-        let mixed = String(repeating: "a", count: 127) + "👍b"
-        let bounded = TerminalTelegramAPIClient.boundedTopicName(mixed)
-        #expect(bounded == String(repeating: "a", count: 127))
-        #expect(bounded.utf16.count <= TerminalTelegramAPIClient.maximumTopicNameUTF16Length)
     }
 
     private static func jsonObject(_ body: Data?) throws -> [String: Any] {

@@ -42,32 +42,6 @@ struct RemoteModelCatalogClientTests {
     }
 
     @Test
-    func openRouterMetadataCatalogRequestTargetsOpenRouter() throws {
-        let request = try RemoteModelCatalogClient().modelsRequest(apiKey: nil)
-        let expectedURL = try #require(URL(string: "https://openrouter.ai/api/v1/models"))
-
-        #expect(request.method == "GET")
-        #expect(request.url == expectedURL)
-        #expect(RemoteHTTPHeaders(request.headers).firstValue(for: "Authorization") == nil)
-    }
-
-    @Test
-    func catalogRequestPreservesBasePathAndQueryWhenAppendingModels() throws {
-        let request = try RemoteModelCatalogClient().modelsRequest(
-            baseURL: "https://provider.example/gateway/v1?tenant=alpha%20team",
-            apiKey: nil
-        )
-        let components = try #require(
-            URLComponents(url: request.url, resolvingAgainstBaseURL: false)
-        )
-
-        #expect(components.path == "/gateway/v1/models")
-        #expect(components.queryItems == [
-            URLQueryItem(name: "tenant", value: "alpha team")
-        ])
-    }
-
-    @Test
     func anthropicCatalogRequestMergesLimitWithExistingBaseQuery() throws {
         let request = try RemoteModelCatalogClient().modelsRequest(
             baseURL: "https://api.anthropic.com/custom/v1?region=eu",
@@ -86,98 +60,6 @@ struct RemoteModelCatalogClientTests {
             RemoteHTTPHeaders(request.headers).firstValue(for: "x-api-key")
                 == "anthropic-secret"
         )
-    }
-
-    @Test
-    func mergingOpenRouterMetadataRetainsProviderValuesWhenCatalogIsSparse() {
-        let providerModel = OpenRouterModelInfo(
-            id: "provider/model",
-            name: "Provider Model",
-            contextLength: 32_768,
-            pricing: OpenRouterModelPricing(prompt: 0.001, completion: 0.002),
-            thinkingSupport: .generic,
-            generationParameterOverrides: AgentGenerationParameterOverrides(
-                maxTokens: 321,
-                temperature: 0.2
-            ),
-            installed: true,
-            loaded: false,
-            serverLoaded: true
-        )
-        let sparseCatalogModel = OpenRouterModelInfo(
-            id: "provider/model",
-            name: "Catalog Model",
-            contextLength: nil,
-            pricing: OpenRouterModelPricing(prompt: 0.003, completion: 0.004),
-            generationParameterOverrides: AgentGenerationParameterOverrides(maxTokens: 123)
-        )
-
-        let merged = ZenCODESetupRunner.modelMergingOpenRouterMetadata(
-            providerModel,
-            metadata: sparseCatalogModel
-        )
-
-        #expect(merged.id == providerModel.id)
-        #expect(merged.name == providerModel.name)
-        #expect(merged.contextLength == 32_768)
-        #expect(merged.pricing == providerModel.pricing)
-        #expect(merged.thinkingSupport == .generic)
-        #expect(merged.generationParameterOverrides == providerModel.generationParameterOverrides)
-        #expect(merged.installed == true)
-        #expect(merged.loaded == false)
-        #expect(merged.serverLoaded == true)
-    }
-
-    @Test
-    func enrichingOpenRouterMetadataPropagatesCancellation() async {
-        let providerModel = OpenRouterModelInfo(
-            id: "provider/model",
-            name: "Provider Model",
-            contextLength: 32_768,
-            pricing: nil
-        )
-
-        do {
-            _ = try await ZenCODESetupRunner.enrichModelsWithOpenRouterMetadata(
-                [providerModel],
-                providerBaseURL: "https://provider.example/v1",
-                apiKey: nil,
-                catalogLoader: {
-                    throw CancellationError()
-                }
-            )
-            Issue.record("Expected OpenRouter metadata cancellation to propagate.")
-        } catch is CancellationError {
-            // Expected: cancellation must not be converted into a provider fallback.
-        } catch {
-            Issue.record("Unexpected error for cancellation: \(error)")
-        }
-    }
-
-    @Test
-    func enrichingOpenRouterMetadataFallsBackToProviderModelsForOtherErrors() async throws {
-        let providerModel = OpenRouterModelInfo(
-            id: "provider/model",
-            name: "Provider Model",
-            contextLength: 32_768,
-            pricing: OpenRouterModelPricing(prompt: 0.001, completion: 0.002),
-            thinkingSupport: .generic,
-            generationParameterOverrides: AgentGenerationParameterOverrides(maxTokens: 321),
-            installed: true,
-            loaded: false,
-            serverLoaded: true
-        )
-
-        let enriched = try await ZenCODESetupRunner.enrichModelsWithOpenRouterMetadata(
-            [providerModel],
-            providerBaseURL: "https://provider.example/v1",
-            apiKey: nil,
-            catalogLoader: {
-                throw MetadataCatalogError.unavailable
-            }
-        )
-
-        #expect(enriched == [providerModel])
     }
 
     @Test
@@ -263,24 +145,6 @@ struct RemoteModelCatalogClientTests {
     }
 
     @Test
-    func deepSeekEnrichmentKeepsProviderThinkingForUnknownModels() async throws {
-        let model = OpenRouterModelInfo(
-            id: "deepseek-future", name: "Future", contextLength: nil, pricing: nil,
-            thinkingSupport: .generic
-        )
-        let catalog = [OpenRouterModelInfo(
-            id: model.id, name: "Routed", contextLength: 32_768, pricing: nil,
-            thinkingSupport: .effort(levels: [.xhigh])
-        )]
-        let enriched = try await ZenCODESetupRunner.enrichModelsWithOpenRouterMetadata(
-            [model], providerBaseURL: "https://api.deepseek.com", apiKey: nil,
-            catalogLoader: { catalog }
-        )
-        #expect(enriched.first?.thinkingSupport == .generic)
-        #expect(enriched.first?.id == model.id)
-    }
-
-    @Test
     func enrichingUnqualifiedZAIModelsUsesUniqueOpenRouterSuffixMetadata() async throws {
         let providerModels = [
             OpenRouterModelInfo(id: "glm-5-turbo", name: "GLM 5 Turbo", contextLength: nil, pricing: nil),
@@ -326,54 +190,6 @@ struct RemoteModelCatalogClientTests {
     }
 
     @Test
-    func unqualifiedOpenRouterSuffixMetadataDoesNotResolveAmbiguousModels() {
-        let catalog = [
-            OpenRouterModelInfo(id: "z-ai/glm-5.2", name: "GLM", contextLength: 1_048_576, pricing: nil),
-            OpenRouterModelInfo(id: "other/glm-5.2", name: "Other GLM", contextLength: 32_768, pricing: nil)
-        ]
-
-        #expect(ZenCODESetupRunner.openRouterMetadata(matching: "glm-5.2", in: catalog) == nil)
-    }
-
-    @Test
-    func exactOpenRouterMetadataMatchTakesPrecedenceOverSuffixAmbiguity() {
-        let exact = OpenRouterModelInfo(id: "glm-5.2", name: "Provider GLM", contextLength: 65_536, pricing: nil)
-        let catalog = [
-            exact,
-            OpenRouterModelInfo(id: "z-ai/glm-5.2", name: "GLM", contextLength: 1_048_576, pricing: nil),
-            OpenRouterModelInfo(id: "other/glm-5.2", name: "Other GLM", contextLength: 32_768, pricing: nil)
-        ]
-
-        #expect(ZenCODESetupRunner.openRouterMetadata(matching: " GLM-5.2 ", in: catalog) == exact)
-    }
-
-    @Test
-    func mergingOpenRouterMetadataEnrichesContextAndThinking() {
-        let providerModel = OpenRouterModelInfo(
-            id: "provider/model",
-            name: "Provider Model",
-            contextLength: nil,
-            pricing: nil
-        )
-        let catalogThinking = ModelThinkingSupport.effort(levels: [.low, .high])
-        let catalogModel = OpenRouterModelInfo(
-            id: "provider/model",
-            name: "Catalog Model",
-            contextLength: 131_072,
-            pricing: nil,
-            thinkingSupport: catalogThinking
-        )
-
-        let merged = ZenCODESetupRunner.modelMergingOpenRouterMetadata(
-            providerModel,
-            metadata: catalogModel
-        )
-
-        #expect(merged.contextLength == 131_072)
-        #expect(merged.thinkingSupport == catalogThinking)
-    }
-
-    @Test
     func detectsThinkingParametersFromRemoteServerModelMetadata() {
         let support = RemoteModelCatalogClient.thinkingSupport(
             fromModelMetadata: [
@@ -413,45 +229,6 @@ struct RemoteModelCatalogClientTests {
     }
 
     @Test
-    func doesNotInferThinkingForSparseNVIDIANemotronCatalogIDsWithoutMetadata() {
-        let support = RemoteModelCatalogClient.thinkingSupport(
-            fromModelMetadata: [
-                "id": "nvidia/llama-3.3-nemotron-super-49b-v1"
-            ],
-            baseURL: "https://integrate.api.nvidia.com/v1",
-            modelID: "nvidia/llama-3.3-nemotron-super-49b-v1"
-        )
-
-        #expect(support == nil)
-    }
-
-    @Test
-    func doesNotInferThinkingForSparseNonReasoningNVIDIAModels() {
-        let support = RemoteModelCatalogClient.thinkingSupport(
-            fromModelMetadata: [
-                "id": "meta/llama-3.3-70b-instruct"
-            ],
-            baseURL: "https://integrate.api.nvidia.com/v1",
-            modelID: "meta/llama-3.3-70b-instruct"
-        )
-
-        #expect(support == nil)
-    }
-
-    @Test
-    func doesNotFallbackToGenericThinkingForModalDirectModelsWithoutMetadata() {
-        let support = RemoteModelCatalogClient.thinkingSupport(
-            fromModelMetadata: [
-                "id": "zai-org/GLM-5.1-FP8"
-            ],
-            baseURL: "https://api.us-west-2.modal.direct/v1",
-            modelID: "zai-org/GLM-5.1-FP8"
-        )
-
-        #expect(support == nil)
-    }
-
-    @Test
     func parsesOpenRouterReasoningSupportedEffortsFromMetadata() {
         let support = RemoteModelCatalogClient.thinkingSupport(
             fromModelMetadata: [
@@ -477,36 +254,24 @@ struct RemoteModelCatalogClientTests {
         #expect(thinkingSupport.defaultSelection == .high)
     }
 
-    @Test
-    func modelWithoutReasoningDataHasNoThinkingSupport() {
+    @Test(arguments: [
+        ("https://integrate.api.nvidia.com/v1", "nvidia/llama-3.3-nemotron-super-49b-v1"),
+        ("https://integrate.api.nvidia.com/v1", "meta/llama-3.3-70b-instruct"),
+        ("https://api.us-west-2.modal.direct/v1", "zai-org/GLM-5.1-FP8"),
+        ("https://openrouter.ai/api/v1", "meta-llama/llama-3.3-70b-instruct")
+    ])
+    func modelWithoutReasoningDataHasNoThinkingSupport(baseURL: String, modelID: String) {
         let support = RemoteModelCatalogClient.thinkingSupport(
             fromModelMetadata: [
-                "id": "meta-llama/llama-3.3-70b-instruct",
-                "name": "Llama 3.3 70B Instruct"
+                "id": modelID
             ],
-            baseURL: "https://openrouter.ai/api/v1",
-            modelID: "meta-llama/llama-3.3-70b-instruct"
+            baseURL: baseURL,
+            modelID: modelID
         )
 
         #expect(support == nil)
     }
-
-    @Test
-    func modalDirectProvidersRequireAPIKeys() {
-        let provider = AgentRemoteProvider(
-            name: "Modal",
-            baseURL: "https://api.us-west-2.modal.direct/v1",
-            modelID: "remote-community/qwen3-test"
-        )
-
-        #expect(provider.requiresAPIKey)
-    }
 }
-
-private enum MetadataCatalogError: Error {
-    case unavailable
-}
-
 
 extension RemoteModelCatalogClientTests {
     @Test

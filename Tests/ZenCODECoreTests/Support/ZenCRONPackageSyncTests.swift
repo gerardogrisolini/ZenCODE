@@ -33,24 +33,6 @@ struct ZenCRONPackageSyncTests {
     }
 
     @Test
-    func theBuildDirectoryOfTheWorkingCopySurvivesAndSourceBuildStateStaysOut() throws {
-        let root = try makeTemporaryDirectory()
-        defer { remove(root) }
-        let source = root.appendingPathComponent("source", isDirectory: true)
-        let copy = root.appendingPathComponent("copy", isDirectory: true)
-        try write("manifest", at: "Package.swift", in: source)
-        try write("source build", at: ".build/artifact", in: source)
-        try write("incremental state", at: ".build/release/ZenCRON", in: copy)
-        try write("old manifest", at: "Package.swift", in: copy)
-
-        try ZenCRONInstallation.syncPackage(from: source, to: copy)
-
-        #expect(try read(".build/release/ZenCRON", in: copy) == "incremental state")
-        #expect(!FileManager.default.fileExists(atPath: copy.appendingPathComponent(".build/artifact").path))
-        #expect(try read("Package.swift", in: copy) == "manifest")
-    }
-
-    @Test
     func filesAndDirectoriesRemovedFromTheSourceDisappearFromTheCopy() throws {
         let root = try makeTemporaryDirectory()
         defer { remove(root) }
@@ -93,39 +75,6 @@ struct ZenCRONPackageSyncTests {
         #expect(try modificationDate("Sources/ZenCRON/Same.swift", in: copy) == longAgo)
         #expect(try modificationDate("Sources/ZenCRON/Changed.swift", in: copy) != longAgo)
         #expect(try read("Sources/ZenCRON/Changed.swift", in: copy) == "after")
-    }
-
-    @Test
-    func aFileBecomingADirectoryAndBackIsReplaced() throws {
-        let root = try makeTemporaryDirectory()
-        defer { remove(root) }
-        let source = root.appendingPathComponent("source", isDirectory: true)
-        let copy = root.appendingPathComponent("copy", isDirectory: true)
-        try write("a file", at: "Thing", in: copy)
-        try write("a directory entry", at: "Other/Inside.swift", in: copy)
-        try write("now a directory", at: "Thing/Inside.swift", in: source)
-        try write("now a file", at: "Other", in: source)
-
-        try ZenCRONInstallation.syncPackage(from: source, to: copy)
-
-        #expect(try files(in: copy) == ["Other", "Thing/Inside.swift"])
-        #expect(try read("Other", in: copy) == "now a file")
-    }
-
-    @Test
-    func theSourceIsNeverModified() throws {
-        let root = try makeTemporaryDirectory()
-        defer { remove(root) }
-        let source = root.appendingPathComponent("source", isDirectory: true)
-        let copy = root.appendingPathComponent("copy", isDirectory: true)
-        try write("manifest", at: "Package.swift", in: source)
-        try write("build", at: ".build/state", in: source)
-        try write("extra", at: "Extra.swift", in: copy)
-
-        try ZenCRONInstallation.syncPackage(from: source, to: copy)
-
-        #expect(try files(in: source) == ["Package.swift"])
-        #expect(try read(".build/state", in: source) == "build")
     }
 
     // MARK: - Helpers

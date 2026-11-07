@@ -63,42 +63,6 @@ extension RenderCoordinatorTestSupport {
         )
     }
 
-    func exampleEditFileCall(id: String) -> DirectAgentToolCall {
-        presentedToolCall(
-            id: id,
-            name: "local.editFile",
-            argumentsObject: [
-                "path": "/tmp/Example.swift",
-                "old": "let oldValue = 1",
-                "new": "let newValue = 2"
-            ],
-            argumentsJSON: "{}"
-        )
-    }
-
-    func compactCompletionText(for toolCall: DirectAgentToolCall, newline: Bool) -> String {
-        TerminalChat.compactToolTerminalText(
-            TerminalChat.compactToolLines(
-                for: toolCall,
-                statusIcon: "✅",
-                statusDetail: "0ms"
-            ),
-            lineInset: "",
-            newline: newline
-        )
-    }
-
-    func makeChatStatusBar(row: Int) async -> TerminalStatusBar {
-        let statusBar = TerminalStatusBar(isEnabled: true) { _ in }
-        await statusBar.configureForTesting(row: row, columns: 80)
-        await statusBar.updateInputPanel(
-            text: "draft",
-            cursorIndex: 5,
-            modeText: "Chat",
-            helpText: "Enter"
-        )
-        return statusBar
-    }
 }
 
 // Raw and ANSI-stripped projections are separate so cursor/control assertions

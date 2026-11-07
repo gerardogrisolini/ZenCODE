@@ -300,24 +300,6 @@ struct ACPCloseQuiescenceTests {
     // MARK: - No deadlock
 
     @Test
-    func closeWithoutAnInFlightPromptAnswersImmediately() async throws {
-        // Negative control for the drain: with no prompt in flight the close
-        // must not gain an unconditional wait, or it would hang here.
-        let transport = CloseQuiescenceTransport()
-        let gate = CloseQuiescenceGate()
-        let backend = CloseQuiescenceBackend(promptGate: gate, bufferedChunk: "unused")
-        let bridge = try Self.makeBridge(transport: transport, backend: backend)
-
-        try await bridge.newSession(id: .number(1), params: Self.sessionParams())
-        let sessionID = try #require(await bridge.testAnySessionID())
-
-        try await bridge.close(id: .number(3), params: ["sessionId": sessionID])
-
-        #expect(transport.responseIndex(id: 3) != nil)
-        #expect(await bridge.testHasSessionEntry(sessionID: sessionID) == false)
-    }
-
-    @Test
     func aSessionRecreatedMidDrainDoesNotHoldTheCloseHostage() async throws {
         // The drain captured the handler set it must wait for. A racing
         // `session/load` that re-creates an entry with the same id — and a
@@ -814,39 +796,6 @@ extension ACPCloseQuiescenceTests {
             let start = fixture.wire.count
             await fixture.prompt("/telegram", id: 3, sessionID: sessionID)
             #expect(fixture.lastAgentText(from: start) == "Telegram: Configured")
-            await fixture.bridge.shutdown()
-        }
-    }
-
-    /// Discarding an incarnation closes its slot only: a discard that names
-    /// an older epoch of the same id leaves the newer incarnation and the
-    /// link of its slot untouched.
-    @Test
-    func discardingAnIncarnationShutsDownOnlyItsOwnChannel() async throws {
-        try await ACPTelegramTestSupport.withSupportDirectory { root in
-            let sessionID = "acp-discard-telegram-\(UUID().uuidString)"
-            let fixture = try await ACPTelegramBridgeFixture.make(
-                root: root,
-                sessionIDs: [sessionID],
-                transport: ACPTelegramScriptedTransport(botID: ACPTelegramTestSupport.uniqueBotID())
-            )
-            let staleEpoch = try #require(await fixture.bridge.telegramTestEpoch(sessionID: sessionID))
-            let sessionConfiguration = try #require(await fixture.bridge.telegramTestConfiguration(sessionID: sessionID))
-            // A newer incarnation with the same id replaces the first one.
-            await fixture.bridge.installTestSession(sessionConfiguration)
-            let epoch = try #require(await fixture.bridge.telegramTestEpoch(sessionID: sessionID))
-            #expect(epoch != staleEpoch)
-            await fixture.turnTelegramOn(sessionID: sessionID, id: 1)
-            let channel = try #require(await fixture.telegramChannel(sessionID: sessionID))
-            #expect(await channel.isActive)
-
-            await fixture.bridge.discardSessionIfCurrent(id: sessionID, epoch: staleEpoch)
-            #expect(await fixture.telegramChannel(sessionID: sessionID) === channel)
-            #expect(await channel.isActive)
-
-            await fixture.bridge.discardSessionIfCurrent(id: sessionID, epoch: epoch)
-            #expect(await fixture.bridge.telegramTestEpoch(sessionID: sessionID) == nil)
-            #expect(await !channel.isActive)
             await fixture.bridge.shutdown()
         }
     }

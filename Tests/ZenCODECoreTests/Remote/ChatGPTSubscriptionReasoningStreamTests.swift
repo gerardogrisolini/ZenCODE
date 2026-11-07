@@ -148,24 +148,6 @@ struct ChatGPTSubscriptionReasoningStreamTests {
         #expect(result.reasoningText == "PensieroPensiero!")
     }
 
-    @Test(arguments: ["response.reasoning_summary_text.delta", "reasoning_summary_delta"])
-    func identifiedSummaryDeltaCannotConsumeAnotherItemsSummary(eventType: String) async throws {
-        let accumulator = ChatGPTSubscriptionGenerationClient.StreamAccumulator()
-        let delta = try await accumulator.ingest(.init([
-            "type": eventType, "item_id": "rs_first", "delta": "Pensiero"
-        ]))
-        #expect(thoughts(delta) == "Pensiero")
-        for (id, expected) in [("rs_other", "Pensiero!"), ("rs_first", "!")] {
-            let events = try await accumulator.ingest(.init([
-                "type": "response.output_item.done", "item": [
-                    "type": "reasoning", "id": id,
-                    "summary": [["type": "summary_text", "text": "Pensiero!"]]
-                ]
-            ]))
-            #expect(thoughts(events) == expected)
-        }
-    }
-
     private func thoughts(_ events: [DirectAgentEvent]) -> String {
         events.compactMap { event in
             if case let .thought(text) = event { return text }

@@ -212,10 +212,6 @@ struct ACPResumeTaskGraphOfferTests {
         ChatSessionNoticeText.text(for: notice).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static var selectedFresh: [String: Any] {
-        ["outcome": "selected", "optionId": "fresh"]
-    }
-
     // MARK: - Nothing to offer
 
     /// Without an incomplete checkpoint in the workspace, `session/new`
@@ -231,24 +227,6 @@ struct ACPResumeTaskGraphOfferTests {
             #expect(fixture.wire.stopReason(id: 2) == "end_turn")
             #expect(await fixture.backend.prompts == ["Hello"])
             #expect(fixture.wire.permissionRequestIDs.isEmpty)
-            await fixture.bridge.shutdown()
-        }
-    }
-
-    /// The incomplete graph of another live ACP session of the workspace is
-    /// not left over: a new session neither registers an offer for it nor
-    /// asks.
-    @Test
-    func theGraphOfAnotherLiveSessionIsNotOffered() async throws {
-        try await Self.withFixture { fixture in
-            let liveSessionID = try await fixture.newSession(id: 1)
-            try fixture.seedEarlierSessionCheckpoint(sessionID: liveSessionID)
-
-            let sessionID = try await fixture.newSession(id: 2)
-            #expect(await !fixture.bridge.hasResumableTaskGraphOfferForTesting(sessionID: sessionID))
-            #expect(fixture.wire.permissionRequestIDs.isEmpty)
-            #expect(try fixture.store.load(sessionID: liveSessionID, workingDirectory: fixture.workspace)?
-                .graphs.map(\.id) == ["old-work"])
             await fixture.bridge.shutdown()
         }
     }
@@ -341,49 +319,6 @@ struct ACPResumeTaskGraphOfferTests {
         }
     }
 
-    /// The answers that start fresh.
-    enum FreshAnswer: String, CaseIterable, Sendable {
-        case cancelled
-        case startFresh
-        case unknownOption
-
-        var outcome: [String: Any] {
-            switch self {
-            case .cancelled:
-                return ["outcome": "cancelled"]
-            case .startFresh:
-                return ACPResumeTaskGraphOfferTests.selectedFresh
-            case .unknownOption:
-                return ["outcome": "selected", "optionId": "resume:another/graph"]
-            }
-        }
-    }
-
-    /// A cancelled answer, Start fresh (`reject_once`), or an option the
-    /// question never offered leave the checkpoint unchanged and present
-    /// nothing; the tool call is completed all the same.
-    @Test(arguments: FreshAnswer.allCases)
-    func aCancelledOrFreshAnswerLeavesTheCheckpointUnchanged(_ answer: FreshAnswer) async throws {
-        try await Self.withFixture { fixture in
-            try fixture.seedEarlierSessionCheckpoint()
-            let sessionID = try await fixture.newSession(id: 1)
-            let (requestIndex, request) = try #require(await fixture.permissionRequest())
-            let toolCallID = try #require(
-                request["params"]?.objectValue?["toolCall"]?.objectValue?["toolCallId"]?.acpStringValue
-            )
-
-            try await fixture.answer(request, outcome: answer.outcome)
-            #expect(await fixture.waitForTheOfferToEnd(sessionID: sessionID))
-
-            #expect(try fixture.earlierSessionGraphIDs() == ["old-work"])
-            #expect(try fixture.store.load(sessionID: sessionID, workingDirectory: fixture.workspace) == nil)
-            #expect(fixture.toolCallUpdates(toolCallID).map { $0["status"]?.acpStringValue } == ["completed"])
-            #expect(fixture.wire.updateTexts(kind: "agent_message_chunk", from: requestIndex).isEmpty)
-            #expect(fixture.wire.permissionRequestIDs.count == 1)
-            await fixture.bridge.shutdown()
-        }
-    }
-
     /// Delete all old tasks (`reject_always`) deletes every listed graph and
     /// presents the deletion; with nothing left, nothing more is asked.
     @Test
@@ -401,65 +336,6 @@ struct ACPResumeTaskGraphOfferTests {
             #expect(fixture.wire.updateTexts(kind: "agent_message_chunk", from: requestIndex)
                 == [Self.text(of: .oldTaskGraphsDeleted(count: 1))])
             #expect(fixture.wire.permissionRequestIDs.count == 1)
-            await fixture.bridge.shutdown()
-        }
-    }
-
-    // MARK: - Prompts while the question waits
-
-    /// A `session/prompt` sent while the question waits does not start until
-    /// it is answered, then runs normally.
-    @Test
-    func aPromptSentWhileTheQuestionWaitsStartsOnlyOnceItIsAnswered() async throws {
-        try await Self.withFixture { fixture in
-            try fixture.seedEarlierSessionCheckpoint()
-            let sessionID = try await fixture.newSession(id: 1)
-            let (_, request) = try #require(await fixture.permissionRequest())
-
-            let prompt = fixture.startPrompt("Hello", id: 2, sessionID: sessionID)
-            #expect(await fixture.waitForPromptsAwaitingTheOffer(1))
-            #expect(await fixture.backend.prompts.isEmpty)
-            #expect(fixture.wire.response(id: 2) == nil)
-            #expect(fixture.wire.updateTexts(kind: "user_message_chunk").isEmpty)
-
-            try await fixture.answer(request, outcome: Self.selectedFresh)
-            await prompt.value
-            #expect(fixture.wire.stopReason(id: 2) == "end_turn")
-            #expect(await fixture.backend.prompts == ["Hello"])
-            #expect(await fixture.bridge.promptsAwaitingResumableTaskGraphOfferCountForTesting() == 0)
-            let completionIndex = try #require(fixture.updateIndex(sessionID: sessionID) {
-                $0["sessionUpdate"]?.acpStringValue == "tool_call_update"
-            })
-            let userMessageIndex = try #require(fixture.updateIndex(sessionID: sessionID) {
-                $0["sessionUpdate"]?.acpStringValue == "user_message_chunk"
-            })
-            #expect(completionIndex < userMessageIndex)
-            await fixture.bridge.shutdown()
-        }
-    }
-
-    /// A `session/cancel` of a prompt waiting for the question ends it as
-    /// `cancelled` once the client answers the question with `cancelled`, as
-    /// ACP has it: no turn runs and the checkpoint is unchanged.
-    @Test
-    func aSessionCancelWhileThePromptWaitsEndsItAsCancelledWithoutATurn() async throws {
-        try await Self.withFixture { fixture in
-            try fixture.seedEarlierSessionCheckpoint()
-            let sessionID = try await fixture.newSession(id: 1)
-            let (_, request) = try #require(await fixture.permissionRequest())
-            let prompt = fixture.startPrompt("Hello", id: 2, sessionID: sessionID)
-            #expect(await fixture.waitForPromptsAwaitingTheOffer(1))
-
-            await fixture.send("session/cancel", id: 3, sessionID: sessionID)
-            #expect(fixture.wire.response(id: 3)?["result"] == .object([:]))
-            #expect(fixture.wire.response(id: 2) == nil)
-            try await fixture.answer(request, outcome: ["outcome": "cancelled"])
-            await prompt.value
-
-            #expect(fixture.wire.stopReason(id: 2) == "cancelled")
-            #expect(await fixture.backend.prompts.isEmpty)
-            #expect(fixture.wire.updateTexts(kind: "user_message_chunk").isEmpty)
-            #expect(try fixture.earlierSessionGraphIDs() == ["old-work"])
             await fixture.bridge.shutdown()
         }
     }

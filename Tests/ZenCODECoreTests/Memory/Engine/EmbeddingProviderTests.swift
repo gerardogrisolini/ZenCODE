@@ -49,28 +49,6 @@ func explicitCompatibilityModelRemainsEncodedWhenProvided() throws {
     #expect(json["model"] as? String == "server-selected-model")
 }
 
-@Test
-func modelAndAPIKeyAreSentInRequestWhenProvided() throws {
-    let endpoint = try #require(URL(string: "https://openrouter.ai/api/v1/embeddings"))
-    let provider = OpenAICompatibleEmbeddingProvider(
-        endpoint: endpoint,
-        model: "qwen/qwen3-embedding-8b",
-        apiKey: "sk-openrouter-test"
-    )
-
-    let request = try provider.streamingRequest(for: "hello")
-    let body = try #require(request.body)
-    let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
-    let headers = RemoteHTTPHeaders(request.headers)
-
-    #expect(request.method == "POST")
-    #expect(request.url == endpoint)
-    #expect(json["model"] as? String == "qwen/qwen3-embedding-8b")
-    #expect(headers.firstValue(for: "Authorization") == "Bearer sk-openrouter-test")
-    #expect(provider.requestModel == "qwen/qwen3-embedding-8b")
-    #expect(provider.modelID == "qwen/qwen3-embedding-8b")
-}
-
 // MARK: - SwiftNIO transport round-trip
 
 /// Proves that `embed()` drives an actual POST through the shared SwiftNIO

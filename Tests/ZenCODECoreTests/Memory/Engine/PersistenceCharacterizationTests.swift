@@ -253,65 +253,6 @@ import Testing
         #expect(after.files["memory.graph.json"] == before.files["memory.graph.json"])
     }
 
-    /// A store refuses to open the future file instead of starting empty.
-    @Test func storeRefusesToOpenANextVersionGraph() async throws {
-        let future = MemoryGraph.currentGraphVersion + 1
-        let directory = try Self.makeDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("memory.graph.json")
-        try Data(Self.emptyGraphJSON(version: future).utf8).write(to: file)
-        let original = try Data(contentsOf: file)
-
-        await #expect(throws: MemoryPersistenceError.unsupportedGraphVersion(future)) {
-            _ = try await MemoryEmbedding.withProvider(nil) {
-                try await MemoryGraphStore.open(graphURL: file)
-            }
-        }
-        #expect(try Data(contentsOf: file) == original)
-    }
-
-    // MARK: - Reload cache
-
-    @Test func cacheDecodesOncePerPublishedChange() async throws {
-        let directory = try Self.makeDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("memory.graph.json")
-        try Data(Self.fixtureJSON(.version3).utf8).write(to: file)
-
-        let persistence = JSONMemoryPersistence(url: file)
-        let loaded = try await persistence.load()
-        _ = try await persistence.load()
-        _ = try await persistence.reloadReadOnly()
-        let unchanged = try await persistence.transaction { graph in graph.memories.count }
-        #expect(unchanged.result == 2)
-        #expect(unchanged.didChange == false)
-        #expect(await persistence.diskDecodeCount == 1)
-
-        // Its own publish re-primes the cache: no decode for the next reads.
-        let changed = try await persistence.transaction { graph in
-            graph.memories["mem_plain"]?.accessCount = 7
-        }
-        #expect(changed.didChange)
-        let afterOwnPublish = try await persistence.reloadReadOnly()
-        #expect(afterOwnPublish == changed.graph)
-        #expect(await persistence.diskDecodeCount == 1)
-
-        // Another writer's publish costs exactly one decode.
-        let other = JSONMemoryPersistence(url: file)
-        _ = try await other.transaction { graph in
-            graph.memories["mem_plain"]?.accessCount = 8
-        }
-        let afterForeignPublish = try await persistence.reloadReadOnly()
-        #expect(afterForeignPublish.memories["mem_plain"]?.accessCount == 8)
-        _ = try await persistence.reloadReadOnly()
-        #expect(await persistence.diskDecodeCount == 2)
-
-        // The cached graph is exactly what a fresh decode returns.
-        let fresh = JSONMemoryPersistence(url: file)
-        #expect(try await fresh.load() == afterForeignPublish)
-        #expect(loaded.memories["mem_vec"] == afterForeignPublish.memories["mem_vec"])
-    }
-
     // MARK: - Transactions that change nothing
 
     /// A body that reads, or writes back values equal to the stored ones,

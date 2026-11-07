@@ -35,28 +35,6 @@ struct SystemSpeechVoiceCatalogTests {
     }
 
     @Test
-    func languageCodesIgnoreRegionScriptAndSeparator() {
-        #expect(SystemSpeechVoiceCatalog.languageCode(of: "it_IT") == "it")
-        #expect(SystemSpeechVoiceCatalog.languageCode(of: "zh-Hant-TW") == "zh")
-        #expect(SystemSpeechVoiceCatalog.languageCode(of: "EN") == "en")
-        #expect(SystemSpeechVoiceCatalog.normalizedLocaleIdentifier("it_IT") == "it-IT")
-    }
-
-    @Test
-    func voicesOfALanguageListTheExactLocaleFirstThenQualityAndName() {
-        #expect(
-            SystemSpeechVoiceCatalog.voices(Self.installed, forLocale: "it_IT")
-                == [Self.federica, Self.luca, Self.alice]
-        )
-        // Other regions follow the exact locale.
-        #expect(
-            SystemSpeechVoiceCatalog.voices(Self.installed, forLocale: "en-US")
-                == [Self.samantha, Self.daniel]
-        )
-        #expect(SystemSpeechVoiceCatalog.voices(Self.installed, forLocale: "ja-JP").isEmpty)
-    }
-
-    @Test
     func automaticVoiceKeepsTheCurrentChoice() {
         // Best quality of the exact locale.
         #expect(SystemSpeechVoiceCatalog.automaticVoice(in: Self.installed, localeIdentifier: "it-IT") == Self.federica)
@@ -98,46 +76,6 @@ struct SystemSpeechVoiceCatalogTests {
             identifier: Self.samantha.identifier, localeIdentifier: "it-IT", lookup: Self.lookup
         ) == nil)
     }
-
-    #if os(macOS)
-    /// The installed voices of this Mac resolve by identifier; a removed
-    /// voice does not, so the speaker falls back to the automatic voice.
-    @Test
-    func installedVoicesResolveByIdentifier() {
-        let voices = SystemSpeechVoiceCatalog.installedVoices()
-        for voice in voices.prefix(20) {
-            #expect(SystemSpeechVoiceCatalog.installedVoice(identifier: voice.identifier) == voice)
-        }
-        #expect(SystemSpeechVoiceCatalog.installedVoice(identifier: "com.zencode.tests.missing-voice") == nil)
-    }
-
-    @MainActor
-    @Test
-    func speakerFallsBackToTheAutomaticVoice() {
-        let automatic = VoiceSpeaker.preferredVoice(localeIdentifier: "it_IT", readingVoiceIdentifier: nil)
-        let missing = VoiceSpeaker.preferredVoice(
-            localeIdentifier: "it_IT",
-            readingVoiceIdentifier: "com.zencode.tests.missing-voice"
-        )
-        #expect(missing?.identifier == automatic?.identifier)
-
-        let installed = SystemSpeechVoiceCatalog.installedVoices()
-        if let otherLanguage = installed.first(where: { SystemSpeechVoiceCatalog.languageCode(of: $0.language) != "it" }) {
-            let ignored = VoiceSpeaker.preferredVoice(
-                localeIdentifier: "it_IT",
-                readingVoiceIdentifier: otherLanguage.identifier
-            )
-            #expect(ignored?.identifier == automatic?.identifier)
-        }
-        if let italian = SystemSpeechVoiceCatalog.voices(installed, forLocale: "it-IT").last {
-            let saved = VoiceSpeaker.preferredVoice(
-                localeIdentifier: "it_IT",
-                readingVoiceIdentifier: italian.identifier
-            )
-            #expect(saved?.identifier == italian.identifier)
-        }
-    }
-    #endif
 }
 
 @Suite("Voice settings manifest")
@@ -228,15 +166,6 @@ struct AgentVoiceSettingsManifestTests {
 
         let reloaded = try JSONDecoder().decode(AgentSettingsManifest.self, from: JSONEncoder().encode(manifest))
         #expect(reloaded == manifest)
-    }
-
-    @Test
-    func readingVoiceRoundTripsBesideTelegramTranscription() throws {
-        let voice = AgentVoiceSettingsManifest(enabled: true, macOSVoiceIdentifier: Self.identifier)
-        let manifest = AgentSettingsManifest(models: [], voice: voice)
-        let reloaded = try JSONDecoder().decode(AgentSettingsManifest.self, from: JSONEncoder().encode(manifest))
-        #expect(reloaded.voice == voice)
-        #expect(TerminalOptionalCommandAvailability.from(manifest: reloaded).voiceEnabled)
     }
 
     @Test

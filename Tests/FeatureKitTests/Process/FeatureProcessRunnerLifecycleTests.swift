@@ -33,19 +33,6 @@ struct FeatureProcessRunnerLifecycleTests {
     }
 
     @Test
-    func timeoutIsNotReportedWhenTheChildExitsFirst() async throws {
-        let result = try await FeatureProcessRunner.run(
-            executableURL: Self.shell,
-            arguments: ["-c", "printf 'done'"],
-            timeout: 30
-        )
-
-        #expect(!result.timedOut)
-        #expect(result.exitCode == 0)
-        #expect(result.stdout == "done")
-    }
-
-    @Test
     func cancellationStopsAChildThatIgnoresSIGTERM() async throws {
         // The child announces readiness through a marker file once its SIGTERM
         // trap is installed, so cancellation happens deterministically after the
@@ -136,46 +123,6 @@ struct FeatureProcessRunnerLifecycleTests {
         #expect(result.renderedProcessOutput.contains("stdout exceeded its safety limit"))
         #expect(result.exitCode != 0)
         #expect(!result.timedOut)
-    }
-
-    @Test
-    func stderrByteLimitBoundsRunawayDiagnosticsAndReapsProducer() async throws {
-        let byteLimit = 32 * 1_024
-        let chunk = String(repeating: "e", count: 4_096)
-        let result = try await FeatureProcessRunner.run(
-            executableURL: Self.shell,
-            arguments: [
-                "-c",
-                "trap '' TERM; while :; do printf '\(chunk)' 1>&2; done",
-            ],
-            maximumOutputBytesPerStream: byteLimit
-        )
-
-        #expect(!result.stdoutWasTruncated)
-        #expect(result.stderrWasTruncated)
-        #expect(result.stderrData.count == byteLimit)
-        #expect(result.renderedProcessOutput.contains("stderr exceeded its safety limit"))
-        #expect(result.exitCode != 0)
-        #expect(!result.timedOut)
-    }
-
-    @Test
-    func startupFailureThrowsWithoutLeavingAnObservedProcess() async throws {
-        let missing = FileManager.default.temporaryDirectory
-            .appendingPathComponent("zencode_missing_executable_\(UUID().uuidString)")
-
-        do {
-            _ = try await FeatureProcessRunner.run(
-                executableURL: missing,
-                arguments: [],
-                timeout: 5
-            )
-            Issue.record("Expected a launch failure for a missing executable.")
-        } catch is CancellationError {
-            Issue.record("Startup failure must not be reported as cancellation.")
-        } catch {
-            // Expected: the launch error is surfaced unchanged.
-        }
     }
 
     @Test

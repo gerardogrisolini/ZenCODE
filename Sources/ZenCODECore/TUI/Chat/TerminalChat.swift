@@ -293,20 +293,6 @@ public final class TerminalChat {
     /// opened and did not exist yet: the opening gives the terminal back and
     /// opens nothing. Reset at every opening.
     var subAgentDetailCloseRequestedWhileOpening = false
-    /// Returning `true` stands in for publishing a shared-chat mention the
-    /// operator typed or dictated; `nil` in production.
-    var onSharedChatPublicationForTesting: (@Sendable () -> Bool)?
-    /// Test-only runtime seams. Production leaves these nil/false; they let a
-    /// deterministic harness drive the real serialized panel FIFO without raw
-    /// terminal I/O or a live model.
-    var interactiveRuntimeEventQueueForTesting: TerminalChatEventQueue?
-    var bypassInteractivePanelInputForTesting = false
-    var onGenerateResponseForTesting: (@Sendable (TerminalPromptAttempt) async throws -> TerminalChatGenerationSuccess)?
-    var onInteractiveGenerationStateForTesting: (@Sendable (Bool) -> Void)?
-    /// The system, failure, and Markdown messages the terminal writes while
-    /// it is not `nil`, one entry per write: a test's capture of what a
-    /// command presents.
-    var capturedCommandOutputForTesting: [String]?
     var optionalCommandAvailability = TerminalOptionalCommandAvailability.load()
     /// Reads and replaces the user's crontab for `/cron`. Tests install a
     /// stand-in so no command ever touches the real crontab.

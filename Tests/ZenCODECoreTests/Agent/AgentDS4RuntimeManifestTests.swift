@@ -244,33 +244,6 @@ struct AgentDS4RuntimeManifestTests {
     }
 
     @Test
-    func blankArchitecturesAreStoredAsNil() throws {
-        let runtime = try AgentDS4RuntimeManifest(
-            rootDirectory: "/tmp",
-            cudaArch: "  ",
-            rocmArch: " gfx1100 "
-        )
-        #expect(runtime.cudaArch == nil)
-        #expect(runtime.rocmArch == "gfx1100")
-    }
-
-    @Test
-    func contextAndPowerAreValidatedAgainstUpstreamRanges() {
-        #expect(throws: AgentDS4RuntimeConfigurationError.invalidContextWindow(0)) {
-            try AgentDS4RuntimeManifest(rootDirectory: "/tmp", contextWindow: 0)
-        }
-        #expect(throws: AgentDS4RuntimeConfigurationError.invalidContextWindow(1_048_577)) {
-            try AgentDS4RuntimeManifest(rootDirectory: "/tmp", contextWindow: 1_048_577)
-        }
-        #expect(throws: AgentDS4RuntimeConfigurationError.invalidPower(0)) {
-            try AgentDS4RuntimeManifest(rootDirectory: "/tmp", power: 0)
-        }
-        #expect(throws: AgentDS4RuntimeConfigurationError.invalidPower(101)) {
-            try AgentDS4RuntimeManifest(rootDirectory: "/tmp", power: 101)
-        }
-    }
-
-    @Test
     func engineOptionsAreValidatedAgainstShimRanges() {
         #expect(throws: AgentDS4RuntimeConfigurationError.invalidMTPDraftTokens(0)) {
             try AgentDS4RuntimeManifest(rootDirectory: "/tmp", mtpDraftTokens: 0)

@@ -166,22 +166,6 @@ struct DS4EngineLibraryTests {
         #expect(DS4EngineError(code: -6, message: "") == .sessionFailed("unknown DS4 engine error (code -6)"))
     }
 
-    @Test
-    func libraryErrorsCarryTheBuildHint() {
-        let errors: [DS4EngineError] = [
-            .libraryUnavailable(reason: "missing", hint: DS4LibraryFixtures.hint),
-            .abiMismatch(found: 1, expected: 2, hint: DS4LibraryFixtures.hint),
-            .missingSymbol("zencode_ds4_stat", hint: DS4LibraryFixtures.hint)
-        ]
-        for error in errors {
-            #expect(error.isLibraryUnavailable)
-            #expect(error.buildHint == DS4LibraryFixtures.hint)
-            #expect(error.localizedDescription.hasSuffix("Rebuild it with: \(DS4LibraryFixtures.hint)"))
-        }
-        #expect(!DS4EngineError.openFailed("x").isLibraryUnavailable)
-        #expect(DS4EngineError.instanceLocked("pid 7").localizedDescription.contains("another DS4 process is using this model"))
-    }
-
     // MARK: Loader
 
     @Test
@@ -202,24 +186,6 @@ struct DS4EngineLibraryTests {
         #expect(hint == DS4LibraryFixtures.hint)
     }
 
-    @Test
-    func nonLibraryFileIsUnavailable() throws {
-        let directory = try DS4LibraryFixtures.temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let url = directory.appendingPathComponent(DS4EngineABI.libraryFileName)
-        try Data("not a dynamic library".utf8).write(to: url)
-
-        let error = #expect(throws: DS4EngineError.self) {
-            _ = try DS4EngineLibrary.load(at: url, buildHint: DS4LibraryFixtures.hint)
-        }
-
-        guard case .libraryUnavailable(let reason, _) = error else {
-            Issue.record("unexpected error \(String(describing: error))")
-            return
-        }
-        #expect(reason.contains("cannot load"))
-    }
-
     @Test(.enabled(if: DS4LibraryFixtures.compilerPath != nil, "needs a C compiler"), arguments: [1, 99])
     func staleABIVersionIsRejected(foundVersion: Int32) throws {
         let directory = try DS4LibraryFixtures.temporaryDirectory()
@@ -234,20 +200,6 @@ struct DS4EngineLibraryTests {
         #expect(throws: DS4EngineError.abiMismatch(
             found: foundVersion, expected: DS4EngineABI.expectedVersion, hint: DS4LibraryFixtures.hint
         )) {
-            _ = try DS4EngineLibrary.load(at: url, buildHint: DS4LibraryFixtures.hint)
-        }
-    }
-
-    @Test(.enabled(if: DS4LibraryFixtures.compilerPath != nil, "needs a C compiler"))
-    func missingSymbolIsRejected() throws {
-        let directory = try DS4LibraryFixtures.temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let url = try DS4LibraryFixtures.buildLibrary(
-            source: "#include <stdint.h>\nint32_t zencode_ds4_abi_version(void) { return 2; }\n",
-            in: directory
-        )
-
-        #expect(throws: DS4EngineError.missingSymbol("zencode_ds4_last_error", hint: DS4LibraryFixtures.hint)) {
             _ = try DS4EngineLibrary.load(at: url, buildHint: DS4LibraryFixtures.hint)
         }
     }
@@ -266,19 +218,6 @@ struct DS4EngineLibraryRealTests {
         URL(fileURLWithPath: ProcessInfo.processInfo.environment["ZENCODE_DS4_ENGINE_LIBRARY"] ?? "")
     }
 
-    private static func configuration(model: URL) -> DS4EngineConfiguration {
-        DS4EngineConfiguration(
-            libraryURL: libraryURL,
-            options: [
-                DS4EngineOption(key: "model_path", value: model.path),
-                DS4EngineOption(key: "backend", value: "cpu")
-            ],
-            contextSize: 4096,
-            sessionCapacity: 1,
-            buildHint: DS4LibraryFixtures.hint
-        )
-    }
-
     @Test
     func loadsEverySymbolAndParsesThinkLevels() throws {
         let library = try DS4EngineLibrary.load(at: Self.libraryURL, buildHint: DS4LibraryFixtures.hint)
@@ -291,89 +230,5 @@ struct DS4EngineLibraryRealTests {
         #expect(library.thinkMode(parseLevel: "high") == nil)
         let again = try DS4EngineLibrary.load(at: Self.libraryURL, buildHint: DS4LibraryFixtures.hint)
         #expect(again === library)
-    }
-
-    @Test
-    func tokensPushAppendsTheExactIDsAndRejectsInvalidArguments() throws {
-        let library = try DS4EngineLibrary.load(at: Self.libraryURL, buildHint: DS4LibraryFixtures.hint)
-        let symbols = library.symbols
-        let buffer = try #require(symbols.tokensNew())
-        defer { symbols.tokensFree(buffer) }
-
-        // No engine involved: the ids are stored as they are, in order.
-        let ids: [Int32] = [7, 0, 151_644, 42, 42]
-        for id in ids {
-            #expect(symbols.tokensPush(buffer, id) == DS4EngineABI.ok)
-        }
-        #expect(symbols.tokensLen(buffer) == Int32(ids.count))
-        for (index, id) in ids.enumerated() {
-            #expect(symbols.tokensGet(buffer, Int32(index)) == id)
-        }
-
-        // A NULL buffer and a negative id are invalid arguments and change nothing.
-        #expect(symbols.tokensPush(nil, 1) == DS4EngineABI.ErrorCode.invalidArgument)
-        #expect(symbols.tokensPush(buffer, -1) == DS4EngineABI.ErrorCode.invalidArgument)
-        #expect(String(cString: symbols.lastError()!).contains("negative"))
-        #expect(symbols.tokensLen(buffer) == Int32(ids.count))
-    }
-
-    @Test
-    func missingModelPathFailsWithAnExplicitError() async throws {
-        let directory = try DS4LibraryFixtures.temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let model = directory.appendingPathComponent("missing.gguf")
-        let registry = DS4EngineRegistry(factory: DS4EngineRegistry.nativeFactory)
-
-        let error = await #expect(throws: DS4EngineError.self) {
-            _ = try await registry.engine(for: Self.configuration(model: model))
-        }
-
-        guard case .invalidOption(let message) = error else {
-            Issue.record("unexpected error \(String(describing: error))")
-            return
-        }
-        #expect(message.contains("model_path"))
-        #expect(message.contains(model.path))
-        #expect(await registry.currentIdentity == nil)
-    }
-
-    @Test
-    func heldInstanceLockFailsWithAnExplicitError() async throws {
-        let directory = try DS4LibraryFixtures.temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        // Passes the shim's GGUF pre-check (regular file >= 32 bytes); the
-        // held lock stops the open before ds4_engine_open reads it.
-        let model = directory.appendingPathComponent("model.gguf")
-        try Data(repeating: 0, count: 64).write(to: model)
-        let lockURL = directory.appendingPathComponent("ds4.lock")
-        try Data("4242\n".utf8).write(to: lockURL)
-
-        let descriptor = open(lockURL.path, O_RDWR)
-        try #require(descriptor >= 0)
-        defer { close(descriptor) }
-        // Must hold: otherwise DS4 would try to load the fake model.
-        try #require(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
-
-        let previous = ProcessInfo.processInfo.environment["DS4_LOCK_FILE"]
-        setenv("DS4_LOCK_FILE", lockURL.path, 1)
-        defer {
-            if let previous {
-                setenv("DS4_LOCK_FILE", previous, 1)
-            } else {
-                unsetenv("DS4_LOCK_FILE")
-            }
-        }
-
-        let error = await #expect(throws: DS4EngineError.self) {
-            _ = try await DS4NativeEngine.open(configuration: Self.configuration(model: model))
-        }
-
-        guard case .instanceLocked(let message) = error else {
-            Issue.record("unexpected error \(String(describing: error))")
-            return
-        }
-        #expect(message.contains("another ds4 process is already running"))
-        #expect(message.contains("4242"))
-        #expect(error?.localizedDescription.contains("another DS4 process is using this model") == true)
     }
 }

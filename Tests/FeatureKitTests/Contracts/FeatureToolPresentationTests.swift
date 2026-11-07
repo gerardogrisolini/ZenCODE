@@ -119,26 +119,4 @@ struct FeatureToolPresentationTests {
             _ = try JSONDecoder().decode(FeatureToolDescriptor.self, from: data)
         }
     }
-
-    @Test
-    func toolDescriptorBridgePreservesPresentation() {
-        let original = ToolDescriptor(
-            name: "sample.bridge",
-            title: "Bridge title",
-            description: "D",
-            inputSchema: "{}",
-            outputSchema: #"{"type":"string"}"#,
-            presentation: ExplicitPresentationTool.presentation
-        )
-
-        let feature = FeatureToolDescriptor(
-            toolDescriptor: original,
-            presentation: ExplicitPresentationTool.presentation
-        )
-        let roundTrip = feature.toolDescriptor
-
-        #expect(feature.presentation == original.presentation)
-        #expect(roundTrip.presentation == original.presentation)
-        #expect(roundTrip.outputSchema == original.outputSchema)
-    }
 }

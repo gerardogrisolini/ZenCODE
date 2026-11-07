@@ -282,39 +282,6 @@ extension TerminalChat {
         return joinedSubAgentOverviewRows(rows)
     }
 
-    /// Physical rows the live section would occupy for `rowBudget`, exposed so
-    /// tests can assert the in-place invariants (row count and visible width)
-    /// without driving a terminal.
-    nonisolated static func renderSubAgentOverviewRowsForTesting(
-        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
-        rowBudget: Int?,
-        toolPresentationsByAgentID: [
-            String: TerminalChatRenderCoordinator.SubAgentToolPresentation
-        ] = [:]
-    ) -> [String] {
-        renderSubAgentOverview(
-            snapshots,
-            modelTitleResolver: { $0 },
-            includesFinalResponses: false,
-            toolPresentationsByAgentID: toolPresentationsByAgentID,
-            rowBudget: rowBudget
-        )
-            .components(separatedBy: "\n")
-            .filter { !$0.isEmpty }
-    }
-
-    /// Exercises the delegated ANSI surface without redirecting process-global
-    /// descriptors: SwiftPM normally captures stderr even when run in a PTY.
-    nonisolated static func renderSubAgentToolRowsForTesting(
-        _ presentation: TerminalChatRenderCoordinator.SubAgentToolPresentation
-    ) -> [String] {
-        subAgentOverviewRows(renderSubAgentToolLines(
-            presentation,
-            density: .full,
-            standardErrorIsTerminal: true
-        ))
-    }
-
     private nonisolated static func subAgentOverviewLines(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
         modelTitleResolver: (String) -> String,

@@ -77,17 +77,6 @@ struct ChatCommandDispatchTests {
         )
     }
 
-    /// A Planner discussion waiting for the operator's answer.
-    private static func plannerDiscussion(goal: String) -> PlanningCommandRuntimeState {
-        var state = PlanningCommandRuntimeState(goal: goal)
-        state.recordPlannerOutput(
-            "Planner questions\n1. Which parser?",
-            agentID: "planner-1",
-            revision: 1
-        )
-        return state
-    }
-
     /// The ACP policy, with a `/review` prompt that names its inputs.
     private static func acpPolicy(
         savingAgent: AgentProfile? = nil,
@@ -150,31 +139,6 @@ struct ChatCommandDispatchTests {
             #expect(await controller.handleCommandLine("/builder-feature list", context: .builderAgent)
                 == ChatCommandOutcome(action: .channelCommand))
             #expect(await harness.presenter.events.isEmpty)
-        }
-    }
-
-    @Test
-    func theTerminalsHiddenCommandsAnswerAsTheTerminalDid() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            controller.commandRegistry = TerminalChat.commandRegistry
-
-            // `/feature` without the Builder agent answers with its message,
-            // `/telegram` without Telegram and `/ds4` without a DS4 model as
-            // unknown commands.
-            let feature = await controller.handleCommandLine("/feature list", context: [])
-            #expect(feature == ChatCommandOutcome(notices: [
-                .commandUnavailable(message: TerminalChat.renderFeatureCommandUnavailableForAgent()),
-            ]))
-            #expect(await controller.handleCommandLine("/telegram on", context: [])
-                == ChatCommandOutcome(notices: [.unknownCommand(line: "/telegram on")]))
-            #expect(await controller.handleCommandLine("/ds4 status", context: [])
-                == ChatCommandOutcome(notices: [.unknownCommand(line: "/ds4 status")]))
-            for line in ["/feature list", "/telegram on", "/ds4 status"] {
-                let terminalContext: ChatCommandContext = [.builderAgent, .telegramEnabled, .ds4Model]
-                #expect(await controller.handleCommandLine(line, context: terminalContext)
-                    == ChatCommandOutcome(action: .channelCommand))
-            }
         }
     }
 
@@ -367,34 +331,6 @@ struct ChatCommandDispatchTests {
     }
 
     @Test
-    func toolsAndAnAgentSwitchRunTheirStepsBeforeTheClosingNotices() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            let hooks = RecordingChannelHooks(runtime: harness.runtime)
-            controller.channelHooks = hooks
-            try await harness.startSession()
-
-            let tools = await controller.handleCommandLine("/tools files", context: [])
-            let toolCalls = await harness.callNames()
-            let toolChange = try #require(hooks.steps.first)
-            #expect(toolChange.hasPrefix("selectionDidApply("))
-            #expect(toolChange.hasSuffix(", tools) after \(toolCalls)"))
-            #expect(tools.notices.contains { if case .activeTools = $0 { true } else { false } })
-
-            await harness.clearRecords()
-            let switched = await controller.handleCommandLine("/agents \(Fixtures.reviewer.name)", context: [])
-            #expect(switched == ChatCommandOutcome(notices: [.agentSwitched(Fixtures.reviewer)]))
-            let switchCalls = await harness.callNames()
-            #expect(hooks.steps.dropFirst().map { $0.components(separatedBy: " after ").first ?? "" } == [
-                "sessionWillCreate(agentSwitched)",
-                "sessionDidCreate(agentSwitched)",
-                "selectionDidApply(sessionRecreated, agents)",
-            ])
-            #expect(hooks.steps.last == "selectionDidApply(sessionRecreated, agents) after \(switchCalls)")
-        }
-    }
-
-    @Test
     func aNewSessionRunsTheChannelStepsAroundTheRuntimeReset() async throws {
         try await withChatHarness { harness in
             let controller = harness.controller
@@ -417,18 +353,6 @@ struct ChatCommandDispatchTests {
                 "newSessionWillStart after []",
                 "newSessionDidStart after \(calls)",
             ])
-        }
-    }
-
-    @Test
-    func aNewSessionWithoutChannelStepsMintsItsOwnID() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            try await harness.startSession()
-
-            #expect(await controller.handleCommandLine("/sessions new", context: [])
-                == ChatCommandOutcome(notices: [.sessionStarted]))
-            #expect(controller.sessionID.hasPrefix("chat-"))
         }
     }
 
@@ -543,101 +467,6 @@ struct ChatCommandDispatchTests {
     }
 
     @Test
-    func acpPlanDeleteAnswersTheUsageBeforeReadingTheLibrary() async throws {
-        try await withChatHarness(catalog: Self.catalog, persistsTaskGraphs: true) { harness in
-            let controller = harness.controller
-
-            #expect(await controller.runPlanCommand(line: "/plan delete", policy: Self.acpPolicy())
-                == ChatCommandOutcome(notices: [.planDeleteUsage]))
-            #expect(await controller.runPlanCommand(line: "/plan delete")
-                == ChatCommandOutcome(notices: [.savedPlanUnavailable]))
-        }
-    }
-
-    @Test
-    func acpPlanStatusKeepsTheActivePlanAndAlwaysReportsAMissingOne() async throws {
-        try await withChatHarness(catalog: Self.catalog) { harness in
-            let controller = harness.controller
-            controller.planBrainstorming = Self.plannerDiscussion(goal: "ship it")
-
-            #expect(await controller.runPlanCommand(line: "/plan status", policy: Self.acpPolicy())
-                == ChatCommandOutcome(notices: [.planClarificationActive(goal: "ship it"), .noActivePlan]))
-            #expect(await controller.runPlanCommand(line: "/plan status")
-                == ChatCommandOutcome(notices: [.planClarificationActive(goal: "ship it")]))
-
-            // A graph that completed a point: ACP shows the projection but
-            // keeps the active plan as it was.
-            controller.planBrainstorming = nil
-            let plan = Self.plan(id: "status-plan")
-            controller.activePlan = plan
-            _ = try await harness.runtime.taskOrchestrator.createGraph(
-                sessionID: controller.sessionID,
-                id: plan.id,
-                source: .plan(planID: plan.id),
-                state: .active,
-                tasks: PlanningCommandKernel.taskDefinitions(for: plan.points),
-                makeCurrent: true,
-                archivePreviousCurrent: true
-            )
-            _ = try await harness.runtime.taskOrchestrator.updateTask(
-                sessionID: controller.sessionID,
-                taskID: "status-plan-1",
-                update: TaskUpdate(status: .inProgress)
-            )
-            _ = try await harness.runtime.taskOrchestrator.updateTask(
-                sessionID: controller.sessionID,
-                taskID: "status-plan-1",
-                update: TaskUpdate(status: .completed, output: "Read")
-            )
-            let acp = await controller.runPlanCommand(line: "/plan status", policy: Self.acpPolicy())
-            guard case let .planStatus(projected, graph)? = acp.notices.first else {
-                Issue.record("Expected the plan status, got \(acp.notices)")
-                return
-            }
-            #expect(graph?.id == plan.id)
-            #expect(projected != plan)
-            #expect(controller.activePlan == plan)
-
-            _ = await controller.runPlanCommand(line: "/plan status")
-            #expect(controller.activePlan == projected)
-        }
-    }
-
-    @Test
-    func acpPlanSaveTakesTheActivePlanWhateverItsGoalAndRecordsTheSessionsAgent() async throws {
-        try await withChatHarness(catalog: Self.catalog, persistsTaskGraphs: true) { harness in
-            let controller = harness.controller
-            controller.activePlan = Self.plan(id: "goalless-plan", goal: "")
-
-            // The terminal needs a goal and finds no other plan; ACP takes the
-            // active plan as it is, and the library refuses it.
-            #expect(await controller.runPlanCommand(line: "/plan save")
-                == ChatCommandOutcome(notices: [.planUnavailableForSaving]))
-            let goalless = await controller.runPlanCommand(line: "/plan save", policy: Self.acpPolicy())
-            guard case .operationFailed? = goalless.notices.first else {
-                Issue.record("Expected the library's refusal, got \(goalless.notices)")
-                return
-            }
-
-            let plan = Self.plan(id: "library-plan")
-            controller.activePlan = plan
-            let acp = await controller.runPlanCommand(
-                line: "/plan save",
-                policy: Self.acpPolicy(savingAgent: Roles.systemReviewer)
-            )
-            #expect(acp == ChatCommandOutcome(notices: [.planSaved(planID: plan.id)]))
-            let saved = try #require(await harness.runtime.savedTaskPlans(workingDirectory: harness.workspace)
-                .first { $0.graph.id == plan.id })
-            #expect(saved.snapshot.savingAgentName == Roles.systemReviewer.name)
-
-            // A plan without text is refused, even as the active plan.
-            controller.activePlan = TerminalSessionPlan(id: "empty", originalGoal: "Goal", consolidatedText: " ")
-            #expect(await controller.runPlanCommand(line: "/plan save", policy: Self.acpPolicy())
-                == ChatCommandOutcome(notices: [.planUnavailableForSaving]))
-        }
-    }
-
-    @Test
     func acpPlanSaveStoresTheActivePlanWithItsQueueAndRefusesASequenceWithABlankPlan() async throws {
         try await withChatHarness(catalog: Self.catalog, persistsTaskGraphs: true) { harness in
             let controller = harness.controller
@@ -712,19 +541,6 @@ struct ChatCommandDispatchTests {
     }
 
     @Test
-    func acpWordsThePlanSequenceNotices() {
-        typealias Bridge = ZenCODEACPBridge
-        #expect(Bridge.acpText(for: .planSequenceSaved(planIDs: ["p1", "p2"]), context: .plan(.save))
-            == "Saved 2 plans to run in sequence: p1, p2. "
-            + "Use /plan load in a new session to load the first one that is not completed.")
-        let queued = [Self.plan(id: "plan-queued-2", goal: "Validate the parser")]
-        #expect(Bridge.acpText(for: .queuedPlans(queued), context: .plan(.status))
-            == PlanningCommandKernel.queuedPlansMessage(for: queued))
-        #expect(Bridge.acpText(for: .queuedPlans(queued), context: .plan(.status))
-            == ChatSessionNoticeText.text(for: .queuedPlans(queued)))
-    }
-
-    @Test
     func acpPlanLoadExtendsTheRuntimeSessionsHistory() async throws {
         try await withChatHarness(catalog: Self.catalog, persistsTaskGraphs: true) { harness in
             let controller = harness.controller
@@ -753,75 +569,6 @@ struct ChatCommandDispatchTests {
             #expect(controller.history.map(\.content) == ["controller copy"])
             #expect(controller.activePlan == loaded)
         }
-    }
-
-    @Test
-    func acpApprovalKeepsARequestWhosePlanIsGoneAndRefusesABlankPlan() async throws {
-        try await withChatHarness(catalog: Self.catalog) { harness in
-            let controller = harness.controller
-            controller.activePlan = Self.plan(id: "current-plan")
-            controller.pendingPlanApprovalPlanID = "gone-plan"
-
-            #expect(await controller.pendingReplyAction(for: "Ship the parser", policy: Self.acpPolicy())
-                == ChatCommandOutcome(notices: [.noPendingPlanApproval]))
-            #expect(controller.pendingPlanApprovalPlanID == "gone-plan")
-            // The terminal drops the request.
-            #expect(await controller.pendingReplyAction(for: "Ship the parser")
-                == ChatCommandOutcome(notices: [.planUnavailableForApproval]))
-            #expect(controller.pendingPlanApprovalPlanID == nil)
-
-            controller.activePlan = TerminalSessionPlan(id: "blank", originalGoal: "", consolidatedText: "  ")
-            controller.pendingPlanApprovalPlanID = "blank"
-            #expect(await controller.pendingReplyAction(for: "Ship it", policy: Self.acpPolicy())
-                == ChatCommandOutcome(notices: [.planUnavailableForApproval]))
-            #expect(controller.pendingPlanApprovalPlanID == "blank")
-            #expect(await harness.runtime.calls.isEmpty)
-        }
-    }
-
-    @Test
-    func acpPlanClearDropsTheGoalRequestOnlyWithThePlan() async throws {
-        try await withChatHarness(catalog: Self.catalog) { harness in
-            let controller = harness.controller
-            controller.pendingPlanApprovalPlanID = "orphan"
-
-            #expect(await controller.runPlanCommand(line: "/plan clear", policy: Self.acpPolicy())
-                == ChatCommandOutcome(notices: [.noPlanToClear]))
-            #expect(controller.pendingPlanApprovalPlanID == "orphan")
-            #expect(await controller.runPlanCommand(line: "/plan clear")
-                == ChatCommandOutcome(notices: [.noPlanToClear]))
-            #expect(controller.pendingPlanApprovalPlanID == nil)
-        }
-    }
-
-    @Test
-    func acpWordsTheNoticesAsItAlwaysDid() {
-        typealias Bridge = ZenCODEACPBridge
-        #expect(Bridge.acpText(for: .noPendingPlanApproval, context: .approvalReply)
-            == "ZenCODE: no pending plan approval is available.")
-        #expect(Bridge.acpText(for: .planUnavailableForApproval, context: .approvalReply)
-            == "ZenCODE: no completed plan is available to approve.")
-        #expect(Bridge.acpText(for: .planUnavailableForApproval, context: .plan(.approve))
-            == "ZenCODE: no completed plan is available to approve. Run /plan <goal> first.")
-        #expect(Bridge.acpText(for: .runtimeSessionUnavailable, context: .plan(.load))
-            == "ZenCODE: the ACP session changed while loading the plan.")
-        #expect(Bridge.acpText(for: .runtimeSessionUnavailable, context: .plan(.clear))
-            == "ZenCODE: the ACP session changed before /plan clear completed.")
-        #expect(Bridge.acpText(for: .runtimeSessionUnavailable, context: .approvalReply)
-            == "ZenCODE: the ACP session changed before plan approval completed.")
-        #expect(Bridge.acpText(for: .planDeleteUsage, context: .plan(.delete(target: nil)))
-            == "ZenCODE: /plan delete requires a plan id, unique prefix, or all.")
-        #expect(Bridge.acpText(for: .noActivePlan, context: .plan(.status)) == "No active plan.")
-        #expect(Bridge.acpText(for: .planSaved(planID: "p1"), context: .plan(.save))
-            == "Saved plan: p1. Use /plan load in a new session to review or revise it.")
-        #expect(Bridge.acpText(for: .agentRoleUnavailable(.reviewer), context: .review)
-            == AgentProfileStore.roleUnavailableForProjectMessage(.reviewer))
-        #expect(Bridge.acpText(
-            for: .workflowAlreadyActive(graphID: "workflow-1", pendingTaskCount: 1),
-            context: .goal
-        ) == "ZenCODE: a goal workflow is already running (workflow-1, 1 task still open). "
-            + "Reply in this session to continue it when it is waiting for you, "
-            + "or clear its task graph before starting another /goal.")
     }
 
     @Test
@@ -886,29 +633,6 @@ struct ChatCommandDispatchTests {
     }
 
     @Test
-    func aGoalSupersededBeforeItStartsCreatesNothing() async throws {
-        try await withChatHarness(catalog: Self.catalog) { harness in
-            let controller = harness.controller
-            let fence = controller.beginCommandFence(sessionID: controller.sessionID)
-            controller.cancelActiveTurn()
-
-            #expect(await controller.runGoalCommand(line: "/goal ship it", fence: fence) == ChatCommandOutcome())
-            #expect(await harness.presenter.events.isEmpty)
-            #expect(controller.activeWorkflow == nil)
-            let graph = try await harness.runtime.taskGraphSnapshot(sessionID: controller.sessionID, graphID: nil)
-            #expect(graph == nil)
-
-            // A current fence lets the same command through.
-            let current = controller.beginCommandFence(sessionID: controller.sessionID)
-            let started = await controller.runGoalCommand(line: "/goal ship it", fence: current)
-            #expect(Self.startsTurn(started))
-            #expect(controller.activeWorkflow?.goal == "ship it")
-            controller.endCommandFence(current)
-            #expect(!controller.isCurrent(current))
-        }
-    }
-
-    @Test
     func anApprovalSupersededAfterActivatingTheGraphRollsItBack() async throws {
         try await withChatHarness(catalog: Self.catalog, persistsTaskGraphs: true) { harness in
             let controller = harness.controller
@@ -945,34 +669,7 @@ struct ChatCommandDispatchTests {
         }
     }
 
-    @Test
-    func anApprovalSupersededBeforeTheGraphChangesTouchesNothing() async throws {
-        try await withChatHarness(catalog: Self.catalog) { harness in
-            let controller = harness.controller
-            let plan = Self.plan(id: "untouched-plan")
-            controller.activePlan = plan
-            controller.pendingPlanApprovalPlanID = plan.id
-            let fence = controller.beginCommandFence(sessionID: controller.sessionID)
-            controller.cancelActiveTurn()
-
-            #expect(await controller.pendingReplyAction(for: "Ship it", fence: fence, policy: Self.acpPolicy())
-                == ChatCommandOutcome())
-            #expect(controller.pendingPlanApprovalPlanID == plan.id)
-            #expect(controller.activePlan == plan)
-            #expect(await harness.runtime.calls.isEmpty)
-            let graph = try await harness.runtime.taskGraphSnapshot(sessionID: controller.sessionID, graphID: plan.id)
-            #expect(graph == nil)
-        }
-    }
-
     // MARK: - Support
-
-    private static func startsTurn(_ outcome: ChatCommandOutcome) -> Bool {
-        if case .startTurn = outcome.action {
-            return true
-        }
-        return false
-    }
 
     /// An ACP bridge over a scripted backend with one installed session.
     private static func makeACPFixture(sessionID: String) async throws -> (

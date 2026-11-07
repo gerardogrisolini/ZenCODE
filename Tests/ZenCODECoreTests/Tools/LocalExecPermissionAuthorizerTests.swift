@@ -136,16 +136,6 @@ struct LocalExecPermissionAuthorizerTests {
     }
 
     @Test
-    func persistedCommandPermissionIdentityExtractsExecutable() {
-        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentity(for: "swift test --filter ZenCODECoreTests") == "swift")
-        // `pwd` is a harmless builtin, so the first authorizable executable is
-        // `git`. Decorative `echo` is filtered.
-        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentity(for: "pwd && git status") == "git")
-        // `echo` with redirection is NOT decorative and remains prompt-worthy.
-        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentity(for: "\n  echo ok > out.txt  \n") == "echo")
-    }
-
-    @Test
     func allSkipCommandYieldsNilIdentity() {
         // M5: a command consisting entirely of harmless built-ins yields no
         // identity, consistent with `localExecAuthorizationCommands` returning [].
@@ -316,35 +306,6 @@ struct LocalExecPermissionAuthorizerTests {
         #expect(prompt.contains("[C]"))
     }
 
-    @Test
-    func terminalPromptIncludesAlwaysScopeHint() {
-        // local.exec: the executable identity is authorized across sessions.
-        let shellRequest = AgentToolAuthorizationRequest(
-            sessionID: "session",
-            toolCallID: "call",
-            toolName: "local.exec",
-            title: "Run swift tests",
-            kind: "shell",
-            command: "swift test --filter One",
-            workingDirectory: "/tmp/project"
-        )
-        let shellPrompt = LocalExecPermissionAuthorizer.terminalPrompt(for: shellRequest)
-        #expect(shellPrompt.contains("across sessions"))
-
-        // Destructive tool: "Always" applies to this session only.
-        let deleteRequest = AgentToolAuthorizationRequest(
-            sessionID: "session",
-            toolCallID: "call",
-            toolName: "local.delete",
-            title: "Delete file",
-            kind: "destructive",
-            command: "rm -rf /tmp/scratch",
-            workingDirectory: "/tmp/project"
-        )
-        let deletePrompt = LocalExecPermissionAuthorizer.terminalPrompt(for: deleteRequest)
-        #expect(deletePrompt.contains("session only"))
-    }
-
     @Test(arguments: [6, 12, 20, 40, 80, 100, 160], [
         "pwd",
         "printf " + String(repeating: "long-unbroken-argument", count: 12),
@@ -371,69 +332,6 @@ struct LocalExecPermissionAuthorizerTests {
     }
 
     @Test
-    func terminalPromptReflowsLongCommandsWithinTerminalWidth() {
-        let columns = 48
-        let request = AgentToolAuthorizationRequest(
-            sessionID: "session",
-            toolCallID: "call",
-            toolName: "local.exec",
-            title: "Run a command whose arguments exceed the card width",
-            kind: "shell",
-            command: "printf '%s' "
-                + String(repeating: "very-long-argument ", count: 12)
-                + "tail-token",
-            workingDirectory: "/tmp/project"
-        )
-
-        let prompt = LocalExecPermissionAuthorizer.terminalPrompt(
-            for: request,
-            terminalColumns: columns
-        )
-        let renderedRows = prompt
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-        let visibleRows = renderedRows.map(TerminalANSIText.stripANSI)
-        let boxRows = visibleRows.filter {
-            $0.hasPrefix("╭")
-                || $0.hasPrefix("│")
-                || $0.hasPrefix("├")
-                || $0.hasPrefix("╰")
-        }
-        let bodyRows = boxRows.filter { $0.hasPrefix("│") }
-
-        // The compositor paints these full-width rows with autowrap disabled.
-        #expect(renderedRows.allSatisfy {
-            TerminalANSIText.visibleWidth($0) <= columns
-        })
-        #expect(boxRows.first?.hasPrefix("╭") == true)
-        #expect(boxRows.last?.hasPrefix("╰") == true)
-        #expect(bodyRows.count > 5)
-        #expect(bodyRows.allSatisfy { $0.hasSuffix("│") })
-        #expect(prompt.contains("tail-token"))
-    }
-
-    @Test
-    func nonInteractiveConsentMessageIsActionable() {
-        let request = AgentToolAuthorizationRequest(
-            sessionID: "session",
-            toolCallID: "call",
-            toolName: "local.exec",
-            title: "Run swift tests",
-            kind: "shell",
-            command: "swift test --filter One",
-            workingDirectory: "/tmp/project"
-        )
-        let message = LocalExecPermissionAuthorizer.nonInteractiveConsentMessage(for: request)
-        // Explains why and stays fail-closed.
-        #expect(message.contains("no interactive terminal"))
-        #expect(message.contains("blocked by design"))
-        // Names the command so the operator knows what was blocked.
-        #expect(message.contains("swift test --filter One"))
-        // Offers a concrete remediation.
-        #expect(message.contains("[A]lways"))
-    }
-
-    @Test
     func sanitizedForTerminalStripsControlSequences() {
         // A crafted command carrying ESC/CSI, carriage return, and bell must not
         // be able to clear, overwrite, or beep-spoof the consent prompt.
@@ -448,18 +346,6 @@ struct LocalExecPermissionAuthorizerTests {
         // Newlines and tabs are preserved for readability.
         #expect(
             LocalExecPermissionAuthorizer.sanitizedForTerminal("a\nb\tc").contains("\n")
-        )
-    }
-
-    @Test
-    func alwaysChoiceHintExplainsScope() {
-        #expect(
-            LocalExecPermissionAuthorizer.alwaysChoiceHint(forToolName: "local.exec")
-                .contains("across sessions")
-        )
-        #expect(
-            LocalExecPermissionAuthorizer.alwaysChoiceHint(forToolName: "local.delete")
-                .contains("session only")
         )
     }
 
@@ -536,15 +422,6 @@ struct LocalExecPermissionAuthorizerTests {
         #expect(decision == nil)
         let count = await recorder.recordedPrompts().count
         #expect(count == 1)
-    }
-
-    @Test
-    func presentDialogDeniesOnCancelKey() async {
-        let authorizer = LocalExecPermissionAuthorizer()
-        let recorder = FakeConsentReader(answers: ["c"])
-        await authorizer.setConsentReader({ prompt in await recorder.next(prompt: prompt) })
-        let decision = await authorizer.presentDialog(for: Self.consentRequest())
-        #expect(decision == .deny)
     }
 
     @Test

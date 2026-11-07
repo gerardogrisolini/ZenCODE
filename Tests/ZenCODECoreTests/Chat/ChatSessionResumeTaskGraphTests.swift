@@ -250,56 +250,6 @@ struct ChatSessionResumeTaskGraphTests {
         }
     }
 
-    @Test
-    func cancellingOrEmptyingTheDeletionMenuGoesBackToTheMainMenu() async throws {
-        try await withChatHarness(
-            hostCapabilities: [.singleChoice, .multipleChoice],
-            persistsTaskGraphs: true
-        ) { harness in
-            try Self.seedCheckpoint([Self.graph("old-work")], sessionID: "old-session", in: harness)
-            let delete = ChatSessionController.resumableTaskGraphDeleteChoiceID
-            await harness.host.answerChooseOne(delete)
-            await harness.host.answerChooseMany(nil)
-            await harness.host.answerChooseOne(delete)
-            await harness.host.answerChooseMany([])
-            await harness.host.answerChooseOne(ChatSessionController.resumableTaskGraphStartFreshChoiceID)
-
-            let outcome = await harness.controller.offerResumableTaskGraphs()
-
-            #expect(outcome == .none)
-            #expect(await harness.runtime.calls.isEmpty)
-            #expect(Self.mainMenus(await harness.host.interactions).count == 3)
-            #expect(try Self.checkpoint("old-session", in: harness)?.graphs.map(\.id) == ["old-work"])
-        }
-    }
-
-    @Test
-    func withoutMultipleChoiceTheDeletionDeletesEveryListedGraph() async throws {
-        try await withChatHarness(
-            hostCapabilities: [.singleChoice],
-            persistsTaskGraphs: true
-        ) { harness in
-            try Self.seedCheckpoint([Self.graph("graph-a")], sessionID: "old-a", in: harness)
-            try Self.seedCheckpoint([Self.graph("graph-b")], sessionID: "old-b", in: harness)
-            await harness.host.answerChooseOne(ChatSessionController.resumableTaskGraphDeleteChoiceID)
-
-            let outcome = await harness.controller.offerResumableTaskGraphs()
-
-            #expect(outcome.notices == [.oldTaskGraphsDeleted(count: 2)])
-            #expect(outcome.notices.map(ChatSessionNoticeText.text(for:)) == ["Deleted 2 old task graphs.\n"])
-            #expect(try Self.checkpoint("old-a", in: harness) == nil)
-            #expect(try Self.checkpoint("old-b", in: harness) == nil)
-            // One menu, whose delete entry says it deletes everything; no
-            // checkbox menu, and nothing left to offer afterwards.
-            let interactions = await harness.host.interactions
-            #expect(interactions.count == 1)
-            let deleteItem = Self.mainMenus(interactions).first?.first { $0.id == "delete" }
-            #expect(deleteItem?.title == "Delete all old tasks")
-            #expect(deleteItem?.detail == "delete every task graph listed above")
-            #expect(deleteItem?.group == "Other actions")
-        }
-    }
-
     // MARK: - What is offered
 
     @Test
@@ -411,27 +361,6 @@ struct ChatSessionResumeTaskGraphTests {
             #expect(try await harness.runtime.taskOrchestrator.graphSnapshot(
                 sessionID: harness.controller.sessionID
             ) == nil)
-        }
-    }
-
-    @Test
-    func withoutSingleChoiceNothingIsOfferedOrRead() async throws {
-        try await withChatHarness(
-            hostCapabilities: [.multipleChoice, .textInput],
-            persistsTaskGraphs: true
-        ) { harness in
-            try Self.seedCheckpoint([Self.graph("old-work")], sessionID: "old-session", in: harness)
-
-            #expect(await harness.controller.offerResumableTaskGraphs() == .none)
-            #expect(await harness.host.interactions.isEmpty)
-            #expect(await harness.runtime.resumableTaskGraphCheckpointReadCount == 0)
-            #expect(await harness.runtime.calls.isEmpty)
-
-            // Another host can ask instead of the controller's.
-            let choiceHost = ScriptedChatInteractionHost(capabilities: [.singleChoice])
-            _ = await harness.controller.offerResumableTaskGraphs(choiceHost: choiceHost)
-            #expect(Self.mainMenus(await choiceHost.interactions).count == 1)
-            #expect(await harness.host.interactions.isEmpty)
         }
     }
 

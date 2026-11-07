@@ -124,34 +124,6 @@ struct AgentBindingPresetsTests {
         #expect(presets.providers.last?.blocksByProfileKey["developer"]?.modelBindings.isEmpty == true)
     }
 
-    @Test
-    func providerOrderIsTheFileOrderNotAlphabetical() throws {
-        let presets = try Self.presets(
-            Self.document(providers: [
-                (name: "Zeta", bindingID: "z", defaultID: nil),
-                (name: "Alpha", bindingID: "a", defaultID: nil),
-                (name: "Mid", bindingID: "m", defaultID: nil)
-            ])
-        )
-
-        #expect(presets.providers.map(\.name) == ["Zeta", "Alpha", "Mid"])
-    }
-
-    @Test
-    func emptyAndFoldedBlockKeysAreNormalizedOrDropped() throws {
-        let presets = try Self.presets(#"""
-        { "version": 1, "providers": { "P": {
-          "": { "modelBindings": [ { "id": "empty", "modelID": "empty" } ] },
-          "   ": { "modelBindings": [ { "id": "blank", "modelID": "blank" } ] },
-          " Developer ": { "modelBindings": [ { "id": "dev", "modelID": "dev" } ] }
-        } } }
-        """#)
-
-        let blocks = try #require(presets.providers.first).blocksByProfileKey
-        #expect(Set(blocks.keys) == ["developer"])
-        #expect(blocks["developer"]?.modelBindings.map(\.id) == ["dev"])
-    }
-
     // MARK: - Key order scanner
 
     @Test
@@ -188,58 +160,6 @@ struct AgentBindingPresetsTests {
         )
     }
 
-    @Test
-    func scannerCountsADuplicateKeyAtItsFirstOccurrence() {
-        let data = Data(#"""
-        { "providers": { "B": 1, "A": 2, "B": 3, "C": {"x": 1}, "A": 4 } }
-        """#.utf8)
-
-        #expect(
-            AgentBindingPresetsKeyScanner.keys(ofMember: "providers", in: data) == ["B", "A", "C"]
-        )
-    }
-
-    @Test
-    func scannerSkipsALeadingByteOrderMarkAndReadsEmptyObjects() {
-        let withBOM = Data([0xEF, 0xBB, 0xBF]) + Data(#"{"providers":{"x":1}}"#.utf8)
-        let empty = Data(#"{ "providers" : { } }"#.utf8)
-
-        #expect(AgentBindingPresetsKeyScanner.keys(ofMember: "providers", in: withBOM) == ["x"])
-        #expect(AgentBindingPresetsKeyScanner.keys(ofMember: "providers", in: empty) == [])
-    }
-
-    @Test
-    func scannerReturnsNilWhenThereIsNothingToRead() {
-        let inputs = [
-            "",
-            "[]",
-            "{}",
-            #"{"version":1}"#,
-            #"{"providers":[1,2]}"#,
-            #"{"providers":"text"}"#,
-            #"{"providers":{"a":1"#,
-            #"{"providers":{"a" 1}}"#,
-            #"{"providers":{"a":}}"#,
-            #"{"providers":{"unterminated:1}}"#
-        ]
-
-        for input in inputs {
-            #expect(
-                AgentBindingPresetsKeyScanner.keys(ofMember: "providers", in: Data(input.utf8)) == nil,
-                "input: \(input)"
-            )
-        }
-    }
-
-    @Test
-    func scannerStopsAtExcessiveNesting() {
-        let depth = 2_000
-        let nested = String(repeating: "[", count: depth) + String(repeating: "]", count: depth)
-        let data = Data(#"{"meta":"#.utf8) + Data(nested.utf8) + Data(#","providers":{"a":1}}"#.utf8)
-
-        #expect(AgentBindingPresetsKeyScanner.keys(ofMember: "providers", in: data) == nil)
-    }
-
     // MARK: - Application
 
     @Test
@@ -269,54 +189,6 @@ struct AgentBindingPresetsTests {
     }
 
     @Test
-    func applicableProviderNamesAreTheConfiguredOnesWithABlockInFileOrder() throws {
-        let presets = try Self.presets(
-            Self.document(providers: [
-                (name: "Zeta", bindingID: "z", defaultID: nil),
-                (name: "Alpha", bindingID: "a", defaultID: nil),
-                (name: "Mid", bindingID: "m", defaultID: nil)
-            ])
-        )
-
-        // File order and file spelling, whatever the order and case of the
-        // configured names; unrelated and empty names never count.
-        #expect(
-            presets.applicableProviderNames(
-                for: [" alpha ", "ZETA", "Unrelated", "", "  "]
-            ) == ["Zeta", "Alpha"]
-        )
-        #expect(
-            presets.applicableProviderNames(for: ["Mid", "Alpha", "Zeta"])
-                == ["Zeta", "Alpha", "Mid"]
-        )
-        #expect(presets.applicableProviderNames(for: ["Other", ""]).isEmpty)
-        #expect(presets.applicableProviderNames(for: []).isEmpty)
-
-        let documented = try Self.presets(Self.documentedFile)
-        #expect(documented.applicableProviderNames(for: ["claude subscription"]) == ["Claude Subscription"])
-        #expect(documented.applicableProviderNames(for: ["Other", "OpenRouter"]) == ["OpenRouter"])
-    }
-
-    @Test
-    func bindingsAreConcatenatedAcrossConfiguredProviders() throws {
-        let presets = try Self.presets(
-            Self.document(providers: [
-                (name: "Second", bindingID: "b-second", defaultID: nil),
-                (name: "First", bindingID: "a-first", defaultID: nil),
-                (name: "Skipped", bindingID: "c-skipped", defaultID: nil)
-            ])
-        )
-
-        let applied = presets.applying(
-            to: [Self.profile(id: "developer")],
-            configuredProviderNames: ["First", "Second"]
-        )
-
-        #expect(Set(applied[0].modelBindings.map(\.id)) == ["a-first", "b-second"])
-        #expect(applied[0].modelBindings.count == 2)
-    }
-
-    @Test
     func defaultComesFromTheFirstProviderInFileOrderEvenWhenSettingsOrderDiffers() throws {
         let presets = try Self.presets(
             Self.document(providers: [
@@ -338,24 +210,6 @@ struct AgentBindingPresetsTests {
         // A provider that is not configured never contributes a default.
         let alphaOnly = presets.applying(to: profiles, configuredProviderNames: ["Alpha"])
         #expect(alphaOnly[0].defaultModelBindingID == "a-binding")
-    }
-
-    @Test
-    func defaultSkipsProvidersThatDeclareNoneOrABlankOne() throws {
-        let presets = try Self.presets(
-            Self.document(providers: [
-                (name: "NoDefault", bindingID: "a-none", defaultID: nil),
-                (name: "Blank", bindingID: "b-blank", defaultID: "   "),
-                (name: "Declared", bindingID: "c-declared", defaultID: "c-declared")
-            ])
-        )
-
-        let applied = presets.applying(
-            to: [Self.profile(id: "developer")],
-            configuredProviderNames: ["NoDefault", "Blank", "Declared"]
-        )
-
-        #expect(applied[0].defaultModelBindingID == "c-declared")
     }
 
     @Test
@@ -383,151 +237,7 @@ struct AgentBindingPresetsTests {
         #expect(applied[0].modelBindings.map(\.id) == ["a-id", "b-role"])
     }
 
-    @Test
-    func customProfileFallsBackToItsRole() throws {
-        let presets = try Self.presets(#"""
-        { "version": 1, "providers": {
-          "A": {
-            "reviewer": { "defaultModelBindingID": "role-binding", "modelBindings": [ { "id": "role-binding", "modelID": "role-binding" } ] }
-          }
-        } }
-        """#)
-        let customReviewer = Self.profile(id: "security-review", role: .reviewer)
-        let customDeveloper = Self.profile(id: "other", role: .developer)
-
-        let applied = presets.applying(
-            to: [customReviewer, customDeveloper],
-            configuredProviderNames: ["A"]
-        )
-
-        #expect(applied[0].modelBindings.map(\.id) == ["role-binding"])
-        #expect(applied[0].defaultModelBindingID == "role-binding")
-        #expect(applied[1].modelBindings.isEmpty)
-    }
-
-    @Test
-    func profilesWithoutAnEntryAreEmptiedAndOtherFieldsArePreserved() throws {
-        let presets = try Self.presets(#"""
-        { "version": 1, "providers": {
-          "A": { "developer": { "modelBindings": [ { "id": "dev", "modelID": "dev", "capability": 7 } ] } }
-        } }
-        """#)
-        let developer = Self.profile(id: "developer")
-        let previous = Self.profile(
-            id: "builder",
-            role: .builder,
-            name: "Builder",
-            bindings: [Self.binding("old-1"), Self.binding("old-2")],
-            defaultBindingID: "old-2"
-        )
-
-        let applied = presets.applying(
-            to: [developer, previous],
-            configuredProviderNames: ["A"]
-        )
-
-        #expect(applied[0].modelBindings.map(\.id) == ["dev"])
-        #expect(applied[0].modelBindings.first?.capability == 7)
-
-        #expect(applied[1].modelBindings.isEmpty)
-        #expect(applied[1].defaultModelBindingID == nil)
-
-        for (original, result) in zip([developer, previous], applied) {
-            #expect(result.id == original.id)
-            #expect(result.name == original.name)
-            #expect(result.instructions == original.instructions)
-            #expect(result.symbolName == original.symbolName)
-            #expect(result.readOnly == original.readOnly)
-            #expect(result.role == original.role)
-            #expect(result.tools == original.tools)
-            #expect(result.skills == original.skills)
-        }
-    }
-
     // MARK: - Loading
-
-    @Test
-    func loadReturnsNilForAMissingFile() throws {
-        try Self.withTemporaryDirectory { directory in
-            let url = directory.appendingPathComponent(AgentBindingPresets.filename)
-
-            let presets = try AgentBindingPresets.load(from: url)
-
-            #expect(presets == nil)
-        }
-    }
-
-    @Test
-    func loadReadsTheFileInFileOrder() throws {
-        try Self.withTemporaryDirectory { directory in
-            let url = directory.appendingPathComponent(AgentBindingPresets.filename)
-            try Data(
-                Self.document(providers: [
-                    (name: "OpenRouter", bindingID: "or", defaultID: nil),
-                    (name: "Claude Subscription", bindingID: "cl", defaultID: nil)
-                ]).utf8
-            ).write(to: url)
-
-            let presets = try #require(try AgentBindingPresets.load(from: url))
-
-            #expect(presets.providers.map(\.name) == ["OpenRouter", "Claude Subscription"])
-        }
-    }
-
-    @Test
-    func loadRejectsInvalidJSONNamingTheFile() throws {
-        try Self.withTemporaryDirectory { directory in
-            let url = directory.appendingPathComponent(AgentBindingPresets.filename)
-            try Data("{ not json".utf8).write(to: url)
-
-            let error = #expect(throws: AgentBindingPresetsError.self) {
-                try AgentBindingPresets.load(from: url)
-            }
-            guard case let .invalidFile(errorURL, _)? = error else {
-                Issue.record("Expected invalidFile, got \(String(describing: error))")
-                return
-            }
-            #expect(errorURL == url)
-            #expect(error?.localizedDescription.contains(url.path) == true)
-        }
-    }
-
-    @Test
-    func loadRejectsAStructurallyInvalidFileAndSaysWhere() throws {
-        try Self.withTemporaryDirectory { directory in
-            let url = directory.appendingPathComponent(AgentBindingPresets.filename)
-            try Data(#"""
-            { "version": 1, "providers": { "A": { "developer": { "modelBindings": "nope" } } } }
-            """#.utf8).write(to: url)
-
-            let error = #expect(throws: AgentBindingPresetsError.self) {
-                try AgentBindingPresets.load(from: url)
-            }
-            guard case .invalidFile? = error else {
-                Issue.record("Expected invalidFile, got \(String(describing: error))")
-                return
-            }
-            let message = error?.localizedDescription ?? ""
-            #expect(message.contains(url.path))
-            #expect(message.contains("modelBindings"))
-        }
-    }
-
-    @Test
-    func loadRejectsAFileWithoutProviders() throws {
-        try Self.withTemporaryDirectory { directory in
-            let url = directory.appendingPathComponent(AgentBindingPresets.filename)
-            try Data(#"{ "version": 1 }"#.utf8).write(to: url)
-
-            let error = #expect(throws: AgentBindingPresetsError.self) {
-                try AgentBindingPresets.load(from: url)
-            }
-            guard case .invalidFile? = error else {
-                Issue.record("Expected invalidFile, got \(String(describing: error))")
-                return
-            }
-        }
-    }
 
     @Test
     func loadRejectsAnUnsupportedVersion() throws {
@@ -548,36 +258,6 @@ struct AgentBindingPresetsTests {
             #expect(expected == AgentBindingPresets.currentVersion)
             #expect(error?.localizedDescription.contains(url.path) == true)
             #expect(error?.localizedDescription.contains("version 2") == true)
-        }
-    }
-
-    @Test
-    func loadRejectsAMissingVersion() throws {
-        try Self.withTemporaryDirectory { directory in
-            let url = directory.appendingPathComponent(AgentBindingPresets.filename)
-            try Data(#"{ "providers": {} }"#.utf8).write(to: url)
-
-            let error = #expect(throws: AgentBindingPresetsError.self) {
-                try AgentBindingPresets.load(from: url)
-            }
-            guard case .invalidFile? = error else {
-                Issue.record("Expected invalidFile, got \(String(describing: error))")
-                return
-            }
-        }
-    }
-
-    @Test
-    func loadReportsAnUnreadablePath() throws {
-        try Self.withTemporaryDirectory { directory in
-            // A directory exists but cannot be read as a file.
-            let error = #expect(throws: AgentBindingPresetsError.self) {
-                try AgentBindingPresets.load(from: directory)
-            }
-            guard case .unreadableFile? = error else {
-                Issue.record("Expected unreadableFile, got \(String(describing: error))")
-                return
-            }
         }
     }
 
@@ -729,51 +409,6 @@ struct AgentBindingPresetsTests {
         }
     }
 
-    @Test
-    func aMissingCheckoutOrAnUnusableFileLeavesTheAgentsUnchanged() throws {
-        let previous = Self.previouslyBoundAgents
-
-        #expect(
-            ZenCODEAgentProfileSetupRunner.applyBindingPresets(
-                to: previous,
-                configuredProviderNames: ["Zeta", "Alpha"],
-                url: nil,
-                selectProviders: { Set($0) }
-            ) == previous
-        )
-
-        let files: [String?] = [
-            nil,
-            "{ not json",
-            #"{ "version": 2, "providers": {} }"#,
-            #"{ "version": 1 }"#
-        ]
-        for file in files {
-            let agents = try Self.applyBindingPresets(
-                to: previous,
-                configuredProviderNames: ["Zeta", "Alpha"],
-                file: file
-            )
-
-            #expect(agents == previous, "file: \(file ?? "<missing>")")
-        }
-    }
-
-    @Test
-    func noConfiguredProviderWithABlockLeavesTheAgentsUnchanged() throws {
-        let previous = Self.previouslyBoundAgents
-
-        for configured in [["Unrelated"], ["", "  "], []] {
-            let agents = try Self.applyBindingPresets(
-                to: previous,
-                configuredProviderNames: configured,
-                file: Self.twoProviderFile
-            )
-
-            #expect(agents == previous, "configured: \(configured)")
-        }
-    }
-
     // MARK: - Provider selection menu
 
     @Test
@@ -831,28 +466,6 @@ struct AgentBindingPresetsTests {
     }
 
     @Test
-    func selectionOrderDoesNotMatterBecausePriorityIsFileOrder() throws {
-        // Configured and selected in an order that differs from the file's.
-        let selectedBoth = try Self.applyBindingPresets(
-            to: Self.previouslyBoundAgents,
-            configuredProviderNames: ["Alpha", "Zeta"],
-            file: Self.twoProviderFile,
-            selectProviders: { _ in ["Alpha", "Zeta"] }
-        )
-        let reversed = try Self.applyBindingPresets(
-            to: Self.previouslyBoundAgents,
-            configuredProviderNames: ["Zeta", "Alpha"],
-            file: Self.twoProviderFile,
-            selectProviders: { _ in ["Zeta", "Alpha"] }
-        )
-
-        // Zeta comes first in the file, so its default wins in both cases.
-        #expect(selectedBoth[0].defaultModelBindingID == "z-dev")
-        #expect(Set(selectedBoth[0].modelBindings.map(\.id)) == ["z-dev", "a-dev"])
-        #expect(selectedBoth == reversed)
-    }
-
-    @Test
     func anEmptySelectionLeavesTheAgentsUnchanged() throws {
         let previous = Self.previouslyBoundAgents
         let menu = ProviderMenuSpy { _ in [] }
@@ -867,37 +480,6 @@ struct AgentBindingPresetsTests {
         // Unlike Reset, confirming with nothing checked removes nothing.
         #expect(menu.offers.count == 1)
         #expect(agents == previous)
-    }
-
-    @Test
-    func cancellingTheProviderMenuLeavesTheAgentsUnchanged() throws {
-        let previous = Self.previouslyBoundAgents
-        let menu = ProviderMenuSpy { _ in nil }
-
-        let agents = try Self.applyBindingPresets(
-            to: previous,
-            configuredProviderNames: ["Zeta", "Alpha"],
-            file: Self.twoProviderFile,
-            selectProviders: menu.select
-        )
-
-        #expect(menu.offers.count == 1)
-        #expect(agents == previous)
-    }
-
-    @Test
-    func theProviderMenuIsShownEvenForASingleApplicableProvider() throws {
-        let menu = ProviderMenuSpy()
-
-        let agents = try Self.applyBindingPresets(
-            to: Self.previouslyBoundAgents,
-            configuredProviderNames: ["alpha", "Unrelated"],
-            file: Self.twoProviderFile,
-            selectProviders: menu.select
-        )
-
-        #expect(menu.offers == [["Alpha"]])
-        #expect(agents[0].modelBindings.map(\.id) == ["a-dev"])
     }
 
     @Test

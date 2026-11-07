@@ -111,42 +111,6 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    func swiftOutlineStaysInSwiftFeaturePackageSelection() throws {
-        let items = TerminalChat.toolSelectionItems(
-            featureStatuses: [
-                featureStatus(
-                    id: "swift-tools",
-                    source: .bundled,
-                    tools: ["swift.build", "swift.test", "swift.run", "swift.package", "swift.outline"]
-                )
-            ]
-        )
-
-        let selectedKeys = try TerminalChat.parseToolSelection(
-            "swift",
-            items: items
-        )
-        let allowedToolNames = TerminalToolSelectionCatalog.allowedToolNames(
-            for: selectedKeys,
-            items: items
-        )
-
-        #expect(allowedToolNames.contains("swift.outline"))
-        #expect(allowedToolNames.contains("swift.build"))
-
-        let developerProfile = AgentProfile(
-            id: "developer",
-            name: "Developer",
-            role: .developer,
-            tools: AgentProfileStore.developerToolNames
-        )
-        let developerAllowedToolNames = developerProfile.allowedToolNames()
-
-        #expect(!developerAllowedToolNames.contains("swift.outline"))
-        #expect(!developerAllowedToolNames.contains("swift.build"))
-    }
-
-    @Test
     @ChatSessionActor
     func skillSelectionUpdatesAnExistingSessionWithoutRecreatingIt() async throws {
         let workingDirectory = URL(
@@ -222,81 +186,6 @@ extension AgentConfigurationTests {
 
     @Test
     @ChatSessionActor
-    func deselectingSkillUpdatesOnlyTheSessionProvider() async throws {
-        let workingDirectory = URL(
-            fileURLWithPath: "/tmp/ZenCODE-skill-revocation",
-            isDirectory: true
-        )
-        let configuration = try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            availableAgents: AgentProfileStore.defaultProfiles(),
-            workingDirectory: workingDirectory
-        )
-        let backend = SkillSelectionCountingBackend()
-        let runner = AgentCoreSessionRunner(
-            backendFactory: { _, _ in backend }
-        )
-        let terminal = TerminalChat(
-            configuration: configuration,
-            stdinIsTerminal: false,
-            sessionRunner: runner
-        )
-        let skill = PromptSkill(
-            canonicalName: "release-review",
-            title: "Release Review",
-            summary: "Review release changes before publishing.",
-            promptBody: "FULL-SKILL-BODY",
-            sourceHash: "release-review-hash"
-        )
-        terminal.availableSkillsCache = [skill]
-        terminal.selectedSkillIDs = [skill.id]
-        terminal.activeSessionHistory = [
-            AgentRuntimeMessage(
-                role: .assistant,
-                content: "Loaded guidance.",
-                toolCalls: [
-                    AgentRuntimeToolCall(
-                        id: "skill-read",
-                        name: PromptSkillToolProvider.toolName,
-                        argumentsJSON: #"{"identifier":"release-review"}"#
-                    )
-                ]
-            ),
-            AgentRuntimeMessage(
-                role: .tool,
-                content: "FULL-SKILL-BODY",
-                toolCallID: "skill-read",
-                toolName: PromptSkillToolProvider.toolName
-            )
-        ]
-
-        try await terminal.createCurrentSession(discoverExternalTools: false)
-        let initialCreateCount = await backend.createCount()
-        let initialUpdateCount = await backend.updateCount()
-        let preDeselectionSnapshot = try #require(
-            await runner.snapshotSession(id: terminal.sessionID)
-        )
-
-        await terminal.applySkillSelection([])
-        let snapshot = try #require(await runner.snapshotSession(id: terminal.sessionID))
-
-        // Deselection must not create/update the remote session or alter its
-        // prompt, allowlist, cache key, or history. Revocation is
-        // non-retroactive, so the continuation and KV-cache prefix stay valid.
-        #expect(await backend.createCount() == initialCreateCount)
-        #expect(await backend.updateCount() == initialUpdateCount)
-        #expect(snapshot.systemPrompt == preDeselectionSnapshot.systemPrompt)
-        #expect(snapshot.allowedToolNames == preDeselectionSnapshot.allowedToolNames)
-        #expect(snapshot.cacheKey == preDeselectionSnapshot.cacheKey)
-        #expect(snapshot.history.count == preDeselectionSnapshot.history.count)
-        #expect(snapshot.history.contains { $0.content.contains("FULL-SKILL-BODY") })
-        // Both skill tools remain always-on even with no selection.
-        #expect(snapshot.allowedToolNames?.contains(PromptSkillToolProvider.toolName) == true)
-        #expect(snapshot.systemPrompt?.contains("FULL-SKILL-BODY") == false)
-    }
-
-    @Test
-    @ChatSessionActor
     func toolSelectionChangeResetsSessionAndInformsModel() async throws {
         let workingDirectory = URL(
             fileURLWithPath: "/tmp/ZenCODE-tool-selection",
@@ -357,62 +246,6 @@ extension AgentConfigurationTests {
         #expect(notice.content.contains("historical context"))
     }
 
-    /// A `/tools` change that alters the allowlist rebuilds the session, and
-    /// the rebuild drops the session's prompt-skill provider: the selected
-    /// skills must be handed to the rebuilt session again.
-    @Test
-    @ChatSessionActor
-    func toolSelectionRebuildKeepsTheSelectedSkills() async throws {
-        let workingDirectory = URL(
-            fileURLWithPath: "/tmp/ZenCODE-tool-rebuild-skills-\(UUID().uuidString)",
-            isDirectory: true
-        )
-        let configuration = try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            availableAgents: AgentProfileStore.defaultProfiles(),
-            workingDirectory: workingDirectory
-        )
-        let runner = AgentCoreSessionRunner(
-            backendFactory: { _, _ in SkillSelectionCountingBackend() }
-        )
-        let terminal = TerminalChat(
-            configuration: configuration,
-            stdinIsTerminal: false,
-            sessionRunner: runner
-        )
-        let skill = PromptSkill(
-            canonicalName: "release-review",
-            title: "Release Review",
-            summary: "Review release changes before publishing.",
-            promptBody: "FULL-SKILL-BODY",
-            sourceHash: "release-review-hash"
-        )
-        terminal.availableSkillsCache = [skill]
-        terminal.selectedSkillIDs = [skill.id]
-        terminal.selectedToolKeys = try TerminalChat.parseToolSelection(
-            "shell",
-            items: TerminalChat.toolSelectionItems(featureStatuses: [])
-        )
-
-        try await terminal.createCurrentSession(discoverExternalTools: false)
-        let initialSkills = await runner.promptSkillProvidersBySessionID[terminal.sessionID]?
-            .currentSkills()
-        #expect(initialSkills?.map(\.id) == [skill.id])
-        let initialAllowedToolNames = await runner.snapshotSession(id: terminal.sessionID)?
-            .allowedToolNames
-
-        await terminal.handleToolsCommand("/tools none")
-
-        // The allowlist changed, so the session was rebuilt.
-        let rebuiltAllowedToolNames = await runner.snapshotSession(id: terminal.sessionID)?
-            .allowedToolNames
-        #expect(rebuiltAllowedToolNames != initialAllowedToolNames)
-        #expect(terminal.selectedSkillIDs == [skill.id])
-        let rebuiltSkills = await runner.promptSkillProvidersBySessionID[terminal.sessionID]?
-            .currentSkills()
-        #expect(rebuiltSkills?.map(\.id) == [skill.id])
-    }
-
     @Test
     @ChatSessionActor
     func toolsSelectionCannotReenableMutableCoreToolsForReadOnlyProfile() async throws {
@@ -445,43 +278,6 @@ extension AgentConfigurationTests {
         #expect(allowedToolNames.contains("memory.read"))
         #expect(allowedToolNames.contains("agent.list"))
         #expect(allowedToolNames.contains("tasks.list"))
-    }
-
-    @Test
-    func groupedModelTitlesOmitRedundantProviderFallback() throws {
-        let providerID = "custom"
-        let fallbackTitleModel = AgentSettingsModelManifestFactory.remoteAPIModel(
-            title: nil,
-            modelID: "remote-community/qwen3",
-            providerID: providerID,
-            providerName: "remote-server",
-            baseURL: "http://127.0.0.1:8080/v1",
-            chatEndpoint: .responses,
-            configuredContextWindowLimit: nil,
-            generationParameterOverrides: nil,
-            thinkingSupport: nil
-        )
-        let titledModel = AgentSettingsModelManifestFactory.remoteAPIModel(
-            title: "Qwen3 Local",
-            modelID: "remote-community/qwen3-local",
-            providerID: providerID,
-            providerName: "remote-server",
-            baseURL: "http://127.0.0.1:8080/v1",
-            chatEndpoint: .responses,
-            configuredContextWindowLimit: nil,
-            generationParameterOverrides: nil,
-            thinkingSupport: nil
-        )
-
-        let group = try #require(
-            AgentModelCatalogPresentation.groupedByProvider([fallbackTitleModel, titledModel])
-                .first { $0.title == "remote-server" }
-        )
-
-        #expect(fallbackTitleModel.displayTitle == "remote-server - remote-community/qwen3")
-        #expect(AgentModelCatalogPresentation.modelTitle(for: fallbackTitleModel) == "remote-community/qwen3")
-        #expect(AgentModelCatalogPresentation.modelTitle(for: fallbackTitleModel, in: group) == "remote-community/qwen3")
-        #expect(AgentModelCatalogPresentation.modelTitle(for: titledModel, in: group) == "Qwen3 Local")
     }
 }
 

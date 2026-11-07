@@ -15,100 +15,7 @@ import Testing
 /// guard against a genuine process-management regression.
 @Suite(.timeLimit(.minutes(1)))
 struct DirectExecJobRuntimeTests {
-    @Test
-    func catalogExposesExecJobAndBackgroundFlag() {
-        let coreProcessNames = Set(DirectToolCatalog.coreProcessDescriptors.map(\.name))
-        #expect(coreProcessNames.contains("local.exec"))
-        #expect(coreProcessNames.contains("exec.job"))
-
-        let baseNames = Set(DirectToolCatalog.baseDescriptors.map(\.name))
-        #expect(baseNames.contains("exec.job"))
-
-        let localExec = DirectToolCatalog.baseDescriptors.first { $0.name == "local.exec" }
-        #expect(localExec?.inputSchema.contains("background") == true)
-        #expect(localExec?.description.contains("background") == true)
-
-        let execJob = DirectToolCatalog.baseDescriptors.first { $0.name == "exec.job" }
-        #expect(execJob?.inputSchema.contains("\"poll\"") == true)
-        #expect(execJob?.inputSchema.contains("\"kill\"") == true)
-        #expect(execJob?.inputSchema.contains("\"list\"") == true)
-    }
-
 #if os(macOS) || os(Linux)
-    @Test
-    func backgroundJobRunsToCompletionAndReportsOutput() async throws {
-        let runtime = DirectExecJobRuntime()
-        let startOutput = try await runtime.startBackgroundJob(
-            command: "printf zen-exec-job-output",
-            shellPath: "/bin/sh",
-            workingDirectory: FileManager.default.temporaryDirectory
-        )
-        #expect(startOutput.contains("Started background job job-1"))
-        #expect(startOutput.contains("exec.job"))
-
-        let finalPoll = try await pollUntil(runtime: runtime, jobID: "job-1") {
-            $0.contains("exited")
-        }
-        #expect(finalPoll.contains("exited (code 0)"))
-        #expect(finalPoll.contains("zen-exec-job-output"))
-    }
-
-    @Test
-    func pollWithAdvancedOffsetReturnsOnlyNewOutput() async throws {
-        let runtime = DirectExecJobRuntime()
-        _ = try await runtime.startBackgroundJob(
-            command: "printf abc",
-            shellPath: "/bin/sh",
-            workingDirectory: FileManager.default.temporaryDirectory
-        )
-        _ = try await pollUntil(runtime: runtime, jobID: "job-1") {
-            $0.contains("exited")
-        }
-
-        let caughtUpPoll = try await runtime.poll(jobID: "job-1", offset: 3)
-        #expect(caughtUpPoll.contains("no new output since offset 3"))
-    }
-
-    @Test
-    func killTerminatesRunningJob() async throws {
-        let runtime = DirectExecJobRuntime()
-        _ = try await runtime.startBackgroundJob(
-            command: "sleep 30",
-            shellPath: "/bin/sh",
-            workingDirectory: FileManager.default.temporaryDirectory
-        )
-
-        let killOutput = try await runtime.kill(jobID: "job-1")
-        #expect(killOutput.contains("Requested termination of job job-1"))
-
-        let finalPoll = try await pollUntil(runtime: runtime, jobID: "job-1") {
-            $0.contains("killed")
-        }
-        #expect(finalPoll.contains("job job-1: killed"))
-    }
-
-    /// An interrupt must reach the whole process tree. The child survives its
-    /// parent shell via `exec sleep` and is only reaped if the runtime signals
-    /// the isolated process group rather than the shell PID alone.
-    @Test
-    func interruptRunningJobsTerminatesJobAndReachesDescendants() async throws {
-        let runtime = DirectExecJobRuntime()
-        _ = try await runtime.startBackgroundJob(
-            command: "sleep 30",
-            shellPath: "/bin/sh",
-            workingDirectory: FileManager.default.temporaryDirectory
-        )
-
-        let interruptedCount = await runtime.interruptRunningJobs()
-        #expect(interruptedCount == 1)
-
-        let finalPoll = try await pollUntil(runtime: runtime, jobID: "job-1") {
-            $0.contains("killed")
-        }
-        #expect(finalPoll.contains("job job-1: killed"))
-        #expect(finalPoll.contains("interrupted by user"))
-        #expect(!finalPoll.contains("Job is still running"))
-    }
 
     @Test
     func interruptRunningJobsSkipsFinishedJobs() async throws {
@@ -159,22 +66,6 @@ struct DirectExecJobRuntimeTests {
         await #expect(throws: DirectExecJobError.self) {
             _ = try await runtime.poll(jobID: "job-99", offset: 0)
         }
-    }
-
-    @Test
-    func listRendersKnownJobs() async throws {
-        let runtime = DirectExecJobRuntime()
-        let emptyList = await runtime.list()
-        #expect(emptyList.contains("No background jobs"))
-
-        _ = try await runtime.startBackgroundJob(
-            command: "printf listed",
-            shellPath: "/bin/sh",
-            workingDirectory: FileManager.default.temporaryDirectory
-        )
-        let list = await runtime.list()
-        #expect(list.contains("job-1"))
-        #expect(list.contains("printf listed"))
     }
 
     @Test

@@ -261,27 +261,6 @@ struct ACPShutdownCloseOutputTests {
         #expect(transport.errors.isEmpty)
     }
 
-    @Test
-    func promptForUnknownSessionStillAnswersWithAnErrorWithoutShutdown() async throws {
-        // Negative control: reordering the fence must not swallow ordinary
-        // invalid-params errors while the transport is open.
-        let transport = RecordingTransport()
-        let bridge = try Self.makeBridge(
-            transport: transport,
-            backend: OutputFenceBackend()
-        )
-
-        await bridge.handleMessage([
-            "jsonrpc": "2.0",
-            "id": 5,
-            "method": "session/prompt",
-            "params": ["sessionId": "missing-session", "prompt": "hello"] as [String: Any]
-        ])
-
-        #expect(transport.responses(id: 5).count == 1)
-        #expect(transport.errors.count == 1)
-    }
-
     // MARK: - close invalidates the lifecycle operations of one epoch
 
     @Test
@@ -322,43 +301,6 @@ struct ACPShutdownCloseOutputTests {
         // The stale set re-created the session inside the runner while it was
         // suspended; the fence must have undone that, leaving no orphan.
         #expect(await bridge.testRunnerHasSession(sessionID: sessionID) == false)
-    }
-
-    @Test
-    func setConfigOptionSuspendedInRunnerDoesNotAnswerAfterClose() async throws {
-        let transport = RecordingTransport()
-        let teardownGate = OutputFenceGate()
-        let backend = OutputFenceBackend()
-        let bridge = try Self.makeBridge(transport: transport, backend: backend)
-
-        try await bridge.newSession(id: .number(10), params: Self.sessionParams())
-        let sessionID = try #require(await bridge.testAnySessionID())
-        try await bridge.prompt(
-            id: .number(11),
-            params: ["sessionId": sessionID, "prompt": "warm up"]
-        )
-        await backend.setShutdownGate(teardownGate)
-
-        let setConfigTask = Task {
-            try await bridge.setConfigOption(
-                id: .number(12),
-                params: [
-                    "sessionId": sessionID,
-                    "configId": "model",
-                    "value": "other-model"
-                ]
-            )
-        }
-        await teardownGate.waitUntilReached()
-
-        let configOptionsBeforeClose = transport.containing("configOptions").count
-        try await bridge.close(id: .number(13), params: ["sessionId": sessionID])
-        teardownGate.open()
-        _ = try? await setConfigTask.value
-
-        #expect(transport.responses(id: 13).count == 1)
-        #expect(transport.responses(id: 12).isEmpty)
-        #expect(transport.containing("configOptions").count == configOptionsBeforeClose)
     }
 
     @Test

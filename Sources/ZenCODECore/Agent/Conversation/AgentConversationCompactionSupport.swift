@@ -192,29 +192,6 @@ public enum AgentConversationCompactionSupport {
         return String(systemPrompt[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Per-search instrumentation; never shared globally or persisted.
-    internal final class SearchDiagnostics {
-        var budgetPasses = 0
-        var uniqueSuffixCount = 0
-        var feasibleSuffixCount = 0
-        var renderedCandidates: [(summaryLimit: Int, recentCount: Int)] = []
-    }
-
-    internal static func searchForTesting(
-        messages: [AgentRuntimeMessage],
-        targetTokenCount: Int,
-        allowsFallbackBeyondTarget: Bool,
-        diagnostics: SearchDiagnostics
-    ) -> [AgentRuntimeMessage]? {
-        bestCandidate(
-            messages: messages,
-            targetTokenCount: targetTokenCount,
-            rawTokenCount: estimatedTokenCount(for: messages),
-            allowsFallbackBeyondTarget: allowsFallbackBeyondTarget,
-            diagnostics: diagnostics
-        )?.messages
-    }
-
     private struct Candidate {
         var messages: [AgentRuntimeMessage]
         var estimatedTokenCount: Int
@@ -232,8 +209,7 @@ public enum AgentConversationCompactionSupport {
         messages: [AgentRuntimeMessage],
         targetTokenCount: Int,
         rawTokenCount: Int,
-        allowsFallbackBeyondTarget: Bool,
-        diagnostics: SearchDiagnostics? = nil
+        allowsFallbackBeyondTarget: Bool
     ) -> Candidate? {
         let split = splitSystemPrompt(from: messages)
         let conversationMessages = split.conversationMessages
@@ -279,8 +255,6 @@ public enum AgentConversationCompactionSupport {
         let feasibleCounts = Set(recentCounts.filter { count in
             Int((Double(fixedCharacters + suffixCharacters[count]) / 4.0).rounded(.up)) <= targetTokenCount
         })
-        diagnostics?.uniqueSuffixCount = recentCounts.count
-        diagnostics?.feasibleSuffixCount = feasibleCounts.count
 
         func retainAsFallback(_ candidate: Candidate) {
             // A fallback must keep the material-progress invariant of a fitting candidate.
@@ -305,7 +279,6 @@ public enum AgentConversationCompactionSupport {
                 return nil
             }
 
-            diagnostics?.renderedCandidates.append((summaryLimit, recentMessageCount))
             let splitIndex = conversationMessages.count - recentMessageCount
             guard splitIndex > 0 else {
                 return nil
@@ -338,7 +311,6 @@ public enum AgentConversationCompactionSupport {
         }
 
         while true {
-            diagnostics?.budgetPasses += 1
             for count in recentCounts {
                 let needsFallback = allowsFallbackBeyondTarget
                     && summaryCharacterLimit == preferredSummaryCharacterLimit

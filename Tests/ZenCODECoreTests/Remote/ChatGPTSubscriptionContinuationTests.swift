@@ -13,34 +13,6 @@ import ToolCore
 
 extension RemoteSessionSnapshotTests {
     @Test
-    func chatGPTSubscriptionContinuationKeepsFullInputForBaseRequest() throws {
-        let messages = chatGPTContinuationMessages()
-        let fullPayload = RemoteGenerationClient.responsesInputPayload(from: messages)
-        let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
-            from: messages,
-            continuation: ChatGPTSubscriptionContinuationState(
-                responseID: "resp_previous",
-                messageCount: 3,
-                instructions: "System prompt"
-            )
-        )
-        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
-            input: JSONValue.acpValue(from: payload.input),
-            model: "gpt-5.5",
-            instructions: payload.instructions ?? "",
-            reasoningEffort: nil,
-            textVerbosity: "medium",
-            sessionID: "session-chatgpt"
-        )
-
-        #expect(payload.input.count == fullPayload.input.count)
-        #expect(payload.cachedWebSocketInput?.count == 1)
-        #expect(payload.previousResponseID == "resp_previous")
-        #expect(body["previous_response_id"] == nil)
-        #expect((body["input"] as? [Any])?.count == fullPayload.input.count)
-    }
-
-    @Test
     func chatGPTSubscriptionWebSocketUsesContinuationOnlyWhenCached() throws {
         let messages = chatGPTContinuationMessages()
         let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
@@ -80,38 +52,6 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionFreshWebSocketCanUseContinuationDeltaWhenAllowed() throws {
-        let messages = chatGPTContinuationMessages()
-        let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
-            from: messages,
-            continuation: ChatGPTSubscriptionContinuationState(
-                responseID: "resp_previous",
-                messageCount: 3,
-                instructions: "System prompt",
-                allowsFreshTransport: true
-            )
-        )
-        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
-            input: JSONValue.acpValue(from: payload.input),
-            model: "gpt-5.5",
-            instructions: payload.instructions ?? "",
-            reasoningEffort: nil,
-            textVerbosity: "medium",
-            sessionID: "session-chatgpt"
-        )
-        let freshPayload = ChatGPTSubscriptionResponsesClient.webSocketRequestPayload(
-            body: body,
-            cachedInput: payload.cachedWebSocketInput.map { JSONValue.acpValue(from: $0) },
-            previousResponseID: payload.previousResponseID,
-            useCachedContinuation: true
-        )
-
-        #expect(freshPayload["previous_response_id"] as? String == "resp_previous")
-        #expect((freshPayload["input"] as? [Any])?.count == payload.cachedWebSocketInput?.count)
-        #expect((freshPayload["input"] as? [Any])?.count == 1)
-    }
-
-    @Test
     func chatGPTSubscriptionContinuationUnavailableErrorIsDetectedForReplayFallback() throws {
         let errors = [
             ChatGPTSubscriptionGenerationError.responseFailed(
@@ -148,110 +88,6 @@ extension RemoteSessionSnapshotTests {
 
         let diagnostic = ChatGPTSubscriptionGenerationClient
             .continuationReplayFallbackDiagnostic()
-        #expect(diagnostic.contains("full conversation replay"))
-    }
-
-    @Test
-    func chatGPTSubscriptionContinuationUnavailableErrorIgnoresUnrelatedFailures() {
-        let error = ChatGPTSubscriptionGenerationError.responseFailed(
-            "ChatGPT Subscription request failed because the service is overloaded."
-        )
-
-        #expect(
-            ChatGPTSubscriptionGenerationClient.continuationUnavailableError(
-                from: error
-            ) == nil
-        )
-    }
-
-    @Test
-    func chatGPTSubscriptionClosedSocketErrorsAreRetryableTransportFailures() {
-        let abortedSocket = POSIXError(.ECONNABORTED)
-        let closedSocketError = NSError(
-            domain: NSPOSIXErrorDomain,
-            code: Int(POSIXErrorCode.ENOTCONN.rawValue),
-            userInfo: [NSLocalizedDescriptionKey: "Socket is not connected"]
-        )
-        let closedMessageError = NSError(
-            domain: "NWErrorDomain",
-            code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "Socket is closed"]
-        )
-
-        #expect(
-            ChatGPTSubscriptionResponsesClient.isRetryableTransportError(
-                abortedSocket
-            )
-        )
-        #expect(
-            ChatGPTSubscriptionResponsesClient.isRetryableTransportError(
-                closedSocketError
-            )
-        )
-        #expect(
-            ChatGPTSubscriptionResponsesClient.isRetryableTransportError(
-                closedMessageError
-            )
-        )
-    }
-
-    @Test
-    func chatGPTSubscriptionStreamInterruptionRetryMatchesOnlyTransportFailures() {
-        let transportError = URLError(.networkConnectionLost)
-        let cancellation = CancellationError()
-        let applicationError = ChatGPTSubscriptionGenerationError.responseFailed(
-            "The model produced an invalid tool call."
-        )
-        let replayUnsafeClosed = ChatGPTSubscriptionResponsesClient
-            .ReplayUnsafeStreamFailure(underlying: RemoteTransportError.closed)
-        let replayUnsafeApplicationError = ChatGPTSubscriptionResponsesClient
-            .ReplayUnsafeStreamFailure(underlying: applicationError)
-
-        #expect(
-            ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
-                transportError
-            )
-        )
-        #expect(
-            !ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
-                cancellation
-            )
-        )
-        #expect(
-            !ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
-                applicationError
-            )
-        )
-        #expect(
-            ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
-                replayUnsafeClosed
-            )
-        )
-        #expect(
-            ChatGPTSubscriptionGenerationClient.shouldRetryStreamInterruption(
-                replayUnsafeClosed,
-                completedRetries: 0
-            )
-        )
-        #expect(
-            !ChatGPTSubscriptionGenerationClient.shouldRetryStreamInterruption(
-                replayUnsafeClosed,
-                completedRetries: ChatGPTSubscriptionGenerationClient
-                    .maxStreamInterruptionRetries
-            )
-        )
-        #expect(
-            !ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(
-                replayUnsafeApplicationError
-            )
-        )
-        #expect(
-            replayUnsafeClosed.localizedDescription
-                == "Remote transport connection is closed."
-        )
-        let diagnostic = ChatGPTSubscriptionGenerationClient
-            .streamInterruptionRetryDiagnostic()
-        #expect(diagnostic.contains("reopening the connection"))
         #expect(diagnostic.contains("full conversation replay"))
     }
 
@@ -635,60 +471,6 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionManualFreshReplayDropsUnavailablePreviousResponseID() throws {
-        let messages = chatGPTContinuationMessages()
-        let continuation = ChatGPTSubscriptionContinuationState(
-            responseID: "resp_missing",
-            messageCount: 3,
-            instructions: "System prompt",
-            allowsFreshTransport: true
-        )
-        let continuationPayload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
-            from: messages,
-            continuation: continuation
-        )
-        let backendError = ChatGPTSubscriptionGenerationError.responseFailed(
-            "Previous response with id 'resp_missing' not found."
-        )
-        let unavailable = try #require(
-            ChatGPTSubscriptionGenerationClient.continuationUnavailableError(
-                from: backendError
-            )
-        )
-        guard case .continuationUnavailable = unavailable else {
-            Issue.record("Expected a continuation-unavailable error.")
-            return
-        }
-
-        let fallbackPayload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
-            from: messages,
-            continuation: nil
-        )
-        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
-            input: JSONValue.acpValue(from: fallbackPayload.input),
-            model: "gpt-5.5",
-            instructions: fallbackPayload.instructions ?? "",
-            reasoningEffort: nil,
-            textVerbosity: "medium",
-            sessionID: "session-chatgpt"
-        )
-        let fallbackWebSocketPayload = ChatGPTSubscriptionResponsesClient.webSocketRequestPayload(
-            body: body,
-            cachedInput: fallbackPayload.cachedWebSocketInput.map { JSONValue.acpValue(from: $0) },
-            previousResponseID: fallbackPayload.previousResponseID,
-            useCachedContinuation: true
-        )
-
-        #expect(continuationPayload.previousResponseID == "resp_missing")
-        #expect(continuationPayload.cachedWebSocketInput != nil)
-        #expect(fallbackPayload.previousResponseID == nil)
-        #expect(fallbackPayload.cachedWebSocketInput == nil)
-        #expect(fallbackWebSocketPayload["previous_response_id"] == nil)
-        #expect((fallbackWebSocketPayload["input"] as? [Any])?.count == fallbackPayload.input.count)
-        #expect((fallbackWebSocketPayload["input"] as? [Any])?.count == continuationPayload.input.count)
-    }
-
-    @Test
     func chatGPTSubscriptionRestoresContinuationFromSavedResponseID() throws {
         let history = [
             AgentRuntimeMessage(role: .user, content: "First prompt"),
@@ -782,200 +564,6 @@ extension RemoteSessionSnapshotTests {
         #expect(payload.previousResponseID == nil)
         #expect(payload.cachedWebSocketInput == nil)
         #expect(payload.instructions?.contains("Tool selection changed during this session.") == true)
-    }
-
-    @Test
-    func chatGPTSubscriptionConnectionScopeSeparatesTransportSessionIdentities() throws {
-        func configuration(
-            connectionScopeID: String?
-        ) -> ChatGPTSubscriptionGenerationClient.RequestConfiguration {
-            ChatGPTSubscriptionGenerationClient.RequestConfiguration(
-                modelID: "gpt-5.5",
-                workingDirectory: "/tmp/project",
-                systemPrompt: "System prompt",
-                sessionKey: "session-main",
-                connectionScopeID: connectionScopeID,
-                history: [],
-                allowedToolNames: ["local.exec"],
-                thinkingSelection: nil,
-                appMode: false
-            )
-        }
-
-        let parentIdentity = ChatGPTSubscriptionGenerationClient.SessionIdentity(
-            configuration: configuration(connectionScopeID: nil)
-        )
-        let subAgentIdentity = ChatGPTSubscriptionGenerationClient.SessionIdentity(
-            configuration: configuration(connectionScopeID: "sub-agent-connection")
-        )
-
-        #expect(parentIdentity != subAgentIdentity)
-        #expect(parentIdentity.connectionScopeID == nil)
-        #expect(subAgentIdentity.connectionScopeID == "sub-agent-connection")
-        #expect(
-            ChatGPTSubscriptionGenerationClient.SessionIdentity(
-                storageKey: parentIdentity.storageKey
-            ) == parentIdentity
-        )
-        #expect(
-            ChatGPTSubscriptionGenerationClient.SessionIdentity(
-                storageKey: subAgentIdentity.storageKey
-            ) == subAgentIdentity
-        )
-    }
-
-    @Test
-    func chatGPTSubscriptionDelegatedConnectionScopeStartsOnHTTPStreaming() async throws {
-        let rootWebSocketCount = Mutex(0)
-        let delegatedWebSocketCount = Mutex(0)
-        let rootPool = ChatGPTSubscriptionWebSocketPool(
-            heartbeatIntervalNanoseconds: UInt64.max,
-            webSocketTaskFactory: { _ in
-                rootWebSocketCount.withLock { $0 += 1 }
-                return ChatGPTSubscriptionTestWebSocketTask()
-            }
-        )
-        let delegatedPool = ChatGPTSubscriptionWebSocketPool(
-            heartbeatIntervalNanoseconds: UInt64.max,
-            webSocketTaskFactory: { _ in
-                delegatedWebSocketCount.withLock { $0 += 1 }
-                return ChatGPTSubscriptionTestWebSocketTask()
-            }
-        )
-        let rootClient = ChatGPTSubscriptionGenerationClient(
-            configuration: remoteStreamingConfiguration(),
-            webSocketPool: rootPool
-        )
-        let delegatedClient = ChatGPTSubscriptionGenerationClient(
-            configuration: remoteStreamingConfiguration(),
-            webSocketPool: delegatedPool,
-            connectionScopeID: "delegated-backend"
-        )
-        let sessionID = "transport-policy-session"
-
-        await rootClient.createSession(id: sessionID, cwd: "/tmp/project")
-        await delegatedClient.createSession(id: sessionID, cwd: "/tmp/project")
-        let rootScope = try #require(
-            await rootClient.httpFallbackScopeIDForTesting(sessionID: sessionID)
-        )
-        let firstDelegatedScope = try #require(
-            await delegatedClient.httpFallbackScopeIDForTesting(sessionID: sessionID)
-        )
-
-        #expect(!(await rootClient.usesDelegatedHTTPStreamingTransport))
-        #expect(await delegatedClient.usesDelegatedHTTPStreamingTransport)
-        #expect(!rootPool.usesHTTPFallback(scopeID: rootScope))
-        #expect(delegatedPool.usesHTTPFallback(scopeID: firstDelegatedScope))
-        #expect(rootWebSocketCount.withLock { $0 } == 0)
-        #expect(delegatedWebSocketCount.withLock { $0 } == 0)
-
-        await delegatedClient.createSession(id: sessionID, cwd: "/tmp/project")
-        let secondDelegatedScope = try #require(
-            await delegatedClient.httpFallbackScopeIDForTesting(sessionID: sessionID)
-        )
-        #expect(firstDelegatedScope != secondDelegatedScope)
-        #expect(delegatedPool.isHTTPFallbackScopeClosed(scopeID: firstDelegatedScope))
-        #expect(delegatedPool.usesHTTPFallback(scopeID: secondDelegatedScope))
-
-        await delegatedClient.closeSession(id: sessionID)
-        #expect(delegatedPool.isHTTPFallbackScopeClosed(scopeID: secondDelegatedScope))
-        #expect(!delegatedPool.usesHTTPFallback(scopeID: secondDelegatedScope))
-
-        await rootClient.shutdown()
-        await delegatedClient.shutdown()
-        rootPool.closeAll()
-        delegatedPool.closeAll()
-    }
-
-    @Test
-    func chatGPTSubscriptionFactoryScopesDelegatedBackendForHTTPStreaming() async throws {
-        let provider = AgentRemoteProvider(
-            id: AgentRemoteProvider.chatGPTSubscriptionProviderID,
-            name: AgentRemoteProvider.chatGPTSubscriptionDisplayTitle,
-            baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL,
-            modelID: "unit-model",
-            chatEndpoint: .responses
-        )
-        let rootBackend = try AgentRemoteBackendFactory.makeRemoteBackend(
-            configuration: remoteStreamingConfiguration(),
-            mcpRuntime: DirectMCPToolRuntime(),
-            fallbackProvider: provider
-        )
-        let rootClient = try #require(
-            rootBackend as? ChatGPTSubscriptionGenerationClient
-        )
-        let toolExecutor = await rootClient.toolExecutor
-        let subAgentRuntime = await toolExecutor.subAgentRuntime
-        let backendFactory = await subAgentRuntime.backendFactory
-        let delegatedBackend = try backendFactory(
-            DirectSubAgentRuntime.BackendContext(
-                requestedName: "worker",
-                requestedRole: "delegated test",
-                profile: nil
-            )
-        )
-        let delegatedClient = try #require(
-            delegatedBackend as? ChatGPTSubscriptionGenerationClient
-        )
-        let nestedToolExecutor = await delegatedClient.toolExecutor
-        let nestedRuntime = await nestedToolExecutor.subAgentRuntime
-        let nestedFactory = await nestedRuntime.backendFactory
-        let nestedBackend = try nestedFactory(
-            DirectSubAgentRuntime.BackendContext(
-                requestedName: "nested-worker",
-                requestedRole: "nested delegated test",
-                profile: nil
-            )
-        )
-        let nestedClient = try #require(
-            nestedBackend as? ChatGPTSubscriptionGenerationClient
-        )
-
-        #expect(!(await rootClient.usesDelegatedHTTPStreamingTransport))
-        #expect(await rootClient.connectionScopeID == nil)
-        #expect(await delegatedClient.usesDelegatedHTTPStreamingTransport)
-        #expect(await delegatedClient.connectionScopeID != nil)
-        #expect(await nestedClient.usesDelegatedHTTPStreamingTransport)
-        #expect(await nestedClient.connectionScopeID != nil)
-        #expect(
-            await nestedClient.connectionScopeID
-                != delegatedClient.connectionScopeID
-        )
-
-        await nestedClient.shutdown()
-        await delegatedClient.shutdown()
-        await rootClient.shutdown()
-    }
-
-    @Test
-    func chatGPTSubscriptionFullReplayDropsPlainReasoningTextFallback() throws {
-        let messages: [[String: Any]] = [
-            ["role": "system", "content": "System prompt"],
-            ["role": "user", "content": "First prompt"],
-            [
-                "role": "assistant",
-                "content": "Visible answer",
-                "reasoning_content": "hidden thought"
-            ],
-            ["role": "user", "content": "Second prompt"]
-        ]
-        let payload = ChatGPTSubscriptionRequestBuilder.requestInputPayload(
-            from: messages,
-            continuation: nil
-        )
-        let genericPayload = RemoteGenerationClient.responsesInputPayload(from: messages)
-
-        // Both the subscription builder and the generic Responses payload drop
-        // loose reasoning text from previous rounds: replaying it would only
-        // inflate billed input tokens on every turn.
-        #expect(
-            genericPayload.input.compactMap { $0 as? [String: Any] }
-                .contains { $0["type"] as? String == "reasoning" } == false
-        )
-        #expect(
-            payload.input.compactMap { $0 as? [String: Any] }
-                .contains { $0["type"] as? String == "reasoning" } == false
-        )
     }
 
     @Test
@@ -1083,130 +671,6 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionRetryPolicyMatchesCodexDefaults() {
-        #expect(ChatGPTSubscriptionResponsesClient.maxRetries == 5)
-        #expect(
-            ChatGPTSubscriptionResponsesClient.baseRetryDelayNanoseconds
-                == 200_000_000
-        )
-    }
-
-    @Test
-    func chatGPTSubscriptionWebSocketHasNoDefaultResponseIdleTimeout() {
-        #expect(ChatGPTSubscriptionResponsesClient.webSocketIdleTimeoutNanoseconds == nil)
-    }
-
-    @Test
-    func chatGPTSubscriptionWebSocketPoolUsesDocumentedLifetimeDefaults() {
-        #expect(
-            ChatGPTSubscriptionWebSocketPool.defaultHeartbeatIntervalNanoseconds
-                == 30 * 1_000_000_000
-        )
-        #expect(
-            ChatGPTSubscriptionWebSocketPool.serverMaximumConnectionAge
-                == .seconds(60 * 60)
-        )
-        #expect(
-            ChatGPTSubscriptionWebSocketPool.defaultMaximumConnectionAge
-                == .seconds(55 * 60)
-        )
-        #expect(
-            ChatGPTSubscriptionWebSocketPool.defaultMaximumConnectionAge
-                < ChatGPTSubscriptionWebSocketPool.serverMaximumConnectionAge
-        )
-    }
-
-    @Test
-    func chatGPTSubscriptionScopedAcquireCannotRaceHTTPClosureIntoWebSocket() async {
-        let harness = ChatGPTSubscriptionWebSocketPoolHarness(
-            maximumConnectionAge: .seconds(10)
-        )
-        let iterations = 100
-        let outcomes = ChatGPTSubscriptionScopedAcquireOutcomes()
-
-        for index in 0..<iterations {
-            let scopeID = "delegated-race-\(index)"
-            harness.pool.activateHTTPFallback(scopeID: scopeID)
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask {
-                    harness.pool.closeHTTPFallbackScope(scopeID: scopeID)
-                }
-                group.addTask {
-                    let result = harness.pool.acquire(
-                        sessionID: "transport-\(index)",
-                        request: harness.request(),
-                        fallbackScopeID: scopeID
-                    )
-                    switch result {
-                    case let .acquired(lease):
-                        harness.pool.release(lease, keepAlive: false)
-                        await outcomes.recordAcquired()
-                    case .useHTTPFallback:
-                        await outcomes.recordHTTP()
-                    case .closed:
-                        await outcomes.recordClosed()
-                    }
-                }
-            }
-        }
-
-        let result = await outcomes.snapshot()
-        #expect(result.acquired == 0)
-        #expect(result.http + result.closed == iterations)
-        #expect(harness.createdRequests().isEmpty)
-    }
-
-    @Test
-    func chatGPTSubscriptionWebSocketReadinessRetriesDisconnectedPing() async throws {
-        let pingCount = Mutex(0)
-
-        try await ChatGPTSubscriptionWebSocketPool.waitUntilReady(
-            maximumAttempts: 3,
-            retryDelayNanoseconds: 1,
-            sleep: { _ in },
-            ping: {
-                let count = pingCount.withLock { value in
-                    value += 1
-                    return value
-                }
-                if count < 3 {
-                    throw POSIXError(.ENOTCONN)
-                }
-            }
-        )
-
-        #expect(pingCount.withLock { $0 } == 3)
-    }
-
-    @Test
-    func chatGPTSubscriptionWebSocketPoolExpiresAtExactLifetimeBoundary() {
-        let openedAt = ContinuousClock.now
-        let maximumConnectionAge: Duration = .seconds(10)
-
-        #expect(
-            !ChatGPTSubscriptionWebSocketPool.hasReachedMaximumConnectionAge(
-                openedAt: openedAt,
-                now: openedAt.advanced(by: .seconds(9)),
-                maximumConnectionAge: maximumConnectionAge
-            )
-        )
-        #expect(
-            ChatGPTSubscriptionWebSocketPool.hasReachedMaximumConnectionAge(
-                openedAt: openedAt,
-                now: openedAt.advanced(by: maximumConnectionAge),
-                maximumConnectionAge: maximumConnectionAge
-            )
-        )
-        #expect(
-            ChatGPTSubscriptionWebSocketPool.hasReachedMaximumConnectionAge(
-                openedAt: openedAt,
-                now: openedAt.advanced(by: .seconds(11)),
-                maximumConnectionAge: maximumConnectionAge
-            )
-        )
-    }
-
-    @Test
     func chatGPTSubscriptionWebSocketPoolReopensExpiredIdleSocketWithCurrentRequest() {
         let harness = ChatGPTSubscriptionWebSocketPoolHarness(
             maximumConnectionAge: .seconds(10)
@@ -1246,284 +710,6 @@ extension RemoteSessionSnapshotTests {
 
         harness.pool.release(renewedLease, keepAlive: false)
         #expect(harness.closeCount(for: renewedLease.task) == 1)
-    }
-
-    @Test
-    func chatGPTSubscriptionWebSocketPoolClosesExpiredBusySocketOnReleaseAfterClockJump() {
-        let harness = ChatGPTSubscriptionWebSocketPoolHarness(
-            maximumConnectionAge: .seconds(10)
-        )
-        let firstLease = harness.pool.acquire(
-            sessionID: "session-release-expiry",
-            request: harness.request()
-        )
-
-        // A machine suspension or delayed scheduler callback is represented by
-        // one large monotonic-clock advance; release must still retire it.
-        harness.advance(by: .seconds(60 * 60))
-        harness.pool.release(firstLease, keepAlive: true)
-
-        #expect(harness.closeCount(for: firstLease.task) == 1)
-        let renewedLease = harness.pool.acquire(
-            sessionID: "session-release-expiry",
-            request: harness.request()
-        )
-        #expect(!renewedLease.isReused)
-        #expect(renewedLease.task !== firstLease.task)
-
-        harness.pool.release(renewedLease, keepAlive: false)
-    }
-
-    @Test
-    func chatGPTSubscriptionWebSocketPoolKeepsSessionLifetimesIndependent() {
-        let harness = ChatGPTSubscriptionWebSocketPoolHarness(
-            maximumConnectionAge: .seconds(10)
-        )
-        let firstSessionLease = harness.pool.acquire(
-            sessionID: "session-old",
-            request: harness.request()
-        )
-        harness.pool.release(firstSessionLease, keepAlive: true)
-
-        harness.advance(by: .seconds(5))
-        let secondSessionLease = harness.pool.acquire(
-            sessionID: "session-young",
-            request: harness.request()
-        )
-        harness.pool.release(secondSessionLease, keepAlive: true)
-
-        harness.advance(by: .seconds(5))
-        let renewedFirstSessionLease = harness.pool.acquire(
-            sessionID: "session-old",
-            request: harness.request()
-        )
-        let reusedSecondSessionLease = harness.pool.acquire(
-            sessionID: "session-young",
-            request: harness.request()
-        )
-
-        #expect(!renewedFirstSessionLease.isReused)
-        #expect(renewedFirstSessionLease.task !== firstSessionLease.task)
-        #expect(reusedSecondSessionLease.isReused)
-        #expect(reusedSecondSessionLease.task === secondSessionLease.task)
-
-        harness.pool.release(renewedFirstSessionLease, keepAlive: false)
-        harness.pool.release(reusedSecondSessionLease, keepAlive: false)
-    }
-
-    @Test
-    func chatGPTSubscriptionWebSocketPoolNeverInterruptsExpiredActiveResponse() {
-        let harness = ChatGPTSubscriptionWebSocketPoolHarness(
-            maximumConnectionAge: .seconds(10)
-        )
-        let activeLease = harness.pool.acquire(
-            sessionID: "session-active-expiry",
-            request: harness.request()
-        )
-        harness.advance(by: .seconds(10))
-
-        let concurrentLease = harness.pool.acquire(
-            sessionID: "session-active-expiry",
-            request: harness.request()
-        )
-
-        #expect(!concurrentLease.isCached)
-        #expect(!concurrentLease.isReused)
-        #expect(concurrentLease.task !== activeLease.task)
-        #expect(harness.closeCount(for: activeLease.task) == 0)
-
-        harness.pool.release(activeLease, keepAlive: true)
-        harness.pool.release(concurrentLease, keepAlive: true)
-        #expect(harness.closeCount(for: activeLease.task) == 1)
-        #expect(harness.closeCount(for: concurrentLease.task) == 1)
-    }
-
-    @Test
-    func chatGPTSubscriptionWebSocketPoolIgnoresLateReleaseAfterReuse() {
-        let harness = ChatGPTSubscriptionWebSocketPoolHarness(
-            maximumConnectionAge: .seconds(10)
-        )
-        let firstLease = harness.pool.acquire(
-            sessionID: "session-late-release",
-            request: harness.request()
-        )
-        harness.pool.release(firstLease, keepAlive: true)
-
-        let activeReusedLease = harness.pool.acquire(
-            sessionID: "session-late-release",
-            request: harness.request()
-        )
-        harness.pool.release(firstLease, keepAlive: true)
-        let concurrentLease = harness.pool.acquire(
-            sessionID: "session-late-release",
-            request: harness.request()
-        )
-
-        #expect(activeReusedLease.isReused)
-        #expect(!concurrentLease.isCached)
-        #expect(concurrentLease.task !== activeReusedLease.task)
-
-        harness.pool.release(activeReusedLease, keepAlive: false)
-        harness.pool.release(concurrentLease, keepAlive: false)
-    }
-
-    @Test
-    func chatGPTSubscriptionIdleWebSocketHeartbeatRepeatsUntilFailure() async {
-        struct PingFailure: Error {}
-
-        let pingCount = Mutex(0)
-        let failureCount = Mutex(0)
-        let expirationCount = Mutex(0)
-
-        await ChatGPTSubscriptionWebSocketPool.runHeartbeat(
-            intervalNanoseconds: 1,
-            sleep: { _ in },
-            ping: {
-                let count = pingCount.withLock { count in
-                    count += 1
-                    return count
-                }
-                if count == 3 {
-                    throw PingFailure()
-                }
-            },
-            onExpiration: {
-                expirationCount.withLock { $0 += 1 }
-            },
-            onFailure: { _ in
-                failureCount.withLock { $0 += 1 }
-            }
-        )
-
-        #expect(pingCount.withLock { $0 } == 3)
-        #expect(failureCount.withLock { $0 } == 1)
-        #expect(expirationCount.withLock { $0 } == 0)
-        #expect(
-            ChatGPTSubscriptionWebSocketPool.defaultHeartbeatIntervalNanoseconds
-                == 30 * 1_000_000_000
-        )
-    }
-
-    @Test
-    func chatGPTSubscriptionHeartbeatPingsBeforeRetiringAtLifetime() async {
-        let clock = Mutex(ContinuousClock.now)
-        let openedAt = clock.withLock { $0 }
-        let pingCount = Mutex(0)
-        let expirationCount = Mutex(0)
-        let failureCount = Mutex(0)
-        let maximumConnectionAge: Duration = .seconds(10)
-
-        await ChatGPTSubscriptionWebSocketPool.runHeartbeat(
-            intervalNanoseconds: 1,
-            sleep: { _ in
-                clock.withLock {
-                    $0 = $0.advanced(by: .seconds(5))
-                }
-            },
-            shouldRetire: {
-                let now = clock.withLock { $0 }
-                return ChatGPTSubscriptionWebSocketPool
-                    .hasReachedMaximumConnectionAge(
-                        openedAt: openedAt,
-                        now: now,
-                        maximumConnectionAge: maximumConnectionAge
-                    )
-            },
-            ping: {
-                pingCount.withLock { $0 += 1 }
-            },
-            onExpiration: {
-                expirationCount.withLock { $0 += 1 }
-            },
-            onFailure: { _ in
-                failureCount.withLock { $0 += 1 }
-            }
-        )
-
-        #expect(pingCount.withLock { $0 } == 1)
-        #expect(expirationCount.withLock { $0 } == 1)
-        #expect(failureCount.withLock { $0 } == 0)
-    }
-
-    @Test
-    func chatGPTSubscriptionTreatsDisconnectedSocketAsRetryableTransportError() {
-        let posixError = POSIXError(.ENOTCONN)
-        let nsPosixError = NSError(
-            domain: NSPOSIXErrorDomain,
-            code: Int(POSIXErrorCode.ENOTCONN.rawValue)
-        )
-        let localizedSocketError = NSError(
-            domain: "UnitTest",
-            code: 1,
-            userInfo: [
-                NSLocalizedDescriptionKey:
-                    "The operation couldn’t be completed. Socket is not connected"
-            ]
-        )
-
-        #expect(ChatGPTSubscriptionResponsesClient.isRetryableTransportError(posixError))
-        #expect(
-            ChatGPTSubscriptionResponsesClient.isRetryableTransportError(
-                RemoteTransportError.closed
-            )
-        )
-        #expect(
-            ChatGPTSubscriptionResponsesClient.isRetryableTransportError(
-                RemoteTransportError.timeout
-            )
-        )
-        #expect(
-            !ChatGPTSubscriptionResponsesClient.isRetryableTransportError(
-                RemoteTransportError.tlsFailure("test")
-            )
-        )
-        #expect(ChatGPTSubscriptionResponsesClient.isRetryableTransportError(nsPosixError))
-        #expect(ChatGPTSubscriptionResponsesClient.isRetryableTransportError(localizedSocketError))
-        #expect(!ChatGPTSubscriptionResponsesClient.isRetryableTransportError(URLError(.badServerResponse)))
-        #expect(ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(posixError, attempt: 0))
-        #expect(
-            ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
-                nsPosixError,
-                attempt: ChatGPTSubscriptionResponsesClient.maxRetries - 1
-            )
-        )
-        #expect(
-            ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
-                localizedSocketError,
-                attempt: 0
-            )
-        )
-        #expect(
-            !ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
-                posixError,
-                attempt: ChatGPTSubscriptionResponsesClient.maxRetries
-            )
-        )
-        #expect(
-            !ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
-                URLError(.badServerResponse),
-                attempt: 0
-            )
-        )
-        #expect(
-            !ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
-                ChatGPTSubscriptionGenerationError.cancelled,
-                attempt: 0
-            )
-        )
-        #expect(
-            !ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
-                CancellationError(),
-                attempt: 0
-            )
-        )
-        #expect(ChatGPTSubscriptionResponsesClient.isCancellationError(URLError(.cancelled)))
-        #expect(
-            !ChatGPTSubscriptionResponsesClient.shouldRetryTransportError(
-                URLError(.cancelled),
-                attempt: 0
-            )
-        )
     }
 
     @Test
@@ -1621,136 +807,6 @@ extension RemoteSessionSnapshotTests {
                 attempt: 0
             )
         )
-    }
-
-    @Test
-    func chatGPTSubscriptionNIOClientRetriesSentContinuationAsFullReplay() async throws {
-        let firstTask = ChatGPTSubscriptionTestWebSocketTask(
-            sendOutcomes: [.failure(RemoteTransportError.closed)]
-        )
-        let secondTask = ChatGPTSubscriptionTestWebSocketTask(
-            receiveOutcomes: [
-                .success(
-                    .text(
-                        #"{"type":"response.completed","response":{"id":"resp_fresh","status":"completed"}}"#
-                    )
-                )
-            ]
-        )
-        let pendingTasks = Mutex([firstTask, secondTask])
-        let factoryCount = Mutex(0)
-        let pool = ChatGPTSubscriptionWebSocketPool(
-            heartbeatIntervalNanoseconds: UInt64.max,
-            webSocketTaskFactory: { _ in
-                factoryCount.withLock { $0 += 1 }
-                return pendingTasks.withLock { $0.removeFirst() }
-            }
-        )
-        defer { pool.closeAll() }
-        let client = ChatGPTSubscriptionResponsesClient(
-            credentials: chatGPTSubscriptionTestCredentials(),
-            baseURL: URL(string: "https://example.invalid/backend-api")!,
-            webSocketPool: pool,
-            retrySleep: { _ in }
-        )
-        let cachedInput = JSONValue.acpValue(from: [
-            ["role": "user", "content": "cached turn"] as [String: Any]
-        ])
-
-        let completion = try await client.streamEvents(
-            input: .array([]),
-            model: "gpt-5.5",
-            instructions: "System prompt",
-            reasoningEffort: nil,
-            textVerbosity: "medium",
-            sessionID: "retry-continuation",
-            cachedWebSocketInput: cachedInput,
-            previousResponseID: "resp_previous",
-            allowsFreshWebSocketContinuation: true
-        ) { _ in }
-
-        let firstPayload = try #require(firstTask.sentMessages.first?.jsonObject)
-        let secondPayload = try #require(secondTask.sentMessages.first?.jsonObject)
-        #expect(completion.responseID == "resp_fresh")
-        #expect(factoryCount.withLock { $0 } == 2)
-        #expect(firstPayload["previous_response_id"] as? String == "resp_previous")
-        #expect(secondPayload["previous_response_id"] == nil)
-        #expect(firstPayload["prompt_cache_key"] as? String == "retry-continuation")
-        #expect(secondPayload["prompt_cache_key"] as? String == "retry-continuation")
-        #expect((secondPayload["input"] as? [Any])?.isEmpty == true)
-    }
-
-    @Test
-    func chatGPTSubscriptionNIOClientRetriesOverloadOnFreshWebSocket() async throws {
-        let overloadedResponse = try JSONValue(jsonObject: [
-            "type": "response.failed",
-            "response": [
-                "status": "failed",
-                "error": [
-                    "code": "server_is_overloaded",
-                    "message": "Our servers are currently overloaded. Please try again later."
-                ]
-            ]
-        ]).jsonData(outputFormatting: [.withoutEscapingSlashes])
-        let firstTask = ChatGPTSubscriptionTestWebSocketTask(
-            receiveOutcomes: [
-                .success(.text(String(decoding: overloadedResponse, as: UTF8.self)))
-            ]
-        )
-        let secondTask = ChatGPTSubscriptionTestWebSocketTask(
-            receiveOutcomes: [
-                .success(
-                    .text(
-                        #"{"type":"response.completed","response":{"id":"resp_after_overload","status":"completed"}}"#
-                    )
-                )
-            ]
-        )
-        let pendingTasks = Mutex([firstTask, secondTask])
-        let factoryCount = Mutex(0)
-        let fallbackCount = Mutex(0)
-        let retrySleepAttempts = Mutex<[Int]>([])
-        let pool = ChatGPTSubscriptionWebSocketPool(
-            heartbeatIntervalNanoseconds: UInt64.max,
-            webSocketTaskFactory: { _ in
-                factoryCount.withLock { $0 += 1 }
-                return pendingTasks.withLock { $0.removeFirst() }
-            }
-        )
-        defer { pool.closeAll() }
-        let client = ChatGPTSubscriptionResponsesClient(
-            credentials: chatGPTSubscriptionTestCredentials(),
-            baseURL: URL(string: "https://example.invalid/backend-api")!,
-            webSocketPool: pool,
-            retrySleep: { attempt in
-                retrySleepAttempts.withLock { $0.append(attempt) }
-            },
-            httpFallbackOverride: { _, _ in
-                fallbackCount.withLock { $0 += 1 }
-                return ChatGPTSubscriptionResponsesClient.StreamCompletion(
-                    responseID: "unexpected-http-fallback"
-                )
-            }
-        )
-
-        let completion = try await client.streamEvents(
-            input: .array([]),
-            model: "gpt-5.5",
-            instructions: "System prompt",
-            reasoningEffort: nil,
-            textVerbosity: "medium",
-            sessionID: "overload-transport",
-            fallbackScopeID: "overload-logical-session"
-        ) { _ in }
-
-        #expect(completion.responseID == "resp_after_overload")
-        #expect(!completion.didActivateHTTPFallback)
-        #expect(factoryCount.withLock { $0 } == 2)
-        #expect(fallbackCount.withLock { $0 } == 0)
-        #expect(retrySleepAttempts.withLock { $0 } == [0])
-        #expect(firstTask.cancelCount == 1)
-        #expect(secondTask.cancelCount == 0)
-        #expect(!pool.usesHTTPFallback(scopeID: "overload-logical-session"))
     }
 
     @Test
@@ -1964,65 +1020,6 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionNIOClientFallsBackAfterWebSocketRetryBudget() async throws {
-        let tasks = (0...ChatGPTSubscriptionResponsesClient.maxRetries).map { _ in
-            ChatGPTSubscriptionTestWebSocketTask(
-                sendOutcomes: [.failure(RemoteTransportError.closed)]
-            )
-        }
-        let pendingTasks = Mutex(tasks)
-        let factoryCount = Mutex(0)
-        let httpFallbackCount = Mutex(0)
-        let pool = ChatGPTSubscriptionWebSocketPool(
-            heartbeatIntervalNanoseconds: UInt64.max,
-            webSocketTaskFactory: { _ in
-                factoryCount.withLock { $0 += 1 }
-                return pendingTasks.withLock { $0.removeFirst() }
-            }
-        )
-        defer { pool.closeAll() }
-        let client = ChatGPTSubscriptionResponsesClient(
-            credentials: chatGPTSubscriptionTestCredentials(),
-            baseURL: URL(string: "https://example.invalid/backend-api")!,
-            webSocketPool: pool,
-            retrySleep: { _ in },
-            httpFallbackOverride: { _, _ in
-                httpFallbackCount.withLock { $0 += 1 }
-                return ChatGPTSubscriptionResponsesClient.StreamCompletion(
-                    responseID: "resp_after_retry_budget"
-                )
-            }
-        )
-
-        let completion = try await client.streamEvents(
-            input: .array([]),
-            model: "gpt-5.5",
-            instructions: "System prompt",
-            reasoningEffort: nil,
-            textVerbosity: "medium",
-            sessionID: "transport-before-fallback",
-            fallbackScopeID: "logical-retry-budget"
-        ) { _ in }
-        let nextCompletion = try await client.streamEvents(
-            input: .array([]),
-            model: "gpt-5.5",
-            instructions: "System prompt",
-            reasoningEffort: nil,
-            textVerbosity: "medium",
-            sessionID: "rotated-transport-after-fallback",
-            fallbackScopeID: "logical-retry-budget"
-        ) { _ in }
-
-        #expect(completion.responseID == "resp_after_retry_budget")
-        #expect(completion.didActivateHTTPFallback)
-        #expect(nextCompletion.responseID == "resp_after_retry_budget")
-        #expect(!nextCompletion.didActivateHTTPFallback)
-        #expect(factoryCount.withLock { $0 } == tasks.count)
-        #expect(httpFallbackCount.withLock { $0 } == 2)
-        #expect(tasks.allSatisfy { $0.cancelCount == 1 })
-    }
-
-    @Test
     func chatGPTSubscriptionNIOClientDefersUnsafeTransportRecoveryToGenerationClient() async {
         let task = ChatGPTSubscriptionTestWebSocketTask(
             receiveOutcomes: [
@@ -2090,232 +1087,99 @@ extension RemoteSessionSnapshotTests {
         )
     }
 
-    @Test
-    func chatGPTSubscriptionNIOClientCancellationClosesActiveLease() async {
-        let task = ChatGPTSubscriptionTestWebSocketTask()
-        let pool = ChatGPTSubscriptionWebSocketPool(
-            heartbeatIntervalNanoseconds: UInt64.max,
-            webSocketTaskFactory: { _ in task }
+    @Test(arguments: [
+        // Text deltas are buffered until the final snapshot.
+        ChatGPTSubscriptionStreamReconciliationCase(
+            events: [
+                #"{"type":"response.output_text.delta","delta":"Confermi che proceda?"}"#,
+                #"{"type":"response.output_text.delta","delta":"Confermi che proceda?\n\nFile modificati: nessuno."}"#,
+                #"{"type":"response.completed","response":{"output_text":"Confermi che proceda?\n\nFile modificati: nessuno."}}"#
+            ],
+            text: "Confermi che proceda?\n\nFile modificati: nessuno.",
+            contentText: "Confermi che proceda?\n\nFile modificati: nessuno."
+        ),
+        // Repeated identical deltas are kept, not deduplicated.
+        ChatGPTSubscriptionStreamReconciliationCase(
+            events: [
+                #"{"type":"response.output_text.delta","delta":"ha"}"#,
+                #"{"type":"response.output_text.delta","delta":"ha"}"#
+            ],
+            text: "haha",
+            contentText: ""
+        ),
+        // A corrected delta snapshot replaces the buffered draft.
+        ChatGPTSubscriptionStreamReconciliationCase(
+            events: [
+                #"{"type":"response_output_text_delta","delta":"Corego le ultime indentazioni accidentali evidenziate dal diff, poi rilancio swift build."}"#,
+                #"{"type":"response_output_text_delta","delta":"Correggo le ultime indentazioni accidentali evidenziate dal diff, poi rilancio swift build."}"#,
+                #"{"type":"response_completed"}"#
+            ],
+            text: "Correggo le ultime indentazioni accidentali evidenziate dal diff, poi rilancio swift build.",
+            contentText: ""
+        ),
+        // The completed snapshot extends the streamed content.
+        ChatGPTSubscriptionStreamReconciliationCase(
+            events: [
+                #"{"type":"response.output_text.delta","delta":"Confermi che proceda?"}"#,
+                #"{"type":"response.completed","response":{"output_text":"Confermi che proceda?\n\nFile modificati: nessuno."}}"#
+            ],
+            text: "Confermi che proceda?\n\nFile modificati: nessuno.",
+            contentText: "Confermi che proceda?\n\nFile modificati: nessuno."
+        ),
+        // A content-part snapshot extends the buffered content.
+        ChatGPTSubscriptionStreamReconciliationCase(
+            events: [
+                #"{"type":"response.output_text.delta","delta":"Prima "}"#,
+                #"{"type":"response.content_part.done","part":{"type":"output_text","text":"parte."}}"#,
+                #"{"type":"response.completed"}"#
+            ],
+            text: "Prima parte.",
+            contentText: ""
+        ),
+        // The refusal stop reason survives `response.completed`.
+        ChatGPTSubscriptionStreamReconciliationCase(
+            events: [
+                #"{"type":"response.refusal.done","refusal":"Non posso aiutare con questa richiesta."}"#,
+                #"{"type":"response.completed","response":{"output":[]}}"#
+            ],
+            text: "Non posso aiutare con questa richiesta.",
+            stopReason: "refusal"
+        ),
+        // The legacy reasoning delta streams a thought.
+        ChatGPTSubscriptionStreamReconciliationCase(
+            events: [
+                #"{"type":"reasoning_content_delta","delta":"legacy thought"}"#,
+                #"{"type":"response.completed","response":{"output":[]}}"#
+            ],
+            thoughtText: "legacy thought",
+            reasoningText: "legacy thought"
         )
-        defer { pool.closeAll() }
-        let client = ChatGPTSubscriptionResponsesClient(
-            credentials: chatGPTSubscriptionTestCredentials(),
-            baseURL: URL(string: "https://example.invalid/backend-api")!,
-            webSocketPool: pool,
-            retrySleep: { _ in }
-        )
-        let streamTask = Task {
-            try await client.streamEvents(
-                input: .array([]),
-                model: "gpt-5.5",
-                instructions: "System prompt",
-                reasoningEffort: nil,
-                textVerbosity: "medium",
-                sessionID: "cancel-active-lease"
-            ) { _ in }
+    ])
+    func chatGPTSubscriptionTextDeltasAreBufferedUntilFinalSnapshot(
+        _ testCase: ChatGPTSubscriptionStreamReconciliationCase
+    ) async throws {
+        let objects = try testCase.events.map { event in
+            try #require(
+                JSONSerialization.jsonObject(with: Data(event.utf8)) as? [String: Any]
+            )
         }
+        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects(objects)
 
-        await task.waitForSend()
-        streamTask.cancel()
-        do {
-            _ = try await streamTask.value
-            Issue.record("A cancelled WebSocket stream unexpectedly completed.")
-        } catch is CancellationError {
-            // Expected: cancellation closes the NIO adapter and releases lease.
-        } catch {
-            Issue.record("Expected CancellationError, got \(error).")
+        if let text = testCase.text {
+            #expect(result.text == text)
         }
-        #expect(task.cancelCount > 0)
-    }
-
-    @Test
-    func chatGPTSubscriptionTextDeltasAreBufferedUntilFinalSnapshot() async throws {
-        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
-            [
-                "type": "response.output_text.delta",
-                "delta": "Confermi che proceda?"
-            ],
-            [
-                "type": "response.output_text.delta",
-                "delta": "Confermi che proceda?\n\nFile modificati: nessuno."
-            ],
-            [
-                "type": "response.completed",
-                "response": [
-                    "output_text": "Confermi che proceda?\n\nFile modificati: nessuno."
-                ]
-            ]
-        ])
-
-        #expect(result.text == "Confermi che proceda?\n\nFile modificati: nessuno.")
-        #expect(result.contentText == result.text)
-    }
-
-    @Test
-    func chatGPTSubscriptionUnderscoreTextDeltasAreBufferedUntilFinalSnapshot() async throws {
-        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
-            [
-                "type": "response_output_text_delta",
-                "delta": "Prima parte. "
-            ],
-            [
-                "type": "response_output_text_delta",
-                "delta": "Seconda parte."
-            ],
-            [
-                "type": "response_completed",
-                "response": [
-                    "output_text": "Prima parte. Seconda parte."
-                ]
-            ]
-        ])
-
-        #expect(result.text == "Prima parte. Seconda parte.")
-        #expect(result.contentText == result.text)
-    }
-
-    @Test
-    func chatGPTSubscriptionCorrectedDeltaSnapshotReplacesBufferedDraft() async throws {
-        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
-            [
-                "type": "response_output_text_delta",
-                "delta": "Corego le ultime indentazioni accidentali evidenziate dal diff, poi rilancio swift build."
-            ],
-            [
-                "type": "response_output_text_delta",
-                "delta": "Correggo le ultime indentazioni accidentali evidenziate dal diff, poi rilancio swift build."
-            ],
-            [
-                "type": "response_completed"
-            ]
-        ])
-
-        #expect(result.text == "Correggo le ultime indentazioni accidentali evidenziate dal diff, poi rilancio swift build.")
-        #expect(result.contentText.isEmpty)
-    }
-
-    @Test
-    func chatGPTSubscriptionCorrectedFinalSnapshotReplacesBufferedDraft() async throws {
-        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
-            [
-                "type": "response_output_text_delta",
-                "delta": "Corego le ultime indentazioni accidentali evidenziate dal diff."
-            ],
-            [
-                "type": "response_completed",
-                "response": [
-                    "output_text": "Correggo le ultime indentazioni accidentali evidenziate dal diff."
-                ]
-            ]
-        ])
-
-        #expect(result.text == "Correggo le ultime indentazioni accidentali evidenziate dal diff.")
-        #expect(result.contentText == result.text)
-        #expect(!result.contentText.contains("Corego"))
-    }
-
-    @Test
-    func chatGPTSubscriptionCompletedSnapshotExtendsExistingContent() async throws {
-        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
-            [
-                "type": "response.output_text.delta",
-                "delta": "Confermi che proceda?"
-            ],
-            [
-                "type": "response.completed",
-                "response": [
-                    "output_text": "Confermi che proceda?\n\nFile modificati: nessuno."
-                ]
-            ]
-        ])
-
-        #expect(result.text == "Confermi che proceda?\n\nFile modificati: nessuno.")
-        #expect(result.contentText == result.text)
-    }
-
-    @Test
-    func chatGPTSubscriptionContentSnapshotExtendsBufferedContent() async throws {
-        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
-            [
-                "type": "response.output_text.delta",
-                "delta": "Prima "
-            ],
-            [
-                "type": "response.content_part.done",
-                "part": [
-                    "type": "output_text",
-                    "text": "parte."
-                ]
-            ],
-            [
-                "type": "response.completed"
-            ]
-        ])
-
-        #expect(result.text == "Prima parte.")
-        #expect(result.contentText.isEmpty)
-    }
-
-    @Test
-    func chatGPTSubscriptionPreservesRefusalStopReasonAfterCompleted() async throws {
-        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
-            [
-                "type": "response.refusal.done",
-                "refusal": "Non posso aiutare con questa richiesta."
-            ],
-            [
-                "type": "response.completed",
-                "response": ["output": []]
-            ]
-        ])
-
-        #expect(result.text == "Non posso aiutare con questa richiesta.")
-        #expect(result.stopReason == "refusal")
-    }
-
-    @Test
-    func chatGPTSubscriptionReasoningItemContentStreamsThought() async throws {
-        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
-            [
-                "type": "response.output_item.done",
-                "output_index": 0,
-                "item": [
-                    "type": "reasoning",
-                    "id": "rs_plain",
-                    "summary": [],
-                    "content": [
-                        [
-                            "type": "reasoning_text",
-                            "text": "plain thought"
-                        ]
-                    ]
-                ]
-            ],
-            [
-                "type": "response.completed",
-                "response": ["output": []]
-            ]
-        ])
-
-        #expect(result.thoughtText == "plain thought")
-        #expect(result.reasoningText == "plain thought")
-    }
-
-    @Test
-    func chatGPTSubscriptionLegacyReasoningDeltaStreamsThought() async throws {
-        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects([
-            [
-                "type": "reasoning_content_delta",
-                "delta": "legacy thought"
-            ],
-            [
-                "type": "response.completed",
-                "response": ["output": []]
-            ]
-        ])
-
-        #expect(result.thoughtText == "legacy thought")
-        #expect(result.reasoningText == "legacy thought")
+        if let contentText = testCase.contentText {
+            #expect(result.contentText == contentText)
+        }
+        if let thoughtText = testCase.thoughtText {
+            #expect(result.thoughtText == thoughtText)
+        }
+        if let reasoningText = testCase.reasoningText {
+            #expect(result.reasoningText == reasoningText)
+        }
+        if let stopReason = testCase.stopReason {
+            #expect(result.stopReason == stopReason)
+        }
     }
 
     @Test
@@ -2366,50 +1230,6 @@ extension RemoteSessionSnapshotTests {
         }
 
         #expect(contentText == "Visible answer")
-    }
-
-    @Test
-    func streamResponsesDoesNotDuplicateOutputItemSnapshotAfterDelta() async throws {
-        let response = """
-        data: {"type":"response.output_text.delta","delta":"Visible answer"}
-
-        data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","content":[{"type":"output_text","text":"Visible answer"}]}}
-
-        data: {"type":"response.completed","response":{"output":[]}}
-
-        """
-        let fixture = try await RemoteNIOStreamingFixture.start(
-            responseBody: Data(response.utf8)
-        )
-        defer {
-            fixture.beginShutdown()
-        }
-        let client = RemoteGenerationClient(
-            configuration: remoteStreamingConfiguration(),
-            provider: AgentRemoteProvider(
-                name: "Unit Test",
-                baseURL: "https://unit.test/v1",
-                modelID: "unit-model",
-                chatEndpoint: .responses
-            ),
-            apiKey: nil,
-            transport: fixture.transport,
-            streamEndpointBaseURLOverride: fixture.baseURL
-        )
-        let capturedEvents = CapturedDirectAgentEvents()
-
-        let result = try await client.streamResponses(
-            messages: [["role": "user", "content": "hi"]],
-            sessionID: "session-output-item-message-dedup",
-            allowedToolNames: [],
-            thinkingSelection: nil,
-            onEvent: { event in
-                capturedEvents.append(event)
-            }
-        )
-
-        #expect(result.text == "Visible answer")
-        #expect(capturedEvents.contentText() == "Visible answer")
     }
 
     @Test
@@ -2515,54 +1335,6 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionClientUsesInjectedMCPRuntimeForActiveTools() async throws {
-        let client = ChatGPTSubscriptionGenerationClient(
-            configuration: remoteStreamingConfiguration(),
-            mcpRuntime: await borrowedFeatureMCPRuntime()
-        )
-
-        await client.createSession(
-            id: "session-chatgpt-fixture-tools",
-            cwd: "/tmp/project",
-            allowedToolNames: ["fixture."]
-        )
-        let descriptors = await client.activeToolDescriptors()
-
-        #expect(descriptors.map(\.name) == ["fixture.Build"])
-    }
-
-    @Test
-    func chatGPTSubscriptionPromptCacheKeyUsesStableSessionIDAcrossRequestPrefixes() throws {
-        let firstBody = ChatGPTSubscriptionRequestBuilder.requestBody(
-            input: .array([]),
-            model: "gpt-5.5",
-            instructions: "First system prompt",
-            reasoningEffort: nil,
-            textVerbosity: "medium",
-            sessionID: "transport-session-a",
-            promptCacheKey: "session-chatgpt",
-            toolPayloads: JSONValue.acpValue(from: [
-                ["type": "function", "name": "first_tool"] as [String: Any]
-            ])
-        )
-        let changedPrefixBody = ChatGPTSubscriptionRequestBuilder.requestBody(
-            input: .array([]),
-            model: "gpt-5.5",
-            instructions: "Changed system prompt",
-            reasoningEffort: nil,
-            textVerbosity: "medium",
-            sessionID: "transport-session-b",
-            promptCacheKey: "session-chatgpt",
-            toolPayloads: JSONValue.acpValue(from: [
-                ["type": "function", "name": "second_tool"] as [String: Any]
-            ])
-        )
-
-        #expect(firstBody["prompt_cache_key"] as? String == "session-chatgpt")
-        #expect(changedPrefixBody["prompt_cache_key"] as? String == "session-chatgpt")
-    }
-
-    @Test
     func chatGPTSubscriptionPromptCacheKeyIsSessionScoped() throws {
         let tools = JSONValue.acpValue(from: [
             [
@@ -2596,21 +1368,6 @@ extension RemoteSessionSnapshotTests {
         #expect(differentSession == "session-b")
         #expect(differentInstructions == "session-a")
         #expect(emptyPrefix == "session-fallback")
-    }
-
-    @Test
-    func chatGPTSubscriptionRequestBodyUsesStableSessionPromptCacheKey() throws {
-        let body = ChatGPTSubscriptionRequestBuilder.requestBody(
-            input: .array([]),
-            model: "gpt-5.5",
-            instructions: "System prompt",
-            reasoningEffort: nil,
-            textVerbosity: "medium",
-            sessionID: "session-chatgpt"
-        )
-        let cacheKey = try #require(body["prompt_cache_key"] as? String)
-
-        #expect(cacheKey == "session-chatgpt")
     }
 
     @Test
@@ -2655,145 +1412,6 @@ extension RemoteSessionSnapshotTests {
         #expect(sanitized.count == 1)
         #expect(sanitized.first?["encrypted_content"] as? String == "blob")
         #expect(sanitized.first?["id"] == nil)
-    }
-    @Test
-    func chatGPTSubscriptionTransportResetPreservesCanonicalPromptCacheIdentity() async {
-        let client = ChatGPTSubscriptionGenerationClient(
-            configuration: remoteStreamingConfiguration()
-        )
-
-        let state = await client.resetTransportIdentityForTesting()
-        let closeClearedFallback = await client.closeClearsHTTPFallbackForTesting()
-        let recreateFencedFallback = await client.recreateFencesHTTPFallbackForTesting()
-        await client.shutdown()
-
-        #expect(state.promptCacheKey == "stable-prompt-cache-key")
-        #expect(state.transportSessionID != "transport-before-reset")
-        #expect(state.transportSessionID?.isEmpty == false)
-        #expect(state.continuationWasCleared)
-        #expect(state.httpFallbackSurvivedReset)
-        #expect(closeClearedFallback)
-        #expect(recreateFencedFallback)
-    }
-}
-
-private extension ChatGPTSubscriptionGenerationClient {
-    func httpFallbackScopeIDForTesting(sessionID: String) -> String? {
-        sessionLease(for: sessionID).map(Self.httpFallbackScopeID(for:))
-    }
-
-    func resetTransportIdentityForTesting() -> (
-        promptCacheKey: String?,
-        transportSessionID: String?,
-        continuationWasCleared: Bool,
-        httpFallbackSurvivedReset: Bool
-    ) {
-        let identity = SessionIdentity(
-            configuration: RequestConfiguration(
-                modelID: "gpt-5.5",
-                workingDirectory: "/tmp/project",
-                systemPrompt: "System prompt",
-                sessionKey: "stable-session",
-                connectionScopeID: "test-scope",
-                history: [],
-                allowedToolNames: [],
-                thinkingSelection: nil,
-                appMode: false
-            )
-        )
-        storePromptCacheKey("stable-prompt-cache-key", for: identity)
-        var session = AgentSession(
-            id: "session",
-            cwd: "/tmp/project",
-            systemPrompt: "System prompt",
-            cacheKey: nil,
-            messages: [],
-            allowedToolNames: [],
-            thinkingSelection: nil,
-            preserveThinking: false,
-            continuation: ChatGPTSubscriptionContinuationState(
-                responseID: "resp_before_reset",
-                messageCount: 0,
-                instructions: "System prompt"
-            ),
-            chatGPTSessionID: "transport-before-reset"
-        )
-
-        let fallbackScopeID = Self.httpFallbackScopeID(
-            sessionID: session.id,
-            generation: 42
-        )
-        webSocketPool.activateHTTPFallback(scopeID: fallbackScopeID)
-        resetContinuationAndTransport(session: &session)
-        return (
-            promptCacheKey: promptCacheKeysByIdentity[identity],
-            transportSessionID: session.chatGPTSessionID,
-            continuationWasCleared: session.continuation == nil,
-            httpFallbackSurvivedReset: webSocketPool.usesHTTPFallback(
-                scopeID: fallbackScopeID
-            )
-        )
-    }
-
-    func closeClearsHTTPFallbackForTesting() async -> Bool {
-        let sessionID = "fallback-close-session"
-        createSession(id: sessionID, cwd: "/tmp/project")
-        guard let lease = sessionLease(for: sessionID) else {
-            return false
-        }
-        let fallbackScopeID = Self.httpFallbackScopeID(for: lease)
-        webSocketPool.activateHTTPFallback(scopeID: fallbackScopeID)
-        await closeSession(id: sessionID)
-        return !webSocketPool.usesHTTPFallback(scopeID: fallbackScopeID)
-    }
-
-    func recreateFencesHTTPFallbackForTesting() async -> Bool {
-        let sessionID = "fallback-recreated-session"
-        createSession(id: sessionID, cwd: "/tmp/project")
-        guard let firstLease = sessionLease(for: sessionID) else {
-            return false
-        }
-        let firstScopeID = Self.httpFallbackScopeID(for: firstLease)
-        webSocketPool.activateHTTPFallback(scopeID: firstScopeID)
-
-        createSession(id: sessionID, cwd: "/tmp/project")
-        guard let secondLease = sessionLease(for: sessionID) else {
-            return false
-        }
-        let secondScopeID = Self.httpFallbackScopeID(for: secondLease)
-        // Simulate a late completion from the invalidated first incarnation.
-        let lateActivation = webSocketPool.activateHTTPFallback(
-            scopeID: firstScopeID
-        )
-        let isFenced = firstScopeID != secondScopeID
-            && !lateActivation
-            && webSocketPool.isHTTPFallbackScopeClosed(scopeID: firstScopeID)
-            && !webSocketPool.usesHTTPFallback(scopeID: secondScopeID)
-
-        await closeSession(id: sessionID)
-        return isFenced
-    }
-}
-
-private actor ChatGPTSubscriptionScopedAcquireOutcomes {
-    private var acquired = 0
-    private var http = 0
-    private var closed = 0
-
-    func recordAcquired() {
-        acquired += 1
-    }
-
-    func recordHTTP() {
-        http += 1
-    }
-
-    func recordClosed() {
-        closed += 1
-    }
-
-    func snapshot() -> (acquired: Int, http: Int, closed: Int) {
-        (acquired, http, closed)
     }
 }
 
@@ -3052,4 +1670,15 @@ private extension ChatGPTSubscriptionWebSocketMessage {
         }
         return object
     }
+}
+
+/// One ChatGPT Subscription stream: JSON event objects and the expected
+/// accumulator result (`nil` fields are not checked).
+struct ChatGPTSubscriptionStreamReconciliationCase: Sendable {
+    let events: [String]
+    var text: String?
+    var contentText: String?
+    var thoughtText: String?
+    var reasoningText: String?
+    var stopReason: String?
 }

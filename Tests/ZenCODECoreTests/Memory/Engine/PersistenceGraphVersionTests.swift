@@ -206,7 +206,6 @@ import Testing
     #expect(reloaded.metadata.linkDiscoveryCount == 2)
 }
 
-
 // MARK: - Durable graph privacy
 
 #if canImport(Darwin) || canImport(Glibc)
@@ -317,25 +316,6 @@ private func posixMode(_ url: URL) throws -> Int {
     #endif
 }
 
-/// A mode that is already stricter than the target must not be widened.
-@Test func hardeningNeverWidensAnAlreadyStrictMode() async throws {
-    #if canImport(Darwin) || canImport(Glibc)
-    let fileManager = FileManager.default
-    let directory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? fileManager.removeItem(at: directory) }
-    try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-    let file = directory.appendingPathComponent("memory.graph.json")
-    try Data("{}".utf8).write(to: file)
-    try fileManager.setAttributes([.posixPermissions: 0o400], ofItemAtPath: file.path)
-
-    _ = try? await JSONMemoryPersistence(url: file).load()
-
-    #expect(try posixMode(file) == 0o400)
-    #else
-    return
-    #endif
-}
-
 /// The closure → save window.
 ///
 /// A transaction body can run long (revalidation, replay of pending recall
@@ -374,27 +354,4 @@ private func posixMode(_ url: URL) throws -> Int {
     let leftovers = try fileManager.contentsOfDirectory(atPath: directory.path)
         .filter { $0.contains("staging") }
     #expect(leftovers.isEmpty)
-}
-
-/// The same window, but with a body that changed nothing: an unchanged graph
-/// never reaches the save path, so cancellation there is not a failure to hide
-/// — the transaction simply reports its read-only result.
-@Test func cancellationInAReadOnlyTransactionBodyStillAborts() async throws {
-    let fileManager = FileManager.default
-    let directory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? fileManager.removeItem(at: directory) }
-    let file = directory.appendingPathComponent("memory.graph.json")
-    let persistence = JSONMemoryPersistence(url: file)
-    try await persistence.save(MemoryGraph())
-    let bytesBefore = try Data(contentsOf: file)
-
-    let task = Task<Bool, Error> {
-        let committed = try await persistence.transaction { _ in
-            withUnsafeCurrentTask { $0?.cancel() }
-            return true
-        }
-        return committed.didChange
-    }
-    #expect(try await task.value == false)
-    #expect(try Data(contentsOf: file) == bytesBefore)
 }

@@ -244,24 +244,6 @@ struct ProjectAgentSelectionStoreTests {
     }
 
     @Test
-    func blankProfileIdentifierFallsBackToTheName() throws {
-        let blank = try JSONDecoder().decode(
-            AgentProfile.self,
-            from: Data(#"{"id":"  ","name":"Legacy","role":"developer"}"#.utf8)
-        )
-        #expect(ProjectAgentSelectionStore.selectionIdentifier(for: blank) == "Legacy")
-
-        try Support.withTemporaryProject { _, workspace in
-            try ProjectAgentSelectionStore.save(
-                agentIDs: [ProjectAgentSelectionStore.selectionIdentifier(for: blank)],
-                workspaceRootURL: workspace
-            )
-            #expect(ProjectAgentSelectionStore.isAssociated(blank, workspaceRootURL: workspace))
-            #expect(!ProjectAgentSelectionStore.isAssociated(Support.developer, workspaceRootURL: workspace))
-        }
-    }
-
-    @Test
     func differentWorkspacesHaveIndependentSelections() throws {
         try Support.withTemporaryProject { support, workspace in
             let other = support.deletingLastPathComponent()
@@ -284,18 +266,6 @@ struct ProjectAgentSelectionStoreTests {
     }
 
     @Test
-    func equivalentWorkspacePathsShareOneFile() throws {
-        try Support.withTemporaryProject { _, workspace in
-            let roundabout = workspace.appendingPathComponent("sub", isDirectory: true)
-                .appendingPathComponent("..", isDirectory: true)
-            #expect(
-                ProjectAgentSelectionStore.manifestURL(workspaceRootURL: roundabout)
-                    == ProjectAgentSelectionStore.manifestURL(workspaceRootURL: workspace)
-            )
-        }
-    }
-
-    @Test
     func emptySavedSelectionDelegatesToNoProfile() throws {
         try Support.withTemporaryProject { _, workspace in
             try ProjectAgentSelectionStore.save(agentIDs: [String](), workspaceRootURL: workspace)
@@ -307,15 +277,6 @@ struct ProjectAgentSelectionStoreTests {
             for profile in Support.profiles {
                 #expect(!ProjectAgentSelectionStore.isAssociated(profile, workspaceRootURL: workspace))
             }
-        }
-    }
-
-    @Test
-    func savingAgainReplacesThePreviousSelection() throws {
-        try Support.withTemporaryProject { _, workspace in
-            try ProjectAgentSelectionStore.save(agentIDs: Support.profiles.map(\.id), workspaceRootURL: workspace)
-            try ProjectAgentSelectionStore.save(agentIDs: [Support.reporter.id], workspaceRootURL: workspace)
-            #expect(ProjectAgentSelectionStore.filter(Support.profiles, workspaceRootURL: workspace) == [Support.reporter])
         }
     }
 

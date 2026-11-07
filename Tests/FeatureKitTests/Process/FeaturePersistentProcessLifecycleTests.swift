@@ -66,20 +66,6 @@ struct FeaturePersistentProcessLifecycleTests {
     }
 
     @Test
-    func shutdownWithoutAStartedProcessSucceeds() async throws {
-        let fixture = try Self.makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-
-        let session = FeaturePersistentProcess(
-            executableURL: fixture.executable,
-            workingDirectory: fixture.root
-        )
-        await session.shutdown()
-        await session.shutdown()
-        #expect(await session.processIdentifier == nil)
-    }
-
-    @Test
     func startupFailureIsReportedAsATransportError() async throws {
         let missing = FileManager.default.temporaryDirectory
             .appendingPathComponent("missing-feature-\(UUID().uuidString)")

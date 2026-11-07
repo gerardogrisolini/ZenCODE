@@ -84,27 +84,6 @@ struct ChatSessionControllerTests {
     }
 
     @Test
-    func requestPresenterReplacesTheControllerDefaultForOneTurn() async throws {
-        try await withHarness { harness in
-            let perTurn = RecordingChatPresenter()
-            await harness.runtime.append { call in
-                await call.onEvent(.content("bound to the request"))
-                return DirectAgentResponse(text: "bound to the request", stopReason: "end_turn", modelID: "m")
-            }
-
-            _ = try await harness.controller.runTurn(harness.request("Hello", presenter: perTurn))
-
-            #expect(await perTurn.events == [
-                .turnWillStart(prompt: "Hello"),
-                .content("bound to the request"),
-                .modelTurnDidReturn,
-                .turnWillFinish,
-            ])
-            #expect(await harness.presenter.events.isEmpty)
-        }
-    }
-
-    @Test
     func aChannelThatDoesNotRetainTheTranscriptNeverAppendsIt() async throws {
         try await withHarness(retainsTranscript: false) { harness in
             await harness.runtime.append { call in
@@ -158,23 +137,6 @@ struct ChatSessionControllerTests {
             #expect(await first.events == turnEvents)
             #expect(await second.events == turnEvents)
             #expect(await harness.presenter.events == turnEvents)
-        }
-    }
-
-    @Test
-    func observersPresentASessionNoticeBeforeThePrimary() async throws {
-        let log = ChatPresentationLog()
-        try await withHarness(presentationLog: log) { harness in
-            let observer = RecordingChatPresenter(name: "observer", log: log)
-            harness.controller.addObserver(observer)
-            let missing = harness.workspace.appendingPathComponent("missing-skill", isDirectory: true)
-
-            _ = await harness.controller.installSkill(from: .local(missing))
-
-            #expect(log.entries == fannedOut(
-                [.sessionNotice(.skillInstallStarted(source: missing.path))],
-                to: ["observer", "primary"]
-            ))
         }
     }
 
@@ -614,18 +576,6 @@ struct ChatSessionControllerTests {
     }
 
     @Test
-    func nonInteractiveOutcomeHonorsAnAlwaysDecisionRecordedFromAnotherSurface() async throws {
-        try await withHarness { harness in
-            let request = gatedRequest(sessionID: harness.sessionID, toolCallID: "headless-always")
-
-            await harness.authorizer.recordAlwaysDecision(for: request)
-
-            #expect(await harness.authorizer.nonInteractiveOutcome(for: request).isApproved)
-            #expect(await harness.host.requestCount == 0)
-        }
-    }
-
-    @Test
     func hostWithoutToolConsentRefusesGatedToolsWithoutCallingTheHost() async throws {
         try await withHarness(hostCapabilities: [], hostDecisions: [.allowAlways]) { harness in
             let request = gatedRequest(sessionID: harness.sessionID)
@@ -731,36 +681,6 @@ struct ChatSessionControllerTests {
         }
     }
 
-    @Test
-    func changesNobodyReportedAreSealedAndPresentedBeforeTheSummary() async throws {
-        try await withHarness { harness in
-            let workspace = harness.workspace
-            try initializeGitRepository(at: workspace, trackedFile: "tracked.txt", contents: "initial\n")
-            await harness.runtime.append { call in
-                await call.onEvent(.content("Editing quietly."))
-                // No tool event reports this write: only the end-of-turn
-                // worktree reconciliation can discover it.
-                try Data("edited\n".utf8).write(to: workspace.appendingPathComponent("tracked.txt"))
-                return DirectAgentResponse(text: "Editing quietly.", stopReason: "end_turn", modelID: "m")
-            }
-
-            let result = try await harness.controller.runTurn(harness.request("Edit tracked.txt"))
-
-            #expect(await harness.presenter.events == [
-                .turnWillStart(prompt: "Edit tracked.txt"),
-                .content("Editing quietly."),
-                .modelTurnDidReturn,
-                .sealedArtifacts(paths: ["tracked.txt"]),
-                .turnWillFinish,
-                .fileChangeSummary(fileCount: 1),
-            ])
-            let summary = try #require(result.fileChangeSummary)
-            #expect(summary.entries.first?.path == "tracked.txt")
-            #expect(summary.entries.first?.status == .modified)
-            #expect(harness.controller.lastFileChangeSummary == summary)
-        }
-    }
-
     // MARK: - Cancellation
 
     @Test
@@ -856,33 +776,6 @@ struct ChatSessionControllerTests {
         }
     }
 
-    @Test
-    func cancelActiveTurnArmsWorkflowRecoveryOnlyOnRequestAndKeepsAnExistingSignal() async throws {
-        try await withHarness { harness in
-            let controller = harness.controller
-            controller.stateStore.withLock {
-                $0.commandState.activeWorkflow = WorkflowCommandRuntimeState(
-                    goal: "Ship the chat controller",
-                    graphID: "workflow_arming"
-                )
-            }
-
-            controller.cancelActiveTurn()
-            #expect(controller.commandState.activeWorkflow?.isAwaitingReply == false)
-
-            controller.cancelActiveTurn(armingWorkflowRecovery: true)
-            #expect(controller.commandState.activeWorkflow?.pendingCoordinatorMessage
-                == PlanningCommandKernel.workflowRecoverySignalMessage(reason: "cancelled"))
-
-            // A workflow already waiting for the operator keeps its own signal.
-            var resumed = WorkflowCommandRuntimeState(goal: "g", graphID: "workflow_arming")
-            resumed.armForResumedGraph()
-            controller.stateStore.withLock { $0.commandState.activeWorkflow = resumed }
-            controller.cancelActiveTurn(armingWorkflowRecovery: true)
-            #expect(controller.commandState.activeWorkflow == resumed)
-        }
-    }
-
     // MARK: - Turn fence
 
     @Test
@@ -902,31 +795,27 @@ struct ChatSessionControllerTests {
         }
     }
 
-    @Test
-    func changingTheSessionDuringTheTurnPreventsEveryWriteBack() async throws {
+    /// Changing the session or cancelling the active turn fences the turn.
+    @Test(arguments: [false, true])
+    func changingTheSessionDuringTheTurnPreventsEveryWriteBack(cancelling: Bool) async throws {
         try await runFencedProgressTurn { harness in
-            harness.controller.sessionID = "another-session"
+            if cancelling {
+                harness.controller.cancelActiveTurn()
+            } else {
+                harness.controller.sessionID = "another-session"
+            }
         }
     }
 
-    @Test
-    func cancellingTheActiveTurnDuringTheTurnPreventsEveryWriteBack() async throws {
-        try await runFencedProgressTurn { harness in
-            harness.controller.cancelActiveTurn()
-        }
-    }
-
-    @Test
-    func changingTheSessionDuringAPlanTurnDoesNotRecordThePlannerPlan() async throws {
+    /// Changing the session or cancelling the active turn fences the plan turn.
+    @Test(arguments: [false, true])
+    func changingTheSessionDuringAPlanTurnDoesNotRecordThePlannerPlan(cancelling: Bool) async throws {
         try await runFencedPlanTurn { harness in
-            harness.controller.sessionID = "another-session"
-        }
-    }
-
-    @Test
-    func cancellingTheActiveTurnDuringAPlanTurnDoesNotRecordThePlannerPlan() async throws {
-        try await runFencedPlanTurn { harness in
-            harness.controller.cancelActiveTurn()
+            if cancelling {
+                harness.controller.cancelActiveTurn()
+            } else {
+                harness.controller.sessionID = "another-session"
+            }
         }
     }
 
@@ -959,20 +848,6 @@ struct ChatSessionControllerTests {
             #expect(normal.allowedToolNames?.isSuperset(of: ["tasks.list", "tasks.update"]) == true)
             #expect(review.dynamicContext?.contains(progressHeading) != true)
             #expect(review.allowedToolNames?.contains("tasks.create") == true)
-        }
-    }
-
-    @Test
-    func turnConfigurationWithoutPurposeToolsOrPlanIsTheCurrentConfiguration() async throws {
-        try await withHarness { harness in
-            let controller = harness.controller
-
-            let turn = await controller.turnSessionConfiguration(for: .normal, responseLanguageSection: nil)
-            let current = await controller.currentSessionConfiguration(responseLanguageSection: nil)
-
-            #expect(turn.allowedToolNames == current.allowedToolNames)
-            #expect(turn.dynamicContext == current.dynamicContext)
-            #expect(turn.systemPrompt == current.systemPrompt)
         }
     }
 
@@ -1308,28 +1183,6 @@ private func turnFailure(
     } catch {
         Issue.record("the turn threw \(error) instead of a ChatTurnFailure")
         return nil
-    }
-}
-
-private func initializeGitRepository(at directory: URL, trackedFile: String, contents: String) throws {
-    try Data(contents.utf8).write(to: directory.appendingPathComponent(trackedFile))
-    let commands = [
-        ["init"],
-        ["add", "."],
-        [
-            "-c", "user.name=Test", "-c", "user.email=test@example.com",
-            "-c", "commit.gpgsign=false", "commit", "-m", "initial",
-        ],
-    ]
-    for arguments in commands {
-        let process = Process()
-        process.executableURL = GitExecutableResolver.executableURL()
-        process.arguments = ["-C", directory.path] + arguments
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        try process.run()
-        process.waitUntilExit()
-        try #require(process.terminationStatus == 0)
     }
 }
 

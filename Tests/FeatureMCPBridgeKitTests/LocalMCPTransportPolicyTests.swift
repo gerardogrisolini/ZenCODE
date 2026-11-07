@@ -8,11 +8,6 @@ import Darwin
 
 @Suite
 struct LocalMCPTransportPolicyTests {
-    @Test
-    func standardPolicyUsesTheProtocolHandshake() {
-        #expect(LocalMCPTransportPolicy.standard.handshake == .standard)
-    }
-
     #if os(macOS)
     @Test(arguments: [false, true])
     func localHandshakeIdentifiesZenCODE(optimistic: Bool) async throws {

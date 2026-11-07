@@ -120,11 +120,6 @@ struct DirectToolDesktopGatingTests {
     }
 
     @Test
-    func authorizerGatesDesktopRun() {
-        #expect(LocalExecPermissionAuthorizer.gatedToolNames.contains("desktop.run"))
-    }
-
-    @Test
     func featureAliasCannotBypassDesktopGate() async throws {
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

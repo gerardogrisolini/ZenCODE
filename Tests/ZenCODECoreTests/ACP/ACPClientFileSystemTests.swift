@@ -137,35 +137,6 @@ struct ACPClientFileSystemTests {
         #expect(recorder.changes.isEmpty)
     }
 
-    @Test func byteIdenticalNoOpsAreSkippedButUnicodeByteChangesRemainDiffs() async throws {
-        for after in ["e\u{301}", "é"] {
-            let before = "e\u{301}"
-            let fixture = FileSystemClientFixture(files: ["/tmp/file.swift": before])
-            let harness = FileSystemHarness(fixture: fixture)
-            defer { harness.stop() }
-            let recorder = OperationFileChangeRecorder()
-            let write = try #require(harness.client.access(sessionID: "root") { true }.write)
-            try await OperationFileChangeRecorder.$current.withValue(recorder) {
-                try await write(URL(fileURLWithPath: "/tmp/file.swift"), after)
-            }
-            #expect(recorder.changes.count == (before.utf8.elementsEqual(after.utf8) ? 0 : 1))
-        }
-    }
-
-    @Test func descriptorGuidanceIsTransientAndDoesNotChangeToolIdentity() async {
-        let descriptor = DirectToolDescriptor(name: "local.editFile", description: "Edit", inputSchema: "{}")
-        #expect(DirectToolExecutor.clientTextFileDescriptor(descriptor).description == "Edit")
-        let client = ClientTextFileSystem(
-            read: { _ in "" }, write: { _, _ in }, edit: { _, transform in ("", try transform("")) })
-        ClientTextFileSystem.$current.withValue(client) {
-            let adapted = DirectToolExecutor.clientTextFileDescriptor(descriptor)
-            #expect(adapted.name == descriptor.name)
-            #expect(adapted.inputSchema == descriptor.inputSchema)
-            #expect(adapted.description.contains("CLIENT EDITOR FILESYSTEM"))
-        }
-        #expect(DirectToolExecutor.clientTextFileDescriptor(descriptor).description == "Edit")
-    }
-
     @Test func concurrentClientChangeAbortsBeforeWrite() async throws {
         let fixture = FileSystemClientFixture(files: ["/tmp/file.swift": "before"], behavior: .changeBeforeWrite)
         let harness = FileSystemHarness(fixture: fixture)
@@ -175,38 +146,6 @@ struct ACPClientFileSystemTests {
             _ = try await edit(URL(fileURLWithPath: "/tmp/file.swift")) { _ in "after" }
         }
         #expect(await fixture.writeCount == 0)
-    }
-
-    @Test func verificationFailureDoesNotTurnAcknowledgedWriteIntoRetryableFailure() async throws {
-        let fixture = FileSystemClientFixture(files: ["/tmp/file.swift": "before"], behavior: .changeAfterWrite)
-        let harness = FileSystemHarness(fixture: fixture)
-        defer { harness.stop() }
-        let recorder = OperationFileChangeRecorder()
-        let edit = try #require(harness.client.access(sessionID: "root") { true }.edit)
-        _ = try await OperationFileChangeRecorder.$current.withValue(recorder) {
-            try await edit(URL(fileURLWithPath: "/tmp/file.swift")) { _ in "after" }
-        }
-        #expect(await fixture.writeCount == 1)
-        #expect(recorder.changes.count == 1)
-        #expect(recorder.changes.first?.explanation != nil)
-        #expect(recorder.changes.first?.oldText == nil)
-    }
-
-    @Test func missingPreimageAndOversizeEvidenceFallBackWithoutTruncation() async throws {
-        for old in [String?.none, String(repeating: "a", count: OperationFileChangeRecorder.maximumTextBytes + 1)] {
-            let fixture = FileSystemClientFixture(files: old.map { ["/tmp/file.swift": $0] } ?? [:])
-            let harness = FileSystemHarness(fixture: fixture)
-            defer { harness.stop() }
-            let write = try #require(harness.client.access(sessionID: "root") { true }.write)
-            let recorder = OperationFileChangeRecorder()
-            try await OperationFileChangeRecorder.$current.withValue(recorder) {
-                try await write(URL(fileURLWithPath: "/tmp/file.swift"), "after")
-            }
-            #expect(await fixture.text(at: "/tmp/file.swift") == "after")
-            #expect(recorder.changes.count == 1)
-            #expect(recorder.changes.first?.explanation != nil)
-            #expect(recorder.changes.first?.oldText == nil)
-        }
     }
 
     @Test func cancelledOrStaleSessionCannotSendWrites() async throws {

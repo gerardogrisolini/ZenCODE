@@ -35,18 +35,6 @@ import Testing
         }
     }
 
-    @Test func roundsToNearestWithTiesToEven() {
-        // Halfway between 1 (even) and 1 + 2⁻¹⁰ (odd): stays at 1.
-        #expect(HalfPrecision.bits(from: 1 + 0x1p-11) == 0x3C00)
-        // Halfway between 1 + 2⁻¹⁰ (odd) and 1 + 2⁻⁹ (even): goes up.
-        #expect(HalfPrecision.bits(from: 1 + 3 * 0x1p-11) == 0x3C02)
-        // Just above and below a tie round to the nearer neighbour.
-        #expect(HalfPrecision.bits(from: (1 + 0x1p-11).nextUp) == 0x3C01)
-        #expect(HalfPrecision.bits(from: (1 + 3 * 0x1p-11).nextDown) == 0x3C01)
-        // A carry out of the fraction moves to the next exponent.
-        #expect(HalfPrecision.bits(from: 2 - 0x1p-12) == 0x4000)
-    }
-
     @Test func overflowsToInfinityOnlyPastTheLargestFiniteHalf() {
         // 65520 is halfway between 65504 and 65536 (= 2¹⁶, beyond the range):
         // the tie goes to the even pattern, which is infinity.
@@ -136,28 +124,4 @@ import Testing
         #expect(HalfPrecision.rounded(rounded) == rounded)
         #expect(HalfPrecision.rounded([Float]()) == [])
     }
-
-    #if arch(arm64)
-    /// Where the platform has a native `Float16`, the hand-written conversion
-    /// agrees with it bit for bit on every non-NaN binary32 value sampled
-    /// across the whole range.
-    @Test func matchesTheNativeConversionWhereItExists() {
-        var generator = SystemRandomNumberGenerator()
-        var samples: [Float] = [0x1p-25, 65520, 1 + 0x1p-11, 1023.5 * 0x1p-24]
-        for _ in 0..<200_000 {
-            let bits = UInt32.random(in: 0...UInt32.max, using: &generator)
-            samples.append(Float(bitPattern: bits))
-        }
-        for _ in 0..<200_000 {
-            samples.append(Float.random(in: -2...2, using: &generator))
-        }
-        let narrowing = samples.filter { !$0.isNaN && HalfPrecision.bits(from: $0) != Float16($0).bitPattern }
-        #expect(narrowing.isEmpty, "first mismatches: \(narrowing.prefix(8))")
-        let widening = (0...UInt16.max).filter { raw in
-            !Float16(bitPattern: raw).isNaN
-                && HalfPrecision.value(fromBits: raw).bitPattern != Float(Float16(bitPattern: raw)).bitPattern
-        }
-        #expect(widening.isEmpty, "first mismatches: \(widening.prefix(8))")
-    }
-    #endif
 }

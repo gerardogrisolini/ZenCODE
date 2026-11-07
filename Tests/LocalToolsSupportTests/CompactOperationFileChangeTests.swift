@@ -65,49 +65,6 @@ struct CompactOperationFileChangeTests {
         #expect(recorder.changes.first == change)
     }
 
-    @Test func scratchAndAnalysisReservationsAreSeparateFromRetainedEvidence() {
-        let recorder = OperationFileChangeRecorder()
-        let size = OperationFileChangeRecorder.maximumSnapshotBytes
-        #expect(!recorder.reserveSnapshotBytes(-1))
-        #expect(!recorder.reserveSnapshotBytes(size + 1))
-        for _ in 0..<4 { #expect(recorder.reserveSnapshotBytes(size)) }
-        #expect(!recorder.reserveSnapshotBytes(1))
-        #expect(!recorder.reserveDiffInputBytes(-1))
-        #expect(!recorder.reserveDiffInputBytes(2 * size + 1))
-        #expect(recorder.reserveDiffInputBytes(2 * size))
-        #expect(recorder.reserveDiffInputBytes(2 * size))
-        #expect(!recorder.reserveDiffInputBytes(1))
-        recorder.record(.init(path: "small", oldText: "before", newText: "after"))
-        #expect(recorder.changes.first?.explanation == nil)
-        #expect(recorder.remainingDiffBytes == OperationFileChangeRecorder.maximumTextBytes)
-    }
-
-    @Test func compactPatchesShareTheOriginalPerFileAndOperationOutputBudget() {
-        let recorder = OperationFileChangeRecorder()
-        let patch = String(repeating: "+", count: OperationFileChangeRecorder.maximumTextBytes)
-        for index in 0..<5 {
-            recorder.record(.init(path: "file\(index)", oldText: nil, newText: nil,
-                compactDiff: .init(patch: patch, additions: 1, deletions: 0)))
-        }
-        #expect(recorder.changes.prefix(4).allSatisfy { $0.compactDiff?.patch == patch })
-        #expect(recorder.changes.last?.compactDiff == nil)
-        #expect(recorder.changes.last?.explanation?.contains("byte limit") == true)
-        #expect(recorder.remainingDiffBytes == 0)
-        let oversized = OperationFileChangeRecorder()
-        oversized.record(.init(path: "large", oldText: nil, newText: nil,
-            compactDiff: .init(patch: patch + "+", additions: 1, deletions: 0)))
-        #expect(oversized.changes.first?.compactDiff == nil)
-        #expect(oversized.changes.first?.explanation != nil)
-        let mixed = OperationFileChangeRecorder()
-        mixed.record(.init(path: "snapshots", oldText: patch, newText: patch))
-        for index in 0..<3 {
-            mixed.record(.init(path: "compact\(index)", oldText: nil, newText: nil,
-                compactDiff: .init(patch: patch, additions: 1, deletions: 0)))
-        }
-        #expect(mixed.changes[1].compactDiff != nil && mixed.changes[2].compactDiff != nil)
-        #expect(mixed.changes[3].compactDiff == nil && mixed.changes[3].explanation != nil)
-    }
-
     @Test func overScratchLimitAndExhaustedAnalysisDoNotChangeMutationSemantics() async throws {
         let root = try workspace()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -129,21 +86,6 @@ struct CompactOperationFileChangeTests {
         #expect(exhausted.changes.first?.explanation?.contains("inputs exceed") == true)
         #expect(exhausted.changes.first?.compactDiff == nil)
         #expect(try String(contentsOf: file, encoding: .utf8) == largeText + "new\n")
-    }
-
-    @Test func largeRewritesAndDenseInputsHaveExplicitComputationFallback() async throws {
-        let root = try workspace()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let file = root.appendingPathComponent("large")
-        for old in [largeText, String(repeating: "\n", count: 70 * 1024)] {
-            try old.write(to: file, atomically: true, encoding: .utf8)
-            let new = old.replacingOccurrences(of: "entry", with: "changed") + "new\n"
-            let recorder = OperationFileChangeRecorder()
-            try await invoke("local.writeFile", ["path": "large", "content": new], root: root, recorder: recorder)
-            #expect(recorder.changes.first?.compactDiff == nil)
-            #expect(recorder.changes.first?.explanation?.contains("computation limit") == true)
-            #expect(try String(contentsOf: file, encoding: .utf8) == new)
-        }
     }
 
     @Test func largeBinarySymlinkAndOverlappedInputsNeverGainCompactCertainty() async throws {

@@ -63,7 +63,7 @@ extension TerminalChat {
     }
 
     func runInteractivePanelLoop() async throws {
-        let eventQueue = interactiveRuntimeEventQueueForTesting ?? TerminalChatEventQueue()
+        let eventQueue = TerminalChatEventQueue()
         // An observation replays the room's retained transcript. Voice mode
         // announces only what is sent from now on, never that replay; taken
         // before the observation starts so a message sent in between is new.
@@ -230,9 +230,6 @@ extension TerminalChat {
 
         @discardableResult
         func startPanelInput() async -> Bool {
-            if bypassInteractivePanelInputForTesting {
-                return true
-            }
             let didStart = await interactiveReader.startPanelInput(
                 statusBar: statusBar,
                 commandSuggestions: await panelSuggestionsForCurrentAgent()
@@ -243,7 +240,6 @@ extension TerminalChat {
         }
 
         func resumePanelInput() async -> Bool {
-            if bypassInteractivePanelInputForTesting { return true }
             let didStart = await interactiveReader.resumePanelInput(
                 statusBar: statusBar,
                 commandSuggestions: await panelSuggestionsForCurrentAgent()
@@ -294,7 +290,6 @@ extension TerminalChat {
             // progress independently of the visible-prompt renderer.
             await renderCoordinator.beginTranscriptTurn()
             isGenerating = true
-            onInteractiveGenerationStateForTesting?(true)
             didRefreshGitStatusDuringCurrentPrompt = false
             // Declare the busy state before the first suspension so the Core
             // cannot authorise a synthetic turn in the window between this
@@ -336,7 +331,6 @@ extension TerminalChat {
         func adoptRunningTurnIfNeeded() async {
             guard takeAdoptedTurnIfNeeded(), !isGenerating else { return }
             isGenerating = true
-            onInteractiveGenerationStateForTesting?(true)
             await synchronizeSharedChatConsumerBusyState()
             // Not redundant with the presenter's `turnDidMoveToChannel`: a
             // turn whose prompt is reserved before it opens, or after it
@@ -696,7 +690,6 @@ extension TerminalChat {
             case let .generationCompleted(result):
                 generationTask = nil
                 isGenerating = false
-                onInteractiveGenerationStateForTesting?(false)
                 // The channel that drives the slot now presents the ending,
                 // decided once here. The terminal releases the turn's
                 // reservation first. Telegram, when `/telegram on` ran

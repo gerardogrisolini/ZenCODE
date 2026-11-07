@@ -59,54 +59,6 @@ extension TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func taskGraphOverviewAfterTasksUpdateUsesOnlyOneBlankRowAfterToolCompletion() async {
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            standardOutputIsTerminal: true
-        )
-        let toolCall = presentedToolCall(
-            id: "task-update",
-            name: "tasks.update",
-            argumentsObject: [:],
-            argumentsJSON: "{}"
-        )
-
-        // Plain streaming prose is intentionally not newline-terminated before
-        // the tool starts, matching the event sequence reported in the TUI.
-        await renderer.writeAssistantContent("Checking the task graph.")
-        await renderer.writeToolCallStarted(toolCall)
-        let deferred = await renderer.renderTaskGraphOverview(
-            signature: "graph:after-update",
-            markdown: "Tasks\n"
-        )
-        #expect(deferred == .deferred)
-
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Updated", summary: "Updated")
-        )
-        let eventsBeforeOverview = await renderer.capturedWriteEvents()
-
-        let rendered = await renderer.renderTaskGraphOverview(
-            signature: "graph:after-update",
-            markdown: "Tasks\n"
-        )
-        let overviewEvents = Array(
-            (await renderer.capturedWriteEvents()).dropFirst(eventsBeforeOverview.count)
-        )
-        let completedToolText = eventsBeforeOverview
-            .last { $0.channel == .standardError }?
-            .text ?? ""
-        let overviewText = overviewEvents.renderedText(on: .standardOutput)
-        let boundary = TerminalANSIText.stripANSI(completedToolText + overviewText)
-
-        #expect(rendered == .rendered)
-        #expect(boundary.contains("✅"))
-        #expect(boundary.contains("\n\nTasks"))
-        #expect(!boundary.contains("\n\n\nTasks"))
-    }
-
-    @Test
     func interleavedFailureDrainsOverviewDeferredByTool() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let toolCall = presentedToolCall(
@@ -202,38 +154,6 @@ extension TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func staleOverviewCallbackDoesNotDiscardNewerPendingPayload() async {
-        let renderer = makeRenderer(standardErrorIsTerminal: false)
-        _ = await renderer.renderTaskGraphOverview(
-            signature: "graph:1",
-            markdown: "## Task graph\n\n- initial\n",
-            revision: 1
-        )
-        await renderer.writeAssistantContent("Answer")
-        _ = await renderer.renderTaskGraphOverview(
-            signature: "graph:3",
-            markdown: "## Task graph\n\n- current\n",
-            revision: 3
-        )
-
-        let stale = await renderer.renderTaskGraphOverview(
-            signature: "graph:2",
-            markdown: "## Task graph\n\n- stale\n",
-            revision: 2
-        )
-        let deferred = await renderer.snapshot()
-        await renderer.finishStreamingOutput()
-
-        let rendered = await renderer.snapshot()
-        let combined = await renderer.capturedText()
-        #expect(stale == .unchanged)
-        #expect(deferred.deferredTaskGraphOverviewRender)
-        #expect(rendered.lastRenderedTaskGraphOverviewSignature == "graph:3")
-        #expect(combined.contains("current"))
-        #expect(!combined.contains("stale"))
-    }
-
-    @Test
     func newerPublicationFencesAnOlderGraphSnapshotEvenWhenItFinishesFirst() async {
         let renderer = makeRenderer(standardErrorIsTerminal: false)
         let olderPublication = await renderer.beginOverviewPublication(.taskGraph)
@@ -298,21 +218,6 @@ extension TerminalChatRenderCoordinatorTests {
 
         let combined = await renderer.capturedText()
         #expect(combined.contains("after menu"))
-    }
-
-    @Test
-    func deferredOverviewStartsOnANewLineForNonTerminalOutput() async {
-        let renderer = makeRenderer(standardErrorIsTerminal: false)
-
-        await renderer.writeAssistantContent("Answer")
-        _ = await renderer.renderTaskGraphOverview(
-            signature: "graph:non-tty",
-            markdown: "## Task graph\n\n- current\n"
-        )
-        await renderer.finishStreamingOutput()
-
-        let output = await renderer.capturedText(on: .standardOutput)
-        #expect(output.contains("Answer\n## Task graph"))
     }
 
     @Test

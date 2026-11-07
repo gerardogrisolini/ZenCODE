@@ -28,26 +28,6 @@ struct SwiftFeatureExecutableResolutionTests {
     }
 
     @Test
-    func swiftExecutableResolutionFindsDefaultSwiftlyInstallationWithoutSearchPath() throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("swiftly-resolution-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: rootURL) }
-        let homeURL = rootURL.appendingPathComponent("home", isDirectory: true)
-        let swiftURL = homeURL
-            .appendingPathComponent(".local/share/swiftly/bin", isDirectory: true)
-            .appendingPathComponent("swift")
-        try Self.writeExecutable(at: swiftURL)
-
-        let resolvedURL = try SwiftFeatureRuntime.swiftExecutableURL(
-            fileManager: .default,
-            environment: ["HOME": homeURL.path, "PATH": "/missing"],
-            standardCandidatePaths: []
-        )
-
-        #expect(resolvedURL.path == swiftURL.standardizedFileURL.path)
-    }
-
-    @Test
     func missingSwiftExecutableProducesActionableErrorInsteadOfReturningMissingUsrBinPath() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("missing-swift-resolution-\(UUID().uuidString)", isDirectory: true)

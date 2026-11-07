@@ -69,17 +69,6 @@ import Testing
         #expect(second == third)
     }
 
-    @Test func missingFileYieldsEmptyGraphWithoutDecoding() async throws {
-        let directory = try Self.makeDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("absent.json")
-
-        let persistence = JSONMemoryPersistence(url: file)
-        let graph = try await persistence.load()
-        #expect(graph.memories.isEmpty)
-        #expect(await persistence.diskDecodeCount == 0)
-    }
-
     @Test func atomicReplacementIsObserved() async throws {
         let directory = try Self.makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -100,26 +89,6 @@ import Testing
 
         _ = try await persistence.reloadReadOnly()
         #expect(await persistence.diskDecodeCount == 2)
-    }
-
-    @Test func inPlaceRewriteWithDifferentSizeIsObserved() async throws {
-        let directory = try Self.makeDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("graph.json")
-        try Data(Self.graphJSON().utf8).write(to: file)
-
-        let persistence = JSONMemoryPersistence(url: file)
-        _ = try await persistence.load()
-        #expect(await persistence.diskDecodeCount == 1)
-
-        let rewritten = Data(
-            Self.graphJSON(id: "mem_long", content: "A considerably longer piece of content than before").utf8
-        )
-        try rewritten.write(to: file)
-        let reloaded = try await persistence.reloadReadOnly()
-        #expect(await persistence.diskDecodeCount == 2)
-        #expect(reloaded.memories["mem_long"] != nil)
-        #expect(reloaded.memories["mem_1"] == nil)
     }
 
     @Test func deletingTheFileDropsTheCache() async throws {

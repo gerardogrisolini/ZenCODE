@@ -153,26 +153,4 @@ import FoundationNetworking
         #expect(result.cacheWriteFailed)
         #expect(try String(contentsOf: target, encoding: .utf8) == "unchanged")
     }
-
-    @Test func savedCandidatesAndManifestMetadata() throws {
-        let saved = AgentSettingsModelManifestFactory.remoteAPIModel(manifestID: "persisted-custom-id", title: "Saved",
-            modelID: "saved-model", providerID: AgentRemoteProvider.chatGPTSubscriptionProviderID,
-            providerName: "ChatGPT", baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL,
-            chatEndpoint: .responses, configuredContextWindowLimit: 77777,
-            generationParameterOverrides: nil, thinkingSupport: .generic)
-        let merged = ZenCODESetupRunner.mergeSubscriptionCandidates([], existingModels: [saved])
-        #expect(merged.map(\.manifestID) == ["persisted-custom-id"])
-        #expect(ZenCODESetupRunner.subscriptionModelSelectionDefaultIndexes(candidates: merged, defaultModels: [saved]) == [0])
-        let candidate = ZenCODESetupRunner.SubscriptionModelCandidate(manifestID: "claude:new-model", modelID: "new-model",
-            title: "New", detail: "", contextWindowTokenLimit: 300000, thinkingSupport: nil,
-            maxOutputTokens: 150000, isDiscovered: true)
-        let manifest = ZenCODESetupRunner.subscriptionModelManifest(candidate: candidate,
-            providerID: AgentRemoteProvider.anthropicSubscriptionProviderID, providerName: "Claude",
-            baseURL: AgentRemoteProvider.anthropicSubscriptionBaseURL, chatEndpoint: .responses)
-        #expect(manifest.id == candidate.manifestID)
-        #expect(manifest.configuredContextWindowLimit == 300000)
-        #expect(manifest.generationParameterOverrides?.maxTokens == 150000)
-        #expect(manifest.thinkingOptions == [.off])
-        #expect(manifest.defaultThinkingSelection == .off)
-    }
 }

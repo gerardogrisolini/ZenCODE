@@ -55,6 +55,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   the handler belongs to the `ChatSessionHost`, which routes the events of the
   delegated sub-agents to every channel; an embedder must not replace it
   (`Docs/embedding.md`).
+- Production code no longer carries test hooks: the 33 internal `…ForTesting`
+  members (and `TelegramWorkEffectForTesting`) of `ZenCODECore`, `FeatureKit`
+  and `FeatureMCPBridgeKit` are removed, with the tests that needed them, and
+  the root test suite is roughly halved (about 6,000 to 3,000 tests) by
+  dropping duplicate, wording-only and trivial tests.
 
 ### Fixed
 

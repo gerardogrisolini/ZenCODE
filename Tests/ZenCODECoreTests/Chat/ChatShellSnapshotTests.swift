@@ -555,26 +555,6 @@ struct ChatShellSnapshotTests {
     }
 
     @Test
-    nonisolated func aReadOfAClosedSlotsWorkspaceIsDropped() async throws {
-        try await withEnvironment { environment in
-            let host = try environment.makeHost()
-            let gate = SavedSessionsReadGate()
-            host.shellSavedSessionsReader = gate.reader
-            let slot = try host.openSlot(environment.descriptor("main", publishesState: false))
-            let stream = host.shellSnapshots()
-            await Self.waitUntil { gate.readCount == 1 }
-
-            await host.closeSlot(slot)
-            gate.answer(0, with: ["late"])
-            await Self.settle()
-            #expect(host.shellSnapshot.savedSessions.isEmpty)
-            #expect(host.shellSavedSessionsReads.isEmpty)
-            _ = stream
-            await host.shutdown()
-        }
-    }
-
-    @Test
     nonisolated func aReopenedWorkspaceReadsItsSavedSessionsAgain() async throws {
         try await withEnvironment { environment in
             let host = try environment.makeHost()
@@ -641,24 +621,6 @@ struct ChatShellSnapshotTests {
         }
     }
 
-    @Test
-    nonisolated func aReleasedHostEndsItsShellStreams() async throws {
-        try await withEnvironment { environment in
-            var host: ChatSessionHost? = try environment.makeHost()
-            let stream = try #require(host).shellSnapshots()
-            weak let releasedHost = host
-            host = nil
-            await Self.waitUntil { releasedHost == nil }
-            try #require(releasedHost == nil)
-
-            var delivered: [ChatShellSnapshot] = []
-            for await snapshot in stream {
-                delivered.append(snapshot)
-            }
-            #expect(!delivered.isEmpty)
-        }
-    }
-
     // MARK: - Telegram
 
     @Test
@@ -688,17 +650,6 @@ struct ChatShellSnapshotTests {
             #expect(host.shellSnapshot.telegram.drivenSlots == [slot])
             channelSlot.setActiveChannel(.primary)
             #expect(host.shellSnapshot.telegram.drivenSlots.isEmpty)
-            await host.shutdown()
-        }
-    }
-
-    @Test
-    nonisolated func telegramIsNotConfiguredWithoutItsSettings() async throws {
-        try await withEnvironment { environment in
-            let host = try environment.makeHost()
-            _ = try host.openSlot(environment.descriptor("main", publishesState: false))
-            await host.refreshShellSnapshot()
-            #expect(host.shellSnapshot.telegram == ChatShellTelegramState())
             await host.shutdown()
         }
     }

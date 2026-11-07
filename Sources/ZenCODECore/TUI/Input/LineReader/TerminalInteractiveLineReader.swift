@@ -211,10 +211,6 @@ public final class TerminalInteractiveLineReader: Sendable {
         /// Lifecycle teardown still needs the renderer itself to stop before the
         /// terminal is handed to another interactive reader.
         var panelRenderDrainWaiters: [CheckedContinuation<Void, Never>] = []
-        /// Internal asynchronous test seam for a render already dequeued by the
-        /// single-flight task. Production leaves it `nil`; tests use it to hold
-        /// a repaint without blocking the cooperative executor or status actor.
-        var panelRenderBeforeUpdateForTesting: (@Sendable () async -> Void)?
         /// The voice dictation previewed at the end of the draft.
         var voiceDictation = TerminalPromptDictation()
         /// Told the id of a dictation an edit ended, so voice forgets what

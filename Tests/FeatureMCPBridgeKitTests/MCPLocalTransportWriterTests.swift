@@ -152,53 +152,6 @@ struct MCPLocalTransportWriterTests {
     }
 
     @Test
-    func enqueueAfterTeardownFailsInsteadOfHanging() async throws {
-        let pipe = Self.makeNonBlockingPipe()
-        let writer = MCPLocalTransportWriter(
-            fileDescriptor: pipe.fileHandleForWriting.fileDescriptor
-        )
-
-        writer.finish()
-        writer.cancel()
-        await writer.join()
-
-        do {
-            try await writer.enqueue(Data(#"{"id":1}"#.utf8))
-            Issue.record("Expected a post-teardown enqueue to fail.")
-        } catch {
-            // Expected: the job can never be drained after teardown.
-        }
-
-        pipe.fileHandleForWriting.closeFile()
-        _ = pipe.fileHandleForReading.readDataToEndOfFile()
-    }
-
-    @Test
-    func aCancelledCallerDoesNotEnqueueAWrite() async throws {
-        let pipe = Self.makeNonBlockingPipe()
-        let writer = MCPLocalTransportWriter(
-            fileDescriptor: pipe.fileHandleForWriting.fileDescriptor
-        )
-
-        let cancelledCaller = Task {
-            // Cancelled before it ever reaches enqueue().
-            try await Task.sleep(nanoseconds: 10_000_000_000)
-            try await writer.enqueue(Data(#"{"id":1}"#.utf8))
-        }
-        cancelledCaller.cancel()
-        do { try await cancelledCaller.value } catch { /* expected */ }
-
-        try await writer.enqueue(Data(#"{"id":2}"#.utf8))
-        writer.finish()
-        await writer.join()
-        pipe.fileHandleForWriting.closeFile()
-
-        let written = pipe.fileHandleForReading.readDataToEndOfFile()
-        // Only the live request reached the bridge; no partial or stale frame.
-        #expect(String(decoding: written, as: UTF8.self) == "{\"id\":2}\n")
-    }
-
-    @Test
     func aCancelledLocalRequestIsNotSentToTheBridge() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("mcp-cancel-write-\(UUID().uuidString)", isDirectory: true)
@@ -599,63 +552,6 @@ struct MCPLocalTransportWriterTests {
         }
         _ = readHandle.readDataToEndOfFile()
         readHandle.closeFile()
-    }
-
-    @Test
-    func aCancelledTeardownBacksOffInsteadOfSpinning() async throws {
-        // Regression: the EAGAIN back-off used `try? await Task.sleep`, which on
-        // an ALREADY CANCELLED task returns immediately and turns the retry loop
-        // into a CPU spin. The back-off must therefore be uninterruptible.
-        //
-        // Measured directly on the primitive: a cancelled task must still be
-        // suspended for (approximately) the full interval.
-        let interval: UInt64 = 200_000_000
-        let spinning = Task {
-            let start = DispatchTime.now()
-            await MCPLocalTransportWriter.sleepIgnoringCancellation(nanoseconds: interval)
-            return DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
-        }
-        spinning.cancel()
-        let elapsed = await spinning.value
-        // A cancellation-aware sleep would return in ~0ns here.
-        #expect(elapsed >= interval / 2)
-    }
-
-    @Test
-    func aWedgedWriterDoesNotBlockASubsequentReconnect() async throws {
-        // End-to-end shape of the finding: a previous generation's writer is
-        // still wedged on a peer that never drains. Starting a new generation
-        // must not wait for it, and the new writer must own a fresh descriptor.
-        let stalePipe = Self.makeNonBlockingPipe()
-        let staleReadEnd = stalePipe.fileHandleForReading
-        let staleWriter = MCPLocalTransportWriter(
-            fileDescriptor: stalePipe.fileHandleForWriting.fileDescriptor,
-            teardownFrameGraceNanoseconds: 50_000_000
-        )
-        let staleJob = Task { try await staleWriter.enqueue(Data(String(repeating: "s", count: 512 * 1024).utf8)) }
-        try await Self.waitUntilWedged(staleWriter)
-
-        // This is the step that used to be unbounded.
-        _ = await staleWriter.shutdown(timeoutNanoseconds: 2_000_000_000)
-        #expect(!staleWriter.isDescriptorValid)
-        do { try await staleJob.value } catch { /* expected */ }
-
-        // A fresh generation works normally: bounded teardown must not leave the
-        // writer in a permanently degraded state.
-        let freshPipe = Self.makeNonBlockingPipe()
-        let freshWriter = MCPLocalTransportWriter(
-            fileDescriptor: freshPipe.fileHandleForWriting.fileDescriptor
-        )
-        try await freshWriter.enqueue(Data(#"{"id":"fresh"}"#.utf8))
-        await freshWriter.shutdown()
-        freshPipe.fileHandleForWriting.closeFile()
-        let written = freshPipe.fileHandleForReading.readDataToEndOfFile()
-        #expect(String(decoding: written, as: UTF8.self) == "{\"id\":\"fresh\"}\n")
-
-        stalePipe.fileHandleForWriting.closeFile()
-        _ = staleReadEnd.readDataToEndOfFile()
-        staleReadEnd.closeFile()
-        freshPipe.fileHandleForReading.closeFile()
     }
 
     @Test

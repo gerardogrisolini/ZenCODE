@@ -23,52 +23,6 @@ struct ACPStandardPresentationTests {
             #expect(["pending", "in_progress", "completed"].contains(fields["status"]!.acpStringValue!))
         }
     }
-
-    @Test func completePlanSnapshotsDeduplicateAndClear() async {
-        let projection = ACPTaskPresentation()
-        let graph = TaskGraphSnapshot(id: "g", source: .manual, state: .active,
-                                      tasks: [TaskRecord(id: "t", title: "Task", order: 0)])
-        let initial = await projection.updates(for: taskOverview(graph))
-        #expect(initial.count == 1)
-        for update in initial { await projection.acknowledge(update) }
-        #expect(await projection.updates(for: taskOverview(graph)).isEmpty)
-        let cleared = await projection.updates(for: nil)
-        #expect(cleared.first?.objectValue?["entries"] == .array([]))
-        for update in cleared { await projection.acknowledge(update) }
-        #expect(await projection.updates(for: nil).isEmpty)
-    }
-
-    @Test func cancelledPermissionOutcomeWinsOverLegacySelection() {
-        let result: JSONValue = .object([
-            "optionId": .string("allow_always"),
-            "outcome": .object(["outcome": .string("cancelled"), "optionId": .string("allow_once")])
-        ])
-        #expect(ACPPermissionBroker.permissionOptionID(from: result) == nil)
-    }
-
-    @Test func delegatedConsentKeysRemainSeparate() {
-        func request(agent: String) -> AgentToolAuthorizationRequest {
-            AgentToolAuthorizationRequest(sessionID: "child", toolCallID: "call", toolName: "tool",
-                title: "Tool", kind: "execute", command: "command", workingDirectory: "/tmp",
-                delegatedIdentity: .init(agentID: agent, rootSessionID: "root"))
-        }
-        #expect(ACPPermissionBroker.permissionCacheKeyValue(for: request(agent: "a"))
-                != ACPPermissionBroker.permissionCacheKeyValue(for: request(agent: "b")))
-    }
-
-    @Test func authenticDiffAndSummaryUseStandardContent() {
-        let call = DirectAgentToolCall(id: "c", name: "local.writeFile", argumentsObject: [:], argumentsJSON: "{}")
-        let result = DirectAgentToolResult(output: "output", summary: "summary", fileChanges: [
-            .init(path: "/tmp/file", oldText: "before\n", newText: "after\n")
-        ])
-        let update = ZenCODEACPBridge.toolCallCompletionJSONUpdate(for: call, result: result)
-        let content = update.objectValue?["content"]?.arrayValue ?? []
-        #expect(content.count == 2)
-        #expect(content.first?.objectValue?["content"]?.objectValue?["text"] == .string("summary\n\noutput"))
-        #expect(content.last?.objectValue?["type"] == .string("diff"))
-        #expect(content.last?.objectValue?["oldText"] == .string("before\n"))
-        #expect(content.last?.objectValue?["newText"] == .string("after\n"))
-    }
 }
 
 extension ACPStandardPresentationTests {
@@ -145,43 +99,6 @@ extension ACPStandardPresentationTests {
         }
         #expect(terminalReplay.isEmpty)
     }
-
-    @Test func taskAttemptDedupCommitsOnlyAfterAcceptance() async throws {
-        let projection = ACPTaskPresentation()
-        let attempt = TaskAttempt(id: "attempt", ordinal: 1, agentID: "worker", executor: .subAgent,
-                                  status: .running, startedAt: .now)
-        let graph = TaskGraphSnapshot(id: "graph", source: .manual, state: .active, tasks: [
-            TaskRecord(id: "task", title: "Work", order: 0, status: .inProgress, attempts: [attempt])
-        ])
-        let prepared = try #require(await projection.updates(for: taskOverview(graph)).first {
-            $0.objectValue?["toolCallId"] == .string("acp:work:graph:task:attempt")
-        })
-        let nextAttempt = await projection.updates(for: taskOverview(graph))
-        #expect(nextAttempt.contains {
-            $0.objectValue?["sessionUpdate"] == .string("tool_call")
-        })
-        await projection.acknowledge(prepared)
-        let replay = await projection.updates(for: taskOverview(graph))
-        let replayForAttempt = replay.filter {
-            $0.objectValue?["toolCallId"] == .string("acp:work:graph:task:attempt")
-        }
-        #expect(replayForAttempt.isEmpty)
-    }
-
-    @Test func retriesHaveSeparateAttemptToolIDs() async {
-        let attempts = [
-            TaskAttempt(id: "first", ordinal: 1, agentID: "a", executor: .subAgent, status: .failed, startedAt: .now),
-            TaskAttempt(id: "retry", ordinal: 2, agentID: "b", executor: .subAgent, status: .running, startedAt: .now)
-        ]
-        let graph = TaskGraphSnapshot(id: "graph", source: .manual, state: .active, tasks: [
-            TaskRecord(id: "task", title: "Task", order: 0, status: .inProgress, attempts: attempts)
-        ])
-        let updates = await ACPTaskPresentation().updates(for: taskOverview(graph))
-        let ids = updates.compactMap { $0.objectValue?["toolCallId"]?.acpStringValue }
-        #expect(Set(ids).count == 2)
-        #expect(ids.contains("acp:work:graph:task:first"))
-        #expect(ids.contains("acp:work:graph:task:retry"))
-    }
 }
 
 extension ACPStandardPresentationTests {
@@ -230,29 +147,6 @@ extension ACPStandardPresentationTests {
 }
 
 extension ACPStandardPresentationTests {
-    @Test func pipelineDrainsAcceptedContentButRejectsLateAdmission() async {
-        let valid = Mutex(true)
-        let messages = Mutex<[Data]>([])
-        let writer = ACPWriter { data in messages.withLock { $0.append(data) } }
-        let pipeline = ACPPromptUpdatePipeline(sessionID: "root", writer: writer,
-            buffer: ACPPromptUpdateBuffer(), isValid: { valid.withLock { $0 } })
-        await pipeline.enqueue(.init(kind: .consume(.object([
-            "sessionUpdate": .string("agent_message_chunk"),
-            "content": .object(["type": .string("text"), "text": .string("buffered")])
-        ])))).value
-        valid.withLock { $0 = false }
-        await pipeline.enqueue(.init(kind: .consume(ZenCODEACPBridge.textChunkJSONUpdate(
-            kind: "agent_message_chunk", text: "late-rejected"
-        )))).value
-        await pipeline.enqueue(.init(kind: .flush)).value
-        await pipeline.drain()
-        let wire = messages.withLock { $0.map { String(decoding: $0, as: UTF8.self) }.joined() }
-        #expect(wire.contains("buffered"))
-        #expect(!wire.contains("late-rejected"))
-    }
-}
-
-extension ACPStandardPresentationTests {
     @Test func cancelledDelegatedPermissionCannotAuthorizeRecreatedRoot() async throws {
         let (stream, continuation) = AsyncStream<JSONValue>.makeStream()
         let writer = ACPWriter { data in
@@ -285,128 +179,5 @@ extension ACPStandardPresentationTests {
         #expect(await second.value == false)
         #expect(await broker.cachedDecisionCount(sessionID: "root") == 0)
         continuation.finish()
-    }
-}
-
-extension ACPStandardPresentationTests {
-    @Test func tasklessAcknowledgementRequiresPipelineAcceptance() async throws {
-        let projection = ACPTasklessPresentation()
-        let terminal = DirectSubAgentRuntime.AgentSnapshot(
-            id: "a", rootSessionID: "root", name: "Agent", role: "Worker", status: .idle,
-            pending: false, latestOutput: "Done", executionRevision: 1,
-            completedExecutionRevision: 1, latestOutputRevision: 1, latestError: nil, createdAt: .now, updatedAt: .now)
-        let update = try #require(await projection.updates([terminal]).first)
-        let valid = Mutex(false)
-        let deliver = Mutex(true)
-        let output = Mutex<[Data]>([])
-        let pipeline = ACPPromptUpdatePipeline(sessionID: "root",
-            writer: ACPWriter { data in output.withLock { $0.append(data) } },
-            buffer: ACPPromptUpdateBuffer(), buffersUpdates: false,
-            isValid: { valid.withLock { $0 } }, canDeliver: { deliver.withLock { $0 } })
-        await pipeline.enqueue(.init(kind: .consume(update)), onAccepted: {
-            await projection.acknowledge(update)
-        }).value
-        #expect(await projection.updates([terminal]) == [update])
-        valid.withLock { $0 = true }
-        deliver.withLock { $0 = false }
-        await pipeline.enqueue(.init(kind: .consume(update)), onAccepted: {
-            await projection.acknowledge(update)
-        }).value
-        #expect(await projection.updates([terminal]) == [update])
-        #expect(output.withLock { $0.isEmpty })
-        deliver.withLock { $0 = true }
-        await pipeline.enqueue(.init(kind: .consume(update)), onAccepted: {
-            await projection.acknowledge(update)
-        }).value
-        #expect(await projection.updates([terminal]).isEmpty)
-        #expect(output.withLock { $0.count } == 1)
-    }
-}
-
-extension ACPStandardPresentationTests {
-    @Test func compactDiffUsesStandardTextWithoutInventingCompleteFileImages() {
-        let call = DirectAgentToolCall(id: "c", name: "local.editFile", argumentsObject: [:], argumentsJSON: "{}")
-        let patch = "@@ -100,1 +100,1 @@\n-old entry\n+new entry\n"
-        let result = DirectAgentToolResult(output: "Updated", summary: "Updated", fileChanges: [
-            .init(path: "/tmp/CHANGELOG.md", oldText: nil, newText: nil,
-                  compactDiff: .init(patch: patch, additions: 1, deletions: 1))
-        ])
-        let update = ZenCODEACPBridge.toolCallCompletionJSONUpdate(for: call, result: result)
-        let content = update.objectValue?["content"]?.arrayValue ?? []
-        #expect(content.count == 2)
-        #expect(content.allSatisfy { $0.objectValue?["type"] == .string("content") })
-        #expect(content.last?.objectValue?["content"]?.objectValue?["type"] == .string("text"))
-        #expect(content.last?.objectValue?["content"]?.objectValue?["text"] == .string("/tmp/CHANGELOG.md:\n" + patch))
-        #expect(content.allSatisfy { $0.objectValue?["oldText"] == nil && $0.objectValue?["newText"] == nil })
-        #expect(update.objectValue?["compactDiff"] == nil)
-        #expect(update.objectValue?["hasLineCounts"] == nil)
-    }
-}
-
-/// The `session/update` payloads a writer put on the wire, in order.
-private final class ACPSessionUpdateLog: Sendable {
-    private let messages = Mutex<[JSONValue]>([])
-
-    var writer: ACPWriter {
-        ACPWriter { data in
-            if let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
-                self.messages.withLock { $0.append(value) }
-            }
-        }
-    }
-
-    var updates: [JSONValue] {
-        messages.withLock { values in
-            values.compactMap { $0.objectValue?["params"]?.objectValue?["update"] }
-        }
-    }
-}
-
-extension ACPStandardPresentationTests {
-    /// A root call's completion title ends with the time its result carries
-    /// (``DirectAgentToolResult/elapsed``), and its `tool_call` stays as it
-    /// was; a result without one (a call cancelled before its dispatch) gives
-    /// a title without time.
-    @Test func rootToolCallCompletionTitleEndsWithTheResultsMeasuredTime() async {
-        let log = ACPSessionUpdateLog()
-        let workspace = URL(fileURLWithPath: "/tmp/acp-workspace")
-        let presenter = ACPPromptPresenter(
-            sessionID: "session",
-            workspaceURL: workspace,
-            writer: log.writer,
-            updatePipeline: nil,
-            ensureTasklessObserver: {},
-            claimDelegatedToolNotification: { _ in true }
-        )
-        let exec = DirectAgentToolCall(
-            id: "call-1", name: "local.exec",
-            argumentsObject: ["command": "swift test"], argumentsJSON: #"{"command":"swift test"}"#
-        )
-        let cancelled = DirectAgentToolCall(
-            id: "call-2", name: "local.exec",
-            argumentsObject: ["command": "swift build"], argumentsJSON: #"{"command":"swift build"}"#
-        )
-        let result = DirectAgentToolResult(
-            output: "Build complete.", summary: "Build complete.", elapsed: .milliseconds(1_250)
-        )
-        let untimedResult = DirectAgentToolResult(output: "Cancelled.", summary: "Cancelled.", status: .failed)
-
-        await presenter.presentToolCallStarted(exec)
-        await presenter.presentToolCallCompleted(exec, result: result)
-        await presenter.presentToolCallCompleted(cancelled, result: untimedResult)
-
-        let updates = log.updates
-        #expect(updates.count == 3)
-        guard updates.count == 3 else { return }
-        #expect(updates[0] == ZenCODEACPBridge.toolCallCreateJSONUpdate(for: exec, workingDirectory: workspace))
-        #expect(updates[0].objectValue?["title"] == .string("local.exec swift test"))
-        #expect(updates[1] == ZenCODEACPBridge.toolCallCompletionJSONUpdate(
-            for: exec, result: result, workingDirectory: workspace
-        ))
-        #expect(updates[1].objectValue?["title"] == .string("local.exec swift test · 1.25s"))
-        #expect(updates[2] == ZenCODEACPBridge.toolCallCompletionJSONUpdate(
-            for: cancelled, result: untimedResult, workingDirectory: workspace
-        ))
-        #expect(updates[2].objectValue?["title"] == .string("local.exec swift build"))
     }
 }

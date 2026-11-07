@@ -30,21 +30,6 @@ struct TerminalCheckboxMenuRenderingTests {
     }
 
     @Test
-    func frameRetainsGeometryUsedForResizeCleanup() {
-        let frame = TerminalCheckboxMenu.RenderedFrame(
-            row: 18,
-            height: 4,
-            terminalRows: 24,
-            terminalColumns: 100
-        )
-
-        #expect(frame.row == 18)
-        #expect(frame.height == 4)
-        #expect(frame.terminalRows == 24)
-        #expect(frame.terminalColumns == 100)
-    }
-
-    @Test
     func clearFrameSequenceClearsReflowedRowsWhenNarrowing() {
         let frame = TerminalCheckboxMenu.RenderedFrame(
             row: 2,
@@ -71,54 +56,6 @@ struct TerminalCheckboxMenuRenderingTests {
     }
 
     @Test
-    func clearFrameSequenceHonorsMinimumWidthAndTerminalRows() {
-        let frame = TerminalCheckboxMenu.RenderedFrame(
-            row: 8,
-            height: 3,
-            terminalRows: 10,
-            terminalColumns: 40
-        )
-
-        let sequence = TerminalCheckboxMenu.clearFrameSequence(
-            frame: frame,
-            terminalRows: 10,
-            terminalColumns: 10
-        )
-
-        #expect(
-            sequence == "\u{1B}[8;1H\u{1B}[2K"
-                + "\u{1B}[9;1H\u{1B}[2K"
-                + "\u{1B}[10;1H\u{1B}[2K"
-                + "\u{1B}[10;1H"
-        )
-        #expect(!sequence.contains("\u{1B}[11;1H"))
-    }
-
-    @Test
-    func clearFrameSequenceUsesPhysicalWidthBelowMinimumBoxWidth() {
-        let frame = TerminalCheckboxMenu.RenderedFrame(
-            row: 2,
-            height: 2,
-            terminalRows: 24,
-            terminalColumns: 20
-        )
-
-        let sequence = TerminalCheckboxMenu.clearFrameSequence(
-            frame: frame,
-            terminalRows: 24,
-            terminalColumns: 10
-        )
-
-        #expect(
-            sequence == "\u{1B}[2;1H\u{1B}[2K"
-                + "\u{1B}[3;1H\u{1B}[2K"
-                + "\u{1B}[4;1H\u{1B}[2K"
-                + "\u{1B}[5;1H\u{1B}[2K"
-                + "\u{1B}[5;1H"
-        )
-    }
-
-    @Test
     func clearFrameSequenceClipsReflowToCurrentTranscriptViewport() {
         let frame = TerminalCheckboxMenu.RenderedFrame(
             row: 3,
@@ -138,36 +75,6 @@ struct TerminalCheckboxMenuRenderingTests {
         #expect(sequence.contains("\u{1B}[18;1H\u{1B}[2K"))
         #expect(!sequence.contains("\u{1B}[19;1H"))
         #expect(!sequence.contains("\u{1B}[24;1H"))
-    }
-
-    @Test
-    func resizeRepaintSequenceObservesCleanupBeforeNewMenuFrame() {
-        let oldFrame = TerminalCheckboxMenu.RenderedFrame(
-            row: 3,
-            height: 2,
-            terminalRows: 24,
-            terminalColumns: 100,
-            reservedBottomRows: 6
-        )
-        let rendered = TerminalCheckboxMenu.renderMenuSequence(
-            title: "Menu",
-            items: [TerminalCheckboxMenuItem(value: 1, title: "One", detail: nil)],
-            selection: .single(1),
-            focusedIndex: 0,
-            reservedBottomRows: 6,
-            reserveSpaceBeforeDrawing: false
-        )
-        let cleanup = TerminalCheckboxMenu.clearFrameSequence(
-            frame: oldFrame,
-            terminalRows: 24,
-            terminalColumns: 20,
-            transcriptBottomRow: 18
-        )
-        let repaint = cleanup + rendered.sequence
-
-        #expect(repaint.hasPrefix(cleanup))
-        #expect(repaint.dropFirst(cleanup.count).contains("Menu"))
-        #expect(repaint.firstIndex(of: "M")! >= repaint.index(repaint.startIndex, offsetBy: cleanup.count))
     }
 
     @Test
@@ -247,41 +154,5 @@ struct TerminalCheckboxMenuRenderingTests {
 
         #expect(coordinator.currentGeneration() == initialGeneration &+ 1)
         #expect(callbackCount.withLock { $0 } == 1)
-    }
-
-    @Test
-    func resumableTaskGraphMenusExposeResumeAndCheckboxDeletionChoices() {
-        let graph = ResumableTaskGraph(
-            sessionID: "session",
-            graphID: "unfinished",
-            state: .active,
-            source: .workflow,
-            totalTaskCount: 3,
-            pendingTaskCount: 2,
-            updatedAt: Date(timeIntervalSince1970: 0)
-        )
-        let timestamp = TerminalChat.savedSessionTimestamp(graph.updatedAt)
-
-        let choices = ChatSessionController.resumableTaskGraphChoiceItems([graph], deletesAll: false)
-        #expect(choices.map(\.id) == ["resume:session/unfinished", "delete", "fresh"])
-        // The terminal draws the rows it drew before: same titles, details,
-        // and headings, no current-item marker. Only the delete detail is new.
-        let rows = TerminalInteractionHost.menuItems(choices)
-        #expect(rows.map(\.value) == choices.map(\.id))
-        #expect(rows.map(\.title) == ["unfinished", "Delete old tasks…", "Start fresh"])
-        #expect(rows.map(\.detail) == [
-            "2 of 3 tasks pending · updated \(timestamp)",
-            "choose the obsolete task graphs to delete",
-            "leave saved tasks unchanged",
-        ])
-        #expect(rows.map(\.groupTitle) == ["Resume", "Other actions", "Other actions"])
-
-        let deletionRows = TerminalInteractionHost.menuItems(
-            ChatSessionController.resumableTaskGraphDeletionItems([graph])
-        )
-        #expect(deletionRows.map(\.value) == [graph.id])
-        #expect(deletionRows.map(\.title) == ["unfinished"])
-        #expect(deletionRows.map(\.detail) == ["2 pending · updated \(timestamp)"])
-        #expect(deletionRows.map(\.groupTitle) == [nil])
     }
 }

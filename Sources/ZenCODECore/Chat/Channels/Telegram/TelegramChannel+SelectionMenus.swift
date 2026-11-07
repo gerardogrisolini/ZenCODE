@@ -507,18 +507,13 @@ extension TelegramChannel {
 
     /// Replaces the keyboard of the message `messageID` with `markup`, or
     /// removes it (`nil`), best effort: a failed edit (the message is gone,
-    /// or unchanged) changes nothing else. The
-    /// ``onTelegramReplyMarkupEditForTesting`` seam takes it over in tests.
+    /// or unchanged) changes nothing else.
     func editSelectionMenuKeyboard(
         _ markup: TerminalTelegramReplyMarkup?,
         chatID: Int64,
         messageID: Int,
         lease: TerminalTelegramRouteLease
     ) async {
-        if let hook = onTelegramReplyMarkupEditForTesting {
-            await hook(markup, chatID, messageID)
-            return
-        }
         guard let fence = wireFence(for: lease) else { return }
         try? await controlService.editMessageReplyMarkup(
             markup, chatID: chatID, messageID: messageID, fence: fence

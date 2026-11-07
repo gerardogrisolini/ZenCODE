@@ -113,27 +113,6 @@ struct ProjectStorageKeyTests {
     }
 
     @Test
-    func movedProjectKeepsItsMemory() async throws {
-        let sandbox = try Sandbox()
-        defer { sandbox.remove() }
-        let original = try sandbox.folder("esselunga/App-Ist-3.0-IOS")
-        try await Self.writeMemory(
-            content: "Summary: the checkout flow uses the v3 API.",
-            workspace: original,
-            support: sandbox.support
-        )
-        let moved = try sandbox.folder("App-Ist-3.0-IOS", create: false)
-        try FileManager.default.moveItem(at: original, to: moved)
-
-        let contents = try await Self.memoryContents(workspace: moved, support: sandbox.support)
-        #expect(contents.contains { $0.contains("checkout flow uses the v3 API") })
-        #expect(
-            MemoryGraphLocation.graphDirectoryURL(for: moved).lastPathComponent
-                == ProjectStorageKey.key(for: moved)
-        )
-    }
-
-    @Test
     func foldersWithTheSameNameShareOneMemoryAndOtherNamesDoNot() async throws {
         let sandbox = try Sandbox()
         defer { sandbox.remove() }
@@ -253,33 +232,5 @@ struct ProjectStorageKeyTests {
             store.taskGraphsDirectoryURL(workingDirectory: moved).lastPathComponent
                 == ProjectStorageKey.key(for: moved)
         )
-    }
-
-    // MARK: - Saved-session index
-
-    @Test
-    func savedSessionIndexKeepsOneEntryPerProjectName() throws {
-        let sandbox = try Sandbox()
-        defer { sandbox.remove() }
-        let index = SavedSessionsStore(directoryURL: sandbox.support)
-        try index.recordSavedSession(
-            projectPath: "/esselunga/App", sessionName: "a", sessionID: "1",
-            savedAt: Date(timeIntervalSince1970: 1)
-        )
-        try index.recordSavedSession(
-            projectPath: "/work/Other", sessionName: "b", sessionID: "2",
-            savedAt: Date(timeIntervalSince1970: 2)
-        )
-        try index.recordSavedSession(
-            projectPath: "/Projects/App", sessionName: "c", sessionID: "3",
-            savedAt: Date(timeIntervalSince1970: 3)
-        )
-
-        #expect(index.sessions().map(\.projectPath) == ["/Projects/App", "/work/Other"])
-        #expect(index.sessions().first?.sessionName == "c")
-
-        let data = try Data(contentsOf: index.sessionsFileURL())
-        let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        #expect(Set(json.keys) == ["version", "sessions"])
     }
 }

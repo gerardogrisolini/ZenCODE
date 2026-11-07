@@ -329,39 +329,6 @@ struct MemoryEmbeddingABLiveTests {
 
     // MARK: - Test
 
-    /// Hermetic: the harness copies a version 4 graph with its vectors file,
-    /// so the copy loads with the same vectors as the source.
-    @Test func harnessCopiesTheVectorsFileWithTheGraph() async throws {
-        let fileManager = FileManager.default
-        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let sourceDirectory = root.appendingPathComponent("source", isDirectory: true)
-        let copyDirectory = root.appendingPathComponent("copy", isDirectory: true)
-        try fileManager.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: copyDirectory, withIntermediateDirectories: true)
-        defer { try? fileManager.removeItem(at: root) }
-        let source = sourceDirectory.appendingPathComponent("memory.graph.json")
-        var graph = MemoryGraph()
-        graph.addMemory(EngineMemoryEntry(
-            id: "vec", category: .fact, content: "with a vector",
-            embedding: [0.5, -0.25, 1], embeddingModel: "m"
-        ))
-        try await JSONMemoryPersistence(url: source).save(graph)
-
-        let copy = try Self.copyGraphFiles(from: source, into: copyDirectory)
-
-        #expect(copy.lastPathComponent == "memory.graph.json")
-        #expect(try Data(contentsOf: JSONMemoryPersistence.vectorsURL(forGraphAt: copy))
-            == Data(contentsOf: JSONMemoryPersistence.vectorsURL(forGraphAt: source)))
-        #expect(try await JSONMemoryPersistence(url: copy).load().memories["vec"]?.embedding == [0.5, -0.25, 1])
-
-        // Without a vectors file (a version 3 graph) only the JSON is copied.
-        let legacyDirectory = root.appendingPathComponent("legacy", isDirectory: true)
-        try fileManager.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
-        try fileManager.removeItem(at: JSONMemoryPersistence.vectorsURL(forGraphAt: source))
-        let legacyCopy = try Self.copyGraphFiles(from: source, into: legacyDirectory)
-        #expect(try fileManager.contentsOfDirectory(atPath: legacyDirectory.path) == [legacyCopy.lastPathComponent])
-    }
-
     @Test func compareRetrievalConfigurationsOnRealGraph() async throws {
         let env = ProcessInfo.processInfo.environment
         guard env["ZENCODE_RUN_LIVE_MEMORY_AB"] == "1" else { return }

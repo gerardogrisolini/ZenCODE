@@ -242,7 +242,6 @@ extension TelegramChannel {
         message: TerminalTelegramIncomingMessage,
         lease: TerminalTelegramRouteLease
     ) async {
-        if onTelegramWorkEffectForTesting?(.attachmentDownload) == true { return }
         guard let fence = wireFence(for: lease) else { return }
         do {
             let stored = try await controlService.receiveInboundAttachment(

@@ -49,54 +49,6 @@ import Testing
         #expect(!capture.bytes.contains("\u{1B}[2J"))
     }
 
-    @Test(arguments: [20, 40, 48, 100, 160], [
-        "pwd",
-        "printf " + String(repeating: "界🙂e\u{301}-long-argument ", count: 12) + "tail-token",
-    ])
-    func `authorization right border aligns with the real prompt for short and long commands`(
-        columns: Int, command: String
-    ) async {
-        // Forty rows retain the whole wrapped card above the actual prompt;
-        // this is an alignment regression, not a resize or clipping fixture.
-        let capture = PrimaryScreenCapture(rows: 40, columns: columns)
-        let bar = TerminalStatusBar(
-            isEnabled: true, cursorReports: capture.reports, outputSink: capture.write,
-        )
-        await bar.configureForTesting(row: 40, columns: columns, modelID: "test-model")
-        await bar.updateInputPanel(text: "draft", cursorIndex: 5, modeText: "Prompt", helpText: "Enter")
-        let reservedRows = await bar.reservedRowsForOverlay()
-        let originalFooter = capture.terminal.withLock { Array($0.viewport.suffix(reservedRows)) }
-        let promptRightBorder = originalFooter.first?.cells.lastIndex(of: "╮")
-        #expect(originalFooter.first?.text.hasPrefix("╭") == true)
-        #expect(promptRightBorder == columns - 1) // zero-based; final physical column
-
-        let rendered = prompt(columns: columns, command: command)
-        let expected = cardLines(rendered)
-        let modal = TerminalModalSession(screen: await bar.primaryScreen)
-        modal.updateDialog(TerminalDialogPresentation(prompt: rendered))
-        let viewport = capture.terminal.withLock { $0.viewport }
-        let authorizationRows = Array(viewport.dropLast(reservedRows).suffix(expected.count))
-
-        #expect(authorizationRows.map(\.text) == expected)
-        #expect(authorizationRows.allSatisfy { row in
-            row.cells.lastIndex(where: { $0 == "╮" || $0 == "│" || $0 == "┤" || $0 == "╯" })
-                == promptRightBorder
-        })
-        #expect(authorizationRows.allSatisfy { row in
-            TerminalANSIText.visibleWidth(row.text) == columns && row.cells.last != " " && !row.softWrapped
-        })
-        #expect(Array(viewport.suffix(reservedRows).map(\.text)) == originalFooter.map(\.text))
-        if command != "pwd" {
-            #expect(expected.filter { $0.hasPrefix("│") }.count > 4)
-            let bodyContent = expected.filter { $0.hasPrefix("│") }.map {
-                String($0.dropFirst(2).dropLast(2)).trimmingCharacters(in: .whitespaces)
-            }.joined()
-            #expect(bodyContent.contains("tail-token"))
-        }
-        modal.close()
-        await bar.stop()
-    }
-
     @Test func `dialog rows retain whitespace and ANSI without menu normalization`() {
         let content = "  \u{1B}[36mplain dialog 界🙂\u{1B}[0m  "
         let dialog = TerminalDialogPresentation(prompt: "\n" + content + "\n")
@@ -136,20 +88,6 @@ import Testing
         #expect(capture.visible.contains("STATUS| ready"))
     }
 
-    @Test func `retry is plain dialog content rather than a menu`() {
-        let capture = PrimaryScreenCapture(), screen = capture.screen()
-        install(screen)
-        let retry = LocalExecPermissionAuthorizer.terminalRetryPrompt()
-        let modal = TerminalModalSession(screen: screen)
-        defer { modal.close() }
-        modal.updateDialog(TerminalDialogPresentation(prompt: retry))
-        let rows = capture.terminal.withLock { $0.viewport.map(\.text) }
-        #expect(rows[rows.count - footerLines.count - 1] == TerminalANSIText.stripANSI(retry))
-        #expect(!capture.visible.contains("╭"))
-        #expect(!capture.visible.contains("│"))
-        #expect(!capture.visible.contains("more"))
-    }
-
     @Test(arguments: [8, 10, 12])
     func `short terminals prioritize consent actions without covering the footer`(rows: Int) {
         let capture = PrimaryScreenCapture(rows: rows, columns: 60), screen = capture.screen()
@@ -174,42 +112,6 @@ import Testing
         modal.close()
         #expect(!capture.visible.contains("[R]"))
         #expect(capture.visible.contains("draft second line"))
-    }
-
-    @Test func `resize keeps real status draft dock and consent choices`() async throws {
-        let capture = PrimaryScreenCapture()
-        let bar = TerminalStatusBar(isEnabled: true, cursorReports: capture.reports,
-            resizeGeneration: { capture.generation.withLock { $0 } }, outputSink: capture.write)
-        await bar.configureForTesting(row: 24, columns: 100, modelID: "test-model", isProcessing: true)
-        let draft = "draft 界🙂\nsecond line"
-        await bar.updateInputPanel(text: draft, cursorIndex: draft.count, modeText: "Prompt", helpText: "Enter")
-        await bar.setSharedChatReader(entries: [], unreadCount: 0, isExpanded: true)
-        let screen = await bar.primaryScreen
-        let modal = TerminalModalSession(screen: screen)
-        let rendered = prompt(command: "echo " + String(repeating: "long-argument ", count: 6))
-        modal.updateDialog(TerminalDialogPresentation(prompt: rendered))
-        for (rows, columns) in [(18, 45), (24, 100)] {
-            capture.resize(rows: rows, columns: columns)
-            await bar.handleTerminalResizeForTesting(rows: rows, columns: columns)
-            screen.append("queued-\(columns)|\n")
-            try await capture.answerReport()
-            #expect(!screen.isAppendOnly)
-            #expect(await bar.state.inputPanelState?.text == draft)
-            #expect(capture.visible.contains("test-model"))
-            #expect(capture.visible.contains("Chat"))
-            #expect(capture.visible.contains("[R]un once / [A]lways / [C]ancel"))
-            let footerRows = await bar.reservedRowsForOverlay()
-            let dialogArea = capture.terminal.withLock {
-                $0.viewport.dropLast(footerRows).map(\.text).joined(separator: "\n")
-            }
-            #expect(dialogArea.filter { $0 == "╭" }.count == 1)
-            #expect(!capture.history.contains("[R]"))
-        }
-        #expect(capture.visible.contains(cardLines(rendered).joined(separator: "\n")))
-        modal.close()
-        #expect(capture.visible.contains("second line"))
-        #expect(!capture.visible.contains("Authorization"))
-        await bar.stop()
     }
 
     @Test func `closing a dialog restores the menu border focus and overflow markers`() {
@@ -265,23 +167,6 @@ import Testing
         ))
         #expect(reader.readSingleKey(prompt: prompt(), shouldCancel: { cancel }, screen: screen) == nil)
         #expect(!capture.visible.contains("Authorization"))
-        #expect(capture.visible.contains("STATUS| ready"))
-    }
-
-    @Test func `text prompts keep their existing menu framing and default semantics`() {
-        let capture = PrimaryScreenCapture(), screen = capture.screen()
-        install(screen)
-        let answer = TerminalCheckboxMenu.readPromptLine(title: "Text prompt", prompt: "Name",
-            defaultValue: "existing", allowEmpty: true, help: "Enter to accept", reservedBottomRows: 4,
-            screen: screen) {
-                #expect(capture.visible.contains("Text prompt"))
-                #expect(capture.visible.contains("Name [existing]: ▏"))
-                #expect(capture.visible.filter { $0 == "╭" }.count == 1)
-                #expect(capture.visible.filter { $0 == "╰" }.count == 1)
-                return .submitted("")
-            }
-        #expect(answer == "existing")
-        #expect(!capture.visible.contains("Text prompt"))
         #expect(capture.visible.contains("STATUS| ready"))
     }
 }

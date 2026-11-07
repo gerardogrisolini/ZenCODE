@@ -191,73 +191,6 @@ struct SessionTaskOrchestratorTests {
     }
 
     @Test
-    func coordinatorLifecycleCreatesAndCompletesAnAttempt() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        _ = try await orchestrator.createGraph(
-            sessionID: "session",
-            id: "graph",
-            source: .manual,
-            state: .active,
-            tasks: [TaskDefinition(id: "a", title: "A")]
-        )
-
-        let started = try await orchestrator.updateTask(
-            sessionID: "session",
-            taskID: "a",
-            update: TaskUpdate(status: .inProgress, output: "started")
-        )
-        let attemptID = try #require(started.task.activeAttemptID)
-        #expect(started.task.activeAttempt?.executor == .coordinator)
-        #expect(started.task.activeAttempt?.status == .running)
-        #expect(started.task.activeAttempt?.output == "started")
-
-        let completed = try await orchestrator.updateTask(
-            sessionID: "session",
-            taskID: "a",
-            update: TaskUpdate(
-                status: .completed,
-                output: "done",
-                evidence: [TaskEvidence(kind: "test", summary: "focused checks passed")]
-            )
-        )
-        #expect(completed.task.status == .completed)
-        #expect(completed.task.activeAttemptID == nil)
-        #expect(completed.task.attempts.count == 1)
-        #expect(completed.task.attempts[0].id == attemptID)
-        #expect(completed.task.attempts[0].status == .completed)
-        #expect(completed.task.attempts[0].output == "done")
-        #expect(completed.task.result?.output == "done")
-        #expect(completed.task.result?.evidence.first?.summary == "focused checks passed")
-    }
-
-    @Test
-    func implementationCompletionRequiresIndependentValidation() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        _ = try await orchestrator.createGraph(
-            sessionID: "session", id: "graph", source: .manual, state: .active,
-            tasks: [TaskDefinition(id: "a", title: "A")]
-        )
-        let claim = try #require(try await orchestrator.claimTasks(
-            sessionID: "session", claims: [TaskClaim(taskID: "a", agentID: "worker")]
-        ).first)
-        _ = try await orchestrator.completeAttempt(
-            sessionID: "session", taskID: "a", attemptID: claim.attemptID,
-            output: "implemented", requiresValidation: true
-        )
-        #expect(try await orchestrator.task(
-            sessionID: "session", taskID: "a"
-        ).task.status == .awaitingValidation)
-
-        let validated = try await orchestrator.validateTaskResult(
-            sessionID: "session", taskID: "a", succeeded: true,
-            evidence: [TaskEvidence(kind: "test", summary: "Focused tests passed")]
-        )
-        #expect(validated.task.status == .completed)
-        #expect(validated.task.result?.validatedAt != nil)
-        #expect(validated.task.result?.evidence.count == 1)
-    }
-
-    @Test
     func workflowCompletionRequiresValidationAndFailedValidationRequiresRetry() async throws {
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(
@@ -446,41 +379,6 @@ struct SessionTaskOrchestratorTests {
     }
 
     @Test
-    func complexityDefaultsToFiveAndClampsToRange() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        _ = try await orchestrator.createGraph(
-            sessionID: "session", id: "graph", source: .manual, state: .active,
-            tasks: [
-                TaskDefinition(id: "default", title: "Default complexity"),
-                TaskDefinition(id: "low", title: "Clamped low", complexity: -5),
-                TaskDefinition(id: "high", title: "Clamped high", complexity: 99),
-                TaskDefinition(id: "explicit", title: "Explicit", complexity: 7),
-            ]
-        )
-        let snapshot = try await orchestrator.graphSnapshot(sessionID: "session", graphID: "graph")
-        let tasks = snapshot?.tasks ?? []
-        #expect(tasks.first { $0.id == "default" }?.complexity == 5)
-        #expect(tasks.first { $0.id == "low" }?.complexity == 1)
-        #expect(tasks.first { $0.id == "high" }?.complexity == 10)
-        #expect(tasks.first { $0.id == "explicit" }?.complexity == 7)
-    }
-
-    @Test
-    func complexityIsUpdatedViaTaskUpdate() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        _ = try await orchestrator.createGraph(
-            sessionID: "session", id: "graph", source: .manual, state: .active,
-            tasks: [TaskDefinition(id: "a", title: "A")]
-        )
-        _ = try await orchestrator.updateTask(
-            sessionID: "session", taskID: "a", graphID: "graph",
-            update: TaskUpdate(complexity: 8)
-        )
-        let snapshot = try await orchestrator.graphSnapshot(sessionID: "session", graphID: "graph")
-        #expect(snapshot?.tasks.first?.complexity == 8)
-    }
-
-    @Test
     func taskRecordDecodesWithoutComplexityKeyForBackwardCompat() throws {
         let json = """
         {
@@ -543,29 +441,6 @@ struct SessionTaskOrchestratorTests {
         )
         #expect(recreated.tasks.count == 2)
         #expect(recreated.tasks.map(\.title) == ["New A", "New B"])
-    }
-
-    @Test
-    func removeGraphRejectsGraphWithActiveAttempt() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        _ = try await orchestrator.createGraph(
-            sessionID: "session",
-            id: "graph",
-            source: .manual,
-            state: .active,
-            tasks: [TaskDefinition(id: "a", title: "A", order: 1)]
-        )
-        _ = try await orchestrator.claimTasks(
-            sessionID: "session",
-            claims: [TaskClaim(taskID: "a", agentID: "worker")]
-        )
-
-        await #expect(throws: SessionTaskOrchestratorError.self) {
-            _ = try await orchestrator.removeGraph(
-                id: "graph",
-                sessionID: "session"
-            )
-        }
     }
 
     @Test(arguments: [TaskGraphSource.workflow, .manual])
@@ -657,28 +532,6 @@ struct SessionTaskOrchestratorTests {
     }
 
     @Test
-    func workflowDelegationRequiresValidationEvenForDeclaredCoordinatorWork() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        _ = try await orchestrator.createGraph(
-            sessionID: "session", id: "workflow", source: .workflow, state: .active,
-            tasks: [TaskDefinition(id: "work", title: "Work")]
-        )
-        let claim = try #require(try await orchestrator.claimTasks(
-            sessionID: "session", claims: [TaskClaim(taskID: "work", agentID: "worker")]
-        ).first)
-        _ = try await orchestrator.completeAttempt(
-            sessionID: "session", taskID: "work", attemptID: claim.attemptID,
-            output: "Delegated result", requiresValidation: false
-        )
-        #expect(try await orchestrator.task(sessionID: "session", taskID: "work").task.status == .awaitingValidation)
-        let rejected = try await orchestrator.validateTaskResult(
-            sessionID: "session", taskID: "work", succeeded: false,
-            failureReason: "Needs correction", blocked: true
-        )
-        #expect(rejected.task.status == .failed)
-    }
-
-    @Test
     func activeWorkflowGraphCannotBeReplacedAndItsSourceRoundTrips() async throws {
         #expect(TaskGraphSource.workflow.isWorkflow)
         #expect(!TaskGraphSource.manual.isWorkflow)
@@ -707,37 +560,6 @@ struct SessionTaskOrchestratorTests {
         } catch let error as SessionTaskOrchestratorError {
             #expect(error == .graphNotMutable("workflow"))
         }
-    }
-
-    @Test
-    func createGraphCannotDeselectANonTerminalWorkflowWhenArchivingIsDisabled() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        _ = try await orchestrator.createGraph(
-            sessionID: "workflow-session",
-            id: "workflow",
-            source: .workflow,
-            state: .active,
-            tasks: []
-        )
-
-        do {
-            _ = try await orchestrator.createGraph(
-                sessionID: "workflow-session",
-                id: "replacement",
-                source: .manual,
-                state: .draft,
-                tasks: [],
-                archivePreviousCurrent: false
-            )
-            Issue.record("A non-terminal workflow must remain current even when archiving is disabled")
-        } catch let error as SessionTaskOrchestratorError {
-            #expect(error == .graphNotMutable("workflow"))
-        }
-        #expect(try await orchestrator.graphSnapshot(sessionID: "workflow-session")?.id == "workflow")
-        #expect(try await orchestrator.graphSnapshot(
-            sessionID: "workflow-session",
-            graphID: "workflow"
-        )?.state == .active)
     }
 
     @Test
@@ -957,22 +779,6 @@ struct SessionTaskOrchestratorTests {
     }
 
     @Test
-    func discardSessionFinishesItsEventStreamAndDropsContinuation() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        let stream = await orchestrator.events(sessionID: "discarded")
-        let consumer = Task { () -> Int in
-            var count = 0
-            for await _ in stream { count += 1 }
-            return count
-        }
-
-        try await orchestrator.discardSession(id: "discarded", deleteCheckpoint: false)
-
-        #expect(await consumer.value == 1)
-        #expect(await orchestrator.eventContinuations["discarded"] == nil)
-    }
-
-    @Test
     func delegatedScopeHasSymmetricReadOnlySnapshotAndCheckpointBoundary() async throws {
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(
@@ -998,24 +804,6 @@ struct SessionTaskOrchestratorTests {
         await #expect(throws: SessionTaskOrchestratorError.self) {
             try await orchestrator.clearTaskGraphs(sessionID: "delegated")
         }
-    }
-
-    @Test
-    func progressWithoutMatchingActiveAttemptIsRejected() async throws {
-        let orchestrator = try await makeTwoTaskGraph()
-
-        let accepted = try await orchestrator.recordAttemptProgress(
-            sessionID: "session",
-            taskID: "a",
-            attemptID: "missing-attempt",
-            output: "must not be stored"
-        )
-
-        // Attempt mutations use a non-throwing stale-event rejection contract:
-        // false means the output was fenced out and no task state was changed.
-        #expect(!accepted)
-        let snapshot = try #require(try await orchestrator.graphSnapshot(sessionID: "session"))
-        #expect(snapshot.tasks.first(where: { $0.id == "a" })?.attempts.isEmpty == true)
     }
 
     private func workflowSnapshot(

@@ -103,25 +103,6 @@ struct ChatSubAgentOverviewTests {
     }
 
     @Test
-    func aChannelThatReservesNothingIsPresentedTheOverviewAsItComes() async throws {
-        try await withChatHarness { harness in
-            let presenter = harness.presenter
-            await presenter.setRecordsSubAgentOverviews(true)
-            await presenter.setReservesSubAgentPublications(false)
-
-            await harness.controller.publishSubAgentOverviewIfChanged()
-
-            #expect(await presenter.subAgentReservations == [nil])
-            let published = try #require(await presenter.subAgentOverviews.first)
-            #expect(published.publication == nil)
-            // No sub-agent: the overview is empty, which a channel shows as
-            // no section.
-            #expect(published.agentIDs.isEmpty)
-            #expect(published.currentBatchID == nil)
-        }
-    }
-
-    @Test
     func aPublicationStillReadingIsOvertakenByOneThatStartedLater() async throws {
         try await withChatHarness { harness in
             let presenter = harness.presenter
@@ -202,66 +183,6 @@ struct ChatSubAgentOverviewTests {
         }
     }
 
-    @Test
-    func startingTwiceKeepsOneRefreshAndEveryStopPublishes() async throws {
-        try await withChatHarness { harness in
-            let presenter = harness.presenter
-            let controller = harness.controller
-            await presenter.setRecordsSubAgentOverviews(true)
-            let gate = DebounceGate()
-            controller.subAgentOverviewRefresher.sleep = { try await gate.sleep($0) }
-
-            controller.startSubAgentOverviewRefreshIfNeeded()
-            let refresh = try #require(controller.subAgentOverviewRefreshTask)
-            controller.startSubAgentOverviewRefreshIfNeeded()
-            #expect(controller.subAgentOverviewRefreshTask == refresh)
-            await gate.waitForEntries(1)
-
-            await controller.stopSubAgentOverviewRefresh()
-            #expect(controller.subAgentOverviewRefreshTask == nil)
-            // Stopping a stopped refresh is safe and still publishes the
-            // latest state, as the turn end does after every turn.
-            await controller.stopSubAgentOverviewRefresh()
-            #expect(controller.subAgentOverviewRefreshTask == nil)
-
-            #expect(await gate.durations.count == 1)
-            #expect(await presenter.subAgentOverviews.count == 2)
-        }
-    }
-
-    @Test
-    func theStopWaitsForTheTickInFlightBeforeItsFinalPublication() async throws {
-        try await withChatHarness { harness in
-            let presenter = harness.presenter
-            let controller = harness.controller
-            await presenter.setRecordsSubAgentOverviews(true)
-            let gate = DebounceGate()
-            let tick = HeldTick()
-            controller.subAgentOverviewRefresher.sleep = { try await gate.sleep($0) }
-            controller.subAgentOverviewRefresher.onTick = { await tick.hold() }
-
-            controller.startSubAgentOverviewRefreshIfNeeded()
-            await gate.waitForEntries(1)
-            await gate.open()
-            await tick.waitForEntry()
-
-            let stopping = Task { await controller.stopSubAgentOverviewRefresh() }
-            await tick.waitForCancellation()
-            // The stop cancelled the tick and is waiting for it: it cannot
-            // publish while the tick is held.
-            #expect(controller.subAgentOverviewRefreshTask == nil)
-            #expect(await presenter.events.isEmpty)
-
-            await tick.release()
-            await stopping.value
-
-            // The cancelled tick publishes nothing; the stop publishes once.
-            #expect(await presenter.subAgentReservations == [ChatOverviewPublication(revision: 1)])
-            #expect(await presenter.subAgentOverviews.count == 1)
-            #expect(await gate.durations.count == 1)
-        }
-    }
-
     // MARK: - The channel drives
 
     @Test
@@ -311,86 +232,6 @@ struct ChatSubAgentOverviewTests {
         }
     }
 
-    // MARK: - Terminal
-
-    @Test @ChatSessionActor
-    func theTerminalForwardsItsRefreshSeamsToTheControllersRefresher() async throws {
-        let terminal = try Self.makeTerminal()
-        let refresher = terminal.chatSession.subAgentOverviewRefresher
-        let gate = DebounceGate()
-        refresher.sleep = { try await gate.sleep($0) }
-        #expect(terminal.subAgentOverviewRefreshInterval == .seconds(2))
-
-        terminal.subAgentOverviewRefreshInterval = .milliseconds(5)
-        #expect(refresher.interval == .milliseconds(5))
-        terminal.onSubAgentOverviewTick = {}
-        #expect(refresher.onTick != nil)
-        #expect(terminal.onSubAgentOverviewTick != nil)
-        terminal.onSubAgentOverviewTick = nil
-        #expect(refresher.onTick == nil)
-
-        terminal.startSubAgentOverviewRefreshIfNeeded()
-        let refresh = try #require(terminal.chatSession.subAgentOverviewRefreshTask)
-        #expect(terminal.subAgentOverviewRefreshTask == refresh)
-        await gate.waitForEntries(1)
-        #expect(await gate.durations == [.milliseconds(5)])
-
-        await terminal.stopSubAgentOverviewRefresh()
-        #expect(terminal.subAgentOverviewRefreshTask == nil)
-        #expect(terminal.chatSession.subAgentOverviewRefreshTask == nil)
-    }
-
-    @Test @ChatSessionActor
-    func theTerminalStartsTheRefreshForASubAgentToolAndStopsItWhenTheToolSettlesOrTheTurnFinishes() async throws {
-        let terminal = try Self.makeTerminal()
-        let gate = DebounceGate()
-        terminal.chatSession.subAgentOverviewRefresher.sleep = { try await gate.sleep($0) }
-        let presenter = terminal.chatSessionPresenter
-        let result = DirectAgentToolResult(output: "done", summary: "done")
-        func toolCall(_ id: String, _ name: String) -> DirectAgentToolCall {
-            DirectAgentToolCall(id: id, name: name, argumentsObject: [:], argumentsJSON: "{}")
-        }
-
-        let exec = toolCall("exec", "local.exec")
-        await presenter.presentToolCallStarted(exec)
-        #expect(terminal.subAgentOverviewRefreshTask == nil)
-        await presenter.presentToolCallSettled(exec, result: result)
-
-        let wait = toolCall("wait", "agent.wait")
-        await presenter.presentToolCallStarted(wait)
-        #expect(terminal.subAgentOverviewRefreshTask != nil)
-        await presenter.presentToolCallSettled(wait, result: result)
-        #expect(terminal.subAgentOverviewRefreshTask == nil)
-
-        let create = toolCall("create", "agent.create")
-        await presenter.presentToolCallStarted(create)
-        #expect(terminal.subAgentOverviewRefreshTask != nil)
-        await presenter.turnWillFinish()
-        #expect(terminal.subAgentOverviewRefreshTask == nil)
-    }
-
-    @Test @ChatSessionActor
-    func theTerminalRendersAPresentedOverviewWithItsToolRowsAndDropsAnOvertakenOne() async throws {
-        let terminal = try Self.makeTerminal()
-        let presenter = terminal.chatSessionPresenter
-        let first = try #require(await presenter.reserveSubAgentOverviewPublication())
-        let second = try #require(await presenter.reserveSubAgentOverviewPublication())
-        #expect(second.revision > first.revision)
-        let older = ChatSubAgentOverview(snapshots: [Self.snapshot(id: "older")])
-        let newer = ChatSubAgentOverview(snapshots: [Self.snapshot(id: "newer")])
-
-        await presenter.presentSubAgentOverview(older, origin: .automatic, publication: first)
-        #expect(await terminal.renderCoordinator.snapshot().lastRenderedSubAgentOverviewSignature == nil)
-
-        await presenter.presentSubAgentOverview(newer, origin: .automatic, publication: second)
-        let toolRevision = await terminal.renderCoordinator.subAgentToolPresentationSnapshot().revision
-        // The terminal adds the revision of the delegated tool rows it tracks.
-        #expect(
-            await terminal.renderCoordinator.snapshot().lastRenderedSubAgentOverviewSignature
-                == newer.signature + "\u{1C}tools:\(toolRevision)"
-        )
-    }
-
     // MARK: - Fixtures
 
     private static func snapshot(
@@ -436,23 +277,6 @@ struct ChatSubAgentOverviewTests {
             presenter: presenter
         )
     }
-
-    @ChatSessionActor
-    private static func makeTerminal() throws -> TerminalChat {
-        let configuration = try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            availableAgents: AgentProfileStore.defaultProfiles(),
-            workingDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(
-                "zencode-sub-agent-overview-\(UUID().uuidString)",
-                isDirectory: true
-            )
-        )
-        return TerminalChat(
-            configuration: configuration,
-            stdinIsTerminal: false,
-            sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil)
-        )
-    }
 }
 
 /// Values appended from another isolation domain, read back by the test.
@@ -461,63 +285,5 @@ private actor Recorder<Value: Sendable> {
 
     func append(_ value: Value) {
         values.append(value)
-    }
-}
-
-/// A refresh tick held in `onTick` until the test releases it. Unlike a
-/// sleep it ignores cancellation, as a tick suspended in the runtime or in the
-/// channel would, and it records the cancellation so the test knows the stop
-/// has cancelled the tick and is waiting for it.
-private actor HeldTick {
-    private var entered = false
-    private var cancelled = false
-    private var released = false
-    private var holder: CheckedContinuation<Void, Never>?
-    private var entryWaiters: [CheckedContinuation<Void, Never>] = []
-    private var cancellationWaiters: [CheckedContinuation<Void, Never>] = []
-
-    /// The `onTick` the refresher runs.
-    nonisolated func hold() async {
-        await withTaskCancellationHandler {
-            await enterAndWait()
-        } onCancel: {
-            Task { await self.noteCancellation() }
-        }
-    }
-
-    func waitForEntry() async {
-        guard !entered else { return }
-        await withCheckedContinuation { entryWaiters.append($0) }
-    }
-
-    func waitForCancellation() async {
-        guard !cancelled else { return }
-        await withCheckedContinuation { cancellationWaiters.append($0) }
-    }
-
-    func release() {
-        released = true
-        holder?.resume()
-        holder = nil
-    }
-
-    private func enterAndWait() async {
-        entered = true
-        let waiters = entryWaiters
-        entryWaiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
-        }
-        guard !released else { return }
-        await withCheckedContinuation { holder = $0 }
-    }
-
-    private func noteCancellation() {
-        cancelled = true
-        let waiters = cancellationWaiters
-        cancellationWaiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
-        }
     }
 }

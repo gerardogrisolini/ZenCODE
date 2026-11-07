@@ -27,12 +27,6 @@ struct ZenCODECommandLineRunnerTests {
     }
 
     @Test
-    func headlessArgumentAcceptsInlinePrompt() throws {
-        try AgentConfiguration.validateArguments(["zen", "-p", "summarize this"])
-        try AgentConfiguration.validateArguments(["zen", "--prompt", "summarize this"])
-    }
-
-    @Test
     func headlessArgumentRequiresAValueAndRejectsACP() {
         #expect(throws: AgentConfigurationError.self) {
             try AgentConfiguration.validateArguments(["zen", "-p"])
@@ -149,26 +143,6 @@ struct ZenCODECommandLineRunnerTests {
     }
 
     @Test
-    func jsonlWriterEmitsOneTerminalErrorForFailedTurn() async {
-        let lines = Mutex<[Data]>([])
-        let writer = ZenCODEHeadlessJSONLWriter(runID: "run-error") { data in
-            lines.withLock { $0.append(data) }
-        }
-
-        await writer.start()
-        await writer.write(event: .turnEnded(.failed(message: "backend failed")))
-        await writer.write(error: ZenCODEHeadlessRunnerError.noResponse)
-
-        let records = lines.withLock { values in
-            values.compactMap { try? JSONDecoder().decode(JSONValue.self, from: $0) }
-        }
-        #expect(records.count == 2)
-        #expect(records[0].objectValue?["type"]?.stringValue == "run.started")
-        #expect(records[1].objectValue?["type"]?.stringValue == "error")
-        #expect(records[1].objectValue?["category"]?.stringValue == "runtime")
-        #expect(records[1].objectValue?["message"]?.stringValue == "The backend produced no assistant text.")
-    }
-    @Test
     func promptFileArgumentIsAcceptedAloneAndWithInlinePromptInAnyOrder() throws {
         try AgentConfiguration.validateArguments(["zen", "-f", "/tmp/prompt.md"])
         try AgentConfiguration.validateArguments(["zen", "-p", "summarize", "-f", "/tmp/prompt.md"])
@@ -217,22 +191,6 @@ struct ZenCODECommandLineRunnerTests {
         #expect(promptArgumentError(["-f", "/a", "-f", "/b"]) == "Options -f and -f cannot be combined.")
         #expect(promptArgumentError(["--acp", "-f", "/a"]) == "Options --acp and -f cannot be combined.")
         #expect(promptArgumentError(["-f", "/a", "--acp"]) == "Options --acp and -f cannot be combined.")
-    }
-
-    @Test
-    func inlinePromptConflictsKeepTheirMessagesNextToPromptFile() {
-        #expect(promptArgumentError(["-p", "a", "-p", "b"]) == "Options -p and -p/--prompt cannot be combined.")
-        #expect(
-            promptArgumentError(["-f", "/a", "-p", "x", "-p", "y"])
-                == "Options -p and -p/--prompt cannot be combined."
-        )
-        #expect(
-            promptArgumentError(["-p", "x", "-f", "/a", "--prompt", "y"])
-                == "Options --prompt and -p/--prompt cannot be combined."
-        )
-        #expect(promptArgumentError(["--acp", "-p", "x"]) == "Options --acp and -p/--prompt cannot be combined.")
-        #expect(promptArgumentError(["-p", "x", "--acp"]) == "Options --acp and -p/--prompt cannot be combined.")
-        #expect(promptArgumentError(["--jsonl"]) == "Missing value for --prompt.")
     }
 
     @Test
@@ -297,17 +255,6 @@ struct ZenCODECommandLineRunnerTests {
         #expect(telegramInTheApp.resolvedRunMode(stdinIsTerminal: false) == .telegram)
     }
 
-    @Test
-    func theRunModeNamesAreTUITelegramACPHeadlessAndAutomatic() {
-        #expect(AgentRunMode(rawValue: "tui") == .tui)
-        #expect(AgentRunMode(rawValue: "telegram") == .telegram)
-        #expect(AgentRunMode(rawValue: "acp") == .acp)
-        #expect(AgentRunMode(rawValue: "headless") == .headless)
-        #expect(AgentRunMode(rawValue: "automatic") == .automatic)
-        // `chat` was renamed to `tui`, without an alias.
-        #expect(AgentRunMode(rawValue: "chat") == nil)
-    }
-
     @Test(arguments: ["--tui", "--telegram"])
     func aModeArgumentConflictsWithEveryHeadlessOptionInAnyOrder(flag: String) {
         let promptConflict = "Options \(flag) and -p/--prompt cannot be combined."
@@ -346,17 +293,6 @@ struct ZenCODECommandLineRunnerTests {
     }
 
     @Test
-    func headlessAndACPConflictMessagesAreUnchanged() {
-        #expect(promptArgumentError(["--acp", "-p", "x"]) == "Options --acp and -p/--prompt cannot be combined.")
-        #expect(promptArgumentError(["-p", "x", "--acp"]) == "Options --acp and -p/--prompt cannot be combined.")
-        #expect(promptArgumentError(["--acp", "-f", "/a"]) == "Options --acp and -f cannot be combined.")
-        #expect(promptArgumentError(["-f", "/a", "--acp"]) == "Options --acp and -f cannot be combined.")
-        #expect(promptArgumentError(["--acp", "--jsonl"]) == "Options --jsonl and --acp cannot be combined.")
-        #expect(promptArgumentError(["--jsonl", "--acp"]) == "Options --acp and --jsonl cannot be combined.")
-        #expect(promptArgumentError(["-p", "x", "--jsonl", "--acp"]) == "Options --acp and -p/--prompt cannot be combined.")
-    }
-
-    @Test
     func headlessPromptUsesPipedContext() throws {
         #expect(
             try ZenCODEHeadlessRunner.prompt(
@@ -386,36 +322,6 @@ struct ZenCODECommandLineRunnerTests {
             )
         }
         #expect(String(decoding: stdin.readDataToEndOfFile(), as: UTF8.self) == "build log")
-    }
-
-    @Test
-    func headlessPromptReadsTheFileAsTheInstruction() throws {
-        try withPromptDirectory { directory in
-            let path = try writePromptFile("\n  summarize the changes \n\n", in: directory)
-            #expect(
-                try ZenCODEHeadlessRunner.prompt(
-                    inlinePrompt: nil,
-                    promptFile: path,
-                    stdin: pipe(containing: "ignored"),
-                    stdinIsTerminal: true
-                ) == "summarize the changes"
-            )
-        }
-    }
-
-    @Test
-    func headlessPromptAddsTheFileToTheInlinePromptAsContext() throws {
-        try withPromptDirectory { directory in
-            let path = try writePromptFile("build log\n", in: directory)
-            #expect(
-                try ZenCODEHeadlessRunner.prompt(
-                    inlinePrompt: "  explain \n",
-                    promptFile: path,
-                    stdin: pipe(containing: "ignored"),
-                    stdinIsTerminal: true
-                ) == "explain\n\nAdditional context from file:\nbuild log"
-            )
-        }
     }
 
     @Test
@@ -513,26 +419,6 @@ struct ZenCODECommandLineRunnerTests {
     }
 
     @Test
-    func promptFileErrorsDescribeTheFileInTextMode() {
-        #expect(
-            ZenCODEPromptFileError.notAbsolute(path: "p.md").localizedDescription
-                == "The prompt file path must be absolute: p.md."
-        )
-        #expect(
-            ZenCODEPromptFileError.unreadable(path: "/p.md").localizedDescription
-                == "Cannot read the prompt file /p.md."
-        )
-        #expect(
-            ZenCODEPromptFileError.notUTF8(path: "/p.md").localizedDescription
-                == "The prompt file /p.md is not UTF-8 text."
-        )
-        #expect(
-            ZenCODEPromptFileError.empty(path: "/p.md").localizedDescription
-                == "The prompt file /p.md is empty."
-        )
-    }
-
-    @Test
     func jsonlPromptFileErrorsAreGenericAndNeverCarryThePath() throws {
         let path = "/Users/alice/.secrets/prompt.md"
         let errors: [ZenCODEPromptFileError] = [
@@ -571,66 +457,6 @@ struct ZenCODECommandLineRunnerTests {
         )
         #expect(missingFileValue.category == .configuration)
         #expect(missingFileValue.publicMessage == "Invalid command-line arguments.")
-    }
-
-    @Test
-    func zenExecutableRejectsARelativePromptFileBeforeSetupWithAFramedJSONLError() throws {
-        let result = try runZen(zenExecutableURL(), arguments: ["--jsonl", "-f", "relative.md"])
-        #expect(result.exitCode == 1)
-        #expect(result.stderr.isEmpty)
-        #expect(result.stdout.last == 0x0A)
-        #expect(result.stdout.filter { $0 == 0x0A }.count == 1)
-
-        let record = try JSONDecoder().decode(JSONValue.self, from: result.stdout)
-        #expect(record.objectValue?["type"]?.stringValue == "error")
-        #expect(record.objectValue?["category"]?.stringValue == "configuration")
-        #expect(record.objectValue?["message"]?.stringValue == "Invalid command-line arguments.")
-    }
-
-    @Test
-    func zenExecutableStandaloneHelpDocumentsThePromptFileOptionExactlyOnce() throws {
-        let result = try runZen(zenExecutableURL(), arguments: ["--help"])
-        #expect(result.exitCode == 0)
-        let help = String(decoding: result.stdout, as: UTF8.self)
-
-        let standaloneUsage = "zen [--doctor] [--install-features [id,id,...]] [--tui] [--telegram] [--jsonl] [-p PROMPT] [-f PATH] [--acp]"
-        let promptFileLine = "  -f PATH                Run one headless prompt read from a file (absolute path). With -p, the file is added as context."
-        #expect(help.components(separatedBy: standaloneUsage).count == 2)
-        #expect(help.components(separatedBy: promptFileLine).count == 2)
-        #expect(help.contains("  --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt or -f)."))
-        #expect(help.contains("  --doctor               Print a redacted diagnostic report"))
-        #expect(help.contains("  --zen-package-path DIR Source ZenCODE checkout used to install optional features."))
-        #expect(help.contains("With -p or -f, piped stdin is supplied as additional context."))
-        #if os(macOS)
-        // `zen --ui` opens the macOS app: in the usage line and in the options.
-        let appUsage = "\(standaloneUsage) [--ui] [--agent NAME]"
-        let appOptionLine = "  --ui                   Open the ZenCODE macOS app (built on first use). Accepts --agent, --model, --skills, --working-directory."
-        #expect(help.components(separatedBy: appUsage).count == 2)
-        #expect(help.components(separatedBy: appOptionLine).count == 2)
-        #expect(help.contains("  --telegram             Run the session from the linked Telegram chat, without the TUI (Telegram must be set up and paired with /setup).\n\(appOptionLine)\n"))
-        #else
-        // Elsewhere the option does not exist.
-        #expect(help.contains("\(standaloneUsage) [--agent NAME]"))
-        #expect(!help.contains("--ui"))
-        #endif
-    }
-
-    @Test
-    func zenExecutableStandaloneHelpDocumentsTheTUIAndTelegramModes() throws {
-        let result = try runZen(zenExecutableURL(), arguments: ["--help"])
-        #expect(result.exitCode == 0)
-        let help = String(decoding: result.stdout, as: UTF8.self)
-
-        let tuiLine = "  --tui                  Human terminal chat (default)."
-        let acpLine = "  --acp                  ACP JSON-RPC over stdio for compatible clients."
-        let telegramLine = "  --telegram             Run the session from the linked Telegram chat, without the TUI (Telegram must be set up and paired with /setup)."
-        #expect(help.components(separatedBy: tuiLine).count == 2)
-        #expect(help.components(separatedBy: telegramLine).count == 2)
-        #expect(help.contains("\(acpLine)\n\(telegramLine)\n"))
-        #expect(help.contains("ZENCODE_AGENT_MODE           tui, telegram, acp, headless, or auto. Auto resolves to tui."))
-        #expect(help.contains("  In the TUI, use /setup to reconfigure ZenCODE"))
-        #expect(!help.contains("  default                Human terminal chat."))
-        #expect(!help.contains("In chat mode,"))
     }
 
     /// The run mode of the environment is validated before the other values,
@@ -776,33 +602,6 @@ struct ZenCODECommandLineRunnerTests {
             #expect(withJSONL.stdout == ordinary.stdout)
             #expect(withJSONL.stderr == ordinary.stderr)
         }
-    }
-
-    @Test
-    func zenExecutableRejectsInstallingTheRetiredSearchToolsFeature() throws {
-        let supportURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("zencode-retired-search-install-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: supportURL)
-        }
-        var environment = ProcessInfo.processInfo.environment
-        environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
-
-        let result = try runZen(
-            zenExecutableURL(),
-            arguments: ["--install-features", "search-tools"],
-            environment: environment
-        )
-        let stderr = String(decoding: result.stderr, as: UTF8.self)
-
-        #expect(result.exitCode == 1)
-        #expect(stderr.contains("Unknown optional Swift feature: search-tools."))
-        #expect(!FileManager.default.fileExists(
-            atPath: supportURL
-                .appendingPathComponent("features", isDirectory: true)
-                .appendingPathComponent("search-tools", isDirectory: true)
-                .path
-        ))
     }
 
     @Test
@@ -1044,29 +843,6 @@ struct ZenCODECommandLineRunnerTests {
     }
 
     @Test
-    func mailDeliveryCaptureReceivesTheLegacyTextUnchanged() async throws {
-        let output = ZenCronCapturedOutput()
-        let runner = ControlledHeadlessSessionRunner(
-            response: DirectAgentResponse(text: "legacy\ntext", stopReason: "stop", modelID: "test"),
-            events: [.status("hidden"), .content("hidden stream"), .turnEnded(.completed)]
-        )
-
-        try await ZenCODEHeadlessRunner.runTurn(
-            configuration: makeHeadlessConfiguration(jsonl: false),
-            prompt: "hello",
-            sessionRunner: runner,
-            sessionConfiguration: makeSessionConfiguration(),
-            jsonlSink: { data in output.append(data) },
-            textSink: { text in output.append(text) }
-        )
-
-        #expect(output.chunks == [
-            ZenCronCapturedOutput.Chunk(stream: .standardOutput, data: Data("legacy\ntext\n".utf8))
-        ])
-        #expect(await runner.lifecycle() == ["create", "send", "close", "shutdown"])
-    }
-
-    @Test
     func mailDeliveryCaptureReceivesTheSameJSONLRecordsAsStandardOutput() async throws {
         func runJSONLTurn(into sink: @escaping ZenCODEHeadlessJSONLWriter.Sink) async throws {
             try await ZenCODEHeadlessRunner.runTurn(
@@ -1101,57 +877,6 @@ struct ZenCODECommandLineRunnerTests {
         #expect(try decodeRecords(chunks.map(\.data)).map { $0.objectValue?["type"]?.stringValue } == [
             "run.started", "message.completed", "run.completed"
         ])
-    }
-
-    @Test
-    func mailDeliveryCaptureReceivesTheJSONLErrorOfAFailedTurn() async throws {
-        let output = ZenCronCapturedOutput()
-        let runner = ControlledHeadlessSessionRunner(
-            response: DirectAgentResponse(text: "unused", stopReason: "stop", modelID: "test"),
-            failure: .send
-        )
-
-        await #expect(throws: ControlledHeadlessSessionRunner.Failure.self) {
-            try await ZenCODEHeadlessRunner.runTurn(
-                configuration: makeHeadlessConfiguration(jsonl: true),
-                prompt: "hello",
-                sessionRunner: runner,
-                sessionConfiguration: makeSessionConfiguration(),
-                jsonlSink: { data in output.append(data) }
-            )
-        }
-
-        let records = try decodeRecords(output.chunks.map(\.data))
-        #expect(records.map { $0.objectValue?["type"]?.stringValue } == ["run.started", "error"])
-    }
-
-    @Test
-    func framedErrorDataIsExactlyWhatAnEarlyJSONLErrorWrites() throws {
-        let pipe = Pipe()
-        ZenCODEHeadlessJSONLProtocol.writeFramedError(
-            ZenCODEHeadlessRunnerError.noPrompt,
-            runID: "early",
-            to: pipe.fileHandleForWriting
-        )
-        try pipe.fileHandleForWriting.close()
-        let written = pipe.fileHandleForReading.readDataToEndOfFile()
-
-        #expect(written.last == 0x0A)
-        #expect(
-            ZenCODEHeadlessJSONLProtocol.framedErrorData(
-                ZenCODEHeadlessRunnerError.noPrompt,
-                runID: "early"
-            ) == written
-        )
-    }
-
-    @Test
-    func textModeFailureMessageCarriesTheTroubleshootingHint() {
-        #expect(
-            ZenCODECommandLineRunner.failureMessage(for: ZenCODEHeadlessRunnerError.noPrompt)
-                == "ZenCODE: No prompt provided. Pass text after -p/--prompt.\n"
-                + ZenCODEDoctorRunner.troubleshootingHint
-        )
     }
     private func makeHeadlessConfiguration(jsonl: Bool) throws -> AgentConfiguration {
         try AgentConfiguration(

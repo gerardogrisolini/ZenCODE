@@ -131,9 +131,5 @@ extension MCPClient {
         pendingRequestMethods.removeValue(forKey: requestID)
         continuation.resume(throwing: CancellationError())
     }
-
-    func recordPendingRequestMethodForTesting(id: Int, method: String) {
-        pendingRequestMethods[id] = method
-    }
 }
 #endif

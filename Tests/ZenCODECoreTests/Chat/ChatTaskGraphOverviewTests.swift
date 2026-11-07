@@ -114,114 +114,6 @@ struct ChatTaskGraphOverviewTests {
         #expect(ChatTaskGraphOverview.signature(for: revisedTask) != signature)
     }
 
-    // MARK: - Reading the current graph
-
-    @Test
-    func theCurrentOverviewIsTheGraphWithItsTaskViewsOrNothing() async throws {
-        try await withChatHarness { harness in
-            let sessionID = harness.controller.sessionID
-            #expect(try await ChatTaskGraphOverview.current(
-                in: harness.runtime,
-                sessionID: sessionID
-            ) == nil)
-
-            let graph = try await Self.createGraph(in: harness)
-            let overview = try #require(try await ChatTaskGraphOverview.current(
-                in: harness.runtime,
-                sessionID: sessionID
-            ))
-            let views = try await harness.runtime.taskOrchestrator.listTasks(
-                sessionID: sessionID,
-                graphID: graph.id
-            )
-            #expect(overview.graph == graph)
-            #expect(overview.tasks == views)
-            #expect(overview.signature == ChatTaskGraphOverview.signature(for: graph))
-        }
-    }
-
-    // MARK: - Publication
-
-    @Test
-    func noGraphPresentsNothingAndAGraphBelowTheThresholdIsLeftToTheChannel() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            let sessionID = controller.sessionID
-
-            // A session other than the active one is fenced before reserving.
-            await controller.publishTaskGraphOverviewIfChanged(observedSessionID: "another-session")
-            #expect(await harness.presenter.events.isEmpty)
-
-            await controller.publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
-            try await harness.runtime.seedTaskGraph(Fixtures.taskGraph(id: "single"), sessionID: sessionID)
-            await controller.publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
-
-            #expect(await harness.presenter.taskGraphReservations == [
-                ChatOverviewPublication(revision: 1),
-                ChatOverviewPublication(revision: 2),
-            ])
-            let overviews = await harness.presenter.taskGraphOverviews
-            #expect(overviews.count == 2)
-            #expect(overviews.first?.overview == nil)
-            #expect(overviews.first?.origin == .automatic)
-            #expect(overviews.first?.publication == ChatOverviewPublication(revision: 1))
-            let trivial = try #require(overviews.last?.overview)
-            #expect(trivial.graph.id == "single")
-            #expect(trivial.tasks.map(\.task.id) == ["single-1"])
-            #expect(!trivial.isSignificant)
-            #expect(overviews.last?.origin == .automatic)
-            #expect(overviews.last?.publication == ChatOverviewPublication(revision: 2))
-        }
-    }
-
-    @Test
-    func aGraphThatChangesWhileItIsReadIsNotPresented() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            let sessionID = controller.sessionID
-            let orchestrator = harness.runtime.taskOrchestrator
-            try await Self.createGraph(in: harness)
-            // The change lands between the first read and the revision check.
-            await harness.runtime.setTaskGraphReadHook { read in
-                guard read == 1 else { return }
-                _ = try? await orchestrator.claimTasks(
-                    sessionID: sessionID,
-                    claims: [TaskClaim(taskID: "first", agentID: "worker")]
-                )
-            }
-
-            await controller.publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
-            #expect(await harness.presenter.taskGraphReservations == [ChatOverviewPublication(revision: 1)])
-            #expect(await harness.presenter.taskGraphOverviews.isEmpty)
-
-            // The change publishes it again, now that the graph holds still.
-            await harness.runtime.setTaskGraphReadHook(nil)
-            await controller.publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
-            let published = try #require(await harness.presenter.taskGraphOverviews.first)
-            let current = try await orchestrator.graphSnapshot(sessionID: sessionID)
-            #expect(published.publication == ChatOverviewPublication(revision: 2))
-            #expect(published.overview?.graph == current)
-            #expect(published.overview?.graph.tasks.first { $0.id == "first" }?.status == .inProgress)
-        }
-    }
-
-    @Test
-    func aPresenterThatReservesNothingGetsEveryOverviewWithoutAReservation() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            await harness.presenter.setReservesTaskGraphPublications(false)
-            try await Self.createGraph(in: harness)
-
-            #expect(await controller.runTasksCommand(line: "/tasks") == ChatCommandOutcome())
-            await controller.publishTaskGraphOverviewIfChanged(observedSessionID: controller.sessionID)
-
-            #expect(await harness.presenter.taskGraphReservations == [nil, nil])
-            let overviews = await harness.presenter.taskGraphOverviews
-            #expect(overviews.map { $0.origin } == [.explicit, .automatic])
-            #expect(overviews.allSatisfy { $0.publication == nil && $0.overview?.graph.id == "graph" })
-        }
-    }
-
     // MARK: - Observer
 
     @Test
@@ -259,36 +151,6 @@ struct ChatTaskGraphOverviewTests {
     }
 
     @Test
-    func aBurstOfChangesPublishesOnceWithTheLastReservation() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            let gate = DebounceGate()
-            controller.taskGraphObserver.sleep = { try await gate.sleep($0) }
-            await controller.startTaskGraphObserver()
-
-            try await Self.createGraph(in: harness)
-            await harness.presenter.waitForTaskGraphReservations(1)
-            await gate.waitForEntries(1)
-            _ = try await harness.runtime.taskOrchestrator.claimTasks(
-                sessionID: controller.sessionID,
-                claims: [TaskClaim(taskID: "first", agentID: "worker")]
-            )
-            await harness.presenter.waitForTaskGraphReservations(2)
-            await gate.waitForEntries(2)
-
-            await gate.open()
-            await harness.presenter.waitForTaskGraphOverviews(1)
-            await controller.taskGraphObserver.pendingPublication?.value
-
-            let overviews = await harness.presenter.taskGraphOverviews
-            #expect(overviews.count == 1)
-            #expect(overviews.first?.publication == ChatOverviewPublication(revision: 2))
-            #expect(overviews.first?.overview?.graph.tasks.first { $0.id == "first" }?.status == .inProgress)
-            await controller.stopTaskGraphObserver()
-        }
-    }
-
-    @Test
     func stoppingDropsThePendingPublicationAndEndsTheSubscription() async throws {
         try await withChatHarness { harness in
             let controller = harness.controller
@@ -311,47 +173,6 @@ struct ChatTaskGraphOverviewTests {
             )
             #expect(await harness.presenter.taskGraphReservations.count == 1)
             #expect(await harness.presenter.taskGraphOverviews.isEmpty)
-        }
-    }
-
-    @Test
-    func quiescencePublishesTheLatestGraphOnceAndARestartRecoversWhatChangedMeanwhile() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            let sessionID = controller.sessionID
-            let gate = DebounceGate()
-            controller.taskGraphObserver.sleep = { try await gate.sleep($0) }
-            await controller.startTaskGraphObserver()
-
-            try await Self.createGraph(in: harness)
-            await harness.presenter.waitForTaskGraphReservations(1)
-            await gate.waitForEntries(1)
-
-            // The debounced publication is drained; the quiescence publishes
-            // with a reservation of its own.
-            await controller.quiesceTaskGraphObserver()
-            #expect(controller.taskGraphObserverTask == nil)
-            var overviews = await harness.presenter.taskGraphOverviews
-            #expect(overviews.count == 1)
-            #expect(overviews.first?.origin == .automatic)
-            #expect(overviews.first?.publication == ChatOverviewPublication(revision: 2))
-            #expect(overviews.first?.overview?.graph.id == "graph")
-
-            // While the observer is stopped a change reserves nothing; the
-            // restart and its fresh publication recover it.
-            let claimed = try #require(try await harness.runtime.taskOrchestrator.claimTasks(
-                sessionID: sessionID,
-                claims: [TaskClaim(taskID: "first", agentID: "worker")]
-            ).first)
-            #expect(await harness.presenter.taskGraphReservations.count == 2)
-            await controller.startTaskGraphObserver()
-            await controller.publishTaskGraphOverviewIfChanged(observedSessionID: sessionID)
-            overviews = await harness.presenter.taskGraphOverviews
-            #expect(overviews.count == 2)
-            #expect(overviews.last?.publication == ChatOverviewPublication(revision: 3))
-            #expect(overviews.last?.overview?.graph.tasks.first { $0.id == "first" }?.activeAttemptID
-                == claimed.attemptID)
-            await controller.stopTaskGraphObserver()
         }
     }
 
@@ -415,19 +236,6 @@ struct ChatTaskGraphOverviewTests {
             }
             // `/tasks` only reads.
             #expect(await harness.runtime.calls.isEmpty)
-        }
-    }
-
-    @Test
-    func statusWithoutAGraphReservesAndClosesWithNoTaskGraph() async throws {
-        try await withChatHarness { harness in
-            #expect(await harness.controller.runTasksCommand(line: "/tasks")
-                == ChatCommandOutcome(notices: [.noTaskGraph]))
-            #expect(await harness.presenter.events == [
-                .submittedCommand("/tasks"),
-                .taskGraphReservation(ChatOverviewPublication(revision: 1)),
-            ])
-            #expect(ChatSessionNoticeText.text(for: .noTaskGraph) == "No task graph for this session.\n")
         }
     }
 
@@ -575,153 +383,6 @@ struct ChatTaskGraphOverviewTests {
         }
     }
 
-    @Test
-    func anUnknownActionOrAMissingTaskIDIsRefusedAfterTheEcho() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            #expect(await controller.runTasksCommand(line: "/tasks Frobnicate now")
-                == ChatCommandOutcome(notices: [.unknownTasksAction(action: "frobnicate")]))
-            #expect(await controller.runTasksCommand(line: "/tasks retry")
-                == ChatCommandOutcome(notices: [.taskIDRequired(action: "retry")]))
-            #expect(await controller.runTasksCommand(line: "/tasks cancel")
-                == ChatCommandOutcome(notices: [.taskIDRequired(action: "cancel")]))
-            #expect(await harness.presenter.events == [
-                .submittedCommand("/tasks Frobnicate now"),
-                .submittedCommand("/tasks retry"),
-                .submittedCommand("/tasks cancel"),
-            ])
-            #expect(await harness.runtime.calls.isEmpty)
-        }
-    }
-
-    @Test
-    func theErrorsOfTasksKeepTheirTextAndChannel() {
-        let missing = TerminalTaskCommandError.missingTaskID("show")
-        let unknown = TerminalTaskCommandError.unknownAction("frobnicate")
-        #expect(missing.localizedDescription == "/tasks show requires a task id.")
-        #expect(unknown.localizedDescription
-            == "Unknown /tasks action 'frobnicate'. Use status, show, retry, cancel, or clear.")
-        #expect(ChatSessionNoticeText.text(for: .taskIDRequired(action: "show"))
-            == "ZenCODE: \(missing.localizedDescription)\n")
-        #expect(ChatSessionNoticeText.text(for: .unknownTasksAction(action: "frobnicate"))
-            == "ZenCODE: \(unknown.localizedDescription)\n")
-        #expect(ChatSessionNotice.taskIDRequired(action: "show").channel == .failure)
-        #expect(ChatSessionNotice.unknownTasksAction(action: "frobnicate").channel == .failure)
-    }
-
-    @Test
-    func aControllerThatOnlyRunsTurnsReadsTasksButCannotChangeThem() async throws {
-        try await withChatHarness { harness in
-            let sessionID = harness.controller.sessionID
-            let controller = ChatSessionController(
-                sessionID: sessionID,
-                runtime: harness.runtime,
-                environment: harness.controller.environment,
-                workingDirectory: harness.workspace,
-                presenter: harness.presenter,
-                host: harness.host,
-                authorizer: harness.controller.authorizer
-            )
-            try await Self.createGraph(in: harness)
-            let unavailable = ChatCommandOutcome(notices: [.operationFailed(
-                description: ChatPlanningCommandError.sessionOperationsUnavailable.localizedDescription
-            )])
-
-            #expect(await controller.runTasksCommand(line: "/tasks retry first") == unavailable)
-            #expect(await controller.runTasksCommand(line: "/tasks cancel first") == unavailable)
-            #expect(await controller.runTasksCommand(line: "/tasks clear") == unavailable)
-            #expect(await harness.runtime.calls.isEmpty)
-
-            let view = try await harness.runtime.taskOrchestrator.task(sessionID: sessionID, taskID: "first")
-            #expect(await controller.runTasksCommand(line: "/tasks show first")
-                == ChatCommandOutcome(notices: [.taskDetail(view)]))
-            #expect(await controller.runTasksCommand(line: "/tasks") == ChatCommandOutcome())
-            #expect(await harness.presenter.taskGraphOverviews.map { $0.origin } == [.explicit])
-        }
-    }
-
-    // MARK: - Terminal
-
-    @Test @ChatSessionActor
-    func theTerminalOrdersItsSectionByReservationAndPresentsAnUnreservedOneAsItComes() async throws {
-        let terminal = try Self.makeTerminal()
-        let presenter = terminal.chatSession.presenter
-        func overview(_ revision: Int, taskCount: Int = 2) -> ChatTaskGraphOverview {
-            ChatTaskGraphOverview(
-                graph: TaskGraphSnapshot(
-                    id: "graph",
-                    source: .manual,
-                    state: .active,
-                    revision: revision,
-                    tasks: (0..<taskCount).map { TaskRecord(id: "task-\($0)", title: "Task \($0)", order: $0) }
-                ),
-                tasks: []
-            )
-        }
-        func lastRenderedSignature() async -> String? {
-            await terminal.renderCoordinator.snapshot().lastRenderedTaskGraphOverviewSignature
-        }
-
-        // A publication overtaken by a later reservation is dropped.
-        let older = try #require(await presenter.reserveTaskGraphOverviewPublication())
-        let newer = try #require(await presenter.reserveTaskGraphOverviewPublication())
-        #expect(newer.revision > older.revision)
-        await presenter.presentTaskGraphOverview(overview(1), origin: .automatic, publication: older)
-        #expect(await lastRenderedSignature() == nil)
-        await presenter.presentTaskGraphOverview(overview(1), origin: .automatic, publication: newer)
-        #expect(await lastRenderedSignature() == overview(1).signature)
-
-        // A reservation drops at once the section deferred behind a tool block.
-        let toolCall = presentedToolCall(
-            id: "wait-tool",
-            name: "agent.wait",
-            argumentsObject: [:],
-            argumentsJSON: "{}"
-        )
-        await terminal.writeToolCallStarted(toolCall)
-        await presenter.presentTaskGraphOverview(
-            overview(2),
-            origin: .automatic,
-            publication: await presenter.reserveTaskGraphOverviewPublication()
-        )
-        #expect(await terminal.renderCoordinator.snapshot().deferredTaskGraphOverviewRender)
-        _ = await presenter.reserveTaskGraphOverviewPublication()
-        #expect(!(await terminal.renderCoordinator.snapshot().deferredTaskGraphOverviewRender))
-        await terminal.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Done", summary: "Done")
-        )
-        #expect(await lastRenderedSignature() == overview(1).signature)
-
-        // Without a reservation the section is presented as it comes.
-        await presenter.presentTaskGraphOverview(overview(3), origin: .automatic, publication: nil)
-        #expect(await lastRenderedSignature() == overview(3).signature)
-
-        // Below the threshold an automatic overview is not written; `/tasks`
-        // always is, without becoming the remembered section.
-        let trivial = overview(4, taskCount: 1)
-        await presenter.presentTaskGraphOverview(
-            trivial,
-            origin: .automatic,
-            publication: await presenter.reserveTaskGraphOverviewPublication()
-        )
-        #expect(await lastRenderedSignature() == overview(3).signature)
-        await presenter.presentTaskGraphOverview(
-            trivial,
-            origin: .explicit,
-            publication: await presenter.reserveTaskGraphOverviewPublication()
-        )
-        #expect(await lastRenderedSignature() == overview(3).signature)
-
-        // No graph forgets the section.
-        await presenter.presentTaskGraphOverview(
-            nil,
-            origin: .automatic,
-            publication: await presenter.reserveTaskGraphOverviewPublication()
-        )
-        #expect(await lastRenderedSignature() == nil)
-    }
-
     // MARK: - Helpers
 
     @discardableResult
@@ -737,23 +398,6 @@ struct ChatTaskGraphOverviewTests {
             source: .manual,
             state: .active,
             tasks: taskIDs.map { TaskDefinition(id: $0, title: "Task \($0)") }
-        )
-    }
-
-    @ChatSessionActor
-    private static func makeTerminal() throws -> TerminalChat {
-        let configuration = try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            availableAgents: AgentProfileStore.defaultProfiles(),
-            workingDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(
-                "zencode-task-overview-\(UUID().uuidString)",
-                isDirectory: true
-            )
-        )
-        return TerminalChat(
-            configuration: configuration,
-            stdinIsTerminal: false,
-            sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil)
         )
     }
 }

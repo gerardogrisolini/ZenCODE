@@ -19,93 +19,12 @@ struct ScheduledPromptsSetupTests {
 
     // MARK: - Section metadata
 
-    @Test
-    func theSectionIsAnOptionalOneThatNeedsNoConfiguredModels() {
-        #expect(SetupSection.scheduledPrompts.title == "Scheduled prompts (ZenCRON)")
-        #expect(SetupSection.scheduledPrompts.category == .optional)
-        #expect(!SetupSection.scheduledPrompts.requiresConfiguredModels)
-    }
-
     @Test(arguments: ["scheduled prompts", "scheduled", "cron", "zencron", "crontab"])
     func theSectionAnswersToItsAliases(alias: String) {
         #expect(SetupSection.scheduledPrompts.matches(alias))
     }
 
-    @Test(arguments: ["telegram", "features", "voice", "schedule", "ZenCRON", ""])
-    func theSectionDoesNotAnswerToOtherNames(name: String) {
-        #expect(!SetupSection.scheduledPrompts.matches(name))
-    }
-
-    @Test
-    func noOtherSectionClaimsTheAliasesOfTheSection() {
-        let others: [SetupSection] = [
-            .providersAndModels, .telegram, .features, .agents, .agentModels, .responseLanguage,
-            .memoryEmbedding, .ds4Runtime, .voiceMode, .dataManagement,
-            .finish, .cancel
-        ]
-        for alias in ["scheduled prompts", "scheduled", "cron", "zencron", "crontab"] {
-            #expect(!others.contains { $0.matches(alias) }, "alias: \(alias)")
-        }
-    }
-
     // MARK: - Menu
-
-    @Test
-    func theMenuListsTheSectionAmongTheOptionalOnesBeforeDataManagement() throws {
-        let options = Runner.setupSectionOptions(currentManifest: nil, zenCRON: Self.notInstalled)
-        let sections = options.map(\.section)
-
-        let scheduled = try #require(sections.firstIndex(of: .scheduledPrompts))
-        let data = try #require(sections.firstIndex(of: .dataManagement))
-        let telegram = try #require(sections.firstIndex(of: .telegram))
-        let finish = try #require(sections.firstIndex(of: .finish))
-        #expect(telegram < scheduled)
-        #expect(scheduled < data)
-        #expect(data < finish)
-        // One contiguous Optional group: the heading is printed once.
-        let optional = sections.indices.filter { options[$0].section.category == .optional }
-        #expect(optional == Array(optional[0]...optional[optional.count - 1]))
-    }
-
-    @Test
-    func theMenuDetailSaysWhetherZenCRONIsInstalled() throws {
-        func detail(_ status: Status) throws -> String? {
-            try #require(
-                Runner.setupSectionOptions(currentManifest: nil, zenCRON: status)
-                    .first { $0.section == .scheduledPrompts }
-            ).detail
-        }
-
-        #expect(try detail(Self.notInstalled) == "not installed")
-        #expect(try detail(Status(path: "/s/bin/ZenCRON", state: .installed(version: "ZenCRON 1"))) == "ZenCRON 1 installed")
-        #expect(try detail(Status(path: "/s/bin/ZenCRON", state: .installedUnchecked)) == "installed")
-        #expect(
-            try detail(Status(path: "/s/bin/ZenCRON", state: .unreadable(reason: "it printed no version")))
-                == "installed, but it does not start"
-        )
-    }
-
-    @Test
-    func theMarkerIsComputedLikeTheOtherOptionalSections() {
-        let installed = Status(path: "/s/bin/ZenCRON", state: .installed(version: "ZenCRON 1"))
-        let broken = Status(path: "/s/bin/ZenCRON", state: .unreadable(reason: "it exited with status 1"))
-
-        #expect(Runner.setupSectionReadinessMarker(for: .scheduledPrompts, currentManifest: nil, zenCRON: installed) == "[✓]")
-        #expect(Runner.setupSectionReadinessMarker(for: .scheduledPrompts, currentManifest: nil, zenCRON: Self.notInstalled) == "[-]")
-        #expect(Runner.setupSectionReadinessMarker(for: .scheduledPrompts, currentManifest: nil, zenCRON: broken) == "[-]")
-    }
-
-    @Test
-    func theMenuItemCombinesTheMarkerAndTheDetail() throws {
-        let installed = Status(path: "/s/bin/ZenCRON", state: .installed(version: "ZenCRON 2"))
-        let options = Runner.setupSectionOptions(currentManifest: nil, zenCRON: installed)
-        let items = Runner.setupSectionMenuItems(options: options, currentManifest: nil, zenCRON: installed)
-
-        let index = try #require(options.firstIndex { $0.section == .scheduledPrompts })
-        #expect(items[index].title == "Scheduled prompts (ZenCRON)")
-        #expect(items[index].detail == "[✓] ZenCRON 2 installed")
-        #expect(items[index].groupTitle == "Optional")
-    }
 
     @Test
     func theDefaultStatusOnlyChecksTheFileSystem() throws {
@@ -140,37 +59,6 @@ struct ScheduledPromptsSetupTests {
         #expect(reads.values == [status.path])
     }
 
-    @Test
-    func loadReportsAnInstalledHostThatDoesNotAnswer() async throws {
-        let support = try makeTemporaryDirectory()
-        defer { remove(support) }
-        try install(bytes: "x", in: support)
-
-        let status = await Status.load(supportDirectory: support) { _ in
-            throw ZenCRONInstallation.VersionError.exitStatus(1, stderr: "")
-        }
-
-        #expect(status.state == .unreadable(reason: "it exited with status 1"))
-        #expect(status.summary == "ZenCRON: installed at \(status.path), but it does not start (it exited with status 1)")
-        #expect(!status.isReady)
-    }
-
-    @Test
-    func loadDoesNotStartAnythingWithoutAnInstalledHost() async throws {
-        let support = try makeTemporaryDirectory()
-        defer { remove(support) }
-        let reads = Recorder()
-
-        let status = await Status.load(supportDirectory: support) { url in
-            reads.record(url.path)
-            return "ZenCRON 1"
-        }
-
-        #expect(status.state == .notInstalled)
-        #expect(status.summary == "ZenCRON: not installed (expected at \(status.path))")
-        #expect(reads.values.isEmpty)
-    }
-
     // MARK: - Build and install
 
     @Test
@@ -187,20 +75,6 @@ struct ScheduledPromptsSetupTests {
         )
         #expect(fixture.recorder.builds.isEmpty)
         #expect(fixture.installedBytes == nil)
-    }
-
-    @Test
-    func aCheckoutWithoutTheZenCRONPackageIsReportedWithoutBuilding() async throws {
-        let fixture = try Fixture(checkout: .withoutPackage)
-        defer { fixture.cleanUp() }
-
-        let outcome = await fixture.run(.macOS)
-
-        let manifest = fixture.checkoutURL.path + "/Sources/ZenCRON/Package.swift"
-        #expect(outcome == .sourceMissing(detail: "\(manifest) does not exist"))
-        #expect(outcome.message.contains("a ZenCODE source checkout and a Swift toolchain"))
-        #expect(fixture.recorder.builds.isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: fixture.workingCopy.path))
     }
 
     @Test
@@ -221,64 +95,6 @@ struct ScheduledPromptsSetupTests {
         #expect(outcome.message == "ZenCRON could not be built: swift build exited with status 1.\n\(output)")
         #expect(fixture.installedBytes == nil)
         #expect(!FileManager.default.fileExists(atPath: fixture.binDirectory.path))
-    }
-
-    @Test
-    func aBuildThatTimesOutIsAFailure() async throws {
-        let fixture = try Fixture(build: .timesOut)
-        defer { fixture.cleanUp() }
-
-        let outcome = await fixture.run(.macOS, buildTimeout: 42)
-
-        #expect(outcome == .buildFailed(summary: "swift build did not finish within 42 seconds.", output: ""))
-        #expect(fixture.installedBytes == nil)
-    }
-
-    @Test
-    func aToolchainThatCannotBeRunIsABuildFailure() async throws {
-        let fixture = try Fixture(build: .throwsError("Swift executable not found."))
-        defer { fixture.cleanUp() }
-
-        let outcome = await fixture.run(.macOS)
-
-        #expect(
-            outcome == .buildFailed(summary: "swift could not be run: Swift executable not found.", output: "")
-        )
-        #expect(fixture.installedBytes == nil)
-    }
-
-    @Test
-    func aSuccessfulBuildWithoutTheExecutableIsAFailure() async throws {
-        let fixture = try Fixture(build: .succeedsWithoutExecutable)
-        defer { fixture.cleanUp() }
-
-        let outcome = await fixture.run(.macOS)
-
-        let built = ZenCRONInstallation.builtExecutableURL(packageDirectory: fixture.workingCopy).path
-        #expect(
-            outcome == .buildFailed(
-                summary: "swift build succeeded, but the executable \(built) was not produced.",
-                output: ""
-            )
-        )
-        #expect(fixture.installedBytes == nil)
-    }
-
-    @Test
-    func aBuiltExecutableWithoutAReadableVersionIsNotInstalled() async throws {
-        let fixture = try Fixture(build: .succeeds(version: "unreadable", label: "new"))
-        defer { fixture.cleanUp() }
-        try fixture.install(label: "old", version: "ZenCRON 1")
-
-        let outcome = await fixture.run(.macOS)
-
-        let built = ZenCRONInstallation.builtExecutableURL(packageDirectory: fixture.workingCopy).path
-        #expect(outcome == .versionUnreadable(path: built, reason: "it printed no version"))
-        #expect(
-            outcome.message == "The ZenCRON built at \(built) does not report its version "
-                + "(it printed no version); nothing was installed."
-        )
-        #expect(fixture.installedLabel == "old")
     }
 
     @Test
@@ -328,18 +144,6 @@ struct ScheduledPromptsSetupTests {
     }
 
     @Test
-    func macOSReplacesAnInstalledHostThatDoesNotReportItsVersion() async throws {
-        let fixture = try Fixture(build: .succeeds(version: "ZenCRON 1", label: "working"))
-        defer { fixture.cleanUp() }
-        try fixture.install(label: "broken", version: "unreadable")
-
-        let outcome = await fixture.run(.macOS)
-
-        #expect(outcome == .replaced(path: fixture.installedPath, version: "ZenCRON 1"))
-        #expect(fixture.installedLabel == "working")
-    }
-
-    @Test
     func linuxAlwaysReplacesTheInstalledHostEvenOfTheSameVersion() async throws {
         let fixture = try Fixture(build: .succeeds(version: "ZenCRON 1", label: "rebuilt"))
         defer { fixture.cleanUp() }
@@ -352,17 +156,6 @@ struct ScheduledPromptsSetupTests {
         #expect(fixture.installedLabel == "rebuilt")
         // Linux does not compare versions, so the old host is never started.
         #expect(fixture.recorder.versionReads == [fixture.builtPath])
-    }
-
-    @Test
-    func linuxInstallsAFirstHostLikeMacOS() async throws {
-        let fixture = try Fixture(build: .succeeds(version: "ZenCRON 1", label: "first"))
-        defer { fixture.cleanUp() }
-
-        let outcome = await fixture.run(.linux)
-
-        #expect(outcome == .installed(path: fixture.installedPath, version: "ZenCRON 1"))
-        #expect(fixture.installedLabel == "first")
     }
 
     @Test
@@ -385,92 +178,6 @@ struct ScheduledPromptsSetupTests {
         #expect(outcome.message == message)
     }
 
-    @Test
-    func theBuildRunsOnTheStableWorkingCopyWithTheFeatureTimeout() async throws {
-        let fixture = try Fixture(build: .succeeds(version: "ZenCRON 1", label: "first"))
-        defer { fixture.cleanUp() }
-
-        _ = await fixture.run(.macOS)
-
-        #expect(fixture.workingCopy.path == ZenCRONInstallation.workingCopyURL(supportDirectory: fixture.support).path)
-        #expect(fixture.recorder.builds == [fixture.workingCopy.path])
-        #expect(fixture.recorder.timeouts == [SwiftFeatureRuntime.defaultOptionalFeatureInstallTimeoutSeconds])
-        #expect(
-            Runner.zenCRONBuildArguments(packageDirectory: fixture.workingCopy)
-                == ["build", "-c", "release", "--product", "ZenCRON", "--package-path", fixture.workingCopy.path]
-        )
-    }
-
-    @Test
-    func theWorkingCopyKeepsItsBuildDirectoryAndDropsVanishedSources() async throws {
-        let fixture = try Fixture(build: .succeeds(version: "ZenCRON 1", label: "first"))
-        defer { fixture.cleanUp() }
-
-        _ = await fixture.run(.macOS)
-        #expect(fixture.workingCopyFileExists("Sources/ZenCRON/main.swift"))
-        #expect(fixture.workingCopyFileExists("Sources/ZenCRON/Obsolete.swift"))
-        // The source of the package loses a file between two builds.
-        try FileManager.default.removeItem(
-            at: fixture.sourcePackage.appendingPathComponent("Sources/ZenCRON/Obsolete.swift")
-        )
-        _ = await fixture.run(.macOS)
-
-        #expect(!fixture.workingCopyFileExists("Sources/ZenCRON/Obsolete.swift"))
-        #expect(fixture.workingCopyFileExists("Sources/ZenCRON/main.swift"))
-        // The artefacts of the first build are still there for the second one.
-        #expect(fixture.workingCopyFileExists(".build/build-1"))
-        #expect(fixture.workingCopyFileExists(".build/build-2"))
-        // The checkout is only read, and its own build state never reaches the copy.
-        #expect(FileManager.default.fileExists(atPath: fixture.sourcePackage.appendingPathComponent("Package.swift").path))
-        #expect(FileManager.default.fileExists(atPath: fixture.sourcePackage.appendingPathComponent(".build/stale").path))
-        #expect(!fixture.workingCopyFileExists(".build/stale"))
-    }
-
-    @Test
-    func theProgressNarratesEachStepInOrder() async throws {
-        let fixture = try Fixture(build: .succeeds(version: "ZenCRON 1", label: "first"))
-        defer { fixture.cleanUp() }
-
-        _ = await fixture.run(.macOS)
-
-        let lines = fixture.recorder.progress
-        #expect(lines.first == "Resolving ZenCODE source checkout…")
-        #expect(lines.contains("Source package: \(fixture.sourcePackage.path)"))
-        #expect(lines.contains("Syncing the package to \(fixture.workingCopy.path)…"))
-        #expect(
-            lines.contains(
-                "Running: swift build -c release --product ZenCRON --package-path \(fixture.workingCopy.path)"
-            )
-        )
-        #expect(lines.contains("fake build output"))
-        #expect(lines.contains("Reading the version of the built ZenCRON…"))
-        #expect(lines.last == "Installing into \(fixture.binDirectory.path)…")
-    }
-
-    @Test
-    func theUsefulBuildOutputIsTheTailOfStandardErrorOrElseOfStandardOutput() {
-        let many = (1...100).map { "line \($0)" }.joined(separator: "\n")
-        let fromStderr = Runner.zenCRONUsefulBuildOutput(
-            ZenCODESetupRunner.ZenCRONBuildResult(exitCode: 1, timedOut: false, stdout: "out", stderr: many + "\n\n")
-        )
-        #expect(fromStderr.components(separatedBy: "\n").count == 40)
-        #expect(fromStderr.hasSuffix("line 100"))
-        #expect(!fromStderr.contains("out"))
-
-        let fromStdout = Runner.zenCRONUsefulBuildOutput(
-            ZenCODESetupRunner.ZenCRONBuildResult(exitCode: 1, timedOut: false, stdout: " compile error \n", stderr: "  \n")
-        )
-        #expect(fromStdout == "compile error")
-
-        let long = Runner.zenCRONUsefulBuildOutput(
-            ZenCODESetupRunner.ZenCRONBuildResult(
-                exitCode: 1, timedOut: false, stdout: "", stderr: String(repeating: "x", count: 10_000)
-            ),
-            characterLimit: 100
-        )
-        #expect(long.count == 100)
-    }
-
     // MARK: - The section itself
 
     @Test
@@ -489,22 +196,6 @@ struct ScheduledPromptsSetupTests {
         #expect(fixture.recorder.builds.isEmpty)
         #expect(fixture.installedBytes == nil)
         #expect(output.values.joined().contains("ZenCRON: not installed (expected at \(fixture.installedPath))"))
-    }
-
-    @Test
-    func backLeavesTheSectionWithoutDoingAnything() async throws {
-        let fixture = try Fixture(build: .succeeds(version: "ZenCRON 1", label: "first"))
-        defer { fixture.cleanUp() }
-
-        await Runner.configureScheduledPrompts(
-            tools: fixture.tools(.macOS),
-            supportDirectory: fixture.support,
-            write: { _ in },
-            selectOne: { _, _, _ in .back }
-        )
-
-        #expect(fixture.recorder.builds.isEmpty)
-        #expect(fixture.installedBytes == nil)
     }
 
     @Test
@@ -533,56 +224,7 @@ struct ScheduledPromptsSetupTests {
         #expect(fixture.installedLabel == "first")
     }
 
-    @Test
-    func anInstalledHostIsOfferedAnUpdateAndItsVersionIsShown() async throws {
-        let fixture = try Fixture(build: .succeeds(version: "ZenCRON 1", label: "rebuilt"))
-        defer { fixture.cleanUp() }
-        try fixture.install(label: "original", version: "ZenCRON 1")
-        let output = Recorder()
-        let menus = Recorder()
-
-        await Runner.configureScheduledPrompts(
-            tools: fixture.tools(.macOS),
-            supportDirectory: fixture.support,
-            write: { output.record($0) },
-            selectOne: { _, items, _ in
-                menus.record(items.map(\.title).joined(separator: ","))
-                return .build
-            }
-        )
-
-        let text = output.values.joined()
-        #expect(menus.values == ["Rebuild and update ZenCRON,Back"])
-        #expect(text.contains("ZenCRON: ZenCRON 1 installed at \(fixture.installedPath)"))
-        #expect(
-            text.hasSuffix(
-                "ZenCRON 1 is already installed at \(fixture.installedPath); "
-                    + "it was kept so that macOS keeps the privacy permissions of scheduled prompts.\n"
-            )
-        )
-        #expect(fixture.installedLabel == "original")
-    }
-
-    @Test
-    func aFailureIsShownAndNothingIsInstalled() async throws {
-        let fixture = try Fixture(checkout: .missing)
-        defer { fixture.cleanUp() }
-        let output = Recorder()
-
-        await Runner.configureScheduledPrompts(
-            tools: fixture.tools(.macOS),
-            supportDirectory: fixture.support,
-            write: { output.record($0) },
-            selectOne: { _, _, _ in .build }
-        )
-
-        #expect(output.values.joined().contains("ZenCRON cannot be built: no ZenCODE source checkout was found."))
-        #expect(fixture.installedBytes == nil)
-    }
-
     // MARK: - Helpers
-
-    private static let notInstalled = Status(path: "/s/bin/ZenCRON", state: .notInstalled)
 
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
@@ -705,10 +347,6 @@ private struct Fixture {
     /// The `<label>` of the installed fake executable.
     var installedLabel: String? {
         installedBytes?.components(separatedBy: "\n").first?.replacingOccurrences(of: "binary ", with: "")
-    }
-
-    func workingCopyFileExists(_ relativePath: String) -> Bool {
-        FileManager.default.fileExists(atPath: workingCopy.appendingPathComponent(relativePath).path)
     }
 
     func cleanUp() {

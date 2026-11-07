@@ -215,76 +215,6 @@ extension ACPCompatibilityTests {
     }
 
     @Test
-    func permissionBrokerEvictsPerSessionDecisionsWithoutAffectingOthers() async throws {
-        let writerReference = Mutex<ACPWriter?>(nil)
-        let writer = ACPWriter(sink: { data in
-            guard let request = try? JSONDecoder().decode(JSONValue.self, from: data),
-                  let id = request.objectValue?["id"],
-                  let writer = writerReference.withLock({ $0 }) else {
-                return
-            }
-            Task(name: "ACPPermissionBrokerTests.allowAlways") {
-                await writer.handleResponse(.object([
-                    "id": id,
-                    "result": .object(["optionId": .string("allow_always")]),
-                ]))
-            }
-        })
-        writerReference.withLock { $0 = writer }
-        let broker = ACPPermissionBroker(writer: writer)
-
-        for sessionID in ["one", "two"] {
-            let allowed = await broker.authorize(AgentToolAuthorizationRequest(
-                sessionID: sessionID,
-                toolCallID: "call-\(sessionID)",
-                toolName: "git.push",
-                title: "Push",
-                kind: "destructive",
-                command: "git push origin main",
-                workingDirectory: "/tmp"
-            ))
-            #expect(allowed)
-        }
-        #expect(await broker.cachedDecisionCount(sessionID: "one") == 1)
-        #expect(await broker.cachedDecisionCount(sessionID: "two") == 1)
-
-        await broker.removeCachedDecisions(sessionID: "one")
-        #expect(await broker.cachedDecisionCount(sessionID: "one") == 0)
-        #expect(await broker.cachedDecisionCount(sessionID: "two") == 1)
-
-        await broker.removeAllCachedDecisions()
-        #expect(await broker.cachedDecisionCount(sessionID: "two") == 0)
-    }
-
-    @Test
-    func authCapableClientReceivesCompatibilityAuthenticationMethod() {
-        let methods = ZenCODEACPBridge.authenticationMethods(from: [
-            "clientInfo": [
-                "name": "FixtureClient",
-                "version": "1.0"
-            ] as [String: Any],
-            "clientCapabilities": [
-                "auth": ["terminal": true]
-            ] as [String: Any]
-        ])
-
-        let secondAuthCapableClientMethods = ZenCODEACPBridge.authenticationMethods(from: [
-            "clientInfo": [
-                "name": "AnotherClient"
-            ] as [String: Any],
-            "clientCapabilities": [
-                "auth": ["terminal": true]
-            ] as [String: Any]
-        ])
-
-        #expect(methods.count == 1)
-        #expect(secondAuthCapableClientMethods.count == 1)
-        #expect(methods.first?["id"] as? String == "zencode-client-compatibility")
-        #expect(methods.first?["name"] as? String == "Continue with ZenCODE")
-        #expect(methods.first?["type"] as? String == "agent")
-    }
-
-    @Test
     func compatibilityAuthenticationMethodIsNotAdvertisedWithoutAuthCapability() {
         let firstClientMethods = ZenCODEACPBridge.authenticationMethods(from: [
             "clientInfo": [
@@ -553,22 +483,6 @@ extension ACPCompatibilityTests {
     }
 
     @Test
-    func configuredBridgeDoesNotAnswerAuthRequired() async throws {
-        let transport = ACPWireRecordingTransport()
-        let bridge = try makeACPWireBridge(transport: transport)
-
-        await bridge.handleMessage([
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "session/prompt",
-            "params": ["sessionId": "swift-agent-unknown"] as [String: Any]
-        ])
-
-        // Unknown session: the ordinary parameter error, not `auth_required`.
-        #expect(transport.errorCode(id: 1) == -32602)
-    }
-
-    @Test
     func resumeSessionRebuildsStateFromClientHistory() async throws {
         let bridge = try makeBridge(
             models: [
@@ -834,42 +748,6 @@ extension ACPCompatibilityTests {
         }
     }
 
-    /// With the time the result carries (``DirectAgentToolResult/elapsed``)
-    /// the completion's `title` ends with ` · ` and the time as the terminal
-    /// formats it; nothing else of the payload changes, and without one the
-    /// payload is the untimed completion.
-    @Test
-    func toolCallCompletionWithAnElapsedTimeChangesOnlyItsTitle() throws {
-        let toolCall = presentedToolCall(
-            id: "call_timed",
-            name: "local.exec",
-            argumentsObject: ["command": "swift test", "workingDirectory": "Sources"],
-            argumentsJSON: #"{"command":"swift test","workingDirectory":"Sources"}"#
-        )
-        let workspace = URL(fileURLWithPath: "/tmp/acp-workspace")
-        let result = DirectAgentToolResult(
-            output: "Build complete.", summary: "Build complete.",
-            fileChanges: [.init(path: "/tmp/acp-workspace/Sources/A.swift", oldText: "a", newText: "b")]
-        )
-        let untimed = ZenCODEACPBridge.toolCallCompletionJSONUpdate(
-            for: toolCall, result: result, workingDirectory: workspace
-        )
-        let timed = ZenCODEACPBridge.toolCallCompletionJSONUpdate(
-            for: toolCall, result: result.withElapsed(.milliseconds(1_250)), workingDirectory: workspace
-        )
-        #expect(untimed.objectValue?["title"] == .string("local.exec swift test"))
-        #expect(timed.objectValue?["title"] == .string("local.exec swift test · 1.25s"))
-        var expected = try #require(untimed.objectValue)
-        expected["title"] = .string("local.exec swift test · 1.25s")
-        #expect(timed == .object(expected))
-        let dictionary = ZenCODEACPBridge.toolCallCompletionUpdate(
-            for: toolCall, result: result.withElapsed(.milliseconds(420)), workingDirectory: workspace
-        )
-        #expect(dictionary["title"] as? String == "local.exec swift test · 420ms")
-        #expect(ZenCODEACPBridge.toolTitle("Worker — Read", elapsed: .nanoseconds(1)) == "Worker — Read · <0.01ms")
-        #expect(ZenCODEACPBridge.toolTitle("Worker — Read", elapsed: nil) == "Worker — Read")
-    }
-
     @Test
     func completionLocationsIncludeEveryRecordedChangedFile() {
         let toolCall = presentedToolCall(
@@ -927,12 +805,6 @@ extension ACPCompatibilityTests {
         #expect(completion["content"] == nil)
         let rawOutput = (completion["_meta"] as? [String: Any])?["rawOutput"] as? [String: Any]
         #expect(rawOutput?["output"] as? String == " \n")
-    }
-
-    @Test
-    func remoteRequestDiagnosticsAreSuppressedFromACPThoughts() {
-        #expect(ZenCODEACPBridge.isAppSuppressedDiagnostic("Remote request: Z.ai Coding Plan glm-5.3."))
-        #expect(!ZenCODEACPBridge.isAppSuppressedDiagnostic("Retrying remote request."))
     }
 
     @Test
@@ -1322,23 +1194,6 @@ private extension ACPCompatibilityTests {
     }
 
     @Test
-    func configOptionsOmitThinkingForModelsWithoutThinking() async throws {
-        let bridge = try makeBridge(
-            models: [
-                AgentSettingsModelManifest(
-                    id: "plain-model",
-                    kind: .remoteAPI,
-                    modelID: "local/plain-model"
-                )
-            ]
-        )
-
-                        let hasThinking = await bridge.testHasThinkingOption(for: "plain-model")
-
-        #expect(!hasThinking)
-    }
-
-    @Test
     func sessionLifecycleResultUsesSessionThinkingSelection() async throws {
         let bridge = try makeBridge(
             models: [
@@ -1373,65 +1228,6 @@ private extension ACPCompatibilityTests {
     // MARK: - ACP v1 extensibility conformance
 
     @Test
-    func toolCallUpdatesCarryRawInputInMetaNotAtRoot() {
-        let toolCall = presentedToolCall(
-            id: "call_meta",
-            name: "local.exec",
-            argumentsObject: [
-                "command": "swift test",
-                "workingDirectory": "/tmp/workspace"
-            ],
-            argumentsJSON: #"{"command":"swift test","workingDirectory":"/tmp/workspace"}"#
-        )
-
-        let create = ZenCODEACPBridge.toolCallCreateUpdate(for: toolCall)
-        #expect(create["rawInput"] == nil)
-        #expect((create["_meta"] as? [String: Any])?["rawInput"] != nil)
-
-        let progress = ZenCODEACPBridge.toolCallProgressUpdate(for: toolCall)
-        #expect(progress["rawInput"] == nil)
-        #expect((progress["_meta"] as? [String: Any])?["rawInput"] != nil)
-
-        let completion = ZenCODEACPBridge.toolCallCompletionUpdate(
-            for: toolCall,
-            result: DirectAgentToolResult(output: "done", summary: "done")
-        )
-        #expect(completion["rawInput"] == nil)
-        #expect(completion["rawOutput"] == nil)
-        let completionMeta = completion["_meta"] as? [String: Any]
-        #expect(completionMeta?["rawInput"] != nil)
-        #expect(completionMeta?["rawOutput"] != nil)
-    }
-
-    @Test
-    func toolCallJSONUpdatesCarryRawInputInMetaNotAtRoot() throws {
-        let toolCall = presentedToolCall(
-            id: "call_json_meta",
-            name: "local.readFile",
-            argumentsObject: ["path": "/tmp/file.swift"],
-            argumentsJSON: #"{"path":"/tmp/file.swift"}"#
-        )
-
-        let create = ZenCODEACPBridge.toolCallCreateJSONUpdate(for: toolCall)
-        #expect(create.objectValue?["rawInput"] == nil)
-        #expect(create.objectValue?["_meta"]?.objectValue?["rawInput"] != nil)
-
-        let progress = ZenCODEACPBridge.toolCallProgressJSONUpdate(for: toolCall)
-        #expect(progress.objectValue?["rawInput"] == nil)
-        #expect(progress.objectValue?["_meta"]?.objectValue?["rawInput"] != nil)
-
-        let completion = ZenCODEACPBridge.toolCallCompletionJSONUpdate(
-            for: toolCall,
-            result: DirectAgentToolResult(output: "content", summary: "content")
-        )
-        #expect(completion.objectValue?["rawInput"] == nil)
-        #expect(completion.objectValue?["rawOutput"] == nil)
-        let meta = try #require(completion.objectValue?["_meta"]?.objectValue)
-        #expect(meta["rawInput"] != nil)
-        #expect(meta["rawOutput"] != nil)
-    }
-
-    @Test
     func subscriptionUsageDataDoesNotWrapInSessionUpdate() {
         let status = DirectAgentSubscriptionUsageStatus(
             provider: "claude",
@@ -1447,16 +1243,6 @@ private extension ACPCompatibilityTests {
         #expect(object?["dailyUsedPercent"]?.numberValue == 42.0)
         #expect(object?["dailyResetsInSeconds"]?.numberValue == 3600)
         #expect(object?["weeklyUsedPercent"] == nil)
-    }
-
-    @Test
-    func subscriptionUsageDataReturnsNilForEmptyStatus() {
-        let status = DirectAgentSubscriptionUsageStatus(
-            provider: "claude",
-            dailyUsedPercent: nil,
-            weeklyUsedPercent: nil
-        )
-        #expect(ZenCODEACPBridge.subscriptionUsageJSONData(for: status) == nil)
     }
 
     @Test

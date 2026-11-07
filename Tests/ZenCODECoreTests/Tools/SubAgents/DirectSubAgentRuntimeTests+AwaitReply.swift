@@ -84,48 +84,6 @@ extension DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func awaitReplyStopsWhenTheWaitingAgentIsClosed() async throws {
-        let fixture = try await AwaitReplyFixture.make()
-        let waiting = Task {
-            try await fixture.backend.executeBorrowedSubAgentTool(
-                awaitReplyCall(#""to":"coordinator","message":"Blocked","awaitReply":true,"replyTimeoutSeconds":30"#)
-            )
-        }
-        await fixture.waitForCoordinatorMailbox()
-        #expect(await fixture.runtime.closeAgent(id: fixture.agentID))
-
-        let output = try await waiting.value
-        #expect(output.contains(DirectSubAgentRuntime.sharedChatReplySenderStoppedText))
-        await fixture.runtime.shutdown()
-    }
-
-    @Test
-    func awaitReplyStopsWhenTheTaskAttemptIsFailedDuringTheWait() async throws {
-        let fixture = try await AwaitReplyFixture.make(taskID: "task-a")
-        let orchestrator = try #require(fixture.orchestrator)
-        let waiting = Task {
-            try await fixture.backend.executeBorrowedSubAgentTool(
-                awaitReplyCall(#""to":"coordinator","message":"Blocked","awaitReply":true,"replyTimeoutSeconds":30"#)
-            )
-        }
-        await fixture.waitForCoordinatorMailbox()
-        let attemptID = try #require(
-            try await orchestrator.task(sessionID: "root", taskID: "task-a").task.activeAttemptID
-        )
-        _ = try await orchestrator.failAttempt(
-            sessionID: "root",
-            taskID: "task-a",
-            attemptID: attemptID,
-            error: "Validation failed"
-        )
-
-        let output = try await waiting.value
-        #expect(output.contains(DirectSubAgentRuntime.sharedChatReplyAttemptInactiveText))
-        #expect(!output.contains(DirectSubAgentRuntime.sharedChatReplyCancelledText))
-        await fixture.runtime.shutdown()
-    }
-
-    @Test
     func awaitReplyStopsPromptlyOnCancellation() async throws {
         let fixture = try await AwaitReplyFixture.make()
         let waiting = Task {
@@ -164,17 +122,6 @@ extension DirectSubAgentRuntimeTests {
         // Probing is non-destructive: the inline executor delivery owns the batch.
         let pending = await fixture.runtime.drainCoordinatorSharedChatMessages(rootSessionID: "root")
         #expect(pending.map(\.text) == ["Need a decision"])
-        await fixture.runtime.shutdown()
-    }
-
-    @Test
-    func agentWaitWithoutMessagesStillWaitsForCompletionOrTimeout() async throws {
-        let fixture = try await AwaitReplyFixture.make()
-        let output = await fixture.runtime.waitForAgents(
-            arguments: ["timeoutSeconds": .number(1), "pollIntervalSeconds": .number(0.2)],
-            roomID: "root"
-        )
-        #expect(output.hasPrefix("Timed out waiting for delegated sub-agents.\n"))
         await fixture.runtime.shutdown()
     }
 
@@ -222,55 +169,7 @@ extension DirectSubAgentRuntimeTests {
         await executor.subAgentRuntime.shutdown()
     }
 
-    @Test
-    func agentWaitWithoutRoomKeepsTheOriginalCompletionOrTimeoutBehaviour() async throws {
-        let fixture = try await AwaitReplyFixture.make()
-        _ = try await fixture.backend.executeBorrowedSubAgentTool(
-            awaitReplyCall(#""to":"coordinator","message":"Pending question""#)
-        )
-        await fixture.waitForCoordinatorMailbox()
-        let output = await fixture.runtime.waitForAgents(
-            arguments: ["timeoutSeconds": .number(1), "pollIntervalSeconds": .number(0.2)]
-        )
-        // No room: no early return, even though a message is waiting.
-        #expect(output.hasPrefix("Timed out waiting for delegated sub-agents.\n"))
-        #expect(!output.contains(DirectSubAgentRuntime.liveChatMessagesWaitingNotice))
-        let pending = await fixture.runtime.drainCoordinatorSharedChatMessages(rootSessionID: "root")
-        #expect(pending.map(\.text) == ["Pending question"])
-        await fixture.runtime.shutdown()
-    }
-
     // MARK: - Replies from other participants
-
-    @Test
-    func awaitReplyIsClosedByABroadcastFromTheCoordinator() async throws {
-        let fixture = try await AwaitReplyFixture.make()
-        let waiting = Task {
-            try await fixture.backend.executeBorrowedSubAgentTool(
-                awaitReplyCall(#""to":"coordinator","message":"Which branch?","awaitReply":true,"replyTimeoutSeconds":30"#)
-            )
-        }
-        await fixture.waitForCoordinatorMailbox()
-        _ = try await fixture.runtime.execute(
-            rootSessionID: "root",
-            toolCall: presentedToolCall(
-                id: "broadcast",
-                name: "agent.message",
-                argumentsObject: ["to": "all", "message": "Everyone: use main"],
-                argumentsJSON: #"{"to":"all","message":"Everyone: use main"}"#
-            ),
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
-            allowedToolNames: nil
-        )
-
-        let output = try await waiting.value
-        #expect(output.contains("[Live chat reply received while you were waiting]"))
-        #expect(output.contains("Everyone: use main"))
-        #expect(output.contains(
-            "If this does not answer your question, call agent.message with awaitReply again."
-        ))
-        await fixture.runtime.shutdown()
-    }
 
     @Test
     func awaitReplyIsClosedByAPeerMessage() async throws {

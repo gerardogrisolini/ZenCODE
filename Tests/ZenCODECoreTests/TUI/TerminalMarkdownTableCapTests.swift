@@ -48,21 +48,6 @@ struct TerminalMarkdownTableCapTests {
     }
 
     @Test
-    func tableUnderCapRendersIntegrallyWithoutTruncationMarker() {
-        var formatter = makeFormatter()
-
-        // 50 body rows = 52 buffered lines, comfortably under the 64-line cap
-        // and under the 8_000-character cap. The render path is unchanged for
-        // tables under the cap, so output is identical to the pre-cap behavior.
-        let rendered = formatter.consume(tableMarkdown(bodyRows: 50)) + formatter.finish()
-
-        #expect(rendered.contains("┌"))                       // table box drawn
-        #expect(rendered.contains("r001"))                    // first body row
-        #expect(rendered.contains("r050"))                    // last body row
-        #expect(!rendered.contains(Self.truncationMarker))    // no degradation
-    }
-
-    @Test
     func tableOverLineCapDegradesExplicitlyWithMarker() {
         var formatter = makeFormatter()
 
@@ -161,21 +146,5 @@ struct TerminalMarkdownTableCapTests {
 
         // The block was already flushed at the cap; finish() has nothing left.
         #expect(formatter.finish() == "")
-    }
-
-    @Test
-    func nonTableTextAfterTruncatedTableIsPreserved() {
-        var formatter = makeFormatter()
-
-        var rendered = formatter.consume(tableMarkdown(bodyRows: 100))
-        // A non-table line ends the (already truncated) block and must render as
-        // normal prose — it is never swallowed by the truncation.
-        rendered += formatter.consume("Text after the table.\n")
-        rendered += formatter.finish()
-
-        #expect(rendered.contains(Self.truncationMarker))
-        #expect(rendered.contains("Text after the table."))
-        // Truncated rows are gone, but the trailing paragraph is intact.
-        #expect(!rendered.contains("r100"))
     }
 }

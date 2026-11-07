@@ -37,7 +37,6 @@ extension TelegramChannel {
         _ voice: TerminalTelegramVoiceAttachment,
         lease: TerminalTelegramRouteLease
     ) async {
-        if onTelegramWorkEffectForTesting?(.voiceTranscription) == true { return }
         guard let fence = wireFence(for: lease) else { return }
         let chatID = lease.key.chatID
         guard isVoiceConfigured else {

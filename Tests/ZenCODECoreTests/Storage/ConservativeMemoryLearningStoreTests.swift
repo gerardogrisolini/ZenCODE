@@ -37,52 +37,6 @@ import Testing
             }
         }
     }
-
-    @Test func lookupIDsOnlyArchiveFenceAndCancellation() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        try await workspace.withIsolatedSupport {
-            let store = try await MemoryGraphStore.open(graphURL: MemoryGraphLocation.graphURL(for: workspace.workspaceURL))
-            let original = try await store.write(content: "Summary: Widget offset is one.\nTimestamp: 2026-01-01", category: .fact, tags: ["manual"])
-            let snapshot = try #require(try await store.learningSnapshot(query: "Widget"))
-            #expect(!(try await store.commitLearning(content: "Summary: Verified Widget offset.", existingID: UUID().uuidString,
-                snapshot: snapshot, permit: MemoryLearningPermit(), event: UUID())))
-            _ = try await store.setArchived(true, id: original.entry.id)
-            #expect(!(try await store.commitLearning(content: "Summary: Verified Widget offset.", existingID: original.entry.id,
-                snapshot: snapshot, permit: MemoryLearningPermit(), event: UUID())))
-            let permit = MemoryLearningPermit()
-            permit.invalidate()
-            let fresh = try #require(try await store.learningSnapshot())
-            #expect(!(try await store.commitLearning(content: "Summary: Verified Widget offset.", existingID: nil,
-                snapshot: fresh, permit: permit, event: UUID())))
-            #expect(try await store.entry(id: original.entry.id)?.active == false)
-        }
-    }
-
-    @Test func boundedLookupDoesNotDisableMatureStoreAndUpdatePreservesManualInformation() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        try await workspace.withIsolatedSupport {
-            let store = try await MemoryGraphStore.open(graphURL: MemoryGraphLocation.graphURL(for: workspace.workspaceURL))
-            for index in 0..<42 {
-                _ = try await store.write(content: "Summary: Unrelated subsystem \(index).", category: .fact, tags: [])
-            }
-            let entry = try await store.write(content: "Summary: Widget is one-based.\nTimestamp: 2026-01-01\nSources: old-ref", category: .fact, tags: ["manual"])
-            _ = try await store.write(content: "password=not-for-the-model", category: .fact, tags: [])
-            let snapshot = try #require(try await store.learningSnapshot(query: "Widget"))
-            #expect(snapshot.entries.contains { $0.id == entry.entry.id })
-            #expect(!snapshot.entries.contains { $0.content.contains("password") })
-            #expect(snapshot.comparison.count == 44)
-            #expect(try await store.commitLearning(content: "Summary: Widget handles empty input.\nSources: new-ref", existingID: entry.entry.id,
-                snapshot: snapshot, permit: MemoryLearningPermit(), event: UUID()))
-            let updated = try #require(try await store.entry(id: entry.entry.id))
-            #expect(updated.content.contains("one-based"))
-            #expect(updated.content.contains("old-ref"))
-            #expect(updated.content.contains("new-ref"))
-            #expect(updated.content.contains("Timestamp: 2026-01-01"))
-            #expect(updated.tags == ["manual"])
-        }
-    }
 }
 
 extension ConservativeMemoryLearningStoreTests {

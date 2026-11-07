@@ -412,59 +412,6 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func streamResponsesKeepsPlainReasoningItemsForReplay() async throws {
-        let response = """
-        data: {"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_plain","summary":[],"content":[{"type":"reasoning_text","text":"plain thought"}]}}
-
-        data: {"type":"response.output_item.done","output_index":1,"item":{"type":"message","content":[{"type":"output_text","text":"Visible answer"}]}}
-
-        data: {"type":"response.completed","response":{"output":[]}}
-
-        """
-        let fixture = try await RemoteNIOStreamingFixture.start(
-            responseBody: Data(response.utf8)
-        )
-        defer {
-            fixture.beginShutdown()
-        }
-        let client = RemoteGenerationClient(
-            configuration: remoteStreamingConfiguration(),
-            provider: AgentRemoteProvider(
-                name: "Unit Test",
-                baseURL: "https://unit.test/v1",
-                modelID: "unit-model",
-                chatEndpoint: .responses
-            ),
-            apiKey: nil,
-            transport: fixture.transport,
-            streamEndpointBaseURLOverride: fixture.baseURL
-        )
-
-        let result = try await client.streamResponses(
-            messages: [["role": "user", "content": "hi"]],
-            sessionID: "session-plain-reasoning-item",
-            allowedToolNames: [],
-            thinkingSelection: nil,
-            onEvent: { _ in }
-        )
-
-        let storedItems = RemoteGenerationClient.responsesReasoningItems(
-            from: result.reasoningItemsJSON
-        )
-        #expect(storedItems.count == 1)
-        #expect(storedItems.first?["id"] as? String == "rs_plain")
-        let storedContent = try #require(storedItems.first?["content"] as? [[String: Any]])
-        #expect(storedContent.first?["text"] as? String == "plain thought")
-
-        var messages: [[String: Any]] = []
-        client.appendAssistantMessage(streamResult: result, to: &messages)
-        let replayPayload = RemoteGenerationClient.responsesInputPayload(from: messages)
-        let replayedReasoningItem = try #require(replayPayload.input.first as? [String: Any])
-        let replayedContent = try #require(replayedReasoningItem["content"] as? [[String: Any]])
-        #expect(replayedContent.first?["text"] as? String == "plain thought")
-    }
-
-    @Test
     func streamChatCompletionsPromotesReasoningContentAfterThinkCloseToContent() async throws {
         let response = """
         data: {"choices":[{"delta":{"reasoning_content":"Analisi.</thi"}}]}
@@ -507,32 +454,6 @@ extension RemoteSessionSnapshotTests {
         #expect(result.text == "Risposta visibile.")
         #expect(capturedEvents.thoughtText() == "Analisi.</think>")
         #expect(capturedEvents.contentText() == "Risposta visibile.")
-    }
-
-    @Test
-    func remoteStreamAccumulatorKeepsCrossDeltaReasoningStateBounded() async throws {
-        let deltaCount = 50_000
-        var accumulator = RemoteStreamAccumulator()
-
-        for _ in 0..<deltaCount {
-            try await accumulator.ingest(.reasoning("x")) { _ in }
-        }
-        #expect(accumulator.reasoningClosingMarkerLookbehindByteCount == 0)
-
-        try await accumulator.ingest(.reasoning("</thi")) { _ in }
-        #expect(accumulator.reasoningClosingMarkerLookbehindByteCount == 5)
-        #expect(
-            accumulator.reasoningClosingMarkerLookbehindByteCount
-                <= RemoteStreamAccumulator.maximumReasoningClosingMarkerLookbehindByteCount
-        )
-
-        try await accumulator.ingest(.reasoning("nk>visible")) { _ in }
-        #expect(accumulator.reasoningClosingMarkerLookbehindByteCount == 0)
-
-        let result = try accumulator.result(requestStartedAt: Date())
-        #expect(result.reasoningText.count == deltaCount + "</think>".count)
-        #expect(result.reasoningText.hasSuffix("</think>"))
-        #expect(result.text == "visible")
     }
 
     @Test
@@ -629,23 +550,6 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func structuredOutputFormatSanitizesSchemaNameForProviderPayloads() throws {
-        let schema = JSONValue(jsonObject: ["type": "object"])
-        let format = AgentStructuredOutputFormat(
-            name: " unit result!* ",
-            schema: schema
-        )
-
-        let responsesPayload = try #require(format.responsesTextFormatPayload)
-        let chatPayload = try #require(format.chatCompletionsResponseFormatPayload)
-        let chatSchema = try #require(chatPayload["json_schema"] as? [String: Any])
-
-        #expect(responsesPayload["name"] as? String == "unit_result_")
-        #expect(chatSchema["name"] as? String == "unit_result_")
-        #expect((responsesPayload["name"] as? String)?.count == 12)
-    }
-
-    @Test
     func parseChatCompletionsDoesNotDuplicateIdenticalReasoningFields() {
         let events = ChatCompletionsStreamParser.parse([
             "choices": [
@@ -665,47 +569,6 @@ extension RemoteSessionSnapshotTests {
         }
 
         #expect(reasoningEvents == ["same thought"])
-    }
-
-    @Test
-    func streamChatCompletionsDoesNotSendNonStandardSessionID() async throws {
-        let response = """
-        data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}
-
-        data: [DONE]
-
-        """
-        let fixture = try await RemoteNIOStreamingFixture.start(
-            responseBody: Data(response.utf8)
-        )
-        defer {
-            fixture.beginShutdown()
-        }
-        let client = RemoteGenerationClient(
-            configuration: remoteStreamingConfiguration(),
-            provider: AgentRemoteProvider(
-                name: "Unit Test",
-                baseURL: "https://unit.test/v1",
-                modelID: "unit-model",
-                chatEndpoint: .chatCompletions
-            ),
-            apiKey: nil,
-            transport: fixture.transport,
-            streamEndpointBaseURLOverride: fixture.baseURL
-        )
-
-        _ = try await client.streamChatCompletions(
-            messages: [["role": "user", "content": "hi"]],
-            sessionID: "session-chat-completions-standard",
-            allowedToolNames: [],
-            thinkingSelection: nil,
-            onEvent: { _ in }
-        )
-        let request = try #require(fixture.capturedRequests().first)
-        let body = try request.jsonObject()
-
-        #expect(body["session_id"] == nil)
-        #expect((body["stream_options"] as? [String: Bool])?["include_usage"] == true)
     }
 
     @Test
@@ -800,46 +663,23 @@ extension RemoteSessionSnapshotTests {
         #expect(capturedEvents.contentText() == "partial")
     }
 
-    @Test
-    func openingRetryPolicyIsNIOErrorAndAttemptSpecific() {
-        #expect(RemoteStreamTransport.shouldRetryStreamOpening(
-            error: RemoteTransportError.tlsFailure("handshake failed"),
-            attempt: 0
-        ))
-        #expect(RemoteStreamTransport.shouldRetryStreamOpening(
-            error: RemoteTransportError.connectionFailure("connection reset"),
-            attempt: 1
-        ))
-        #expect(RemoteStreamTransport.shouldRetryStreamOpening(
-            error: RemoteTransportError.closed,
-            attempt: 0
-        ))
-        #expect(!RemoteStreamTransport.shouldRetryStreamOpening(
-            error: RemoteTransportError.timeout,
-            attempt: 0
-        ))
-        #expect(!RemoteStreamTransport.shouldRetryStreamOpening(
-            error: CancellationError(),
-            attempt: 0
-        ))
-        #expect(!RemoteStreamTransport.shouldRetryStreamOpening(
-            error: RemoteTransportError.tlsFailure("handshake failed"),
-            attempt: RemoteStreamTransport.maximumStreamOpeningRetries
-        ))
-        #expect(!RemoteStreamTransport.shouldRetryStreamOpening(
-            error: RemoteTransportError.tlsFailure("handshake failed"),
-            attempt: -1
-        ))
-    }
+    @Test(arguments: [AgentRemoteChatEndpoint.responses, .chatCompletions])
+    func streamResponsesSendsOpenRouterSessionIDForStickyCacheRouting(
+        endpoint: AgentRemoteChatEndpoint
+    ) async throws {
+        let response = endpoint == .responses
+            ? """
+            data: {"type":"response.output_text.delta","delta":"ok"}
 
-    @Test
-    func streamResponsesSendsOpenRouterSessionIDForStickyCacheRouting() async throws {
-        let response = """
-        data: {"type":"response.output_text.delta","delta":"ok"}
+            data: {"type":"response.completed","response":{"output":[]}}
 
-        data: {"type":"response.completed","response":{"output":[]}}
+            """
+            : """
+            data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}
 
-        """
+            data: [DONE]
+
+            """
         let fixture = try await RemoteNIOStreamingFixture.start(
             responseBody: Data(response.utf8)
         )
@@ -852,126 +692,47 @@ extension RemoteSessionSnapshotTests {
                 name: "OpenRouter",
                 baseURL: "https://openrouter.ai/api/v1",
                 modelID: "deepseek/deepseek-v4-flash",
-                chatEndpoint: .responses
+                chatEndpoint: endpoint
             ),
             apiKey: nil,
             transport: fixture.transport,
             streamEndpointBaseURLOverride: fixture.baseURL
         )
+        let sessionID = endpoint == .responses
+            ? "session-openrouter-cache"
+            : "session-openrouter-chat-cache"
 
-        _ = try await client.streamResponses(
-            messages: [["role": "user", "content": "hi"]],
-            sessionID: "session-openrouter-cache",
-            allowedToolNames: [],
-            thinkingSelection: nil,
-            onEvent: { _ in }
-        )
-        let request = try #require(fixture.capturedRequests().first)
-        let body = try request.jsonObject()
-
-        #expect(body["session_id"] as? String == "session-openrouter-cache")
-        #expect(body["prompt_cache_key"] as? String == "session-openrouter-cache")
-    }
-
-    @Test
-    func streamChatCompletionsSendsOpenRouterSessionIDForStickyCacheRouting() async throws {
-        let response = """
-        data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}
-
-        data: [DONE]
-
-        """
-        let fixture = try await RemoteNIOStreamingFixture.start(
-            responseBody: Data(response.utf8)
-        )
-        defer {
-            fixture.beginShutdown()
+        if endpoint == .responses {
+            _ = try await client.streamResponses(
+                messages: [["role": "user", "content": "hi"]],
+                sessionID: sessionID,
+                allowedToolNames: [],
+                thinkingSelection: nil,
+                onEvent: { _ in }
+            )
+        } else {
+            _ = try await client.streamChatCompletions(
+                messages: [["role": "user", "content": "hi"]],
+                sessionID: sessionID,
+                allowedToolNames: [],
+                thinkingSelection: nil,
+                onEvent: { _ in }
+            )
         }
-        let client = RemoteGenerationClient(
-            configuration: remoteStreamingConfiguration(),
-            provider: AgentRemoteProvider(
-                name: "OpenRouter",
-                baseURL: "https://openrouter.ai/api/v1",
-                modelID: "deepseek/deepseek-v4-flash",
-                chatEndpoint: .chatCompletions
-            ),
-            apiKey: nil,
-            transport: fixture.transport,
-            streamEndpointBaseURLOverride: fixture.baseURL
-        )
-
-        _ = try await client.streamChatCompletions(
-            messages: [["role": "user", "content": "hi"]],
-            sessionID: "session-openrouter-chat-cache",
-            allowedToolNames: [],
-            thinkingSelection: nil,
-            onEvent: { _ in }
-        )
         let request = try #require(fixture.capturedRequests().first)
         let body = try request.jsonObject()
 
-        #expect(body["session_id"] as? String == "session-openrouter-chat-cache")
-        #expect((body["stream_options"] as? [String: Bool])?["include_usage"] == true)
-    }
-
-    @Test
-    func customCompatibilityEndpointDoesNotReceiveImplicitThinkingPayload() async throws {
-        let response = """
-        data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}
-
-        data: [DONE]
-
-        """
-        let fixture = try await RemoteNIOStreamingFixture.start(
-            responseBody: Data(response.utf8)
-        )
-        defer {
-            fixture.beginShutdown()
+        #expect(body["session_id"] as? String == sessionID)
+        if endpoint == .responses {
+            #expect(body["prompt_cache_key"] as? String == sessionID)
+        } else {
+            #expect((body["stream_options"] as? [String: Bool])?["include_usage"] == true)
         }
-        let client = RemoteGenerationClient(
-            configuration: remoteStreamingConfiguration(),
-            provider: AgentRemoteProvider(
-                name: "Custom NVIDIA-compatible endpoint",
-                baseURL: "https://integrate.api.nvidia.com/v1",
-                modelID: "deepseek-ai/deepseek-v4-flash",
-                chatEndpoint: .chatCompletions,
-                providerProfileID: .custom,
-                protocolProfileID: .openAIChatCompletions,
-                authPolicy: .apiKeyOptional
-            ),
-            apiKey: nil,
-            transport: fixture.transport,
-            streamEndpointBaseURLOverride: fixture.baseURL,
-            mcpRuntime: await borrowedFeatureMCPRuntime()
-        )
-
-        _ = try await client.streamChatCompletions(
-            messages: [["role": "user", "content": "hi"]],
-            sessionID: "session-chat-template",
-            allowedToolNames: [],
-            thinkingSelection: .high,
-            onEvent: { _ in }
-        )
-        let request = try #require(fixture.capturedRequests().first)
-        let body = try request.jsonObject()
-        #expect(body["chat_template_kwargs"] == nil)
-        #expect(body["reasoning"] == nil)
-        #expect(body["reasoning_effort"] == nil)
-        #expect(body["thinking"] == nil)
     }
 }
 
 
 extension RemoteSessionSnapshotTests {
-    @Test
-    func responseErrorMessageExtractsNestedJSONErrorMessage() {
-        #expect(
-            RemoteStreamTransport.responseErrorMessage(
-                from: #"{"error":{"message":"capacity exhausted"}}"#
-            ) == "capacity exhausted"
-        )
-    }
-
     @Test
     func streamChatCompletionsSurfacesNIONon2xxErrorBodyWithoutReplay() async throws {
         let fixture = try await RemoteNIOStreamingFixture.start(

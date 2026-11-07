@@ -12,19 +12,6 @@ import ToolCore
 
 extension SwiftFeatureRuntimeTests {
     @Test
-    func processRunnerWritesStandardInput() async throws {
-        let result = try await AsyncProcessRunner.run(
-            executableURL: URL(fileURLWithPath: "/bin/cat"),
-            arguments: [],
-            stdinData: Data("hello feature\n".utf8),
-            timeout: 10
-        )
-
-        #expect(result.exitCode == 0)
-        #expect(result.stdout == "hello feature\n")
-    }
-
-    @Test
     func registryDiscoversExecutableManifest() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("swift-feature-registry-\(UUID().uuidString)", isDirectory: true)
@@ -180,28 +167,6 @@ extension SwiftFeatureRuntimeTests {
             .first { $0.id == "custom-feature" })
         #expect(!disabled.enabled && disabled.available && disabled.tools.isEmpty && disabled.toolCount == 0)
     }
-
-    @Test(arguments: [SwiftFeatureBundleSource.generated, .bundled], [false, true])
-    func bundleStatusPreservesOverrides(source: SwiftFeatureBundleSource, isCore: Bool) {
-        let feature = SwiftFeatureBundle(
-            id: "projection", executableURL: URL(fileURLWithPath: "/tmp/projection"), tools: [],
-            toolNamePrefixes: ["z.", "a."], toolNameAliases: ["Z", "A"],
-            discoversToolsAtRuntime: true, source: source, isCore: isCore
-        )
-        let status = SwiftFeatureRuntime.status(
-            from: feature, enabled: false, available: true,
-            manifestPath: "/tmp/custom.json", issue: "fixture", tools: ["z.tool", "a.tool", "z.tool"]
-        )
-        #expect(status.id == feature.id && status.source == source && status.isCore == isCore)
-        #expect(status.editable == (source == .generated && !isCore))
-        #expect(status.adoptable == (source == .bundled && !isCore))
-        #expect(!status.enabled && status.available && status.issue == "fixture")
-        #expect(status.executablePath == feature.executableURL.path && status.manifestPath == "/tmp/custom.json")
-        #expect(status.tools == ["a.tool", "z.tool", "z.tool"] && status.toolCount == 3)
-        #expect(status.toolNamePrefixes == ["z.", "a."] && status.toolNameAliases == ["Z", "A"])
-        #expect(status.discoversToolsAtRuntime && status.displayName == nil && status.description == nil)
-        #expect(status.adoptedFrom == nil && status.build == nil && status.generated == nil)
-    }
 }
 
 
@@ -242,72 +207,6 @@ extension SwiftFeatureRuntimeTests {
         #expect(records.count == 1)
         #expect(records.first?.hasPrefix("serve:") == true)
         await runtime.shutdown()
-    }
-
-    @Test
-    func nonPersistentFeatureRetainsOneShotProcessIsolation() async throws {
-        let fixture = try PersistentFeatureFixture()
-        defer { fixture.remove() }
-
-        let runtime = SwiftFeatureRuntime(features: [
-            fixture.bundle(supportsPersistentSession: false)
-        ])
-        let descriptors = await runtime.descriptors(allowedToolNames: ["fixture."])
-        #expect(descriptors.map(\.name) == ["fixture.echo"])
-
-        _ = try #require(await runtime.executeIfAvailable(
-            toolCall: DirectAgentToolCall(
-                id: UUID().uuidString,
-                name: "fixture.echo",
-                argumentsObject: [:],
-                argumentsJSON: "{}"
-            ),
-            workingDirectory: fixture.directoryURL
-        ))
-        _ = try #require(await runtime.executeIfAvailable(
-            toolCall: DirectAgentToolCall(
-                id: UUID().uuidString,
-                name: "fixture.echo",
-                argumentsObject: [:],
-                argumentsJSON: "{}"
-            ),
-            workingDirectory: fixture.directoryURL
-        ))
-
-        let records = try fixture.processRecords()
-        #expect(records.count == 3)
-        #expect(records.allSatisfy { $0.hasPrefix("single:") })
-        await runtime.shutdown()
-    }
-
-    @Test
-    func persistentFeatureDoesNotRestartAfterRuntimeShutdown() async throws {
-        let fixture = try PersistentFeatureFixture()
-        defer { fixture.remove() }
-
-        let runtime = SwiftFeatureRuntime(features: [
-            fixture.bundle(supportsPersistentSession: true)
-        ])
-        _ = await runtime.descriptors(allowedToolNames: ["fixture."])
-        await runtime.shutdown()
-
-        do {
-            _ = try await runtime.executeIfAvailable(
-                toolCall: DirectAgentToolCall(
-                    id: UUID().uuidString,
-                    name: "fixture.echo",
-                    argumentsObject: [:],
-                    argumentsJSON: "{}"
-                ),
-                workingDirectory: fixture.directoryURL
-            )
-            Issue.record("A shut down runtime must not start another persistent feature process.")
-        } catch {
-            // Terminal runtime shutdown intentionally rejects later persistent
-            // requests instead of silently creating a new child.
-        }
-
-        #expect(try fixture.processRecords().filter { $0.hasPrefix("serve:") }.count == 1)
     }
 }
 

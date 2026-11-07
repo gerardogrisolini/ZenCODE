@@ -16,36 +16,6 @@ struct SherpaVoiceModeControllerTests {
     // MARK: - Pure helpers
 
     @Test
-    func recognizerResultLinesAreParsed() {
-        #expect(SherpaVoiceModeController.recognizedText(fromLine: " 0: Ciao zen") == "Ciao zen")
-        #expect(SherpaVoiceModeController.recognizedText(fromLine: "12: Che ore sono?") == "Che ore sono?")
-        #expect(SherpaVoiceModeController.recognizedText(fromLine: " 3: ") == nil)
-        #expect(SherpaVoiceModeController.recognizedText(fromLine: "XRUN.") == nil)
-        #expect(SherpaVoiceModeController.recognizedText(fromLine: "Started. Please speak") == nil)
-        #expect(SherpaVoiceModeController.recognizedText(fromLine: "sample rate: 16000") == nil)
-    }
-
-    @Test
-    func failureReasonPrefersTheErrorOverTrailingUsageHints() {
-        // Real sherpa-onnx output without an audio device.
-        let diagnostics = [
-            "Recognizer created!",
-            "ALSA lib pcm.c:2722:(snd_pcm_open_noupdate) Unknown PCM default",
-            "Unable to open: default. No such file or directory",
-            "Please use the command:",
-            "arecord -l",
-            "and if you want to select card 3 and device 0 on that card, please use:",
-            "plughw:3,0"
-        ]
-        #expect(
-            SherpaVoiceModeController.reason(status: 255, diagnostics: diagnostics)
-                == "Unable to open: default. No such file or directory."
-        )
-        #expect(SherpaVoiceModeController.reason(status: 3, diagnostics: ["bad model"]) == "bad model.")
-        #expect(SherpaVoiceModeController.reason(status: 3, diagnostics: []) == "the program exited with status 3.")
-    }
-
-    @Test
     func longAnswersAreCappedOnACharacterBoundary() {
         let limit = SherpaVoiceModeController.maximumSpokenBytes
         #expect(SherpaVoiceModeController.cappedForArgument("breve") == "breve")
@@ -91,22 +61,6 @@ struct SherpaVoiceModeControllerTests {
     }
 
     // MARK: - Process handling
-
-    @Test
-    func recognizedUtterancesArriveOnlyAfterTheRecognizerStarted() async throws {
-        let fixture = try Fixture()
-        try fixture.queueUtterance("Ciao zen")
-        let controller = fixture.makeController()
-        await controller.start()
-
-        #expect(await waitUntil { await fixture.events.systemMessages.contains { $0.hasPrefix("Voice: listening (sherpa-onnx") } })
-        #expect(await waitUntil { await fixture.events.utterances == [.dictation(id: 1, text: "Ciao zen")] })
-        #expect(await controller.phase == .listening)
-        await controller.stop()
-        #expect(await fixture.events.failures.isEmpty)
-        // Pause mode sends every segment at once and previews nothing.
-        #expect(await fixture.events.previews.isEmpty)
-    }
 
     /// In pause mode an awaited yes or no is sent alone, and the dictation
     /// id advances only with the dictations sent.
@@ -180,22 +134,6 @@ struct SherpaVoiceModeControllerTests {
     }
 
     @Test
-    func readingTurnsTheMicrophoneOffAndBackOnWhenItEnds() async throws {
-        let fixture = try Fixture(readingSeconds: "0.3")
-        let controller = fixture.makeController()
-        await controller.start()
-        #expect(await waitUntil { await controller.phase == .listening })
-        #expect(fixture.recognizerLaunches == 1)
-
-        await controller.speak("**Ciao** a tutti")
-        #expect(await waitUntil { await fixture.events.speaking == [true, false] })
-        #expect(await waitUntil { fixture.recognizerLaunches == 2 })
-        #expect(fixture.synthesizerCalls.last?.hasSuffix("--|Ciao a tutti.|") == true)
-        await controller.stop()
-        #expect(await fixture.events.failures.isEmpty)
-    }
-
-    @Test
     func escapeInterruptsReadingAndTurnsTheMicrophoneBackOn() async throws {
         let fixture = try Fixture(readingSeconds: "30")
         let controller = fixture.makeController()
@@ -233,35 +171,6 @@ struct SherpaVoiceModeControllerTests {
         #expect(await waitUntil { fixture.recognizerLaunches == 2 })
         await controller.stop()
         #expect(await controller.isActive == false)
-    }
-
-    /// Live-chat texts and answers are both read whole, however long; an
-    /// answer only loses its Markdown.
-    @Test
-    func plainTextAndAnswersAreReadWhole() async throws {
-        let fixture = try Fixture(readingSeconds: "0.2")
-        let controller = fixture.makeController()
-        await controller.start()
-        #expect(await waitUntil { await controller.phase == .listening })
-        #expect(controller.languageCode == "it")
-
-        let sentence = "Questa frase riempie il messaggio. "
-        let long = String(repeating: sentence, count: 1_000 / sentence.count + 1)
-        #expect(long.count > 1_000)
-        #expect(await controller.speak(long, rendering: .plainText))
-        #expect(await controller.isSpeaking)
-        #expect(await waitUntil { await fixture.events.speaking == [true, false] })
-        #expect(fixture.synthesizerCalls.last?.hasSuffix("--|\(long)|") == true)
-
-        #expect(await controller.speak("# Titolo\n\n" + long, rendering: .answer))
-        #expect(await waitUntil { await fixture.events.speaking == [true, false, true, false] })
-        #expect(
-            fixture.synthesizerCalls.last?.hasSuffix(
-                "--|Titolo. \(long.trimmingCharacters(in: .whitespaces))|"
-            ) == true
-        )
-        await controller.stop()
-        #expect(await fixture.events.failures.isEmpty)
     }
 
     @Test

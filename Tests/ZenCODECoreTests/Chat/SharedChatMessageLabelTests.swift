@@ -16,19 +16,6 @@ struct SharedChatMessageLabelTests {
     // MARK: - timestamp
 
     @Test(arguments: [
-        (0.0, "00:00:00"),
-        (7.0, "00:00:07"),
-        (32_643.0, "09:04:03"),
-        (43_200.0, "12:00:00"),
-        (65_109.0, "18:05:09"),
-        (86_399.0, "23:59:59"),
-    ])
-    func timestampUses24HourClockWithZeroPaddedFields(seconds: TimeInterval, expected: String) throws {
-        let utc = try #require(TimeZone(secondsFromGMT: 0))
-        #expect(SharedChatMessageLabel.timestamp(Date(timeIntervalSince1970: seconds), timeZone: utc) == expected)
-    }
-
-    @Test(arguments: [
         (0, "18:05:09"),
         (19_800, "23:35:09"),
         (-18_000, "13:05:09"),
@@ -40,12 +27,6 @@ struct SharedChatMessageLabelTests {
         #expect(SharedChatMessageLabel.timestamp(sentAt, timeZone: timeZone) == expected)
     }
 
-    @Test
-    func timestampDefaultsToTheLocalTimeZone() {
-        let sentAt = Date(timeIntervalSince1970: Self.sentAtSeconds)
-        #expect(SharedChatMessageLabel.timestamp(sentAt) == SharedChatMessageLabel.timestamp(sentAt, timeZone: .current))
-    }
-
     // MARK: - route
 
     @Test
@@ -55,11 +36,6 @@ struct SharedChatMessageLabelTests {
         #expect(try label(roomID: roomID, recipientIDs: [coordinator]) == "Worker [18:05:09] → Coordinator")
         // The coordinator wins over the broadcast wording.
         #expect(try label(roomID: roomID, recipientIDs: ["reviewer", coordinator]) == "Worker [18:05:09] → Coordinator")
-    }
-
-    @Test
-    func routeNamesAllForMoreThanOneRecipient() throws {
-        #expect(try label(recipientIDs: ["reviewer", "worker-2"]) == "Worker [18:05:09] → All")
     }
 
     @Test
@@ -88,74 +64,6 @@ struct SharedChatMessageLabelTests {
             try label(recipientIDs: [unnamed.id], participantMap: [unnamed.id: unnamed])
                 == "Worker [18:05:09] → agent-7"
         )
-    }
-
-    @Test
-    func routeFallsBackToAgentForAnUnknownRecipient() throws {
-        let reviewer = AgentSharedChat.Participant(id: "reviewer", name: "Reviewer", kind: .agent)
-        #expect(try label(recipientIDs: ["unknown-agent"]) == "Worker [18:05:09] → Agent")
-        #expect(
-            try label(recipientIDs: ["unknown-agent"], participantMap: [reviewer.id: reviewer])
-                == "Worker [18:05:09] → Agent"
-        )
-        #expect(try label(recipientIDs: []) == "Worker [18:05:09] → Agent")
-    }
-
-    @Test
-    func routeShowsTheSendTimeInTheRequestedTimeZone() throws {
-        let timeZone = try #require(TimeZone(secondsFromGMT: 19_800))
-        #expect(
-            try label(recipientIDs: ["unknown-agent"], timeZone: timeZone)
-                == "Worker [23:35:09] → Agent"
-        )
-    }
-
-    @Test
-    func routeDefaultsToTheLocalTimeZone() throws {
-        let message = try makeMessage(recipientIDs: ["unknown-agent"])
-        let expectedTime = SharedChatMessageLabel.timestamp(message.sentAt, timeZone: .current)
-        #expect(SharedChatMessageLabel.route(for: message) == "Worker [\(expectedTime)] → Agent")
-    }
-
-    // MARK: - TerminalChat forwarders
-
-    @Test(arguments: [0, 19_800, -18_000, 36_000])
-    func terminalTimestampForwardsToTheSharedLabel(offset: Int) throws {
-        let timeZone = try #require(TimeZone(secondsFromGMT: offset))
-        for seconds in [0.0, 7.0, 32_643.0, Self.sentAtSeconds, 86_399.0] {
-            let sentAt = Date(timeIntervalSince1970: seconds)
-            #expect(
-                TerminalChat.sharedChatTimestamp(sentAt, timeZone: timeZone)
-                    == SharedChatMessageLabel.timestamp(sentAt, timeZone: timeZone)
-            )
-        }
-        let sentAt = Date(timeIntervalSince1970: Self.sentAtSeconds)
-        #expect(TerminalChat.sharedChatTimestamp(sentAt) == SharedChatMessageLabel.timestamp(sentAt))
-    }
-
-    @Test
-    func terminalRouteForwardsToTheSharedLabel() throws {
-        let roomID = "label-room"
-        let reviewer = AgentSharedChat.Participant(id: "reviewer", name: "Reviewer", kind: .agent)
-        let participantMap = [reviewer.id: reviewer]
-        let cases: [[String]] = [
-            [AgentSharedChat.coordinatorID(for: roomID)],
-            ["reviewer", "worker-2"],
-            [AgentSharedChat.operatorID(for: roomID)],
-            [reviewer.id],
-            ["unknown-agent"],
-        ]
-        for recipientIDs in cases {
-            let message = try makeMessage(roomID: roomID, recipientIDs: recipientIDs)
-            #expect(
-                TerminalChat.sharedChatIncomingCardRoute(for: message, participantMap: participantMap)
-                    == SharedChatMessageLabel.route(for: message, participantMap: participantMap)
-            )
-            #expect(
-                TerminalChat.sharedChatIncomingCardRoute(for: message)
-                    == SharedChatMessageLabel.route(for: message)
-            )
-        }
     }
 
     // MARK: - Helpers

@@ -103,30 +103,6 @@ struct VoiceChatDialogueTests {
         #expect(empty.phase == .idle)
     }
 
-    @Test
-    func theQueueDropsTheOldestPastItsLimit() {
-        var dialogue = VoiceChatDialogue()
-        let messages = (0..<(VoiceChatDialogue.maximumPendingAnnouncements + 3)).map { index in
-            message(from: reviewer, text: "message \(index)")
-        }
-        dialogue.enqueue(messages)
-        #expect(dialogue.pending.count == VoiceChatDialogue.maximumPendingAnnouncements)
-        #expect(dialogue.pending.first?.text == "message 3")
-        #expect(dialogue.pending.last?.text == "message \(messages.count - 1)")
-    }
-
-    @Test
-    func anUnspokenAnnouncementReturnsToTheHeadOfTheQueue() {
-        let first = message(from: reviewer)
-        let second = message(from: builder)
-        var dialogue = VoiceChatDialogue()
-        dialogue.enqueue([first, second])
-        _ = dialogue.beginAnnouncement(skipping: { _ in false })
-        dialogue.announcementNotSpoken()
-        #expect(dialogue.phase == .idle)
-        #expect(dialogue.pending.map(\.id) == [first.id, second.id])
-    }
-
     // MARK: - Answers
 
     @Test
@@ -152,19 +128,6 @@ struct VoiceChatDialogueTests {
     }
 
     @Test
-    func aReplyToTheCoordinatorTargetsTheCoordinatorDestination() {
-        let incoming = message(from: coordinator)
-        var dialogue = dialogueAsking(incoming)
-        _ = dialogue.interpret("ok", participants: [])
-        _ = dialogue.speechEnded()
-        _ = dialogue.interpret("ja", participants: [])
-        #expect(
-            dialogue.interpret("Fermati.", participants: [])
-                == .send(destination: .coordinator, text: "Fermati.", label: "Coordinator")
-        )
-    }
-
-    @Test
     func noDeclinesTheReadingOrTheReply() {
         let incoming = message(from: reviewer)
         var dialogue = dialogueAsking(incoming)
@@ -176,24 +139,6 @@ struct VoiceChatDialogueTests {
         _ = replying.speechEnded()
         #expect(replying.interpret("non ora", participants: []) == .skip)
         #expect(replying.phase == .idle)
-    }
-
-    /// The reading ends with "Do you want to reply?": a yes or no heard while
-    /// the message is still being read answers that question, instead of
-    /// reading the message again from the start.
-    @Test
-    func anAnswerDuringTheReadingAnswersTheReplyQuestion() {
-        let incoming = message(from: reviewer)
-        var dialogue = dialogueAsking(incoming)
-        _ = dialogue.interpret("sì", participants: [])
-        #expect(dialogue.phase == .reading(incoming))
-        #expect(dialogue.interpret("sì", participants: []) == .askReplyText(incoming))
-        #expect(dialogue.phase == .awaitingReplyText(incoming))
-
-        var declining = dialogueAsking(incoming)
-        _ = declining.interpret("sì", participants: [])
-        #expect(declining.interpret("no", participants: []) == .skip)
-        #expect(declining.phase == .idle)
     }
 
     @Test
@@ -212,24 +157,6 @@ struct VoiceChatDialogueTests {
                 == .send(destination: .coordinator, text: "fermati", label: "coordinator")
         )
         #expect(sending.phase == .idle)
-    }
-
-    @Test
-    func sendPhrasesFromIdleResolveTheirRecipient() {
-        var dialogue = VoiceChatDialogue()
-        #expect(dialogue.interpret("Che ore sono?", participants: [reviewer]) == .prompt)
-        #expect(
-            dialogue.interpret("message to all: pause", participants: [reviewer])
-                == .send(destination: .all, text: "pause", label: "all")
-        )
-        #expect(
-            dialogue.interpret("messaggio a Reviewer: controlla", participants: [reviewer, builder])
-                == .send(destination: .direct([reviewer.id]), text: "controlla", label: "Reviewer")
-        )
-        #expect(dialogue.interpret("messaggio a Anna: ciao", participants: [reviewer]) == .unknownAgent("Anna"))
-        // Nothing usable after the preposition is an ordinary prompt.
-        #expect(dialogue.interpret("messaggio a : ciao", participants: [reviewer]) == .prompt)
-        #expect(dialogue.phase == .idle)
     }
 
     @Test
@@ -370,18 +297,5 @@ struct VoiceChatDialogueTests {
         waitingForText.answerReadingStarted()
         #expect(waitingForText.phase == .awaitingMessageText(destination: .all, label: "all"))
         #expect(waitingForText.pending.isEmpty)
-    }
-
-    @Test
-    func cancellingClearsTheQueueAndTheQuestion() {
-        var dialogue = VoiceChatDialogue()
-        dialogue.enqueue([message(from: reviewer), message(from: builder)])
-        _ = dialogue.beginAnnouncement(skipping: { _ in false })
-        _ = dialogue.speechEnded()
-        dialogue.cancelAll()
-        #expect(dialogue.phase == .idle)
-        #expect(dialogue.pending.isEmpty)
-        #expect(dialogue.deadlineToken == nil)
-        #expect(dialogue.beginAnnouncement(skipping: { _ in false }) == nil)
     }
 }

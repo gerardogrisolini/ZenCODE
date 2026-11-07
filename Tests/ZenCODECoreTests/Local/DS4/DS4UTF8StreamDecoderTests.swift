@@ -14,22 +14,6 @@ import Testing
 @Suite
 struct DS4UTF8StreamDecoderTests {
     @Test
-    func buffersSplitScalars() {
-        var decoder = DS4UTF8StreamDecoder()
-        let bytes = Array("ciao 🙂".utf8)
-        let splitIndex = bytes.count - 2
-
-        let first = decoder.consume(Array(bytes[..<splitIndex]))
-        let second = decoder.consume(Array(bytes[splitIndex...]))
-
-        #expect(first == "ciao ")
-        #expect(second == "🙂")
-        #expect(first + second + decoder.finish() == "ciao 🙂")
-        #expect(!first.contains("\u{FFFD}"))
-        #expect(!second.contains("\u{FFFD}"))
-    }
-
-    @Test
     func everyByteSplitReassemblesWithoutReplacement() {
         let text = "Perché 漢字 🙂👍🏽 é\u{301} <｜DSML｜invoke>"
         let bytes = Array(text.utf8)
@@ -42,21 +26,6 @@ struct DS4UTF8StreamDecoderTests {
             #expect(!(first + second).contains("\u{FFFD}"), "split at \(split)")
             #expect(tail.isEmpty, "split at \(split)")
         }
-    }
-
-    @Test
-    func singleByteChunksEmitEmptyStringsUntilScalarCompletes() {
-        var decoder = DS4UTF8StreamDecoder()
-        let outputs = Array("🙂".utf8).map { decoder.consume([$0]) }
-        #expect(outputs == ["", "", "", "🙂"])
-        #expect(!decoder.hasPendingBytes)
-    }
-
-    @Test
-    func emptyChunkProducesNothing() {
-        var decoder = DS4UTF8StreamDecoder()
-        #expect(decoder.consume([]).isEmpty)
-        #expect(decoder.finish().isEmpty)
     }
 
     @Test

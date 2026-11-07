@@ -3,37 +3,6 @@ import Testing
 
 @Suite
 struct ZenCODESetupPromptingTests {
-    @Test
-    func yesNoDisplaysHelpBeforeSelection() throws {
-        let help = "This operation removes configuration."
-        var events: [String] = []
-        let result = try ZenCODESetupRunner.promptYesNo(
-            "Continue?",
-            defaultValue: false,
-            help: help,
-            writeHelp: { events.append($0) },
-            selectOne: { title, items, selected in
-                events.append("selection")
-                #expect(title == "Continue?")
-                #expect(items.map(\.value) == [true, false])
-                #expect(!selected)
-                return selected
-            }
-        )
-        #expect(!result)
-        #expect(events == ["\(help)\n", "selection"])
-    }
-
-    @Test
-    func yesNoWithoutHelpDoesNotWriteAnAdvisory() throws {
-        let result = try ZenCODESetupRunner.promptYesNo(
-            "Continue?",
-            defaultValue: true,
-            writeHelp: { _ in Issue.record("Unexpected help output") },
-            selectOne: { _, _, selected in selected }
-        )
-        #expect(result)
-    }
 
     @Test
     func yesNoCancellationDoesNotAcceptDefault() {
@@ -69,17 +38,6 @@ struct ZenCODESetupPromptingTests {
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
-    }
-
-    @Test(arguments: [Set<Int>(), Set([0]), Set([1])])
-    func multipleSelectionPreservesExplicitConfirmation(selection: Set<Int>) throws {
-        let result = try ZenCODESetupRunner.promptMenuSelection(
-            title: "Models",
-            items: modelItems,
-            selected: [0],
-            select: { _, _, _ in selection }
-        )
-        #expect(result == selection)
     }
 
     @Test

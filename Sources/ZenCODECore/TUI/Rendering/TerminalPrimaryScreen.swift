@@ -441,21 +441,6 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
             deactivate()
         }
     }
-    var outputRowForTesting: Int { TerminalOutputSynchronization.withTransaction { cursorRow } }
-    func positionOutputForTesting(row: Int) {
-        TerminalOutputSynchronization.withTransaction {
-            cursorRow = min(height, max(1, row))
-            stream = TerminalStreamingText()
-            output(park())
-        }
-    }
-    func clearOutputRowForTesting() {
-        TerminalOutputSynchronization.withTransaction {
-            output(cup(cursorRow) + "\u{1B}[2K")
-            stream = TerminalStreamingText()
-            output(park())
-        }
-    }
 
     private var margins: String { "\u{1B}[1;\(height)r" }
     private func cup(_ row: Int, _ column: Int = 1) -> String { "\u{1B}[\(row);\(column)H" }

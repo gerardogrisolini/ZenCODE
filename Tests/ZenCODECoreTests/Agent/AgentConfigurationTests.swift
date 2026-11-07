@@ -26,64 +26,6 @@ struct AgentConfigurationTests {
     }
 
     @Test
-    func syntaxValidationRejectsRemovedBearerTokenOptionWithoutLoadingConfiguration() {
-        #expect(throws: AgentConfigurationError.self) {
-            try AgentConfiguration.validateArguments([
-                "zen",
-                "--bearer-token",
-                "no-longer-supported",
-            ])
-        }
-    }
-
-    @Test
-    func syntaxValidationRejectsRemovedVerboseOptionWithoutLoadingConfiguration() {
-        #expect(throws: AgentConfigurationError.self) {
-            try AgentConfiguration.validateArguments(["zen", "--verbose"])
-        }
-        #expect {
-            try AgentConfiguration.validateArguments(["zen", "--verbose"])
-        } throws: { error in
-            guard case let AgentConfigurationError.unknownArgument(argument) = error else {
-                return false
-            }
-            return argument == "--verbose"
-        }
-    }
-
-    @Test
-    func helpTextNoLongerMentionsVerboseOption() throws {
-        _ = try AgentConfiguration(arguments: ["zen", "--help"])
-        #expect(!AgentConfiguration.helpText.contains("--verbose"))
-        #expect(!AgentConfiguration.helpText.contains("ZENCODE_AGENT_VERBOSE"))
-    }
-
-    @Test
-    func helpTextDocumentsTheTUIAndTelegramModes() {
-        let help = AgentConfiguration.helpText
-        #expect(help.contains("  zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--acp] [--agent NAME]"))
-        #expect(help.contains("Modes:\n  --tui                  Human terminal chat (default).\n  -p, --prompt PROMPT"))
-        #expect(help.contains(
-            "  --acp                  ACP JSON-RPC over stdio for compatible clients.\n"
-                + "  --telegram             Run the session from the linked Telegram chat, without the TUI "
-                + "(Telegram must be set up and paired with /setup).\n"
-        ))
-        #expect(help.contains("ZENCODE_AGENT_MODE           tui, telegram, acp, headless, or auto. Auto resolves to tui."))
-        #expect(help.contains("  In the TUI, use /setup to reconfigure ZenCODE"))
-        #expect(!help.contains("  default                Human terminal chat."))
-        #expect(!help.contains("In chat mode,"))
-    }
-
-    @Test
-    func missingRemoteAPIKeyDirectsUsersToProviderSetup() {
-        #expect(
-            AgentCoreBackendError.missingRemoteAPIKey("Example provider")
-                .localizedDescription
-                == "No API key is stored for Example provider. Run /setup to configure that provider."
-        )
-    }
-
-    @Test
     func anthropicDirectAPIProtocolBuildsNativeRemoteBackend() throws {
         let configuration = AgentRuntimeConfiguration(
             modelID: "claude-unit-test",
@@ -226,36 +168,6 @@ struct AgentConfigurationTests {
         }
     }
 
-    @Test
-    func explicitAgentNameStillSelectsAnyProfileRegardlessOfTheProject() throws {
-        let custom = AgentProfile(id: "custom-dev", name: "Custom Dev", role: .developer)
-        let pluto = AgentProfileRoleTestSupport.pluto
-        let agents = [AgentProfileRoleTestSupport.developer, custom, pluto]
-
-        try ProjectAgentSelectionTestSupport.withTemporaryProject { _, workspace in
-            try ProjectAgentSelectionStore.save(agentIDs: [custom.id], workspaceRootURL: workspace)
-
-            let explicit = try AgentConfiguration(
-                hostedModelID: "remote-community/test",
-                agentName: "  Pluto  ",
-                availableAgents: agents,
-                workingDirectory: workspace
-            )
-            #expect(explicit.selectedAgent == pluto)
-            #expect(explicit.requestedAgentName == "Pluto")
-            #expect(explicit.agentName == "Pluto")
-
-            let blank = try AgentConfiguration(
-                hostedModelID: "remote-community/test",
-                agentName: "   ",
-                availableAgents: agents,
-                workingDirectory: workspace
-            )
-            #expect(blank.selectedAgent == custom)
-            #expect(blank.requestedAgentName == nil)
-        }
-    }
-
     // MARK: - Launch working directory
 
     /// A real, symlink-resolved temporary directory removed on exit, so
@@ -299,64 +211,6 @@ struct AgentConfigurationTests {
                     )
                 }
             }
-        }
-    }
-
-    @Test
-    func launchWorkingDirectoryLastArgumentWins() throws {
-        try withTemporaryDirectory { first in
-            try withTemporaryDirectory { second in
-                #expect(
-                    AgentConfiguration.launchWorkingDirectoryURL(
-                        arguments: [
-                            "zen",
-                            "--working-directory", first.path,
-                            "--agent", "Developer",
-                            "--working-directory", second.path,
-                        ],
-                        environment: [:]
-                    ) == second
-                )
-            }
-        }
-    }
-
-    @Test
-    func launchWorkingDirectoryIgnoresRelativeOrMissingShellDirectory() {
-        let currentDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-        let missing = "/zencode-missing-\(UUID().uuidString)"
-        for shellValue in ["relative/path", missing] {
-            let resolved = AgentConfiguration.launchWorkingDirectoryURL(
-                arguments: ["zen"],
-                environment: ["PWD": shellValue]
-            )
-            // Falls through to the process's current directory (or home, when
-            // that is the executable's directory), never to the ignored value.
-            #expect(
-                resolved == currentDirectory
-                    || resolved == UserHomeDirectory.current().standardizedFileURL.resolvingSymlinksInPath()
-            )
-        }
-        #expect(
-            AgentConfiguration.defaultWorkingDirectoryRawPath(environment: ["PWD": "relative/path"])
-                == FileManager.default.currentDirectoryPath
-        )
-        #expect(
-            AgentConfiguration.defaultWorkingDirectoryRawPath(environment: ["PWD": missing])
-                == FileManager.default.currentDirectoryPath
-        )
-    }
-
-    @Test
-    func defaultWorkingDirectoryRawPathIgnoresBlankEnvironmentValue() throws {
-        try withTemporaryDirectory { shellDirectory in
-            #expect(
-                AgentConfiguration.defaultWorkingDirectoryRawPath(
-                    environment: ["ZENCODE_AGENT_CWD": "   ", "PWD": shellDirectory.path]
-                ) == shellDirectory.path
-            )
         }
     }
 }

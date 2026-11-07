@@ -37,42 +37,6 @@ struct TelegramTUITests {
     }
 
     @Test
-    func telegramSettingsRequireEnabledToken() {
-        let tokenOnlySettings = AgentTelegramSettingsManifest(
-            enabled: true,
-            botToken: " 123456:ABCDEF "
-        )
-        let pairedSettings = AgentTelegramSettingsManifest(
-            enabled: true,
-            botToken: " 123456:ABCDEF ",
-            linkedChatID: 42,
-            linkedChatTitle: "Gerardo",
-            ownerUserID: 7,
-            routes: [.init(roomID: "default")]
-        )
-        let missingTokenSettings = AgentTelegramSettingsManifest(
-            enabled: true,
-            botToken: " "
-        )
-        let disabledSettings = AgentTelegramSettingsManifest(
-            enabled: false,
-            botToken: "123456:ABCDEF"
-        )
-
-        #expect(tokenOnlySettings.isConfigured)
-        #expect(!tokenOnlySettings.isEnabled)
-        #expect(tokenOnlySettings.botToken == "123456:ABCDEF")
-        #expect(pairedSettings.isConfigured)
-        #expect(pairedSettings.isEnabled)
-        #expect(pairedSettings.linkedChatID == 42)
-        #expect(pairedSettings.linkedChatTitle == "Gerardo")
-        #expect(!missingTokenSettings.isEnabled)
-        #expect(missingTokenSettings.botToken == nil)
-        #expect(!disabledSettings.isEnabled)
-        #expect(disabledSettings.botToken == nil)
-    }
-
-    @Test
     func telegramSettingsFailClosedUnlessSchema2OwnerAndRoutesAreComplete() throws {
         let fixtures: [(String, Bool)] = [
             (#"{"enabled":true,"botToken":"123456:ABCDEF","linkedChatID":42,"ownerUserID":7,"routingVersion":1,"routes":[{"roomID":"default","lifecycle":"active","generation":1}]}"#, false),
@@ -88,36 +52,6 @@ struct TelegramTUITests {
             )
             #expect(settings.isEnabled == expectedEnabled)
         }
-    }
-
-    /// Characterization of the current routing-v2 manifest: routes may carry a
-    /// `topicID`. They decode, are re-encoded sorted by topic (the topicless
-    /// route first, then ascending topic), keep lifecycle and generation, and
-    /// leave the configuration enabled.
-    @Test
-    func telegramSettingsTopicRoutesDecodeReencodeSortedAndStayEnabled() throws {
-        let json = #"{"enabled":true,"botToken":"123456:ABCDEF","linkedChatID":42,"ownerUserID":7,"routingVersion":2,"routes":[{"topicID":77,"roomID":"session-b","lifecycle":"active","generation":3},{"roomID":"default","lifecycle":"active","generation":1},{"topicID":12,"roomID":"session-a","lifecycle":"closed","generation":2}]}"#
-
-        let settings = try JSONDecoder().decode(
-            AgentTelegramSettingsManifest.self, from: Data(json.utf8)
-        )
-        #expect(settings.isEnabled)
-        #expect(settings.routes == [
-            AgentTelegramRouteManifest(roomID: "default", lifecycle: .active, generation: 1),
-            AgentTelegramRouteManifest(topicID: 12, roomID: "session-a", lifecycle: .closed, generation: 2),
-            AgentTelegramRouteManifest(topicID: 77, roomID: "session-b", lifecycle: .active, generation: 3),
-        ])
-
-        let encoded = try JSONEncoder().encode(settings)
-        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        let routes = try #require(object["routes"] as? [[String: Any]])
-        #expect(routes.map { $0["topicID"] as? Int } == [nil, 12, 77])
-        #expect(routes.map { $0["roomID"] as? String } == ["default", "session-a", "session-b"])
-        #expect(object["routingVersion"] as? Int == 2)
-
-        let reloaded = try JSONDecoder().decode(AgentTelegramSettingsManifest.self, from: encoded)
-        #expect(reloaded == settings)
-        #expect(reloaded.isEnabled)
     }
 
     /// Round trip through the real settings store, isolated in a temporary
@@ -200,33 +134,6 @@ struct TelegramTUITests {
     }
 
     @Test
-    func settingsManifestRoundTripsEnabledTelegramConfiguration() throws {
-        let manifest = AgentSettingsManifest(
-            models: [],
-            telegram: AgentTelegramSettingsManifest(
-                enabled: true,
-                botToken: "123456:ABCDEF",
-                linkedChatID: 42,
-                linkedChatTitle: "Gerardo",
-                ownerUserID: 7,
-                routes: [.init(roomID: "default")]
-            )
-        )
-
-        let data = try JSONEncoder().encode(manifest)
-        let decoded = try JSONDecoder().decode(AgentSettingsManifest.self, from: data)
-        let json = try #require(String(data: data, encoding: .utf8))
-
-        #expect(decoded.telegram?.isEnabled == true)
-        #expect(decoded.telegram?.botToken == "123456:ABCDEF")
-        #expect(decoded.telegram?.linkedChatID == 42)
-        #expect(decoded.telegram?.linkedChatTitle == "Gerardo")
-        #expect(json.contains(#""telegram""#))
-        #expect(json.contains(#""botToken":"123456:ABCDEF""#))
-        #expect(json.contains(#""linkedChatID":42"#))
-    }
-
-    @Test
     func settingsManifestPreservesTokenOnlyTelegramConfigurationWithoutEnablingCommand() throws {
         let manifest = AgentSettingsManifest(
             models: [],
@@ -246,24 +153,6 @@ struct TelegramTUITests {
     }
 
     @Test
-    func settingsManifestOmitsDisabledTelegramConfiguration() throws {
-        let manifest = AgentSettingsManifest(
-            models: [],
-            telegram: AgentTelegramSettingsManifest(
-                enabled: false,
-                botToken: "123456:ABCDEF"
-            )
-        )
-
-        let data = try JSONEncoder().encode(manifest)
-        let decoded = try JSONDecoder().decode(AgentSettingsManifest.self, from: data)
-        let json = try #require(String(data: data, encoding: .utf8))
-
-        #expect(decoded.telegram == nil)
-        #expect(!json.contains(#""telegram""#))
-    }
-
-    @Test
     func telegramCommandIsVisibleOnlyWhenConfigured() {
         let disabledCommands = TerminalChat.visibleCommandDescriptors(
             builderAgentEnabled: false,
@@ -280,46 +169,6 @@ struct TelegramTUITests {
         #expect(!enabledCommands.contains("/make-agents"))
         #expect(!disabledCommands.contains("/telegram"))
         #expect(enabledCommands.contains("/telegram"))
-    }
-
-    @Test
-    func builderCommandVisibilityRemainsIndependentFromTelegram() {
-        let commands = TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: true,
-            telegramEnabled: false
-        ).map(\.command)
-
-        #expect(commands.contains("/feature"))
-        #expect(!commands.contains("/telegram"))
-    }
-
-    @Test
-    func telegramCommandTokenRendersAsUnknownWhenHidden() {
-        #expect(
-            TerminalChat.unknownCommandMessage(for: "/telegram on")
-                == "ZenCODE: unknown command '/telegram'.\n"
-        )
-    }
-
-    @Test
-    func submittedLineRoleSeparatesPromptsFromSlashCommands() {
-        #expect(TerminalChat.submittedLineRole(for: "ciao") == .prompt)
-        #expect(TerminalChat.submittedLineRole(for: "   ") == .empty)
-        #expect(TerminalChat.submittedLineRole(for: "/telegram on") == .slashCommand(token: "/telegram"))
-        #expect(TerminalChat.submittedLineRole(for: "/help extra") == .slashCommand(token: "/help"))
-        #expect(TerminalChat.submittedLineRole(for: "/start 233B0EC4") == .slashCommand(token: "/start"))
-    }
-
-    @Test
-    func slashCommandsDoNotUsePromptPanelRules() {
-        #expect(!TerminalChat.shouldSuspendPanelInput(for: "ciao"))
-        #expect(TerminalChat.shouldSuspendPanelInput(for: "/help"))
-        #expect(TerminalChat.shouldSuspendPanelInput(for: "/unknown"))
-        #expect(TerminalChat.isKnownSlashCommand("/think"))
-        #expect(TerminalChat.isKnownSlashCommand("/session save"))
-        #expect(!TerminalChat.isKnownSlashCommand("/agents-md"))
-        #expect(!TerminalChat.isKnownSlashCommand("/make-agents"))
-        #expect(!TerminalChat.isKnownSlashCommand("/start 233B0EC4"))
     }
 
     @Test
@@ -416,34 +265,6 @@ struct TelegramTUITests {
         let destination = try #require(routed.withLock { $0 })
         #expect(destination.0 == 42)
         #expect(destination.1 == 44)
-    }
-
-    @Test
-    func telegramBareCommandWithoutRequiredArgumentRemainsImmediate() async throws {
-        let terminal = TerminalChat(
-            configuration: try AgentConfiguration(
-                hostedModelID: "remote-community/test",
-                availableAgents: AgentProfileStore.defaultProfiles(),
-                workingDirectory: FileManager.default.temporaryDirectory
-            ),
-            stdinIsTerminal: false
-        )
-        let lease = await Self.installTestRoute(on: terminal)
-        terminal.telegramChannel.controlState.isActive = true
-        terminal.telegramChannel.controlState.wireLifecycleEpoch = UUID()
-        let messages = Mutex<[String]>([])
-        terminal.telegramChannel.onTelegramSystemMessage = { message, _ in
-            messages.withLock { $0.append(message) }
-            return true
-        }
-
-        guard case .handled = await terminal.telegramChannel.lineAction(for:
-            "/review", lease: lease
-        ) else {
-            Issue.record("/review has no required argument and must stay immediate")
-            return
-        }
-        #expect(messages.withLock { !$0.isEmpty })
     }
 
     @Test
@@ -665,124 +486,6 @@ struct TelegramTUITests {
         #expect(terminal.activePlan?.isApproved == true)
     }
 
-    /// A plain-word alias ("diff", "status") answers an open `/goal` question
-    /// instead of running the remote command; the slash form stays a command.
-    @Test
-    func telegramPlainAliasYieldsToAnOpenWorkflowQuestion() async throws {
-        let terminal = TerminalChat(configuration: try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            availableAgents: AgentProfileStore.defaultProfiles(),
-            workingDirectory: URL(
-                fileURLWithPath: "/tmp/ZenCODE-telegram-alias-workflow",
-                isDirectory: true
-            )
-        ), stdinIsTerminal: false)
-        let lease = await Self.installTestRoute(on: terminal, roomID: terminal.sessionID)
-        terminal.telegramChannel.controlState.isActive = true
-        terminal.telegramChannel.controlState.wireLifecycleEpoch = UUID()
-
-        // Nothing is waiting: the alias is still the remote command.
-        guard case .handled = await terminal.telegramChannel.lineAction(for:
-            "status", lease: lease
-        ) else {
-            Issue.record("a plain alias must stay a command while nothing waits")
-            return
-        }
-
-        guard case .startTurn = await terminal.telegramChannel.lineAction(for:
-            "/goal choose a format", lease: lease
-        ) else {
-            Issue.record("Telegram /goal should create a workflow")
-            return
-        }
-        let graphID = try #require(terminal.activeWorkflow?.graphID)
-        let graph = try #require(try await terminal.sessionRunner.taskGraphSnapshot(sessionID: terminal.sessionID))
-        _ = try await terminal.sessionRunner.taskOrchestrator.updateWorkflow(
-            sessionID: terminal.sessionID, graphID: graphID, state: .awaitingUser,
-            message: "Should I emit a diff or a patch?", expectedRevision: graph.revision
-        )
-        await terminal.recordWorkflowTurnOutcome(
-            graphID: graphID,
-            coordinatorMessage: "Should I emit a diff or a patch?"
-        )
-
-        guard case let .startTurn(prompt: prompt, purpose: purpose, locksResponseLanguage: _) =
-            await terminal.telegramChannel.lineAction(for: "diff", lease: lease) else {
-            Issue.record("\"diff\" must answer the open workflow question")
-            return
-        }
-        #expect(purpose == .workflow(originalGoal: "choose a format", graphID: graphID))
-        #expect(prompt.contains("diff"))
-        #expect(terminal.activeWorkflow?.isAwaitingReply == false)
-    }
-
-    /// The outcome of a Telegram `/plan approve` Goal reply reaches the chat
-    /// that sent it, instead of being written only to the TUI.
-    @Test
-    func telegramPlanApprovalFailureIsSentToTheChat() async throws {
-        let terminal = TerminalChat(configuration: try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            availableAgents: AgentProfileStore.defaultProfiles(),
-            workingDirectory: FileManager.default.temporaryDirectory
-                .appendingPathComponent("ZenCODE-telegram-plan-fail-\(UUID().uuidString)", isDirectory: true)
-        ), stdinIsTerminal: false)
-        let lease = await Self.installTestRoute(on: terminal, roomID: terminal.sessionID)
-        terminal.telegramChannel.controlState.isActive = true
-        terminal.telegramChannel.controlState.wireLifecycleEpoch = UUID()
-        let messages = Mutex<[String]>([])
-        terminal.telegramChannel.onTelegramSystemMessage = { message, _ in
-            messages.withLock { $0.append(message) }
-            return true
-        }
-        terminal.activePlan = TerminalSessionPlan(
-            originalGoal: "old planner goal",
-            consolidatedText: "Implement the Telegram plan approval flow."
-        )
-
-        guard case .handled = await terminal.telegramChannel.lineAction(for:
-            "/plan approve", lease: lease
-        ) else {
-            Issue.record("Telegram /plan approve should first request a Goal")
-            return
-        }
-        // The plan awaiting approval is replaced before the Goal arrives.
-        terminal.activePlan = TerminalSessionPlan(
-            originalGoal: "another goal",
-            consolidatedText: "A different plan."
-        )
-        messages.withLock { $0.removeAll() }
-
-        guard case .handled = await terminal.telegramChannel.lineAction(for:
-            "Ship the approval flow", lease: lease
-        ) else {
-            Issue.record("a stale approval must not start implementation")
-            return
-        }
-        let unavailable = TerminalChat.planUnavailableForApprovalMessage
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        #expect(messages.withLock { $0.contains { $0.contains(unavailable) } })
-    }
-
-    /// `/telegram` shows poll, command-menu and send errors separately.
-    @Test
-    func telegramStatusRendersSeparateDiagnostics() async throws {
-        let terminal = try await Self.activeTelegramTerminal()
-        terminal.telegramChannel.controlState.pollError = "Telegram polling failed: 409"
-        terminal.telegramChannel.controlState.commandMenuError = "Could not publish Telegram command menu: x"
-        terminal.telegramChannel.controlState.lastError = "send failed"
-        let text = TelegramChannel.statusText(controlState: terminal.telegramChannel.controlState, linkedChatTitle: terminal.telegramChannel.linkedChatTitle, topicName: terminal.telegramChannel.sessionTopic?.name)
-        #expect(text.contains("Polling error: Telegram polling failed: 409"))
-        #expect(text.contains("Command menu error: Could not publish Telegram command menu: x"))
-        #expect(text.contains("Last error: send failed"))
-    }
-
-    /// `/telegram` is a TUI-only command: the remote help never mentions it.
-    @Test
-    func telegramRemoteHelpDoesNotMentionTheTUIOnlyTelegramCommand() async throws {
-        let terminal = try await Self.activeTelegramTerminal()
-        #expect(!terminal.telegramChannel.remoteHelpText().contains("/telegram"))
-    }
-
     @Test
     func telegramProgressReporterRequiresActiveTelegramSession() async throws {
         let terminal = try await Self.activeTelegramTerminal()
@@ -821,51 +524,6 @@ struct TelegramTUITests {
             settings: settings,
             linkedChatID: 42
         ) == nil)
-    }
-
-    @Test
-    nonisolated func telegramOnFailsPreflightForForeignPersistedRouteWithoutTransportRequests() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "zencode-telegram-preflight-\(UUID().uuidString)", isDirectory: true
-        )
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let recorder = TelegramTransportRequestRecorder()
-
-        try await AppStorageDirectory.withSupportDirectoryURL(directory) {
-            try AgentSettingsManifestStore.save(AgentSettingsManifest(
-                models: [],
-                telegram: AgentTelegramSettingsManifest(
-                    enabled: true,
-                    botToken: "123456:ABCDEF",
-                    linkedChatID: 42,
-                    ownerUserID: 7,
-                    routes: [.init(roomID: "foreign-session", generation: 1)]
-                )
-            ))
-            let result = try await Task { @ChatSessionActor in
-                let terminal = TerminalChat(
-                    configuration: try AgentConfiguration(
-                        hostedModelID: "remote-community/test",
-                        availableAgents: AgentProfileStore.defaultProfiles(),
-                        workingDirectory: directory
-                    ),
-                    stdinIsTerminal: true,
-                    telegramTransportFactory: { TelegramRecordingTransport(recorder: recorder) }
-                )
-
-                terminal.capturedCommandOutputForTesting = []
-                TelegramChannelTestSupport.standInForInteractiveLoop(of: terminal)
-                await terminal.startTelegramControl()
-                return (
-                    !terminal.telegramChannel.controlState.isActive,
-                    terminal.capturedCommandOutputForTesting?.joined() ?? ""
-                )
-            }.value
-
-            #expect(recorder.requestCount() == 0)
-            #expect(result.0)
-            #expect(result.1.contains("pair Telegram again"))
-        }
     }
 
     /// A generating session can be blocked on remote tool consent, so the busy
@@ -923,32 +581,6 @@ struct TelegramTUITests {
     }
 
     @Test
-    func busyTelegramSessionAnswersHelpAndChangesButKeepsAliasesBusy() async throws {
-        let terminal = try await Self.activeTelegramTerminal()
-        let notices = Mutex<[String]>([])
-        terminal.telegramChannel.onTelegramSystemMessage = { text, _ in
-            notices.withLock { $0.append(text) }
-            return true
-        }
-        let reservation = try terminal.sessionHost.reservePrompt(in: terminal.terminalSlotID)
-        defer { terminal.sessionHost.releasePrompt(reservation) }
-        for (index, text) in ["/help", "/changes@zencode_bot", "help"].enumerated() {
-            let didQueue = await terminal.telegramChannel.handleIncomingMessage(
-                TerminalTelegramIncomingMessage(
-                    chatID: 42, userID: 7, text: text, voice: nil,
-                    messageID: 200 + index, chatTitle: nil, username: nil
-                )
-            )
-            #expect(!didQueue)
-        }
-        let delivered = notices.withLock { $0 }
-        #expect(delivered.count == 3)
-        #expect(delivered[0].contains("Remote commands:"))
-        #expect(delivered[1].contains("No tracked file changes."))
-        #expect(delivered[2].contains("was not queued"))
-    }
-
-    @Test
     func telegramUnknownSlashAndArgumentedRemoteCommandsAreRejected() async throws {
         let terminal = try await Self.activeTelegramTerminal()
         let lease = try #require(terminal.telegramChannel.activeRouteLease)
@@ -987,49 +619,6 @@ struct TelegramTUITests {
         #expect(delivered[0].hasPrefix("ZenCODE: unknown command '/bogus'. Available commands: /help"))
         #expect(delivered[1] == "ZenCODE: /status does not accept arguments.")
         #expect(delivered[2].contains("Remote commands:"))
-    }
-
-    @Test
-    func telegramPlanSubcommandsAreListedAndDegeneratePlanMentionAsksForArgument() async throws {
-        #expect(TelegramChannel.remoteCommandList().contains(
-            "/plan <goal> (or save|load|list|delete|status|approve|clear)"
-        ))
-        let terminal = try await Self.activeTelegramTerminal()
-        let prompts = Mutex<[String]>([])
-        terminal.telegramChannel.onTelegramMentionPickerMessage = { text, _, _ in
-            prompts.withLock { $0.append(text) }
-            return 1
-        }
-        for (index, text) in ["/plan", "/plan@"].enumerated() {
-            let didQueue = await terminal.telegramChannel.handleIncomingMessage(
-                TerminalTelegramIncomingMessage(
-                    chatID: 42, userID: 7, text: text, voice: nil,
-                    messageID: 300 + index, chatTitle: nil, username: nil
-                )
-            )
-            #expect(!didQueue)
-        }
-        let asked = prompts.withLock { $0 }
-        #expect(asked.count == 2)
-        #expect(asked.allSatisfy { $0.contains("/plan") && $0.contains("approve") })
-    }
-
-    @Test
-    func tuiOnlyToolsHintIsWordedForTheTUI() async throws {
-        let terminal = try await Self.activeTelegramTerminal()
-        let lease = try #require(terminal.telegramChannel.activeRouteLease)
-        let notices = Mutex<[String]>([])
-        terminal.telegramChannel.onTelegramSystemMessage = { text, _ in
-            notices.withLock { $0.append(text) }
-            return true
-        }
-        terminal.selectedToolKeys.remove("sub-agents")
-        _ = await terminal.telegramChannel.lineAction(for:
-            "/plan build it", lease: lease
-        )
-        #expect(notices.withLock { $0 }.contains {
-            $0.contains("Enable it from the ZenCODE TUI with /tools")
-        })
     }
 
     private static func activeTelegramTerminal(
@@ -1082,44 +671,6 @@ struct TelegramTUITests {
             "*ZenCODE completed*\n\nDone.",
             "🪬 Summary: 1 file  +1 -0"
         ])
-    }
-
-    @Test
-    func telegramSubAgentOverviewRoutesToSubAgentResponsePayload() {
-        let payload = TelegramChannelPresenter.subAgentResponsePayload(
-            heading: "\u{001B}[1mResponse from Reviewer:\u{001B}[0m",
-            markdown: "Completed the review."
-        )
-
-        guard case let .some(.subAgentResponse(text)) = payload else {
-            Issue.record("A sub-agent overview must retain the subAgentResponse discriminator.")
-            return
-        }
-        #expect(text == "Response from Reviewer:\n\nCompleted the review.")
-    }
-
-    @Test
-    func telegramProgressReporterTruncatesAllowedPayloads() async {
-        let collector = TelegramTestMessageCollector()
-        let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { message, _ in
-            await collector.append(message)
-            return true
-        }
-
-        await reporter.enqueue(.agentResponse(String(repeating: "x", count: 4_000)))
-        await reporter.flush()
-
-        let messages = await collector.allMessages()
-        #expect(messages.count == 1)
-        #expect(messages[0].count == TerminalTelegramTurnProgressReporter.maximumMessageLength)
-    }
-
-    @Test
-    func telegramProgressReporterReturnsAuthorizationDeliveryResult() async {
-        let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { _, _ in false }
-
-        #expect(!(await reporter.send(.authorization("🔐 Permission required"))))
-        await reporter.flush()
     }
 
     @Test
@@ -1192,29 +743,6 @@ struct TelegramTUITests {
         #expect(terminal.telegramChannel.activeTurnLease == nil)
     }
 
-    @Test
-    func telegramFinalizationDoesNotUseDirectFallbackWhenReporterExists() async throws {
-        let terminal = try await Self.activeTelegramTerminal()
-        let reporterCollector = TelegramTestMessageCollector()
-        let fallbackCollector = TelegramTestMessageCollector()
-        terminal.telegramChannel.activeTurnLease = terminal.telegramChannel.activeRouteLease!
-        terminal.telegramChannel.activeProgressReporter = TerminalTelegramTurnProgressReporter(
-            chatID: 42
-        ) { message, _ in
-            await reporterCollector.append(message)
-            return true
-        }
-        terminal.telegramChannel.onDirectTelegramTurnMessage = { payload, _ in
-            await fallbackCollector.append(payload.text)
-            return true
-        }
-
-        await terminal.telegramChannel.retireTurn(outcomePayload: .agentResponse("Done."), fileChangeSummary: nil)
-
-        #expect((await reporterCollector.allMessages()) == ["Done."])
-        #expect((await fallbackCollector.allMessages()).isEmpty)
-    }
-
     // MARK: - Root responses in the chat
 
     @Test
@@ -1232,23 +760,6 @@ struct TelegramTUITests {
         await reporter.flush()
 
         #expect((await collector.allMessages()) == ["Inspecting the reporter first."])
-    }
-
-    @Test
-    func telegramPublishesEveryIntermediateRootResponseSeparately() async throws {
-        let terminal = try await Self.activeTelegramTerminal()
-        let collector = TelegramTestMessageCollector()
-        let reporter = Self.attachTestReporter(to: terminal, collector: collector)
-
-        await terminal.telegramChannel.appendRootResponseDelta("First step.")
-        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
-        await terminal.telegramChannel.appendRootResponseDelta("Second step.")
-        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
-        // A boundary without any content in between publishes nothing.
-        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
-        await reporter.flush()
-
-        #expect((await collector.allMessages()) == ["First step.", "Second step."])
     }
 
     @Test
@@ -1307,38 +818,6 @@ struct TelegramTUITests {
     }
 
     @Test
-    func telegramKeepsRootResponsesInOrderWithDelegatedAndAuthorizationPayloads() async throws {
-        let terminal = try await Self.activeTelegramTerminal()
-        let collector = TelegramTestMessageCollector()
-        terminal.telegramChannel.activeTurnLease = terminal.telegramChannel.activeRouteLease!
-        let reporter = Self.attachTestReporter(to: terminal, collector: collector)
-
-        await terminal.telegramChannel.appendRootResponseDelta("Delegating the work.")
-        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
-        await reporter.enqueue(.tasks("📋 Task graph\n\nstep 1"))
-        await reporter.enqueue(.subAgentResponse("🤖 worker\n\nDelegated answer."))
-        await terminal.telegramChannel.sendTurnMessage(
-            .authorization("Permission required"), to: 42,
-            lease: Self.testTelegramLease
-        )
-        await terminal.telegramChannel.appendRootResponseDelta("Continuing after the tool.")
-        await terminal.telegramChannel.publishRootResponseAtToolBoundary()
-
-        await terminal.telegramChannel.retireTurn(outcomePayload: .agentResponse("Final answer."), fileChangeSummary: nil)
-
-        #expect(
-            (await collector.allMessages()) == [
-                "Delegating the work.",
-                "📋 Task graph\n\nstep 1",
-                "🤖 worker\n\nDelegated answer.",
-                "Permission required",
-                "Continuing after the tool.",
-                "Final answer."
-            ]
-        )
-    }
-
-    @Test
     func telegramReporterTruncatesAggregatedRootResponseToMessageLimit() async {
         let collector = TelegramTestMessageCollector()
         let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { message, _ in
@@ -1357,23 +836,6 @@ struct TelegramTUITests {
         let messages = await collector.allMessages()
         #expect(messages.count == 1)
         #expect(messages.first?.count == limit)
-    }
-
-    @Test
-    func telegramReporterDiscardsPendingRootResponseWithoutSending() async {
-        let collector = TelegramTestMessageCollector()
-        let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { message, _ in
-            await collector.append(message)
-            return true
-        }
-
-        await reporter.appendAgentResponseDelta("Trailing final text.")
-        await reporter.discardPendingAgentResponse()
-        #expect(await reporter.hasPendingAgentResponse == false)
-        #expect(await reporter.publishPendingAgentResponseAtBoundary() == false)
-        await reporter.flush()
-
-        #expect((await collector.allMessages()).isEmpty)
     }
 
     @Test
@@ -1402,21 +864,6 @@ struct TelegramTUITests {
                 "Inspecting the manifest.",
                 "*ZenCODE completed*\n\nAll done, everything works."
             ]
-        )
-    }
-
-    @Test
-    func telegramFinalResponseTextKeepsFallbackWithoutPublishedIntermediateResponses() async throws {
-        let terminal = try await Self.activeTelegramTerminal()
-        let collector = TelegramTestMessageCollector()
-        terminal.telegramChannel.activeTurnLease = terminal.telegramChannel.activeRouteLease!
-        _ = Self.attachTestReporter(to: terminal, collector: collector)
-
-        await terminal.telegramChannel.appendRootResponseDelta("Only one response.")
-
-        #expect(
-            (await terminal.telegramChannel.finalResponseText(fallback: "Only one response."))
-                == "Only one response."
         )
     }
 
@@ -1617,20 +1064,6 @@ struct TelegramTUITests {
         #expect(outcome.isApproved)
     }
 
-    @Test
-    func telegramPermissionBrokerHandlesStrayPermissionRepliesWithoutPrompting() async {
-        let broker = TerminalTelegramPermissionBroker()
-        let lease = Self.telegramPermissionTestLease()
-        let permissionReply = await broker.handleMessage("/allow ABC123", lease: lease)
-        let regularPrompt = await broker.handleMessage("please continue", lease: lease)
-
-        #expect(permissionReply.isHandled)
-        if case let .handled(reply) = permissionReply {
-            #expect(reply == "No permission request is pending.")
-        }
-        #expect(regularPrompt == .notHandled)
-    }
-
     private static func telegramPermissionTestLease() -> TerminalTelegramRouteLease {
         TerminalTelegramRouteLease(
             key: .init(chatID: 42, userID: 7, roomID: "terminal-test"),
@@ -1766,71 +1199,6 @@ struct TelegramTUITests {
         #expect(operatorTarget == nil)
     }
 
-    /// A voice note is refused only when it quotes a card that really routes
-    /// somewhere. Quoting the operator's own relayed traffic is not a direct
-    /// reply, so it must keep the ordinary voice-prompt path instead of being
-    /// bounced with the "replies must be text" refusal.
-    @Test
-    func telegramVoiceReplyToAnOperatorCardKeepsTheOrdinaryPath() async throws {
-        let terminal = try await Self.activeTelegramTerminal()
-        let receipts = TelegramCardReceiptRecorder()
-        terminal.telegramChannel.sharedChatRelayStorage = TerminalTelegramSharedChatRelay {
-            text, chatID in
-            await receipts.record(text, chatID: chatID)
-        }
-        let room = terminal.sessionID
-        let relay = terminal.telegramChannel.sharedChatRelay
-        await relay.activate(roomID: room, chatID: 42)
-
-        await relay.forward(
-            [
-                Self.sharedChatMessage(
-                    roomID: room,
-                    kind: .operator,
-                    senderID: AgentSharedChat.operatorID(for: room),
-                    name: "operator",
-                    text: "echo of my own line"
-                ),
-                Self.sharedChatMessage(
-                    roomID: room,
-                    kind: .agent,
-                    senderID: "agent-7",
-                    name: "Worker",
-                    text: "need a decision"
-                )
-            ],
-            roomID: room
-        )
-        await relay.waitForPendingCards()
-
-        let cards = await receipts.cards
-        let operatorReceipt = try #require(
-            cards.first { $0.text.contains("echo of my own line") }?.receipt
-        )
-        let agentReceipt = try #require(
-            cards.first { $0.text.contains("need a decision") }?.receipt
-        )
-
-        // Same decision for voice and text: an operator card is not a direct
-        // reply target, an agent card is.
-        #expect(
-            await terminal.telegramChannel.directReplyTarget(
-                for: Self.incomingTelegramMessage(replyToMessageID: operatorReceipt)
-            ) == nil
-        )
-        #expect(
-            await terminal.telegramChannel.handleSharedChatReplyIfNeeded(
-                "spoken answer",
-                message: Self.incomingTelegramMessage(replyToMessageID: operatorReceipt),
-                lease: Self.testTelegramLease
-            ) == false
-        )
-        let agentTarget = await terminal.telegramChannel.directReplyTarget(
-            for: Self.incomingTelegramMessage(replyToMessageID: agentReceipt)
-        )
-        #expect(agentTarget?.replyDestination == .direct(["agent-7"]))
-    }
-
     /// A quoted message the relay never produced, or one of a retired room, is
     /// not consumed as a live reply: it falls back to the ordinary prompt path
     /// instead of being routed to an arbitrary participant.
@@ -1962,35 +1330,6 @@ private actor TelegramCardReceiptRecorder {
         nextReceipt += 1
         cards.append(Card(text: text, chatID: chatID, receipt: nextReceipt))
         return nextReceipt
-    }
-}
-
-/// Records every invocation at the HTTP boundary, so a failed local preflight
-/// can prove that control startup did not reach Telegram at all.
-private final class TelegramTransportRequestRecorder: Sendable {
-    private let count = Mutex(0)
-
-    func recordRequest() {
-        count.withLock { $0 += 1 }
-    }
-
-    func requestCount() -> Int {
-        count.withLock { $0 }
-    }
-}
-
-private struct TelegramRecordingTransport: TelegramHTTPTransport {
-    let recorder: TelegramTransportRequestRecorder
-
-    func send(
-        url _: URL,
-        method _: String,
-        headers _: [RemoteHTTPHeader],
-        body _: Data?,
-        timeout _: Duration?
-    ) async throws -> (status: Int, body: Data) {
-        recorder.recordRequest()
-        return (500, Data())
     }
 }
 

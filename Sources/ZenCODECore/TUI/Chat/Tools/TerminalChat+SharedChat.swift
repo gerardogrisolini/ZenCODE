@@ -140,15 +140,13 @@ extension TerminalChat {
     }
 
     /// Publishes a live mention the operator typed or dictated. Returns
-    /// `true` when the message was accepted by the room (or short-circuited
-    /// by the test seam), `false` for a destination that is no longer
-    /// active or a failed publication; the failure is already written to the
-    /// terminal. A mention sent from Telegram is published by the slot's
-    /// Telegram channel, which records its route for the coordinator turn it
-    /// triggers.
+    /// `true` when the message was accepted by the room, `false` for a
+    /// destination that is no longer active or a failed publication; the
+    /// failure is already written to the terminal. A mention sent from
+    /// Telegram is published by the slot's Telegram channel, which records
+    /// its route for the coordinator turn it triggers.
     @discardableResult
     func sendSharedChatMention(_ route: SharedChatMentionRoute) async -> Bool {
-        if onSharedChatPublicationForTesting?() == true { return true }
         guard await isCurrentSharedChatDirectDestination(route.destination) else {
             await writeFailureMessage("ZenCODE message: selected agent is no longer active.\n")
             await refreshSharedChatPanelSuggestions()

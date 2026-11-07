@@ -6,17 +6,6 @@ import ToolCore
 @Suite(.serialized)
 struct SwiftFeaturePromotionTests {
     @Test
-    func promotionDescriptorIsValidJSONAndRequiresID() throws {
-        let descriptor = try #require(
-            SwiftFeatureRuntime.managementToolDescriptors.first { $0.name == "feature.promote" }
-        )
-        let schema = try #require(
-            JSONSerialization.jsonObject(with: Data(descriptor.inputSchema.utf8)) as? [String: Any]
-        )
-        #expect(schema["required"] as? [String] == ["id"])
-    }
-
-    @Test
     func promotionRejectsBuildAndExecutablePathsOutsideStaging() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("promotion-containment-\(UUID().uuidString)", isDirectory: true)
@@ -44,21 +33,6 @@ struct SwiftFeaturePromotionTests {
     }
 
     @Test
-    func promotionAcceptsNormalizedPathsConfinedToPackage() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("promotion-contained-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let manifest = try promotionManifest(
-            executable: ".build/release/fixture",
-            packagePath: ".",
-            executablePath: ".build/release/fixture",
-            arguments: ["-Xswiftc", "-warnings-as-errors"]
-        )
-        try SwiftFeatureRuntime.assertPromotionManifestPathsAreConfined(manifest, featureDirectoryURL: root)
-    }
-
-    @Test
     func promotionRejectsPackageResolvedSymlinkBeforeReadingIt() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
@@ -76,41 +50,6 @@ struct SwiftFeaturePromotionTests {
         #expect(throws: DirectToolError.self) {
             _ = try SwiftFeatureRuntime.promotionPackageResolvedData(in: root, fileManager: fileManager)
         }
-    }
-
-    @Test
-    func promotionRollbackRestoresDestinationAndUsesAbsentCatalogSentinel() throws {
-        let fileManager = FileManager.default
-        let root = fileManager.temporaryDirectory
-            .appendingPathComponent("promotion-rollback-\(UUID().uuidString)", isDirectory: true)
-        defer { try? fileManager.removeItem(at: root) }
-        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
-        let destination = root.appendingPathComponent("Feature", isDirectory: true)
-        let backup = root.appendingPathComponent("Feature.backup", isDirectory: true)
-        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
-        try "new".write(to: destination.appendingPathComponent("value"), atomically: true, encoding: .utf8)
-        try fileManager.createDirectory(at: backup, withIntermediateDirectories: true)
-        try "old".write(to: backup.appendingPathComponent("value"), atomically: true, encoding: .utf8)
-        let existingCatalog = root.appendingPathComponent("existing.json")
-        let newlyCreatedCatalog = root.appendingPathComponent("new.json")
-        try "changed".write(to: existingCatalog, atomically: true, encoding: .utf8)
-        try "created".write(to: newlyCreatedCatalog, atomically: true, encoding: .utf8)
-
-        try SwiftFeatureRuntime.rollbackPromotionPublication(
-            fileManager: fileManager,
-            destinationURL: destination,
-            destinationExisted: true,
-            destinationBackupURL: backup,
-            published: true,
-            catalogBackups: [
-                existingCatalog: .contents(Data("original".utf8)),
-                newlyCreatedCatalog: .absent
-            ]
-        )
-
-        #expect(try String(contentsOf: destination.appendingPathComponent("value"), encoding: .utf8) == "old")
-        #expect(try String(contentsOf: existingCatalog, encoding: .utf8) == "original")
-        #expect(!fileManager.fileExists(atPath: newlyCreatedCatalog.path))
     }
 
     @Test

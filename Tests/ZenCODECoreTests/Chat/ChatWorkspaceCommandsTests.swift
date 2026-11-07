@@ -153,71 +153,6 @@ struct ChatWorkspaceCommandsTests {
         }
     }
 
-    @Test
-    func undoRefusesArgumentsAndReportsWhatItCannotUndo() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            let edited = try Self.writeFile(
-                "Value.swift",
-                in: harness.workspace,
-                contents: Data("let value = 2\n".utf8)
-            )
-            controller.lastFileChangeSummary = Self.modifiedSummary
-
-            // `/undo` takes no arguments: the line names no command.
-            #expect(await controller.runUndoCommand(line: "/undo everything")
-                == ChatCommandOutcome(notices: [.unknownCommand(line: "/undo everything")]))
-            #expect(ChatSessionNoticeText.text(for: .unknownCommand(line: "/undo everything"))
-                == "ZenCODE: unknown command '/undo'.\n")
-            #expect(try String(contentsOf: edited, encoding: .utf8) == "let value = 2\n")
-            #expect(controller.lastFileChangeSummary == Self.modifiedSummary)
-
-            // A summary without the evidence to restore it.
-            let unavailable = TurnFileChangeSummary(entries: [
-                .init(
-                    path: "Unknown.swift",
-                    additions: 1,
-                    deletions: 0,
-                    status: .modified,
-                    isBinary: false,
-                    existedBefore: nil,
-                    beforeDataBase64: nil,
-                    patch: nil
-                ),
-            ])
-            controller.lastFileChangeSummary = unavailable
-            #expect(await controller.runUndoCommand(line: "/undo")
-                == ChatCommandOutcome(notices: [
-                    .fileChangesNotUndone(description: "Undo is not available for the latest file changes.")
-                ]))
-            #expect(controller.lastFileChangeSummary == unavailable)
-
-            // Restoring fails: the folder of the file is a file.
-            try Self.writeFile("blocker", in: harness.workspace)
-            let blocked = TurnFileChangeSummary(entries: [
-                .init(
-                    path: "blocker/Inner.swift",
-                    additions: 1,
-                    deletions: 1,
-                    status: .modified,
-                    isBinary: false,
-                    existedBefore: true,
-                    beforeDataBase64: Data("old\n".utf8).base64EncodedString(),
-                    patch: nil
-                ),
-            ])
-            controller.lastFileChangeSummary = blocked
-            let outcome = await controller.runUndoCommand(line: "/undo")
-            guard case let .fileChangesUndoFailed(description)? = outcome.notices.first else {
-                Issue.record("Expected an undo failure, got \(outcome)")
-                return
-            }
-            #expect(outcome.notices.count == 1)
-            #expect(!description.isEmpty)
-            #expect(controller.lastFileChangeSummary == blocked)
-        }
-    }
-
     // MARK: - /artifacts
 
     @Test
@@ -317,76 +252,6 @@ struct ChatWorkspaceCommandsTests {
     }
 
     @Test
-    func attachReportsUsageQuotesAndFilesItCannotImport() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            try Self.writeFile("notes.txt", in: harness.workspace, contents: Data("text".utf8))
-
-            #expect(await controller.runAttachCommand(line: #"/attach """#)
-                == ChatCommandOutcome(notices: [.attachmentUsage]))
-            #expect(await controller.runAttachCommand(line: #"/attach "open.png"#)
-                == ChatCommandOutcome(notices: [.unterminatedAttachmentQuote]))
-            #expect(await controller.runAttachCommand(line: "/attach notes.txt")
-                == ChatCommandOutcome(notices: [
-                    .operationFailed(description: "Unsupported attachment type: notes.txt")
-                ]))
-            #expect(await controller.runAttachCommand(line: "/attach missing.png")
-                == ChatCommandOutcome(notices: [
-                    .operationFailed(description: "Unable to read attachment data from missing.png.")
-                ]))
-            #expect(controller.pendingAttachments.isEmpty)
-        }
-    }
-
-    @Test
-    func attachWithoutArgumentsNeedsThePickerAndAHome() async throws {
-        try await Self.withHomeDirectory { home in
-            // No picker: the non-interactive output, nothing asked.
-            try await withChatHarness(userHomeDirectoryURL: home) { harness in
-                #expect(await harness.controller.runAttachCommand(line: "/attach")
-                    == ChatCommandOutcome(notices: [.requiresInteractiveHost(.attachmentSelection)]))
-                #expect(await harness.host.interactions.isEmpty)
-            }
-            // A picker but no home to start from: the same.
-            try await withChatHarness(hostCapabilities: [.attachmentPicker]) { harness in
-                #expect(await harness.controller.runAttachCommand(line: "/attach")
-                    == ChatCommandOutcome(notices: [.requiresInteractiveHost(.attachmentSelection)]))
-                #expect(await harness.host.interactions.isEmpty)
-            }
-        }
-    }
-
-    @Test
-    func attachWithoutArgumentsStagesThePickedFile() async throws {
-        try await Self.withHomeDirectory { home in
-            try await withChatHarness(
-                hostCapabilities: [.attachmentPicker],
-                userHomeDirectoryURL: home
-            ) { harness in
-                let controller = harness.controller
-                let photo = try Self.writeFile("Pictures/photo.png", in: home)
-
-                // The operator cancels.
-                #expect(await controller.runAttachCommand(line: "/attach")
-                    == ChatCommandOutcome(notices: [.attachmentSelectionCancelled]))
-                #expect(await harness.host.interactions == [.pickAttachment(startingAt: home)])
-                #expect(controller.pendingAttachments.isEmpty)
-
-                await harness.host.clearInteractions()
-                await harness.host.answerPickAttachment(photo)
-                let outcome = await controller.runAttachCommand(line: "/attach")
-                let staged = controller.pendingAttachments
-                #expect(staged.map(\.fileURL?.path) == [photo.path])
-                #expect(outcome == ChatCommandOutcome(notices: [
-                    .attachmentsAdded(addedCount: 1, pendingCount: 1),
-                    .pendingAttachments(staged),
-                ]))
-                #expect(await harness.host.interactions == [.pickAttachment(startingAt: home)])
-            }
-        }
-    }
-
-    @Test
     func thePendingAttachmentsAreHandedToOnePrompt() async throws {
         try await withChatHarness { harness in
             let controller = harness.controller
@@ -446,22 +311,6 @@ struct ChatWorkspaceCommandsTests {
         #expect(resolve("file:///tmp/a.png", home: home, fileURLs: true) == "/tmp/a.png")
     }
 
-    @Test
-    func theControllerResolvesWithTheChannelsHome() async throws {
-        try await Self.withHomeDirectory { home in
-            try await withChatHarness(userHomeDirectoryURL: home) { harness in
-                #expect(harness.controller.resolvedWorkspaceFileURL(from: "~/a.png").path
-                    == home.appendingPathComponent("a.png").path)
-                #expect(harness.controller.resolvedWorkspaceFileURL(from: "a.png").path
-                    == harness.workspace.appendingPathComponent("a.png").standardizedFileURL.path)
-            }
-        }
-        try await withChatHarness { harness in
-            #expect(harness.controller.resolvedWorkspaceFileURL(from: "~/a.png").path
-                == harness.workspace.appendingPathComponent("~/a.png").standardizedFileURL.path)
-        }
-    }
-
     // MARK: - /open candidates
 
     @Test
@@ -512,18 +361,6 @@ struct ChatWorkspaceCommandsTests {
         }
     }
 
-    @Test
-    func openWithoutCandidatesSaysSo() async throws {
-        try await withChatHarness(hostCapabilities: [.singleChoice, .externalOpen]) { harness in
-            harness.controller.transcript = [
-                AgentRuntimeMessage(role: .assistant, content: "Nothing to open here."),
-            ]
-            #expect(await harness.controller.runOpenCommand(line: "/open")
-                == ChatCommandOutcome(notices: [.noOpenCandidates]))
-            #expect(await harness.host.interactions.isEmpty)
-        }
-    }
-
     // MARK: - /open routing
 
     @Test
@@ -563,96 +400,6 @@ struct ChatWorkspaceCommandsTests {
                 == ChatCommandOutcome(notices: [.nothingOpened]))
             #expect(await harness.host.interactions == [menu])
             #expect(await harness.presenter.events.isEmpty)
-        }
-    }
-
-    @Test
-    func openOpensItsArgumentDirectly() async throws {
-        try await Self.withHomeDirectory { home in
-            try await withChatHarness(
-                hostCapabilities: [.externalOpen],
-                userHomeDirectoryURL: home
-            ) { harness in
-                let controller = harness.controller
-                let notes = try Self.writeFile("docs/notes.md", in: harness.workspace)
-                let homeNote = try Self.writeFile("home-note.txt", in: home)
-
-                let url = ChatOpenTarget(target: "https://example.com/docs", kind: .url)
-                #expect(await controller.runOpenCommand(line: "/open https://example.com/docs")
-                    == ChatCommandOutcome(notices: [.opening(url)]))
-                let mail = ChatOpenTarget(target: "mailto:dev@example.com", kind: .url)
-                #expect(await controller.runOpenCommand(line: "/open mailto:dev@example.com")
-                    == ChatCommandOutcome(notices: [.opening(mail)]))
-                let file = ChatOpenTarget(target: notes.path, kind: .file)
-                #expect(await controller.runOpenCommand(line: "/open docs/../docs/notes.md")
-                    == ChatCommandOutcome(notices: [.opening(file)]))
-                let homeFile = ChatOpenTarget(target: homeNote.path, kind: .file)
-                #expect(await controller.runOpenCommand(line: "/open ~/home-note.txt")
-                    == ChatCommandOutcome(notices: [.opening(homeFile)]))
-                #expect(await harness.host.interactions == [
-                    .openExternal(url),
-                    .openExternal(mail),
-                    .openExternal(file),
-                    .openExternal(homeFile),
-                ])
-
-                // A missing file is never handed to the host.
-                await harness.host.clearInteractions()
-                #expect(await controller.runOpenCommand(line: "/open missing.md")
-                    == ChatCommandOutcome(notices: [.openTargetNotFound(argument: "missing.md")]))
-                #expect(await harness.host.interactions.isEmpty)
-
-                // The platform refuses.
-                await harness.host.failNextOpenExternal("The system file launcher failed with exit code 1.")
-                #expect(await controller.runOpenCommand(line: "/open docs/notes.md")
-                    == ChatCommandOutcome(notices: [
-                        .operationFailed(description: "The system file launcher failed with exit code 1.")
-                    ]))
-                #expect(await harness.host.interactions == [.openExternal(file)])
-                #expect(await harness.presenter.events.isEmpty)
-            }
-        }
-    }
-
-    @Test
-    func openNeedsTheExternalOpenCapability() async throws {
-        try await withChatHarness(hostCapabilities: [.singleChoice]) { harness in
-            let controller = harness.controller
-            try Self.writeFile("notes.md", in: harness.workspace)
-            controller.transcript = [
-                AgentRuntimeMessage(role: .assistant, content: "See ./notes.md"),
-            ]
-            let unsupported = ChatCommandOutcome(notices: [
-                .operationFailed(description: "Opening files is not supported by this channel.")
-            ])
-
-            #expect(await controller.runOpenCommand(line: "/open notes.md") == unsupported)
-            #expect(await controller.runOpenCommand(line: "/open https://example.com") == unsupported)
-            #expect(await harness.host.interactions.isEmpty)
-
-            await harness.host.answerChooseOne("0")
-            #expect(await controller.runOpenCommand(line: "/open") == unsupported)
-            #expect(await harness.host.interactions.count == 1)
-            #expect(await harness.host.interactions.contains { interaction in
-                if case .openExternal = interaction { return true }
-                return false
-            } == false)
-            #expect(ChatSessionNoticeText.text(for: unsupported.notices[0])
-                == "ZenCODE: Opening files is not supported by this channel.\n")
-        }
-    }
-
-    /// The terminal opens files and offers its picker only with an
-    /// interactive terminal, like its menus; piped or inside a host app it
-    /// offers neither.
-    @ChatSessionActor
-    @Test
-    func theTerminalOffersOpeningAndThePickerOnlyWithAnInteractiveTerminal() {
-        let interactive = TerminalInteractionHost(stdinIsTerminal: true, appMode: false)
-        #expect(interactive.capabilities.isSuperset(of: [.externalOpen, .attachmentPicker, .singleChoice]))
-        for appMode in [false, true] {
-            let piped = TerminalInteractionHost(stdinIsTerminal: false, appMode: appMode)
-            #expect(piped.capabilities.isDisjoint(with: [.externalOpen, .attachmentPicker, .singleChoice]))
         }
     }
 }

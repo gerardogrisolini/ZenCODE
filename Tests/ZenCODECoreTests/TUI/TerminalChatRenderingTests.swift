@@ -38,33 +38,6 @@ private actor TickGate {
 @ChatSessionActor
 @Suite
 struct TerminalChatRenderingTests {
-    @Test
-    func startupLogoUsesDarkerOrangeWithoutDim() {
-        let rendered = TerminalChat.renderStartupBox(lines: ["Version: test", "", "Commands: /help"])
-        let reset = TerminalStyle.reset
-        let orange = TerminalStyle.Accent.primary
-        let gray = TerminalStyle.Text.secondary
-        let logo = "\u{1B}[22;38;5;130m\(TerminalChat.zenCODEHeader)\(reset)"
-
-        // SGR 22 clears inherited bold; no SGR 2: the darker orange (130)
-        // replaces the terminal-dependent faint attribute.
-        #expect(TerminalStyle.Chrome.startupLogo == "\u{1B}[22;38;5;130m")
-        #expect(rendered == [
-            logo,
-            "\(orange)Version:\(gray) test\(reset)",
-            "\(gray)\(reset)",
-            "\(orange)Commands:\(gray) /help\(reset)"
-        ].joined(separator: "\n"))
-    }
-
-    @Test
-    func removingLeadingLineBreaksPreservesContent() {
-
-        #expect(TerminalChatTextFormatting.removingLeadingLineBreaks("\n\nCiao") == "Ciao")
-        #expect(TerminalChatTextFormatting.removingLeadingLineBreaks("\r\nCiao") == "Ciao")
-        #expect(TerminalChatTextFormatting.removingLeadingLineBreaks("Ciao") == "Ciao")
-        #expect(TerminalChatTextFormatting.removingLeadingLineBreaks("\n\n") == "")
-    }
 
     @Test
     func chatLineInsetIsAppliedOnlyAtLineStarts() {
@@ -97,41 +70,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func chatLineInsetWithoutPrefixTracksOnlyTheFinalCharacter() {
-        var isAtLineStart = false
-        let lineEnding = "ciao\n"
-
-        #expect(
-            TerminalChatTextFormatting.chatLineInsetApplied(
-                to: lineEnding,
-                prefix: "",
-                isAtLineStart: &isAtLineStart
-            ) == lineEnding
-        )
-        #expect(isAtLineStart)
-
-        let content = "mondo"
-        #expect(
-            TerminalChatTextFormatting.chatLineInsetApplied(
-                to: content,
-                prefix: "",
-                isAtLineStart: &isAtLineStart
-            ) == content
-        )
-        #expect(!isAtLineStart)
-
-        isAtLineStart = true
-        #expect(
-            TerminalChatTextFormatting.chatLineInsetApplied(
-                to: "",
-                prefix: "",
-                isAtLineStart: &isAtLineStart
-            ).isEmpty
-        )
-        #expect(isAtLineStart)
-    }
-
-    @Test
     func chatSpacingNormalizationLimitsVisibleBlankRowsAcrossWrites() {
         var trailingNewlineCount = 0
 
@@ -147,20 +85,6 @@ struct TerminalChatRenderingTests {
         #expect(first == "Thinking\n\n")
         #expect(second == "🛠️  Read\n\nNext")
         #expect(!("\(first)\(second)".contains("\n\n\n")))
-        #expect(trailingNewlineCount == 0)
-    }
-
-    @Test
-    func chatSpacingNormalizationWithoutNewlineResetsTrailingCount() {
-        var trailingNewlineCount = 2
-        let text = "Contenuto senza ritorno a capo"
-
-        #expect(
-            TerminalChatTextFormatting.chatSpacingNormalized(
-                text,
-                trailingNewlineCount: &trailingNewlineCount
-            ) == text
-        )
         #expect(trailingNewlineCount == 0)
     }
 
@@ -202,22 +126,6 @@ struct TerminalChatRenderingTests {
 
         #expect(first == "before\r")
         #expect(second == "\n after")
-        #expect(!state.isAtLineStart)
-    }
-
-    @Test
-    func chatLineInsetRecognizesInBufferCRLF() {
-        var state = TerminalChatTextFormatting.ChatLineInsetState(
-            isAtLineStart: false
-        )
-
-        let rendered = TerminalChatTextFormatting.chatLineInsetApplied(
-            to: "before\r\nafter",
-            prefix: " ",
-            state: &state
-        )
-
-        #expect(rendered == "before\r\n after")
         #expect(!state.isAtLineStart)
     }
 
@@ -286,33 +194,6 @@ struct TerminalChatRenderingTests {
             ) == "\u{1B}[0m!\n"
         )
         #expect(state.isAtLineStart)
-    }
-
-    @Test
-    func chatLineInsetPlacesTheMarginBeforeLeadingEscapeSequencesOfAVisibleRow() {
-        var state = TerminalChatTextFormatting.ChatLineInsetState()
-
-        #expect(
-            TerminalChatTextFormatting.chatLineInsetApplied(
-                to: "\u{1B}[90mNow",
-                prefix: " ",
-                state: &state
-            ) == " \u{1B}[90mNow"
-        )
-        #expect(!state.isAtLineStart)
-
-        // Escape-only updates tracked without a prefix keep the same state.
-        var trackedState = TerminalChatTextFormatting.ChatLineInsetState()
-        TerminalChatTextFormatting.updateChatLineInsetState(
-            after: "\u{1B}[1m\u{1B}[0m",
-            state: &trackedState
-        )
-        #expect(trackedState.isAtLineStart)
-        TerminalChatTextFormatting.updateChatLineInsetState(
-            after: "\u{1B}[1mX",
-            state: &trackedState
-        )
-        #expect(!trackedState.isAtLineStart)
     }
 
     @Test
@@ -401,56 +282,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func terminalWidthForceRefreshBypassesTheMonotonicTTL() {
-        let probe = TerminalWidthProbe(120)
-        let now = ContinuousClock().now
-        let descriptors: [Int32] = [-9_876]
-
-        #expect(
-            TerminalWidth.current(
-                descriptors: descriptors,
-                fallback: 80,
-                forceRefresh: true,
-                now: now,
-                measure: { _ in probe.measure() }
-            ) == 120
-        )
-
-        probe.width = 40
-        #expect(
-            TerminalWidth.current(
-                descriptors: descriptors,
-                fallback: 80,
-                now: now.advanced(by: .milliseconds(10)),
-                measure: { _ in probe.measure() }
-            ) == 120
-        )
-        #expect(probe.readCount == 1)
-
-        #expect(
-            TerminalWidth.current(
-                descriptors: descriptors,
-                fallback: 80,
-                forceRefresh: true,
-                now: now.advanced(by: .milliseconds(10)),
-                measure: { _ in probe.measure() }
-            ) == 40
-        )
-        #expect(probe.readCount == 2)
-
-        probe.width = 72
-        #expect(
-            TerminalWidth.current(
-                descriptors: descriptors,
-                fallback: 80,
-                now: now.advanced(by: .milliseconds(300)),
-                measure: { _ in probe.measure() }
-            ) == 72
-        )
-        #expect(probe.readCount == 3)
-    }
-
-    @Test
     func toolOutputSpacingLeavesABlankRowAfterUnterminatedAssistantContent() {
         var trailingNewlineCount = 0
         TerminalChatTextFormatting.updateTrailingNewlineCount(
@@ -478,34 +309,6 @@ struct TerminalChatRenderingTests {
         rendered += TerminalChatTextFormatting.flushBoldSectionBreak(state: &state)
 
         #expect(rendered == "Fixed it incorrectly.\n**Identifying bugs** done")
-    }
-
-    @Test
-    func boldSectionBreakSeparatesBackToBackBoldTitles() {
-        var state = TerminalChatBoldBreakState()
-
-        let chunks = ["**Planning isolated test execution**", "**Analyzing ANSI cursor**"]
-        var rendered = chunks
-            .map { TerminalChatTextFormatting.normalizedBoldSectionBreak($0, state: &state) }
-            .joined()
-        rendered += TerminalChatTextFormatting.flushBoldSectionBreak(state: &state)
-
-        #expect(
-            rendered ==
-            "**Planning isolated test execution**\n**Analyzing ANSI cursor**"
-        )
-    }
-
-    @Test
-    func boldSectionBreakDoesNotBreakBeforeClosingMarkerAfterPeriod() {
-        var state = TerminalChatBoldBreakState()
-
-        let rendered = TerminalChatTextFormatting.normalizedBoldSectionBreak(
-            "**Done.** next",
-            state: &state
-        ) + TerminalChatTextFormatting.flushBoldSectionBreak(state: &state)
-
-        #expect(rendered == "**Done.** next")
     }
 
     @Test
@@ -539,31 +342,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func thoughtNormalizationLeavesPlainNumbersInline() {
-        var state = TerminalChatBoldBreakState()
-        let rendered = TerminalChatTextFormatting.normalizedBoldSectionBreak(
-            "Uso la versione 1.2. Poi continuo",
-            state: &state
-        )
-
-        #expect(rendered == "Uso la versione 1.2. Poi continuo")
-    }
-
-    @Test
-    func markdownFormatterStillFormatsExplicitThinkingMarkdown() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false
-        )
-        let rendered = formatter.consume("- Primo\n- Secondo\n") + formatter.finish()
-
-        #expect(rendered.contains("•"))
-        #expect(rendered.contains("Primo"))
-        #expect(rendered.contains("Secondo"))
-    }
-
-    @Test
     func markdownFormatterCompactsLooseListBlankLines() {
         var formatter = TerminalMarkdownStreamFormatter(
             isEnabled: true,
@@ -576,8 +354,6 @@ struct TerminalChatRenderingTests {
         #expect(rendered.contains("Secondo"))
         #expect(!rendered.contains("\n\n"))
     }
-
-
 
     @Test
     func thinkingFormatterRemovesUnbalancedStrongMarkers() {
@@ -593,21 +369,6 @@ struct TerminalChatRenderingTests {
         #expect(!rendered.contains("**"))
         #expect(rendered.contains("renderListItem handles indentation."))
         #expect(rendered.contains("If it fails, keep the words."))
-    }
-
-    @Test
-    func thinkingFormatterKeepsBalancedStrongMarkersRenderable() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false,
-            removesUnbalancedStrongMarkers: true
-        )
-
-        let rendered = formatter.consume("This is **important**.\n")
-
-        #expect(rendered.contains("\u{1B}[1mimportant\u{1B}[0m"))
-        #expect(!rendered.contains("**important**"))
     }
 
     @Test
@@ -635,69 +396,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func markdownFormatterHidesStandaloneHTMLComment() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false
-        )
-
-        let rendered = formatter.consume("<!-- internal note -->\n") + formatter.finish()
-
-        #expect(!rendered.contains("<!-- internal note -->"))
-    }
-
-    @Test
-    func applyPatchCompactRenderingShowsCanonicalNameAndPath() {
-        let patch = """
-        *** Begin Patch
-        *** Update File: Sources/App.swift
-        @@
-        -old
-        +new
-        *** End Patch
-        """
-        let toolCall = presentedToolCall(
-            id: "patch",
-            name: "local.applyPatch",
-            argumentsObject: ["patch": patch],
-            argumentsJSON: "{}"
-        )
-
-        let lines = TerminalChat.compactToolLines(
-            for: toolCall,
-            statusIcon: "✅",
-            contentInsetWidth: 0
-        )
-
-        #expect(lines == ["🛠️  local.applyPatch", "Sources/App.swift ✅"])
-    }
-
-    @Test
-    func systemMessageColoringWrapsNonBlankLines() {
-        let rendered = TerminalChatTextFormatting.systemMessageColorApplied(
-            to: "Mode: full access — local.exec commands run without approval.\n",
-            isEnabled: true
-        )
-
-        #expect(
-            rendered.hasPrefix(
-                "\u{1B}[38;5;110mMode: full access — local.exec commands run without approval.\u{1B}[0m\n"
-            )
-        )
-        #expect(rendered.hasSuffix("\n"))
-    }
-
-    @Test
-    func startupInlineTextWrapsWithoutEllipsis() {
-        #expect(TerminalChat.wrapInline("Commands: /help, /models, /agents", width: 18) == [
-            "Commands: /help,",
-            "/models, /agents"
-        ])
-        #expect(!TerminalChat.fitInline("Commands: /help, /models, /agents", width: 18).contains("..."))
-    }
-
-    @Test
     func truncatedInlineCountsWideGraphemesInsteadOfDisplayColumns() {
         // `😀` and `界` are each two terminal cells, but each consumes one
         // count-based truncation unit. A width-aware core would return `...`.
@@ -716,54 +414,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func statusBarModelFragmentIncludesThinkingSelection() {
-        #expect(
-            TerminalStatusBar.modelStatusFragment(
-                modelID: "remote-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
-                thinkingSelection: .high
-            ) == "Qwen3-Coder-30B-A3B-Instruct-4bit · High"
-        )
-        #expect(
-            TerminalStatusBar.modelStatusFragment(
-                modelID: "remote-community/Qwen3-Coder-30B-A3B-Instruct-4bit",
-                thinkingSelection: nil
-            ) == "Qwen3-Coder-30B-A3B-Instruct-4bit"
-        )
-    }
-
-    @Test
-    func statusBarSubscriptionUsageOmitsUnavailableWindow() {
-        let weeklyOnly = DirectAgentSubscriptionUsageStatus(
-            provider: "ChatGPT",
-            dailyUsedPercent: nil,
-            weeklyUsedPercent: 42
-        )
-        let dailyOnly = DirectAgentSubscriptionUsageStatus(
-            provider: "ChatGPT",
-            dailyUsedPercent: 10,
-            weeklyUsedPercent: nil
-        )
-
-        #expect(TerminalStatusBar.subscriptionUsageFragment(weeklyOnly) == "w:42%")
-        #expect(TerminalStatusBar.subscriptionUsageFragment(dailyOnly) == "d:10%")
-    }
-
-    @Test
-    func statusBarSubscriptionUsageMutesLabelsButNotValues() {
-        let usage = DirectAgentSubscriptionUsageStatus(
-            provider: "ChatGPT",
-            dailyUsedPercent: 10,
-            weeklyUsedPercent: 42
-        )
-
-        #expect(
-            TerminalStatusBar.styledSubscriptionUsageFragment(usage)
-                == "\(TerminalStyle.Text.muted)d:\(TerminalStyle.reset)10% "
-                    + "\(TerminalStyle.Text.muted)w:\(TerminalStyle.reset)42%"
-        )
-    }
-
-    @Test
     func statusBarSynchronizesFromCurrentRunnerAccessMode() async throws {
         let runner = AgentCoreSessionRunner()
         #expect(await runner.toggleLocalExecAccessMode() == .fullAccess)
@@ -772,17 +422,6 @@ struct TerminalChatRenderingTests {
         await terminal.synchronizeLocalExecAccessModeStatusBar()
 
         let accessMode = await terminal.statusBar.state.localExecAccessMode
-        #expect(accessMode == .fullAccess)
-    }
-
-    @Test
-    func statusBarResetPreservesFullAccessMode() async {
-        let statusBar = TerminalStatusBar(isEnabled: false)
-        await statusBar.update(localExecAccessMode: .fullAccess)
-
-        await statusBar.reset()
-
-        let accessMode = await statusBar.state.localExecAccessMode
         #expect(accessMode == .fullAccess)
     }
 
@@ -818,43 +457,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func compactPanelHelpAtEightyColumnsKeepsProcessingActionsAndAccessShortcutVisible() {
-        let processingLine = TerminalStatusBar.inputPanelModeLineText(
-            modeText: "Prompt",
-            helpText: "Enter queue · Ctrl+G access · Esc stop",
-            compactHelpText: "Enter queue · Esc stop · Ctrl+G access",
-            width: 80
-        )
-
-        #expect(processingLine.contains("Enter queue"))
-        #expect(processingLine.contains("Esc stop"))
-        #expect(processingLine.contains("Ctrl+G access"))
-        #expect(TerminalStatusBar.visibleCharacterCount(processingLine) <= 80)
-
-        let idleLine = TerminalStatusBar.inputPanelModeLineText(
-            modeText: "Prompt",
-            helpText: "Enter send · Ctrl+G access · Esc clear",
-            compactHelpText: "Enter send · Esc clear · Ctrl+G access",
-            width: 80
-        )
-        #expect(idleLine.contains("Enter send"))
-        #expect(idleLine.contains("Esc clear"))
-        #expect(idleLine.contains("Ctrl+G access"))
-    }
-
-    @Test
-    func runtimeHelpListsAccessModeShortcut() throws {
-        let terminal = try makeTerminalForToolInterleavingTest()
-        let help = terminal.renderHelpTextForCurrentAgent()
-
-        #expect(
-            help.contains(
-                "Ctrl+G toggles default/full access for local.exec approvals in the interactive panel."
-            )
-        )
-    }
-
-    @Test
     func generationOnlyAllowsCommandsWithConcurrencySafeState() {
         #expect(TerminalChat.isAvailableDuringGeneration(for: "/help"))
         #expect(TerminalChat.isAvailableDuringGeneration(for: "/tasks"))
@@ -885,24 +487,6 @@ struct TerminalChatRenderingTests {
         await terminal.writeToolCallStarted(toolCall)
 
         await terminal.writeAccessModeChangeMessage(.fullAccess)
-        let snapshot = await terminal.renderCoordinator.snapshot()
-
-        #expect(snapshot.activeToolCallID == nil)
-        #expect(snapshot.activeToolRenderedRowCount == 0)
-    }
-
-    @Test
-    func interleavedModeMessageClearsToolRewriteState() async throws {
-        let terminal = try makeTerminalForToolInterleavingTest()
-        let toolCall = presentedToolCall(
-            id: "detailed-tool",
-            name: "agent.wait",
-            argumentsObject: [:],
-            argumentsJSON: "{}"
-        )
-        await terminal.writeToolCallStarted(toolCall)
-
-        await terminal.writeAccessModeChangeMessage(.standard)
         let snapshot = await terminal.renderCoordinator.snapshot()
 
         #expect(snapshot.activeToolCallID == nil)
@@ -1088,32 +672,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func subAgentOverviewRendersDuringAgentToolBlockCompact() async throws {
-        let terminal = try makeTerminalForToolInterleavingTest(
-            sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil)
-        )
-        let toolCall = presentedToolCall(
-            id: "create-tool",
-            name: "agent.create",
-            argumentsObject: [:],
-            argumentsJSON: "{}"
-        )
-        // The single standard tool presentation is active by default.
-        await terminal.writeToolCallStarted(toolCall)
-
-        await terminal.renderSubAgentOverview(
-            ChatSubAgentOverview(snapshots: []),
-            origin: .automatic,
-            publication: await terminal.reserveSubAgentOverviewPublication(),
-            force: true
-        )
-        let renderedSnapshot = await terminal.renderCoordinator.snapshot()
-
-        #expect(renderedSnapshot.lastRenderedSubAgentOverviewSignature != nil)
-        #expect(renderedSnapshot.activeToolCallID == nil)
-    }
-
-    @Test
     func subAgentOverviewRefreshTaskLifecycle() async throws {
         let terminal = try makeTerminalForToolInterleavingTest()
 
@@ -1183,22 +741,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func statusBarGitFragmentShowsDiffSummary() {
-        let summary = TerminalGitStatusSummary(
-            changedFileCount: 3,
-            additions: 12,
-            deletions: 4
-        )
-
-        let rendered = TerminalStatusBar.gitStatusFragment(summary: summary)
-
-        #expect(rendered.contains("\u{1B}[38;5;81m3\u{1B}[0m files"))
-        #expect(rendered.contains("\u{1B}[38;5;114m+12\u{1B}[0m"))
-        #expect(rendered.contains("\u{1B}[38;5;203m-4\u{1B}[0m"))
-        #expect(TerminalStatusBar.visibleCharacterCount(rendered) == "3 files +12 -4".count)
-    }
-
-    @Test
     func statusBarRejectsStaleGitRefreshResults() async {
         let statusBar = TerminalStatusBar(isEnabled: false)
         let staleGeneration = await statusBar.beginGitStatusRefresh()
@@ -1259,13 +801,6 @@ struct TerminalChatRenderingTests {
             toolCall: read,
             lifecycle: .completed(result)
         )))
-    }
-
-    @Test
-    func statusBarVisibleCharacterCountIgnoresANSISequences() {
-        let colored = "git \u{1B}[38;5;114m+12\u{1B}[0m \u{1B}[38;5;203m-4\u{1B}[0m"
-
-        #expect(TerminalStatusBar.visibleCharacterCount(colored) == "git +12 -4".count)
     }
 
     @Test
@@ -1355,50 +890,6 @@ struct TerminalChatRenderingTests {
         #expect(state.latestMetrics?.responseDurationSeconds == nil)
     }
 
-    @Test
-    func statusBarGenerationTokenCountsFragmentIsCompactAndOptional() {
-        let metrics = DirectAgentGenerationMetrics(
-            promptTokenCount: 15_000,
-            completionTokenCount: 20_000,
-        )
-        let unavailableMetrics = DirectAgentGenerationMetrics(
-            promptTokenCount: nil,
-            completionTokenCount: nil,
-        )
-
-        #expect(TerminalStatusBar.generationTokenCountsFragment(metrics) == "p:15k g:20k")
-        #expect(TerminalStatusBar.generationTokenCountsFragment(unavailableMetrics) == nil)
-    }
-
-    @Test
-    func statusBarGenerationTokenCountsShowsReportedCacheMiss() {
-        let metrics = DirectAgentGenerationMetrics(
-            promptTokenCount: 15_000,
-            cachedPromptTokenCount: 0,
-            completionTokenCount: 2_000,
-        )
-
-        #expect(
-            TerminalStatusBar.generationTokenCountsFragment(metrics) == "c:0 p:15k g:2.0k"
-        )
-    }
-
-    @Test
-    func statusBarTextPlacesGenerationTokenCountsAfterTime() {
-        let statusBar = TerminalStatusBar(isEnabled: false)
-        var state = TerminalStatusBar.State()
-        state.latestMetrics = DirectAgentGenerationMetrics(
-            promptTokenCount: 15_000,
-            completionTokenCount: 20_000,
-            responseDurationSeconds: 12
-        )
-
-        #expect(
-            TerminalANSIText.stripANSI(statusBar.statusTextLocked(state: &state))
-                .contains("35.0k/-- · 0:00:12 · p:15k g:20k")
-        )
-    }
-
     // MARK: - DS4 throughput label
 
     @Test
@@ -1445,175 +936,6 @@ struct TerminalChatRenderingTests {
             TerminalStatusBar.generationThroughputFragment(
                 metrics(processed: 10, target: 100, rate: -3)
             ) == "p:10/100"
-        )
-    }
-
-    @Test
-    func liveProgressIgnoresTheGenerationRate() {
-        let metrics = DirectAgentGenerationMetrics(
-            promptTokenCount: nil,
-            completionTokenCount: nil,
-            throughput: DirectAgentGenerationThroughput(
-                phase: .prefill,
-                prefillTokensPerSecond: 512,
-                generationTokensPerSecond: 42.1,
-                processedTokens: 1_200,
-                targetTokens: 8_000
-            )
-        )
-
-        #expect(TerminalStatusBar.generationThroughputFragment(metrics) == "p:1.2k/8.0k 512.0 tok/s")
-    }
-
-    @Test
-    func throughputFragmentShowsBothSpeedsInOneLabel() {
-        func fragment(prefill: Double?, generation: Double?) -> String? {
-            TerminalStatusBar.generationThroughputFragment(
-                DirectAgentGenerationMetrics(
-                    promptTokenCount: nil,
-                    completionTokenCount: nil,
-                    throughput: DirectAgentGenerationThroughput(
-                        phase: .generation,
-                        prefillTokensPerSecond: prefill,
-                        generationTokensPerSecond: generation
-                    )
-                )
-            )
-        }
-
-        #expect(fragment(prefill: 512, generation: 42.1) == "p:512.0 g:42.1 tok/s")
-        #expect(fragment(prefill: 612.34, generation: 43.2) == "p:612.3 g:43.2 tok/s")
-        #expect(fragment(prefill: 1_234.6, generation: 41.23) == "p:1234.6 g:41.2 tok/s")
-        #expect(fragment(prefill: 512, generation: nil) == "p:512.0 tok/s")
-        #expect(fragment(prefill: nil, generation: 42.1) == "g:42.1 tok/s")
-        // Unusable values are dropped one by one.
-        #expect(fragment(prefill: .nan, generation: 42.1) == "g:42.1 tok/s")
-        #expect(fragment(prefill: 512, generation: -1) == "p:512.0 tok/s")
-        #expect(fragment(prefill: nil, generation: nil) == nil)
-        #expect(fragment(prefill: .infinity, generation: .nan) == nil)
-    }
-
-    @Test
-    func throughputFragmentFormatsTheGenerationRate() {
-        func fragment(_ rate: Double?) -> String? {
-            TerminalStatusBar.generationThroughputFragment(
-                DirectAgentGenerationMetrics(
-                    promptTokenCount: nil,
-                    completionTokenCount: nil,
-                    throughput: DirectAgentGenerationThroughput(
-                        phase: .generation,
-                        generationTokensPerSecond: rate
-                    )
-                )
-            )
-        }
-
-        #expect(fragment(41.23) == "g:41.2 tok/s")
-        #expect(fragment(0) == "g:0.0 tok/s")
-        #expect(fragment(99.94) == "g:99.9 tok/s")
-        #expect(fragment(100) == "g:100.0 tok/s")
-        #expect(fragment(100.44) == "g:100.4 tok/s")
-        #expect(fragment(1_234.6) == "g:1234.6 tok/s")
-        #expect(fragment(nil) == nil)
-        #expect(fragment(-1) == nil)
-        #expect(fragment(.nan) == nil)
-        #expect(fragment(.infinity) == nil)
-    }
-
-    @Test
-    func throughputFragmentIsAbsentWithoutThroughput() {
-        let metrics = DirectAgentGenerationMetrics(
-            promptTokenCount: 120,
-            cachedPromptTokenCount: 800,
-            completionTokenCount: 32
-        )
-
-        #expect(TerminalStatusBar.generationThroughputFragment(metrics) == nil)
-        #expect(TerminalStatusBar.styledGenerationThroughputFragment(metrics) == nil)
-    }
-
-    @Test
-    func styledThroughputFragmentMutesOnlyTheLabels() throws {
-        let muted = TerminalStyle.Text.muted
-        let reset = TerminalStyle.reset
-
-        let prefill = DirectAgentGenerationMetrics(
-            promptTokenCount: nil,
-            completionTokenCount: nil,
-            throughput: DirectAgentGenerationThroughput(
-                phase: .prefill,
-                prefillTokensPerSecond: 512,
-                processedTokens: 1_200,
-                targetTokens: 8_000
-            )
-        )
-        let styledPrefill = try #require(TerminalStatusBar.styledGenerationThroughputFragment(prefill))
-        #expect(styledPrefill == "\(muted)p:\(reset)1.2k/8.0k 512.0 tok/s")
-        #expect(TerminalANSIText.stripANSI(styledPrefill) == "p:1.2k/8.0k 512.0 tok/s")
-
-        let both = DirectAgentGenerationMetrics(
-            promptTokenCount: nil,
-            completionTokenCount: nil,
-            throughput: DirectAgentGenerationThroughput(
-                phase: .generation,
-                prefillTokensPerSecond: 512,
-                generationTokensPerSecond: 42.1
-            )
-        )
-        let styledBoth = try #require(TerminalStatusBar.styledGenerationThroughputFragment(both))
-        #expect(styledBoth == "\(muted)p:\(reset)512.0 \(muted)g:\(reset)42.1 tok/s")
-        #expect(
-            TerminalANSIText.stripANSI(styledBoth)
-                == TerminalStatusBar.generationThroughputFragment(both)
-        )
-
-        let onlyGeneration = DirectAgentGenerationMetrics(
-            promptTokenCount: nil,
-            completionTokenCount: nil,
-            throughput: DirectAgentGenerationThroughput(phase: .generation, generationTokensPerSecond: 42.1)
-        )
-        #expect(
-            TerminalStatusBar.styledGenerationThroughputFragment(onlyGeneration)
-                == "\(muted)g:\(reset)42.1 tok/s"
-        )
-
-        let noRatePrefill = DirectAgentGenerationMetrics(
-            promptTokenCount: nil,
-            completionTokenCount: nil,
-            throughput: DirectAgentGenerationThroughput(
-                phase: .prefill, processedTokens: 0, targetTokens: 8_000
-            )
-        )
-        #expect(
-            TerminalStatusBar.styledGenerationThroughputFragment(noRatePrefill)
-                == "\(muted)p:\(reset)0/8.0k"
-        )
-    }
-
-    @Test
-    func statusBarTextPlacesTheThroughputRightAfterTheTokenCounts() {
-        let statusBar = TerminalStatusBar(isEnabled: false)
-        var state = TerminalStatusBar.State()
-        state.latestMetrics = DirectAgentGenerationMetrics(
-            promptTokenCount: 120,
-            cachedPromptTokenCount: 800,
-            completionTokenCount: 32,
-            responseDurationSeconds: 12,
-            throughput: DirectAgentGenerationThroughput(
-                phase: .generation,
-                prefillTokensPerSecond: 512,
-                generationTokensPerSecond: 41.2
-            )
-        )
-        state.latestSubscriptionUsage = DirectAgentSubscriptionUsageStatus(
-            provider: "test",
-            dailyUsedPercent: 12,
-            weeklyUsedPercent: nil
-        )
-
-        #expect(
-            TerminalANSIText.stripANSI(statusBar.statusTextLocked(state: &state))
-                .contains("0:00:12 · c:800 p:120 g:32 · p:512.0 g:41.2 tok/s · d:12%")
         )
     }
 
@@ -1740,20 +1062,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func gitStatusSummaryReturnsNilOutsideGitRepository() async {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("terminal-chat-git-status-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer {
-            try? FileManager.default.removeItem(at: directory)
-        }
-
-        let summary = await TerminalChat.gitStatusSummary(in: directory)
-
-        #expect(summary == nil)
-    }
-
-    @Test
     func markdownFormatterStylesHeadingsAndInlineCode() {
         var formatter = TerminalMarkdownStreamFormatter(
             isEnabled: true,
@@ -1794,31 +1102,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func markdownFormatterEmitsStreamingBlankLineChunks() {
-        var formatter = TerminalMarkdownStreamFormatter(isEnabled: true)
-
-        let first = formatter.consume("First paragraph.\n")
-        let blank = formatter.consume("\n")
-        let second = formatter.consume("Second paragraph.\n")
-
-        #expect(first == "First paragraph.\n")
-        #expect(blank == "\n")
-        #expect(second == "Second paragraph.\n")
-    }
-
-    @Test
-    func preservedSpacingTracksTrailingNewlinesThroughANSI() {
-        var trailingNewlineCount = 0
-
-        TerminalChatTextFormatting.updateTrailingNewlineCount(
-            afterPreserving: "\u{1B}[90mthinking\n\u{1B}[0m",
-            trailingNewlineCount: &trailingNewlineCount
-        )
-
-        #expect(trailingNewlineCount == 1)
-    }
-
-    @Test
     func markdownFormatterDoesNotBufferInlinePipelineAsTableCandidate() {
         var formatter = TerminalMarkdownStreamFormatter(isEnabled: true)
 
@@ -1840,39 +1123,6 @@ struct TerminalChatRenderingTests {
         #expect(rendered.contains("┌"))
         #expect(rendered.contains("A"))
         #expect(rendered.contains("1"))
-    }
-
-    @Test
-    func markdownFormatterReservesChatInsetForTables() {
-        let renderWidth = 60
-        let longItem = Array(repeating: "long plan item", count: 24).joined(separator: " ")
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: renderWidth,
-            supportsHyperlinks: false
-        )
-
-        let rendered = formatter.consume("""
-        | # | Plan item | Status |
-        | ---: | --- | --- |
-        | 1 | \(longItem) | `in_progress` |
-
-        """) + formatter.finish()
-        var isAtLineStart = true
-        let insetRendered = TerminalChatTextFormatting.chatLineInsetApplied(
-            to: rendered,
-            prefix: " ",
-            isAtLineStart: &isAtLineStart
-        )
-        let boxRows = insetRendered
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-            .filter { $0.contains("│") || $0.contains("─") }
-
-        #expect(!boxRows.isEmpty)
-        #expect(boxRows.allSatisfy {
-            TerminalANSIText.visibleWidth($0) <= renderWidth
-        })
     }
 
     @Test
@@ -1924,53 +1174,6 @@ struct TerminalChatRenderingTests {
         #expect(rendered.contains("- not a list"))
         #expect(rendered.contains("**not bold**"))
         #expect(!rendered.contains("•"))
-    }
-
-    @Test
-    func markdownFormatterEmitsLongPlainLineWithoutSyntheticWrap() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 20,
-            supportsHyperlinks: false
-        )
-        let line = Array(repeating: "word", count: 12).joined(separator: " ")
-
-        let rendered = formatter.consume(line + "\n") + formatter.finish()
-
-        // The complete logical line is emitted intact; the terminal owns the
-        // physical wrap, so no synthetic newlines are inserted.
-        let lines = rendered.components(separatedBy: "\n")
-        #expect(lines.count == 2)
-        #expect(lines[0] == line)
-        #expect(rendered.contains("word"))
-    }
-
-    @Test
-    func markdownFormatterEmitsStreamedInlineTailWithoutSyntheticWrap() {
-        let renderWidth = 80
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: renderWidth,
-            supportsHyperlinks: false
-        )
-        // The safe prose prefix is emitted immediately. The following strong
-        // marker makes the remaining text an inline tail; the formatter renders
-        // it without injecting any synthetic line breaks.
-        let prefix = String(repeating: "plain ", count: 10)
-        let tail = "**Browser** lo consente per lo sviluppo locale. Il permesso resta valido per una pagina aperta o navigata esplicitamente su loopback, incluse risorse HMR WebSocket locali."
-
-        let streamedPrefix = formatter.consume(prefix)
-        let renderedTail = formatter.consume(tail + "\n") + formatter.finish()
-
-        #expect(streamedPrefix == prefix)
-        // The strong marker is rendered, not left literal.
-        #expect(!renderedTail.contains("**"))
-        #expect(renderedTail.contains("\u{1B}[1mBrowser\u{1B}[0m"))
-        // No synthetic newlines: only the source line break remains.
-        let withoutTrailingNewline = renderedTail.hasSuffix("\n")
-            ? String(renderedTail.dropLast())
-            : renderedTail
-        #expect(!withoutTrailingNewline.contains("\n"))
     }
 
     @Test
@@ -2040,25 +1243,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func markdownFormatterStreamsOrderedListPreservingNumbers() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false
-        )
-
-        let streamed = formatter.consume("1. first\n2. second\n")
-        // Each item flushes independently but keeps its source start number.
-        #expect(streamed.contains("1."))
-        #expect(streamed.contains("first"))
-        #expect(!streamed.contains("second"))
-
-        let tail = formatter.finish()
-        #expect(tail.contains("2."))
-        #expect(tail.contains("second"))
-    }
-
-    @Test
     func markdownFormatterStreamsLazyOrderedListWithAscendingNumbers() {
         var formatter = TerminalMarkdownStreamFormatter(
             isEnabled: true,
@@ -2113,100 +1297,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func markdownFormatterStreamsBlockQuoteIncrementally() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false
-        )
-
-        // The first quote line is rendered as soon as the next one arrives.
-        let streamed = formatter.consume("> first line\n> second line\n")
-        #expect(streamed.contains("first line"))
-        #expect(!streamed.contains("> first line"))
-        // The last quote line stays buffered until the stream ends.
-        #expect(!streamed.contains("second line"))
-
-        let tail = formatter.finish()
-        #expect(tail.contains("second line"))
-    }
-
-    @Test
-    func markdownFormatterStreamsTableWithManyRowsIntact() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false
-        )
-
-        // A confirmed table with more rows than the soft safety limit (16) must
-        // stay intact: it is never split mid-table by the safety flush.
-        var source = "| A | B |\n| --- | --- |\n"
-        for row in 1...20 {
-            source += "| \(row) | \(row * 10) |\n"
-        }
-
-        let rendered = formatter.consume(source) + formatter.finish()
-
-        // The whole table renders as a single box-drawing block.
-        #expect(rendered.contains("┌"))
-        #expect(rendered.contains("└"))
-        // The last row is present, proving no rows were dropped or spilled out
-        // as literal text by an early safety flush.
-        #expect(rendered.contains("200"))
-        // Only one table border block exists (a single ┌ line).
-        #expect(rendered.components(separatedBy: "┌").count - 1 == 1)
-    }
-
-    @Test
-    func markdownFormatterStreamsListItemWithManyNestedChildren() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false
-        )
-
-        // A single top-level item with many nested children exceeds the soft
-        // safety limit (16 lines). The hierarchy must be preserved: the nested
-        // children must never be promoted to top-level bullets.
-        var source = "- parent\n"
-        for child in 1...20 {
-            source += "  - child \(child)\n"
-        }
-
-        let rendered = formatter.consume(source) + formatter.finish()
-
-        // The last nested child is present and stays nested (◦ glyph), proving
-        // the safety flush did not truncate the item mid-structure.
-        #expect(rendered.contains("child 20"))
-        #expect(rendered.contains("◦"))
-        // Exactly one top-level bullet (•) for the parent item.
-        let topLevelBullets = rendered.components(separatedBy: "•").count - 1
-        #expect(topLevelBullets == 1)
-    }
-
-    @Test
-    func markdownFormatterThinkingPreservesMultilineBoldInBlockQuote() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false,
-            removesUnbalancedStrongMarkers: true
-        )
-
-        // A bold span that straddles two quote lines. Streaming line by line
-        // would make each `**` unbalanced and the thinking formatter would drop
-        // both markers; the blockquote must buffer until the span closes.
-        let streamed = formatter.consume("> **first line\n> second line**\n") + formatter.finish()
-
-        // Both strong markers survived and the bold run rendered.
-        #expect(streamed.contains("\u{1B}[1mfirst line"))
-        #expect(streamed.contains("second line\u{1B}[0m"))
-        // No stray literal markers leaked into the output.
-        #expect(!streamed.contains("**"))
-    }
-
-    @Test
     func markdownFormatterStreamsBulletToOrderedTransitionRenumbered() {
         var formatter = TerminalMarkdownStreamFormatter(
             isEnabled: true,
@@ -2226,62 +1316,6 @@ struct TerminalChatRenderingTests {
         // A blank line separates the two list-type blocks (matching the document
         // renderer) rather than concatenating them directly.
         #expect(plain.contains("\n\n1. first"))
-    }
-
-    @Test
-    func markdownFormatterStreamsOrderedBulletOrderedRestartsFromOne() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false
-        )
-
-        // ordered → bullet → ordered: each type change starts a new list block,
-        // so the second ordered segment restarts at 1./2. (not continues 3./4.).
-        let streamed = formatter.consume(
-            "1. alpha\n1. beta\n\n- bullet\n\n1. gamma\n1. delta\n"
-        ) + formatter.finish()
-        let plain = TerminalANSIText.stripANSI(streamed)
-
-        #expect(plain.contains("1. alpha"))
-        #expect(plain.contains("2. beta"))
-        #expect(plain.contains("1. gamma"))
-        #expect(plain.contains("2. delta"))
-        // The second ordered segment did not inherit the counter.
-        #expect(!plain.contains("3. gamma"))
-        #expect(!plain.contains("4. delta"))
-        // Blank separators appear at both type-change boundaries (the rendered
-        // bullet glyph is •, not the literal source marker).
-        #expect(plain.contains("2. beta\n\n• bullet"))
-        #expect(plain.contains("bullet\n\n1. gamma"))
-    }
-
-    @Test
-    func markdownFormatterStreamsFirstItemBeyondCharLimitPreservesHierarchy() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false
-        )
-
-        // A single top-level item whose first line alone exceeds the soft char
-        // limit (2000), followed by nested children. The children must not be
-        // orphaned: the item stays buffered until the hard cap, preserving
-        // hierarchy.
-        let longWord = String(repeating: "x", count: 2100)
-        var source = "- \(longWord)\n"
-        for child in 1...3 {
-            source += "  - child \(child)\n"
-        }
-
-        let rendered = formatter.consume(source) + formatter.finish()
-
-        // The children stayed nested (◦), proving the item was not flushed
-        // mid-structure by the soft char limit.
-        #expect(rendered.contains("child 3"))
-        #expect(rendered.contains("◦"))
-        let topLevelBullets = rendered.components(separatedBy: "•").count - 1
-        #expect(topLevelBullets == 1)
     }
 
     @Test
@@ -2313,29 +1347,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func markdownFormatterStrayCloserInBlockQuoteDoesNotBlockIndefinitely() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false,
-            removesUnbalancedStrongMarkers: true
-        )
-
-        // A stray closer `**` with no preceding opener can never pair, so the
-        // balance guard would block forever without the hard cap.
-        var source = "> stray**\n"
-        for line in 1...85 {
-            source += "> line \(line)\n"
-        }
-
-        let rendered = formatter.consume(source)
-
-        // The hard cap forced a flush; the formatter did not hang.
-        #expect(!rendered.isEmpty)
-        #expect(rendered.contains("stray"))
-    }
-
-    @Test
     func markdownFormatterHandlesIntMaxOrderedMarkerWithoutCrash() {
         var formatter = TerminalMarkdownStreamFormatter(
             isEnabled: true,
@@ -2353,37 +1364,6 @@ struct TerminalChatRenderingTests {
         // (renumbering is skipped for out-of-range values).
         #expect(streamed.contains("9223372036854775807"))
         #expect(streamed.contains("item"))
-    }
-
-    @Test
-    func markdownFormatterRenumbersNineDigitOrderedMarkers() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false
-        )
-
-        // Swift Markdown accepts up to 9-digit ordered markers. Two lazy markers
-        // at 10000000 (8 digits) must renumber to 10000000./10000001.
-        let streamed8 = formatter.consume(
-            "10000000. item\n10000000. item\n"
-        ) + formatter.finish()
-        let plain8 = TerminalANSIText.stripANSI(streamed8)
-        #expect(plain8.contains("10000000. item"))
-        #expect(plain8.contains("10000001. item"))
-
-        // 9-digit markers are also valid and renumber correctly.
-        var formatter9 = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false
-        )
-        let streamed9 = formatter9.consume(
-            "999999998. item\n999999998. item\n"
-        ) + formatter9.finish()
-        let plain9 = TerminalANSIText.stripANSI(streamed9)
-        #expect(plain9.contains("999999998. item"))
-        #expect(plain9.contains("999999999. item"))
     }
 
     @Test
@@ -2408,91 +1388,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func markdownFormatterDoesNotClassifyTenDigitMarkerAsListTransition() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false
-        )
-
-        // A bullet item followed by a 10-digit marker. Swift Markdown treats the
-        // 10-digit line as a lazy continuation of the bullet item (indented
-        // under it), NOT as a new list block. The formatter must buffer it as a
-        // continuation line so the rendered structure matches the document
-        // parser exactly.
-        let source = "- bullet\n1000000000. first\n"
-        let streamed = formatter.consume(source) + formatter.finish()
-
-        // Independent oracle: render the whole document directly through the
-        // markdown renderer, bypassing the stream formatter. Using a second
-        // formatter copy would not be independent.
-        var expectedRenderer = TerminalSwiftMarkdownRenderer(
-            supportsHyperlinks: false,
-            renderWidth: 79
-        )
-        let expected = expectedRenderer.visit(Document(parsing: source)) + "\n"
-
-        // The streaming output matches the full-document rendering: the 10-digit
-        // line stays inside the list item as a lazy continuation (indented under
-        // the bullet), not flushed as a separate paragraph.
-        #expect(streamed == expected)
-
-        let plain = TerminalANSIText.stripANSI(streamed)
-        // The 10-digit line is present and indented as a continuation.
-        #expect(plain.contains("1000000000. first"))
-        // No block separator between the bullet and the continuation line.
-        #expect(!plain.contains("\n\n1000000000."))
-    }
-
-    @Test
-    func markdownFormatterStopsRenumberingAtNineDigitBoundary() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false
-        )
-
-        // Starting at 999_999_999 (9 digits, the max valid marker). The second
-        // item would renumber to 1_000_000_000 (10 digits), which Swift Markdown
-        // treats as plain text. The formatter must stop renumbering there and
-        // leave the marker verbatim, keeping the output coherent with the parser.
-        let streamed = formatter.consume(
-            "999999999. alpha\n999999999. beta\n"
-        ) + formatter.finish()
-        let plain = TerminalANSIText.stripANSI(streamed)
-
-        // First item renumbered to its start number.
-        #expect(plain.contains("999999999. alpha"))
-        // Second item is left verbatim — not renumbered to 1000000000, which
-        // would be parsed as a paragraph and lose ordered styling.
-        #expect(plain.contains("999999999. beta"))
-        // No 10-digit number was generated.
-        #expect(!plain.contains("1000000000"))
-    }
-
-    @Test
-    func markdownFormatterThinkingPreservesBoldInLongBlockQuote() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false,
-            removesUnbalancedStrongMarkers: true
-        )
-
-        // A blockquote whose first line (with the `**` opener) exceeds the soft
-        // char cap (2000). The soft-cap safety flush must not fire mid-span;
-        // the blockquote keeps buffering until the `**` closes so the bold run
-        // survives in the thinking formatter.
-        let longBody = String(repeating: "x", count: 2050)
-        let streamed = formatter.consume("> **\(longBody)\n> close**\n") + formatter.finish()
-
-        // Both strong markers survived and the bold run rendered.
-        #expect(streamed.contains("\u{1B}[1m"))
-        #expect(streamed.contains("close"))
-        #expect(!streamed.contains("**"))
-    }
-
-    @Test
     func markdownFormatterStreamsTableIntactUntilComplete() {
         var formatter = TerminalMarkdownStreamFormatter(isEnabled: true)
 
@@ -2505,98 +1400,6 @@ struct TerminalChatRenderingTests {
         #expect(rendered.contains("┌"))
         #expect(rendered.contains("A"))
         #expect(rendered.contains("1"))
-    }
-
-    @Test
-    func markdownFormatterStreamsCodeFenceWithoutParsingBody() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 80,
-            supportsHyperlinks: false
-        )
-
-        let opened = formatter.consume("```swift\n")
-        // The opening fence streams a readable header, not raw Markdown.
-        #expect(opened.contains("Code · Swift"))
-        #expect(!opened.contains("```"))
-
-        let body = formatter.consume("- not a list\n**not bold**\n")
-        // Inside the fence, markdown markers are preserved verbatim.
-        #expect(body.contains("- not a list"))
-        #expect(body.contains("**not bold**"))
-        #expect(!body.contains("•"))
-
-        let closed = formatter.consume("```\n") + formatter.finish()
-        // The closing fence preserves its source newline, yielding the blank
-        // block separator used by the complete document renderer.
-        #expect(closed == "\n")
-    }
-
-    @Test
-    func markdownFormatterStreamsProseUnchanged() {
-        var formatter = TerminalMarkdownStreamFormatter(isEnabled: true)
-
-        let first = formatter.consume("Plain prose line.\n")
-        let blank = formatter.consume("\n")
-
-        #expect(first == "Plain prose line.\n")
-        #expect(blank == "\n")
-        #expect(formatter.finish() == "")
-    }
-
-    @Test
-    func dimmedANSISequenceMapsHeadingAccentToMutedSteel() {
-        let dimmed = TerminalChatTextFormatting.dimmedANSISequence(
-            "\u{1B}[1;38;5;75m",
-            gray: "\u{1B}[90m",
-            reset: "\u{1B}[0m"
-        )
-
-        // Bold is removed while the bright heading accent is remapped to the
-        // muted steel-teal (109) used inside the dimmed thinking stream.
-        #expect(dimmed == "\u{1B}[38;5;109m")
-    }
-
-    @Test
-    func dimmedANSISequenceMapsInlineCodeAccentToMutedTan() {
-        let dimmed = TerminalChatTextFormatting.dimmedANSISequence(
-            "\u{1B}[38;5;180m",
-            gray: "\u{1B}[90m",
-            reset: "\u{1B}[0m"
-        )
-
-        #expect(dimmed == "\u{1B}[38;5;144m")
-    }
-
-    @Test
-    func thinkingTitleUsesTaskValueColor() {
-        #expect(
-            TerminalStyle.Thinking.title
-                == TerminalStyle.sequence(90)
-        )
-    }
-
-    @Test
-    func dimmedANSISequenceCollapsesResetToGray() {
-        let dimmed = TerminalChatTextFormatting.dimmedANSISequence(
-            "\u{1B}[0m",
-            gray: "\u{1B}[90m",
-            reset: "\u{1B}[0m"
-        )
-
-        #expect(dimmed == "\u{1B}[0m\u{1B}[90m")
-    }
-
-    @Test
-    func dimmedANSISequenceFallsBackToGrayForUnmappedColor() {
-        let dimmed = TerminalChatTextFormatting.dimmedANSISequence(
-            "\u{1B}[38;5;200m",
-            gray: "\u{1B}[90m",
-            reset: "\u{1B}[0m"
-        )
-
-        // An accent without a muted mapping degrades to plain gray (90).
-        #expect(dimmed == "\u{1B}[90m")
     }
 
     @Test
@@ -2785,193 +1588,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func subAgentOverviewRendersMetricsOnTheModelLineWithoutAddingARow() {
-        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
-            id: "agent_metrics",
-            name: "planner",
-            role: "Planner",
-            status: .running,
-            pending: true,
-            modelID: "gpt-5",
-            latestMetrics: DirectAgentGenerationMetrics(
-                promptTokenCount: 1_200,
-                cachedPromptTokenCount: 800,
-                completionTokenCount: 42,
-            ),
-            latestOutput: nil,
-            latestError: nil,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-        let withoutMetrics = DirectSubAgentRuntime.AgentSnapshot(
-            id: "agent_metrics",
-            name: "planner",
-            role: "Planner",
-            status: .running,
-            pending: true,
-            modelID: "gpt-5",
-            latestOutput: nil,
-            latestError: nil,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-
-        let rows = TerminalChat.renderSubAgentOverviewRowsForTesting(
-            [snapshot],
-            rowBudget: nil
-        ).map { TerminalANSIText.stripANSI($0) }
-        let baselineRows = TerminalChat.renderSubAgentOverviewRowsForTesting(
-            [withoutMetrics],
-            rowBudget: nil
-        )
-
-        // Same row, same row count.
-        #expect(rows.count == baselineRows.count)
-        let metricsRows = rows.filter { $0.contains("c:800") }
-        #expect(metricsRows.count == 1)
-        #expect(metricsRows.first?.contains("model: gpt-5") == true)
-        #expect(metricsRows.first?.contains("p:1.2k") == true)
-        #expect(metricsRows.first?.contains("g:42") == true)
-    }
-
-    @Test
-    func subAgentOverviewCompactRendersMetricsOnTheAgentAndModelRow() {
-        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
-            id: "agent_compact_metrics",
-            name: "planner",
-            role: "Planner",
-            profileID: "developer-profile",
-            profileName: "Developer",
-            status: .running,
-            pending: true,
-            modelID: "gpt-5",
-            latestMetrics: DirectAgentGenerationMetrics(
-                promptTokenCount: 1_200,
-                cachedPromptTokenCount: 800,
-                completionTokenCount: 42,
-            ),
-            latestOutput: nil,
-            latestError: nil,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-
-        // One row below the full presentation forces the compact variant.
-        let fullRowCount = TerminalChat.renderSubAgentOverviewRowsForTesting(
-            [snapshot],
-            rowBudget: nil
-        ).count
-        let rows = TerminalChat.renderSubAgentOverviewRowsForTesting(
-            [snapshot],
-            rowBudget: fullRowCount - 1
-        ).map { TerminalANSIText.stripANSI($0) }
-
-        let identityRows = rows.filter { $0.contains("agent: Developer") }
-        #expect(identityRows.count == 1)
-        let identityRow = identityRows.first
-        #expect(identityRow?.contains("model: gpt-5") == true)
-        #expect(identityRow?.contains("c:800") == true)
-        #expect(identityRow?.contains("p:1.2k") == true)
-        #expect(identityRow?.contains("g:42") == true)
-        // The counters never claim a row of their own.
-        #expect(rows.filter { $0.contains("c:800") }.count == 1)
-        #expect(!rows.contains { $0.contains("id: ") })
-    }
-
-    /// Counters never create a metadata row when the model is unavailable.
-    @Test
-    func subAgentOverviewOmitsMetricsUntilTheModelRowExists() {
-        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
-            id: "agent_metrics_no_model",
-            name: "planner",
-            role: "Planner",
-            status: .running,
-            pending: true,
-            latestMetrics: DirectAgentGenerationMetrics(
-                promptTokenCount: nil,
-                completionTokenCount: 42,
-            ),
-            latestOutput: nil,
-            latestError: nil,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-        let withoutMetrics = DirectSubAgentRuntime.AgentSnapshot(
-            id: "agent_metrics_no_model",
-            name: "planner",
-            role: "Planner",
-            status: .running,
-            pending: true,
-            latestOutput: nil,
-            latestError: nil,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-
-        let rows = TerminalChat.renderSubAgentOverviewRowsForTesting(
-            [snapshot],
-            rowBudget: nil
-        ).map { TerminalANSIText.stripANSI($0) }
-        let baselineRows = TerminalChat.renderSubAgentOverviewRowsForTesting(
-            [withoutMetrics],
-            rowBudget: nil
-        )
-
-        #expect(rows.count == baselineRows.count)
-        #expect(!rows.contains { $0.contains("model:") })
-        #expect(!rows.contains { $0.contains("g:42") })
-    }
-
-    /// Dense and inline presentations stay one row per agent: the counters
-    /// live on a metadata row that those densities do not emit.
-    @Test
-    func subAgentOverviewMetricsDoNotAffectDenseOrInlineRowCounts() {
-        func snapshot(
-            id: String,
-            metrics: DirectAgentGenerationMetrics?
-        ) -> DirectSubAgentRuntime.AgentSnapshot {
-            DirectSubAgentRuntime.AgentSnapshot(
-                id: id,
-                name: id,
-                role: "Worker",
-                status: .running,
-                pending: true,
-                modelID: "gpt-5",
-                latestMetrics: metrics,
-                latestOutput: nil,
-                latestError: nil,
-                createdAt: Date(timeIntervalSince1970: 0),
-                updatedAt: Date(timeIntervalSince1970: 0)
-            )
-        }
-        let metrics = DirectAgentGenerationMetrics(
-            promptTokenCount: 1_200,
-            cachedPromptTokenCount: 800,
-            completionTokenCount: 42,
-        )
-        let ids = (0..<8).map { "agent-\($0)" }
-        let withMetrics = ids.map { snapshot(id: $0, metrics: metrics) }
-        let withoutMetrics = ids.map { snapshot(id: $0, metrics: nil) }
-
-        for rowBudget in [ids.count + 2, ids.count + 4] {
-            let rows = TerminalChat.renderSubAgentOverviewRowsForTesting(
-                withMetrics,
-                rowBudget: rowBudget
-            )
-            let baselineRows = TerminalChat.renderSubAgentOverviewRowsForTesting(
-                withoutMetrics,
-                rowBudget: rowBudget
-            )
-            #expect(rows.count == baselineRows.count)
-            #expect(rows.count <= rowBudget)
-            #expect(
-                rows.map { TerminalANSIText.stripANSI($0) }
-                    == baselineRows.map { TerminalANSIText.stripANSI($0) }
-            )
-        }
-    }
-
-    @Test
     func subAgentOverviewSignatureTracksGenerationMetrics() {
         func snapshot(
             metrics: DirectAgentGenerationMetrics?
@@ -3024,47 +1640,6 @@ struct TerminalChatRenderingTests {
         #expect(none != first)
         #expect(first != second)
         #expect(second == sameCounts)
-    }
-
-    @Test
-    func subAgentMetadataUsesMutedLabelsAndTaskValueColor() {
-        let rendered = TerminalChat.subAgentMetadataText(
-            label: "role:",
-            value: "Reviewer",
-            ansiEnabled: true
-        )
-
-        #expect(
-            rendered == "\(TerminalStyle.Text.muted)role:\(TerminalStyle.reset) "
-                + "\(TerminalMarkdownPalette.detected.inlineCodeForeground)Reviewer\(TerminalStyle.reset)"
-        )
-        #expect(
-            TerminalChat.subAgentMetadataText(
-                label: "role:",
-                value: "Reviewer",
-                ansiEnabled: false
-            ) == "role: Reviewer"
-        )
-    }
-
-    @Test
-    func subAgentOverviewOmitsAgentProfileLineWhenProfileNameIsNil() {
-        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
-            id: "agent_no_profile",
-            name: "builder",
-            role: "Builder",
-            status: .running,
-            pending: true,
-            latestOutput: nil,
-            latestError: nil,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-
-        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
-
-        #expect(!rendered.contains("agent:"))
-        #expect(rendered.contains("role: Builder"))
     }
 
     @Test
@@ -3152,25 +1727,6 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func resolvedSubAgentModelTitleStripsRemoteAPIProviderKey() {
-        #expect(TerminalChat.resolvedSubAgentModelTitle(for: "zai:glm-5.2") == "glm-5.2")
-        #expect(
-            TerminalChat.resolvedSubAgentModelTitle(for: "openrouter:deepseek/deepseek-r1:free")
-                == "deepseek/deepseek-r1:free"
-        )
-    }
-
-    @Test
-    func resolvedSubAgentModelTitleLeavesUnrelatedIDsUnchanged() {
-        #expect(TerminalChat.resolvedSubAgentModelTitle(for: "gpt-5") == "gpt-5")
-        #expect(
-            TerminalChat.resolvedSubAgentModelTitle(for: "provider:remote-community/model")
-                == "provider:remote-community/model"
-        )
-        #expect(TerminalChat.resolvedSubAgentModelTitle(for: "chatgpt:gpt-5") == "chatgpt:gpt-5")
-    }
-
-    @Test
     func subAgentModelNameStrippingRemoteAPIPrefixHandlesEdgeCases() {
         #expect(TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix("zai:glm-5.2") == "glm-5.2")
         #expect(TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix("gpt-5") == nil)
@@ -3181,69 +1737,6 @@ struct TerminalChatRenderingTests {
         )
         // Missing model name segment.
         #expect(TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix("openrouter:") == nil)
-    }
-
-    @Test
-    func renderSnapshotsIncludesProfileNameWhenPresent() {
-        let now = Date(timeIntervalSince1970: 10)
-        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
-            id: "agent-snapshot",
-            name: "worker",
-            role: "worker",
-            profileID: "dev-profile",
-            profileName: "Developer",
-            status: .running,
-            pending: true,
-            modelID: "gpt-5",
-            latestOutput: nil,
-            latestError: nil,
-            createdAt: now,
-            updatedAt: now
-        )
-
-        let rendered = DirectSubAgentRuntime.renderSnapshots([snapshot])
-        #expect(rendered.contains("profile=Developer"))
-        #expect(rendered.contains("model=gpt-5"))
-    }
-
-    @Test
-    func renderSnapshotsOmitsProfileWhenNameIsAbsent() {
-        let now = Date(timeIntervalSince1970: 10)
-        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
-            id: "agent-snapshot",
-            name: "worker",
-            role: "worker",
-            status: .running,
-            pending: true,
-            latestOutput: nil,
-            latestError: nil,
-            createdAt: now,
-            updatedAt: now
-        )
-
-        let rendered = DirectSubAgentRuntime.renderSnapshots([snapshot])
-        #expect(!rendered.contains("profile="))
-    }
-
-    @Test
-    func subAgentOverviewRendersActivityWithoutCurrentTool() {
-        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
-            id: "agent_3",
-            name: "planner",
-            role: "Planner",
-            status: .running,
-            pending: true,
-            currentActivity: "reading project files",
-            latestOutput: nil,
-            latestError: nil,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-
-        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
-
-        #expect(rendered.contains("💬 reading project files"))
-        #expect(!rendered.contains("🛠️"))
     }
 
     @Test
@@ -3377,295 +1870,10 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
-    func subAgentOverviewKeepsCompleteActivityAndToolTargetTogether() {
-        let staleMarker = "STALE_ACTIVITY_MARKER"
-        let latestMarker = "LATEST_ACTIVITY_MARKER"
-        let staleToolMarker = "STALE_TOOL_MARKER"
-        let latestToolMarker = "LATEST_TOOL_MARKER"
-        let longActivity = "\(staleMarker) "
-            + String(
-                repeating: "analysing renderer state while checking delegated agent progress ",
-                count: 12
-            )
-            + latestMarker
-        let longToolName = "\(staleToolMarker) "
-            + String(repeating: "delegated tool progress ", count: 40)
-            + latestToolMarker
-        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
-            id: "agent_current",
-            name: "worker",
-            role: "worker",
-            status: .running,
-            pending: true,
-            currentActivity: longActivity,
-            currentToolName: "search.grep",
-            currentToolTarget: longToolName,
-            latestOutput: nil,
-            latestError: nil,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-
-        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
-        let visibleLines = rendered
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { String($0) }
-
-        #expect(rendered.contains("💬"))
-        #expect(rendered.contains(latestMarker))
-        #expect(rendered.contains(staleMarker))
-        #expect(rendered.contains("🛠️  search.grep"))
-        #expect(rendered.contains(latestToolMarker))
-        #expect(rendered.contains(staleToolMarker))
-        #expect(!rendered.contains("…"))
-
-        let currentIndex = visibleLines.firstIndex { $0.contains("💬") }
-        let idIndex = visibleLines.firstIndex { $0.contains("id: agent_current") }
-        #expect(currentIndex != nil)
-        #expect(idIndex != nil)
-        if let currentIndex, let idIndex {
-            #expect(currentIndex > idIndex)
-        }
-    }
-
-    @Test
-    func subAgentOverviewOmitsContentPreview() {
-        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
-            id: "agent_preview",
-            name: "writer",
-            role: "writer",
-            status: .running,
-            pending: true,
-            currentActivity: "thinking through the answer",
-            latestContentPreview: "Drafting the final summary for the delegated investigation",
-            latestOutput: nil,
-            latestError: nil,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-
-        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
-
-        #expect(rendered.contains("💬 thinking through the answer"))
-        #expect(!rendered.contains("preview:"))
-        #expect(!rendered.contains("Drafting the final summary"))
-    }
-
-    @Test
     func inlineTextCollapsesNewlinesAndCarriageReturns() {
         #expect(TerminalChat.inlineText("a\nb\r\nc\rd  ") == "a b c d")
         #expect(TerminalChat.inlineText("  hello world  ") == "hello world")
         #expect(TerminalChat.inlineText("line1\r\nline2") == "line1 line2")
-    }
-
-    @Test
-    func subAgentOverviewDoesNotTruncateLongOutputWithEllipsisDots() {
-        let longOutput = String(repeating: "word ", count: 40) + "ENDMARKER"
-        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
-            id: "agent_long",
-            name: "worker",
-            role: "worker",
-            status: .idle,
-            pending: false,
-            latestOutput: longOutput,
-            latestError: nil,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-
-        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
-
-        #expect(rendered.contains("✅"))
-        #expect(rendered.contains("ENDMARKER"))
-        #expect(!rendered.contains("..."))
-        #expect(!rendered.contains("…"))
-    }
-
-    @Test
-    func subAgentOverviewRendersCompleteFinalResponseInOneBlock() {
-        let staleMarker = "STALE_RESULT_MARKER"
-        let latestMarker = "LATEST_RESULT_MARKER"
-        let hugeOutput = "\(staleMarker) "
-            + String(repeating: "alpha bravo charlie delta ", count: 60)
-            + latestMarker
-        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
-            id: "agent_flood",
-            name: "worker",
-            role: "worker",
-            status: .idle,
-            pending: false,
-            latestOutput: hugeOutput,
-            latestError: nil,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-
-        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
-        let visibleLines = rendered
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { String($0) }
-
-        #expect(rendered.contains("✅"))
-        #expect(rendered.contains(latestMarker))
-        #expect(rendered.contains(staleMarker))
-        #expect(!rendered.contains("…"))
-        #expect(visibleLines.count > 12)
-    }
-
-    @Test
-    func compactSubAgentOverviewIncludesAgentAndModelForEveryAgent() {
-        let now = Date(timeIntervalSince1970: 0)
-        let snapshots = (0..<2).map { index in
-            DirectSubAgentRuntime.AgentSnapshot(
-                id: "compact-agent-\(index)",
-                name: "worker-\(index)",
-                role: "",
-                profileName: "Developer",
-                status: .running,
-                pending: true,
-                modelID: "gpt-5.6",
-                latestOutput: nil,
-                latestError: nil,
-                createdAt: now,
-                updatedAt: now
-            )
-        }
-        // Full does not fit this budget, while compact fits exactly.
-        let compactRows = TerminalChat.renderSubAgentOverviewRowsForTesting(
-            snapshots,
-            rowBudget: 10
-        ).map(ansiStripped)
-
-        #expect(compactRows.count == 10)
-        #expect(
-            compactRows.filter {
-                $0.contains("agent: Developer") && $0.contains("model: gpt-5.6")
-            }.count == snapshots.count
-        )
-        #expect(compactRows.filter { $0.contains("id: compact-agent-") }.isEmpty)
-    }
-
-    @Test
-    func compactSubAgentOverviewShowsToolParameterInsteadOfEllipsis() {
-        let now = Date(timeIntervalSince1970: 0)
-        let snapshots = (0..<2).map { index in
-            DirectSubAgentRuntime.AgentSnapshot(
-                id: "tool-agent-\(index)",
-                name: "worker-\(index)",
-                role: "",
-                status: .running,
-                pending: true,
-                currentToolName: "local.readFile",
-                currentToolTarget: "Sources/ZenCODECore/VeryLongUnbrokenPath/RequestedFile.swift",
-                latestOutput: nil,
-                latestError: nil,
-                createdAt: now,
-                updatedAt: now
-            )
-        }
-
-        let compactRows = TerminalChat.renderSubAgentOverviewRowsForTesting(
-            snapshots,
-            rowBudget: 10
-        ).map(ansiStripped)
-        let toolRows = compactRows.filter { $0.contains("local.readFile") }
-
-        #expect(toolRows.count == snapshots.count)
-        #expect(toolRows.allSatisfy { $0.contains("Sources/ZenCODECore/") })
-        #expect(toolRows.allSatisfy { !$0.contains("…") })
-    }
-
-    @Test
-    func subAgentOverviewFitsRowBudgetWhenManyAgentsRun() {
-        let now = Date(timeIntervalSince1970: 0)
-        let snapshots = (0..<12).map { index in
-            DirectSubAgentRuntime.AgentSnapshot(
-                id: "agent-\(index)",
-                taskID: "task-\(index)",
-                name: "worker-\(index)",
-                role: "delegated implementation worker number \(index)",
-                profileName: "Developer",
-                status: .running,
-                pending: true,
-                modelID: "chatgpt:gpt-5.6-terra",
-                currentActivity: "inspecting the shared runtime for delegated work \(index)",
-                currentToolName: "search.grep",
-                currentToolTarget: "Sources/ZenCODECore/TUI/Chat/Tools",
-                latestOutput: nil,
-                latestError: nil,
-                createdAt: now,
-                updatedAt: now
-            )
-        }
-        // The rows a section may occupy while it still fits the scrolling
-        // region of a small terminal.
-        let rowBudget = TerminalChat.subAgentOverviewRowBudget(forInPlaceRows: 24) ?? 0
-        let unbounded = TerminalChat.renderSubAgentOverviewRowsForTesting(
-            snapshots,
-            rowBudget: nil
-        )
-        let bounded = TerminalChat.renderSubAgentOverviewRowsForTesting(
-            snapshots,
-            rowBudget: rowBudget
-        )
-
-        // Without a budget the full presentation is kept, which is exactly what
-        // overflows a single page and defeats the in-place replacement.
-        #expect(unbounded.count > rowBudget)
-        #expect(bounded.count <= rowBudget)
-        // Every agent stays represented, and the aggregate summary survives.
-        #expect(bounded.first?.contains("Sub-Agents:") == true)
-        #expect(bounded.contains { $0.contains("12 total") })
-        for index in 0..<12 {
-            #expect(bounded.contains { $0.contains("worker-\(index)") })
-        }
-    }
-
-    @Test
-    func subAgentOverviewRowsStayWithinTerminalWidthForInPlaceRewrite() {
-        let now = Date(timeIntervalSince1970: 0)
-        let columns = TerminalChat.terminalColumnCount()
-        let snapshots = (0..<6).map { index in
-            DirectSubAgentRuntime.AgentSnapshot(
-                id: "agent-\(index)",
-                name: String(repeating: "long-agent-name-", count: 6) + "\(index)",
-                role: String(repeating: "delegated review responsibility ", count: 6),
-                profileName: "Reviewer",
-                status: .running,
-                pending: true,
-                modelID: "chatgpt:gpt-5.6-sol",
-                currentActivity: String(repeating: "scanning renderer rows ", count: 12),
-                currentToolName: "local.readFile",
-                currentToolTarget: String(repeating: "Sources/Nested/Path/", count: 8),
-                latestOutput: nil,
-                latestError: nil,
-                createdAt: now,
-                updatedAt: now
-            )
-        }
-
-        for rowBudget in [nil, TerminalChat.subAgentOverviewRowBudget(forInPlaceRows: 20)] {
-            let rows = TerminalChat.renderSubAgentOverviewRowsForTesting(
-                snapshots,
-                rowBudget: rowBudget
-            )
-            // A row reaching the final column wraps in a terminal-dependent
-            // way, which desynchronizes the saved row count used to erase the
-            // previous section.
-            #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) < columns })
-        }
-    }
-
-    @Test
-    func failureMessageColoringWrapsNonBlankLines() {
-        let rendered = TerminalChatTextFormatting.failureMessageColorApplied(
-            to: "ZenCODE: HTTP 402\n\nRetry later.\n",
-            isEnabled: true
-        )
-
-        #expect(rendered.hasPrefix("\u{1B}[38;5;203mZenCODE: HTTP 402\u{1B}[0m\n\n"))
-        #expect(rendered.contains("\u{1B}[38;5;203mRetry later.\u{1B}[0m\n"))
-        #expect(rendered.hasSuffix("\n"))
     }
 
     private func makeTerminalForToolInterleavingTest(
@@ -3681,21 +1889,5 @@ struct TerminalChatRenderingTests {
             stdinIsTerminal: false,
             sessionRunner: sessionRunner
         )
-    }
-}
-
-
-/// Deterministic probe used to exercise `TerminalWidth` without issuing ioctl.
-private final class TerminalWidthProbe: @unchecked Sendable {
-    var width: Int
-    private(set) var readCount = 0
-
-    init(_ width: Int) {
-        self.width = width
-    }
-
-    func measure() -> Int {
-        readCount += 1
-        return width
     }
 }

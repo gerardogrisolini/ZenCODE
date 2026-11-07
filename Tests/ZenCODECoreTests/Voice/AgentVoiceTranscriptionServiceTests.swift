@@ -10,66 +10,32 @@ import Testing
 #if canImport(Speech)
 @Suite
 struct AgentVoiceTranscriptionServiceTests {
-    private let italian = Locale(identifier: "it_IT")
-    private let russian = Locale(identifier: "ru_RU")
-
-    @Test
-    func speechTranscriberIsPreferredWhenItSupportsTheLanguage() {
+    /// SpeechTranscriber is preferred when it supports the language and is
+    /// available; DictationTranscriber covers the languages it does not support
+    /// and replaces it when it is unavailable; no model when neither fits.
+    @Test(arguments: [
+        (
+            Locale(identifier: "it_IT"), Locale(identifier: "it_IT"), true,
+            AppleSpeechModel.speechTranscriber(Locale(identifier: "it_IT"))
+        ),
+        (nil, Locale(identifier: "ru_RU"), true, .dictationTranscriber(Locale(identifier: "ru_RU"))),
+        (Locale(identifier: "it_IT"), Locale(identifier: "it_IT"), false, .dictationTranscriber(Locale(identifier: "it_IT"))),
+        (nil, nil, true, nil),
+        (Locale(identifier: "it_IT"), nil, false, nil)
+    ] as [(Locale?, Locale?, Bool, AppleSpeechModel?)])
+    func speechTranscriberIsPreferredWhenItSupportsTheLanguage(
+        speechTranscriberLocale: Locale?,
+        dictationTranscriberLocale: Locale?,
+        isSpeechTranscriberAvailable: Bool,
+        expected: AppleSpeechModel?
+    ) {
         let model = AppleSpeechModel.resolve(
-            speechTranscriberLocale: italian,
-            dictationTranscriberLocale: italian,
-            isSpeechTranscriberAvailable: true
+            speechTranscriberLocale: speechTranscriberLocale,
+            dictationTranscriberLocale: dictationTranscriberLocale,
+            isSpeechTranscriberAvailable: isSpeechTranscriberAvailable
         )
-        #expect(model == .speechTranscriber(italian))
-        #expect(model?.locale == italian)
-    }
-
-    @Test
-    func dictationTranscriberCoversLanguagesSpeechTranscriberDoesNotSupport() {
-        let model = AppleSpeechModel.resolve(
-            speechTranscriberLocale: nil,
-            dictationTranscriberLocale: russian,
-            isSpeechTranscriberAvailable: true
-        )
-        #expect(model == .dictationTranscriber(russian))
-        #expect(model?.locale == russian)
-    }
-
-    @Test
-    func dictationTranscriberIsUsedWhenSpeechTranscriberIsUnavailable() {
-        let model = AppleSpeechModel.resolve(
-            speechTranscriberLocale: italian,
-            dictationTranscriberLocale: italian,
-            isSpeechTranscriberAvailable: false
-        )
-        #expect(model == .dictationTranscriber(italian))
-    }
-
-    @Test
-    func noModelWhenNeitherSupportsTheLanguage() {
-        #expect(AppleSpeechModel.resolve(
-            speechTranscriberLocale: nil,
-            dictationTranscriberLocale: nil,
-            isSpeechTranscriberAvailable: true
-        ) == nil)
-        #expect(AppleSpeechModel.resolve(
-            speechTranscriberLocale: italian,
-            dictationTranscriberLocale: nil,
-            isSpeechTranscriberAvailable: false
-        ) == nil)
-    }
-
-    @Test
-    func modelDownloadFailuresTellHowToRetry() {
-        #expect(
-            AgentVoiceTranscriptionError.speechModelDownloadFailed(language: "it_IT", detail: "offline")
-                .localizedDescription
-                == "The speech recognition model for it_IT could not be downloaded (offline). Check the network connection and send the voice message again."
-        )
-        #expect(
-            VoiceDictationError.speechModelDownloadFailed("it_IT", "offline").localizedDescription
-                == "The speech recognition model for it_IT could not be downloaded (offline). Check the network connection and run /voice on again."
-        )
+        #expect(model == expected)
+        #expect(model?.locale == expected?.locale)
     }
 }
 #endif

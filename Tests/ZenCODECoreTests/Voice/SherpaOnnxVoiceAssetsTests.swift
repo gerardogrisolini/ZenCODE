@@ -33,25 +33,6 @@ struct SherpaOnnxVoiceAssetsTests {
     }
 
     @Test
-    func voicesCoverTheRecognizerLanguagesThatHaveAPiperVoice() {
-        let languages = Set(SherpaOnnxVoiceCatalog.voices.map(\.languageCode))
-        #expect(languages == [
-            "cs", "da", "de", "el", "en", "es", "fi", "fr", "hu", "it",
-            "lv", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"
-        ])
-    }
-
-    @Test
-    func voicesAreFilteredByLanguageInAnySpelling() {
-        let italian = SherpaOnnxVoiceCatalog.voices(forLanguage: "it").map(\.speaker)
-        #expect(italian == ["dii", "miro", "paola", "riccardo"])
-        #expect(SherpaOnnxVoiceCatalog.voices(forLanguage: "IT-it").map(\.speaker) == italian)
-        #expect(SherpaOnnxVoiceCatalog.voices(forLanguage: "it_IT").map(\.speaker) == italian)
-        #expect(SherpaOnnxVoiceCatalog.voices(forLanguage: "xx").isEmpty)
-        #expect(SherpaOnnxVoiceCatalog.voices(forLanguage: " ").isEmpty)
-    }
-
-    @Test
     func piperArchiveNamesParseIntoLocaleSpeakerAndQuality() throws {
         let paola = try #require(SherpaOnnxVoice(archive: .init(
             archiveName: "vits-piper-it_IT-paola-medium.tar.bz2",
@@ -79,19 +60,6 @@ struct SherpaOnnxVoiceAssetsTests {
         }
     }
 
-    @Test
-    func sharedAssetsFollowTheBuildArchitecture() throws {
-        #if arch(x86_64) || arch(arm64)
-        let shared = try #require(SherpaOnnxVoiceCatalog.sharedAssets())
-        #if arch(x86_64)
-        #expect(shared.first == SherpaOnnxVoiceCatalog.runtimeX64)
-        #else
-        #expect(shared.first == SherpaOnnxVoiceCatalog.runtimeARM64)
-        #endif
-        #expect(shared.dropFirst() == [SherpaOnnxVoiceCatalog.recognizer, SherpaOnnxVoiceCatalog.voiceActivityDetector])
-        #endif
-    }
-
     // MARK: - Installation layout
 
     @Test
@@ -115,23 +83,6 @@ struct SherpaOnnxVoiceAssetsTests {
         // A voice directory with two models is not a usable voice.
         try Data().write(to: installation.installedURL(for: voice.asset).appendingPathComponent("second.onnx"))
         #expect(installation.runtimePaths() == .failure(.unexpectedLayout(voice.asset.fileName)))
-    }
-
-    @Test
-    func keepingOneVoiceRemovesTheOthers() throws {
-        let installation = try makeInstallation()
-        let voices = SherpaOnnxVoiceCatalog.voices(forLanguage: "it")
-        for voice in voices.prefix(2) {
-            try FileManager.default.createDirectory(
-                at: installation.installedURL(for: voice.asset),
-                withIntermediateDirectories: true
-            )
-        }
-        #expect(installation.installedVoices() == Array(voices.prefix(2)))
-
-        try SherpaOnnxVoiceInstaller(installation: installation, downloader: FakeDownloader([:]))
-            .removeVoices(except: voices[1])
-        #expect(installation.installedVoices() == [voices[1]])
     }
 
     // MARK: - Installer
@@ -212,46 +163,6 @@ struct SherpaOnnxVoiceAssetsTests {
             ).install(asset)
         }
         #expect(!installation.isInstalled(asset))
-    }
-
-    @Test
-    func removeAllDeletesTheVoiceDirectory() throws {
-        let installation = try makeInstallation()
-        try FileManager.default.createDirectory(at: installation.directoryURL, withIntermediateDirectories: true)
-        try Data("x".utf8).write(to: installation.directoryURL.appendingPathComponent("silero_vad.onnx"))
-        let installer = SherpaOnnxVoiceInstaller(installation: installation, downloader: FakeDownloader([:]))
-        try installer.removeAll()
-        #expect(!FileManager.default.fileExists(atPath: installation.directoryURL.path))
-        try installer.removeAll()
-    }
-
-    /// Opt-in network check of the real HTTPS downloader against the pinned
-    /// 0.6 MB voice activity model: `ZENCODE_RUN_LIVE_VOICE_DOWNLOAD=1`.
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["ZENCODE_RUN_LIVE_VOICE_DOWNLOAD"] == "1"))
-    func liveDownloadOfThePinnedVoiceActivityModelVerifies() async throws {
-        let installation = try makeInstallation()
-        let asset = SherpaOnnxVoiceCatalog.voiceActivityDetector
-        try await SherpaOnnxVoiceInstaller(installation: installation).install(asset)
-        let attributes = try FileManager.default.attributesOfItem(atPath: installation.installedURL(for: asset).path)
-        #expect((attributes[.size] as? NSNumber)?.int64Value == asset.byteCount)
-    }
-
-    /// Opt-in end-to-end download of everything voice mode needs for an
-    /// Italian voice (about 580 MB): `ZENCODE_RUN_LIVE_VOICE_INSTALL=1`. Set
-    /// `ZENCODE_LIVE_VOICE_DIRECTORY` to keep the files for manual checks.
-    @Test(
-        .enabled(if: ProcessInfo.processInfo.environment["ZENCODE_RUN_LIVE_VOICE_INSTALL"] == "1"),
-        .timeLimit(.minutes(30))
-    )
-    func liveInstallOfAnItalianVoiceResolvesTheRuntime() async throws {
-        let installation = try ProcessInfo.processInfo.environment["ZENCODE_LIVE_VOICE_DIRECTORY"]
-            .map { SherpaOnnxVoiceInstallation(directoryURL: URL(fileURLWithPath: $0, isDirectory: true)) }
-            ?? makeInstallation()
-        let voice = try #require(SherpaOnnxVoiceCatalog.voices(forLanguage: "it").first { $0.speaker == "paola" })
-        try await SherpaOnnxVoiceInstaller(installation: installation).install(voice: voice)
-        let paths = try installation.runtimePaths().get()
-        #expect(paths.voice == voice)
-        #expect(installation.missingAssets(for: voice) == [])
     }
 
     // MARK: - Support

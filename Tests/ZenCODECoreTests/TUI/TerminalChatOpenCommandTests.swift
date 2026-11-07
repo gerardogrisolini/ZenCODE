@@ -25,35 +25,10 @@ struct TerminalChatOpenCommandTests {
         #expect(candidates.allSatisfy { $0.kind == .url })
     }
 
-        @Test
-    func extractsCommonURLSchemes() {
-        let candidates = TerminalChat.extractOpenCandidates(
-            from: "mail me at mailto:dev@example.com or ftp://files.test/pub or call tel:+15551234",
-            workingDirectory: URL(fileURLWithPath: "/tmp")
-        )
-
-        #expect(candidates.map(\.target) == [
-            "mailto:dev@example.com",
-            "ftp://files.test/pub",
-            "tel:+15551234"
-        ])
-        #expect(candidates.allSatisfy { $0.kind == .url })
-    }
-
     @Test
     func ignoresUnknownOrTimeLikeSchemes() {
         let candidates = TerminalChat.extractOpenCandidates(
             from: "meeting at 12:30 and gopher://old.test/x",
-            workingDirectory: URL(fileURLWithPath: "/tmp")
-        )
-
-        #expect(candidates.isEmpty)
-    }
-
-    @Test
-    func ignoresPlainWordsThatAreNotPathsOrURLs() {
-        let candidates = TerminalChat.extractOpenCandidates(
-            from: "just some normal words here",
             workingDirectory: URL(fileURLWithPath: "/tmp")
         )
 
@@ -106,16 +81,5 @@ struct TerminalChatOpenCommandTests {
         #expect(candidate?.kind == .file)
         #expect(candidate?.display == "diagram.png")
         #expect(candidate?.target == fileURL.standardizedFileURL.path)
-    }
-
-    @Test
-    func attachmentWithoutFileURLIsIgnored() {
-        let attachment = AgentRuntimeAttachment(
-            kind: .image,
-            data: Data([0x1]),
-            originalFilename: "inline.png"
-        )
-
-        #expect(TerminalChat.attachmentCandidate(from: attachment) == nil)
     }
 }

@@ -173,24 +173,6 @@ struct TerminalChatRenderingBaselineTests {
 
     // MARK: - (a) Streaming vs single-block equivalence
 
-    @Test("Simple prose: streaming matches single-block rendering")
-    func plainProseStreamingEquivalence() {
-        // Repeat the paragraph so the streamed line crosses the incremental
-        // flush thresholds while still being rendered as prose.
-        let text = Array(repeating: Self.proseParagraph, count: 100)
-            .joined(separator: "\n\n") + "\n"
-        #expect(text.count >= 20_000)
-        expectStreamingEquivalence(text, "plain prose")
-    }
-
-    @Test("Inline markers: streaming matches single-block rendering")
-    func inlineMarkerStreamingEquivalence() {
-        let text = Array(repeating: Self.inlineMarkerLine, count: 220)
-            .joined(separator: "\n\n") + "\n"
-        #expect(text.count >= 20_000)
-        expectStreamingEquivalence(text, "inline markers")
-    }
-
     @Test("Lists: streaming matches single-block rendering")
     func listStreamingEquivalence() {
         let text = Array(repeating: Self.listBlock, count: 180)

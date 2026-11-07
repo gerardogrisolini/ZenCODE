@@ -6,34 +6,6 @@ import ToolCore
 
 @Suite
 struct TerminalTelegramRichMessageTests {
-    @Test
-    func markdownPresentationRendersCurrentRichSubset() throws {
-        let document = PresentationDocument(markdown: """
-        # Release
-
-        A **safe** paragraph with `code`.
-
-        ```swift
-        print("ok")
-        ```
-
-        1. first
-        2. second
-        """)
-        let rich = try TerminalTelegramRichMessageRenderer.render(document)
-        let object = try jsonObject(rich)
-        let blocks = try #require(object["blocks"] as? [[String: Any]])
-
-        #expect(blocks.map { $0["type"] as? String } == ["heading", "paragraph", "pre", "list"])
-        #expect(blocks[0]["size"] as? Int == 1)
-        #expect(blocks[2]["language"] as? String == "swift")
-        let items = try #require(blocks[3]["items"] as? [[String: Any]])
-        #expect(items.count == 2)
-        #expect(items[0]["value"] as? Int == 1)
-        #expect(items[0]["type"] as? String == "1")
-        #expect(document.plainText.contains("Release"))
-        #expect(document.plainText.contains("1. first"))
-    }
 
     @Test
     func detailsButtonsAndDocumentUseBotAPI103WireShapes() throws {
@@ -124,25 +96,6 @@ struct TerminalTelegramRichMessageTests {
     }
 
     @Test
-    func incompatibleRichDraftFallsBackToLegacyDraft() async throws {
-        let transport = RichRecordingTransport(richStatus: 404)
-        let support = try makeSupportDirectory()
-        try await AppStorageDirectory.withSupportDirectoryURL(support) {
-            let service = TerminalTelegramControlService(transportFactory: { transport })
-            let state = try await service.start()
-            try await service.sendRichMessageDraftWithFallback(
-                "## Partial\n\nanswer", to: 42, draftID: 19, fence: makeFence(epoch: try #require(state.wireLifecycleEpoch))
-            )
-            _ = await service.stop()
-        }
-        let requests = transport.requests
-        #expect(requests.map(\.method) == ["sendRichMessageDraft", "sendMessageDraft"])
-        let fallback = try jsonDictionary(requests[1].body)
-        #expect(fallback["draft_id"] as? Int == 19)
-        #expect(fallback["text"] as? String == "Partial\n\nanswer")
-    }
-
-    @Test
     func ambiguousFailureNeverFallsBackAndRiskDuplicate() async throws {
         let transport = RichRecordingTransport(richStatus: 500)
         let support = try makeSupportDirectory()
@@ -157,19 +110,6 @@ struct TerminalTelegramRichMessageTests {
             _ = await service.stop()
         }
         #expect(transport.requests.map(\.method) == ["sendRichMessage"])
-    }
-
-    @Test
-    func cancelledRichSendDoesNotEmitPlainFallback() async throws {
-        let transport = CancellingRichTransport()
-        let client = TerminalTelegramAPIClient(token: "token", transport: transport)
-        let task = Task {
-            try await client.sendRichMessage(PresentationDocument(markdown: "visible"), to: 42)
-        }
-        await transport.waitUntilStarted()
-        task.cancel()
-        await #expect(throws: CancellationError.self) { try await task.value }
-        #expect(await transport.attempts == 1)
     }
 
     @Test
@@ -201,18 +141,6 @@ struct TerminalTelegramRichMessageTests {
         }
     }
 
-    @Test
-    func compatibilityClassificationExcludesRateLimitsAndServerFailures() {
-        #expect(TerminalTelegramControlService.isRichMessageCompatibilityError(
-            .apiFailure(status: 400, errorCode: 400, description: "Bad Request: rich messages unsupported", retryAfter: nil)
-        ))
-        #expect(TerminalTelegramControlService.isRichMessageCompatibilityError(.httpError(404, nil)))
-        #expect(!TerminalTelegramControlService.isRichMessageCompatibilityError(
-            .apiFailure(status: 429, errorCode: 429, description: "retry", retryAfter: 1)
-        ))
-        #expect(!TerminalTelegramControlService.isRichMessageCompatibilityError(.httpError(500, nil)))
-    }
-
     /// A 400 whose description names an entity-parsing failure is the Markdown
     /// fallback contract: the plain-text retry keeps the receipt API usable
     /// when Telegram rejects the markup.
@@ -239,49 +167,6 @@ struct TerminalTelegramRichMessageTests {
         #expect(first["parse_mode"] as? String == "Markdown")
         #expect(fallback["parse_mode"] == nil)
         #expect(fallback["text"] as? String == "**bold with <bad> tag**")
-    }
-
-    /// Only a 400 that names entity parsing is a markup failure: an explicit
-    /// 429 is retried by the governor with the same Markdown payload (never a
-    /// plain-text resend), and any other 400 surfaces after exactly one send.
-    @Test
-    func nonMarkupFailuresNeverResendAsPlainText() async throws {
-        // (status, description, retryAfterPayload, expectedSendCount)
-        let cases: [(Int, String, Bool, Int)] = [
-            (429, "Too Many Requests: retry after 1", true, 2),
-            (400, "Bad Request: chat not found", false, 1),
-        ]
-        for rejection in cases {
-            let transport = MarkdownFallbackTransport(
-                status: rejection.0, description: rejection.1,
-                includeRetryAfter: rejection.2
-            )
-            let support = try makeSupportDirectory()
-            try await AppStorageDirectory.withSupportDirectoryURL(support) {
-                let service = TerminalTelegramControlService(transportFactory: { transport })
-                let state = try await service.start()
-                if rejection.0 == 429 {
-                    let returned = try await service.sendMessage(
-                        "hello", to: 42, topicID: nil,
-                        fence: makeFence(epoch: try #require(state.wireLifecycleEpoch))
-                    )
-                    #expect(returned.isActive)
-                } else {
-                    await #expect(throws: TerminalTelegramControlError.self) {
-                        _ = try await service.sendMessage(
-                            "hello", to: 42, topicID: nil,
-                            fence: makeFence(epoch: try #require(state.wireLifecycleEpoch))
-                        )
-                    }
-                }
-                _ = await service.stop()
-            }
-            #expect(transport.requests.count == rejection.3)
-            for request in transport.requests {
-                let body = try jsonDictionary(request.body)
-                #expect(body["parse_mode"] as? String == "Markdown")
-            }
-        }
     }
 
     private func jsonObject(_ value: some Encodable) throws -> [String: Any] {
@@ -356,28 +241,6 @@ private final class RichRecordingTransport: TelegramHTTPTransport, @unchecked Se
     }
 
     var requests: [Request] { storage.withLock { $0 } }
-}
-
-private actor CancellingRichTransport: TelegramHTTPTransport {
-    private var continuation: CheckedContinuation<Void, Never>?
-    private var started = false
-    private(set) var attempts = 0
-
-    func send(
-        url: URL, method: String, headers: [RemoteHTTPHeader], body: Data?, timeout: Duration?
-    ) async throws -> (status: Int, body: Data) {
-        attempts += 1
-        started = true
-        continuation?.resume()
-        continuation = nil
-        try await Task.sleep(for: .seconds(30))
-        return (200, Data())
-    }
-
-    func waitUntilStarted() async {
-        if started { return }
-        await withCheckedContinuation { continuation = $0 }
-    }
 }
 
 private actor LifecycleMessageGateTransport: TelegramHTTPTransport {

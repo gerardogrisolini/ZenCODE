@@ -15,29 +15,6 @@ import ToolCore
 
 extension RemoteSessionSnapshotTests {
     @Test
-    func remoteClientCarriesTheProfileRoleIntoToolExecutionContext() async {
-        let client = RemoteGenerationClient(
-            configuration: AgentRuntimeConfiguration(
-                modelID: "unit-model",
-                workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
-                maxToolRounds: 4,
-                toolAuthorizationHandler: nil,
-                profileRole: .organizer
-            ),
-            provider: AgentRemoteProvider(
-                name: "OpenAI",
-                baseURL: "https://api.openai.com/v1",
-                modelID: "unit-model",
-                chatEndpoint: .responses
-            ),
-            apiKey: nil
-        )
-
-        #expect(await client.toolExecutor.toolExecutionContext.profileRole == .organizer)
-        await client.shutdown()
-    }
-
-    @Test
     func remoteToolCatalogRenderingIsByteStable() throws {
         let descriptors = [
             DirectToolDescriptor(
@@ -60,21 +37,6 @@ extension RemoteSessionSnapshotTests {
         #if canImport(CryptoKit)
         #expect(SHA256.hash(data: firstData) == SHA256.hash(data: secondData))
         #endif
-    }
-
-    @Test
-    func remoteInitialMessagesRoundTripToolTranscript() {
-        let history = remoteHistory()
-        let messages = RemoteGenerationClient.initialMessages(
-            cwd: "/tmp/project",
-            systemPrompt: "System prompt",
-            history: history,
-            allowedToolNames: ["local.exec"]
-        )
-        let snapshot = RemoteGenerationClient.snapshotMessages(from: messages)
-
-        #expect(snapshot.systemPrompt == "System prompt")
-        #expect(snapshot.history == history)
     }
 
     @Test
@@ -146,45 +108,6 @@ extension RemoteSessionSnapshotTests {
         #expect(assistant?["reasoning_items"] as? String == reasoningItemsJSON)
         #expect(assistant?["thinking_blocks"] as? String == thinkingBlocksJSON)
         #expect(assistant?["response_id"] as? String == "resp_first")
-    }
-
-    @Test
-    func remoteClientSnapshotUsesLocalTranscript() async {
-        let history = remoteHistory()
-        let configuration = AgentRuntimeConfiguration(
-            modelID: "remote-model",
-            workingDirectory: URL(fileURLWithPath: "/tmp/project"),
-            maxToolRounds: 4,
-            toolAuthorizationHandler: nil
-        )
-        let client = RemoteGenerationClient(
-            configuration: configuration,
-            provider: AgentRemoteProvider(
-                name: "Remote remote-server",
-                baseURL: "http://127.0.0.1:8080/v1",
-                modelID: "remote-model",
-                chatEndpoint: .responses
-            ),
-            apiKey: nil
-        )
-
-        await client.createSession(
-            id: "session-remote",
-            cwd: "/tmp/project",
-            systemPrompt: "System prompt",
-            history: history,
-            cacheKey: "cache-remote",
-            allowedToolNames: ["local.exec"],
-            thinkingSelection: nil,
-            preserveThinking: false
-        )
-
-        let snapshot = await client.snapshotSession(id: "session-remote")
-
-        #expect(snapshot?.sessionID == "session-remote")
-        #expect(snapshot?.systemPrompt == "System prompt")
-        #expect(snapshot?.cacheKey == "cache-remote")
-        #expect(snapshot?.history == history)
     }
 
 #if os(macOS)
@@ -316,53 +239,6 @@ extension RemoteSessionSnapshotTests {
 #endif
 
     @Test
-    func remoteToolWireCatalogRewritesResponsesHistoryNames() throws {
-        let catalog = RemoteToolWireCatalog(
-            descriptors: [
-                DirectToolDescriptor(
-                    name: "local.exec",
-                    description: "Run a shell command.",
-                    inputSchema: #"{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}"#
-                ),
-                DirectToolDescriptor(
-                    name: "git.diff",
-                    description: "Run git diff.",
-                    inputSchema: #"{"type":"object","properties":{}}"#
-                )
-            ]
-        )
-        let messages = RemoteGenerationClient.initialMessages(
-            cwd: "/tmp/project",
-            systemPrompt: "System prompt",
-            history: remoteHistory(),
-            allowedToolNames: ["local.exec"]
-        )
-
-        let wireMessages = catalog.wireMessages(from: messages)
-        let payload = RemoteGenerationClient.responsesInputPayload(from: wireMessages)
-        let inputObjects = payload.input.compactMap { $0 as? [String: Any] }
-        let functionCall = try #require(
-            inputObjects.first { $0["type"] as? String == "function_call" }
-        )
-        let toolPayloadNames = catalog.responsesToolPayloads.compactMap {
-            $0["name"] as? String
-        }
-        let localToolCall = catalog.localToolCall(
-            from: DirectAgentToolCall(
-                id: "call_2",
-                name: "tool_git_diff",
-                argumentsObject: [:],
-                argumentsJSON: "{}"
-            )
-        )
-
-        #expect(functionCall["name"] as? String == "tool_local_exec")
-        #expect(toolPayloadNames.contains("tool_local_exec"))
-        #expect(!toolPayloadNames.contains("local.exec"))
-        #expect(localToolCall.name == "git.diff")
-    }
-
-    @Test
     func remoteToolWireCatalogKeepsCanonicalAndWireNamespacesDirectional() throws {
         let firstPresentation = ToolPresentationDefinition.standard(
             title: "First tool",
@@ -414,62 +290,6 @@ extension RemoteSessionSnapshotTests {
         #expect(firstIncoming.presentation == firstPresentation)
         #expect(secondIncoming.name == "tool_local_exec")
         #expect(secondIncoming.presentation == secondPresentation)
-    }
-
-    @Test
-    func remoteToolWireCatalogDoesNotMapSingularTaskNamespaceToTasks() {
-        let catalog = RemoteToolWireCatalog(
-            descriptors: [
-                DirectToolDescriptor(
-                    name: "tasks.list",
-                    description: "List task graph records.",
-                    inputSchema: #"{"type":"object","properties":{}}"#
-                )
-            ]
-        )
-        let singularToolCall = DirectAgentToolCall(
-            id: "call_tasks",
-            name: "task.list",
-            argumentsObject: [:],
-            argumentsJSON: "{}"
-        )
-
-        #expect(
-            catalog.wireName(forToolName: "task.list")
-                != catalog.wireName(forToolName: "tasks.list")
-        )
-        #expect(catalog.localToolCall(from: singularToolCall).name == "task.list")
-    }
-
-    @Test
-    func remoteToolWireCatalogSanitizesFeatureNamesForResponses() throws {
-        let catalog = RemoteToolWireCatalog(
-            descriptors: [
-                DirectToolDescriptor(
-                    name: "fixture.Build",
-                    description: "Feature: build project.",
-                    inputSchema: #"{"type":"object","properties":{}}"#
-                )
-            ]
-        )
-        let toolPayloadNames = catalog.responsesToolPayloads.compactMap {
-            $0["name"] as? String
-        }
-        let chatToolPayloadNames = catalog.chatCompletionToolPayloads.compactMap {
-            (($0["function"] as? [String: Any])?["name"] as? String)
-        }
-        let localToolCall = catalog.localToolCall(
-            from: DirectAgentToolCall(
-                id: "call_feature",
-                name: "tool_fixture_Build",
-                argumentsObject: [:],
-                argumentsJSON: "{}"
-            )
-        )
-
-        #expect(toolPayloadNames == ["tool_fixture_Build"])
-        #expect(chatToolPayloadNames == ["tool_fixture_Build"])
-        #expect(localToolCall.name == "fixture.Build")
     }
 
     @Test

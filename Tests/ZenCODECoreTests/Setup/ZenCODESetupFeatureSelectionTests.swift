@@ -45,14 +45,4 @@ struct ZenCODESetupFeatureSelectionTests {
         #expect(plan.idsToDisable.isEmpty)
         #expect(plan.enabledAfterUpdate.isEmpty)
     }
-
-    @Test
-    func unchangedSelectionProducesNoActions() {
-        let plan = ZenCODESetupRunner.featureSelectionPlan(
-            requested: [.toggle("git-tools"), .toggle("swift-tools")],
-            enabledIDs: ["git-tools", "swift-tools"]
-        )
-
-        #expect(plan == ZenCODESetupRunner.FeatureSelectionPlan())
-    }
 }

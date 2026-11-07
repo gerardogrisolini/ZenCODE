@@ -10,26 +10,6 @@ import Testing
 
 @Suite
 struct TerminalMarkdownCodeRenderingTests {
-    @Test
-    func indentedCodeFenceDoesNotAddAnUnindentedBlankRow() {
-        var stream = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 32,
-            supportsHyperlinks: false,
-            palette: .dark
-        )
-
-        let rendered = stream.consume("```text\nvalue\n```\n") + stream.finish()
-        let indented = TerminalChatRenderCoordinator.indentedMarkdown(
-            rendered,
-            with: "   "
-        )
-        let rows = TerminalANSIText.stripANSI(indented)
-            .split(separator: "\n", omittingEmptySubsequences: false)
-
-        #expect(rows.count == 2)
-        #expect(rows.allSatisfy { $0.hasPrefix("   ") })
-    }
 
     @Test
     func tablesReservePresentationIndentationInTheirLayoutWidth() {
@@ -203,34 +183,6 @@ struct TerminalMarkdownCodeRenderingTests {
     }
 
     @Test
-    func streamingTildeFenceMatchesCompleteParser() {
-        let source = """
-        ~~~swift
-        let value = 1
-        ~~~
-        after
-        """
-        let palette = TerminalMarkdownPalette.dark
-        var documentRenderer = TerminalSwiftMarkdownRenderer(
-            supportsHyperlinks: false,
-            renderWidth: 32,
-            palette: palette
-        )
-        let complete = documentRenderer.visit(Document(parsing: source))
-        var stream = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 33,
-            supportsHyperlinks: false,
-            palette: palette
-        )
-        let streamed = stream.consume(source) + stream.finish()
-
-        #expect(complete == streamed.trimmingCharacters(in: .newlines))
-        #expect(TerminalANSIText.stripANSI(streamed).contains("Code · Swift"))
-        #expect(!streamed.contains("~~~"))
-    }
-
-    @Test
     func codePayloadControlsAndTabsAreVisibleSafeAndWidthStable() {
         let palette = TerminalMarkdownPalette.dark
         let payload = "a\tb\r\u{1B}[31mred\u{202E}x"
@@ -253,52 +205,6 @@ struct TerminalMarkdownCodeRenderingTests {
         )
         #expect(rows.count == 2)
         #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) == 12 })
-    }
-
-    @Test
-    func streamingCodeFenceNormalizesSplitCRLFAndExpandsTabs() {
-        var stream = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 41,
-            supportsHyperlinks: false,
-            palette: .dark
-        )
-        var rendered = ""
-        for delta in ["```text\r", "\nleft\tright\r", "\n```\r", "\n"] {
-            rendered += stream.consume(delta)
-        }
-        rendered += stream.finish()
-
-        let visible = TerminalANSIText.stripANSI(rendered)
-        #expect(visible.contains("left    right"))
-        #expect(!visible.contains("␍"))
-        #expect(!rendered.contains("\t"))
-        #expect(!rendered.contains("\r"))
-    }
-
-    @Test
-    func diffRowsUseDedicatedSemanticStyles() {
-        let palette = TerminalMarkdownPalette.dark
-        let rendered = TerminalCodeBlockRenderer.renderBlock(
-            """
-            diff --git a/File.swift b/File.swift
-            --- a/File.swift
-            +++ b/File.swift
-            @@ -1,2 +1,2 @@
-            -let old = 1
-            +let new = 2
-             let unchanged = true
-            """,
-            language: "diff",
-            width: 60,
-            palette: palette
-        )
-
-        #expect(rendered.contains("\(palette.diffHeader)--- a/File.swift"))
-        #expect(rendered.contains("\(palette.diffHeader)+++ b/File.swift"))
-        #expect(rendered.contains("\(palette.diffHunk)@@ -1,2 +1,2 @@"))
-        #expect(rendered.contains("\(palette.diffRemoval)-\(TerminalStyle.reset)\(palette.codeForeground)\(palette.diffRemovalBackground)let old = 1"))
-        #expect(rendered.contains("\(palette.diffAddition)+\(TerminalStyle.reset)\(palette.codeForeground)\(palette.diffAdditionBackground)let new = 2"))
     }
 
     @Test

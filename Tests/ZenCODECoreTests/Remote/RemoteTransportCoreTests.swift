@@ -716,73 +716,6 @@ struct RemoteTransportCoreTests {
         await server.shutdown()
     }
 
-    @Test("WebSocket send completes while a receive is already parked")
-    func webSocketSendProceedsWhileReceiveIsPending() async throws {
-        let serverReady = TestSignal()
-        let server = try await LocalWebSocketTestServer.start(
-            onWebSocketReady: {
-                Task { await serverReady.signal() }
-            }
-        )
-        let transport = RemoteTransportCore(owningEventLoopThreads: 1)
-
-        do {
-            let socket = try await transport.connectWebSocket(
-                RemoteWebSocketRequest(
-                    url: server.url(path: "/frames"),
-                    headers: [RemoteHTTPHeader(name: "x-transport-test", value: "websocket")]
-                )
-            )
-            // `handlerAdded` is a concrete server-side edge: the echo handler
-            // is installed before the client starts its parked receive.
-            try await wait(for: serverReady)
-
-            // Mirror the ChatGPT driver: a reader parks on receive() first,
-            // then a ping is sent on an otherwise idle connection. The ping
-            // frame must be written while the receive is still awaiting.
-            let receiveTask = Task {
-                try await socket.receive()
-            }
-            defer { receiveTask.cancel() }
-
-            // Do not infer this from elapsed time. The driver reports that the
-            // receive request has left its queue for the read loop; this idle
-            // fixture cannot complete it before the ping is written.
-            try await awaitWebSocketReceiveParked(socket.driver)
-            let pingPayload = Data("readiness".utf8)
-            try await socket.send(.ping(pingPayload))
-
-            let received = try await withThrowingTaskGroup(
-                of: RemoteWebSocketFrame?.self
-            ) { group in
-                group.addTask {
-                    try await receiveTask.value
-                }
-                group.addTask {
-                    try await Task.sleep(for: .seconds(5))
-                    throw RemoteTransportError.timeout
-                }
-                defer { group.cancelAll() }
-                while let frame = try await group.next() {
-                    if frame != nil {
-                        return frame
-                    }
-                }
-                return nil
-            }
-            #expect(received == .pong(Data("readiness".utf8)))
-
-            try await socket.close()
-        } catch {
-            await transport.shutdownIgnoringError()
-            await server.shutdown()
-            throw error
-        }
-
-        try await transport.shutdown()
-        await server.shutdown()
-    }
-
     @Test("Releasing an abandoned HTTP/SSE stream tears down its parked driver")
     func httpStreamAbandonmentReleasesParkedDriver() async throws {
         // The server keeps the body open; the consumer reads one event and then
@@ -1805,25 +1738,6 @@ private func wait(for signal: TestSignal) async throws {
             throw RemoteTransportError.timeout
         }
         return result
-    }
-}
-
-/// Waits for the actual driver state instead of treating a scheduler delay as
-/// proof that `receive()` reached the inbound stream. The deadline is only a
-/// failure bound; the observed parked state is the synchronization edge.
-private func awaitWebSocketReceiveParked(
-    _ driver: RemoteWebSocketDriver,
-    timeout: Duration = .seconds(5)
-) async throws {
-    let deadline = ContinuousClock.now.advanced(by: timeout)
-    while ContinuousClock.now < deadline {
-        if await driver.hasParkedReceiveForTesting() {
-            return
-        }
-        try await Task.sleep(for: .milliseconds(1))
-    }
-    guard await driver.hasParkedReceiveForTesting() else {
-        throw RemoteTransportError.timeout
     }
 }
 

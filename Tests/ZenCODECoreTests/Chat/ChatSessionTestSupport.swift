@@ -121,16 +121,8 @@ actor RecordingChatPresenter: ChatSessionPresenter {
         events = []
     }
 
-    func setReservesTaskGraphPublications(_ reserves: Bool) {
-        reservesTaskGraphPublications = reserves
-    }
-
     func setRecordsSubAgentOverviews(_ records: Bool) {
         recordsSubAgentOverviews = records
-    }
-
-    func setReservesSubAgentPublications(_ reserves: Bool) {
-        reservesSubAgentPublications = reserves
     }
 
     /// The sub-agent reservations taken so far, in order.
@@ -472,16 +464,6 @@ actor ScriptedChatInteractionHost: ChatInteractionHost {
         workspaceAnswers.append(granted)
     }
 
-    /// Queues the file the next attachment picker returns (`nil` cancels).
-    func answerPickAttachment(_ answer: URL?) {
-        attachmentAnswers.append(answer)
-    }
-
-    /// Makes the next `openExternal` throw `message`; without one it opens.
-    func failNextOpenExternal(_ message: String) {
-        openFailures.append(message)
-    }
-
     func clearInteractions() {
         interactions = []
     }
@@ -788,19 +770,6 @@ actor ScriptedChatRuntime: ChatSessionManagementRuntime {
     ) {
         engineRestoreOutcome = outcome
         engineRestoreEvents = events
-    }
-
-    func setUpdateSessionOptionsError(_ error: Error?) {
-        updateSessionOptionsError = error
-    }
-
-    /// Runs `hook` after each task-graph read from now on, before the read
-    /// returns its snapshot, with the number of reads since the hook was set
-    /// (1 for the first). A test changes the graph there to land a change
-    /// between two reads of the controller.
-    func setTaskGraphReadHook(_ hook: (@Sendable (Int) async -> Void)?) {
-        taskGraphReadHook = hook
-        taskGraphReadCount = 0
     }
 
     /// Runs `hook` with the graph's ID after each task-graph activation from

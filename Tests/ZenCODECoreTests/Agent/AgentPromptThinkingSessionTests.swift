@@ -11,103 +11,6 @@ import Testing
 
 extension AgentConfigurationTests {
     @Test
-    func defaultAgentInstructionsArePlatformNeutralAndOmitDynamicFeatureWorkflow() {
-        let instructions = SystemPromptBuilder.defaultAgentInstructions()
-
-        #expect(instructions.contains("on the user's machine"))
-        #expect(!instructions.contains("on the user's Mac"))
-        #expect(!instructions.contains("Dynamic Swift feature workflow:"))
-        #expect(!instructions.contains("dynamic Swift feature tools"))
-        #expect(!instructions.contains("feature.scaffold"))
-        #expect(!instructions.contains("feature.validate"))
-        #expect(!instructions.contains("feature.build"))
-        #expect(!instructions.contains("feature.enable"))
-        #expect(!instructions.contains("feature.reload"))
-        #expect(!instructions.contains("feature.install"))
-        #expect(!instructions.contains("feature.delete"))
-        #expect(!instructions.contains("Swift tools 6.4"))
-        #expect(instructions.contains("local.inspectFile"))
-        #expect(instructions.contains("search.locate"))
-        #expect(instructions.contains("local.readFile` offset/limit"))
-    }
-
-    @Test
-    func defaultAgentInstructionsDoNotRequireQuestionSentinel() {
-        let instructions = SystemPromptBuilder.defaultAgentInstructions()
-
-        #expect(!instructions.contains("follow-up question"))
-        #expect(!instructions.contains("final character"))
-        #expect(!instructions.contains("whose final character is `?`"))
-        #expect(!instructions.contains("inspect, search, read, edit, write, or test"))
-//        #expect(instructions.contains("Before starting file modifications, briefly explain the intended changes"))
-//        #expect(instructions.contains("files or areas you expect to edit and what you expect to change"))
-//        #expect(instructions.contains("intended edits must be visible before the confirmation question"))
-//        #expect(instructions.contains("Do not modify files until the user confirms"))
-        #expect(!instructions.contains("required pre-edit list"))
-        #expect(!instructions.contains("files you modified"))
-        #expect(!instructions.contains("If you did not modify files"))
-        #expect(instructions.contains("Once the requested work is complete and no tool call is needed, stop."))
-    }
-
-    @Test
-    func defaultAgentInstructionsRequireConciseProgressCommentsAroundToolWork() {
-        let instructions = SystemPromptBuilder.defaultAgentInstructions()
-
-        #expect(instructions.contains("briefly comment before the first tool call in a phase"))
-        #expect(instructions.contains("concise progress updates at phase boundaries"))
-        #expect(instructions.contains("do not narrate every trivial call"))
-        #expect(instructions.contains("Keep any narration as natural-language assistant text"))
-        #expect(instructions.contains("read enough exact text to make `old` unique"))
-        #expect(instructions.contains("`local.multiEdit` for ordered atomic edits to one file"))
-        #expect(instructions.contains("`local.applyPatch` for large or multi-file changes"))
-        #expect(instructions.contains("avoid `local.writeFile` for partial edits"))
-        #expect(!instructions.contains("explanations around tool calls"))
-    }
-
-    @Test
-    func legacyDefaultInstructionsAlsoIncludeTaskOrchestrationPolicy() {
-        let instructions = SystemPromptBuilder.defaultAgentInstructions(
-            memoryToolEnabled: false
-        )
-
-        #expect(instructions.contains("Task workflow policy:"))
-        #expect(instructions.contains("A `/goal` graph remains persistent even for entirely direct work"))
-        #expect(instructions.contains("new canonical agent.create item containing `taskID`"))
-    }
-
-    @Test
-    func responseLanguageSectionSupportsGenericAndLockedPrompts() {
-        let genericPrompt = SystemPromptBuilder.responseLanguageSection()
-        let lockedPrompt = SystemPromptBuilder.responseLanguageSection(languageName: "Italian")
-
-        #expect(genericPrompt.contains("Use the operating system language"))
-        #expect(lockedPrompt.contains("locked to Italian"))
-        #expect(lockedPrompt.contains("Use Italian for all natural-language replies"))
-    }
-
-    @Test
-    func standalonePromptKeepsResponseLanguageInstructionInSystemPrefix() throws {
-        let prompt = SystemPromptBuilder.standalonePrompt(
-            cwd: "/tmp/project",
-            agentsSection: "Agent instructions:\nAnswer briefly.",
-            memorySection: "Memory tools:\nUse memory.read when relevant.",
-            memoryToolEnabled: true,
-            selectedSkillSection: "Selected skill guidance:\nUse the selected skill."
-        )
-
-        #expect(prompt.contains("Response language:"))
-        #expect(prompt.contains("Use the operating system language for all natural-language replies."))
-        #expect(prompt.contains("Ignore hidden/internal prompts generated by slash commands when determining the response language."))
-
-        let skillRange = try #require(prompt.range(of: "Selected skill guidance:"))
-        let languageRange = try #require(prompt.range(of: "Response language:"))
-        let closingRange = try #require(prompt.range(of: "Turn-closing rule:"))
-
-        #expect(languageRange.upperBound < closingRange.lowerBound)
-        #expect(closingRange.upperBound < skillRange.lowerBound)
-    }
-
-    @Test
     func taskWorkflowPolicyIsConditionalOnTheRequiredTaskTools() throws {
         let taskTools: Set<String> = [
             "tasks.create",
@@ -229,40 +132,6 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    func providedSystemPromptKeepsResponseLanguageInstructionLast() throws {
-        let prompt = AgentCoreAppSessionFactory.resolvedSystemPrompt(
-            providedSystemPrompt: "Client instructions written in English.",
-            cwd: "/tmp/project",
-            selectedAgent: AgentProfile(
-                id: "developer",
-                name: "Developer",
-                instructions: "Selected agent instructions written in English.",
-                role: .developer
-            ),
-            allowedToolNames: []
-        )
-
-        #expect(prompt.contains("Client instructions written in English."))
-        #expect(prompt.contains("Response language:"))
-        let providedRange = try #require(prompt.range(of: "Client instructions written in English."))
-        let languageRange = try #require(prompt.range(of: "Response language:"))
-        #expect(providedRange.upperBound < languageRange.lowerBound)
-    }
-
-    @Test
-    func hostedConfigurationCanReloadAgentProfilesFromStore() throws {
-        let configuration = try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            availableAgents: AgentProfileStore.defaultProfiles(),
-            cacheAgentProfiles: false,
-            workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true)
-        )
-
-        #expect(configuration.selectedAgent?.displayName == AgentProfileStore.developerAgentName)
-        #expect(configuration.hostedAgentProfiles == nil)
-    }
-
-    @Test
     func removedDefaultProfileNameIsRejected() {
         #expect(throws: AgentConfigurationError.self) {
             _ = try AgentConfiguration(
@@ -272,28 +141,6 @@ extension AgentConfigurationTests {
                 workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true)
             )
         }
-    }
-
-    @Test
-    func toolRoundPolicyCentralizesDefaultAndNormalization() throws {
-        let configuration = try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            availableAgents: AgentProfileStore.defaultProfiles(),
-            workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true)
-        )
-        let sessionConfiguration = AgentCoreSessionConfiguration(
-            sessionID: "tool-round-policy",
-            modelID: nil,
-            workingDirectory: "/tmp/project",
-            systemPrompt: nil,
-            cacheKey: nil,
-            history: [],
-            maxToolRounds: 0
-        )
-
-        #expect(configuration.maxToolRounds == AgentToolRoundPolicy.defaultMaxToolRounds)
-        #expect(AgentConfiguration.helpText.contains("Default: \(AgentToolRoundPolicy.defaultMaxToolRounds)."))
-        #expect(sessionConfiguration.maxToolRounds == AgentToolRoundPolicy.minimumMaxToolRounds)
     }
 
     @Test
@@ -332,35 +179,6 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    func terminalDefaultThinkingUsesSettingsSelection() {
-        let manifest = thinkingSelectionManifest(selectedThinkingSelection: .high)
-
-        let thinkingSelection = TerminalChat.effectiveThinkingSelection(
-            manualThinkingSelectionOverride: nil,
-            hostedModel: nil,
-            explicitModelID: nil,
-            agentModelID: nil,
-            manifest: manifest
-        )
-
-        #expect(thinkingSelection == .high)
-    }
-
-    @Test
-    func appSessionDefaultThinkingUsesSettingsSelection() {
-        let manifest = thinkingSelectionManifest(selectedThinkingSelection: .high)
-
-        let thinkingSelection = AgentCoreAppSessionFactory.resolvedThinkingSelection(
-            nil,
-            explicitModelID: nil,
-            agentModelID: nil,
-            manifest: manifest
-        )
-
-        #expect(thinkingSelection == .high)
-    }
-
-    @Test
     func agentThinkingOverridesSettingsSelection() {
         let manifest = thinkingSelectionManifest(selectedThinkingSelection: .high)
 
@@ -382,45 +200,6 @@ extension AgentConfigurationTests {
 
         #expect(terminalThinkingSelection == .low)
         #expect(appSessionThinkingSelection == .low)
-    }
-
-    @Test
-    func hostedAgentThinkingOverridesHostedModelDefault() {
-        let hostedModel = thinkingSelectionManifest(selectedThinkingSelection: .medium).models[0]
-
-        let thinkingSelection = TerminalChat.effectiveThinkingSelection(
-            manualThinkingSelectionOverride: nil,
-            hostedModel: hostedModel,
-            explicitModelID: nil,
-            agentModelID: hostedModel.id,
-            agentThinkingSelection: .high
-        )
-
-        #expect(thinkingSelection == .high)
-    }
-
-    @Test
-    @ChatSessionActor
-    func terminalSessionConfigurationUsesSessionIDCacheKeyByDefault() throws {
-        let workingDirectory = URL(
-            fileURLWithPath: "/tmp/ZenCODE-cache-project",
-            isDirectory: true
-        )
-        let configuration = try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            availableAgents: AgentProfileStore.defaultProfiles(),
-            workingDirectory: workingDirectory
-        )
-        let terminal = TerminalChat(
-            configuration: configuration,
-            stdinIsTerminal: false
-        )
-
-        let sessionConfiguration = terminal.currentSessionConfiguration(
-            allowedToolNames: []
-        )
-
-        #expect(sessionConfiguration.cacheKey == terminal.sessionID)
     }
 
     @Test

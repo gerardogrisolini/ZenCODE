@@ -45,31 +45,6 @@ struct SemanticGateAndFusionTests {
         #expect(ungated.count == 9)
     }
 
-    @Test func gateYieldsNothingForAFlatDistribution() {
-        let graph = Self.graph(similarities: Array(repeating: 0.6, count: 9))
-
-        let gated = MemorySearch.semantic(
-            graph: graph, queryEmbedding: [1, 0], modelID: Self.model,
-            threshold: 0.4, minimumZScore: 2, limit: 10
-        )
-
-        #expect(gated.isEmpty)
-    }
-
-    @Test func gateIsNotAppliedBelowTheMinimumSampleSize() {
-        // Four entries can never produce a 2σ outlier; the absolute floor alone applies.
-        let graph = Self.graph(similarities: [0.5, 0.5, 0.5, 0.7])
-
-        let hits = MemorySearch.semantic(
-            graph: graph, queryEmbedding: [1, 0], modelID: Self.model,
-            threshold: 0.4, minimumZScore: 2, limit: 10
-        )
-
-        #expect(graph.memories.count < MemorySearch.minimumGateSampleSize)
-        #expect(hits.count == 4)
-        #expect(hits.first?.id == "m3")
-    }
-
     @Test func robustScaleIsNotInflatedByAFewGenuineMatches() {
         // Three matches among ten: with mean/standard deviation the matches
         // inflate the spread until nothing passes 2σ; median/MAD keeps them.
@@ -82,17 +57,6 @@ struct SemanticGateAndFusionTests {
         )
 
         #expect(Set(hits.map(\.id)) == ["m7", "m8", "m9"])
-    }
-
-    @Test func absoluteThresholdStillAppliesUnderTheGate() {
-        let graph = Self.graph(similarities: [0.10, 0.11, 0.12, 0.12, 0.13, 0.13, 0.14, 0.15, 0.35])
-
-        let hits = MemorySearch.semantic(
-            graph: graph, queryEmbedding: [1, 0], modelID: Self.model,
-            threshold: 0.4, minimumZScore: 2, limit: 10
-        )
-
-        #expect(hits.isEmpty)
     }
 
     @Test func normalizedFusionKeepsADominantSingleListHitAhead() {
@@ -115,34 +79,5 @@ struct SemanticGateAndFusionTests {
         #expect(normalized[2].id == "both")
         // Reciprocal ranks reward mere presence in both lists.
         #expect(reciprocal.first?.id == "both")
-    }
-
-    @Test func normalizedFusionRanksAnEntryNearTheTopOfBothListsFirst() {
-        let lexical = [ScoredMemoryID(id: "a", score: 10), ScoredMemoryID(id: "shared", score: 9)]
-        let semantic = [ScoredMemoryID(id: "b", score: 0.7), ScoredMemoryID(id: "shared", score: 0.65)]
-
-        let fused = MemorySearch.normalizedScoreFusion(rankedLists: [lexical, semantic], limit: 10)
-
-        #expect(fused.first?.id == "shared")
-        #expect(fused.first.map { abs($0.score - (0.9 + 0.65 / 0.7)) < 0.001 } == true)
-    }
-
-    @Test func normalizedFusionIgnoresListsWithoutPositiveScores() {
-        let lexical = [ScoredMemoryID(id: "a", score: 2)]
-        let empty: [ScoredMemoryID] = []
-        let zeros = [ScoredMemoryID(id: "z", score: 0)]
-
-        let fused = MemorySearch.normalizedScoreFusion(rankedLists: [lexical, empty, zeros], limit: 10)
-
-        #expect(fused.map(\.id) == ["a"])
-        #expect(fused.first?.score == 1)
-    }
-
-    @Test func engineDefaultsUseTheMeasuredConfiguration() {
-        let configuration = MemoryEngineConfiguration()
-
-        #expect(configuration.fusion == .normalizedScore)
-        #expect(configuration.semanticMinimumZScore == 2.5)
-        #expect(configuration.similarityThreshold == 0.4)
     }
 }

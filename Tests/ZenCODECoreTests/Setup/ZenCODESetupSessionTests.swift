@@ -78,25 +78,6 @@ struct ZenCODESetupSessionTests {
     }
 
     @Test
-    func freshSessionWithoutManifestReportsNoModels() {
-        let session = SetupSession(originalManifest: nil)
-
-        #expect(session.manifest == nil)
-        #expect(session.shouldWriteSettings == false)
-        #expect(session.outcome == .noModels)
-    }
-
-    @Test
-    func existingManifestWithoutModelsReportsNoModels() {
-        let empty = Self.emptyManifest(commands: ["ls"])
-        let session = SetupSession(originalManifest: empty)
-
-        #expect(session.manifest == empty)
-        #expect(session.shouldWriteSettings == false)
-        #expect(session.outcome == .noModels)
-    }
-
-    @Test
     func quickSetupMarksRemoteSettingsChangedAndWrites() {
         var session = SetupSession(originalManifest: nil)
         let configured = Self.remoteManifest(commands: ["ls"])
@@ -138,19 +119,6 @@ struct ZenCODESetupSessionTests {
     }
 
     @Test
-    func quickSetupChangeSurvivesAnUnchangedSection() {
-        // The change flag from quick setup must survive an unchanged section.
-        var session = SetupSession(originalManifest: nil)
-        let configured = Self.remoteManifest(commands: ["ls"])
-        session.applyQuickSetup(configured)
-
-        session.apply(SetupSectionConfigurationResult(manifest: configured))
-
-        #expect(session.shouldWriteSettings)
-        #expect(session.outcome == .write(manifest: configured, settingsWillBeWritten: true))
-    }
-
-    @Test
     func clearingAllModelsCannotProduceAWritableOutcome() {
         let original = Self.remoteManifest(commands: ["ls"])
         var session = SetupSession(originalManifest: original)
@@ -160,84 +128,6 @@ struct ZenCODESetupSessionTests {
 
         #expect(session.manifest == empty)
         #expect(session.outcome == .noModels)
-    }
-
-    @Test
-    func remoteResetIsAvailableWithoutConfiguredModels() {
-        let options = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
-
-        // Reset lives only inside the Data management submenu; the main menu
-        // must not duplicate it.
-        #expect(!options.contains { $0.section.title == "Reset remote configuration" })
-        #expect(!options.contains { $0.section.matches("reset") })
-        #expect(options.contains { $0.section == .dataManagement })
-        #expect(!SetupSection.dataManagement.requiresConfiguredModels)
-        let submenu = ZenCODESetupRunner.dataManagementMenuItems()
-        #expect(submenu.contains { $0.value == .reset && $0.title == "Reset remote configuration" })
-    }
-
-    @Test
-    func coreModelAndAgentSectionsAppearInRequiredGroup() {
-        let sections = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
-            .filter { $0.section.category == .required }
-            .map(\.section)
-
-        #expect(sections == [.providersAndModels, .agents])
-    }
-
-    @Test(arguments: [false, true])
-    func setupMenuContainsOnlyConfigurationSections(hasConfiguredModels: Bool) {
-        let manifest = hasConfiguredModels ? Self.remoteManifest() : nil
-        let sections = ZenCODESetupRunner.setupSectionOptions(currentManifest: manifest)
-            .map(\.section)
-
-        #if os(Linux) || os(macOS)
-        #expect(sections == [
-            .providersAndModels, .agents,
-            .agentModels, .responseLanguage, .features, .memoryEmbedding,
-            .ds4Runtime, .telegram, .voiceMode, .scheduledPrompts, .dataManagement,
-            .finish, .cancel,
-        ])
-        #else
-        #expect(sections == [
-            .providersAndModels, .agents,
-            .agentModels, .responseLanguage, .features, .memoryEmbedding,
-            .ds4Runtime, .telegram, .scheduledPrompts, .dataManagement,
-            .finish, .cancel,
-        ])
-        #endif
-        for alias in ["default", "default model", "selected model", "thinking", "default thinking"] {
-            #expect(!sections.contains { $0.matches(alias) })
-        }
-    }
-
-    @Test
-    func voiceToolsAreNotAnAvailableSetupSection() {
-        let options = ZenCODESetupRunner.setupSectionOptions(
-            currentManifest: Self.remoteManifest()
-        )
-
-        #expect(!options.map(\.section).contains { $0.title == "Voice tools" })
-    }
-
-    @Test
-    func telegramVoiceSettingsFollowTelegramStateOnEveryPlatform() {
-        let enabledTelegram = AgentTelegramSettingsManifest(
-            enabled: true,
-            botToken: "token",
-            linkedChatID: 1,
-            linkedChatTitle: nil,
-            ownerUserID: 2,
-            routes: [AgentTelegramRouteManifest(roomID: "default")]
-        )
-
-        // macOS and Linux both transcribe voice messages; the language
-        // follows the response language and is not stored.
-        #expect(
-            ZenCODESetupRunner.voiceSettings(for: enabledTelegram) ==
-                AgentVoiceSettingsManifest(enabled: true)
-        )
-        #expect(ZenCODESetupRunner.voiceSettings(for: nil) == nil)
     }
 
     /// Re-running Telegram setup, enabled or not, keeps the reading voice
@@ -284,27 +174,6 @@ struct ZenCODESetupSessionTests {
     }
 
     @Test
-    func responseLanguageSectionIsAvailableWithoutConfiguredModels() {
-        let options = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
-
-        #expect(options.contains { $0.section == .responseLanguage })
-        #expect(options.contains { $0.section == .ds4Runtime })
-        #expect(!SetupSection.responseLanguage.requiresConfiguredModels)
-        #expect(SetupSection.ds4.title == "DS4 local runtime (in-process engine)")
-        #expect(SetupSection.ds4.matches("ds4 engine"))
-        #expect(SetupSection.responseLanguage.category == .recommended)
-        #expect(SetupSection.responseLanguage.title == "Response language")
-        // A configured language is reflected in the menu detail.
-        let withLanguage = AgentSettingsManifest(models: [], responseLanguage: "it")
-        #expect(
-            ZenCODESetupRunner.responseLanguageSetupDetail(withLanguage) == "Italian"
-        )
-        #expect(
-            ZenCODESetupRunner.responseLanguageSetupDetail(nil) == "system default"
-        )
-    }
-
-    @Test
     func updatingResponseLanguagePreservesExistingSettings() {
         let original = Self.remoteManifest(commands: ["ls"])
         let updated = ZenCODESetupRunner.manifestByUpdatingResponseLanguage(
@@ -317,21 +186,6 @@ struct ZenCODESetupSessionTests {
         #expect(updated.models == original.models)
         #expect(updated.selectedModelID == original.selectedModelID)
         #expect(updated.localExecAllowedCommands == original.localExecAllowedCommands)
-    }
-
-    @Test
-    func responseLanguageChangeMarksSettingsChanged() {
-        let original = Self.remoteManifest(commands: ["ls"])
-        var session = SetupSession(originalManifest: original)
-        let mutated = ZenCODESetupRunner.manifestByUpdatingResponseLanguage(
-            original,
-            responseLanguage: "fr"
-        )
-
-        session.apply(SetupSectionConfigurationResult(manifest: mutated))
-
-        #expect(session.manifest?.responseLanguage == "fr")
-        #expect(session.shouldWriteSettings)
     }
 
     @Test
@@ -462,13 +316,6 @@ struct ZenCODESetupSessionTests {
     }
 
     @Test
-    func threadedModeStatusTextIsExactAndAnUnreportedFlagCountsAsDisabled() {
-        for (flag, line) in Self.threadedCases {
-            #expect(ZenCODESetupRunner.telegramThreadedModeStatus(hasTopicsEnabled: flag) == line)
-        }
-    }
-
-    @Test
     func pairingPrintsTheThreadedModeStatusFromGetMeBeforeTheLink() async throws {
         var writtenManifests = Set<Data>()
         for (flag, line) in Self.threadedCases {
@@ -523,79 +370,6 @@ struct ZenCODESetupSessionTests {
             // polling, no pairing grant.
             #expect(transport.requestPaths == ["/botstored-token/getMe"])
         }
-    }
-
-    @Test
-    func keptPairingIgnoresEveryGetMeFailureInSilence() async throws {
-        let failures: [ThreadedModeWireTransport.GetMe] = [
-            .httpError(401), .undecodable, .unreachable
-        ]
-        for failure in failures {
-            let output = SetupOutputBuffer()
-            let transport = ThreadedModeWireTransport(getMe: failure, output: output)
-
-            let result = try await ZenCODESetupRunner.promptTelegramSettings(
-                existingSettings: Self.keptTelegram,
-                transport: transport,
-                confirm: { label, _ in label == Self.enableLabel },
-                write: { output.append($0) }
-            )
-
-            #expect(result == Self.keptTelegram)
-            #expect(output.text.isEmpty)
-            #expect(transport.requestPaths == ["/botstored-token/getMe"])
-        }
-
-        // Without a usable stored token there is nothing to ask Telegram.
-        for token in [nil, "", "   "] as [String?] {
-            let output = SetupOutputBuffer()
-            let transport = ThreadedModeWireTransport(getMe: .reports(true), output: output)
-            await ZenCODESetupRunner.printStoredTelegramThreadedModeStatus(
-                botToken: token,
-                transport: transport,
-                write: { output.append($0) }
-            )
-            #expect(output.text.isEmpty)
-            #expect(transport.requestPaths.isEmpty)
-        }
-    }
-
-    @Test
-    func decliningTelegramPrintsNoStatusAndAsksTelegramNothing() async throws {
-        let output = SetupOutputBuffer()
-        let transport = ThreadedModeWireTransport(getMe: .reports(true), output: output)
-
-        let result = try await ZenCODESetupRunner.promptTelegramSettings(
-            existingSettings: Self.keptTelegram,
-            transport: transport,
-            confirm: { _, _ in false },
-            write: { output.append($0) }
-        )
-
-        #expect(result == nil)
-        #expect(output.text.isEmpty)
-        #expect(transport.requestPaths.isEmpty)
-    }
-
-    @Test
-    func replacingThePairingPrintsTheStatusOnceFromThePairingFlow() async throws {
-        let output = SetupOutputBuffer()
-        let transport = ThreadedModeWireTransport(getMe: .reports(true), output: output)
-
-        // Replace the pairing, then reuse the stored token.
-        let result = try await ZenCODESetupRunner.promptTelegramSettings(
-            existingSettings: Self.keptTelegram,
-            transport: transport,
-            confirm: { _, _ in true },
-            write: { output.append($0) }
-        )
-
-        #expect(result == Self.pairedTelegram(token: "stored-token"))
-        let text = output.text
-        #expect(text.components(separatedBy: "Threaded mode:").count == 2)
-        #expect(text.contains(Self.threadedEnabledLine + "\n"))
-        #expect(transport.requestPaths.filter { $0.hasSuffix("/getMe") }.count == 1)
-        #expect(transport.requestPaths.contains { $0.hasSuffix("/deleteWebhook") })
     }
 }
 

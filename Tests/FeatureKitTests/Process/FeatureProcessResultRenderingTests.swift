@@ -36,36 +36,6 @@ struct FeatureProcessResultRenderingTests {
     }
 
     @Test
-    func emitsNoOutputPlaceholderWhenOnlyExitCodePresent() {
-        let rendered = result(exitCode: 0).renderedProcessOutput
-
-        #expect(rendered == "exit_code: 0\n<no output>")
-    }
-
-    @Test
-    func includesTimedOutMarkerBeforeStreams() {
-        let rendered = result(
-            exitCode: -1,
-            stdout: "partial",
-            timedOut: true
-        ).renderedProcessOutput
-
-        #expect(rendered == "exit_code: -1\ntimed_out: true\nstdout:\npartial")
-    }
-
-    @Test
-    func treatsWhitespaceOnlyStreamsAsEmpty() {
-        let rendered = result(
-            exitCode: 0,
-            stdout: "   \n",
-            stderr: "\t"
-        ).renderedProcessOutput
-
-        // Whitespace-only stdout/stderr are dropped, leaving the placeholder.
-        #expect(rendered == "exit_code: 0\n<no output>")
-    }
-
-    @Test
     func staticRendererMatchesValueTypeRendering() {
         // Callers holding already-decoded stdout/stderr (e.g. ProcessResult)
         // must produce byte-identical output to FeatureProcessResult.

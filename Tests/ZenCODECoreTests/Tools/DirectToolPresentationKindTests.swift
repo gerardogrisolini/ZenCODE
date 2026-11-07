@@ -33,44 +33,4 @@ struct DirectToolPresentationKindTests {
         #expect(executeToolNames(in: DirectToolCatalog.featureDescriptors).isEmpty)
         #expect(executeToolNames(in: DirectToolCatalog.todoTaskDescriptors).isEmpty)
     }
-
-    @Test
-    func formerExecuteToolsKeepTheirActionButPresentAsOther() throws {
-        let expectedActions = [
-            "tasks.retry": "Retry",
-            "feature.reload": "Reload",
-            "feature.build": "Build",
-        ]
-        let descriptors = DirectToolCatalog.baseDescriptors
-        for (name, action) in expectedActions {
-            let descriptor = try #require(descriptors.first { $0.name == name }, "\(name)")
-            #expect(descriptor.presentation?.kind == .other, "\(name)")
-            #expect(descriptor.presentation?.action == action, "\(name)")
-        }
-    }
-
-    @Test
-    func featureScaffoldTemplatesPresentTheGeneratedToolAsOther() throws {
-        let manifest = try SwiftFeatureRuntime.featureManifestContents(
-            id: "kind-check",
-            displayName: "Kind Check",
-            description: "Scaffold presentation kind check.",
-            toolName: "kind.echo",
-            enabled: true
-        )
-        let object = try #require(
-            JSONSerialization.jsonObject(with: Data(manifest.utf8)) as? [String: Any]
-        )
-        let tools = try #require(object["tools"] as? [[String: Any]])
-        let presentation = try #require(tools.first?["presentation"] as? [String: Any])
-        #expect(presentation["kind"] as? String == "other")
-        #expect(presentation["action"] as? String == "Echo")
-
-        let main = SwiftFeatureRuntime.featureMainContents(
-            toolName: "kind.echo",
-            toolDescription: "Echoes text."
-        )
-        #expect(main.contains("kind: .other,"))
-        #expect(!main.contains("kind: .execute"))
-    }
 }

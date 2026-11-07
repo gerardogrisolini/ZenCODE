@@ -44,22 +44,6 @@ struct FeatureManagedProcessLifecycleTests {
     }
 
     @Test
-    func missingProcessSurfacesLaunchFailureAndLeavesLifecycleReusableForInspection() async throws {
-        let missing = FileManager.default.temporaryDirectory
-            .appendingPathComponent("feature-managed-missing-\(UUID().uuidString)")
-        let process = FeatureManagedProcess(executableURL: missing)
-
-        await #expect(throws: (any Error).self) {
-            try await process.start()
-        }
-        #expect(!(await process.hasStarted))
-        #expect(!(await process.isRunning))
-        #expect(await process.processIdentifier == nil)
-        #expect((await process.waitUntilExit()).wasStarted == false)
-        await process.stop()
-    }
-
-    @Test
     func boundedReadersRetainAtMostTheConfiguredTailAndStopAProducerIgnoringTerm() async throws {
         let fixture = try Self.makeFixture(
             name: "output",

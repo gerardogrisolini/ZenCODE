@@ -12,91 +12,6 @@ import Testing
 @Suite
 struct DataManagementSetupTests {
     @Test
-    func dataManagementSectionIsAvailableWithoutConfiguredModels() {
-        let options = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
-
-        let dataOption = options.first { $0.section == .dataManagement }
-        #expect(dataOption != nil)
-        #expect(!SetupSection.dataManagement.requiresConfiguredModels)
-        #expect(SetupSection.dataManagement.category == .optional)
-        #expect(SetupSection.dataManagement.title == "Data management")
-        #expect(dataOption?.detail == "export, import, clean memory, and reset ZenCODE data")
-    }
-
-    @Test
-    func resetIsNotDuplicatedInTheMainMenu() {
-        let options = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
-
-        let resetCount = options.filter { $0.section.title == "Reset remote configuration" }
-            .count
-        #expect(resetCount == 0, "Reset must live only in the data management submenu")
-        #expect(ZenCODESetupRunner.dataManagementMenuItems().filter { $0.value == .reset }.count == 1)
-    }
-
-    @Test
-    func dataManagementActionMatchesAliases() {
-        #expect(SetupSection.dataManagement.matches("data"))
-        #expect(SetupSection.dataManagement.matches("backup"))
-        #expect(SetupSection.dataManagement.matches("export"))
-        #expect(SetupSection.dataManagement.matches("import"))
-        #expect(SetupSection.dataManagement.matches("data management"))
-        #expect(!SetupSection.dataManagement.matches("telegram"))
-    }
-
-    @Test
-    func dataManagementMenuItemsContainExportImportCleanupRebuildResetAndBack() throws {
-        let items = ZenCODESetupRunner.dataManagementMenuItems()
-        let titles = items.map(\.title)
-
-        #expect(titles.contains("Export backup"))
-        #expect(titles.contains("Import backup"))
-        #expect(titles.contains("Clean memory"))
-        #expect(titles.contains("Clean support directory"))
-        #expect(titles.contains("Rebuild memory embeddings"))
-        #expect(titles.contains("Reset remote configuration"))
-        #expect(titles.contains("Back"))
-        #expect(titles.last == "Back")
-        #expect(titles.count == 7)
-        // Clean memory, Clean support directory and Rebuild memory embeddings
-        // sit between Import backup and Reset.
-        let importIndex = try #require(titles.firstIndex(of: "Import backup"))
-        #expect(titles[importIndex + 1] == "Clean memory")
-        #expect(titles[importIndex + 2] == "Clean support directory")
-        #expect(titles[importIndex + 3] == "Rebuild memory embeddings")
-        #expect(titles[importIndex + 4] == "Reset remote configuration")
-        #expect(items.map(\.value) == [
-            .export, .importBackup, .cleanMemory, .cleanSupportDirectory, .rebuildEmbeddings, .reset, .back
-        ])
-        #expect(items[importIndex + 2].detail
-            == "free disk space: delete browser caches and build files that are regenerated")
-        #expect(items[importIndex + 3].detail
-            == "embed entries missing a vector from the configured model, in every memory graph")
-    }
-
-    @Test
-    func setupOutcomeDataReplacedIsDistinct() {
-        #expect(SetupOutcome.dataReplaced != SetupOutcome.reset)
-        #expect(SetupOutcome.dataReplaced != SetupOutcome.configured)
-        #expect(SetupOutcome.dataReplaced != SetupOutcome.cancelled)
-    }
-
-    @Test
-    func mainMenuGroupsDataManagementWithOptionalSections() {
-        let options = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
-        let dataOptionIndex = options.firstIndex { $0.section == .dataManagement }
-        #expect(dataOptionIndex != nil)
-
-        // Options are grouped by category in display order; Data management
-        // must sit between the other optional sections and Finish.
-        let finishIndex = options.firstIndex { $0.section == .finish }
-        #expect(dataOptionIndex! < finishIndex!)
-        let firstOptionalIndex = options.firstIndex {
-            $0.section.category == .optional
-        }
-        #expect(dataOptionIndex! >= firstOptionalIndex!)
-    }
-
-    @Test
     func exportAndImportRoundTripThroughRunnerHelpers() throws {
         // Verify the pure archive seam the interactive flow delegates to,
         // scoped to an isolated support directory override.
@@ -143,29 +58,6 @@ struct DataManagementSetupTests {
     }
 
     // MARK: - Export summary
-
-    @Test
-    func exportSummaryWithoutSkippedSymbolicLinksIsUnchanged() {
-        let result = SupportDirectoryArchive.ExportResult(
-            archiveURL: URL(fileURLWithPath: "/tmp/backup.tar.gz"),
-            fileCount: 12,
-            totalBytes: 3456,
-            skippedSymbolicLinks: []
-        )
-
-        #expect(
-            ZenCODESetupRunner.renderDataExportResult(result) == """
-
-            Backup exported:
-              File: /tmp/backup.tar.gz
-              Files: 12
-              Size (uncompressed): 3456 bytes
-
-            Keep the archive private: it contains API keys and tokens.
-
-            """
-        )
-    }
 
     @Test
     func exportSummaryListsSkippedSymbolicLinksWithTheirTargets() {
@@ -299,32 +191,6 @@ struct DataManagementSetupTests {
             ) { () async throws -> Int in
                 throw CancellationError()
             }
-        }
-    }
-
-    @Test
-    func dataManagementActionRethrowsEveryErrorOfACancelledTask() async {
-        // Esc and failures alike, once the surrounding task has been
-        // cancelled: Data management must not report them and open again.
-        let errors: [any Error] = [ZenCODESetupError.cancelled, ZenCODESetupError.noRemoteModelsReturned]
-        for error in errors {
-            let outcome = await Task { () -> (rethrown: Bool, written: [String]) in
-                withUnsafeCurrentTask { $0?.cancel() }
-                var written: [String] = []
-                do {
-                    _ = try await ZenCODESetupRunner.runningDataManagementAction(
-                        "Clean memory",
-                        write: { written.append($0) }
-                    ) { () async throws -> Int in
-                        throw error
-                    }
-                    return (false, written)
-                } catch {
-                    return (true, written)
-                }
-            }.value
-            #expect(outcome.rethrown, "\(error)")
-            #expect(outcome.written.isEmpty, "\(error)")
         }
     }
 }

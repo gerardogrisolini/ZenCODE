@@ -11,1057 +11,320 @@ import Testing
 
 @Suite
 struct LocalExecCommandParserTests {
-    // MARK: - Segmentation: pipes and logical operators
+    // MARK: - Segmentation
 
-    @Test
-    func segmentsSplitOnPipe() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "printf one | grep one|sort")
-            == ["printf one", "grep one", "sort"]
-        )
-    }
-
-    @Test
-    func segmentsSplitOnPipeAmpersand() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "producer |& consumer")
-            == ["producer", "consumer"]
-        )
-    }
-
-    @Test
-    func segmentsSplitOnOrOr() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "primary || fallback")
-            == ["primary", "fallback"]
-        )
-    }
-
-    @Test
-    func segmentsSplitOnAndAnd() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "cmd1 && cmd2")
-            == ["cmd1", "cmd2"]
-        )
-    }
-
-    @Test
-    func segmentsSplitOnSemicolon() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "cmd1; cmd2")
-            == ["cmd1", "cmd2"]
-        )
-    }
-
-    @Test
-    func segmentsSplitOnBackgroundAmpersand() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "cmd &")
-            == ["cmd"]
-        )
-    }
-
-    @Test
-    func segmentsSplitOnNewlines() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "cmd1\ncmd2\n")
-            == ["cmd1", "cmd2"]
-        )
-    }
-
-    @Test
-    func segmentsSplitOnMixedOperators() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "false || make && install")
-            == ["false", "make", "install"]
-        )
-    }
-
-    // MARK: - Segmentation: quoting and escaping preserved
-
-    @Test
-    func segmentsPreserveSingleQuotedPipes() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: #"printf 'a|b' | grep a"#)
-            == [#"printf 'a|b'"#, "grep a"]
-        )
-    }
-
-    @Test
-    func segmentsPreserveDoubleQuotedPipes() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: #"printf "a|b" | grep a"#)
-            == [#"printf "a|b""#, "grep a"]
-        )
-    }
-
-    @Test
-    func segmentsPreserveEscapedPipes() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: #"printf a\|b | grep a"#)
-            == [#"printf a\|b"#, "grep a"]
-        )
-    }
-
-    @Test
-    func extendedTestRegexPipeIsNotTreatedAsPipeline() {
-        let command = #"[[ "$value" =~ ^(foo|bar)$ ]] && rm -f marker"#
-        #expect(
-            LocalExecCommandParser.commandSegments(in: command)
-            == [#"[[ "$value" =~ ^(foo|bar)$ ]]"#, "rm -f marker"]
-        )
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
-            == ["rm"]
-        )
-    }
-
-    @Test
-    func executableStartingWithDoubleBracketIsNotAConditionalBuiltin() {
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(
-                in: "[[evil]] | rm -f marker"
-            ).map(\.identity) == ["[[evil]]", "rm"]
-        )
-    }
-
-    @Test
-    func arithmeticBitwisePipeIsNotTreatedAsPipeline() {
-        let command = "(( mask = 1 | 2 )) && rm -f marker"
-        #expect(
-            LocalExecCommandParser.commandSegments(in: command)
-            == ["(( mask = 1 | 2 ))", "rm -f marker"]
-        )
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
-            == ["rm"]
-        )
-    }
-
-    @Test
-    func compoundExpressionsAfterControlKeywordsDoNotBecomeExecutables() {
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(
-                in: "if (( mask = 1 | 2 )); then :; fi"
-            ).isEmpty
-        )
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(
-                in: "if [[ left > right ]]; then rm -f marker; fi"
-            ).map(\.identity) == ["rm"]
-        )
-    }
-
-    @Test
-    func compoundExpressionsAfterBraceGroupDoNotBecomeExecutables() {
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(
-                in: "{ [[ left > right ]]; (( harmless = 1 )); }"
-            ).isEmpty
-        )
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(
-                in: "{ [[ left > right ]]; rm -rf target; }"
-            ).map(\.identity) == ["rm"]
-        )
-    }
-
-    // MARK: - Segmentation: substitutions are opaque
-
-    @Test
-    func commandSubstitutionDoesNotSplit() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "echo $(ls | wc -l)")
-            == ["echo $(ls | wc -l)"]
-        )
-    }
-
-    @Test
-    func nestedCommandSubstitutionDoesNotSplit() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "echo $(cat $(find . -name '*.txt') | wc -l)")
-            == ["echo $(cat $(find . -name '*.txt') | wc -l)"]
-        )
-    }
-
-    @Test
-    func backtickSubstitutionDoesNotSplit() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "echo `ls | wc -l`")
-            == ["echo `ls | wc -l`"]
-        )
-    }
-
-    @Test
-    func processSubstitutionDoesNotSplit() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "diff <(ls a) <(ls b) | cat")
-            == ["diff <(ls a) <(ls b)", "cat"]
-        )
-    }
-
-    // MARK: - Segmentation: edge cases
-
-    @Test
-    func emptyCommandYieldsNoSegments() {
-        #expect(LocalExecCommandParser.commandSegments(in: "").isEmpty)
-        #expect(LocalExecCommandParser.commandSegments(in: "   ").isEmpty)
-    }
-
-    @Test
-    func whitespaceOnlySegmentCollapses() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "  cmd   ")
-            == ["cmd"]
-        )
-    }
-
-    // MARK: - Identity: plain executables
-
-    @Test
-    func plainExecutableIdentity() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "swift build")
-            == .executable("swift")
-        )
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "git status --short")
-            == .executable("git")
-        )
-    }
-
-    // MARK: - Identity: skip-list (built-ins and keywords)
-
-    @Test
-    func skipListBuiltins() {
-        #expect(LocalExecCommandParser.executableIdentity(for: "true") == .skip)
-        #expect(LocalExecCommandParser.executableIdentity(for: "false") == .skip)
-        #expect(LocalExecCommandParser.executableIdentity(for: ":") == .skip)
-        #expect(LocalExecCommandParser.executableIdentity(for: "cd /tmp") == .skip)
-        #expect(LocalExecCommandParser.executableIdentity(for: "pwd") == .skip)
-        #expect(LocalExecCommandParser.executableIdentity(for: "test -f x") == .skip)
-        #expect(LocalExecCommandParser.executableIdentity(for: "[ -f x ]") == .skip)
-    }
-
-    @Test
-    func builtinWithRedirectionIsPrompted() {
-        // C2: a built-in with a redirection has side effects and must be
-        // prompted, not skipped.
-        #expect(LocalExecCommandParser.executableIdentity(for: ": > victim.txt") == .executable(":"))
-        #expect(LocalExecCommandParser.executableIdentity(for: "true > out.txt") == .executable("true"))
-        #expect(LocalExecCommandParser.executableIdentity(for: "pwd > file") == .executable("pwd"))
-    }
-
-    @Test
-    func controlFlowKeywordsAreConsumedAndExecutableSurfaces() {
-        // C1: after segmentation, control-flow keywords are consumed as
-        // syntactic prefixes and the real executable surfaces.
-        let segments = LocalExecCommandParser.commandSegments(
-            in: "if /bin/touch /tmp/pwn; then true; fi"
-        )
-        #expect(segments == ["if /bin/touch /tmp/pwn", "then true", "fi"])
-
-        // `if` consumed → `/bin/touch` is the executable.
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "if /bin/touch /tmp/pwn")
-            == .executable("/bin/touch")
-        )
-        // `then` consumed → `true` is skip.
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "then true") == .skip
-        )
-        // `fi` consumed → nothing left → skip.
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "fi") == .skip
-        )
-    }
-
-    @Test
-    func controlFlowForLoopConsumesKeyword() {
-        let segments = LocalExecCommandParser.commandSegments(
-            in: "for x in a; do echo $x; done"
-        )
-        #expect(segments.contains("do echo $x"))
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "do echo $x")
-            == .executable("echo")
-        )
-    }
-
-    // MARK: - Identity: environment assignments
-
-    @Test
-    func leadingEnvironmentAssignmentIsSkipped() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "FOO=bar swift build")
-            == .executable("swift")
-        )
-    }
-
-    @Test
-    func multipleLeadingEnvironmentAssignmentsAreSkipped() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "A=1 B=2 make all")
-            == .executable("make")
-        )
-    }
-
-    @Test
-    func envWrapperIsUnwrapped() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "env CI=1 swift test")
-            == .executable("swift")
-        )
-    }
-
-    @Test
-    func bareEnvWrapperFallsBack() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "env")
-            == .executable("env")
-        )
-    }
-
-    @Test
-    func otherWrappersAreUnwrapped() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "command swift build")
-            == .executable("swift")
-        )
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "exec /bin/sh -c run")
-            == .executable("/bin/sh")
-        )
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "nohup server --port 8080")
-            == .executable("server")
-        )
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "time swift test")
-            == .executable("swift")
-        )
-    }
-
-    @Test
-    func sudoIsNotUnwrapped() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "sudo rm -rf /tmp/x")
-            == .executable("sudo")
-        )
-    }
-
-    @Test
-    func wrappersConsumeOptions() {
-        // C3: wrapper options (starting with `-`) must be consumed before the
-        // real command.
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "env -i swift build")
-            == .executable("swift")
-        )
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "env -- rm /tmp")
-            == .executable("rm")
-        )
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "command -p swift test")
-            == .executable("swift")
-        )
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "time -p swift test")
-            == .executable("swift")
-        )
-    }
-
-    @Test
-    func assignmentOnlyYieldsSkip() {
-        // C4: a segment with only environment assignments is harmless.
-        #expect(LocalExecCommandParser.executableIdentity(for: "FOO=bar") == .skip)
-        #expect(LocalExecCommandParser.executableIdentity(for: "A=1 B=2") == .skip)
-    }
-
-    @Test
-    func quotedParenInsideSubstitutionDoesNotCorruptDepth() {
+    static let segmentationCases: [(String, [String])] = [
+        // Pipes and logical operators.
+        ("printf one | grep one|sort", ["printf one", "grep one", "sort"]),
+        ("producer |& consumer", ["producer", "consumer"]),
+        ("primary || fallback", ["primary", "fallback"]),
+        ("cmd1 && cmd2", ["cmd1", "cmd2"]),
+        ("cmd1; cmd2", ["cmd1", "cmd2"]),
+        ("cmd &", ["cmd"]),
+        ("cmd1\ncmd2\n", ["cmd1", "cmd2"]),
+        ("false || make && install", ["false", "make", "install"]),
+        // Quoting and escaping preserved.
+        (#"printf 'a|b' | grep a"#, [#"printf 'a|b'"#, "grep a"]),
+        (#"printf "a|b" | grep a"#, [#"printf "a|b""#, "grep a"]),
+        (#"printf a\|b | grep a"#, [#"printf a\|b"#, "grep a"]),
+        // Conditional/arithmetic/case pipes are not pipelines.
+        (
+            #"[[ "$value" =~ ^(foo|bar)$ ]] && rm -f marker"#,
+            [#"[[ "$value" =~ ^(foo|bar)$ ]]"#, "rm -f marker"]
+        ),
+        ("(( mask = 1 | 2 )) && rm -f marker", ["(( mask = 1 | 2 ))", "rm -f marker"]),
+        (
+            "case x in foo|bar) rm -rf target;; esac",
+            ["case x in foo|bar)", "rm -rf target", "esac"]
+        ),
+        // Substitutions are opaque.
+        ("echo $(ls | wc -l)", ["echo $(ls | wc -l)"]),
+        (
+            "echo $(cat $(find . -name '*.txt') | wc -l)",
+            ["echo $(cat $(find . -name '*.txt') | wc -l)"]
+        ),
+        ("echo `ls | wc -l`", ["echo `ls | wc -l`"]),
+        ("diff <(ls a) <(ls b) | cat", ["diff <(ls a) <(ls b)", "cat"]),
         // C5: quoted `(` inside `$()` must not alter substitution depth.
-        #expect(
-            LocalExecCommandParser.commandSegments(
-                in: #"true $(printf '('); /bin/touch /tmp/x"#
-            ) == [#"true $(printf '(')"#, "/bin/touch /tmp/x"]
-        )
+        (
+            #"true $(printf '('); /bin/touch /tmp/x"#,
+            [#"true $(printf '(')"#, "/bin/touch /tmp/x"]
+        ),
+        // C1: control-flow keywords split into their own segments.
+        (
+            "if /bin/touch /tmp/pwn; then true; fi",
+            ["if /bin/touch /tmp/pwn", "then true", "fi"]
+        ),
+        // Edge cases.
+        ("", []),
+        ("   ", []),
+        ("  cmd   ", ["cmd"]),
+        // Comments.
+        ("# this is a comment", []),
+        ("   # comment", []),
+        ("swift build # debug build", ["swift build"]),
+        ("echo hi # comment\ngit status", ["echo hi", "git status"]),
+        ("echo hi#world", ["echo hi#world"]),
+        ("echo \"# not comment\"", ["echo \"# not comment\""]),
+        // Heredoc bodies do not produce segments.
+        ("cat <<EOF\nnot a command\nnor this\nEOF\necho done", ["cat <<EOF", "echo done"]),
+        ("cat <<'EOF'\nrm -rf /\nEOF", ["cat <<'EOF'"]),
+    ]
+
+    @Test(arguments: LocalExecCommandParserTests.segmentationCases)
+    func commandSegmentsSplitAtShellSeparatorsOnly(command: String, segments: [String]) {
+        #expect(LocalExecCommandParser.commandSegments(in: command) == segments)
     }
 
-    @Test
-    func quotedKeywordIsNotSkipped() {
+    // MARK: - Identity
+
+    static let identityCases: [(String, LocalExecCommandParser.Identity)] = [
+        // Plain executables.
+        ("swift build", .executable("swift")),
+        ("git status --short", .executable("git")),
+        // Skip-list built-ins and keywords.
+        ("true", .skip),
+        ("false", .skip),
+        (":", .skip),
+        ("cd /tmp", .skip),
+        ("pwd", .skip),
+        ("test -f x", .skip),
+        ("[ -f x ]", .skip),
+        // C2: a built-in with a redirection has side effects and is prompted.
+        (": > victim.txt", .executable(":")),
+        ("true > out.txt", .executable("true")),
+        ("pwd > file", .executable("pwd")),
+        // C1: control-flow keywords are consumed and the executable surfaces.
+        ("if /bin/touch /tmp/pwn", .executable("/bin/touch")),
+        ("then true", .skip),
+        ("fi", .skip),
+        ("do echo $x", .executable("echo")),
+        // F7: a for header does not surface the loop variable.
+        ("for x in a b", .skip),
+        // Environment assignments and wrappers.
+        ("FOO=bar swift build", .executable("swift")),
+        ("A=1 B=2 make all", .executable("make")),
+        ("env CI=1 swift test", .executable("swift")),
+        ("env", .executable("env")),
+        ("command swift build", .executable("swift")),
+        ("exec /bin/sh -c run", .executable("/bin/sh")),
+        ("nohup server --port 8080", .executable("server")),
+        ("time swift test", .executable("swift")),
+        ("sudo rm -rf /tmp/x", .executable("sudo")),
+        // C3: wrapper options are consumed before the real command.
+        ("env -i swift build", .executable("swift")),
+        ("env -- rm /tmp", .executable("rm")),
+        ("command -p swift test", .executable("swift")),
+        ("time -p swift test", .executable("swift")),
+        // F4: wrapper option arity.
+        ("command -v swift", .skip),
+        ("env -u NAME swift build", .executable("swift")),
+        ("env -C /tmp swift build", .executable("swift")),
+        // C4: assignment-only segments are harmless.
+        ("FOO=bar", .skip),
+        ("A=1 B=2", .skip),
         // M4: a quoted keyword is a literal path, not a shell keyword.
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: #"'if'"#)
-            == .executable("if")
-        )
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: #""true""#)
-            == .executable("true")
-        )
+        (#"'if'"#, .executable("if")),
+        (#""true""#, .executable("true")),
+        // Redirections.
+        ("ls -la > out.txt", .executable("ls")),
+        (">out.txt echo hi", .executable("echo")),
+        ("> out.txt echo hi", .executable("echo")),
+        ("2>&1 swift build", .executable("swift")),
+        ("echo hi >> log.txt", .executable("echo")),
+        ("swift build 2>errors.log", .executable("swift")),
+        ("make &>build.log", .executable("make")),
+        (">| out.txt echo hi", .executable("echo")),
+        // Grouping delimiters.
+        ("(cd /tmp", .skip),
+        ("make)", .executable("make")),
+        // Quoted executables.
+        (#"'swift' build"#, .executable("swift")),
+        (#""swift" build"#, .executable("swift")),
+        // Fallback for empty segments.
+        ("", .unresolved("")),
+        ("   ", .unresolved("")),
+    ]
+
+    @Test(arguments: LocalExecCommandParserTests.identityCases)
+    func executableIdentityStripsShellNoise(
+        segment: String,
+        identity: LocalExecCommandParser.Identity
+    ) {
+        #expect(LocalExecCommandParser.executableIdentity(for: segment) == identity)
     }
 
-    // MARK: - Identity: redirections
-
-    @Test
-    func trailingRedirectionIsSkipped() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "ls -la > out.txt")
-            == .executable("ls")
-        )
-    }
-
-    @Test
-    func leadingRedirectionIsSkipped() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: ">out.txt echo hi")
-            == .executable("echo")
-        )
-    }
-
-    @Test
-    func leadingRedirectWithSeparatedTargetIsSkipped() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "> out.txt echo hi")
-            == .executable("echo")
-        )
-    }
-
-    @Test
-    func fdRedirectionWithAttachedTarget() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "2>&1 swift build")
-            == .executable("swift")
-        )
-    }
-
-    @Test
-    func appendRedirectionIsSkipped() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "echo hi >> log.txt")
-            == .executable("echo")
-        )
-    }
-
-    @Test
-    func fdRedirectionToFile() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "swift build 2>errors.log")
-            == .executable("swift")
-        )
-    }
-
-    @Test
-    func combinedStdoutStderrRedirection() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "make &>build.log")
-            == .executable("make")
-        )
-    }
-
-    @Test
-    func clobberRedirectionIsNotParsedAsPipeline() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: ">| out.txt echo hi")
-                == .executable("echo")
-        )
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: "echo hi >| out.txt")
-                .map(\.identity) == ["echo"]
-        )
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: "echo hi > | cat")
-                .map(\.identity) == ["echo", "cat"]
-        )
-    }
-
-    // MARK: - Identity: grouping delimiters
-
-    @Test
-    func leadingParenStripped() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "(cd /tmp")
-            == .skip
-        )
-    }
-
-    @Test
-    func trailingParenStripped() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "make)")
-            == .executable("make")
-        )
-    }
-
-    // MARK: - Identity: quoting
-
-    @Test
-    func quotedExecutableIsUnwrapped() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: #"'swift' build"#)
-            == .executable("swift")
-        )
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: #""swift" build"#)
-            == .executable("swift")
-        )
-    }
-
-    // MARK: - Identity: fallback
-
-    @Test
-    func unresolvedFallbackForEmptySegment() {
-        // An empty or whitespace-only segment yields unresolved.
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "")
-            == .unresolved("")
-        )
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "   ")
-            == .unresolved("   ".trimmingCharacters(in: .whitespacesAndNewlines))
-        )
-    }
-
-    // MARK: - commandSegments: comment handling
-
-    @Test
-    func commentOnlySegmentYieldsNoSegments() {
-        #expect(LocalExecCommandParser.commandSegments(in: "# this is a comment").isEmpty)
-        #expect(LocalExecCommandParser.commandSegments(in: "   # comment").isEmpty)
-    }
-
-    @Test
-    func inlineCommentIsStrippedFromSegment() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "swift build # debug build")
-            == ["swift build"]
-        )
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "echo hi # comment\ngit status")
-            == ["echo hi", "git status"]
-        )
-    }
-
-    @Test
-    func hashInsideWordIsNotComment() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "echo hi#world")
-            == ["echo hi#world"]
-        )
-    }
-
-    @Test
-    func quotedHashIsNotComment() {
-        #expect(
-            LocalExecCommandParser.commandSegments(in: "echo \"# not comment\"")
-            == ["echo \"# not comment\""]
-        )
-    }
-
-    // MARK: - commandSegments: heredoc body
-
-    @Test
-    func heredocBodyDoesNotProduceSegments() {
-        let command = "cat <<EOF\nnot a command\nnor this\nEOF\necho done"
-        #expect(
-            LocalExecCommandParser.commandSegments(in: command)
-            == ["cat <<EOF", "echo done"]
-        )
-    }
-
-    @Test
-    func quotedHeredocDelimiterBodyDoesNotProduceSegments() {
-        let command = "cat <<'EOF'\nrm -rf /\nEOF"
-        #expect(
-            LocalExecCommandParser.commandSegments(in: command)
-            == ["cat <<'EOF'"]
-        )
-    }
-
-    // MARK: - authorizationCandidates: noise filtered
-
-    @Test
-    func authorizationCandidatesEmptyCommandYieldsNothing() {
-        #expect(LocalExecCommandParser.authorizationCandidates(in: "").isEmpty)
-        #expect(LocalExecCommandParser.authorizationCandidates(in: "   ").isEmpty)
-        #expect(LocalExecCommandParser.authorizationCandidates(in: "\n\n").isEmpty)
-    }
-
-    @Test
-    func authorizationCandidatesCommentOnlyYieldsNothing() {
-        #expect(LocalExecCommandParser.authorizationCandidates(in: "# build comment").isEmpty)
-        #expect(LocalExecCommandParser.authorizationCandidates(in: "# line 1\n# line 2").isEmpty)
-    }
-
-    @Test
-    func authorizationCandidatesDecorativeEchoIsFiltered() {
-        #expect(LocalExecCommandParser.authorizationCandidates(in: "echo hello world").isEmpty)
-        #expect(LocalExecCommandParser.authorizationCandidates(in: "printf 'build step'").isEmpty)
-    }
-
-    @Test
-    func authorizationCandidatesEchoWithRedirectionIsPrompted() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: #"echo "secret" > /tmp/file"#
-        )
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "echo")
-    }
-
-    @Test
-    func authorizationCandidatesBuiltinOnlyYieldsNothing() {
-        #expect(LocalExecCommandParser.authorizationCandidates(in: "true").isEmpty)
-        #expect(LocalExecCommandParser.authorizationCandidates(in: "false").isEmpty)
-        #expect(LocalExecCommandParser.authorizationCandidates(in: "cd /tmp").isEmpty)
-    }
-
-    @Test
-    func authorizationCandidatesAssignmentOnlyYieldsNothing() {
-        #expect(LocalExecCommandParser.authorizationCandidates(in: "FOO=bar").isEmpty)
-        #expect(LocalExecCommandParser.authorizationCandidates(in: "A=1 B=2").isEmpty)
-    }
-
-    @Test
-    func authorizationCandidatesBuiltinWithRedirectionIsPrompted() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(in: ": > victim.txt")
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == ":")
-    }
-
-    // MARK: - authorizationCandidates: real executables
-
-    @Test
-    func authorizationCandidatesPlainExecutable() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(in: "swift build")
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "swift")
-        #expect(candidates.first?.invocation == "swift build")
-    }
-
-    @Test
-    func authorizationCandidatesStripsEnvironmentAssignments() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(in: "FOO=bar swift build")
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "swift")
-        #expect(candidates.first?.invocation == "swift build")
-    }
-
-    @Test
-    func authorizationCandidatesUnwrapsEnvWrapper() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(in: "env CI=1 swift test")
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "swift")
-        #expect(candidates.first?.invocation == "swift test")
-    }
-
-    @Test
-    func authorizationCandidatesUnwrapsNestedWrappers() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: "env CI=1 command swift test"
-        )
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "swift")
-        #expect(candidates.first?.invocation == "swift test")
-    }
-
-    @Test
-    func authorizationCandidatesDeduplicatesByIdentity() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: "grep foo | sort | grep bar"
-        )
-        #expect(candidates.count == 2)
-        #expect(candidates[0].identity == "grep")
-        #expect(candidates[1].identity == "sort")
-    }
-
-    @Test
-    func authorizationCandidatesKeepsRedirectionsInInvocation() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(in: "swift build 2>&1")
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "swift")
-        #expect(candidates.first?.invocation == "swift build 2>&1")
-    }
-
-    // MARK: - authorizationCandidates: shell -c recursion
-
-    @Test
-    func authorizationCandidatesShellDashCExtractsNestedCommands() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: "bash -lc 'echo separator; git status'"
-        )
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "git")
-        #expect(candidates.first?.invocation == "git status")
-    }
-
-    @Test
-    func authorizationCandidatesShellDashCWithDecorativeEchoOnly() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: #"sh -c 'echo hi'"#
-        )
-        #expect(candidates.isEmpty)
-    }
-
-    // MARK: - authorizationCandidates: command substitution extraction
-
-    @Test
-    func authorizationCandidatesEchoWithSubstitutionExtractsNested() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: #"echo "$(git rev-parse HEAD)""#
-        )
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "git")
-        #expect(candidates.first?.invocation == "git rev-parse HEAD")
-    }
-
-    // MARK: - authorizationCandidates: composite fixture
-
-    @Test
-    func authorizationCandidatesCompositeFixture() {
-        let command = """
-        # build
-        echo "== Build =="
-        true && env CI=1 command swift test
-        """
-        let candidates = LocalExecCommandParser.authorizationCandidates(in: command)
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "swift")
-        #expect(candidates.first?.invocation == "swift test")
-    }
-
-    @Test
-    func authorizationCandidatesHeredocBodyFiltered() {
-        let command = "cat <<EOF\nrm -rf /\nEOF\necho done"
-        let candidates = LocalExecCommandParser.authorizationCandidates(in: command)
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "cat")
-    }
-
-    // MARK: - authorizationCandidates: conservative fallback
-
-    @Test
-    func authorizationCandidatesUnknownExecutableProducesCandidate() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(in: "my CustomTool --flag")
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "my")
-    }
-
-    @Test
-    func authorizationCandidatesSudoNotUnwrapped() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(in: "sudo rm -rf /tmp/x")
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "sudo")
-    }
-
-    @Test
-    func authorizationCandidatesControlFlowSurfacesExecutable() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: "if /bin/touch /tmp/x; then true; fi"
-        )
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "/bin/touch")
-    }
-
-    // MARK: - Review fixes: nested substitution extraction (F1)
-
-    @Test
-    func normalExecutableWithNestedSubstitutionExtractsBoth() {
-        // cat "$(rm -rf /tmp/x)" must surface BOTH cat and rm.
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: "cat \"$(rm -rf /tmp/x)\""
-        )
-        #expect(candidates.count == 2)
-        #expect(candidates[0].identity == "cat")
-        #expect(candidates[1].identity == "rm")
-        #expect(candidates[1].invocation == "rm -rf /tmp/x")
-    }
-
-    @Test
-    func nestedSubstitutionInAssignmentPrefix() {
-        // FOO=$(rm -rf x) outer: the security-critical requirement is that the
-        // nested `rm` is surfaced for authorization (never silently executed).
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: "FOO=$(rm -rf x) make"
-        )
-        let identities = Set(candidates.map(\.identity))
-        #expect(identities.contains("rm"))
-    }
-
-    @Test
-    func harmlessBuiltinWithSubstitutionSurfacesOnlyNestedExecutable() {
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(
-                in: "true $(rm -f marker)"
-            ).map(\.identity) == ["rm"]
-        )
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(
-                in: #"[[ "$(rm -f marker)" =~ foo|bar ]]"#
-            ).map(\.identity) == ["rm"]
-        )
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(
-                in: #"[[ left > right && right < limit ]]"#
-            ).isEmpty
-        )
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(
-                in: #"[[ left > right ]] > result.txt"#
-            ).map(\.identity) == ["[["]
-        )
-    }
-
-    // MARK: - Review fixes: process substitution extraction (F2)
-
-    @Test
-    func processSubstitutionExtractsNestedCommand() {
-        // diff <(rm -rf /tmp/x) expected must surface diff and rm.
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: "diff <(rm -rf /tmp/x) expected"
-        )
-        let identities = Set(candidates.map(\.identity))
-        #expect(identities.contains("diff"))
-        #expect(identities.contains("rm"))
-    }
-
-    @Test
-    func outputProcessSubstitutionExtractsNestedCommand() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: "tee >(rm -rf /tmp/x)"
-        )
-        let identities = Set(candidates.map(\.identity))
-        #expect(identities.contains("tee"))
-        #expect(identities.contains("rm"))
-    }
-
-    // MARK: - Review fixes: arithmetic expansion (F5)
-
-    @Test
-    func arithmeticExpansionIsNotCommandSubstitution() {
-        // $((swift)) is arithmetic, not a command; must not surface swift.
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: "echo $((1 + 2))"
-        )
-        #expect(candidates.isEmpty)
-    }
-
-    @Test
-    func arithmeticExpansionAlongsideRealCommandSubstitution() {
-        // Mixed: $((...)) is ignored, $(rm) is extracted.
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: "cat \"$((1+2))\" \"$(rm x)\""
-        )
-        let identities = Set(candidates.map(\.identity))
-        #expect(identities.contains("cat"))
-        #expect(identities.contains("rm"))
-        #expect(!identities.contains("1"))
-    }
-
-    // MARK: - Review fixes: wrapper option arity (F4)
-
-    @Test
-    func commandDashVIsIntrospectionNotExecution() {
-        // command -v swift looks up swift, does not execute it.
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "command -v swift") == .skip
-        )
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: "command -v swift").isEmpty
-        )
-    }
-
-    @Test
-    func envUnsetOptionConsumesOperand() {
-        // env -u NAME swift build must surface swift, not NAME.
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "env -u NAME swift build")
-            == .executable("swift")
-        )
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: "env -u NAME swift build"
-        )
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "swift")
-        #expect(candidates.first?.invocation == "swift build")
-    }
-
-    @Test
-    func envChdirOptionConsumesOperand() {
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "env -C /tmp swift build")
-            == .executable("swift")
-        )
-    }
-
-    // MARK: - Review fixes: for/case headers (F7)
-
-    @Test
-    func forLoopHeaderDoesNotSurfaceLoopVariable() {
-        // `for x in a b` header must not produce a candidate `x`, `a`, or `b`.
-        #expect(
-            LocalExecCommandParser.executableIdentity(for: "for x in a b")
-            == .skip
-        )
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: "for x in a b; do rm -rf target; done"
-        )
-        let identities = Set(candidates.map(\.identity))
-        #expect(identities.contains("rm"))
-        #expect(!identities.contains("x"))
-        #expect(!identities.contains("a"))
-    }
-
-    @Test
-    func caseStatementSurfacesBranchCommandNotSubject() {
-        // `case x in x) rm ...` must surface rm, not x.
-        let candidates = LocalExecCommandParser.authorizationCandidates(
-            in: "case x in x) rm -rf target;; esac"
-        )
-        let identities = Set(candidates.map(\.identity))
-        #expect(identities.contains("rm"))
-        #expect(!identities.contains("x"))
-    }
-
-    @Test
-    func casePatternAlternationPipeIsNotACommandPipeline() {
-        let command = "case x in foo|bar) rm -rf target;; esac"
-        #expect(
-            LocalExecCommandParser.commandSegments(in: command)
-            == ["case x in foo|bar)", "rm -rf target", "esac"]
-        )
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
-            == ["rm"]
-        )
-    }
-
-    @Test
-    func caseTerminatorRestoresPipelineParsing() {
-        let command = "case x in x) :;; esac\ntrue | rm -rf target"
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
-            == ["rm"]
-        )
-    }
-
-    @Test
-    func caseSubjectNamedEsacDoesNotCloseTheCase() {
-        let command = "case esac in\nfoo|bar) rm -rf target;;\nesac"
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
-            == ["rm"]
-        )
-    }
-
-    @Test
-    func casePatternIgnoresParenthesisInsideParameterExpansion() {
-        let command = "X=; case 'foo)bar' in ${X:-foo)bar}) rm -rf target;; esac"
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
-            == ["rm"]
-        )
-    }
-
-    @Test
-    func caseParameterExpansionSurvivesBraceInsideNestedCommandSubstitution() {
-        let command = "X=; case '}foo)true' in ${X:-$(printf %s })foo)true}) touch marker;; esac"
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
-            == ["touch"]
-        )
-    }
-
-    @Test
-    func casePatternIgnoresParenthesisInsideBracketExpression() {
-        let command = "case ')' in [)]) rm -rf target;; esac"
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
-            == ["rm"]
-        )
-    }
-
-    @Test
-    func quotedParenDoesNotCloseCasePattern() {
-        let command = #"case true in "x)"|true) rm -rf target;; esac"#
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
-            == ["rm"]
-        )
-    }
-
-    @Test
-    func multilineCaseKeepsPatternPipesButSplitsBranchPipelines() {
-        let command = """
-        case "$value" in
-          foo|bar) cat input | grep needle ;;
-          baz|qux) rm -f marker ;;
-        esac
-        """
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
-            == ["cat", "grep", "rm"]
-        )
-    }
-
-    @Test
-    func laterCasePatternStillExtractsCommandSubstitution() {
-        let command = """
-        case "$value" in
-          first) true ;;
-          $(rm -f marker)|other) true ;;
-        esac
-        """
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
-            == ["rm"]
-        )
-    }
-
-    @Test
-    func nestedCaseAndEsacArgumentKeepOuterPatternState() {
-        let nested = """
-        case "$outer" in
-          first)
-            case "$inner" in
-              x|y) cat input ;;
+    // MARK: - authorizationCandidates
+
+    static let candidateIdentityCases: [(String, [String])] = [
+        // Noise filtered.
+        ("", []),
+        ("   ", []),
+        ("\n\n", []),
+        ("# build comment", []),
+        ("# line 1\n# line 2", []),
+        ("echo hello world", []),
+        ("printf 'build step'", []),
+        ("true", []),
+        ("false", []),
+        ("cd /tmp", []),
+        ("FOO=bar", []),
+        ("A=1 B=2", []),
+        ("echo $((1 + 2))", []),
+        ("command -v swift", []),
+        (#"sh -c 'echo hi'"#, []),
+        // Redirections make built-ins and decorative commands prompt-worthy.
+        (#"echo "secret" > /tmp/file"#, ["echo"]),
+        (": > victim.txt", [":"]),
+        ("echo hi >| out.txt", ["echo"]),
+        ("echo hi > | cat", ["echo", "cat"]),
+        // Real executables.
+        ("swift build", ["swift"]),
+        ("FOO=bar swift build", ["swift"]),
+        ("env CI=1 swift test", ["swift"]),
+        ("env CI=1 command swift test", ["swift"]),
+        ("env -u NAME swift build", ["swift"]),
+        ("swift build 2>&1", ["swift"]),
+        ("grep foo | sort | grep bar", ["grep", "sort"]),
+        ("bash -lc 'echo separator; git status'", ["git"]),
+        (#"echo "$(git rev-parse HEAD)""#, ["git"]),
+        (
+            """
+            # build
+            echo "== Build =="
+            true && env CI=1 command swift test
+            """,
+            ["swift"]
+        ),
+        ("cat <<EOF\nrm -rf /\nEOF\necho done", ["cat"]),
+        // Conservative fallback and privilege wrappers.
+        ("my CustomTool --flag", ["my"]),
+        ("sudo rm -rf /tmp/x", ["sudo"]),
+        ("doas rm -rf /tmp/x", ["doas"]),
+        // Control flow and compound expressions.
+        ("if /bin/touch /tmp/x; then true; fi", ["/bin/touch"]),
+        (#"[[ "$value" =~ ^(foo|bar)$ ]] && rm -f marker"#, ["rm"]),
+        ("[[evil]] | rm -f marker", ["[[evil]]", "rm"]),
+        ("(( mask = 1 | 2 )) && rm -f marker", ["rm"]),
+        ("if (( mask = 1 | 2 )); then :; fi", []),
+        ("if [[ left > right ]]; then rm -f marker; fi", ["rm"]),
+        ("{ [[ left > right ]]; (( harmless = 1 )); }", []),
+        ("{ [[ left > right ]]; rm -rf target; }", ["rm"]),
+        // F1: nested substitutions surface their executables.
+        ("cat \"$(rm -rf /tmp/x)\"", ["cat", "rm"]),
+        ("true $(rm -f marker)", ["rm"]),
+        (#"[[ "$(rm -f marker)" =~ foo|bar ]]"#, ["rm"]),
+        (#"[[ left > right && right < limit ]]"#, []),
+        (#"[[ left > right ]] > result.txt"#, ["[["]),
+        // F7: case statements.
+        ("case x in foo|bar) rm -rf target;; esac", ["rm"]),
+        ("case x in x) :;; esac\ntrue | rm -rf target", ["rm"]),
+        ("case esac in\nfoo|bar) rm -rf target;;\nesac", ["rm"]),
+        ("X=; case 'foo)bar' in ${X:-foo)bar}) rm -rf target;; esac", ["rm"]),
+        ("X=; case '}foo)true' in ${X:-$(printf %s })foo)true}) touch marker;; esac", ["touch"]),
+        ("case ')' in [)]) rm -rf target;; esac", ["rm"]),
+        (#"case true in "x)"|true) rm -rf target;; esac"#, ["rm"]),
+        (
+            """
+            case "$value" in
+              foo|bar) cat input | grep needle ;;
+              baz|qux) rm -f marker ;;
             esac
-            ;;
-          second|third) rm -f marker ;;
-        esac
-        """
-        #expect(
-            LocalExecCommandParser.authorizationCandidates(in: nested).map(\.identity)
-            == ["cat", "rm"]
-        )
+            """,
+            ["cat", "grep", "rm"]
+        ),
+        (
+            """
+            case "$value" in
+              first) true ;;
+              $(rm -f marker)|other) true ;;
+            esac
+            """,
+            ["rm"]
+        ),
+        (
+            """
+            case "$outer" in
+              first)
+                case "$inner" in
+                  x|y) cat input ;;
+                esac
+                ;;
+              second|third) rm -f marker ;;
+            esac
+            """,
+            ["cat", "rm"]
+        ),
+        ("case x in first) echo esac;; second|third) rm marker;; esac", ["rm"]),
+    ]
 
-        let esacArgument = "case x in first) echo esac;; second|third) rm marker;; esac"
+    @Test(arguments: LocalExecCommandParserTests.candidateIdentityCases)
+    func authorizationCandidatesSurfaceOnlyPromptWorthyExecutables(
+        command: String,
+        identities: [String]
+    ) {
         #expect(
-            LocalExecCommandParser.authorizationCandidates(in: esacArgument).map(\.identity)
-            == ["rm"]
+            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
+            == identities
         )
     }
 
-    // MARK: - Review fixes: unquoted heredoc expansion (F6)
+    static let candidateInvocationCases: [(String, String, String)] = [
+        ("swift build", "swift", "swift build"),
+        ("FOO=bar swift build", "swift", "swift build"),
+        ("env CI=1 swift test", "swift", "swift test"),
+        ("env CI=1 command swift test", "swift", "swift test"),
+        ("env -u NAME swift build", "swift", "swift build"),
+        ("swift build 2>&1", "swift", "swift build 2>&1"),
+        ("bash -lc 'echo separator; git status'", "git", "git status"),
+        (#"echo "$(git rev-parse HEAD)""#, "git", "git rev-parse HEAD"),
+        (
+            """
+            # build
+            echo "== Build =="
+            true && env CI=1 command swift test
+            """,
+            "swift",
+            "swift test"
+        ),
+        ("cat \"$(rm -rf /tmp/x)\"", "rm", "rm -rf /tmp/x"),
+    ]
 
-    @Test
-    func unquotedHeredocBodyExtractsCommandSubstitution() {
-        // An unquoted heredoc delimiter expands $(...) in the body.
-        let command = "cat <<EOF\nvalue=$(rm -rf /tmp/x)\nEOF"
+    @Test(arguments: LocalExecCommandParserTests.candidateInvocationCases)
+    func authorizationCandidatesCarryTheCleanedInvocation(
+        command: String,
+        identity: String,
+        invocation: String
+    ) {
         let candidates = LocalExecCommandParser.authorizationCandidates(in: command)
-        let identities = Set(candidates.map(\.identity))
-        #expect(identities.contains("cat"))
-        #expect(identities.contains("rm"))
+        #expect(candidates.first { $0.identity == identity }?.invocation == invocation)
     }
 
-    @Test
-    func quotedHeredocBodyDoesNotExpand() {
-        // A quoted heredoc delimiter keeps the body literal.
-        let command = "cat <<'EOF'\nvalue=$(rm -rf /tmp/x)\nEOF"
-        let candidates = LocalExecCommandParser.authorizationCandidates(in: command)
-        let identities = Set(candidates.map(\.identity))
-        #expect(identities.contains("cat"))
-        #expect(!identities.contains("rm"))
+    /// Nested and process substitutions, heredoc bodies, and loop/case
+    /// headers: the nested executables must surface (never silently run)
+    /// while syntactic words must not.
+    static let nestedCandidateCases: [(String, Set<String>, Set<String>)] = [
+        ("FOO=$(rm -rf x) make", ["rm"], []),
+        ("diff <(rm -rf /tmp/x) expected", ["diff", "rm"], []),
+        ("tee >(rm -rf /tmp/x)", ["tee", "rm"], []),
+        (#"cat "$((1+2))" "$(rm x)""#, ["cat", "rm"], ["1"]),
+        ("for x in a b; do rm -rf target; done", ["rm"], ["x", "a"]),
+        ("case x in x) rm -rf target;; esac", ["rm"], ["x"]),
+        ("cat <<EOF\nvalue=$(rm -rf /tmp/x)\nEOF", ["cat", "rm"], []),
+        ("cat <<'EOF'\nvalue=$(rm -rf /tmp/x)\nEOF", ["cat"], ["rm"]),
+    ]
+
+    @Test(arguments: LocalExecCommandParserTests.nestedCandidateCases)
+    func authorizationCandidatesSurfaceNestedExecutables(
+        command: String,
+        required: Set<String>,
+        forbidden: Set<String>
+    ) {
+        let identities = Set(
+            LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
+        )
+        #expect(required.isSubset(of: identities))
+        #expect(identities.isDisjoint(with: forbidden))
     }
 
     // MARK: - Review fixes: leading redirection preserved (F9)
@@ -1078,13 +341,6 @@ struct LocalExecCommandParserTests {
     }
 
     // MARK: - Review fixes: privilege wrappers and dynamic builtins
-
-    @Test
-    func doasIsNotUnwrapped() {
-        let candidates = LocalExecCommandParser.authorizationCandidates(in: "doas rm -rf /tmp/x")
-        #expect(candidates.count == 1)
-        #expect(candidates.first?.identity == "doas")
-    }
 
     @Test
     func evalSourceTrapRemainPromptWorthy() {

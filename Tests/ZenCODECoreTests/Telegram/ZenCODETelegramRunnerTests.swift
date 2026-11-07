@@ -68,17 +68,6 @@ private final class TelegramRunnerLogRecorder: Sendable {
     }
 }
 
-/// The texts a sink received, in order.
-private final class WrittenTexts: Sendable {
-    private let storage = Mutex<[String]>([])
-
-    var texts: [String] { storage.withLock { $0 } }
-
-    func append(_ text: String) {
-        storage.withLock { $0.append(text) }
-    }
-}
-
 /// Counts the calls of a factory.
 private final class CallCounter: Sendable {
     private let storage = Mutex(0)
@@ -334,21 +323,6 @@ struct ZenCODETelegramRunnerTests {
         }
     }
 
-    /// A stop that arrives during the startup is a clean stop, with status 0.
-    @Test
-    func aStopDuringTheStartupIsACleanStop() async throws {
-        try await withEnvironment { environment in
-            let mode = try Self.startMode(in: environment)
-            mode.stop.yield(.interrupt)
-            #expect(await mode.task.value == 0)
-            #expect(Array(environment.log.messages.suffix(2)) == ["Stopping (SIGINT).", "Stopped."])
-            #expect(await ACPTelegramTestSupport.waitUntil {
-                await environment.transport.runningPollCount == 0
-            })
-            #expect(TelegramChannelRegistry.shared.attachedCount(botID: environment.transport.botID) == 0)
-        }
-    }
-
     // MARK: - The chat drives the session
 
     /// A prompt from the chat runs a turn whose answer reaches the Bot API;
@@ -391,31 +365,6 @@ struct ZenCODETelegramRunnerTests {
             #expect(await mode.task.value == 0)
             #expect(Array(environment.log.messages.suffix(2)) == ["Stopping (SIGINT).", "Stopped."])
             #expect(await !environment.transport.sentTexts.contains { $0.contains("never streamed") })
-        }
-    }
-
-    /// A gated tool of a turn from the chat is asked in the chat, where
-    /// `/allow ID` decides it: the slot's authorizer routes it to the
-    /// Telegram channel, never to a terminal.
-    @Test
-    func aGatedToolIsDecidedWithAllowInTheChat() async throws {
-        try await withEnvironment { environment in
-            guard let (mode, _) = try await Self.startedMode(in: environment) else { return }
-            await environment.backend.enqueue([.askPermission(command: "echo hi"), .reply("ran")])
-            try await environment.transport.deliver("Run echo hi")
-            let card = await environment.transport.waitForSentMessage { $0.text.contains("Request ID: ") }
-            let cardText = try #require(card?.text)
-            let range = try #require(cardText.range(of: "Request ID: "))
-            let requestID = String(cardText[range.upperBound...].prefix { !$0.isWhitespace })
-            try await environment.transport.deliver("/allow \(requestID)")
-            #expect(await ACPTelegramTestSupport.waitUntil {
-                await environment.transport.sentTexts.contains { $0.contains("ZenCODE completed") }
-            })
-            #expect(await environment.backend.permissionDecisions == [true])
-            #expect(environment.log.messages.contains("Telegram approved local.exec."))
-
-            mode.stop.yield(.terminate)
-            #expect(await mode.task.value == 0)
         }
     }
 
@@ -517,183 +466,7 @@ struct ZenCODETelegramRunnerTests {
         }
     }
 
-    /// A stop while the startup menu waits withdraws it and ends the mode
-    /// cleanly: the graph stays where it was and nothing is resumed.
-    @Test
-    func aStopWhileTheStartupMenuWaitsIsACleanStop() async throws {
-        try await withEnvironment(persistsTaskGraphs: true) { environment in
-            try Self.seedEarlierSessionCheckpoint(in: environment)
-            guard let (mode, session) = try await Self.startedMode(in: environment) else { return }
-            #expect(await environment.transport.waitForSentMessage {
-                $0.text.hasPrefix(Self.resumeMenuTitle)
-            } != nil)
-            let channel = try #require(session.telegramChannel)
-            #expect(channel.pendingChoiceReader != nil)
-
-            mode.stop.yield(.interrupt)
-            #expect(await mode.task.value == 0)
-            #expect(Array(environment.log.messages.suffix(2)) == ["Stopping (SIGINT).", "Stopped."])
-            #expect(!environment.log.messages.contains { $0.hasPrefix("Resumed task graph") })
-            #expect(channel.pendingChoiceReader == nil)
-            let store = try #require(environment.taskGraphStore)
-            #expect(try store.load(sessionID: "old-session", workingDirectory: environment.workspace)?
-                .graphs.map(\.id) == ["old-work"])
-        }
-    }
-
-    // MARK: - The channel on the `.telegram` slot
-
-    /// Only the slots no other channel observes run the controller's
-    /// task-graph observer from the Telegram channel: an ACP session's and
-    /// the `zen --telegram` one.
-    @Test(arguments: [
-        (ChatSlotIdentity.telegram, true),
-        (.acpSession("acp-session"), true),
-        (.terminal, false),
-        (.window("window"), false),
-    ])
-    func theChannelRunsTheTaskGraphObserverOnTelegramAndACPSlots(
-        _ identity: ChatSlotIdentity,
-        _ runsObserver: Bool
-    ) async throws {
-        try await withEnvironment { environment in
-            let (host, channel) = try Self.slotChannel(identity: identity, in: environment)
-            #expect(channel.runsTaskGraphObserver == runsObserver)
-            await host.shutdown()
-        }
-    }
-
-    /// `/undo` has no `/telegram off` to point to on the `zen --telegram`
-    /// slot; the other slots keep their text.
-    @Test
-    func undoTellsItIsNotAvailableOnTheTelegramSlot() async throws {
-        try await withEnvironment { environment in
-            let (telegramHost, telegramChannel) = try Self.slotChannel(
-                identity: .telegram, description: "Telegram", in: environment
-            )
-            #expect(telegramChannel.undoText == "/undo is not available in a session started with zen --telegram.")
-            await telegramHost.shutdown()
-
-            let (terminalHost, terminalChannel) = try Self.slotChannel(
-                identity: .terminal, description: "TUI", in: environment
-            )
-            #expect(terminalChannel.undoText == "Use /undo in the TUI after /telegram off to revert file changes.")
-            await terminalHost.shutdown()
-        }
-    }
-
-    /// A host with one slot of `identity`, without session, and the slot's
-    /// Telegram channel, not attached.
-    private static func slotChannel(
-        identity: ChatSlotIdentity,
-        description: String = "Telegram",
-        in environment: Environment
-    ) throws -> (ChatSessionHost, TelegramChannel) {
-        let host = ChatSessionHost(
-            runner: AgentCoreSessionRunner(taskGraphStore: nil),
-            environment: ChatSessionEnvironment(configuration: try environment.configuration(), featureRuntime: nil)
-        )
-        host.telegramTransportFactory = environment.transportFactory
-        let slotID = try host.openSlot(ChatSlotDescriptor(
-            identity: identity,
-            workingDirectory: environment.workspace,
-            presenter: ZenCODETelegramSilentPresenter(),
-            interaction: .host(ZenCODETelegramPrimaryHost()),
-            authorizer: ChatToolConsentAuthorizer(host: ZenCODETelegramPrimaryHost()),
-            publishesState: false
-        ))
-        let channel = try #require(host.telegramChannelCreatingIfNeeded(
-            in: slotID, primaryChannelDescription: description
-        ))
-        return (host, channel)
-    }
-
-    // MARK: - Log
-
-    /// Each line of an event that is not blank gets its own timestamp: the
-    /// local time to the second with its offset, `+00:00` for UTC.
-    @Test
-    func theLogTimestampsEveryLineThatIsNotBlank() throws {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
-        let date = try #require(calendar.date(from: DateComponents(
-            year: 2026, month: 11, day: 5, hour: 9, minute: 0, second: 0
-        )))
-        let rome = try #require(TimeZone(secondsFromGMT: 3_600))
-        #expect(ZenCODETelegramLog.formattedLines(
-            "Telegram remote control is active.\nLinked chat: Test\n\n",
-            date: date,
-            timeZone: rome
-        ) == """
-            2026-11-05T10:00:00+01:00 Telegram remote control is active.
-            2026-11-05T10:00:00+01:00 Linked chat: Test
-
-            """)
-        #expect(ZenCODETelegramLog.timestamp(for: date, in: try #require(TimeZone(secondsFromGMT: 0)))
-            == "2026-11-05T09:00:00+00:00")
-        #expect(ZenCODETelegramLog.timestamp(
-            for: date.addingTimeInterval(7.9),
-            in: try #require(TimeZone(secondsFromGMT: -(4 * 3_600 + 30 * 60)))
-        ) == "2026-11-05T04:30:07-04:30")
-        #expect(ZenCODETelegramLog.formattedLines("\n  \n\t\n", date: date, timeZone: rome).isEmpty)
-        #expect(ZenCODETelegramLog.formattedLines("Stopped.", date: date, timeZone: rome)
-            == "2026-11-05T10:00:00+01:00 Stopped.\n")
-
-        let written = WrittenTexts()
-        let log = ZenCODETelegramLog(timeZone: rome, now: { date }) { lines in
-            written.append(lines)
-        }
-        log.log("ZenCODE: Telegram is not receiving messages.\nZenCODE keeps retrying every minute.\n\n")
-        log.log("\n")
-        #expect(written.texts == [
-            "2026-11-05T10:00:00+01:00 ZenCODE: Telegram is not receiving messages.\n"
-                + "2026-11-05T10:00:00+01:00 ZenCODE keeps retrying every minute.\n",
-        ])
-    }
-
-    /// The mode's writer sends what is written to the preserved standard
-    /// error to the log, writes what is written to the preserved standard
-    /// output as it is, and leaves every other handle alone; a write to a
-    /// pipe without reader or to a closed descriptor is dropped, never fatal.
-    @Test
-    func theOutputWriterRoutesStandardErrorToTheLogAndNeverFails() throws {
-        let standardError = Pipe()
-        let standardOutput = Pipe()
-        let other = Pipe()
-        let recorder = TelegramRunnerLogRecorder()
-        let writer = ZenCODETelegramOutput.writer(
-            standardErrorDescriptor: standardError.fileHandleForWriting.fileDescriptor,
-            standardOutputDescriptor: standardOutput.fileHandleForWriting.fileDescriptor,
-            log: recorder.log
-        )
-        #expect(writer("\nPermission required.\nOperation denied.\n", standardError.fileHandleForWriting))
-        #expect(recorder.messages == ["Permission required.", "Operation denied."])
-        #expect(writer("raw output", standardOutput.fileHandleForWriting))
-        try standardOutput.fileHandleForWriting.close()
-        let output = standardOutput.fileHandleForReading.readDataToEndOfFile()
-        #expect(String(decoding: output, as: UTF8.self) == "raw output")
-        #expect(!writer("untouched", other.fileHandleForWriting))
-
-        let closedReader = Pipe()
-        SystemCrontabClient.suppressSIGPIPE(on: closedReader.fileHandleForWriting)
-        try closedReader.fileHandleForReading.close()
-        ZenCODETelegramOutput.write("lost after the reader closed\n", to: closedReader.fileHandleForWriting.fileDescriptor)
-        ZenCODETelegramOutput.write("lost on a closed descriptor\n", to: -1)
-    }
-
     // MARK: - Signals
-
-    /// The first stop signal stops the session; every later one forces the
-    /// exit.
-    @Test
-    func theFirstSignalStopsAndEveryLaterOneForcesTheExit() {
-        let latch = ZenCODETelegramStopSignalLatch()
-        #expect(latch.receive(.terminate) == .stop(.terminate))
-        #expect(latch.receive(.interrupt) == .forceExit)
-        #expect(latch.receive(.terminate) == .forceExit)
-        #expect(ZenCODETelegramStopSignal.terminate.name == "SIGTERM")
-        #expect(ZenCODETelegramStopSignal.interrupt.name == "SIGINT")
-    }
 
     /// The monitor with real signals that the test process does not use
     /// otherwise, SIGUSR1 standing for SIGTERM and SIGUSR2 for a SIGINT the

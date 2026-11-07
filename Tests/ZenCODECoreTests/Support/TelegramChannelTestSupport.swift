@@ -114,19 +114,6 @@ enum TelegramChannelTestSupport {
         )
     }
 
-    /// What `terminal` writes while `operation` runs, one entry per write.
-    @ChatSessionActor
-    static func capturing(
-        _ terminal: TerminalChat,
-        _ operation: () async -> Void
-    ) async -> [String] {
-        terminal.capturedCommandOutputForTesting = []
-        await operation()
-        let writes = terminal.capturedCommandOutputForTesting ?? []
-        terminal.capturedCommandOutputForTesting = nil
-        return writes
-    }
-
     /// Stands in for the interactive input loop of `terminal`, which
     /// `/telegram on` needs (``TerminalChat/loopEventQueue``), for a test that
     /// drives the commands directly. Nothing reads the queue: a test that

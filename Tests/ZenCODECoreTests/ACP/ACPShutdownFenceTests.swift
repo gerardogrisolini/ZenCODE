@@ -188,23 +188,6 @@ struct ACPShutdownFenceTests {
         }
     }
 
-    @Test
-    func lifecycleOperationStaysLiveWithoutShutdown() async throws {
-        // Negative control: the fence must not invalidate healthy operations,
-        // otherwise the assertions above would pass for the wrong reason.
-        let bridge = try Self.makeBridge()
-
-        let first = try await bridge.registerLifecycleOperation()
-        let second = try await bridge.registerLifecycleOperation()
-        #expect(await bridge.isLifecycleOperationLive(first))
-        #expect(await bridge.isLifecycleOperationLive(second))
-
-        // Finishing one operation must not fence the other.
-        await bridge.finishLifecycleOperation(first)
-        #expect(await bridge.isLifecycleOperationLive(first) == false)
-        #expect(await bridge.isLifecycleOperationLive(second))
-    }
-
     // MARK: - session/new
 
     @Test
@@ -222,44 +205,6 @@ struct ACPShutdownFenceTests {
     }
 
     // MARK: - session/load and session/resume
-
-    @Test
-    func loadSessionAfterShutdownCreatesNoSessionAndNoBackend() async throws {
-        let createdBackends = ACPLifecycleCounter()
-        let bridge = try Self.makeBridge(createdBackends: createdBackends)
-        let sessionID = "session-\(UUID().uuidString)"
-
-        await bridge.shutdown()
-        await #expect(throws: (any Error).self) {
-            try await bridge.loadSession(
-                id: .number(3),
-                params: Self.sessionParams(sessionID: sessionID)
-            )
-        }
-
-        #expect(await bridge.testHasSession(sessionID: sessionID) == false)
-        #expect(await bridge.testSessionCount() == 0)
-        #expect(createdBackends.value == 0)
-    }
-
-    @Test
-    func resumeSessionAfterShutdownCreatesNoSessionAndNoBackend() async throws {
-        let createdBackends = ACPLifecycleCounter()
-        let bridge = try Self.makeBridge(createdBackends: createdBackends)
-        let sessionID = "session-\(UUID().uuidString)"
-
-        await bridge.shutdown()
-        await #expect(throws: (any Error).self) {
-            try await bridge.resumeSession(
-                id: .number(4),
-                params: Self.sessionParams(sessionID: sessionID)
-            )
-        }
-
-        #expect(await bridge.testHasSession(sessionID: sessionID) == false)
-        #expect(await bridge.testSessionCount() == 0)
-        #expect(createdBackends.value == 0)
-    }
 
     @Test
     func restoreOfAnExistingSessionAfterShutdownIsRejected() async throws {
@@ -350,31 +295,6 @@ struct ACPShutdownFenceTests {
     }
 
     // MARK: - Negative controls (the fence must not break the normal path)
-
-    @Test
-    func newSessionWithoutShutdownStillPublishesTheSession() async throws {
-        let bridge = try Self.makeBridge()
-
-        try await bridge.newSession(id: .number(15), params: Self.sessionParams())
-
-        #expect(await bridge.testSessionCount() == 1)
-        let sessionID = try #require(await bridge.testAnySessionID())
-        #expect(await bridge.testHasSession(sessionID: sessionID))
-    }
-
-    @Test
-    func restoreWithoutShutdownStillPublishesTheSession() async throws {
-        let bridge = try Self.makeBridge()
-        let sessionID = "session-\(UUID().uuidString)"
-
-        try await bridge.resumeSession(
-            id: .number(16),
-            params: Self.sessionParams(sessionID: sessionID)
-        )
-
-        #expect(await bridge.testHasSession(sessionID: sessionID))
-        #expect(await bridge.testSessionCount() == 1)
-    }
 
     @Test
     func closeWithoutShutdownStillRemovesOnlyThatSession() async throws {

@@ -554,13 +554,3 @@ final class ChatConsentHostRoutes: Sendable {
         }
     }
 }
-
-extension ChatSessionHost {
-    /// Installs the transport of the Telegram channels this host creates
-    /// from now on (see ``telegramTransportFactory``); for tests.
-    func setTelegramTransportFactoryForTesting(
-        _ factory: (@Sendable () -> any TelegramHTTPTransport)?
-    ) {
-        telegramTransportFactory = factory
-    }
-}

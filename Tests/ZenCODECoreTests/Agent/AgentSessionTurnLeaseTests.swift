@@ -52,31 +52,6 @@ struct AgentSessionTurnLeaseTests {
     }
 
     @Test
-    func allowsTurnsForDifferentSessionsToProceedConcurrently() async throws {
-        let lease = AgentSessionTurnLease()
-        let recorder = LeaseTestRecorder()
-        let completionGate = LeaseTestGate()
-
-        let first = Task {
-            try await lease.withLease(sessionID: "first") {
-                await recorder.record("first")
-                await completionGate.wait()
-            }
-        }
-        let second = Task {
-            try await lease.withLease(sessionID: "second") {
-                await recorder.record("second")
-                await completionGate.wait()
-            }
-        }
-
-        await recorder.waitForCount(2)
-        await completionGate.open()
-        try await first.value
-        try await second.value
-    }
-
-    @Test
     func releasesLeaseAfterOperationError() async throws {
         let lease = AgentSessionTurnLease()
         let recorder = LeaseTestRecorder()

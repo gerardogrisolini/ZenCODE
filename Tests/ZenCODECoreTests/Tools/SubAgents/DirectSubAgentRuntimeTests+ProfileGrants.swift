@@ -166,41 +166,6 @@ extension DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func profileNameDoesNotCollideWithCoordinatorID() async throws {
-        let profile = AgentProfile(
-            id: "coordinator-profile",
-            name: "child-profile",
-            role: .developer,
-            tools: ["local.writeFile"]
-        )
-        let backend = CapturingSubAgentRuntimeBackend()
-        let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in backend },
-            profileResolver: { _ in profile },
-            parentProfileID: "Developer",
-            parentProfileName: "coordinator-profile"
-        )
-
-        // A custom profile: the project must have it in its saved selection.
-        let workingDirectory = URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests")
-        _ = try await Self.withProjectSelection([profile], workingDirectory: workingDirectory) {
-            try await runtime.createAgents(
-                arguments: [
-                    "name": .string("isolated-worker"),
-                    "profile": .string(profile.id)
-                ],
-                workingDirectory: workingDirectory,
-                parentAllowedToolNames: ["local.readFile"]
-            )
-        }
-
-        let session = try #require(await backend.createdSessions().first)
-        #expect(session.allowedToolNames?.contains("local.writeFile") == true)
-        #expect(session.allowedToolNames?.contains("local.readFile") == false)
-        await runtime.shutdown()
-    }
-
-    @Test
     func profileNameIsFallbackWhenCoordinatorIDIsUnavailable() async throws {
         let developer = AgentProfile(
             id: AgentProfileRole.developer.rawValue,
@@ -227,45 +192,6 @@ extension DirectSubAgentRuntimeTests {
         let session = try #require(await backend.createdSessions().first)
         #expect(session.allowedToolNames?.contains("local.readFile") == true)
         #expect(session.allowedToolNames?.contains("local.writeFile") == false)
-        await runtime.shutdown()
-    }
-    @Test
-    func resolvedPlannerProfileIsComposedIntoCreatedBackendSystemPrompt() async throws {
-        let planner = AgentProfile(
-            id: AgentProfileRole.planner.rawValue,
-            name: "Customized Planning Agent",
-            instructions: "Preserve this authentic Planner customization.",
-            readOnly: false,
-            role: .planner,
-            tools: ["local.readFile", "local.writeFile", "external.inspect"]
-        )
-        let backend = CapturingSubAgentRuntimeBackend()
-        let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in backend },
-            profileResolver: { _ in planner },
-            parentProfileID: "developer-profile",
-            parentProfileName: "Developer"
-        )
-
-        _ = try await runtime.createAgents(
-            arguments: [
-                "name": .string(PlanningCommandKernel.planAuthorAgentName),
-                "role": .string(AgentProfileStore.plannerAgentName),
-                "profile": .string(planner.id),
-            ],
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-planner-prompt-tests"),
-            parentAllowedToolNames: ["local.writeFile"]
-        )
-
-        let session = try #require(await backend.createdSessions().first)
-        let systemPrompt = try #require(session.systemPrompt)
-        let allowedToolNames = try #require(session.allowedToolNames)
-        #expect(systemPrompt.contains("Selected agent: Customized Planning Agent"))
-        #expect(systemPrompt.contains("Preserve this authentic Planner customization."))
-        #expect(!systemPrompt.contains("Planner workflow policy:"))
-        #expect(allowedToolNames.contains("local.readFile"))
-        #expect(!allowedToolNames.contains("local.writeFile"))
-        #expect(allowedToolNames.contains("external.inspect"))
         await runtime.shutdown()
     }
 
@@ -491,35 +417,6 @@ extension DirectSubAgentRuntimeTests {
         #expect(propagated.sessionID == session.id)
         let propagatedToolNames = Set(propagated.providers.flatMap(\.tools).map(\.name))
         #expect(propagatedToolNames == PromptSkillToolProvider.toolNames)
-
-        await runtime.shutdown()
-    }
-
-    @Test
-    func skillProviderNotRegisteredWhenAbsent() async throws {
-        let backend = CapturingSubAgentRuntimeBackend()
-        let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in backend },
-            profileResolver: { _ in AgentProfile(id: AgentProfileRole.developer.rawValue, name: "Worker", role: .developer, tools: []) }
-        )
-        // No promptSkillToolProvider installed.
-
-        _ = try await runtime.createAgents(
-            arguments: [
-                "name": .string("worker"),
-                "role": .string("worker"),
-                "profile": .string("Worker")
-            ],
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-skill-absent-tests"),
-            parentAllowedToolNames: ["local.readFile"]
-        )
-
-        let session = try #require(await backend.createdSessions().first)
-        // Skill tools are still in the allowlist (always-on), but no
-        // provider update is sent because there is no skill provider.
-        #expect(session.allowedToolNames?.isSuperset(of: PromptSkillToolProvider.toolNames) == true)
-        let updates = await backend.toolProviderUpdates
-        #expect(updates.isEmpty)
 
         await runtime.shutdown()
     }

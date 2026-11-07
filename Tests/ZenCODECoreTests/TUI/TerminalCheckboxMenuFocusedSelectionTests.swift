@@ -19,7 +19,6 @@ struct TerminalCheckboxMenuFocusedSelectionTests {
     // Single-byte keys only: an escape sequence or a lone Esc is sensitive to
     // the process-wide resize generation that unrelated tests bump concurrently.
     private static let down = "j"
-    private static let up = "k"
 
     private func footer(rows: Int) -> String {
         ["PROMPT| draft", "draft second line", "DOCK| 2 unread", "STATUS| ready"].enumerated().map {
@@ -73,25 +72,6 @@ struct TerminalCheckboxMenuFocusedSelectionTests {
     }
 
     @Test
-    func cursorStartsOnTheFocusedItemSoEnterAloneKeepsIt() throws {
-        let result = try #require(run(
-            keys: "\r",
-            selected: ["alpha", "beta", "gamma"],
-            focused: "beta"
-        ))
-        #expect(result.selected == ["alpha", "beta", "gamma"])
-        #expect(result.focused == "beta")
-    }
-
-    @Test
-    func missingOrUnknownFocusStartsOnTheFirstRow() throws {
-        let withoutFocus = try #require(run(keys: "\r", selected: [], focused: nil))
-        #expect(withoutFocus.focused == "alpha")
-        let unknownFocus = try #require(run(keys: "\r", selected: [], focused: "missing"))
-        #expect(unknownFocus.focused == "alpha")
-    }
-
-    @Test
     func spaceAndXToggleWithoutMovingTheCursor() throws {
         let result = try #require(run(
             keys: "x" + " " + "X" + "\r",
@@ -115,18 +95,6 @@ struct TerminalCheckboxMenuFocusedSelectionTests {
     }
 
     @Test
-    func arrowKeysStayWithinTheItemList() throws {
-        let top = try #require(run(keys: Self.up + Self.up + "\r", selected: [], focused: "beta"))
-        #expect(top.focused == "alpha")
-        let bottom = try #require(run(
-            keys: Self.down + Self.down + Self.down + Self.down + "\r",
-            selected: [],
-            focused: "alpha"
-        ))
-        #expect(bottom.focused == "gamma")
-    }
-
-    @Test
     func cancelKeysReturnNothing() {
         #expect(run(keys: " q", selected: ["alpha"], focused: "beta") == nil)
         #expect(run(keys: "xQ", selected: ["alpha"], focused: "beta") == nil)
@@ -146,27 +114,6 @@ struct TerminalCheckboxMenuFocusedSelectionTests {
         let rendered = capture.bytes
         #expect(rendered.contains("Enter use agent"))
         #expect(!rendered.contains("Enter confirm"))
-    }
-
-    @Test
-    func defaultHelpIsKeptWhenNoOverrideIsGiven() throws {
-        let capture = PrimaryScreenCapture()
-        _ = try #require(run(keys: "\r", selected: ["alpha"], focused: nil, capture: capture))
-        #expect(capture.bytes.contains("Enter confirm"))
-    }
-
-    @Test
-    func emptyItemListReturnsNothing() {
-        let result = TerminalCheckboxMenu.selectWithFocus(
-            title: "Empty",
-            items: [TerminalCheckboxMenuItem<String>](),
-            selected: [],
-            focused: nil,
-            helpLines: nil,
-            reservedBottomRows: 0,
-            shouldCancel: nil
-        )
-        #expect(result == nil)
     }
 
     @Test

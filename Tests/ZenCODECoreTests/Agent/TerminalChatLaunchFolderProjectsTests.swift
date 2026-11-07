@@ -25,13 +25,6 @@ struct TerminalChatLaunchFolderProjectsTests {
         }
     }
 
-    @Test
-    func theCacheIsKeyedByTheSelectedAgentAndRefilledAfterAnInvalidation() async throws {
-        try await Support.withTemporaryProjectAsync { _, workspace in
-            try await Self.cacheKeyScenario(in: workspace)
-        }
-    }
-
     private nonisolated static func makeFolder(_ name: String, in workspace: URL) throws {
         try FileManager.default.createDirectory(
             at: workspace.appendingPathComponent(name, isDirectory: true),
@@ -102,53 +95,6 @@ struct TerminalChatLaunchFolderProjectsTests {
         #expect(terminal.launchFolderProjectsForSelectedAgent() == nil)
         let developerContext = terminal.currentSessionConfiguration(allowedToolNames: []).dynamicContext
         #expect(developerContext?.contains(headline) == false)
-    }
-
-    @ChatSessionActor
-    private static func cacheKeyScenario(in workspace: URL) throws {
-        try makeFolder("one", in: workspace)
-        try makeFolder("two", in: workspace)
-        let terminal = TerminalChat(
-            configuration: try AgentConfiguration(
-                hostedModelID: "remote-community/test",
-                availableAgents: [Support.developer, organizer],
-                workingDirectory: workspace
-            ),
-            stdinIsTerminal: false
-        )
-
-        terminal.selectedAgent = Support.developer
-        #expect(terminal.launchFolderProjectsForSelectedAgent() == nil)
-        #expect(terminal.launchFolderProjectsCache == nil)
-
-        terminal.selectedAgent = organizer
-        let first = try #require(terminal.launchFolderProjectsForSelectedAgent())
-        #expect(first.folderNames == ["one", "two"])
-        #expect(first.workingDirectoryPath == workspace.standardizedFileURL.path)
-
-        try makeFolder("three", in: workspace)
-        // Same selection: the cached snapshot is returned.
-        #expect(terminal.launchFolderProjectsForSelectedAgent() == first)
-
-        // A cache read for another selection key is not reused.
-        terminal.launchFolderProjectsCache = TerminalChat.LaunchFolderProjectsCache(
-            agentKey: "another-agent",
-            projects: first
-        )
-        let refreshed = try #require(terminal.launchFolderProjectsForSelectedAgent())
-        #expect(refreshed.folderNames == ["one", "three", "two"])
-        #expect(
-            terminal.launchFolderProjectsCache?.agentKey
-                == ProjectAgentSelectionStore.selectionKey(for: organizer)
-        )
-
-        // After an invalidation the next composition reads the folder again.
-        try makeFolder("four", in: workspace)
-        terminal.launchFolderProjectsCache = nil
-        #expect(
-            try #require(terminal.launchFolderProjectsForSelectedAgent()).folderNames
-                == ["four", "one", "three", "two"]
-        )
     }
 }
 

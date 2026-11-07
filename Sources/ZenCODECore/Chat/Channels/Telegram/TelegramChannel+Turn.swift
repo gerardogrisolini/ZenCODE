@@ -162,10 +162,6 @@ extension TelegramChannel {
         purpose: ChatTurnPurpose = .normal,
         isUserVisible: Bool = true
     ) async {
-        if let onRunTurnForTesting {
-            await onRunTurnForTesting(prompt, lease, purpose)
-            return
-        }
         guard let host, drivesSlot else { return }
         nextTurnLease = lease
         defer { nextTurnLease = nil }
@@ -274,7 +270,6 @@ extension TelegramChannel {
     /// Waits until no turn is finishing (``finishingTurnCount``).
     private func waitForFinishingTurn() async {
         while finishingTurnCount > 0 {
-            onBeginTurnWaitsForFinishingTurnForTesting?()
             await withCheckedContinuation { continuation in
                 finishingTurnWaiters.append(continuation)
             }

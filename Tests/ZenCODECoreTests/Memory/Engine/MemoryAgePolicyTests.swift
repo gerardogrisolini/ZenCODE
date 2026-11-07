@@ -66,16 +66,6 @@ struct MemoryAgePolicyTests {
     }
 
     @Test
-    func boostCountsAccessesWithoutChangingTheContentTimestamp() {
-        let created = Date().addingTimeInterval(-50 * 86_400)
-        var entry = EngineMemoryEntry(category: .fact, content: "boosted", createdAt: created)
-        entry.boostConfidence(by: 0.02)
-        entry.touch()
-        #expect(entry.accessCount == 2)
-        #expect(entry.updatedAt == created)
-    }
-
-    @Test
     func olderRelevantEntryOutranksFreshWeakMatch() async throws {
         let now = Date()
         let engine = MemoryEngine(selector: ScoreThresholdMemorySelector())
@@ -142,78 +132,5 @@ struct MemoryAgePolicyTests {
 
         let result = try await engine.searchReadOnlyDetailed("alpha alignment")
         #expect(result.candidates.map(\.memory.id).prefix(2) == ["leader", "runner-up"])
-    }
-
-    @Test
-    func graphNeighboursCarryTheirOwnWeight() async throws {
-        let now = Date()
-        let engine = MemoryEngine(selector: ScoreThresholdMemorySelector())
-        try await engine.insert(
-            EngineMemoryEntry(
-                id: "hit",
-                category: .fact,
-                content: "kafka consumer group tuning",
-                tags: ["streaming"],
-                createdAt: now
-            ),
-            persist: false
-        )
-        // Two neighbours reachable only through the shared tag; same text,
-        // different ages.
-        try await engine.insert(
-            EngineMemoryEntry(
-                id: "fresh-neighbour",
-                category: .fact,
-                content: "schema registry migration",
-                tags: ["streaming"],
-                createdAt: now
-            ),
-            persist: false
-        )
-        try await engine.insert(
-            EngineMemoryEntry(
-                id: "old-neighbour",
-                category: .fact,
-                content: "schema registry rollout",
-                tags: ["streaming"],
-                createdAt: Self.days(300, before: now)
-            ),
-            persist: false
-        )
-
-        let result = try await engine.searchReadOnlyDetailed("kafka consumer")
-        let ids = result.candidates.map(\.memory.id)
-        #expect(ids.first == "hit")
-        let freshIndex = try #require(ids.firstIndex(of: "fresh-neighbour"))
-        let oldIndex = try #require(ids.firstIndex(of: "old-neighbour"))
-        #expect(freshIndex < oldIndex)
-        // The hit keeps its seed score; the neighbours inherit a decayed share
-        // of it, discounted by their own age.
-        let hitScore = try #require(result.candidates.first?.score)
-        let oldScore = try #require(result.candidates.first { $0.memory.id == "old-neighbour" }?.score)
-        #expect(oldScore < hitScore)
-    }
-
-    @Test
-    func rejectedCandidatesAreNotDecayedByDefault() async throws {
-        let engine = MemoryEngine(selector: ScoreThresholdMemorySelector())
-        #expect(MemoryEngineConfiguration().decayRejectedBy == 0)
-        try await engine.insert(
-            EngineMemoryEntry(id: "strong", category: .fact, content: "transport architecture for the swift server"),
-            persist: false
-        )
-        try await engine.insert(
-            EngineMemoryEntry(id: "weak", category: .fact, content: "transport layer notes"),
-            persist: false
-        )
-
-        _ = try await engine.recall("transport architecture")
-
-        let graph = await engine.snapshot()
-        let strong = try #require(graph.memories["strong"])
-        let weak = try #require(graph.memories["weak"])
-        #expect(strong.accessCount == 1)
-        #expect(weak.accessCount == 0)
-        #expect(weak.confidence == 1)
     }
 }

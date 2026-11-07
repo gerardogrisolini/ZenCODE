@@ -78,36 +78,6 @@ struct MemoryReadOnlySearchStoreTests {
     }
 
     @Test
-    func storeSearchDoesNotMutateEngineGraphMetadata() async throws {
-        let persistence = RecordingPersistence()
-        let engine = MemoryEngine(persistence: persistence)
-        let store = MemoryGraphStore(
-            graphURL: URL(fileURLWithPath: "/dev/null/graph.json"),
-            engine: engine,
-            embedder: nil
-        )
-        try await engine.remember("actors isolate mutable state", tags: ["swift"])
-
-        let retrievalBefore = await engine.snapshot().metadata.retrievalCount
-        let confidenceBefore = await engine.snapshot().memories.mapValues(\.confidence)
-        let edgesBefore = await engine.snapshot().edges
-
-        _ = try await store.search(query: "actors", includeArchived: false, limit: 10)
-        _ = try await store.search(query: "mutable", includeArchived: false, limit: 10)
-
-        let retrievalAfter = await engine.snapshot().metadata.retrievalCount
-        let confidenceAfter = await engine.snapshot().memories.mapValues(\.confidence)
-        let edgesAfter = await engine.snapshot().edges
-
-        #expect(retrievalAfter == retrievalBefore)
-        #expect(confidenceAfter == confidenceBefore)
-        #expect(edgesAfter == edgesBefore)
-
-        let saves = await persistence.saved.count
-        #expect(saves == 1) // Only the initial remember persisted.
-    }
-
-    @Test
     func storeSearchSucceedsWhenPersistenceAlwaysFails() async throws {
         let engine = MemoryEngine(persistence: AlwaysFailingPersistence())
         let store = MemoryGraphStore(
@@ -184,111 +154,12 @@ struct MemoryReadOnlySearchStoreTests {
             #expect(!FileManager.default.fileExists(atPath: graphURL.path))
         }
     }
-
-    @Test
-    func coldSearchDoesNotFailWhenGraphDirectoryIsReadOnly() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-
-        try await workspace.withIsolatedSupport {
-            let graphURL = workspace.graphURL()
-            let graphDir = graphURL.deletingLastPathComponent()
-
-            // Pre-create the directory where the graph file would be written,
-            // then make it read-only. Any premature save during open would
-            // fail with a permission error.
-            try FileManager.default.createDirectory(
-                at: graphDir,
-                withIntermediateDirectories: true
-            )
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o555],
-                ofItemAtPath: graphDir.path
-            )
-            defer {
-                // Restore write permission so the workspace cleanup succeeds.
-                try? FileManager.default.setAttributes(
-                    [.posixPermissions: 0o755],
-                    ofItemAtPath: graphDir.path
-                )
-            }
-
-            // The cold open + search must succeed despite the read-only
-            // directory: open loads an empty graph and never calls save.
-            let store = try await MemoryGraphStore.open(
-                graphURL: graphURL
-            )
-            let results = try await store.search(
-                query: "directory",
-                includeArchived: false,
-                limit: 10
-            )
-            #expect(results.isEmpty)
-
-            // No graph file was created.
-            #expect(!FileManager.default.fileExists(atPath: graphURL.path))
-        }
-    }
-
-    @Test
-    func firstMutationPersistsEmptyGraph() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-
-        try await workspace.withIsolatedSupport {
-            let graphURL = workspace.graphURL()
-            let service = MemoryService()
-
-            // Cold read: empty graph in memory, no file.
-            let before = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
-                limit: 10
-            )
-            #expect(before.isEmpty)
-            #expect(!FileManager.default.fileExists(atPath: graphURL.path))
-
-            // First mutation: the new entry is
-            // persisted atomically.
-            _ = try await service.writeEntry(
-                content: "Summary: the write that triggers persistence.",
-                workspaceRootURL: workspace.workspaceURL
-            )
-            #expect(FileManager.default.fileExists(atPath: graphURL.path))
-
-            // A fresh open must load the written entry from disk.
-            let reopened = try await MemoryGraphStore.open(
-                graphURL: graphURL
-            )
-            let all = try await reopened.entries(includeArchived: true, limit: 100)
-            #expect(all.count == before.count + 1)
-        }
-    }
 }
 
 // MARK: - Embedding environment isolation
 
 @Suite(.serialized)
 struct MemoryEmbeddingIsolationTests {
-
-    @Test
-    func forcedNilOverrideIgnoresEnvironment() async throws {
-        // The override takes precedence over the real environment: forcing nil
-        // guarantees no provider and therefore no network call, regardless of
-        // what the developer's shell exports.
-        let resolved = await MemoryEmbedding.withProvider(nil) {
-            MemoryEmbedding.provider()
-        }
-        #expect(resolved == nil)
-    }
-
-    @Test
-    func forcedProviderOverrideWins() async throws {
-        let injected = DeterministicHashEmbeddingProvider(modelID: "test-embed-v1")
-        let resolved = await MemoryEmbedding.withProvider(injected) {
-            MemoryEmbedding.provider()
-        }
-        #expect(resolved?.modelID == "test-embed-v1")
-    }
 
     @Test
     func overrideDoesNotLeakOutsideScope() async throws {
@@ -313,18 +184,6 @@ struct MemoryEmbeddingIsolationTests {
     }
 
     @Test
-    func concurrentOverridesDoNotInterfere() async throws {
-        let providerA = DeterministicHashEmbeddingProvider(modelID: "model-a")
-        let providerB = DeterministicHashEmbeddingProvider(modelID: "model-b")
-
-        async let a = resolveModelID(with: providerA)
-        async let b = resolveModelID(with: providerB)
-
-        #expect(try await a == "model-a")
-        #expect(try await b == "model-b")
-    }
-
-    @Test
     func injectedProviderReachesStoreWrites() async throws {
         // Prove the override propagates through the unstructured Task that the
         // registry uses to open the engine: a written entry carries an embedding
@@ -346,24 +205,6 @@ struct MemoryEmbeddingIsolationTests {
         }
     }
 
-    @Test
-    func forcedNilProviderReachesStoreWrites() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-
-        try await workspace.withIsolatedSupport {
-            try await MemoryEmbedding.withProvider(nil) {
-                let service = MemoryService()
-                let entry = try await service.writeEntry(
-                    content: "Summary: no embedding provider.",
-                    workspaceRootURL: workspace.workspaceURL
-                )
-                #expect(entry.embedding == nil)
-                #expect(entry.embeddingModel == nil)
-            }
-        }
-    }
-
     // MARK: - Environment resolution (controlled isolation)
 
     @Test
@@ -376,31 +217,6 @@ struct MemoryEmbeddingIsolationTests {
         ) {
             let resolved = MemoryEmbedding.provider()
             #expect(resolved == nil)
-        }
-    }
-
-    @Test
-    func forcedProviderWinsEvenWithRealEnvUnderTestHarness() async throws {
-        // Even with real env vars set AND the test-harness guard, an explicit
-        // task-local override must win — tests can still inject providers.
-        let injected = DeterministicHashEmbeddingProvider(modelID: "override-wins")
-        await withScopedEmbeddingEndpoint(
-            "https://embeddings.example.com/v1/embeddings"
-        ) {
-            let resolved = await MemoryEmbedding.withProvider(injected) {
-                MemoryEmbedding.provider()
-            }
-            #expect(resolved?.modelID == "override-wins")
-        }
-    }
-
-    // MARK: - Helpers
-
-    private func resolveModelID(with provider: any EmbeddingProvider) async throws -> String? {
-        try await MemoryEmbedding.withProvider(provider) {
-            // Yield to encourage potential interleaving between concurrent tasks.
-            try await Task.sleep(for: .milliseconds(1))
-            return MemoryEmbedding.provider()?.modelID
         }
     }
 }

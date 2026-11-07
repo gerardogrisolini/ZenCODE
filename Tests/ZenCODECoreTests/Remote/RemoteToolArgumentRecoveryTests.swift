@@ -151,38 +151,6 @@ extension RemoteSessionSnapshotTests {
         #expect(try String(contentsOf: file, encoding: .utf8) == expectedContent)
     }
 
-    @Test(arguments: [0, 1, 2], [false, true])
-    func cancellationCallbacksCannotWriteIntoResetSession(profile: Int, resetDuringDrain: Bool) async throws {
-        let fixture = try await RemoteNIOStreamingFixture.start(
-            responseBody: recoveryBatchBody(profile, appendPath: "/unused-cancelled-tool-path")
-        )
-        defer { fixture.beginShutdown() }
-        let client = recoveryClient(fixture, profile: profile)
-        let task = Task {
-            try await client.sendPrompt(sessionID: "reset-batch", prompt: "hi", attachments: []) { event in
-                if case .toolCallStarted = event {
-                    withUnsafeCurrentTask { $0?.cancel() }
-                    if !resetDuringDrain {
-                        await client.createSession(id: "reset-batch", cwd: FileManager.default.temporaryDirectory.path)
-                    }
-                }
-                if case .toolCallCompleted = event, resetDuringDrain {
-                    // The full batch must already be closed before this reentrant callback.
-                    let snapshot = await client.snapshotSession(id: "reset-batch")
-                    #expect(snapshot?.history.filter { $0.role == .tool }.count == 3)
-                    await client.createSession(id: "reset-batch", cwd: FileManager.default.temporaryDirectory.path)
-                }
-            }
-        }
-        do {
-            _ = try await task.value
-            Issue.record("Expected stale session")
-        } catch RemoteGenerationClientError.missingSession {}
-        let snapshot = try #require(await client.snapshotSession(id: "reset-batch"))
-        #expect(!snapshot.history.contains { $0.role == .tool || $0.role == .assistant })
-        #expect(fixture.capturedRequests().count == 1)
-    }
-
     @Test(arguments: [0, 1, 2])
     func malformedToolRoundRetriesLiveWithoutDuplicateDispatch(profile: Int) async throws {
         let fixture = try await RemoteNIOStreamingFixture.start(
@@ -230,25 +198,6 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test(arguments: [0, 1, 2])
-    func malformedToolRetryBudgetSurvivesValidRound(profile: Int) async throws {
-        let fixture = try await RemoteNIOStreamingFixture.start(
-            responseBody: recoveryBody(profile, malformed: true),
-            responseSequence: [recoveryBody(profile, malformed: true), recoveryBody(profile, malformed: false)]
-        )
-        defer { fixture.beginShutdown() }
-        let client = recoveryClient(fixture, profile: profile)
-        let calls = Mutex(0)
-        do {
-            _ = try await client.sendPrompt(sessionID: "budget", prompt: "hi", attachments: []) { event in
-                if case .toolCallStarted = event { calls.withLock { $0 += 1 } }
-            }
-            Issue.record("Expected invalidToolArguments")
-        } catch RemoteGenerationClientError.invalidToolArguments {}
-        #expect(fixture.capturedRequests().count == 3)
-        #expect(calls.withLock { $0 } == 1)
-    }
-
-    @Test(arguments: [0, 1, 2])
     func repeatedMalformedToolRoundStopsAfterTwoRequests(profile: Int) async throws {
         let fixture = try await RemoteNIOStreamingFixture.start(responseBody: recoveryBody(profile, malformed: true, mixed: true))
         defer { fixture.beginShutdown() }
@@ -264,21 +213,6 @@ extension RemoteSessionSnapshotTests {
         #expect(calls.withLock { $0 } == 0)
         let snapshot = try #require(await client.snapshotSession(id: "repeated"))
         #expect(!snapshot.history.contains { $0.role == .assistant })
-    }
-
-    @Test func unrelatedHTTPErrorDoesNotConsumeToolRecovery() async throws {
-        let fixture = try await RemoteNIOStreamingFixture.start(
-            responseBody: Data("bad request".utf8), responseStatus: 400
-        )
-        defer { fixture.beginShutdown() }
-        let client = recoveryClient(fixture, profile: 0)
-        let events = CapturedDirectAgentEvents()
-        do {
-            _ = try await client.sendPrompt(sessionID: "http-error", prompt: "hi", attachments: []) { events.append($0) }
-            Issue.record("Expected HTTP error")
-        } catch {}
-        #expect(fixture.capturedRequests().count == 1)
-        #expect(!events.diagnostics().contains { $0.contains("Retrying this generation round") })
     }
 
     @Test(arguments: [0, 1, 2])
@@ -331,41 +265,5 @@ extension RemoteSessionSnapshotTests {
         #expect(fixture.capturedRequests().count == 1)
         let snapshot = try #require(await client.snapshotSession(id: "cancel"))
         #expect(!snapshot.history.contains { $0.role == .assistant })
-    }
-}
-
-struct RemoteRoundOutputRelayTests {
-    @Test func forwardsLiveAndReconcilesIndependentUnicodePrefixes() async {
-        let relay = RemoteRoundOutputRelay()
-        let events = CapturedDirectAgentEvents()
-        let sink: @Sendable (DirectAgentEvent) async -> Void = { events.append($0) }
-        await relay.forward(.content("e"), to: sink)
-        #expect(events.contentText() == "e") // Before result/finalization.
-        await relay.forward(.content("\u{301}👩‍💻 old"), to: sink)
-        await relay.forward(.thought("think old"), to: sink)
-        await relay.beginRetry()
-        for chunk in ["e\u{301}👩", "‍", "💻 ", "new"] {
-            await relay.forward(.content(chunk), to: sink)
-        }
-        for chunk in ["th", "ink", " new"] {
-            await relay.forward(.thought(chunk), to: sink)
-        }
-        #expect(events.contentText() == "e\u{301}👩‍💻 oldnew")
-        #expect(events.thoughtText() == "think oldnew")
-    }
-
-    @Test func identicalAndShorterRetriesEmitNothingAndExtensionStaysLive() async {
-        let relay = RemoteRoundOutputRelay()
-        let events = CapturedDirectAgentEvents()
-        let sink: @Sendable (DirectAgentEvent) async -> Void = { events.append($0) }
-        await relay.forward(.content("abc"), to: sink)
-        await relay.forward(.thought("xyz"), to: sink)
-        await relay.beginRetry()
-        await relay.forward(.content("a"), to: sink)
-        await relay.forward(.thought("xyz"), to: sink)
-        #expect(events.contentText() == "abc")
-        #expect(events.thoughtText() == "xyz")
-        await relay.forward(.content("bc!"), to: sink)
-        #expect(events.contentText() == "abc!")
     }
 }

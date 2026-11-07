@@ -10,58 +10,22 @@ import Testing
 
 @Suite
 struct RemoteGenerationRoundTextTests {
-    @Test
-    func emptyAccumulatedTextAppendsRoundTextAsIs() {
-        var text = ""
-        RemoteGenerationClient.appendRoundText("Hello", to: &text)
-        #expect(text == "Hello")
-    }
-
-    @Test
-    func emptyRoundTextLeavesAccumulatedTextUnchanged() {
-        var text = "Hello"
-        RemoteGenerationClient.appendRoundText("", to: &text)
-        #expect(text == "Hello")
-
-        var empty = ""
-        RemoteGenerationClient.appendRoundText("", to: &empty)
-        #expect(empty.isEmpty)
-    }
-
-    @Test
-    func gluedRoundsAreSeparatedByLineBreak() {
-        var text = "A."
-        RemoteGenerationClient.appendRoundText("## B", to: &text)
-        #expect(text == "A.\n## B")
-    }
-
-    @Test
-    func accumulatedTextEndingWithNewlineIsNotSeparatedAgain() {
-        var text = "A.\n"
-        RemoteGenerationClient.appendRoundText("## B", to: &text)
-        #expect(text == "A.\n## B")
-    }
-
-    @Test
-    func roundTextStartingWithNewlineIsNotSeparatedAgain() {
-        var text = "A."
-        RemoteGenerationClient.appendRoundText("\n## B", to: &text)
-        #expect(text == "A.\n## B")
-    }
-
-    @Test
-    func accumulatedTextEndingWithCRLFIsNotSeparatedAgain() {
-        var text = "A.\r\n"
-        RemoteGenerationClient.appendRoundText("## B", to: &text)
-        #expect(text == "A.\r\n## B")
-    }
-
-    @Test
-    func threeConsecutiveRoundsAreEachSeparated() {
-        var text = ""
-        RemoteGenerationClient.appendRoundText("One.", to: &text)
-        RemoteGenerationClient.appendRoundText("Two.", to: &text)
-        RemoteGenerationClient.appendRoundText("Three.", to: &text)
-        #expect(text == "One.\nTwo.\nThree.")
+    @Test(arguments: [
+        ("", "Hello", "Hello"),
+        ("Hello", "", "Hello"),
+        ("", "", ""),
+        ("A.", "## B", "A.\n## B"),
+        ("A.\n", "## B", "A.\n## B"),
+        ("A.", "\n## B", "A.\n## B"),
+        ("A.\r\n", "## B", "A.\r\n## B")
+    ])
+    func gluedRoundsAreSeparatedByLineBreak(
+        accumulated: String,
+        round: String,
+        expected: String
+    ) {
+        var text = accumulated
+        RemoteGenerationClient.appendRoundText(round, to: &text)
+        #expect(text == expected)
     }
 }

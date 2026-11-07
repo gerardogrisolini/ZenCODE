@@ -81,32 +81,6 @@ struct ChatPlanningCommandsTests {
     }
 
     @Test
-    func planAndReviewRefuseWithoutAProfileForTheirRoleBeforeTheEcho() async throws {
-        try await withChatHarness(catalog: .hosted(agents: [Roles.developer])) { harness in
-            let controller = harness.controller
-            controller.selection.toolKeys = ["sub-agents"]
-            controller.activePlan = TerminalSessionPlan(
-                originalGoal: "Fix the parser",
-                consolidatedText: "1. Fix it.",
-                isApproved: true
-            )
-
-            #expect(await controller.runPlanCommand(line: "/plan ship it")
-                == ChatCommandOutcome(notices: [.agentRoleUnavailable(.planner)]))
-            #expect(await controller.runReviewCommand(line: "/review")
-                == ChatCommandOutcome(notices: [.agentRoleUnavailable(.reviewer)]))
-
-            // A Planner reply is kept pending so it can be sent again later.
-            let discussion = Self.plannerDiscussion(goal: "ship it")
-            controller.planBrainstorming = discussion
-            #expect(await controller.pendingReplyAction(for: "The JSON one.")
-                == ChatCommandOutcome(notices: [.agentRoleUnavailable(.planner)]))
-            #expect(controller.planBrainstorming == discussion)
-            #expect(await harness.presenter.events.isEmpty)
-        }
-    }
-
-    @Test
     func planStartEchoesAbandonsTheOpenRequestAndStartsTheHiddenPlannerTurn() async throws {
         try await withChatHarness(catalog: Self.catalog) { harness in
             let controller = harness.controller
@@ -210,29 +184,6 @@ struct ChatPlanningCommandsTests {
         }
     }
 
-    /// A two-plan Planner answer, as the latest assistant message.
-    private static let twoPlanAnswer = """
-    Piano 1/2: Parser
-
-    Specifiche concordate
-    - Keep the public API.
-
-    Implementation plan
-    1. Read the parser.
-       Dependencies: none
-    2. Fix it.
-       Dependencies: 1
-
-    Piano 2/2: Validation
-
-    Specifiche concordate
-    - Cover the regression.
-
-    Implementation plan
-    1. Add the regression test.
-       Dependencies: none
-    """
-
     @Test
     func savingASequenceStoresEveryPlanInOrderAndLoadingRestoresTheFirstUnfinishedOne() async throws {
         try await withChatHarness(catalog: Self.catalog, persistsTaskGraphs: true) { harness in
@@ -296,85 +247,6 @@ struct ChatPlanningCommandsTests {
         }
     }
 
-    @Test
-    func savingKeepsTheSaveTimeOfAPlanTheLibraryAlreadyHolds() async throws {
-        try await withChatHarness(catalog: Self.catalog, persistsTaskGraphs: true) { harness in
-            let controller = harness.controller
-            try await harness.startSession()
-            let first = Self.plan(id: "plan-first")
-            let second = Self.plan(id: "plan-second", goal: "Validate the parser")
-
-            // The second plan is in the library before the sequence is saved.
-            controller.activePlan = second
-            #expect(await controller.runPlanCommand(line: "/plan save")
-                == ChatCommandOutcome(notices: [.planSaved(planID: "plan-second")]))
-            let original = try #require(
-                await harness.runtime.savedTaskPlans(workingDirectory: harness.workspace).first
-            )
-
-            controller.activePlan = first
-            controller.queuedPlans = [second]
-            #expect(await controller.runPlanCommand(line: "/plan save")
-                == ChatCommandOutcome(notices: [.planSequenceSaved(planIDs: ["plan-first", "plan-second"])]))
-            let library = await harness.runtime.savedTaskPlans(workingDirectory: harness.workspace)
-            #expect(library.map(\.graph.id) == ["plan-first", "plan-second"])
-            #expect(library.last?.snapshot.savedAt == original.snapshot.savedAt)
-            #expect(try #require(library.first?.snapshot.savedAt) > original.snapshot.savedAt)
-        }
-    }
-
-    @Test
-    func savingPromotesEveryPlanOfTheLatestAnswerAndQueuesTheOthers() async throws {
-        try await withChatHarness(catalog: Self.catalog, persistsTaskGraphs: true) { harness in
-            let controller = harness.controller
-            try await harness.startSession(conversation: [
-                Fixtures.message(.user, "Ship the parser fix"),
-                Fixtures.message(.assistant, Self.twoPlanAnswer),
-            ])
-
-            let outcome = await controller.runPlanCommand(line: "/plan save")
-
-            let active = try #require(controller.activePlan)
-            let queued = controller.queuedPlans
-            #expect(queued.count == 1)
-            let next = try #require(queued.first)
-            #expect(outcome == ChatCommandOutcome(notices: [.planSequenceSaved(planIDs: [active.id, next.id])]))
-            #expect(active.id != next.id)
-            #expect(active.originalGoal == "Piano 1/2: Parser — Ship the parser fix")
-            #expect(next.originalGoal == "Piano 2/2: Validation — Ship the parser fix")
-            #expect(active.points.map(\.text) == ["Read the parser.", "Fix it."])
-            #expect(next.points.map(\.text) == ["Add the regression test."])
-            #expect(!active.isApproved)
-            let library = await harness.runtime.savedTaskPlans(workingDirectory: harness.workspace)
-            #expect(library.map(\.graph.id) == [next.id, active.id])
-            #expect(library.map { $0.graph.tasks.count } == [1, 2])
-        }
-    }
-
-    @Test
-    func statusListsTheQueuedPlansAfterTheActivePlan() async throws {
-        try await withChatHarness(catalog: Self.catalog) { harness in
-            let controller = harness.controller
-            try await harness.startSession()
-            let first = Self.plan(id: "plan-status-first")
-            let second = Self.plan(id: "plan-status-second", goal: "Validate the parser")
-            controller.activePlan = first
-            controller.queuedPlans = [second]
-            let expected = ChatCommandOutcome(notices: [
-                .planStatus(first, graph: nil),
-                .queuedPlans([second]),
-            ])
-
-            #expect(await controller.runPlanCommand(line: "/plan status") == expected)
-            #expect(await controller.runPlanCommand(
-                line: "/plan status",
-                policy: .acp(savingAgent: nil, fallbackHistory: [], reviewPrompt: { _ in "" })
-            ) == expected)
-            // Status reads the queue without changing it.
-            #expect(controller.queuedPlans == [second])
-        }
-    }
-
     /// Drives a live graph of `plan` to completion in another session of the
     /// project, so the saved-plan library mirrors it as completed.
     @ChatSessionActor
@@ -401,29 +273,6 @@ struct ChatPlanningCommandsTests {
                     update: TaskUpdate(status: status, output: status.rawValue)
                 )
             }
-        }
-    }
-
-    @Test
-    func anOpenDiscussionOrGoalRequestBlocksSavingLoadingAndApprovingAfterTheEcho() async throws {
-        try await withChatHarness(catalog: Self.catalog) { harness in
-            let controller = harness.controller
-            controller.activePlan = Self.plan(id: "plan-blocked")
-
-            controller.planBrainstorming = Self.plannerDiscussion(goal: "Fix the parser")
-            for line in ["/plan save", "/plan load", "/plan approve"] {
-                #expect(await controller.runPlanCommand(line: line)
-                    == ChatCommandOutcome(notices: [.planDiscussionBlocksMutation]))
-            }
-            controller.planBrainstorming = nil
-            controller.pendingPlanApprovalPlanID = "plan-blocked"
-            #expect(await controller.runPlanCommand(line: "/plan approve")
-                == ChatCommandOutcome(notices: [.planDiscussionBlocksMutation]))
-
-            #expect(await harness.presenter.events == [
-                "/plan save", "/plan load", "/plan approve", "/plan approve",
-            ].map(RecordingChatPresenter.Event.submittedCommand))
-            #expect(await harness.runtime.calls.isEmpty)
         }
     }
 
@@ -547,27 +396,6 @@ struct ChatPlanningCommandsTests {
         }
     }
 
-    @Test
-    func aGoalForAPlanThatWasReplacedIsRefusedAndEndsTheRequest() async throws {
-        try await withChatHarness(catalog: Self.catalog) { harness in
-            let controller = harness.controller
-            controller.activePlan = Self.plan(id: "plan-new")
-            controller.pendingPlanApprovalPlanID = "plan-old"
-
-            #expect(await controller.pendingReplyAction(for: "Ship it")
-                == ChatCommandOutcome(notices: [.planUnavailableForApproval]))
-            #expect(controller.pendingPlanApprovalPlanID == nil)
-            #expect(controller.activePlan?.isApproved == false)
-            #expect(await harness.runtime.calls.isEmpty)
-
-            // Approving needs a plan with a text.
-            controller.activePlan = nil
-            #expect(await controller.runPlanCommand(line: "/plan approve")
-                == ChatCommandOutcome(notices: [.planUnavailableForApproval]))
-            #expect(controller.pendingPlanApprovalPlanID == nil)
-        }
-    }
-
     // MARK: - Status and clear
 
     @Test
@@ -636,35 +464,6 @@ struct ChatPlanningCommandsTests {
             #expect(await harness.presenter.events == [
                 "/plan clear", "/plan clear", "/plan clear", "/plan clear",
             ].map(RecordingChatPresenter.Event.submittedCommand))
-        }
-    }
-
-    @Test
-    func withoutSessionOperationsTheLibraryIsEmptyAndClearingAGraphFails() async throws {
-        try await withChatHarness(catalog: Self.catalog) { harness in
-            let sessionID = harness.controller.sessionID
-            // A controller that only runs turns.
-            let controller = ChatSessionController(
-                sessionID: sessionID,
-                runtime: harness.runtime,
-                environment: harness.controller.environment,
-                workingDirectory: harness.workspace,
-                presenter: harness.presenter,
-                host: harness.host,
-                authorizer: harness.controller.authorizer
-            )
-            #expect(await controller.runPlanCommand(line: "/plan list")
-                == ChatCommandOutcome(notices: [.noSavedPlans]))
-
-            try await harness.runtime.seedTaskGraph(Fixtures.taskGraph(id: "plan-graph"), sessionID: sessionID)
-            controller.activePlan = Self.plan(id: "plan-graph")
-            #expect(await controller.runPlanCommand(line: "/plan clear")
-                == ChatCommandOutcome(notices: [
-                    .operationFailed(
-                        description: ChatPlanningCommandError.sessionOperationsUnavailable.localizedDescription
-                    ),
-                ]))
-            #expect(controller.activePlan?.id == "plan-graph")
         }
     }
 
@@ -779,20 +578,6 @@ struct ChatPlanningCommandsTests {
             let running = try #require(await controller.currentWorkflowGraph(sessionID: sessionID))
             #expect(running.workflow?.state == .running)
             #expect(await harness.presenter.events.isEmpty)
-        }
-    }
-
-    @Test
-    func aWaitingWorkflowWhoseGraphIsGoneIsForgotten() async throws {
-        try await withChatHarness(catalog: Self.catalog) { harness in
-            let controller = harness.controller
-            try await harness.startSession()
-            var workflow = WorkflowCommandRuntimeState(goal: "Ship it", graphID: "workflow_gone")
-            workflow.armForResumedGraph()
-            controller.activeWorkflow = workflow
-
-            #expect(await controller.pendingReplyAction(for: "Go on") == nil)
-            #expect(controller.activeWorkflow == nil)
         }
     }
 

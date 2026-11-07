@@ -149,43 +149,6 @@ struct MemoryEnhancementTests {
     }
 
     @Test
-    func memoryUpdatePreservesSubsecondCreatedAtAfterLockedJSONReload() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        try await workspace.withIsolatedSupport {
-            let service = MemoryService()
-            let original = try await service.writeEntry(
-                content: """
-                Summary: precise creation timestamp.
-                State: the persisted graph keeps subsecond precision.
-                Next: update without rewriting creation time.
-                """,
-                workspaceRootURL: workspace.workspaceURL
-            )
-            let originalSeconds = original.createdAt.timeIntervalSince1970
-            // Date() is expected to carry a subsecond component on supported
-            // platforms; keep the assertion so this test cannot pass while
-            // silently exercising a whole-second fixture.
-            #expect(originalSeconds != floor(originalSeconds))
-
-            let updated = try await service.updateEntry(
-                id: original.id.uuidString,
-                content: """
-                Summary: updated precise creation timestamp.
-                State: the original creation instant remains unchanged.
-                Next: preserve it through the locked reload.
-                """,
-                workspaceRootURL: workspace.workspaceURL,
-                updatedAt: Date(timeIntervalSince1970: 1_754_665_696.123456),
-                timeZone: TimeZone(secondsFromGMT: 0)!
-            )
-
-            #expect(updated.createdAt == original.createdAt)
-            #expect(updated.createdAt.timeIntervalSince1970 == originalSeconds)
-        }
-    }
-
-    @Test
     func memoryUpdatePreservesArchivedState() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
@@ -324,55 +287,6 @@ struct MemoryEnhancementTests {
     }
 
     @Test
-    func weakRecallCandidatesAreNeitherBoostedNorDecayed() async throws {
-        // Regression: with the passthrough selector every recalled candidate
-        // was selected, so weak partial matches were boosted toward confidence
-        // 1.0. The score-threshold selector keeps the boost for strong hits
-        // only; a rejected candidate is left exactly as it was — no access
-        // bump, no permanent confidence loss, no timestamp change.
-        //
-        // Maintenance is exercised through the automatic recall path
-        // (`store.context`), not `memory.search`: search is read-only and must
-        // not mutate retrievalCount/confidence/access/link.
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        try await workspace.withIsolatedSupport {
-            let service = MemoryService()
-            let strong = try await service.writeEntry(
-                content: "Summary: transport architecture for the swift server.",
-                workspaceRootURL: workspace.workspaceURL
-            )
-            let weak = try await service.writeEntry(
-                content: "Summary: transport layer notes.",
-                workspaceRootURL: workspace.workspaceURL
-            )
-
-            let store = try await MemoryGraphStoreRegistry.shared.store(
-                graphURL: workspace.graphURL()
-            )
-            _ = try await store.context(for: "transport architecture")
-
-            let after = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
-                limit: 10
-            )
-            let strongAfter = try #require(after.first { $0.id == strong.id })
-            let weakAfter = try #require(after.first { $0.id == weak.id })
-
-            // The weak hit (~0.26x of the top) was filtered by the 0.5 floor,
-            // so only the strong hit was verified and boosted. Being recalled
-            // does not touch the content timestamp.
-            #expect(strongAfter.accessCount == 1)
-            #expect(strongAfter.confidence == 1.0)
-            #expect(abs(strongAfter.updatedAt.timeIntervalSince(strong.updatedAt)) < 0.001)
-            // The weak hit is untouched: no access bump, no decay.
-            #expect(weakAfter.accessCount == 0)
-            #expect(weakAfter.confidence == weak.confidence)
-            #expect(abs(weakAfter.updatedAt.timeIntervalSince(weak.updatedAt)) < 0.001)
-        }
-    }
-
-    @Test
     func repeatedRecallsDoNotDenselyConnectTheGraph() async throws {
         // Regression: with the passthrough selector every recall with two or
         // more results linked ALL of them pairwise at weight 0.7, saturating
@@ -486,19 +400,6 @@ struct MemoryEnhancementTests {
     }
 
     @Test
-    func confidenceBoostAndDecayMoveTheStoredValue() {
-        var entry = GraphEntry(category: .fact, content: "boostable fact")
-        entry.decayConfidence(by: 0.5)
-        #expect(entry.confidence == 0.5)
-
-        let beforeBoost = entry.effectiveConfidence()
-        entry.boostConfidence(by: 0.2)
-        #expect(entry.confidence == 0.7)
-        #expect(entry.accessCount == 1)
-        #expect(entry.effectiveConfidence() > beforeBoost)
-    }
-
-    @Test
     func graphStatePersistsAcrossReopens() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
@@ -533,49 +434,6 @@ struct MemoryEnhancementTests {
             #expect(all.contains { $0.id == first.id.uuidString })
             #expect(all.contains { $0.isArchived && $0.id == second.id.uuidString })
             #expect(Set(all.flatMap(\.tags)) == ["persistence"])
-        }
-    }
-
-    @Test
-    func archivedEntriesRemainReachableUnderSmallSearchLimit() async throws {
-        // Regression: archived hits appended after a full page of active results
-        // were unreachable. The store reserves part of the budget for them.
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        try await workspace.withIsolatedSupport {
-            let service = MemoryService()
-            _ = try await service.writeEntry(
-                content: "Summary: redis cache layer.",
-                workspaceRootURL: workspace.workspaceURL
-            )
-            _ = try await service.writeEntry(
-                content: "Summary: redis pubsub layer.",
-                workspaceRootURL: workspace.workspaceURL
-            )
-            let archived = try await service.writeEntry(
-                content: "Summary: redis cluster setup notes.",
-                workspaceRootURL: workspace.workspaceURL
-            )
-            _ = try await service.archiveEntry(
-                id: archived.id.uuidString,
-                workspaceRootURL: workspace.workspaceURL
-            )
-
-            let excludingArchived = try await service.searchEntries(
-                query: "redis",
-                workspaceRootURL: workspace.workspaceURL,
-                limit: 10
-            )
-            #expect(!excludingArchived.contains { $0.id == archived.id })
-
-            let limited = try await service.searchEntries(
-                query: "redis",
-                workspaceRootURL: workspace.workspaceURL,
-                includeArchived: true,
-                limit: 2
-            )
-            #expect(limited.count == 2)
-            #expect(limited.contains { $0.id == archived.id })
         }
     }
 

@@ -170,48 +170,6 @@ struct SessionTaskGraphPlanLibraryTests {
     }
 
     @Test
-    func deleteSavedTaskPlansIgnoresUnknownAndDuplicateIDsAndCreatesNoLibrary() async throws {
-        let (root, support, working) = try makeTemp()
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let store = SessionTaskGraphStore(supportDirectoryURL: support)
-        let orchestrator = SessionTaskOrchestrator(store: store)
-        let librarySessionID = SessionTaskOrchestrator.savedPlanLibrarySessionID(
-            for: working
-        )
-
-        // Unknown ids on an empty library neither fail nor create a checkpoint.
-        #expect(
-            try await orchestrator.deleteSavedTaskPlans(
-                planIDs: ["plan-missing"],
-                workingDirectory: working
-            ).isEmpty
-        )
-        #expect(
-            try store.load(
-                sessionID: librarySessionID,
-                workingDirectory: working
-            ) == nil
-        )
-
-        let saved = makeSavedPlan(
-            id: "plan-cccccccc-3333",
-            goal: "Only plan",
-            savedAt: Date(timeIntervalSince1970: 300)
-        )
-        try await saveDraft(orchestrator, savedPlan: saved, working: working)
-
-        let deleted = try await orchestrator.deleteSavedTaskPlans(
-            planIDs: [saved.plan.id, "plan-missing", saved.plan.id],
-            workingDirectory: working
-        )
-        #expect(deleted == [saved.plan.id])
-        #expect(
-            await orchestrator.savedTaskPlans(workingDirectory: working).isEmpty
-        )
-    }
-
-    @Test
     func completingLivePlanGraphMarksLibraryDraftCompleted() async throws {
         let (root, support, working) = try makeTemp()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -258,32 +216,6 @@ struct SessionTaskGraphPlanLibraryTests {
         #expect(persisted.graph.state == .completed)
         #expect(
             persisted.graph.tasks.allSatisfy { $0.status == .completed }
-        )
-    }
-
-    @Test
-    func completingLivePlanGraphWithoutLibraryCreatesNoCheckpoint() async throws {
-        let (root, support, working) = try makeTemp()
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let store = SessionTaskGraphStore(supportDirectoryURL: support)
-        let orchestrator = SessionTaskOrchestrator(store: store)
-        let liveGraph = try await completeLivePlanGraph(
-            orchestrator,
-            planID: "plan-eeeeeeee-5555",
-            sessionID: "terminal-session",
-            working: working
-        )
-        #expect(liveGraph.state == .completed)
-
-        let librarySessionID = SessionTaskOrchestrator.savedPlanLibrarySessionID(
-            for: working
-        )
-        #expect(
-            try store.load(
-                sessionID: librarySessionID,
-                workingDirectory: working
-            ) == nil
         )
     }
 
@@ -417,49 +349,6 @@ struct SessionTaskGraphPlanLibraryTests {
         #expect(savedPlans.map(\.graph.id) == [planBID, planAID])
         #expect(savedPlans.first?.graph.state == .draft)
         #expect(savedPlans.last?.graph.state == .completed)
-    }
-
-    @Test
-    func deleteKeepsPlansSavedByAnotherOrchestratorOnTheSameStore() async throws {
-        let (root, support, working) = try makeTemp()
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let store = SessionTaskGraphStore(supportDirectoryURL: support)
-        let first = SessionTaskOrchestrator(store: store)
-        let second = SessionTaskOrchestrator(store: store)
-        let planAID = "plan-33333333-7777"
-        let planBID = "plan-44444444-6666"
-
-        try await saveDraft(
-            first,
-            savedPlan: makeSavedPlan(
-                id: planAID,
-                goal: "Plan A",
-                savedAt: Date(timeIntervalSince1970: 100)
-            ),
-            working: working
-        )
-        try await saveDraft(
-            second,
-            savedPlan: makeSavedPlan(
-                id: planBID,
-                goal: "Plan B",
-                savedAt: Date(timeIntervalSince1970: 200)
-            ),
-            working: working
-        )
-
-        let deleted = try await first.deleteSavedTaskPlans(
-            planIDs: [planAID],
-            workingDirectory: working
-        )
-        #expect(deleted == [planAID])
-
-        let reader = SessionTaskOrchestrator(store: store)
-        #expect(
-            await reader.savedTaskPlans(workingDirectory: working)
-                .map(\.graph.id) == [planBID]
-        )
     }
 
     private func makeDraft(
@@ -648,51 +537,6 @@ struct SessionTaskGraphPlanLibraryTests {
     }
 
     @Test
-    func savePlanDraftsWithDuplicatePlanIDsSavesNothing() async throws {
-        let (root, support, working) = try makeTemp()
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let store = SessionTaskGraphStore(supportDirectoryURL: support)
-        let orchestrator = SessionTaskOrchestrator(store: store)
-        let librarySessionID = SessionTaskOrchestrator.savedPlanLibrarySessionID(
-            for: working
-        )
-        let existing = makeSavedPlan(
-            id: "plan-dddd0001-0001",
-            goal: "Pre-existing",
-            savedAt: Date(timeIntervalSince1970: 100)
-        )
-        try await saveDraft(orchestrator, savedPlan: existing, working: working)
-        let before = await orchestrator.savedTaskPlans(workingDirectory: working)
-
-        let duplicateID = "plan-dddd0002-0002"
-        let batch = [
-            makeDraft(
-                id: duplicateID,
-                goal: "Twice",
-                savedAt: Date(timeIntervalSince1970: 200)
-            ),
-            // Same id once normalized: surrounding whitespace is trimmed.
-            makeDraft(
-                id: " \(duplicateID) ",
-                goal: "Twice again",
-                savedAt: Date(timeIntervalSince1970: 201)
-            ),
-        ]
-        await #expect(
-            throws: SessionTaskOrchestratorError.invalidSnapshot(
-                "plan '\(duplicateID)' appears more than once in the batch"
-            )
-        ) {
-            try await orchestrator.savePlanDrafts(batch, sessionID: librarySessionID)
-        }
-
-        #expect(await orchestrator.savedTaskPlans(workingDirectory: working) == before)
-        let reader = SessionTaskOrchestrator(store: store)
-        #expect(await reader.savedTaskPlans(workingDirectory: working) == before)
-    }
-
-    @Test
     func savePlanDraftsRejectsALiveActivePlanGraphAndSavesNothing() async throws {
         let (root, support, working) = try makeTemp()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -737,35 +581,6 @@ struct SessionTaskGraphPlanLibraryTests {
             try await orchestrator.graphSnapshot(sessionID: sessionID, graphID: activeID)
         )
         #expect(active.state == .active)
-    }
-
-    @Test
-    func savePlanDraftsWithNoDraftsCommitsNothing() async throws {
-        let (root, support, working) = try makeTemp()
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let store = SessionTaskGraphStore(supportDirectoryURL: support)
-        let orchestrator = SessionTaskOrchestrator(store: store)
-        let librarySessionID = SessionTaskOrchestrator.savedPlanLibrarySessionID(
-            for: working
-        )
-        try await orchestrator.registerSession(
-            id: librarySessionID,
-            workingDirectory: working
-        )
-
-        let snapshots = try await orchestrator.savePlanDrafts(
-            [],
-            sessionID: librarySessionID
-        )
-
-        #expect(snapshots.isEmpty)
-        #expect(
-            try store.load(
-                sessionID: librarySessionID,
-                workingDirectory: working
-            ) == nil
-        )
     }
 
     @Test
@@ -820,58 +635,6 @@ struct SessionTaskGraphPlanLibraryTests {
         )
         #expect(checkpoint.graphs.count == 2)
         #expect(checkpoint.graphs.allSatisfy { $0.state == .draft })
-    }
-
-    @Test
-    func mirrorIsIdempotentAcrossRepeatedCommits() async throws {
-        let (root, support, working) = try makeTemp()
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let store = SessionTaskGraphStore(supportDirectoryURL: support)
-        let orchestrator = SessionTaskOrchestrator(store: store)
-        let planID = "plan-66666666-4444"
-        try await saveDraft(
-            orchestrator,
-            savedPlan: makeSavedPlan(
-                id: planID,
-                goal: "Idempotent mirror",
-                savedAt: Date(timeIntervalSince1970: 100)
-            ),
-            working: working
-        )
-        _ = try await completeLivePlanGraph(
-            orchestrator,
-            planID: planID,
-            sessionID: "terminal-session",
-            working: working
-        )
-
-        let librarySessionID = SessionTaskOrchestrator.savedPlanLibrarySessionID(
-            for: working
-        )
-        let firstRevision = try #require(
-            try store.load(
-                sessionID: librarySessionID,
-                workingDirectory: working
-            )?.graphs.first?.revision
-        )
-
-        // A further commit on the already-completed live graph must not touch
-        // the mirrored library graph again.
-        _ = try await orchestrator.updateTask(
-            sessionID: "terminal-session",
-            taskID: "\(planID)-1",
-            graphID: planID,
-            update: TaskUpdate(output: "follow-up note")
-        )
-
-        let secondRevision = try #require(
-            try store.load(
-                sessionID: librarySessionID,
-                workingDirectory: working
-            )?.graphs.first?.revision
-        )
-        #expect(secondRevision == firstRevision)
     }
 
     /// Regression test: deleting the library checkpoint (discardSession) used

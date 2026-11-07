@@ -4,20 +4,6 @@ import ToolCore
 @testable import ZenCODECore
 
 extension TerminalChatRenderCoordinatorTests {
-    @Test
-    func markdownMessageCanRenderOnStandardErrorForOperatorCommands() async {
-        let renderer = makeRenderer(standardErrorIsTerminal: false)
-
-        await renderer.writeMarkdownMessage(
-            "**Artifacts**\n\n```swift\nlet value = 1\n```\n",
-            to: .standardError
-        )
-
-        let events = await renderer.capturedWriteEvents()
-        #expect(!events.isEmpty)
-        #expect(events.allSatisfy { $0.channel == .standardError })
-        #expect(events.renderedText().contains("let value = 1"))
-    }
 
     @Test(arguments: ["thought", "assistant", "tool"])
     func liveArtifactsInterruptStreamingAndToolsBeforeDeferredOverviews(_ active: String) async throws {

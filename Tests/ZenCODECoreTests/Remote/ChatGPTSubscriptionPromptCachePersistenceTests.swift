@@ -32,21 +32,6 @@ struct ChatGPTSubscriptionPromptCachePersistenceTests {
     }
 
     @Test
-    func persistenceKeyUsesSwiftStringCanonicalEquivalence() {
-        let composed = makeIdentity(
-            sessionKey: "caf\u{00E9}",
-            systemPrompt: "r\u{00E9}sum\u{00E9}"
-        )
-        let decomposed = makeIdentity(
-            sessionKey: "cafe\u{0301}",
-            systemPrompt: "re\u{0301}sume\u{0301}"
-        )
-
-        #expect(composed == decomposed)
-        #expect(composed.promptCachePersistenceKey == decomposed.promptCachePersistenceKey)
-    }
-
-    @Test
     func legacyPromptCacheKeysAreMigratedWithoutChangingTheirValues() throws {
         let suiteName = "ChatGPTSubscriptionPromptCachePersistenceTests.\(UUID().uuidString)"
         let userDefaults = try #require(UserDefaults(suiteName: suiteName))

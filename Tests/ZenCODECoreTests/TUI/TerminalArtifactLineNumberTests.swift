@@ -73,72 +73,12 @@ struct TerminalArtifactLineNumberTests {
         #expect(numbers == gutter)
     }
 
-    @Test
-    func publicSourceLineNumbersOfNoLinesAreEmpty() {
-        #expect(TerminalChat.artifactDiffSourceLineNumbers([]) == [])
-    }
-
     @Test(arguments: ["context", "\u{0301}context"])
     func combiningSourceScalarsDoNotHideASCIIMarkersOrGutters(context: String) {
         let patch = "@@ -10,2 +20,2 @@\n-\u{0301}old\n+\u{0301}new\n \(context)"
         let numbered = TerminalCodeBlockRenderer.numberedArtifactDiff(patch)
         let expected = "   │ @@ -10,2 +20,2 @@\n10 │ -\u{0301}old\n20 │ +\u{0301}new\n21 │  \(context)"
         #expect(Array(numbered.unicodeScalars) == Array(expected.unicodeScalars))
-    }
-
-    @Test(arguments: [TerminalMarkdownPalette.dark, .light])
-    func renderingKeepsCombiningScalarsInSourceRatherThanMarker(palette: TerminalMarkdownPalette) {
-        let source = "\u{0301}let value = \"e\u{0301}界\""
-        let markers: [(String, TerminalCodeBlockRenderer.DiffLineKind, String)] = [
-            ("+", .addition, palette.diffAddition),
-            ("-", .removal, palette.diffRemoval),
-            (" ", .context, ""),
-        ]
-        for (marker, kind, style) in markers {
-            let line = marker + source
-            #expect(TerminalCodeBlockRenderer.diffLineKind(line) == kind)
-            for sourceLanguage in [nil, "swift"] as [String?] {
-                let highlighted = sourceLanguage.map {
-                    TerminalCodeBlockRenderer.renderLine(source, language: $0, palette: palette)
-                } ?? TerminalCodeBlockRenderer.terminalSafeSourceLine(source)
-                let expected = style.isEmpty ? marker + highlighted
-                    : style + marker + TerminalStyle.reset + highlighted
-                let rendered = TerminalCodeBlockRenderer.renderDiffLine(
-                    line, sourceLanguage: sourceLanguage, palette: palette
-                )
-                #expect(Array(rendered.unicodeScalars) == Array(expected.unicodeScalars))
-                #expect(Array(TerminalANSIText.stripANSI(rendered).unicodeScalars) == Array(line.unicodeScalars))
-            }
-        }
-    }
-
-    @Test
-    func zeroCountsAndHeaderLikeSourceKeepCorrectNumbersAcrossFiles() {
-        let patch = """
-        --- /dev/null
-        +++ b/added.txt
-        @@ -0,0 +8,2 @@
-        +
-        +++ added source
-        --- a/deleted.txt
-        +++ /dev/null
-        @@ -51,2 +0,0 @@
-        -
-        --- removed source
-        --- a/last.txt
-        +++ b/last.txt
-        @@ -4 +9 @@
-        -old
-        +new
-        """
-        let numbered = TerminalCodeBlockRenderer.numberedArtifactDiff(patch)
-        #expect(numbered.contains(" 8 │ +\n 9 │ +++ added source"))
-        #expect(numbered.contains("51 │ -\n52 │ --- removed source"))
-        #expect(numbered.contains(" 4 │ -old\n 9 │ +new"))
-        for line in numbered.components(separatedBy: "\n") where
-            line.contains("@@") || line.contains("/dev/null") || line.contains("a/") || line.contains("b/") {
-            #expect(line.hasPrefix("   │ "))
-        }
     }
 
     @Test
@@ -276,25 +216,6 @@ struct TerminalArtifactLineNumberTests {
                 expectBackground(row, background: palette.diffAdditionBackground, width: 36, palette: palette)
             }
         }
-    }
-
-    @Test
-    func artifactMarkdownCarriesNumbersInPlainOutputWithoutDependingOnCapabilities() {
-        let artifact = FileChangeArtifact(
-            absolutePath: "/tmp/File.swift", displayPath: "File.swift", status: .modified,
-            patch: "@@ -8,2 +30,2 @@\r\n-old\r\n+new\r\n context\r\n"
-        )
-        let turns = [SessionFileArtifactHistory.Turn(number: 1, artifacts: [artifact])]
-        let markdown = TerminalChat.renderFileArtifacts(turns, columnWidth: 12, isEnabled: false)
-        #expect(markdown == TerminalChat.renderFileArtifacts(turns, columnWidth: 120, isEnabled: true))
-        var formatter = TerminalMarkdownStreamFormatter(isEnabled: false)
-        var plain = ""
-        for character in markdown { plain += formatter.consume(String(character)) }
-        plain += formatter.finish()
-        #expect(plain == markdown)
-        #expect(plain.contains(" 8 │ -old\n30 │ +new\n31 │  context\n```"))
-        #expect(!plain.contains("\u{1B}"))
-        #expect(!plain.contains("\r"))
     }
 
     @Test

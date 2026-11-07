@@ -23,71 +23,69 @@ private func render(_ parts: [DS4ThinkSplitter.Part]) -> (content: String, thoug
     return (content, thought)
 }
 
+/// One streamed input and the content/thought it must produce.
+struct DS4ThinkSplitterCase: Sendable, CustomTestStringConvertible {
+    let name: String
+    let startsInThinking: Bool
+    let chunks: [String]
+    let content: String
+    /// `nil` when the case does not constrain the thought.
+    let thought: String?
+
+    var testDescription: String { name }
+}
+
+private let splitterCases: [DS4ThinkSplitterCase] = [
+    .init(name: "plain content", startsInThinking: false, chunks: ["hello world"], content: "hello world", thought: ""),
+    .init(name: "think block in content", startsInThinking: false,
+          chunks: ["before<think>reasoning</think>after"], content: "beforeafter", thought: "reasoning"),
+    .init(name: "starts in thinking until close tag", startsInThinking: true,
+          chunks: ["deep thoughts</think>visible"], content: "visible", thought: "deep thoughts"),
+    .init(name: "unterminated thinking flushes as thought", startsInThinking: true,
+          chunks: ["still thinking"], content: "", thought: "still thinking"),
+    .init(name: "close tag split across chunks", startsInThinking: true,
+          chunks: ["reasoning</th", "ink>visible"], content: "visible", thought: "reasoning"),
+    .init(name: "open tag split across chunks", startsInThinking: false,
+          chunks: ["visible<thi", "nk>secret</think>tail"], content: "visibletail", thought: "secret"),
+    .init(name: "channel-style tags ignored by default", startsInThinking: false,
+          chunks: ["a<|channel>thought<channel|>b"], content: "a<|channel>thought<channel|>b", thought: nil),
+    .init(name: "leading newlines after think close", startsInThinking: true,
+          chunks: ["reasoning</think>\n\n\nvisible"], content: "visible", thought: "reasoning"),
+    .init(name: "leading newlines across chunks", startsInThinking: true,
+          chunks: ["reasoning</think>", "\n\n", "\nvisible"], content: "visible", thought: "reasoning"),
+    .init(name: "leading spaces and tabs like ds4_agent", startsInThinking: true,
+          chunks: ["reasoning</think> \t\r\n visible"], content: "visible", thought: nil),
+    .init(name: "newlines within content preserved", startsInThinking: true,
+          chunks: ["reasoning</think>line1\n\nline2"], content: "line1\n\nline2", thought: nil),
+    .init(name: "reasoning whitespace preserved", startsInThinking: false,
+          chunks: ["<think>\n step \n</think>x"], content: "x", thought: "\n step \n"),
+    .init(name: "stray close tag in content", startsInThinking: false,
+          chunks: ["hello</think>world"], content: "helloworld", thought: ""),
+    .init(name: "stray close tag split across chunks", startsInThinking: false,
+          chunks: ["hello</thin", "k>world"], content: "helloworld", thought: nil),
+    .init(name: "well-formed span with trailing stray close", startsInThinking: false,
+          chunks: ["a<think>secret</think>b</think>c"], content: "abc", thought: "secret"),
+    .init(name: "nested open tag inside thinking dropped", startsInThinking: true,
+          chunks: ["one<think>two</think>three"], content: "three", thought: "onetwo"),
+    .init(name: "unfinished tag prefix released at finish", startsInThinking: false,
+          chunks: ["tail <thin"], content: "tail <thin", thought: nil),
+]
+
 @Suite
 struct DS4ThinkSplitterTests {
-    @Test
-    func plainContentWithoutThinking() {
-        var splitter = DS4ThinkSplitter(startsInThinking: false)
-        let result = render(splitter.consume("hello world") + splitter.finish())
-        #expect(result.content == "hello world")
-        #expect(result.thought.isEmpty)
-    }
-
-    @Test
-    func extractsThinkBlockFromContent() {
-        var splitter = DS4ThinkSplitter(startsInThinking: false)
-        let result = render(splitter.consume("before<think>reasoning</think>after") + splitter.finish())
-        #expect(result.content == "beforeafter")
-        #expect(result.thought == "reasoning")
-    }
-
-    @Test
-    func startsInThinkingUntilCloseTag() {
-        var splitter = DS4ThinkSplitter(startsInThinking: true)
-        let result = render(splitter.consume("deep thoughts</think>visible") + splitter.finish())
-        #expect(result.thought == "deep thoughts")
-        #expect(result.content == "visible")
-    }
-
-    @Test
-    func unterminatedThinkingFlushesAsThought() {
-        var splitter = DS4ThinkSplitter(startsInThinking: true)
-        let result = render(splitter.consume("still thinking") + splitter.finish())
-        #expect(result.thought == "still thinking")
-        #expect(result.content.isEmpty)
-    }
-
-    @Test
-    func handlesCloseTagSplitAcrossChunks() {
-        var splitter = DS4ThinkSplitter(startsInThinking: true)
-        var parts = splitter.consume("reasoning</th")
-        parts += splitter.consume("ink>visible")
+    @Test(arguments: splitterCases)
+    func splitsStreamedTextIntoContentAndThought(_ testCase: DS4ThinkSplitterCase) {
+        var splitter = DS4ThinkSplitter(startsInThinking: testCase.startsInThinking)
+        var parts: [DS4ThinkSplitter.Part] = []
+        for chunk in testCase.chunks {
+            parts += splitter.consume(chunk)
+        }
         parts += splitter.finish()
         let result = render(parts)
-        #expect(result.thought == "reasoning")
-        #expect(result.content == "visible")
-    }
-
-    @Test
-    func handlesOpenTagSplitAcrossChunks() {
-        var splitter = DS4ThinkSplitter(startsInThinking: false)
-        var parts = splitter.consume("visible<thi")
-        parts += splitter.consume("nk>secret</think>tail")
-        parts += splitter.finish()
-        let result = render(parts)
-        #expect(result.content == "visibletail")
-        #expect(result.thought == "secret")
-    }
-
-    @Test
-    func holdsOnlyTheSuffixThatCanStartATag() {
-        var splitter = DS4ThinkSplitter(startsInThinking: false)
-        let first = render(splitter.consume("a < b <th"))
-        #expect(first.content == "a < b ")
-        #expect(splitter.hasPendingText)
-        let second = render(splitter.consume("ree"))
-        #expect(second.content == "<three")
-        #expect(!splitter.hasPendingText)
+        #expect(result.content == testCase.content)
+        if let thought = testCase.thought {
+            #expect(result.thought == thought)
+        }
     }
 
     @Test
@@ -100,100 +98,6 @@ struct DS4ThinkSplitterTests {
         let result = render(splitter.consume("a<|channel>thoughtreasoning<channel|>b") + splitter.finish())
         #expect(result.content == "ab")
         #expect(result.thought == "reasoning")
-    }
-
-    @Test
-    func ignoresChannelStyleTagsByDefault() {
-        var splitter = DS4ThinkSplitter(startsInThinking: false)
-        let result = render(splitter.consume("a<|channel>thought<channel|>b") + splitter.finish())
-        #expect(result.content == "a<|channel>thought<channel|>b")
-    }
-
-    // MARK: - Leading whitespace after the thinking boundary
-
-    @Test
-    func stripsLeadingNewlinesAfterThinkClose() {
-        var splitter = DS4ThinkSplitter(startsInThinking: true)
-        let result = render(splitter.consume("reasoning</think>\n\n\nvisible") + splitter.finish())
-        #expect(result.thought == "reasoning")
-        #expect(result.content == "visible")
-    }
-
-    @Test
-    func stripsLeadingNewlinesAcrossChunks() {
-        var splitter = DS4ThinkSplitter(startsInThinking: true)
-        var parts = splitter.consume("reasoning</think>")
-        parts += splitter.consume("\n\n")
-        parts += splitter.consume("\nvisible")
-        parts += splitter.finish()
-        let result = render(parts)
-        #expect(result.thought == "reasoning")
-        #expect(result.content == "visible")
-    }
-
-    @Test
-    func stripsLeadingSpacesAndTabsAfterThinkCloseLikeDS4Agent() {
-        var splitter = DS4ThinkSplitter(startsInThinking: true)
-        let result = render(splitter.consume("reasoning</think> \t\r\n visible") + splitter.finish())
-        #expect(result.content == "visible")
-    }
-
-    @Test
-    func preservesNewlinesWithinContent() {
-        var splitter = DS4ThinkSplitter(startsInThinking: true)
-        let result = render(splitter.consume("reasoning</think>line1\n\nline2") + splitter.finish())
-        #expect(result.content == "line1\n\nline2")
-    }
-
-    @Test
-    func preservesReasoningWhitespace() {
-        var splitter = DS4ThinkSplitter(startsInThinking: false)
-        let result = render(splitter.consume("<think>\n step \n</think>x") + splitter.finish())
-        #expect(result.thought == "\n step \n")
-        #expect(result.content == "x")
-    }
-
-    // MARK: - Stray tags
-
-    @Test
-    func stripsStrayCloseTagInContent() {
-        var splitter = DS4ThinkSplitter(startsInThinking: false)
-        let result = render(splitter.consume("hello</think>world") + splitter.finish())
-        #expect(result.content == "helloworld")
-        #expect(result.thought.isEmpty)
-    }
-
-    @Test
-    func stripsStrayCloseTagSplitAcrossChunks() {
-        var splitter = DS4ThinkSplitter(startsInThinking: false)
-        var parts = splitter.consume("hello</thin")
-        parts += splitter.consume("k>world")
-        parts += splitter.finish()
-        #expect(render(parts).content == "helloworld")
-    }
-
-    @Test
-    func preservesWellFormedThinkSpanWithTrailingStrayClose() {
-        var splitter = DS4ThinkSplitter(startsInThinking: false)
-        let result = render(splitter.consume("a<think>secret</think>b</think>c") + splitter.finish())
-        #expect(result.content == "abc")
-        #expect(result.thought == "secret")
-    }
-
-    @Test
-    func nestedOpenTagInsideThinkingIsDropped() {
-        var splitter = DS4ThinkSplitter(startsInThinking: true)
-        let result = render(splitter.consume("one<think>two</think>three") + splitter.finish())
-        #expect(result.thought == "onetwo")
-        #expect(result.content == "three")
-    }
-
-    @Test
-    func unfinishedTagPrefixIsReleasedAtFinish() {
-        var splitter = DS4ThinkSplitter(startsInThinking: false)
-        var parts = splitter.consume("tail <thin")
-        parts += splitter.finish()
-        #expect(render(parts).content == "tail <thin")
     }
 
     // MARK: - Byte API

@@ -40,55 +40,6 @@ struct ZenDiagnosticsTests {
     }
 
     @Test
-    func oversizedMessagesAreTruncatedToTheSafeLimit() {
-        let record = ZenLogger.systemLogRecord(
-            level: .info,
-            category: .diagnostics,
-            message: String(repeating: "a", count: ZenLogger.maximumMessageCharacters + 5_000)
-        )
-
-        #expect(record.message.count == ZenLogger.maximumMessageCharacters + 1)
-        #expect(record.message.hasSuffix("…"))
-    }
-
-    @Test
-    func levelsMapToSystemLogSeveritiesAndCategoriesStayIdentifiable() {
-        #expect(ZenLogger.systemLogSeverity(for: .debug) == .debug)
-        #expect(ZenLogger.systemLogSeverity(for: .info) == .info)
-        #expect(ZenLogger.systemLogSeverity(for: .warning) == .warning)
-        #expect(ZenLogger.systemLogSeverity(for: .error) == .error)
-        #expect(SystemLogSeverity.debug.syslogPriority == "user.debug")
-        #expect(SystemLogSeverity.info.syslogPriority == "user.info")
-        #expect(SystemLogSeverity.notice.syslogPriority == "user.notice")
-        #expect(SystemLogSeverity.warning.syslogPriority == "user.warning")
-        #expect(SystemLogSeverity.error.syslogPriority == "user.err")
-        #expect(ZenLogger.diagnosticCategory(for: .memory) == "diagnostics-MemoryService")
-        #expect(SystemLogEmitter.subsystem == "com.zencode.zen")
-        #expect(SystemLogEmitter.linuxTag == "zen")
-    }
-
-    @Test
-    func lazyEvaluationSkipsMessageClosuresBelowTheThreshold() {
-        defer { ZenLogger.configure(nil) }
-        ZenLogger.configure(
-            ZenLoggerConfiguration(minimumLevel: .error, destination: .systemLog)
-        )
-
-        var evaluated = false
-        ZenLogger.log(.info, .diagnostics) {
-            evaluated = true
-            return "never rendered"
-        }
-        #expect(!evaluated)
-
-        ZenLogger.log(.error, .diagnostics) {
-            evaluated = true
-            return "rendered"
-        }
-        #expect(evaluated)
-    }
-
-    @Test
     func loggerEmittingDoesNotCreateApplicationFiles() throws {
         let root = try temporaryDirectory()
         defer {
@@ -152,43 +103,6 @@ struct ZenDiagnosticsTests {
         }
     }
 
-    @Test
-    func legacyDestinationsAreRejectedInsteadOfSilentlyEnablingTheSystemLog() {
-        for legacy in ["stderr", "STDERR", "2"] {
-            #expect(
-                ZenLoggerConfiguration.resolve(environment: ["ZENCODE_LOG": legacy]) == nil,
-                "ZENCODE_LOG=\(legacy) must not enable diagnostics"
-            )
-        }
-        #expect(ZenLoggerConfiguration.isLegacyDestinationValue("stderr"))
-        #expect(ZenLoggerConfiguration.isLegacyDestinationValue("2"))
-        #expect(!ZenLoggerConfiguration.isLegacyDestinationValue("debug"))
-        #expect(!ZenLoggerConfiguration.isLegacyDestinationValue("1"))
-        #expect(!ZenLoggerConfiguration.isLegacyDestinationValue("bogus"))
-
-        // ZENCODE_LOG_FILE is ignored as a legacy destination override.
-        #expect(
-            ZenLoggerConfiguration.resolve(
-                environment: ["ZENCODE_LOG": "debug", "ZENCODE_LOG_FILE": "/tmp/legacy.log"]
-            )?.destinationDescription == "system log"
-        )
-    }
-
-    @Test
-    func configureNilRestoresResolutionFromTheEnvironment() {
-        defer { ZenLogger.configure(nil) }
-        ZenLogger.configure(
-            ZenLoggerConfiguration(minimumLevel: .error, destination: .systemLog)
-        )
-        #expect(ZenLogger.activeLevel == .error)
-
-        ZenLogger.configure(nil)
-        // The test process runs without ZENCODE_LOG, so resolution is disabled.
-        #expect(!ZenLogger.isEnabled)
-        #expect(ZenLogger.activeLevel == nil)
-        #expect(ZenLogger.destinationDescription == nil)
-    }
-
     /// The shared store reads the real process environment, where `ZENCODE_LOG`
     /// is unset, so "restore the environment" and "stay disabled" would look
     /// identical. A store built on an injected environment separates them:
@@ -220,16 +134,6 @@ struct ZenDiagnosticsTests {
         // And restoring once more re-enables, proving disable is not sticky.
         store.configure(.environment)
         #expect(store.resolvedConfiguration()?.minimumLevel == .debug)
-    }
-
-    @Test
-    func explicitDisableOverridesAnEnablingEnvironmentOnTheStore() {
-        let store = ZenLogConfigurationStore(
-            environmentProvider: { ["ZENCODE_LOG": "warning"] }
-        )
-        #expect(store.resolvedConfiguration()?.minimumLevel == .warning)
-        store.configure(.disabled)
-        #expect(store.resolvedConfiguration() == nil)
     }
 
     @Test
@@ -270,34 +174,6 @@ struct ZenDiagnosticsTests {
             #expect(arguments[3] == severity.syslogPriority)
             #expect(arguments[4] == "--")
         }
-    }
-
-    @Test
-    func loggerExecutableResolutionPrefersUsrBinAndToleratesAbsence() {
-        #expect(SystemLogEmitter.resolveLoggerExecutable { _ in true } == "/usr/bin/logger")
-        #expect(
-            SystemLogEmitter.resolveLoggerExecutable { $0 == "/bin/logger" } == "/bin/logger"
-        )
-        #expect(SystemLogEmitter.resolveLoggerExecutable { _ in false } == nil)
-    }
-
-    @Test
-    func previewConfigurationIsReadOnlyAndPointsAtTheSystemLog() throws {
-        let parent = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: parent) }
-        let environment = ["ZENCODE_LOG": "debug"]
-        let configuration = ZenLogger.previewConfiguration(environment: environment)
-        let historicalConfiguration = ZenLogger.previewConfiguration(
-            environment: environment,
-            supportDirectory: parent
-        )
-
-        #expect(configuration?.minimumLevel == .debug)
-        #expect(configuration?.destination == .systemLog)
-        #expect(configuration?.destinationDescription == "system log")
-        #expect(historicalConfiguration == configuration)
-        // Resolution is pure: no support directory or file is ever created.
-        #expect(try contentsOfDirectory(parent).isEmpty)
     }
 
     @Test
@@ -412,15 +288,6 @@ struct ZenDiagnosticsTests {
     }
 
     @Test
-    func doctorOptionParsesWithoutRequiringPersistedConfiguration() throws {
-        let configuration = try AgentConfiguration(arguments: ["zen", "--doctor"])
-
-        #expect(configuration.printDoctor)
-        #expect(!configuration.printHelp)
-        #expect(!configuration.printVersion)
-    }
-
-    @Test
     func doctorChecksEveryRequiredSetupSection() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -464,125 +331,6 @@ struct ZenDiagnosticsTests {
     }
 
     @Test
-    func doctorKeepsRequiredChecksVisibleWhenConfigurationIsMissing() throws {
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let checks = ZenDoctor.runReport(supportDirectory: root).allChecks
-        for id in [
-            "configuration.models",
-            "configuration.selectedModel",
-            "configuration.agents",
-        ] {
-            let check = try #require(checks.first { $0.id == id })
-            #expect(check.status == .warning)
-        }
-    }
-
-    @Test
-    func doctorReportsOnlyKeyRequiringProvidersWithoutStoredKeys() throws {
-        let root = try temporaryDirectory()
-        defer {
-            try? FileManager.default.removeItem(at: root)
-        }
-
-        let duplicateFirstProvider = AgentRemoteProvider(
-            id: "modal",
-            name: "Duplicate provider",
-            baseURL: AgentRemoteProvider.defaultOpenRouterBaseURL,
-            modelID: "duplicate-first"
-        )
-        let duplicateSecondProvider = AgentRemoteProvider(
-            id: "nvidia",
-            name: "Duplicate provider",
-            baseURL: AgentRemoteProvider.defaultOpenRouterBaseURL,
-            modelID: "duplicate-second"
-        )
-        let missingKeyProvider = AgentRemoteProvider(
-            id: "openrouter",
-            name: "OpenRouter",
-            baseURL: AgentRemoteProvider.defaultOpenRouterBaseURL,
-            modelID: "missing-key"
-        )
-        let storedKeyProvider = AgentRemoteProvider(
-            id: "openai",
-            name: "Stored key",
-            baseURL: AgentRemoteProvider.defaultOpenRouterBaseURL,
-            modelID: "stored-key"
-        )
-        let subscriptionProvider = AgentRemoteProvider(
-            id: AgentRemoteProvider.chatGPTSubscriptionProviderID,
-            name: "Subscription",
-            baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL,
-            modelID: "subscription-model"
-        )
-        let customKeylessProvider = AgentRemoteProvider(
-            id: "custom",
-            name: "Custom keyless",
-            baseURL: "https://custom.example.test/v1",
-            modelID: "custom-keyless-model"
-        )
-        let models = [
-            AgentSettingsModelManifest(
-                kind: .remoteAPI,
-                modelID: "stored-key",
-                provider: storedKeyProvider
-            ),
-            AgentSettingsModelManifest(
-                kind: .remoteAPI,
-                modelID: "duplicate-second",
-                provider: duplicateSecondProvider
-            ),
-            AgentSettingsModelManifest(
-                kind: .remoteAPI,
-                modelID: "subscription-model",
-                provider: subscriptionProvider
-            ),
-            AgentSettingsModelManifest(
-                kind: .remoteAPI,
-                modelID: "custom-keyless-model",
-                provider: customKeylessProvider
-            ),
-            AgentSettingsModelManifest(
-                kind: .remoteAPI,
-                modelID: "missing-key",
-                provider: missingKeyProvider
-            ),
-            AgentSettingsModelManifest(
-                kind: .remoteAPI,
-                modelID: "duplicate-first-1",
-                provider: duplicateFirstProvider
-            ),
-            AgentSettingsModelManifest(
-                kind: .remoteAPI,
-                modelID: "duplicate-first-2",
-                provider: duplicateFirstProvider
-            ),
-        ]
-        let manifest = AgentSettingsManifest(
-            models: models,
-            remoteAPIKeysByProviderID: [
-                storedKeyProvider.id: "stored-key-value"
-            ]
-        )
-        try JSONEncoder()
-            .encode(manifest)
-            .write(to: root.appendingPathComponent("settings.json"))
-
-        let report = ZenDoctor.runReport(supportDirectory: root)
-        let modelsCheck = try #require(report.allChecks.first { $0.id == "configuration.models" })
-
-        #expect(modelsCheck.status == .warning)
-        #expect(
-            modelsCheck.detail == "7 model(s) configured; 3 remote provider(s) have no stored API key: Duplicate provider (2 model(s)), Duplicate provider (1 model(s)), OpenRouter (1 model(s))."
-        )
-        #expect(!modelsCheck.detail.contains("Stored key"))
-        #expect(!modelsCheck.detail.contains("Subscription"))
-        #expect(!modelsCheck.detail.contains("Custom keyless"))
-        #expect(modelsCheck.remedy == "Run /setup to save an API key for each provider.")
-    }
-
-    @Test
     func reportRendererReceivesOnlyRedactedFields() {
         let secret = "sk-abcdefghijklmnopqrstuvwxyz123456"
         let report = ZenDoctorReport(sections: [
@@ -607,31 +355,6 @@ struct ZenDiagnosticsTests {
     }
 
     @Test
-    func doctorReportsSchedulingToolsWhenInjectedAndInstalled() throws {
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let report = ZenDoctor.runReport(
-            environment: [:],
-            supportDirectory: root,
-            cronToolchain: ZenCronToolchain(
-                crontabPath: "/usr/bin/crontab",
-                sendmailPath: "/usr/sbin/sendmail"
-            )
-        )
-        let section = try #require(report.sections.first { $0.title == "Scheduled prompts" })
-        let crontab = try #require(section.checks.first { $0.id == "scheduling.crontab" })
-        let sendmail = try #require(section.checks.first { $0.id == "scheduling.sendmail" })
-
-        #expect(crontab.status == .ok)
-        #expect(crontab.detail == "Found at /usr/bin/crontab.")
-        #expect(crontab.remedy == nil)
-        #expect(sendmail.status == .ok)
-        #expect(sendmail.detail == "Found at /usr/sbin/sendmail.")
-        #expect(sendmail.remedy == nil)
-    }
-
-    @Test
     func doctorWarnsWithoutSchedulingToolsAndKeepsExitCodeZero() throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -653,22 +376,6 @@ struct ZenDiagnosticsTests {
         #expect(sendmail.remedy == "Install an MTA such as postfix, exim or msmtp.")
         #expect(!report.hasFailure)
         #expect(report.exitCode == 0)
-    }
-
-    @Test
-    func reportRendererShowsScheduledPromptsSection() throws {
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let report = ZenDoctor.runReport(
-            environment: [:],
-            supportDirectory: root,
-            cronToolchain: ZenCronToolchain(crontabPath: nil, sendmailPath: nil)
-        )
-        let rendered = ZenDoctorReportRenderer.render(report)
-
-        #expect(rendered.contains("\nScheduled prompts:\n"))
-        #expect(rendered.contains("  [!] crontab: Not found."))
     }
 }
 

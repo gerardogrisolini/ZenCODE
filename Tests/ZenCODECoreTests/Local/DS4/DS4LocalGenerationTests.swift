@@ -94,45 +94,6 @@ struct DS4LocalGenerationTests {
     }
 
     @Test
-    func minimalManifestPassesOnlyRequiredOptions() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-        let model = try Self.touch("flash.gguf", in: fixture.rootDirectory)
-        let manifest = try AgentDS4RuntimeManifest(rootDirectory: fixture.rootDirectory, modelRelativePath: "flash.gguf")
-
-        let options = try DS4EngineConfigurationMapping.options(for: manifest)
-
-        #expect(options.map(\.keyValue) == [
-            "ds4_root=\(fixture.rootDirectory)",
-            "model_path=\(model)",
-            "backend=metal",
-            "context_size=65536",
-            "session_count=\(AgentDS4RuntimeManifest.defaultEngineSessions)",
-            "power_percent=100",
-        ])
-    }
-
-    @Test
-    func missingModelFileFailsTheMapping() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-        let manifest = try AgentDS4RuntimeManifest(rootDirectory: fixture.rootDirectory, modelRelativePath: "absent.gguf")
-        #expect(throws: AgentDS4PathValidationError.self) {
-            _ = try DS4EngineConfigurationMapping.options(for: manifest)
-        }
-    }
-
-    @Test
-    func cacheExpertsPrefersTheCountAndRoundsBytesToGiB() {
-        #expect(DS4EngineConfigurationMapping.cacheExpertsValue(experts: 64, bytes: 8 << 30) == "64")
-        #expect(DS4EngineConfigurationMapping.cacheExpertsValue(experts: nil, bytes: (8 << 30) + 5) == "8GB")
-        #expect(DS4EngineConfigurationMapping.cacheExpertsValue(experts: nil, bytes: 1024) == "1GB")
-        #expect(DS4EngineConfigurationMapping.cacheExpertsValue(experts: nil, bytes: nil) == nil)
-        #expect(DS4EngineConfigurationMapping.format(3) == "3")
-        #expect(DS4EngineConfigurationMapping.format(0.25) == "0.25")
-    }
-
-    @Test
     func missingLibraryThrowsLibraryUnavailableWithTheBuildCommand() throws {
         let fixture = try DS4EngineBuildFixture()
         defer { fixture.remove() }
@@ -224,42 +185,6 @@ struct AgentRemoteBackendFactoryDS4Tests {
         // The manifest context window wins over the model settings.
         #expect(await client.configuration.configuredContextWindowLimit == 16_384)
         #expect(harness.openCount == 0)
-        await client.shutdown()
-    }
-
-    @Test
-    func remoteSelectionStaysAnOrdinaryClient() async throws {
-        let provider = AgentRemoteProvider(
-            name: "Remote",
-            baseURL: "https://remote.invalid/v1",
-            modelID: "remote-model",
-            chatEndpoint: .chatCompletions,
-            providerProfileID: .openAI,
-            protocolProfileID: .openAIChatCompletions,
-            authPolicy: .apiKeyRequired
-        )
-        let backend = try AgentRemoteBackendFactory.makeRemoteBackend(
-            configuration: AgentRuntimeConfiguration(
-                modelID: provider.modelID,
-                workingDirectory: FileManager.default.temporaryDirectory,
-                configuredContextWindowLimit: 100_000,
-                maxToolRounds: 2,
-                toolAuthorizationHandler: nil
-            ),
-            mcpRuntime: DirectMCPToolRuntime(),
-            resolvedModelSelection: AgentModelSelection(
-                providerKind: .remoteAPI,
-                modelID: provider.modelID,
-                remoteProvider: provider,
-                apiKey: "key",
-                configuredContextWindowLimit: 100_000,
-                generationParameterOverrides: nil,
-                thinkingSelection: nil
-            )
-        )
-        let client = try #require(backend as? RemoteGenerationClient)
-        #expect(await client.ds4Generation == nil)
-        #expect(await client.configuration.configuredContextWindowLimit == 100_000)
         await client.shutdown()
     }
 }

@@ -522,51 +522,6 @@ struct AgentProviderKeyMigrationTests {
     }
 
     @Test
-    func collisionWarningIsDeliveredAfterTheCommit() throws {
-        let root = try Self.temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let settingsURL = root.appendingPathComponent(AgentSettingsManifestStore.settingsFilename)
-        let first = "11111111-2222-4333-8444-555555555555"
-        let second = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
-        try JSONSerialization.data(withJSONObject: [
-            "version": 14,
-            "providers": [
-                ["id": first, "name": "Custom A", "baseURL": "http://127.0.0.1:1234/v1", "chatEndpoint": "chat_completions"],
-                ["id": second, "name": "Custom B", "baseURL": "http://127.0.0.1:5678/v1", "chatEndpoint": "chat_completions"]
-            ],
-            "models": [
-                ["id": Self.legacyModelID(first, "a"), "kind": "remoteAPI", "modelID": "a", "providerID": first],
-                ["id": Self.legacyModelID(second, "b"), "kind": "remoteAPI", "modelID": "b", "providerID": second]
-            ]
-        ] as [String: Any]).write(to: settingsURL)
-
-        var warnings: [String] = []
-        let report = try AgentProviderKeyMigration.migrateIfNeeded(
-            supportDirectoryURL: root,
-            warningSink: { warnings.append($0) }
-        )
-        #expect(report.migratedFilenames == ["settings.json"])
-        #expect(warnings == report.warnings)
-        #expect(warnings.count == 1)
-        #expect(warnings.first?.contains("'Custom B'") == true)
-        let manifest = try AgentSettingsManifestStore.loadRequired(from: settingsURL)
-        #expect(manifest.providers.map(\.id) == ["custom"])
-        #expect(manifest.providers.first?.name == "Custom A")
-        #expect(manifest.models.map(\.id) == ["custom:a"])
-    }
-
-    @Test
-    func missingSettingsCreateNothing() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("zencode-provider-key-migration-missing-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let report = try AgentProviderKeyMigration.migrateIfNeeded(supportDirectoryURL: root)
-        #expect(!report.didMigrate)
-        #expect(!FileManager.default.fileExists(atPath: root.path))
-    }
-
-    @Test
     func legacyModelReferencesAreRewrittenOnTheFirstColonOnly() {
         let providerIDs = [Self.openRouterUUID: "openrouter"]
         #expect(

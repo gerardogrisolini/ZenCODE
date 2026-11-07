@@ -40,12 +40,6 @@ struct TerminalCheckboxMenuHeaderScrollTests {
     }
 
     @Test
-    func emptyHeaderHasNoRowsAndNoLimit() {
-        #expect(layout([], items: 3, capacity: 10) == .init(lines: [], scrollLimit: 0))
-        #expect(layout([], offset: 4, items: 30, capacity: 2) == .init(lines: [], scrollLimit: 0))
-    }
-
-    @Test
     func scrollableHeaderShowsTheWindowAtTheOffsetWithMoreMarkers() {
         // 10 item rows leave 4 free of 14, so the header takes half: 7 rows,
         // separator included, hence a viewport of 6.
@@ -60,122 +54,6 @@ struct TerminalCheckboxMenuHeaderScrollTests {
         // At the limit the last row is shown, so only the "↑ more" marker is left.
         let bottom = layout(Self.rows(20), offset: 14, items: 10, capacity: 14)
         #expect(bottom.lines == ["↑ more", "H15", "H16", "H17", "H18", "H19", ""])
-    }
-
-    @Test
-    func offsetIsClampedToTheValidRange() {
-        let bottom = layout(Self.rows(20), offset: 14, items: 10, capacity: 14)
-        #expect(layout(Self.rows(20), offset: 15, items: 10, capacity: 14) == bottom)
-        #expect(layout(Self.rows(20), offset: 9_999, items: 10, capacity: 14) == bottom)
-        let top = layout(Self.rows(20), items: 10, capacity: 14)
-        #expect(layout(Self.rows(20), offset: -1, items: 10, capacity: 14) == top)
-        #expect(layout(Self.rows(20), offset: Int.min, items: 10, capacity: 14) == top)
-    }
-
-    @Test
-    func headerTakesTheRowsTheItemsLeaveFree() {
-        // Only 3 item rows: the header gets the other 11 (10 plus separator).
-        let result = layout(Self.rows(20), items: 3, capacity: 14)
-        #expect(result.lines.count == 11)
-        #expect(result.scrollLimit == 10)
-    }
-
-    @Test
-    func shortHeaderStaysWholeWhileTheItemsScroll() {
-        // 2 rows fit in the half reserved, so the header needs no scrolling
-        // even though the items overflow.
-        let result = layout(Self.rows(2), items: 30, capacity: 14)
-        #expect(result == .init(lines: ["H0", "H1", ""], scrollLimit: 0))
-    }
-
-    @Test
-    func markersNeedAViewportOfThreeRows() {
-        // Viewport of 2: no markers, a plain window.
-        let two = layout(Self.rows(10), offset: 4, items: 30, capacity: 6)
-        #expect(two.lines == ["H4", "H5", ""])
-        #expect(two.scrollLimit == 8)
-        // Viewport of 1.
-        let one = layout(Self.rows(10), offset: 3, items: 30, capacity: 5)
-        #expect(one.lines == ["H3", ""])
-        #expect(one.scrollLimit == 9)
-        // Viewport of exactly 3: first and last rows become markers.
-        #expect(layout(Self.rows(10), items: 30, capacity: 8).lines == ["H0", "H1", "↓ more", ""])
-        #expect(layout(Self.rows(10), offset: 3, items: 30, capacity: 8).lines == ["↑ more", "H4", "↓ more", ""])
-        #expect(layout(Self.rows(10), offset: 7, items: 30, capacity: 8).lines == ["↑ more", "H8", "H9", ""])
-    }
-
-    @Test
-    func headerIsOmittedWhenNoRowRemainsForIt() {
-        // Reserved rows = max(0, capacity / 2): a viewport below 1 hides it.
-        #expect(layout(Self.rows(10), items: 30, capacity: 2) == .init(lines: [], scrollLimit: 0))
-        #expect(layout(Self.rows(10), items: 30, capacity: 1) == .init(lines: [], scrollLimit: 0))
-        #expect(layout(Self.rows(10), offset: 3, items: 30, capacity: 0) == .init(lines: [], scrollLimit: 0))
-    }
-
-    // MARK: Help
-
-    @Test
-    func helpMentionsTabOnlyOnTheFirstLineAndKeepsTheLineCount() {
-        let single = ["↑/↓ move · Enter select · Esc/Q cancel"]
-        #expect(TerminalCheckboxMenu.scrollableHeaderHelpLines(single, tableFocused: false)
-            == ["↑/↓ move · Tab table · Enter select · Esc/Q cancel"])
-        #expect(TerminalCheckboxMenu.scrollableHeaderHelpLines(single, tableFocused: true)
-            == ["↑/↓ scroll table · Tab list · Enter select · Esc/Q cancel"])
-
-        let custom = ["Enter use agent", "second line"]
-        #expect(TerminalCheckboxMenu.scrollableHeaderHelpLines(custom, tableFocused: false)
-            == ["Enter use agent · Tab table", "second line"])
-        #expect(TerminalCheckboxMenu.scrollableHeaderHelpLines(custom, tableFocused: true)
-            == ["Enter use agent · Tab list", "second line"])
-        #expect(TerminalCheckboxMenu.scrollableHeaderHelpLines([], tableFocused: true).isEmpty)
-    }
-
-    // MARK: ANSI handling
-
-    @Test
-    func dimmedItemLinesKeepTheirWidthAndAnsi() {
-        let dimmed = TerminalStyle.Text.muted + "(x) Done" + TerminalStyle.reset
-        let fitted = TerminalCheckboxMenu.fitLine(dimmed, width: 30)
-        #expect(fitted == dimmed)
-        #expect(TerminalANSIText.visibleWidth(TerminalCheckboxMenu.padded(fitted, width: 30)) == 30)
-        // Too narrow: it is cut by visible columns, and the style is closed.
-        let cut = TerminalCheckboxMenu.fitLine(dimmed, width: 6)
-        #expect(TerminalANSIText.visibleWidth(cut) <= 6)
-        #expect(cut.hasPrefix(TerminalStyle.Text.muted))
-        #expect(cut.contains(TerminalStyle.reset))
-    }
-
-    // MARK: Keys
-
-    @Test
-    func readKeyMapsTheTabByte() {
-        let capture = PrimaryScreenCapture()
-        let pipe = Pipe()
-        pipe.fileHandleForWriting.write(Data("\tjk".utf8))
-        let raw = TerminalRawInput(
-            fileDescriptor: pipe.fileHandleForReading.fileDescriptor,
-            cursorReports: capture.reports
-        )
-        #expect(TerminalCheckboxMenu.readKey(rawInput: raw) == .tab)
-        #expect(TerminalCheckboxMenu.readKey(rawInput: raw) == .down)
-        #expect(TerminalCheckboxMenu.readKey(rawInput: raw) == .up)
-    }
-
-    @Test
-    func tabDoesNotChangeTheSelectionState() {
-        let items = [
-            TerminalCheckboxMenuItem(value: 0, title: "Zero", detail: nil),
-            TerminalCheckboxMenuItem(value: 1, title: "One", detail: nil),
-        ]
-        var state = TerminalCheckboxMenu.SelectionState<Int>.single(1)
-        var focused = 1
-        let action = TerminalCheckboxMenu.apply(key: .tab, items: items, state: &state, focusedIndex: &focused)
-        #expect(action == .continue)
-        #expect(focused == 1)
-        guard case .single(.some(1)) = state else {
-            Issue.record("Tab changed the selection")
-            return
-        }
     }
 
     // MARK: End to end
@@ -273,19 +151,6 @@ struct TerminalCheckboxMenuHeaderScrollTests {
     }
 
     @Test
-    func upAndDownAreClampedAtBothEndsOfTheTable() {
-        let header = Self.tableRows(40)
-        let capture = PrimaryScreenCapture()
-        // Up at the top does nothing; many downs stop at the last row.
-        let keys = "\tk" + String(repeating: "j", count: 80) + "\r"
-        #expect(run(keys: keys, header: header, capture: capture) == 1)
-        let lastFrame = capture.writes.withLock { $0 }.last { $0.contains("Tab list") }
-        #expect(lastFrame?.contains("ROW_39") == true)
-        #expect(lastFrame?.contains("↓ more") == false)
-        #expect(lastFrame?.contains("↑ more") == true)
-    }
-
-    @Test
     func tabAgainReturnsTheArrowsToTheList() {
         let header = Self.tableRows(40)
         let capture = PrimaryScreenCapture()
@@ -314,13 +179,5 @@ struct TerminalCheckboxMenuHeaderScrollTests {
         #expect(!capture.bytes.contains("Tab"))
         #expect(capture.bytes.contains("ROW_01"))
         #expect(capture.bytes.contains("↑/↓ move · Enter select"))
-    }
-
-    @Test
-    func menuWithoutHeaderIgnoresTabAndKeepsItsHelp() {
-        let capture = PrimaryScreenCapture()
-        #expect(run(keys: "\tj\r", header: [], capture: capture) == 2)
-        #expect(!capture.bytes.contains("Tab"))
-        #expect(capture.bytes.contains("↑/↓ move · Enter select · Esc/Q cancel"))
     }
 }

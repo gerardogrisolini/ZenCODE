@@ -39,21 +39,6 @@ struct AnthropicThinkingBlockTests {
     }
 
     @Test
-    func accumulatorDropsThinkingBlockWithoutSignature() {
-        var accumulator = AnthropicThinkingBlockAccumulator()
-        accumulator.ingestContentBlockStart([
-            "index": 0,
-            "content_block": ["type": "thinking", "thinking": ""]
-        ])
-        accumulator.ingestDelta(
-            index: 0,
-            delta: ["type": "thinking_delta", "thinking": "Unsigned thought."]
-        )
-
-        #expect(accumulator.finalize().isEmpty)
-    }
-
-    @Test
     func accumulatorCapturesRedactedThinkingBlock() {
         var accumulator = AnthropicThinkingBlockAccumulator()
         accumulator.ingestContentBlockStart([
@@ -65,46 +50,6 @@ struct AnthropicThinkingBlockTests {
         #expect(blocks.count == 1)
         #expect(blocks.first?["type"] as? String == "redacted_thinking")
         #expect(blocks.first?["data"] as? String == "encrypted-data")
-    }
-
-    @Test
-    func assistantBlocksReplayThinkingBeforeTextAndToolUse() {
-        let message: [String: Any] = [
-            "role": "assistant",
-            "content": "Final answer.",
-            "thinking_blocks": "[{\"type\":\"thinking\",\"thinking\":\"step\",\"signature\":\"sig\"}]",
-            "tool_calls": [
-                [
-                    "id": "toolu_1",
-                    "type": "function",
-                    "function": ["name": "tool_local_ls", "arguments": "{}"]
-                ]
-            ]
-        ]
-
-        let blocks = AnthropicSubscriptionGenerationClient.assistantContentBlocks(
-            from: message,
-            includeThinkingBlocks: true
-        )
-        #expect(blocks.first?["type"] as? String == "thinking")
-        #expect(blocks.contains { $0["type"] as? String == "text" })
-        #expect(blocks.contains { $0["type"] as? String == "tool_use" })
-    }
-
-    @Test
-    func assistantBlocksOmitThinkingWhenThinkingDisabled() {
-        let message: [String: Any] = [
-            "role": "assistant",
-            "content": "Final answer.",
-            "thinking_blocks": "[{\"type\":\"thinking\",\"thinking\":\"step\",\"signature\":\"sig\"}]"
-        ]
-
-        let blocks = AnthropicSubscriptionGenerationClient.assistantContentBlocks(
-            from: message,
-            includeThinkingBlocks: false
-        )
-        #expect(blocks.allSatisfy { $0["type"] as? String != "thinking" })
-        #expect(blocks.contains { $0["type"] as? String == "text" })
     }
 
     @Test
@@ -266,21 +211,6 @@ struct AnthropicThinkingBlockTests {
     }
 
     @Test
-    func anthropicToolsCarryNoCacheBreakpoint() throws {
-        let descriptor = DirectToolDescriptor(
-            name: "local.exec",
-            description: "Runs a command",
-            inputSchema: #"{"type":"object","properties":{}}"#
-        )
-        let tools = AnthropicSubscriptionGenerationClient.anthropicTools(
-            from: RemoteToolWireCatalog(descriptors: [descriptor]).bindings
-        )
-
-        #expect(tools.count == 1)
-        #expect(tools.allSatisfy { $0["cache_control"] == nil })
-    }
-
-    @Test
     func cacheControlBreakpointsMarkLastMessageSkippingThinkingBlocks() throws {
         let messages: [[String: Any]] = [
             ["role": "user", "content": [["type": "text", "text": "first"]]],
@@ -373,140 +303,66 @@ struct AnthropicThinkingBlockTests {
         #expect(!interleavedHeader.contains("context-1m-2025-08-07"))
     }
 
-    @Test
-    func adaptiveThinkingModelsHandleNilAndOffSelections() throws {
-        let nilSelection = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
-            mode: "adaptive", selection: nil, options: [.off, .high],
-            maxTokens: 4096
-        )
-        let offSelection = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
-            mode: "adaptive", selection: .off, options: [.off, .high],
-            maxTokens: 4096
-        )
-        let nonAdaptiveOff = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
-            mode: "enabled", selection: .off, options: [.off, .high],
-            maxTokens: 4096
-        )
-
-        #expect(nilSelection.thinking == nil)
-        #expect(nilSelection.outputConfig == nil)
-        #expect(offSelection.thinking?["type"] as? String == "disabled")
-        #expect(offSelection.thinking?["display"] == nil)
-        #expect(offSelection.outputConfig == nil)
-        #expect(nonAdaptiveOff.thinking?["type"] as? String == "disabled")
-    }
-
-    @Test
-    func adaptiveThinkingRequestsSummarizedDisplay() throws {
-        let payload = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
-            mode: "adaptive", selection: .high, options: [.off, .high],
-            maxTokens: 8192
-        )
-        let thinking = try #require(payload.thinking)
-        let outputConfig = try #require(payload.outputConfig)
-
-        #expect(thinking["type"] as? String == "adaptive")
-        #expect(thinking["budget_tokens"] == nil)
-        #expect(thinking["display"] as? String == "summarized")
-        #expect(outputConfig["effort"] as? String == "high")
-    }
-
-    @Test
-    func adaptiveThinkingPreservesMaxEffortWithSummarizedDisplay() throws {
-        let payload = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
-            mode: "adaptive", selection: .max, options: [.off, .max], maxTokens: 64_000
-        )
-        let thinking = try #require(payload.thinking)
-        #expect(thinking["type"] as? String == "adaptive")
-        #expect(thinking["display"] as? String == "summarized")
-        #expect(payload.outputConfig?["effort"] as? String == "max")
-    }
-
-    @Test
-    func manualThinkingModelsUseEnabledBudgetWithoutForcedDisplay() throws {
-        let payload = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
-            mode: "enabled", selection: .high, options: [.off, .high],
-            maxTokens: 8192
-        )
-        let thinking = try #require(payload.thinking)
-
-        #expect(thinking["type"] as? String == "enabled")
-        #expect((thinking["budget_tokens"] as? Int ?? 0) > 0)
-        #expect(thinking["display"] == nil)
-        #expect(payload.outputConfig == nil)
-    }
-
-    @Test
-    func adaptiveThinkingEffortUsesOnlyConfiguredLevels() {
-        for selection in [AgentThinkingSelection.xhigh, .max, .ultra, .minimal] {
-            let allowed = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
-                mode: "adaptive", selection: selection, options: [.off, selection], maxTokens: 8192
-            )
-            #expect(allowed.outputConfig?["effort"] as? String == selection.rawValue)
-            let rejected = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
-                mode: "adaptive", selection: selection, options: [.off, .high], maxTokens: 8192
-            )
-            #expect(rejected.thinking == nil)
-            #expect(rejected.outputConfig == nil)
-        }
-    }
-
-    @Test
-    func manualThinkingBudgetsAreMonotonicWithinAnthropicLimits() {
-        let ladder: [AgentThinkingSelection] = [
-            .minimal, .low, .medium, .high, .xhigh, .max
+    /// Adaptive models handle nil/off selections and request the summarized
+    /// display; manual models use an enabled budget without forced display and
+    /// are omitted below Anthropic's budget minimum; adaptive effort uses only
+    /// the configured levels.
+    static let catalogThinkingPayloadCases: [CatalogThinkingPayloadCase] = {
+        var cases: [CatalogThinkingPayloadCase] = [
+            .init(mode: "adaptive", selection: nil, options: [.off, .high], maxTokens: 4096,
+                  expectations: [.noThinking, .noOutputConfig]),
+            .init(mode: "adaptive", selection: .off, options: [.off, .high], maxTokens: 4096,
+                  expectations: [.type("disabled"), .noDisplay, .noOutputConfig]),
+            .init(mode: "enabled", selection: .off, options: [.off, .high], maxTokens: 4096,
+                  expectations: [.type("disabled")]),
+            .init(mode: "adaptive", selection: .high, options: [.off, .high], maxTokens: 8192,
+                  expectations: [.type("adaptive"), .noBudget, .display("summarized"), .effort("high")]),
+            .init(mode: "enabled", selection: .high, options: [.off, .high], maxTokens: 8192,
+                  expectations: [.type("enabled"), .positiveBudget, .noDisplay, .noOutputConfig]),
+            .init(mode: "enabled", selection: .high, options: [.off, .high], maxTokens: 1_500,
+                  expectations: [.noThinking, .noOutputConfig])
         ]
-        let budgets = ladder.map(
-            AnthropicSubscriptionGenerationClient.thinkingBudgetTokens(for:)
-        )
+        for selection in [AgentThinkingSelection.xhigh, .max, .ultra, .minimal] {
+            cases.append(.init(mode: "adaptive", selection: selection, options: [.off, selection], maxTokens: 8192,
+                               expectations: [.effort(selection.rawValue)]))
+            cases.append(.init(mode: "adaptive", selection: selection, options: [.off, .high], maxTokens: 8192,
+                               expectations: [.noThinking, .noOutputConfig]))
+        }
+        return cases
+    }()
 
-        #expect(budgets == budgets.sorted())
-        #expect(Set(budgets).count == budgets.count)
-        #expect(
-            AnthropicSubscriptionGenerationClient.thinkingBudgetTokens(for: .off) == 0
-        )
-        #expect(
-            budgets.first == AnthropicSubscriptionGenerationClient
-                .minimumThinkingBudgetTokens
-        )
-        #expect((budgets.last ?? 0) <= 32_000)
-        #expect(
-            AnthropicSubscriptionGenerationClient.thinkingBudgetTokens(for: .ultra)
-                == AnthropicSubscriptionGenerationClient.thinkingBudgetTokens(for: .max)
-        )
-    }
-
-    @Test
-    func manualThinkingPayloadIsOmittedBelowAnthropicBudgetMinimum() {
+    @Test(arguments: Self.catalogThinkingPayloadCases)
+    func catalogThinkingPayloadMatchesModeSelectionAndOptions(
+        _ testCase: CatalogThinkingPayloadCase
+    ) throws {
         let payload = AnthropicSubscriptionGenerationClient.catalogThinkingPayload(
-            mode: "enabled", selection: .high, options: [.off, .high],
-            maxTokens: 1_500
+            mode: testCase.mode, selection: testCase.selection, options: testCase.options,
+            maxTokens: testCase.maxTokens
         )
-
-        #expect(payload.thinking == nil)
-        #expect(payload.outputConfig == nil)
-    }
-
-    @Test
-    func manualThinkingBudgetLeavesRoomForOutputTokens() {
-        #expect(
-            AnthropicSubscriptionGenerationClient.adjustedThinkingBudget(
-                2_048,
-                maxTokens: 8_192
-            ) == 2_048
-        )
-        #expect(
-            AnthropicSubscriptionGenerationClient.adjustedThinkingBudget(
-                8_192,
-                maxTokens: 8_192
-            ) == 7_168
-        )
-        #expect(
-            AnthropicSubscriptionGenerationClient.adjustedThinkingBudget(
-                16_384,
-                maxTokens: 8_192
-            ) == 7_168
-        )
+        for expectation in testCase.expectations {
+            switch expectation {
+            case .noThinking:
+                #expect(payload.thinking == nil)
+            case .noOutputConfig:
+                #expect(payload.outputConfig == nil)
+            case let .type(type):
+                let thinking = try #require(payload.thinking)
+                #expect(thinking["type"] as? String == type)
+            case .noDisplay:
+                #expect(payload.thinking?["display"] == nil)
+            case let .display(display):
+                let thinking = try #require(payload.thinking)
+                #expect(thinking["display"] as? String == display)
+            case .noBudget:
+                let thinking = try #require(payload.thinking)
+                #expect(thinking["budget_tokens"] == nil)
+            case .positiveBudget:
+                let thinking = try #require(payload.thinking)
+                #expect((thinking["budget_tokens"] as? Int ?? 0) > 0)
+            case let .effort(effort):
+                #expect(payload.outputConfig?["effort"] as? String == effort)
+            }
+        }
     }
 
     @Test
@@ -560,5 +416,25 @@ struct AnthropicThinkingBlockTests {
             )
         )
     }
+}
+
+/// One `catalogThinkingPayload` input and the checks its result must pass.
+struct CatalogThinkingPayloadCase: Sendable {
+    let mode: String
+    let selection: AgentThinkingSelection?
+    let options: [AgentThinkingSelection]
+    let maxTokens: Int
+    let expectations: [CatalogThinkingExpectation]
+}
+
+enum CatalogThinkingExpectation: Sendable {
+    case noThinking
+    case noOutputConfig
+    case type(String)
+    case noDisplay
+    case display(String)
+    case noBudget
+    case positiveBudget
+    case effort(String)
 }
 #endif

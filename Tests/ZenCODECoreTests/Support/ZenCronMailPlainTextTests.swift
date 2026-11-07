@@ -13,276 +13,100 @@ struct ZenCronMailPlainTextTests {
         ZenCronMailPlainText.render(markdown: markdown)
     }
 
-    // MARK: - Blocks
+    /// Markdown and the plain text it reads as, one construct per case.
+    static let renderings: [(String, String)] = [
+        // An empty or blank document is the empty string.
+        ("", ""),
+        ("  \n\n \t\n", ""),
+        // Top-level blocks are separated by one blank line and the text ends with one line break.
+        ("one\n\n\n\ntwo\n\n\n", "one\n\ntwo\n"),
+        ("one", "one\n"),
+        // A heading is its text on a line of its own.
+        ("# Title\n\n## Sub **bold** `code`\n\n###### Deep\ntext", "Title\n\nSub bold code\n\nDeep\n\ntext\n"),
+        // Strong, emphasis, strikethrough and code keep only their text.
+        ("**bold** *it* _it_ ~~gone~~ `a < b` ***both***", "bold it it gone a < b both\n"),
+        ("escaped \\*star\\* and &amp; entity", "escaped *star* and & entity\n"),
+        // The author's characters are kept: no smart quotes, dashes or ellipses.
+        (
+            "say \"hi\" -- it's ... fine; run `zen --jsonl` or zen --jsonl",
+            "say \"hi\" -- it's ... fine; run zen --jsonl or zen --jsonl\n"
+        ),
+        // Soft and hard line breaks of the source are kept as line breaks.
+        ("line one\nline two", "line one\nline two\n"),
+        ("hard  \nbreak", "hard\nbreak\n"),
+        ("backslash\\\nbreak", "backslash\nbreak\n"),
+        // A thematic break is a line of 40 box-drawing dashes.
+        ("above\n\n---\n\nbelow", "above\n\n────────────────────────────────────────\n\nbelow\n"),
+        // Bullets nest with the text column of the parent and change glyph after the first level.
+        ("- one\n  - two\n    - three\n- four", "• one\n  ◦ two\n    ◦ three\n• four\n"),
+        // A bullet list under a numbered item aligns with the text after the number.
+        ("3. first\n4. second\n   - nested", "3. first\n4. second\n   ◦ nested\n"),
+        // Numbered lists count from the start index of the list.
+        ("1. a\n2. b\n3. c", "1. a\n2. b\n3. c\n"),
+        ("7. a\n1. b\n1. c", "7. a\n8. b\n9. c\n"),
+        ("0. zero\n1. one", "0. zero\n1. one\n"),
+        // Items sit on consecutive lines and their paragraphs are separated by a blank line.
+        ("- first\n\n  second paragraph\n- next\n\nOutside", "• first\n\n  second paragraph\n• next\n\nOutside\n"),
+        // Continuation lines align with the text after the number, whatever its width.
+        (
+            "9. nine\n10. ten\n    line two\\\n    hard break\n\n    second paragraph",
+            "9. nine\n10. ten\n    line two\n    hard break\n\n    second paragraph\n"
+        ),
+        // A task box replaces the bullet of a bulleted item and follows the number of a numbered one.
+        ("- [x] done\n- [ ] to do\n  - nested\n- plain", "[x] done\n[ ] to do\n    ◦ nested\n• plain\n"),
+        ("1. [x] done\n2. [ ] to do", "1. [x] done\n2. [ ] to do\n"),
+        // A link reads text and url, and just one of them when the other adds nothing.
+        ("[docs](https://example.com/docs)", "docs (https://example.com/docs)\n"),
+        ("<https://example.com>", "https://example.com\n"),
+        ("[https://example.com](https://example.com)", "https://example.com\n"),
+        ("[**bold** link](https://example.com)", "bold link (https://example.com)\n"),
+        ("[](https://example.com)", "https://example.com\n"),
+        ("[only text]()", "only text\n"),
+        // A mailto link whose text is the address is just the address.
+        ("<user@example.com>", "user@example.com\n"),
+        ("[user@example.com](mailto:user@example.com)", "user@example.com\n"),
+        ("[write me](mailto:user@example.com)", "write me (mailto:user@example.com)\n"),
+        // An image reads alt text and url, or just the url without alt text.
+        ("![logo](https://example.com/logo.png)", "logo (https://example.com/logo.png)\n"),
+        ("![](https://example.com/logo.png)", "https://example.com/logo.png\n"),
+        ("![just alt]()", "just alt\n"),
+        // Code keeps its content, indented by four spaces, with no fences and no trailing spaces.
+        (
+            "Before\n\n```swift\nlet x = 1\n\nprint(x)\u{20}\u{20}\u{20}\n```\n\nAfter",
+            "Before\n\n    let x = 1\n\n    print(x)\n\nAfter\n"
+        ),
+        // Code inside a list item is indented relative to the item.
+        ("- run:\n\n  ```\n  make\n\n  make test\n  ```", "• run:\n\n      make\n\n      make test\n"),
+        // Every line of a quote starts with a bar, blank lines get just the bar.
+        ("> quote\n\n> first\n>\n> second\n>\n> > nested", "│ quote\n\n│ first\n│\n│ second\n│\n│ │ nested\n"),
+        // Each body row becomes a block of Header: value lines, empty cells and rows left out.
+        (
+            "| Task | Owner | Due |\n| --- | :---: | ---: |\n| Write docs | Ann | Friday |\n"
+                + "| Fix bug | | Monday |\n|  |  |  |\n| Ship | Bob | |",
+            "Task: Write docs\nOwner: Ann\nDue: Friday\n\nTask: Fix bug\nDue: Monday\n\nTask: Ship\nOwner: Bob\n"
+        ),
+        // A column without a header shows just the value.
+        ("| | Status |\n| --- | --- |\n| Deploy | ok |", "Deploy\nStatus: ok\n"),
+        // A table without body rows is its headers on one line.
+        ("| Name | Owner | Due |\n| --- | --- | --- |", "Name · Owner · Due\n"),
+        // A cell is rendered like inline text on a single line.
+        (
+            "| Item | Notes |\n| --- | --- |\n| **bold** | one<br>two<br/>three and [site](https://example.com) |",
+            "Item: bold\nNotes: one two three and site (https://example.com)\n"
+        ),
+        // A table sits between its neighbours like any other block.
+        ("Before\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nAfter", "Before\n\nA: 1\nB: 2\n\nAfter\n"),
+        // br tags are line breaks in any case and spelling.
+        ("a<br>b<BR/>c<br />d<Br>e", "a\nb\nc\nd\ne\n"),
+        // Any other raw HTML stays literal.
+        ("x <span>y</span> z", "x <span>y</span> z\n"),
+        ("<div>hello *there*</div>", "<div>hello *there*</div>\n"),
+        ("a <br class=\"x\"> b", "a <br class=\"x\"> b\n")
+    ]
 
-    @Test("an empty or blank document is the empty string")
-    func emptyDocument() {
-        #expect(render("") == "")
-        #expect(render("  \n\n \t\n") == "")
-    }
-
-    @Test("top-level blocks are separated by one blank line and the text ends with one line break")
-    func blocksAreSeparatedByOneBlankLine() {
-        #expect(render("one\n\n\n\ntwo\n\n\n") == "one\n\ntwo\n")
-        #expect(render("one") == "one\n")
-    }
-
-    @Test("a heading is its text on a line of its own")
-    func headings() {
-        #expect(
-            render("# Title\n\n## Sub **bold** `code`\n\n###### Deep\ntext")
-                == "Title\n\nSub bold code\n\nDeep\n\ntext\n"
-        )
-    }
-
-    @Test("strong, emphasis, strikethrough and code keep only their text")
-    func inlineStyles() {
-        #expect(
-            render("**bold** *it* _it_ ~~gone~~ `a < b` ***both***")
-                == "bold it it gone a < b both\n"
-        )
-        #expect(render("escaped \\*star\\* and &amp; entity") == "escaped *star* and & entity\n")
-    }
-
-    @Test("the author's characters are kept: no smart quotes, dashes or ellipses")
-    func noTypographicSubstitution() {
-        #expect(
-            render("say \"hi\" -- it's ... fine; run `zen --jsonl` or zen --jsonl")
-                == "say \"hi\" -- it's ... fine; run zen --jsonl or zen --jsonl\n"
-        )
-    }
-
-    @Test("soft and hard line breaks of the source are kept as line breaks")
-    func lineBreaks() {
-        #expect(render("line one\nline two") == "line one\nline two\n")
-        #expect(render("hard  \nbreak") == "hard\nbreak\n")
-        #expect(render("backslash\\\nbreak") == "backslash\nbreak\n")
-    }
-
-    @Test("a thematic break is a line of 40 box-drawing dashes")
-    func thematicBreak() {
-        #expect(render("above\n\n---\n\nbelow") == "above\n\n" + String(repeating: "─", count: 40) + "\n\nbelow\n")
-    }
-
-    // MARK: - Lists
-
-    @Test("bullets nest with the text column of the parent and change glyph after the first level")
-    func nestedBullets() {
-        let markdown = """
-        - one
-          - two
-            - three
-        - four
-        """
-        #expect(render(markdown) == "• one\n  ◦ two\n    ◦ three\n• four\n")
-    }
-
-    @Test("a bullet list under a numbered item aligns with the text after the number")
-    func bulletsUnderNumberedItems() {
-        let markdown = """
-        3. first
-        4. second
-           - nested
-        """
-        #expect(render(markdown) == "3. first\n4. second\n   ◦ nested\n")
-    }
-
-    @Test("numbered lists count from the start index of the list")
-    func numberedLists() {
-        #expect(render("1. a\n2. b\n3. c") == "1. a\n2. b\n3. c\n")
-        #expect(render("7. a\n1. b\n1. c") == "7. a\n8. b\n9. c\n")
-        #expect(render("0. zero\n1. one") == "0. zero\n1. one\n")
-    }
-
-    @Test("items sit on consecutive lines and their paragraphs are separated by a blank line")
-    func itemParagraphs() {
-        let markdown = """
-        - first
-
-          second paragraph
-        - next
-
-        Outside
-        """
-        #expect(render(markdown) == "• first\n\n  second paragraph\n• next\n\nOutside\n")
-    }
-
-    @Test("continuation lines align with the text after the number, whatever its width")
-    func continuationUnderWideNumbers() {
-        let markdown = """
-        9. nine
-        10. ten
-            line two\\
-            hard break
-
-            second paragraph
-        """
-        #expect(render(markdown) == "9. nine\n10. ten\n    line two\n    hard break\n\n    second paragraph\n")
-    }
-
-    @Test("a task box replaces the bullet of a bulleted item")
-    func taskBoxesReplaceBullets() {
-        let markdown = """
-        - [x] done
-        - [ ] to do
-          - nested
-        - plain
-        """
-        #expect(render(markdown) == "[x] done\n[ ] to do\n    ◦ nested\n• plain\n")
-    }
-
-    @Test("a task box follows the number of a numbered item")
-    func taskBoxesFollowNumbers() {
-        #expect(render("1. [x] done\n2. [ ] to do") == "1. [x] done\n2. [ ] to do\n")
-    }
-
-    // MARK: - Links and images
-
-    @Test("a link reads text and url, and just one of them when the other adds nothing")
-    func links() {
-        #expect(render("[docs](https://example.com/docs)") == "docs (https://example.com/docs)\n")
-        #expect(render("<https://example.com>") == "https://example.com\n")
-        #expect(render("[https://example.com](https://example.com)") == "https://example.com\n")
-        #expect(render("[**bold** link](https://example.com)") == "bold link (https://example.com)\n")
-        #expect(render("[](https://example.com)") == "https://example.com\n")
-        #expect(render("[only text]()") == "only text\n")
-    }
-
-    @Test("a mailto link whose text is the address is just the address")
-    func mailtoLinks() {
-        #expect(render("<user@example.com>") == "user@example.com\n")
-        #expect(render("[user@example.com](mailto:user@example.com)") == "user@example.com\n")
-        #expect(
-            render("[write me](mailto:user@example.com)") == "write me (mailto:user@example.com)\n"
-        )
-    }
-
-    @Test("an image reads alt text and url, or just the url without alt text")
-    func images() {
-        #expect(render("![logo](https://example.com/logo.png)") == "logo (https://example.com/logo.png)\n")
-        #expect(render("![](https://example.com/logo.png)") == "https://example.com/logo.png\n")
-        #expect(render("![just alt]()") == "just alt\n")
-    }
-
-    // MARK: - Code and quotes
-
-    @Test("code keeps its content, indented by four spaces, with no fences and no trailing spaces")
-    func codeBlocks() {
-        let markdown = """
-        Before
-
-        ```swift
-        let x = 1
-
-        print(x)\u{20}\u{20}\u{20}
-        ```
-
-        After
-        """
-        #expect(render(markdown) == "Before\n\n    let x = 1\n\n    print(x)\n\nAfter\n")
-    }
-
-    @Test("code inside a list item is indented relative to the item")
-    func codeInListItem() {
-        let markdown = """
-        - run:
-
-          ```
-          make
-
-          make test
-          ```
-        """
-        #expect(render(markdown) == "• run:\n\n      make\n\n      make test\n")
-    }
-
-    @Test("every line of a quote starts with a bar, blank lines get just the bar")
-    func blockQuotes() {
-        let markdown = """
-        > quote
-
-        > first
-        >
-        > second
-        >
-        > > nested
-        """
-        #expect(
-            render(markdown) == "│ quote\n\n│ first\n│\n│ second\n│\n│ │ nested\n"
-        )
-    }
-
-    // MARK: - Tables
-
-    @Test("each body row becomes a block of Header: value lines, empty cells and rows left out")
-    func tables() {
-        let markdown = """
-        | Task | Owner | Due |
-        | --- | :---: | ---: |
-        | Write docs | Ann | Friday |
-        | Fix bug | | Monday |
-        |  |  |  |
-        | Ship | Bob | |
-        """
-        #expect(
-            render(markdown)
-                == "Task: Write docs\nOwner: Ann\nDue: Friday\n\nTask: Fix bug\nDue: Monday\n\nTask: Ship\nOwner: Bob\n"
-        )
-    }
-
-    @Test("a column without a header shows just the value")
-    func tableWithAnEmptyHeader() {
-        let markdown = """
-        | | Status |
-        | --- | --- |
-        | Deploy | ok |
-        """
-        #expect(render(markdown) == "Deploy\nStatus: ok\n")
-    }
-
-    @Test("a table without body rows is its headers on one line")
-    func tableWithoutBody() {
-        #expect(render("| Name | Owner | Due |\n| --- | --- | --- |") == "Name · Owner · Due\n")
-    }
-
-    @Test("a cell is rendered like inline text on a single line")
-    func tableCellContent() {
-        let markdown = """
-        | Item | Notes |
-        | --- | --- |
-        | **bold** | one<br>two<br/>three and [site](https://example.com) |
-        """
-        #expect(
-            render(markdown) == "Item: bold\nNotes: one two three and site (https://example.com)\n"
-        )
-    }
-
-    @Test("a table sits between its neighbours like any other block")
-    func tableBetweenParagraphs() {
-        let markdown = """
-        Before
-
-        | A | B |
-        | --- | --- |
-        | 1 | 2 |
-
-        After
-        """
-        #expect(render(markdown) == "Before\n\nA: 1\nB: 2\n\nAfter\n")
-    }
-
-    // MARK: - Raw HTML
-
-    @Test("br tags are line breaks in any case and spelling")
-    func lineBreakTags() {
-        #expect(render("a<br>b<BR/>c<br />d<Br>e") == "a\nb\nc\nd\ne\n")
-    }
-
-    @Test("any other raw HTML stays literal")
-    func otherHTMLStaysLiteral() {
-        #expect(render("x <span>y</span> z") == "x <span>y</span> z\n")
-        #expect(render("<div>hello *there*</div>") == "<div>hello *there*</div>\n")
-        #expect(render("a <br class=\"x\"> b") == "a <br class=\"x\"> b\n")
+    @Test("each Markdown construct reads as plain text", arguments: ZenCronMailPlainTextTests.renderings)
+    func rendersEachMarkdownConstructAsPlainText(_ markdown: String, _ plainText: String) {
+        #expect(render(markdown) == plainText)
     }
 
     // MARK: - Trailing spaces

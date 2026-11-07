@@ -535,10 +535,8 @@ extension TelegramChannel {
 
     /// Publishes a live `@mention` sent from Telegram on `lease`, as the
     /// terminal's `sendSharedChatMention(_:)` publishes the operator's.
-    /// Returns `true` when the room accepted the message (or the
-    /// ``TelegramWorkEffectForTesting/sharedChatPublication`` seam consumed
-    /// it), `false` for a direct recipient that is no longer active or a
-    /// failed publication.
+    /// Returns `true` when the room accepted the message, `false` for a
+    /// direct recipient that is no longer active or a failed publication.
     ///
     /// The route is recorded before the message crosses to the runtime, so
     /// the coordinator turn the message triggers answers on the same route
@@ -550,7 +548,6 @@ extension TelegramChannel {
         _ route: SharedChatMentionParser.Route,
         lease: TerminalTelegramRouteLease
     ) async -> Bool {
-        if onTelegramWorkEffectForTesting?(.sharedChatPublication) == true { return true }
         guard await isCurrentSharedChatDirectDestination(route.destination) else {
             await presentNotice(
                 "ZenCODE message: selected agent is no longer active.\n",

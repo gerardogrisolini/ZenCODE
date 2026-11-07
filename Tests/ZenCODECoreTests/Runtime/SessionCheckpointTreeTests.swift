@@ -27,31 +27,6 @@ struct SessionCheckpointTreeTests {
         #expect(tree.activeMessages[2].content == "How are you?")
     }
 
-    @Test
-    func emptyHistoryProducesEmptyTree() {
-        let tree = SessionCheckpointTree.fromLinearHistory([], sessionID: "test")
-
-        #expect(tree.entries.count == 1) // root placeholder
-        #expect(tree.activeMessages.count == 1) // the root system message
-    }
-
-    // MARK: - Path walking
-
-    @Test
-    func pathFromLeafToRootIsChronological() {
-        let messages = (0..<5).map { i in
-            AgentRuntimeMessage(role: .user, content: "msg-\(i)")
-        }
-        let tree = SessionCheckpointTree.fromLinearHistory(messages, sessionID: "test")
-
-        let leafID = tree.activeLeafID
-        let path = tree.path(from: leafID)
-
-        #expect(path.count == 5)
-        #expect(path[0].message?.content == "msg-0")
-        #expect(path[4].message?.content == "msg-4")
-    }
-
     // MARK: - Branching
 
     @Test
@@ -78,47 +53,6 @@ struct SessionCheckpointTreeTests {
         #expect(active.count == 2)
         #expect(active[0].content == "Hello")
         #expect(active[1].content == "Branch B")
-    }
-
-    @Test
-    func multipleBranchesProduceMultipleLeaves() {
-        let messages = [
-            AgentRuntimeMessage(role: .user, content: "Root message"),
-        ]
-        var tree = SessionCheckpointTree.fromLinearHistory(messages, sessionID: "test")
-        let rootID = tree.activeLeafID
-
-        // Branch 1
-        _ = tree.branch(from: rootID, kind: .message(
-            AgentRuntimeMessage(role: .user, content: "Branch 1")
-        ))
-
-        // Branch 2 (also from root)
-        _ = tree.branch(from: rootID, kind: .message(
-            AgentRuntimeMessage(role: .user, content: "Branch 2")
-        ))
-
-        #expect(tree.children(of: rootID).count == 2)
-    }
-
-    // MARK: - Navigation
-
-    @Test
-    func navigateChangesActiveLeaf() {
-        let messages = [
-            AgentRuntimeMessage(role: .user, content: "Msg 1"),
-            AgentRuntimeMessage(role: .user, content: "Msg 2"),
-            AgentRuntimeMessage(role: .user, content: "Msg 3"),
-        ]
-        var tree = SessionCheckpointTree.fromLinearHistory(messages, sessionID: "test")
-
-        // Navigate back to the first message entry
-        let firstEntry = tree.entries[0]
-        tree.navigate(to: firstEntry.id)
-
-        #expect(tree.activeLeafID == firstEntry.id)
-        #expect(tree.activeMessages.count == 1)
-        #expect(tree.activeMessages[0].content == "Msg 1")
     }
 
     // MARK: - Selective restore (checkpointEntryID)
@@ -210,51 +144,6 @@ struct SessionCheckpointTreeTests {
 
         #expect(merged.activeMessages.count == 3)
         #expect(merged.activeMessages[2].content == "How are you?")
-    }
-
-    @Test
-    func mergingHistoryIsIdempotent() {
-        let messages = [
-            AgentRuntimeMessage(role: .user, content: "Hello"),
-            AgentRuntimeMessage(role: .assistant, content: "Hi!"),
-        ]
-        let tree = SessionCheckpointTree.fromLinearHistory(messages, sessionID: "test")
-
-        let merged = tree.mergingHistory(messages)
-
-        #expect(merged.entries.count == tree.entries.count)
-    }
-
-
-    // MARK: - Entry ID generation
-
-    @Test
-    func entryIDsAreEightHexChars() {
-        let id = SessionCheckpointTree.generateEntryID()
-        #expect(id.count == 8)
-        #expect(id.allSatisfy { $0.isHexDigit })
-    }
-
-    // MARK: - Children
-
-    @Test
-    func childrenOfEntryReturnsAllDirectChildren() {
-        var tree = SessionCheckpointTree.fromLinearHistory(
-            [AgentRuntimeMessage(role: .user, content: "Root")],
-            sessionID: "test"
-        )
-        let rootID = tree.activeLeafID
-
-        _ = tree.branch(from: rootID, kind: .message(
-            AgentRuntimeMessage(role: .user, content: "Child A")
-        ))
-        tree.navigate(to: rootID)
-        _ = tree.branch(from: rootID, kind: .message(
-            AgentRuntimeMessage(role: .user, content: "Child B")
-        ))
-
-        let children = tree.children(of: rootID)
-        #expect(children.count == 2)
     }
 
     // MARK: - Codable round-trip

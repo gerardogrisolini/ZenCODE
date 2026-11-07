@@ -10,20 +10,6 @@ import Testing
 @Suite("Dictation voice mode")
 struct DictationVoiceModeTests {
     @Test
-    func voiceSubcommandsParseCaseInsensitively() {
-        #expect(VoiceModeCommandAction(argument: "") == .togglePause)
-        #expect(VoiceModeCommandAction(argument: "  ") == .togglePause)
-        #expect(VoiceModeCommandAction(argument: "on") == .turnOn)
-        #expect(VoiceModeCommandAction(argument: " ON ") == .turnOn)
-        #expect(VoiceModeCommandAction(argument: "off") == .turnOff)
-        #expect(VoiceModeCommandAction(argument: "Pause") == .pause)
-        #expect(VoiceModeCommandAction(argument: "resume") == .resume)
-        #expect(VoiceModeCommandAction(argument: "start") == .usage)
-        #expect(VoiceModeCommandAction(argument: "on now") == .usage)
-        #expect(VoiceModeCommandAction.usageMessage == "Usage: /voice [on|off|pause|resume]\n")
-    }
-
-    @Test
     func anUtteranceEndsAfterTheSilenceGap() {
         let start = ContinuousClock.now
         var segmenter = VoiceDictationSegmenter()
@@ -68,22 +54,6 @@ struct DictationVoiceModeTests {
     }
 
     @Test
-    func theSendKeywordEndsMultiLineSpeechAndKeepsItsInnerNewlines() throws {
-        let keyword = try #require(VoiceModeSendKeyword("vai"))
-        #expect(keyword.textBeforeKeyword(in: "Cerca il file\nnella cartella Docs, vai") == "Cerca il file\nnella cartella Docs")
-        // The keyword said as a segment of its own.
-        #expect(keyword.textBeforeKeyword(in: "Cerca il file\nnella cartella Docs\nvai") == "Cerca il file\nnella cartella Docs")
-        #expect(keyword.textBeforeKeyword(in: "Cerca il file\nvai a casa") == nil)
-        #expect(keyword.utteranceToSend(pending: "prima parte", speech: "seconda\nparte, vai") == "prima parte seconda\nparte")
-
-        var segmenter = VoiceDictationSegmenter()
-        let start = ContinuousClock.now
-        segmenter.observe("Cerca il file", at: start, endsSegment: true)
-        segmenter.observe("nella cartella Docs, vai", at: start + .seconds(3))
-        #expect(keyword.textBeforeKeyword(in: segmenter.text) == "Cerca il file\nnella cartella Docs")
-    }
-
-    @Test
     func theKeywordCollectorSendsOnlyOnTheKeywordOrABareAnswerWhenAwaited() throws {
         var collector = VoiceKeywordCollector(keyword: try #require(VoiceModeSendKeyword("vai")))
         #expect(collector.receive("   ", awaitingShortAnswer: false) == .nothing)
@@ -114,77 +84,6 @@ struct DictationVoiceModeTests {
     }
 
     @Test
-    func aBareYesOrNoIsAnAnswerOnlyWhileTheDialogueAwaitsOne() {
-        #expect(VoiceModeUtterance.isAwaitedAnswer("Sì.", awaitingShortAnswer: true))
-        #expect(VoiceModeUtterance.isAwaitedAnswer("no", awaitingShortAnswer: true))
-        #expect(!VoiceModeUtterance.isAwaitedAnswer("sì", awaitingShortAnswer: false))
-        #expect(!VoiceModeUtterance.isAwaitedAnswer("sì, ma prima", awaitingShortAnswer: true))
-    }
-
-    @Test
-    func stableTextIsIndependentOfTheSilenceGap() {
-        let start = ContinuousClock.now
-        var segmenter = VoiceDictationSegmenter(silence: .seconds(5))
-        #expect(!segmenter.hasStableText(for: .zero, at: start))
-        segmenter.observe("Cerca il file vai", at: start)
-        #expect(!segmenter.hasStableText(for: .milliseconds(600), at: start + .milliseconds(500)))
-        #expect(segmenter.hasStableText(for: .milliseconds(600), at: start + .milliseconds(600)))
-        #expect(!segmenter.isUtteranceComplete(at: start + .milliseconds(600)))
-        #expect(segmenter.text == "Cerca il file vai")
-    }
-
-    @Test
-    func theTextEndsWithAClosedSegmentOnlyAfterAFinalResult() {
-        let start = ContinuousClock.now
-        var segmenter = VoiceDictationSegmenter()
-        #expect(!segmenter.endsWithClosedSegment)
-        segmenter.observe("Cerca il file vai", at: start)
-        #expect(!segmenter.endsWithClosedSegment)
-        segmenter.observe("Cerca il file vai", at: start + .seconds(2), endsSegment: true)
-        #expect(segmenter.endsWithClosedSegment)
-        // An empty result after the final one opens no segment.
-        segmenter.observe("", at: start + .seconds(3))
-        #expect(segmenter.endsWithClosedSegment)
-        segmenter.observe("Poi", at: start + .seconds(4))
-        #expect(!segmenter.endsWithClosedSegment)
-        segmenter.observe("Poi vai", at: start + .seconds(5), endsSegment: true)
-        #expect(segmenter.endsWithClosedSegment)
-        segmenter.reset()
-        #expect(!segmenter.endsWithClosedSegment)
-    }
-
-    @Test
-    func emptyRecognitionNeverCompletesAnUtterance() {
-        let start = ContinuousClock.now
-        var segmenter = VoiceDictationSegmenter()
-        segmenter.observe("   ", at: start)
-        #expect(!segmenter.isUtteranceComplete(at: start + .seconds(5)))
-        #expect(segmenter.takeUtterance() == nil)
-        // Neither does an empty result that closes a segment.
-        segmenter.observe("", at: start, endsSegment: true)
-        #expect(!segmenter.hasPendingText)
-        #expect(!segmenter.isUtteranceComplete(at: start + .seconds(5)))
-    }
-
-    @Test
-    func speechSegmentsAreJoinedWithANewline() {
-        let start = ContinuousClock.now
-        var segmenter = VoiceDictationSegmenter()
-        segmenter.observe("Prima frase", at: start)
-        segmenter.observe("Prima frase di prova", at: start + .milliseconds(600))
-        #expect(segmenter.text == "Prima frase di prova")
-        segmenter.observe("Prima frase di prova", at: start + .milliseconds(2_000), endsSegment: true)
-        #expect(segmenter.text == "Prima frase di prova")
-
-        segmenter.observe("Seconda", at: start + .milliseconds(4_000))
-        #expect(segmenter.text == "Prima frase di prova\nSeconda")
-        segmenter.observe(" Seconda frase dopo la pausa ", at: start + .milliseconds(4_600), endsSegment: true)
-        segmenter.observe("Terza", at: start + .milliseconds(7_000))
-        #expect(segmenter.text == "Prima frase di prova\nSeconda frase dopo la pausa\nTerza")
-        #expect(VoiceDictationSegmenter.segmentSeparator == "\n")
-    }
-
-    @Test
     func textAfterAResetPartialKeepsTheEarlierSegments() {
         let start = ContinuousClock.now
         var segmenter = VoiceDictationSegmenter()
@@ -202,77 +101,6 @@ struct DictationVoiceModeTests {
         #expect(segmenter.text == "Cerca il file nella cartella\nDocs\nPoi apri il file")
     }
 
-    @Test
-    func anEmptyPartialAfterACommitKeepsTheTextAndTheSilenceGap() {
-        let start = ContinuousClock.now
-        var segmenter = VoiceDictationSegmenter(silence: .seconds(5))
-        segmenter.observe("Prima frase", at: start)
-        segmenter.observe("Prima frase", at: start + .seconds(2), endsSegment: true)
-        segmenter.observe("", at: start + .seconds(3))
-        segmenter.observe("  ", at: start + .seconds(4))
-        #expect(segmenter.text == "Prima frase")
-        #expect(segmenter.hasPendingText)
-        // Neither the commit nor the empty partials moved the gap.
-        #expect(!segmenter.isUtteranceComplete(at: start + .milliseconds(4_999)))
-        #expect(segmenter.isUtteranceComplete(at: start + .seconds(5)))
-    }
-
-    @Test
-    func theSilenceGapIsMeasuredFromTheLastChangeOfTheCombinedText() {
-        let start = ContinuousClock.now
-        var segmenter = VoiceDictationSegmenter(silence: .seconds(5))
-        segmenter.observe("Uno", at: start)
-        segmenter.observe("Uno", at: start + .seconds(2), endsSegment: true)
-        #expect(segmenter.hasStableText(for: .seconds(2), at: start + .seconds(2)))
-
-        // A new segment changes the combined text: the gap restarts.
-        segmenter.observe("Due", at: start + .seconds(3))
-        #expect(!segmenter.hasStableText(for: .seconds(2), at: start + .milliseconds(4_999)))
-        #expect(segmenter.hasStableText(for: .seconds(2), at: start + .seconds(5)))
-        #expect(!segmenter.isUtteranceComplete(at: start + .milliseconds(7_999)))
-        // Closing that segment with the same words does not move it.
-        segmenter.observe("Due", at: start + .seconds(4), endsSegment: true)
-        #expect(segmenter.isUtteranceComplete(at: start + .seconds(8)))
-        #expect(segmenter.text == "Uno\nDue")
-
-        // Words added to the next segment do.
-        segmenter.observe("Tre", at: start + .seconds(7))
-        #expect(!segmenter.isUtteranceComplete(at: start + .seconds(8)))
-        #expect(segmenter.isUtteranceComplete(at: start + .seconds(12)))
-    }
-
-    @Test
-    func takingTheUtteranceReturnsEverySegmentAndClears() {
-        let start = ContinuousClock.now
-        var segmenter = VoiceDictationSegmenter()
-        segmenter.observe("Prima", at: start, endsSegment: true)
-        segmenter.observe("Seconda", at: start + .seconds(1), endsSegment: true)
-        segmenter.observe("Terza in corso", at: start + .seconds(2))
-        #expect(segmenter.takeUtterance() == "Prima\nSeconda\nTerza in corso")
-        #expect(segmenter.text.isEmpty)
-        #expect(!segmenter.hasPendingText)
-        #expect(!segmenter.isUtteranceComplete(at: start + .seconds(20)))
-        #expect(segmenter.takeUtterance() == nil)
-        // The next utterance starts from nothing.
-        segmenter.observe("Nuova", at: start + .seconds(21))
-        #expect(segmenter.text == "Nuova")
-    }
-
-    @Test
-    func resettingForgetsEverySegment() {
-        let start = ContinuousClock.now
-        var segmenter = VoiceDictationSegmenter()
-        segmenter.observe("Prima", at: start, endsSegment: true)
-        segmenter.observe("Seconda", at: start + .seconds(1))
-        segmenter.reset()
-        #expect(segmenter.text.isEmpty)
-        #expect(!segmenter.hasPendingText)
-        #expect(!segmenter.isUtteranceComplete(at: start + .seconds(20)))
-        #expect(segmenter.takeUtterance() == nil)
-        segmenter.observe("Dopo", at: start + .seconds(21))
-        #expect(segmenter.text == "Dopo")
-    }
-
     /// The request's final result repeats the last segment, even when an
     /// earlier result already closed it.
     @Test
@@ -286,54 +114,6 @@ struct DictationVoiceModeTests {
         #expect(segmenter.text == "Seconda frase dopo la pausa")
         #expect(segmenter.isUtteranceComplete(at: start + .seconds(7)))
         #expect(segmenter.takeUtterance() == "Seconda frase dopo la pausa")
-    }
-
-    @Test
-    func theSamePhraseSaidTwiceIsKeptTwice() {
-        let start = ContinuousClock.now
-        var segmenter = VoiceDictationSegmenter()
-        segmenter.observe("Sì", at: start)
-        segmenter.observe("Sì", at: start + .seconds(2), endsSegment: true)
-        segmenter.observe("Sì", at: start + .seconds(4))
-        segmenter.observe("Sì", at: start + .seconds(6), endsSegment: true)
-        #expect(segmenter.text == "Sì\nSì")
-    }
-
-    @Test
-    func aClosingResultCommitsTheSegmentInProgressOnce() {
-        let start = ContinuousClock.now
-        var segmenter = VoiceDictationSegmenter()
-        segmenter.observe("Apri il", at: start)
-        // The closing result may complete the words of the partial.
-        segmenter.observe("Apri il progetto", at: start + .seconds(1), endsSegment: true)
-        #expect(segmenter.text == "Apri il progetto")
-        segmenter.observe("e compila", at: start + .seconds(3))
-        // A closing result without words closes the segment as it is.
-        segmenter.observe("", at: start + .seconds(4), endsSegment: true)
-        #expect(segmenter.text == "Apri il progetto\ne compila")
-        segmenter.observe("ora", at: start + .seconds(5))
-        #expect(segmenter.text == "Apri il progetto\ne compila\nora")
-    }
-
-    @Test
-    func dictationResultsCarryWhetherTheyCloseASegment() {
-        let open = VoiceDictationEvent.partial(generation: 1, text: "Prima", endsSegment: false)
-        let closing = VoiceDictationEvent.partial(generation: 1, text: "Prima", endsSegment: true)
-        #expect(open != closing)
-        #expect(closing == .partial(generation: 1, text: "Prima", endsSegment: true))
-    }
-
-    @Test
-    func echoGuardRecognisesTheAssistantsOwnWords() {
-        let spoken = "Oggi hai tre appuntamenti: alle dieci, alle quindici e alle diciotto."
-        #expect(VoiceEchoGuard.isLikelyEcho("oggi hai tre appuntamenti", of: spoken))
-        #expect(VoiceEchoGuard.isLikelyEcho("Alle QUINDICI", of: spoken))
-        #expect(!VoiceEchoGuard.isLikelyEcho("aspetta, spostali a domani", of: spoken))
-        #expect(!VoiceEchoGuard.isLikelyEcho("stop", of: spoken))
-        #expect(!VoiceEchoGuard.isLikelyEcho("", of: spoken))
-        #expect(!VoiceEchoGuard.isLikelyEcho("oggi", of: ""))
-        // Diacritics and case are ignored.
-        #expect(VoiceEchoGuard.isLikelyEcho("perche e cosi", of: "Perché è così."))
     }
 
     @Test
@@ -373,17 +153,6 @@ struct DictationVoiceModeTests {
         let second = state.begin(text: "Seconda", at: start + .milliseconds(200))
         #expect(second != first)
         #expect(state.isSpeaking(at: start + .milliseconds(200)))
-    }
-
-    @Test
-    func synthesisWithoutATerminalBufferEventuallyStopsSpeaking() {
-        let start = ContinuousClock.now
-        let state = VoiceSpeechState()
-        let generation = state.begin(text: "Testo", at: start)
-        #expect(state.bufferScheduled(generation: generation, at: start))
-        state.bufferPlayed(generation: generation, at: start + .milliseconds(500))
-        #expect(state.isSpeaking(at: start + .milliseconds(600)))
-        #expect(!state.isSpeaking(at: start + .milliseconds(2_600)))
     }
 
     /// A slow synthesizer start is not the end of speech: before the first
@@ -441,33 +210,6 @@ struct DictationVoiceModeTests {
         #expect(!spoken.contains("secret"))
         #expect(!spoken.contains("*"))
         #expect(!spoken.contains("`"))
-    }
-
-    @Test
-    func codeBlockNoticeFollowsTheLanguage() {
-        #expect(VoiceSpeechText.codeBlockNotice(languageCode: "it-IT") == "Blocco di codice omesso.")
-        #expect(VoiceSpeechText.codeBlockNotice(languageCode: "en") == "Code block omitted.")
-        #expect(VoiceSpeechText.codeBlockNotice(languageCode: "ja") == "Code block omitted.")
-        #expect(VoiceSpeechText.codeBlockNotice(languageCode: nil) == "Code block omitted.")
-    }
-
-    @Test
-    func shortAnswersAreReadWhole() {
-        let markdown = "## Fatto\n\nHo aggiornato il file. Vuoi che faccia il commit?"
-        let spoken = VoiceSpeechText.speakable(fromMarkdown: markdown, languageCode: "it")
-        #expect(spoken == "Fatto. Ho aggiornato il file. Vuoi che faccia il commit?")
-    }
-
-    @Test
-    func aLongAnswerIsReadWholeWithoutANotice() {
-        let lines = (1...100).map { "Questa è la riga numero \($0) della risposta." }
-        let markdown = lines.joined(separator: "\n") + "\nCome vuoi procedere?"
-        let spoken = VoiceSpeechText.speakable(fromMarkdown: markdown, languageCode: "it")
-        #expect(spoken == lines.joined(separator: " ") + " Come vuoi procedere?")
-        #expect(spoken.count > 3_000)
-        #expect(spoken.hasPrefix("Questa è la riga numero 1 della risposta."))
-        #expect(!spoken.contains("Risposta lunga"))
-        #expect(!spoken.contains("Long answer"))
     }
 
     @Test

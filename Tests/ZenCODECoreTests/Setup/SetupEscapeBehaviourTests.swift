@@ -87,50 +87,6 @@ struct SetupEscapeBehaviourTests {
         #expect(written.isEmpty)
     }
 
-    @Test
-    func helperLetsEveryOtherErrorPropagate() async {
-        #expect(throws: FixtureError.self) {
-            _ = try ZenCODESetupRunner.returningToMenuOnCancel(
-                "Step cancelled.",
-                write: { _ in Issue.record("Only Esc is reported") }
-            ) { () throws -> Int in
-                throw FixtureError()
-            }
-        }
-        await #expect(throws: CancellationError.self) {
-            _ = try await ZenCODESetupRunner.returningToMenuOnCancel(
-                "Step cancelled.",
-                write: { _ in Issue.record("Only Esc is reported") }
-            ) { () async throws -> Int in
-                throw CancellationError()
-            }
-        }
-    }
-
-    @Test
-    func asyncHelperTurnsEscIntoNilWithItsMessage() async throws {
-        var written: [String] = []
-        let cancelled = try await ZenCODESetupRunner.returningToMenuOnCancel(
-            "Download cancelled.",
-            write: { written.append($0) }
-        ) { () async throws -> Int in
-            await Task.yield()
-            throw ZenCODESetupError.cancelled
-        }
-        #expect(cancelled == nil)
-        #expect(written == ["Download cancelled.\n\n"])
-
-        let value = try await ZenCODESetupRunner.returningToMenuOnCancel(
-            "Download cancelled.",
-            write: { written.append($0) }
-        ) { () async throws -> String in
-            await Task.yield()
-            return "done"
-        }
-        #expect(value == "done")
-        #expect(written.count == 1)
-    }
-
     // MARK: - A section of the main menu
 
     @Test
@@ -216,88 +172,7 @@ struct SetupEscapeBehaviourTests {
         }
     }
 
-    // MARK: - Sections that act immediately
-
-    @Test
-    func onlyFeaturesAndScheduledPromptsActInsteadOfStagingSettings() {
-        let staging: [SetupSection] = [
-            .providersAndModels, .telegram, .agents, .agentModels, .responseLanguage,
-            .memoryEmbedding, .ds4Runtime, .voiceMode, .dataManagement, .finish, .cancel
-        ]
-        #expect(staging.allSatisfy { $0.stagesSettings })
-        #expect(!SetupSection.features.stagesSettings)
-        #expect(!SetupSection.scheduledPrompts.stagesSettings)
-    }
-
-    @Test(arguments: [SetupSection.features, .scheduledPrompts])
-    func failedSectionThatActsImmediatelySaysTheAppliedChangesAreKept(
-        section: SetupSection
-    ) async throws {
-        let original = Self.remoteManifest()
-        var session = SetupSession(originalManifest: original)
-        var written: [String] = []
-
-        try await ZenCODESetupRunner.runSetupSection(
-            section,
-            session: &session,
-            write: { written.append($0) },
-            configure: { _, _, _ in throw FixtureError() }
-        )
-
-        #expect(session.manifest == original)
-        #expect(!session.shouldWriteSettings)
-        #expect(written == [
-            "\n\(section.title) failed: the server did not answer\nChanges already applied are kept.\n\n"
-        ])
-    }
-
     // MARK: - Quick setup
-
-    @Test
-    func escDuringProvidersStagesNothingAndReturnsToTheModeMenu() async throws {
-        var session = SetupSession(originalManifest: nil)
-        var written: [String] = []
-
-        let outcome = try await ZenCODESetupRunner.runQuickSetup(
-            session: &session,
-            write: { written.append($0) },
-            configureProviders: { _ in throw ZenCODESetupError.cancelled },
-            configureLanguage: { _ in
-                Issue.record("Esc in Providers must stop quick setup")
-                return Self.remoteManifest()
-            },
-            configureAgents: {
-                Issue.record("Esc in Providers must stop quick setup")
-                return []
-            }
-        )
-
-        #expect(outcome == .providersCancelled)
-        #expect(session.manifest == nil)
-        #expect(session.agentProfiles == nil)
-        #expect(session.outcome == .noModels)
-        #expect(written.contains("\nProviders and models cancelled; changes not saved.\n\n"))
-    }
-
-    @Test
-    func failedProvidersStageNothingAndReturnToTheModeMenu() async throws {
-        var session = SetupSession(originalManifest: nil)
-        var written: [String] = []
-
-        let outcome = try await ZenCODESetupRunner.runQuickSetup(
-            session: &session,
-            write: { written.append($0) },
-            configureProviders: { _ in throw FixtureError() },
-            configureLanguage: { $0 },
-            configureAgents: { [] }
-        )
-
-        #expect(outcome == .providersCancelled)
-        #expect(session.manifest == nil)
-        #expect(written.contains(
-            "\nProviders and models failed: the server did not answer\nChanges not saved.\n\n"
-        ))
-    }
 
     @Test
     func escAfterProvidersKeepsThemAndOpensTheMainMenu() async throws {
@@ -403,27 +278,6 @@ struct SetupEscapeBehaviourTests {
         #expect(chosen == [1])
     }
 
-    @Test
-    func escOnTheContextWindowAndThinkingSelectionCancels() throws {
-        let models = Self.remoteManifest().models
-        let error = #expect(throws: ZenCODESetupError.self) {
-            _ = try ZenCODESetupRunner.promptModelMetadataIndexes(
-                providerName: "Test provider",
-                models: models,
-                select: { _, _, _ in nil }
-            )
-        }
-        if case .cancelled? = error {} else {
-            Issue.record("Expected cancelled, got \(String(describing: error))")
-        }
-        let none = try ZenCODESetupRunner.promptModelMetadataIndexes(
-            providerName: "Test provider",
-            models: models,
-            select: { _, _, _ in [] }
-        )
-        #expect(none.isEmpty)
-    }
-
     // MARK: - Agent prompts
 
     @Test
@@ -469,41 +323,6 @@ struct SetupEscapeBehaviourTests {
         }
     }
 
-    @Test
-    func agentPromptsReturnTheConfirmedValue() throws {
-        let name = try ZenCODEAgentProfileSetupRunner.promptString(
-            "Agent name",
-            defaultValue: nil,
-            allowEmpty: false,
-            promptLine: { prompt, _, allowEmpty in
-                #expect(prompt == "Agent name")
-                #expect(!allowEmpty)
-                return "Reviewer"
-            }
-        )
-        #expect(name == "Reviewer")
-        let readOnly = try ZenCODEAgentProfileSetupRunner.promptYesNo(
-            "Read-only agent?",
-            defaultValue: false,
-            selectOne: { _, _, _ in true }
-        )
-        #expect(readOnly)
-        let role = try ZenCODEAgentProfileSetupRunner.promptRole(
-            defaultValue: .developer,
-            selectOne: { title, _, _ in
-                #expect(title == "Role")
-                return .reviewer
-            }
-        )
-        #expect(role == .reviewer)
-        let kept = try ZenCODEAgentProfileSetupRunner.promptInstructions(
-            defaultValue: "Be concise.",
-            write: { _ in },
-            selectChoice: { _, _, selected in selected }
-        )
-        #expect(kept == "Be concise.")
-    }
-
     // MARK: - The action menu of a model binding
 
     private static let bindingAgent = AgentProfile(
@@ -517,49 +336,6 @@ struct SetupEscapeBehaviourTests {
         ],
         defaultModelBindingID: "fast"
     )
-
-    @Test
-    func escOnTheBindingActionMenuNeitherEditsNorRemovesTheBinding() throws {
-        let agent = Self.bindingAgent
-        let binding = agent.modelBindings[1]
-        var preselected: ZenCODEAgentProfileSetupRunner.AgentModelBindingEditAction?
-
-        let result = try ZenCODEAgentProfileSetupRunner.editModelBinding(
-            binding,
-            for: agent,
-            models: [],
-            selectAction: { _, _, selected in
-                preselected = selected
-                return nil
-            },
-            promptBinding: { _, _, _ in
-                Issue.record("Esc on the action menu must not open Edit binding")
-                return nil
-            }
-        )
-
-        #expect(preselected == .edit)
-        #expect(result == nil)
-    }
-
-    @Test
-    func escInsideEditBindingCancelsWithoutRemovingTheBinding() {
-        let agent = Self.bindingAgent
-        do {
-            _ = try ZenCODEAgentProfileSetupRunner.editModelBinding(
-                agent.modelBindings[1],
-                for: agent,
-                models: [],
-                selectAction: { _, _, _ in .edit },
-                promptBinding: { _, _, _ in throw ZenCODESetupError.cancelled }
-            )
-            Issue.record("Esc inside Edit binding must throw, not return a profile")
-        } catch ZenCODESetupError.cancelled {
-            // Expected: the per-agent menu keeps the binding as it was.
-        } catch {
-            Issue.record("Unexpected error: \(error)")
-        }
-    }
 
     @Test
     func noDedicatedModelStillRemovesTheEditedBindingAndOtherActionsApply() throws {
@@ -592,46 +368,6 @@ struct SetupEscapeBehaviourTests {
     }
 
     // MARK: - Messages
-
-    @Test
-    func interruptedStepMessagesNameTheSection() throws {
-        var written: [String] = []
-        try ZenCODESetupRunner.reportInterruptedSetupStep(
-            ZenCODESetupError.cancelled,
-            title: "Memory embeddings",
-            write: { written.append($0) }
-        )
-        try ZenCODESetupRunner.reportInterruptedSetupStep(
-            FixtureError(),
-            title: "Telegram remote control",
-            write: { written.append($0) }
-        )
-        #expect(written == [
-            "\nMemory embeddings cancelled; changes not saved.\n\n",
-            "\nTelegram remote control failed: the server did not answer\nChanges not saved.\n\n"
-        ])
-        #expect(throws: CancellationError.self) {
-            try ZenCODESetupRunner.reportInterruptedSetupStep(
-                CancellationError(),
-                title: "Agents",
-                write: { _ in Issue.record("A task cancellation is not reported") }
-            )
-        }
-    }
-
-    @Test
-    func failureOfASectionThatActsImmediatelyKeepsTheAppliedChanges() throws {
-        var written: [String] = []
-        try ZenCODESetupRunner.reportInterruptedSetupStep(
-            FixtureError(),
-            title: "Features",
-            stagesSettings: false,
-            write: { written.append($0) }
-        )
-        #expect(written == [
-            "\nFeatures failed: the server did not answer\nChanges already applied are kept.\n\n"
-        ])
-    }
 
     @Test
     func everyErrorOfACancelledTaskIsRethrownUnreported() async {

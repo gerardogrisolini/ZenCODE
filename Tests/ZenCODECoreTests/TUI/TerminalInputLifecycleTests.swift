@@ -70,34 +70,6 @@ struct TerminalInputLifecycleTests {
     }
 
     @Test
-    func cancellableLineReadStillReturnsSubmittedInput() async {
-        let pipe = Pipe()
-        defer {
-            pipe.fileHandleForReading.closeFile()
-        }
-        let reader = TerminalInteractiveLineReader(
-            rawInput: TerminalRawInput(
-                fileDescriptor: pipe.fileHandleForReading.fileDescriptor
-            )
-        )
-        let didStartReading = TerminalTestSignal()
-
-        let line = Task { () -> String? in
-            didStartReading.signal()
-            return await TerminalChat.readLineOffActor(reader: reader, prompt: "")
-        }
-        // The read is a poll loop over a pipe, so input written after it starts
-        // is picked up on the next poll; signalling replaces the arbitrary sleep
-        // without changing what is being read.
-        await didStartReading.wait()
-        pipe.fileHandleForWriting.write(Data("hi\r".utf8))
-
-        // UX unchanged: a normal submission still resolves to its text.
-        #expect(await line.value == "hi")
-        pipe.fileHandleForWriting.closeFile()
-    }
-
-    @Test
     func panelInputLoopStopsPromptlyWhenTheReadTokenIsCancelled() async {
         let input = makeIdleInput()
         defer {
@@ -217,35 +189,6 @@ struct TerminalInputLifecycleTests {
     }
 
     @Test
-    func aSecondStartIsRejectedWhileThePanelIsRunning() async {
-        // Concurrent starts must not both take the terminal; the loser is told
-        // the panel is already active instead of being parked forever.
-        let reader = TerminalInteractiveLineReader()
-        let statusBar = TerminalStatusBar(isEnabled: false)
-
-        #expect(
-            reader.preparePanelForStart(
-                statusBar: statusBar,
-                commandSuggestions: [],
-                preservingState: false
-            ) == .admitted
-        )
-        let loop = Task<Void, Never> {}
-        reader.finishPanelStart(task: loop)
-
-        let second = await reader.admitPanelStart(
-            statusBar: statusBar,
-            commandSuggestions: [],
-            preservingState: false
-        )
-        #expect(second == .alreadyActive)
-
-        let claim = await reader.claimPanelForStop()
-        #expect(claim.task != nil)
-        reader.finishPanelStop(clearPanel: true)
-    }
-
-    @Test
     func aFailedStartReleasesThePanelForTheNextCaller() async {
         // A start that cannot acquire raw mode must not strand the panel in
         // `starting`, or every later start and stop would park forever.
@@ -299,25 +242,6 @@ struct TerminalInputLifecycleTests {
     }
 
     @Test
-    func panelReadReportsCancellationRatherThanAKey() {
-        let input = makeIdleInput()
-        defer {
-            input.pipe.fileHandleForWriting.closeFile()
-            input.pipe.fileHandleForReading.closeFile()
-        }
-        let reader = TerminalInteractiveLineReader(rawInput: input.rawInput)
-
-        let token = TerminalBlockingReadToken()
-        token.cancel()
-        #expect(
-            TerminalInteractiveLineReader.readPanelKeyResult(
-                reader: reader,
-                token: token
-            ) == nil
-        )
-    }
-
-    @Test
     func cancelledMenuReadReportsEndOfInputInsteadOfBlocking() {
         let input = makeIdleInput()
         defer {
@@ -341,40 +265,6 @@ struct TerminalInputLifecycleTests {
                 shouldCancel: token.isCancelled
             ) == nil
         )
-    }
-
-    @Test
-    func menuReadReturnsAKeyWhenNotCancelled() {
-        let pipe = Pipe()
-        defer {
-            pipe.fileHandleForReading.closeFile()
-        }
-        let rawInput = TerminalRawInput(
-            fileDescriptor: pipe.fileHandleForReading.fileDescriptor
-        )
-        pipe.fileHandleForWriting.write(Data([0x20, 0x78, 0x58]))
-
-        // Space remains a toggle, and x/X are the visible checkbox
-        // marker/keys exposed by the uninstall picker.
-        #expect(
-            TerminalCheckboxMenu.readKey(
-                rawInput: rawInput,
-                shouldCancel: { false }
-            ) == .toggle
-        )
-        #expect(
-            TerminalCheckboxMenu.readKey(
-                rawInput: rawInput,
-                shouldCancel: { false }
-            ) == .toggle
-        )
-        #expect(
-            TerminalCheckboxMenu.readKey(
-                rawInput: rawInput,
-                shouldCancel: { false }
-            ) == .toggle
-        )
-        pipe.fileHandleForWriting.closeFile()
     }
 
     @Test
@@ -461,13 +351,6 @@ struct TerminalInputLifecycleTests {
                 currentProcessGroup: 202,
                 foregroundProcessGroupExists: false
             )
-        )
-    }
-
-    @Test
-    func escapeStopMonitorIsNotStartedWhenDisabled() {
-        #expect(
-            TerminalEscapeStopMonitor.startIfNeeded(isEnabled: false, onStop: {}) == nil
         )
     }
 

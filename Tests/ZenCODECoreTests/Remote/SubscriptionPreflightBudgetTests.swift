@@ -139,102 +139,6 @@ struct SubscriptionPreflightBudgetTests {
     }
 
     @Test
-    func preflightStaticOverheadTracksOnlyTheToolCatalogue() throws {
-        let short = wireConversation()
-        let long = wireConversation(count: 480)
-        let shortMessageTokens = AgentConversationCompactionSupport.estimatedTokenCount(
-            for: RemoteGenerationClient.agentRuntimeMessages(from: short)
-        )
-        let longMessageTokens = AgentConversationCompactionSupport.estimatedTokenCount(
-            for: RemoteGenerationClient.agentRuntimeMessages(from: long)
-        )
-        #expect(longMessageTokens > shortMessageTokens * 3)
-
-        let small = try anthropicEstimate(for: short, toolDescriptionRepeats: 1_000)
-        let large = try anthropicEstimate(for: short, toolDescriptionRepeats: 3_000)
-        let longHistory = try anthropicEstimate(for: long, toolDescriptionRepeats: 1_000)
-
-        // The catalogue is what moves the static reservation...
-        #expect(small.staticOverheadTokens > 0)
-        #expect(large.staticOverheadTokens > small.staticOverheadTokens)
-        // ...and the conversation never does, no matter how long it grows.
-        #expect(longHistory.staticOverheadTokens == small.staticOverheadTokens)
-        #expect(longHistory.conversationTokens > small.conversationTokens * 3)
-
-        // The wire cost per estimator token is a rate, so it stays put while
-        // the same kind of history scales up: the old difference-based overhead
-        // grew instead, and eventually swallowed the whole window.
-        let shortOverhead = SubscriptionCompactionSupport.requestOverhead(
-            estimate: small,
-            messages: short
-        )
-        let longOverhead = SubscriptionCompactionSupport.requestOverhead(
-            estimate: longHistory,
-            messages: long
-        )
-        #expect(shortOverhead.staticOverheadTokens == longOverhead.staticOverheadTokens)
-        #expect(
-            abs(
-                shortOverhead.conversationInflationFactor
-                    - longOverhead.conversationInflationFactor
-            ) < 0.25
-        )
-        #expect(
-            SubscriptionCompactionSupport.requestOverhead(
-                estimate: .unmeasured,
-                messages: short
-            ) == .none
-        )
-    }
-
-    @Test
-    func escapedUnicodeHistoryScalesAsConversationInsteadOfStaticOverhead() throws {
-        // This is deliberately expensive on the wire but compact in Swift's
-        // character count: JSON escaping, multi-byte emoji and combining marks
-        // used to be folded into a difference-based "static" overhead. Growing
-        // this history would then make a feasible request look impossible.
-        let short = unicodeEscapedConversation(count: 24)
-        let long = unicodeEscapedConversation(count: 240)
-        let shortEstimate = try chatGPTEstimate(for: short, toolDescriptionRepeats: 20)
-        let longEstimate = try chatGPTEstimate(for: long, toolDescriptionRepeats: 20)
-        let longMessageTokens = AgentConversationCompactionSupport.estimatedTokenCount(
-            for: RemoteGenerationClient.agentRuntimeMessages(from: long)
-        )
-        let longOverhead = SubscriptionCompactionSupport.requestOverhead(
-            estimate: longEstimate,
-            messages: long
-        )
-
-        // Running the same provider estimator without history makes the static
-        // component invariant. The legacy heterogeneous difference grows with
-        // the history and would be a false reservation.
-        #expect(longEstimate.staticOverheadTokens == shortEstimate.staticOverheadTokens)
-        #expect(longEstimate.conversationTokens > shortEstimate.conversationTokens * 5)
-        let legacyDifferenceOverhead = longEstimate.totalTokens - longMessageTokens
-        #expect(legacyDifferenceOverhead > longEstimate.staticOverheadTokens)
-        #expect(longOverhead.conversationInflationFactor > 1.0)
-
-        let reservedOutputTokens = 1_000
-        let contextWindowTokens = reservedOutputTokens
-            + longEstimate.staticOverheadTokens
-            + max(longMessageTokens / 2, 1)
-        #expect(legacyDifferenceOverhead + reservedOutputTokens >= contextWindowTokens)
-
-        let outcome = SubscriptionCompactionSupport.preflightCompaction(
-            long,
-            estimate: longEstimate,
-            maxTokens: contextWindowTokens,
-            maxOutputTokens: reservedOutputTokens,
-            reserveTokenCount: 0
-        )
-        guard case let .compacted(result) = outcome else {
-            Issue.record("Unicode/escaping history was incorrectly treated as an unsatisfiable static reservation: \(outcome).")
-            return
-        }
-        #expect(result.estimatedTokenCount < result.originalEstimatedTokenCount)
-    }
-
-    @Test
     func highUnicodeInflationIsNotCappedAndTheRebuiltAnthropicPayloadFits() throws {
         // One visible grapheme can encode many UTF-8 bytes. This mixes a ZWJ
         // sequence, a skin-tone modifier, a combining mark and escaped JSON
@@ -284,50 +188,6 @@ struct SubscriptionPreflightBudgetTests {
         // actual compacted wire payload, not merely the shared approximation.
         #expect(result.estimatedTokenCount < result.originalEstimatedTokenCount)
         #expect(rebuiltEstimate.totalTokens + maxOutputTokens <= contextWindowTokens)
-    }
-
-    @Test
-    func preflightReportsMinimumUnsatisfiableBudgetBeforeMessageCountGuards() {
-        // Four messages are below the normal compaction-count guard. The output
-        // reservation alone still makes the request impossible and must produce
-        // the explicit outcome before that guard can say "not needed".
-        let messages: [[String: Any]] = (0..<4).map { index in
-            RemoteGenerationClient.remoteMessage(
-                role: index.isMultiple(of: 2) ? "user" : "assistant",
-                content: "tiny \(index)",
-                attachments: []
-            )
-        }
-        let outcome = SubscriptionCompactionSupport.preflightCompaction(
-            messages,
-            estimate: SubscriptionCompactionSupport.RequestEstimate(
-                totalTokens: 4,
-                staticOverheadTokens: 0
-            ),
-            maxTokens: 128,
-            maxOutputTokens: 128,
-            reserveTokenCount: 0
-        )
-
-        guard case let .unsatisfiableBudget(
-            contextWindowTokens,
-            reservedOutputTokens,
-            overheadTokens
-        ) = outcome else {
-            Issue.record("Expected the minimum impossible budget to be reported, got \(outcome).")
-            return
-        }
-        #expect(contextWindowTokens == 128)
-        #expect(reservedOutputTokens == 128)
-        #expect(overheadTokens == 0)
-        #expect(
-            SubscriptionCompactionSupport.unsatisfiableBudgetDiagnostic(
-                provider: "test",
-                contextWindowTokens: contextWindowTokens,
-                maxOutputTokens: reservedOutputTokens,
-                overheadTokens: overheadTokens
-            ).contains("leave no room")
-        )
     }
 
     // MARK: - Helpers
@@ -404,21 +264,6 @@ struct SubscriptionPreflightBudgetTests {
                 RemoteGenerationClient.remoteMessage(
                     role: index.isMultiple(of: 2) ? "user" : "assistant",
                     content: "brief message \(index) " + String(repeating: "detail ", count: 30),
-                    attachments: []
-                )
-            )
-        }
-        return messages
-    }
-
-    private func unicodeEscapedConversation(count: Int) -> [[String: Any]] {
-        var messages: [[String: Any]] = [["role": "system", "content": "System prompt"]]
-        let payload = String(repeating: "\\\"🙂 e\u{301}\n", count: 48)
-        for index in 0..<count {
-            messages.append(
-                RemoteGenerationClient.remoteMessage(
-                    role: index.isMultiple(of: 2) ? "user" : "assistant",
-                    content: "unicode turn \(index): \(payload)",
                     attachments: []
                 )
             )

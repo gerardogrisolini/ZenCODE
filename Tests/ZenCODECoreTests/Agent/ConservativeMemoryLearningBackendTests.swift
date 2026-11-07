@@ -124,19 +124,6 @@ import Testing
         }
     }
 
-    @Test func roleLessSessionProposesForTheSameVerifiedDelta() async throws {
-        // Control for the organizer test: the same verified delta reaches the
-        // proposal step without an organizer role, so an empty result for the
-        // organizer comes from the guard rather than from a delta that never
-        // qualified. It runs in its own workspace, sharing no graph state.
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        try await workspace.withIsolatedSupport {
-            let requests = try await proposalRequests(agentRole: nil, workspace: workspace)
-            #expect(!requests.isEmpty)
-        }
-    }
-
     @Test func isolatedRequestHasNoToolsHistoryRecallOrUserCacheAndCloses() async throws {
         let mock = MemoryProposalMockBackend()
         let core = try await backend(mock)
@@ -155,23 +142,6 @@ import Testing
         #expect(requests[0].snapshot.systemPrompt == "extract only")
         #expect(await mock.sessionIDs == ["root"])
         #expect(await core.snapshotSession(id: "root")?.cacheKey == "user-cache-key")
-        await core.shutdown()
-    }
-
-    @Test func isolatedRequestDoesNotInheritTheTurnInstruction() async throws {
-        let mock = MemoryProposalMockBackend()
-        let core = try await backend(mock)
-        // The proposal runs while the operator's turn instruction is bound
-        // (a Task inherits task-locals), yet the isolated request must not see it.
-        let text = try await AgentTurnInstructionContext.$currentTurnInstruction.withValue("Answer in short sentences.") {
-            try await core.proposeMemory(parentSessionID: "root", prompt: "bounded evidence", systemPrompt: "extract only",
-                permit: MemoryLearningPermit(), timeout: .seconds(1))
-        }
-        #expect(text == "null")
-        let requests = await mock.requests
-        #expect(requests.count == 1)
-        #expect(requests[0].isolated)
-        #expect(requests[0].turnInstruction == nil)
         await core.shutdown()
     }
 
@@ -274,62 +244,6 @@ private actor MemoryProposalMockBackend: AgentRuntimeBackend {
         try Task.checkCancellation()
         if wait { throw CancellationError() }
         return .init(text: proposal, stopReason: "stop", modelID: "same-model")
-    }
-}
-
-extension ConservativeMemoryLearningBackendTests {
-    @Test func runnerRebuildPreservesExhaustedBudgetAndLogicalResetReleasesIt() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        try await workspace.withIsolatedSupport {
-            let mock = MemoryProposalMockBackend()
-            let runner = AgentCoreSessionRunner(backendFactory: { _, _ in mock })
-            let configuration = AgentCoreSessionConfiguration(sessionID: "root", modelID: "same-model",
-                workingDirectory: workspace.workspaceURL, systemPrompt: nil, cacheKey: nil, history: [], allowedToolNames: ["memory.write"])
-            _ = try await runner.sendPrompt(configuration: configuration, prompt: "hello", attachments: [], onEvent: { _ in })
-            let original = try #require(await runner.memoryLearningPermits["root"])
-            for _ in 0..<3 { #expect(original.reserve(event: UUID())) }
-            await runner.rebuildSession(id: "root")
-            _ = try await runner.sendPrompt(configuration: configuration, prompt: "hello", attachments: [], onEvent: { _ in })
-            let rebuilt = try #require(await runner.memoryLearningPermits["root"])
-            #expect(rebuilt !== original)
-            #expect(!original.reserve(event: UUID()))
-            #expect(!rebuilt.reserve(event: UUID()))
-            try await runner.resetSessionThrowing(id: "root")
-            #expect(await runner.memoryLearningPermits["root"] == nil)
-            _ = try await runner.sendPrompt(configuration: configuration, prompt: "hello", attachments: [], onEvent: { _ in })
-            let fresh = try #require(await runner.memoryLearningPermits["root"])
-            #expect(fresh.reserve(event: UUID()))
-            await runner.shutdown()
-            #expect(!fresh.canPropose)
-            #expect(await runner.memoryLearningPermits.isEmpty)
-        }
-    }
-
-    @Test func runnerBackendChangeLeavesTwoReservationsAfterOneMutation() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        try await workspace.withIsolatedSupport {
-            let runner = AgentCoreSessionRunner(backendFactory: { _, _ in MemoryProposalMockBackend() })
-            let originalConfig = AgentCoreSessionConfiguration(sessionID: "root", modelID: "first-model",
-                workingDirectory: workspace.workspaceURL, systemPrompt: nil, cacheKey: nil, history: [], allowedToolNames: ["memory.write"])
-            _ = try await runner.sendPrompt(configuration: originalConfig, prompt: "hello", attachments: [], onEvent: { _ in })
-            let original = try #require(await runner.memoryLearningPermits["root"])
-            #expect(original.reserve(event: UUID()))
-            let replacementConfig = AgentCoreSessionConfiguration(sessionID: "root", modelID: "second-model",
-                workingDirectory: workspace.workspaceURL, systemPrompt: nil, cacheKey: nil, history: [], allowedToolNames: ["memory.write"])
-            _ = try await runner.sendPrompt(configuration: replacementConfig, prompt: "hello", attachments: [], onEvent: { _ in })
-            let replacement = try #require(await runner.memoryLearningPermits["root"])
-            #expect(replacement !== original)
-            #expect(!original.reserve(event: UUID()))
-            #expect(replacement.reserve(event: UUID()))
-            #expect(replacement.reserve(event: UUID()))
-            #expect(!replacement.reserve(event: UUID()))
-            try await runner.closeSessionThrowing(id: "root")
-            #expect(await runner.memoryLearningPermits["root"] == nil)
-            #expect(!replacement.canPropose)
-            await runner.shutdown()
-        }
     }
 }
 

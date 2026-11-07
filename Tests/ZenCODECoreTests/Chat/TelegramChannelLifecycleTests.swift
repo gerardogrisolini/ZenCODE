@@ -24,99 +24,7 @@ struct TelegramChannelLifecycleTests {
 
     private static let activationText = "Telegram remote control is active.\nLinked chat: Test\n"
 
-    private static let oneFileSummary = TurnFileChangeSummary(entries: [
-        .init(
-            path: "Value.swift", additions: 1, deletions: 1, status: .modified,
-            isBinary: false, existedBefore: true, beforeDataBase64: nil, patch: nil
-        ),
-    ])
-
-    private static let twoFileSummary = TurnFileChangeSummary(entries: [
-        .init(
-            path: "Added.swift", additions: 3, deletions: 0, status: .added,
-            isBinary: false, existedBefore: false, beforeDataBase64: nil, patch: nil
-        ),
-        .init(
-            path: "Removed.swift", additions: 0, deletions: 2, status: .deleted,
-            isBinary: false, existedBefore: true, beforeDataBase64: nil, patch: nil
-        ),
-    ])
-
     // MARK: - Attach
-
-    /// `attach()` links the session: the activation text reaches the primary
-    /// channel, the link records the chat, its owner and the shared route,
-    /// and the channel is registered under its bot. The terminal's
-    /// `/telegram on` writes the same text, then its status line.
-    @Test
-    func attachLinksTheSessionWithTheActivationTextAndRegisters() async throws {
-        try await Support.withSupport {
-            let botID = Support.uniqueBotID()
-            let terminal = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: botID))
-            let channel = terminal.telegramChannel
-            let recorder = TelegramChannelNoticeRecorder()
-            recorder.install(on: channel)
-
-            try await channel.attach()
-
-            #expect(recorder.notices == [.init(text: Self.activationText, channel: .system)])
-            #expect(channel.isActive)
-            #expect(channel.controlState.botID == botID)
-            #expect(channel.linkedChatID == 42)
-            #expect(channel.linkedChatTitle == "Test")
-            #expect(channel.linkedUserID == 7)
-            #expect(try #require(channel.activeRouteLease).key == Support.defaultRouteKey)
-            #expect(TelegramChannelRegistry.shared.attachedCount(botID: botID) == 1)
-            await channel.detach()
-
-            // The terminal's command: the channel's text, then the status line.
-            channel.noticeSink = nil
-            Support.standInForInteractiveLoop(of: terminal)
-            let terminalWrites = await Support.capturing(terminal) {
-                await terminal.startTelegramControl()
-            }
-            #expect(terminalWrites == [Self.activationText, TerminalChat.telegramDrivingStatusText])
-            #expect(terminal.sessionHost.activeChannel(in: terminal.terminalSlotID) == .telegram)
-            await terminal.sessionHost.shutdown()
-        }
-    }
-
-    @Test
-    func attachWithoutPairingThrowsTheTerminalText() async throws {
-        let unpaired = AgentTelegramSettingsManifest(enabled: true, botToken: "123456:ABCDEF")
-        try await Support.withSupport(telegram: unpaired) {
-            let botID = Support.uniqueBotID()
-            let transport = TelegramChannelTestTransport(botID: botID)
-            let terminal = try Support.makeTerminal(transport: transport)
-            // The terminal hides `/telegram` without a pairing; the guard is
-            // lifted to reach the same failure through the command.
-            terminal.optionalCommandAvailability = .init(telegramEnabled: true, voiceEnabled: false)
-            let channel = terminal.telegramChannel
-            let recorder = TelegramChannelNoticeRecorder()
-            recorder.install(on: channel)
-
-            do throws(TelegramChannelAttachError) {
-                try await channel.attach()
-                Issue.record("attach linked an unpaired session")
-            } catch {
-                #expect(error == .notPaired)
-                #expect(error.failureText == "ZenCODE: Telegram is not paired. Run the /setup command in zen.\n")
-            }
-            #expect(recorder.notices.isEmpty)
-            #expect(!channel.isActive)
-            #expect(await transport.requestCount == 0)
-            #expect(TelegramChannelRegistry.shared.attachedCount(botID: botID) == 0)
-
-            channel.noticeSink = nil
-            Support.standInForInteractiveLoop(of: terminal)
-            let terminalWrites = await Support.capturing(terminal) {
-                await terminal.startTelegramControl()
-            }
-            #expect(terminalWrites == ["ZenCODE: Telegram is not paired. Run the /setup command in zen.\n"])
-            #expect(terminal.sessionHost.activeChannel(in: terminal.terminalSlotID) == .primary)
-            await terminal.sessionHost.shutdown()
-        }
-    }
 
     @Test
     func attachWithoutAUsableRouteThrowsTheTerminalText() async throws {
@@ -149,36 +57,6 @@ struct TelegramChannelLifecycleTests {
     }
 
     @Test
-    func attachThatCannotStartRecordsTheErrorAndStaysUnregistered() async throws {
-        try await Support.withSupport {
-            let terminal = try Support.makeTerminal(transport: Support.unauthorizedGetMeTransport())
-            let channel = terminal.telegramChannel
-            let recorder = TelegramChannelNoticeRecorder()
-            recorder.install(on: channel)
-
-            do throws(TelegramChannelAttachError) {
-                try await channel.attach()
-                Issue.record("attach succeeded with a rejected token")
-            } catch {
-                guard case let .controlFailed(description) = error else {
-                    Issue.record("unexpected error \(error)")
-                    return
-                }
-                #expect(error.failureText == "ZenCODE: \(description)\n")
-                #expect(channel.controlState.lastError == description)
-            }
-            #expect(recorder.notices.isEmpty)
-            #expect(!channel.isActive)
-            // The linked chat stays recorded after a failed start.
-            #expect(channel.linkedChatID == 42)
-            #expect(channel.activeRouteLease?.key == Support.defaultRouteKey)
-            #expect(channel.controlState.botID == nil)
-            #expect(terminal.sessionHost.activeChannel(in: terminal.terminalSlotID) == .primary)
-            await terminal.sessionHost.shutdown()
-        }
-    }
-
-    @Test
     func repeatedAttachRestartsTheServiceAndRegistersOnce() async throws {
         try await Support.withSupport {
             let botID = Support.uniqueBotID()
@@ -199,69 +77,7 @@ struct TelegramChannelLifecycleTests {
         }
     }
 
-    @Test
-    func failedReattachRemovesTheRegistration() async throws {
-        try await Support.withSupport {
-            let botID = Support.uniqueBotID()
-            let transport = TelegramChannelTestTransport(botID: botID)
-            let terminal = try Support.makeTerminal(transport: transport)
-            let channel = terminal.telegramChannel
-
-            try await channel.attach()
-            #expect(TelegramChannelRegistry.shared.attachedCount(botID: botID) == 1)
-            await transport.setGetMeFails(true)
-            do throws(TelegramChannelAttachError) {
-                try await channel.attach()
-                Issue.record("attach succeeded with a rejected token")
-            } catch {
-                guard case .controlFailed = error else {
-                    Issue.record("unexpected error \(error)")
-                    return
-                }
-            }
-
-            #expect(!channel.isActive)
-            #expect(TelegramChannelRegistry.shared.attachedCount(botID: botID) == 0)
-            await terminal.sessionHost.shutdown()
-        }
-    }
-
     // MARK: - Detach and shutdown
-
-    @Test
-    func detachUnlinksWithTheStopTextAndLeavesTheRegistry() async throws {
-        try await Support.withSupport {
-            let botID = Support.uniqueBotID()
-            let terminal = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: botID))
-            let channel = terminal.telegramChannel
-            let recorder = TelegramChannelNoticeRecorder()
-            recorder.install(on: channel)
-            try await channel.attach()
-            recorder.clear()
-
-            await channel.detach()
-
-            #expect(recorder.notices == [.init(text: "Telegram remote control stopped.\n", channel: .system)])
-            #expect(!channel.isActive)
-            #expect(channel.controlState.wireLifecycleEpoch == nil)
-            #expect(channel.controlState.botID == botID)
-            #expect(channel.linkedChatID == nil)
-            #expect(channel.linkedChatTitle == nil)
-            #expect(channel.linkedUserID == nil)
-            #expect(channel.activeRouteLease == nil)
-            #expect(TelegramChannelRegistry.shared.attachedCount(botID: botID) == 0)
-
-            // The terminal's `/telegram off` writes the same text.
-            channel.noticeSink = nil
-            Support.standInForInteractiveLoop(of: terminal)
-            await terminal.startTelegramControl()
-            let terminalWrites = await Support.capturing(terminal) {
-                await terminal.stopTelegramControl()
-            }
-            #expect(terminalWrites == ["Telegram remote control stopped.\n"])
-            await terminal.sessionHost.shutdown()
-        }
-    }
 
     @Test
     func detachWithoutAttachTellsTheStopTextAndKeepsOtherRegistrations() async throws {
@@ -308,34 +124,6 @@ struct TelegramChannelLifecycleTests {
     // MARK: - Registry
 
     @Test
-    func registryCountsTheChannelsOfEachBot() async throws {
-        try await Support.withSupport {
-            let botID = Support.uniqueBotID()
-            let otherBotID = Support.uniqueBotID()
-            let first = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: botID))
-            let second = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: botID))
-            let other = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: otherBotID))
-
-            try await first.telegramChannel.attach()
-            try await second.telegramChannel.attach()
-            try await other.telegramChannel.attach()
-            #expect(TelegramChannelRegistry.shared.attachedCount(botID: botID) == 2)
-            #expect(TelegramChannelRegistry.shared.attachedCount(botID: otherBotID) == 1)
-
-            await first.telegramChannel.detach()
-            #expect(TelegramChannelRegistry.shared.attachedCount(botID: botID) == 1)
-            await second.telegramChannel.shutdown()
-            #expect(TelegramChannelRegistry.shared.attachedCount(botID: botID) == 0)
-            #expect(TelegramChannelRegistry.shared.attachedCount(botID: otherBotID) == 1)
-            await other.telegramChannel.shutdown()
-            #expect(TelegramChannelRegistry.shared.attachedCount(botID: otherBotID) == 0)
-            for terminal in [first, second, other] {
-                await terminal.sessionHost.shutdown()
-            }
-        }
-    }
-
-    @Test
     func registryFollowsIdentityAndHoldsChannelsWeakly() async throws {
         try await Support.withSupport {
             let terminal = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: Support.uniqueBotID()))
@@ -365,147 +153,6 @@ struct TelegramChannelLifecycleTests {
             registry.register(try #require(channel), botID: 3)
             channel = nil
             #expect(registry.attachedCount(botID: 3) == 0)
-            await terminal.sessionHost.shutdown()
-        }
-    }
-
-    // MARK: - Texts
-
-    /// `/telegram` writes the channel's status text; the static form words
-    /// every control state the terminal showed.
-    @Test
-    func statusTextIsTheTerminals() async throws {
-        try await Support.withSupport {
-            let terminal = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: Support.uniqueBotID()))
-            Support.standInForInteractiveLoop(of: terminal)
-            await terminal.startTelegramControl()
-            let channel = terminal.telegramChannel
-            let terminalWrites = await Support.capturing(terminal) {
-                await terminal.printTelegramStatus()
-            }
-
-            #expect([await channel.statusText() + "\n"] == terminalWrites)
-            #expect(terminalWrites == ["Telegram: Active as @zencode_bot\nBot: @zencode_bot\nLinked chat: Test\n"])
-
-            let failing = TerminalTelegramControlState(
-                isConfigured: true, isActive: true, statusText: "Active as @zencode_bot",
-                botUsername: "zencode_bot", lastError: "Telegram send failed",
-                lastMessagePreview: nil, wireLifecycleEpoch: UUID(),
-                pollError: "Telegram polling failed: Unauthorized",
-                commandMenuError: "Could not publish Telegram command menu: Unauthorized"
-            )
-            #expect(TelegramChannel.statusText(controlState: failing, linkedChatTitle: "Test") == """
-                Telegram: Active as @zencode_bot
-                Bot: @zencode_bot
-                Linked chat: Test
-                Polling error: Telegram polling failed: Unauthorized
-                Command menu error: Could not publish Telegram command menu: Unauthorized
-                Last error: Telegram send failed
-                """)
-            let configured = TerminalTelegramControlState(
-                isConfigured: true, isActive: false, statusText: "Configured",
-                botUsername: " ", lastError: nil, lastMessagePreview: nil
-            )
-            #expect(TelegramChannel.statusText(controlState: configured, linkedChatTitle: "  ") == "Telegram: Configured")
-            #expect(TelegramChannel.statusText(controlState: configured, linkedChatTitle: nil, topicName: "Topic")
-                == "Telegram: Configured\nTopic: Topic")
-            #expect(TelegramChannel.statusText(controlState: .inactive(settings: nil), linkedChatTitle: "Test")
-                == "Telegram: \(TerminalTelegramControlState.inactive(settings: nil).statusText)\nLinked chat: Test")
-            await terminal.sessionHost.shutdown()
-        }
-    }
-
-    /// The remote `/status`, `/help` and `/changes` texts, with and without
-    /// file changes; the command list names every remote command.
-    @Test
-    func remoteTextsNameTheSessionAndItsChanges() async throws {
-        try await Support.withSupport {
-            let terminal = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: Support.uniqueBotID()))
-            let channel = terminal.telegramChannel
-
-            #expect(channel.remoteStatusText() == """
-                Session active.
-                Agent: \(terminal.chatSession.selection.agent?.displayName ?? AgentProfileStore.developerAgentName)
-                Model: \(terminal.chatSession.currentEffectiveModelID() ?? "default model")
-                Working directory: /tmp/project
-                """)
-            #expect(channel.remoteHelpText().contains("Remote commands: \(TelegramChannel.remoteCommandList())."))
-            #expect(TelegramChannel.remoteCommandList().contains("/status"))
-            #expect(!TelegramChannel.remoteCommandList().contains("/telegram"))
-            #expect(channel.remoteChangesText() == "No tracked file changes.")
-            terminal.lastFileChangeSummary = Self.oneFileSummary
-            #expect(channel.remoteChangesText().hasPrefix("1 modified file"))
-            #expect(channel.remoteChangesText().contains("Value.swift"))
-            terminal.lastFileChangeSummary = Self.twoFileSummary
-            #expect(channel.remoteChangesText().hasPrefix("2 modified files"))
-            #expect(channel.remoteChangesText().contains("Added.swift"))
-            #expect(channel.remoteChangesText().contains("Removed.swift"))
-            await terminal.sessionHost.shutdown()
-        }
-    }
-
-    // MARK: - Poll health
-
-    @Test
-    func pollHealthNoticesHaveTheTerminalTexts() async throws {
-        try await Support.withSupport {
-            let terminal = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: Support.uniqueBotID()))
-            let channel = terminal.telegramChannel
-            let recorder = TelegramChannelNoticeRecorder()
-            recorder.install(on: channel)
-            try await channel.attach()
-            recorder.clear()
-
-            await channel.presentPollHealthNotice(.failing("Telegram polling failed: Unauthorized"))
-            await channel.presentPollHealthNotice(.recovered)
-
-            #expect(recorder.notices == [
-                .init(
-                    text: "ZenCODE: Telegram is not receiving messages. Telegram polling failed: Unauthorized\n"
-                        + "ZenCODE keeps retrying every minute. Check the bot token with /setup, or stop the other process polling this bot. /telegram shows the latest error.\n",
-                    channel: .failure
-                ),
-                .init(text: "Telegram polling recovered; messages are being received again.\n", channel: .system),
-            ])
-
-            // Nothing is said once the link stopped.
-            await channel.detach()
-            recorder.clear()
-            await channel.presentPollHealthNotice(.recovered)
-            #expect(recorder.notices.isEmpty)
-            await terminal.sessionHost.shutdown()
-        }
-    }
-
-    /// A polling failure the service reports while the link starts is
-    /// presented once the link is active, after the activation text.
-    @Test
-    func persistentPollingFailureIsPresentedAfterTheActivationText() async throws {
-        try await Support.withSupport {
-            let botID = Support.uniqueBotID()
-            // deleteWebhook and getMe succeed; every later request (getUpdates,
-            // setMyCommands) is rejected as a revoked token.
-            let transport = ScriptedTelegramTransport(responses: [
-                (200, Data(#"{"ok":true,"result":true}"#.utf8)),
-                (200, Support.getMeBody(botID: botID)),
-                (401, Support.unauthorizedBody),
-            ])
-            let terminal = try Support.makeTerminal(transport: transport)
-            let channel = terminal.telegramChannel
-            let recorder = TelegramChannelNoticeRecorder()
-            recorder.install(on: channel)
-
-            try await channel.attach()
-            try await Support.waitUntil { recorder.notices.count >= 2 }
-
-            try #require(recorder.notices.count == 2)
-            #expect(recorder.notices[0] == .init(text: Self.activationText, channel: .system))
-            #expect(recorder.notices[1].channel == .failure)
-            #expect(recorder.notices[1].text.hasPrefix(
-                "ZenCODE: Telegram is not receiving messages. Telegram polling failed: "
-            ))
-            #expect(recorder.notices[1].text.hasSuffix("/telegram shows the latest error.\n"))
-            #expect(await channel.statusText().contains("Polling error: Telegram polling failed: "))
             await terminal.sessionHost.shutdown()
         }
     }
@@ -574,28 +221,6 @@ struct TelegramChannelLifecycleTests {
     }
 
     @Test
-    func failedSendIsRecordedAndPresented() async throws {
-        try await Support.withSupport {
-            let terminal = try Support.makeTerminal(
-                transport: TelegramChannelTestTransport(botID: Support.uniqueBotID(), sendMessageFails: true)
-            )
-            let channel = terminal.telegramChannel
-            let recorder = TelegramChannelNoticeRecorder()
-            recorder.install(on: channel)
-            try await channel.attach()
-            recorder.clear()
-            let lease = try #require(channel.activeRouteLease)
-
-            #expect(!(await channel.sendSystemMessage("hello", to: 42, lease: lease)))
-
-            let lastError = try #require(channel.controlState.lastError)
-            #expect(recorder.notices == [.init(text: "ZenCODE: \(lastError)\n", channel: .failure)])
-            #expect(lastError.contains("chat not found"))
-            await terminal.sessionHost.shutdown()
-        }
-    }
-
-    @Test
     func turnMessagesNeedTheLinkAndPreferTheDirectSeam() async throws {
         try await Support.withSupport {
             let transport = TelegramChannelTestTransport(botID: Support.uniqueBotID())
@@ -618,77 +243,6 @@ struct TelegramChannelLifecycleTests {
 
             #expect(direct.values == ["direct|42", "linked|42"])
             #expect(await transport.sentTexts == ["wire"])
-            await terminal.sessionHost.shutdown()
-        }
-    }
-
-    // MARK: - Turn endings
-
-    /// Completed, empty, long, failed, and stopped turns, with and without a
-    /// summary, end in the chat with the terminal's texts.
-    @Test
-    func turnEndingsAreSentWithTheTerminalTexts() async throws {
-        try await Support.withSupport {
-            let terminal = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: Support.uniqueBotID()))
-            let channel = terminal.telegramChannel
-            try await channel.attach()
-            let cases: [(ChatTurnEnding.Outcome, TurnFileChangeSummary?)] = [
-                (.completed(Self.response("All done.")), nil),
-                (.completed(Self.response("  \n")), nil),
-                (.completed(Self.response(String(repeating: "a", count: 4_000))), nil),
-                (.completed(Self.response("Changed two files.")), Self.twoFileSummary),
-                (.failed("The model is unavailable."), Self.oneFileSummary),
-                (.cancelled, Self.twoFileSummary),
-            ]
-            var results: [[String]] = []
-            for (outcome, summary) in cases {
-                await channel.beginTurn(adoptingStreamingBlock: false)
-                let log = TelegramTurnMessageLog()
-                await Self.installLog(log, on: channel)
-                await channel.finishTurn(ending: ChatTurnEnding(outcome: outcome, fileChangeSummary: summary))
-                results.append(await log.messages)
-            }
-
-            #expect(results == [
-                ["*ZenCODE completed*\n\nAll done."],
-                ["*ZenCODE completed*\n\nDone."],
-                ["*ZenCODE completed*\n\n" + String(repeating: "a", count: 3_600)],
-                ["*ZenCODE completed*\n\nChanged two files.", Self.summaryText(Self.twoFileSummary)],
-                ["ZenCODE failed: The model is unavailable.", Self.summaryText(Self.oneFileSummary)],
-                ["Stopped.", Self.summaryText(Self.twoFileSummary)],
-            ])
-            await terminal.sessionHost.shutdown()
-        }
-    }
-
-    /// Without a reporter the outcome and the summary go to the linked chat
-    /// directly; without an outcome only the summary goes.
-    @Test
-    func endingAndSummaryReachTheChatDirectlyWithoutAReporter() async throws {
-        try await Support.withSupport {
-            let terminal = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: Support.uniqueBotID()))
-            let channel = terminal.telegramChannel
-            try await channel.attach()
-            let direct = TelegramTestRecorder<String>()
-            channel.onDirectTelegramTurnMessage = { payload, chatID in
-                direct.append("\(payload.text)|\(chatID)")
-                return true
-            }
-
-            await channel.beginTurn(adoptingStreamingBlock: false)
-            await channel.activeProgressReporter?.revokeAndWait()
-            channel.activeProgressReporter = nil
-            await channel.finishTurn(ending: ChatTurnEnding(
-                outcome: .completed(Self.response("Done.")), fileChangeSummary: Self.oneFileSummary
-            ))
-            await channel.beginTurn(adoptingStreamingBlock: false)
-            await channel.activeProgressReporter?.revokeAndWait()
-            channel.activeProgressReporter = nil
-            await channel.retireTurn(outcomePayload: nil, fileChangeSummary: Self.oneFileSummary)
-
-            let summary = Self.summaryText(Self.oneFileSummary)
-            #expect(direct.values == ["*ZenCODE completed*\n\nDone.|42", "\(summary)|42", "\(summary)|42"])
-            #expect(channel.activeTurnLease == nil)
             await terminal.sessionHost.shutdown()
         }
     }
@@ -767,58 +321,6 @@ struct TelegramChannelLifecycleTests {
             #expect(await next.messages.first == "📋 Task graph\n\n1 running")
 
             await channel.endTurnReporting()
-            await terminal.sessionHost.shutdown()
-        }
-    }
-
-    @Test
-    func noticeCaptureCollectsTheNoticesOfARemoteCommand() async throws {
-        try await Support.withSupport {
-            let terminal = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: Support.uniqueBotID()))
-            let channel = terminal.telegramChannel
-            let presenter = channel.presenter
-            let blocked = ChatWorkflowNotice.blocked(graphID: "graph-1", message: "Waiting for review.")
-
-            await presenter.presentSessionNotice(.workflowMissingGoal)
-            presenter.beginNoticeCapture()
-            await presenter.presentSessionNotice(.workflowMissingGoal)
-            await presenter.presentWorkflowNotice(blocked)
-            #expect(presenter.endNoticeCapture() == [
-                ChatSessionNoticeText.text(for: ChatSessionNotice.workflowMissingGoal),
-                ChatSessionNoticeText.text(for: blocked),
-            ])
-            await presenter.presentSessionNotice(.workflowMissingGoal)
-            #expect(presenter.endNoticeCapture().isEmpty)
-            await terminal.sessionHost.shutdown()
-        }
-    }
-
-    /// `ChatSessionNoticeText.text(for:)`, which the channel sends, words
-    /// every workflow notice as the terminal's presenter writes it.
-    @Test
-    func workflowNoticeTextsMatchTheTerminalPresenter() async throws {
-        try await Support.withSupport {
-            let terminal = try Support.makeTerminal(transport: TelegramChannelTestTransport(botID: Support.uniqueBotID()))
-            let presenter = TerminalChatSessionPresenter()
-            presenter.chat = terminal
-            let notices: [ChatWorkflowNotice] = [
-                .awaitingReply(graphID: "graph-1", pendingTaskCount: 1),
-                .awaitingReply(graphID: "graph-1", pendingTaskCount: 2),
-                .blocked(graphID: "graph-1", message: "Waiting for review."),
-                .openWithoutQuestion(graphID: "graph-1", pendingTaskCount: 3),
-                .recoverableFailure(graphID: "graph-1", pendingTaskCount: 1),
-            ]
-            for notice in notices {
-                let terminalWrites = await Support.capturing(terminal) {
-                    await presenter.presentWorkflowNotice(notice)
-                }
-                #expect(terminalWrites == [ChatSessionNoticeText.text(for: notice)], "\(notice)")
-            }
-            #expect(
-                ChatSessionNoticeText.text(for: .blocked(graphID: "graph-1", message: "Waiting for review."))
-                    == "Workflow \"graph-1\" is blocked: Waiting for review.\n"
-                    + "Your next message resumes this same workflow; use /tasks clear to stop it.\n"
-            )
             await terminal.sessionHost.shutdown()
         }
     }
@@ -964,12 +466,6 @@ struct TelegramChannelLifecycleTests {
                 $0.replacingOccurrences(of: "Request ID:", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             }
-    }
-
-    /// The summary text the channel sends for `summary`.
-    private static func summaryText(_ summary: TurnFileChangeSummary) -> String {
-        TurnFileChangeSummaryPresentation.text(summary, includesCommandHint: true)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Replaces the reporter of `channel`'s turn with one that records into

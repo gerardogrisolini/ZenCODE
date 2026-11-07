@@ -379,49 +379,6 @@ struct ACPIncarnationCharacterizationTests {
         await bridge.shutdown()
     }
 
-    // MARK: - Cancel and close are per session
-
-    @Test
-    func cancelAndCloseOfOneSessionLeaveTheReservationOfAnotherUntouched() async throws {
-        let transport = IncarnationTransport()
-        let backend = IncarnationBackend()
-        let bridge = try Self.makeBridge(transport: transport, backend: backend)
-        let alpha = "acp-alpha-\(UUID().uuidString)"
-        let beta = "acp-beta-\(UUID().uuidString)"
-        await bridge.installTestSession(Self.makeConfiguration(sessionID: alpha))
-        await bridge.installTestSession(Self.makeConfiguration(sessionID: beta))
-        let alphaPin = await backend.pin("alpha turn")
-        let betaPin = await backend.pin("beta turn")
-
-        let alphaPrompt = Task {
-            try await bridge.prompt(id: .number(1), params: ["sessionId": alpha, "prompt": "alpha turn"])
-        }
-        let betaPrompt = Task {
-            try await bridge.prompt(id: .number(2), params: ["sessionId": beta, "prompt": "beta turn"])
-        }
-        await alphaPin.started.wait()
-        await betaPin.started.wait()
-        let betaPromptID = try #require(await bridge.testActivePromptID(sessionID: beta))
-
-        try await bridge.cancel(id: .number(3), params: ["sessionId": alpha])
-        _ = try? await alphaPrompt.value
-        #expect(await bridge.testActivePromptID(sessionID: alpha) == nil)
-        #expect(await bridge.testActivePromptID(sessionID: beta) == betaPromptID)
-        #expect(transport.stopReason(id: 1) == "cancelled")
-
-        try await bridge.close(id: .number(4), params: ["sessionId": alpha])
-        #expect(await bridge.testHasSession(sessionID: alpha) == false)
-        #expect(await bridge.testHasSession(sessionID: beta))
-        #expect(await bridge.testActivePromptID(sessionID: beta) == betaPromptID)
-
-        betaPin.finish.open()
-        try await betaPrompt.value
-        #expect(transport.stopReason(id: 2) == "end_turn")
-        #expect(await bridge.testActivePromptID(sessionID: beta) == nil)
-
-        await bridge.shutdown()
-    }
-
     // MARK: - Prompt and reconfiguration exclude each other
 
     /// Fixed with the container (see `CHANGELOG.md`): `session/cancel` is

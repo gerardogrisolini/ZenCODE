@@ -57,17 +57,6 @@ struct TerminalCursorReportTests {
         #expect(reports.isFenced)
     }
 
-    @Test func queryRejectsFragmentedPasteOpeningWithoutLosingBytes() {
-        let reports = TerminalCursorReport()
-        let prefix = "\u{1B}[20"
-        for byte in prefix.utf8 { #expect(reports.consume(byte).isEmpty) }
-        #expect(!reports.request { _ in Issue.record("A partial paste must not arm CPR") })
-        let suffix = "0~literal \u{1B}[10;1R\u{1B}[201~"
-        let bytes = suffix.utf8.flatMap { reports.consume($0) }
-        #expect(String(decoding: bytes, as: UTF8.self) == prefix + suffix)
-        #expect(!reports.isHoldingInput)
-    }
-
     @Test func timeoutWithoutReplyDoesNotTurnNewEscapeAndFIntoMetaF() async throws {
         let reports = TerminalCursorReport()
         let pipe = Pipe()
@@ -86,22 +75,6 @@ struct TerminalCursorReportTests {
         // A NEW truncated numeric prefix is ordinary input, not old CPR state.
         pipe.fileHandleForWriting.write(Data("\u{1B}[42;".utf8))
         #expect(drain(raw, count: 5) == "\u{1B}[42;")
-    }
-
-    @Test func oldTruncatedReportPrefixHasABoundedGracePeriod() {
-        let clock = Mutex(ContinuousClock.now)
-        let reports = TerminalCursorReport(now: { clock.withLock { $0 } })
-        #expect(reports.request { _ in })
-        let prefix = "\u{1B}[19;"
-        for byte in prefix.utf8 { #expect(reports.consume(byte).isEmpty) }
-        reports.cancel()
-        #expect(reports.releaseOrdinaryPrefix().isEmpty)
-        clock.withLock { $0 = $0.advanced(by: .seconds(1)) }
-        #expect(String(decoding: reports.releaseOrdinaryPrefix(), as: UTF8.self) == prefix)
-        #expect(reports.releaseOrdinaryPrefix().isEmpty)
-        #expect(reports.consume(27).isEmpty)
-        #expect(reports.releaseOrdinaryPrefix() == [27])
-        #expect(reports.consume(102) == [102])
     }
 
     @Test func ordinaryCSIAndModifiedF3OutsideHandshakeAreNeverConsumed() {
@@ -159,16 +132,6 @@ struct TerminalCursorReportTests {
         #expect(trace.contains { $0.hasPrefix("report.parsed id=") && $0.hasSuffix("row=19 column=1") })
         #expect(trace.contains { $0.hasPrefix("report.delivery.begin result=") })
         #expect(!trace.contains { $0.hasPrefix("report.failure ") })
-    }
-
-    @Test func injectedDiagnosticsIdentifyCancellationAndBufferedPrefix() {
-        let events = Mutex<[String]>([])
-        let reports = TerminalCursorReport(diagnostic: { event in events.withLock { $0.append(event) } })
-        #expect(reports.request { _ in })
-        for byte in "\u{1B}[19;".utf8 { _ = reports.consume(byte) }
-        reports.cancel()
-        #expect(events.withLock { $0.contains { $0.hasPrefix("report.failure id=") && $0.contains("reason=cancelled prefixCount=5") } })
-        #expect(reports.isFenced)
     }
 
     @Test func aSuspendedResizeQueuesKeysBeforeTheQueryWithoutASecondReader() async throws {

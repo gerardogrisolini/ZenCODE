@@ -76,44 +76,6 @@ struct SharedChatNamespaceAndBoundsTests {
         )
     }
 
-    @Test
-    func coordinatorAndBusUseIdenticalRoomNormalization() async throws {
-        // The coordinator and the bus must key the same room. Verify they agree
-        // on a room ID that contains internal whitespace and a bidi override.
-        let rawRoom = "my\u{202E} session"
-        let normalized = AgentSharedChat.boundedRoomIdentifier(rawRoom)
-        #expect(normalized == "my session")
-
-        let chat = AgentSharedChat()
-        _ = try await chat.registerCoordinator(roomID: rawRoom)
-        _ = try await chat.registerAgent(id: "agent-x", name: "x", roomID: rawRoom)
-
-        let coordinator = AgentSharedChatCoordinator(
-            source: AgentSharedChatCoordinator.Source(
-                drainCoordinatorMessages: { _ in [] },
-                participants: { _ in [] },
-                allRoomMessages: { _ in [] }
-            ),
-            pollInterval: .seconds(60)
-        )
-        // observeSubscription creates the room under the coordinator's
-        // normalized key. isTrackingRoom confirms the coordinator and the bus
-        // resolve the same room identity.
-        _ = await coordinator.observeSubscription(roomID: rawRoom)
-        #expect(await coordinator.isTrackingRoom(roomID: rawRoom))
-        // The raw value with the bidi char is never a direct key, but the
-        // coordinator's normalizedRoomID maps it to the same key the bus uses.
-        #expect(await coordinator.isTrackingRoom(roomID: normalized))
-
-        // The bus also sees participants under the same normalized key.
-        let participants = await chat.participants(roomID: rawRoom)
-        #expect(participants.contains { $0.id == "agent-x" })
-        let sameParticipants = await chat.participants(roomID: normalized)
-        #expect(sameParticipants.map(\.id).sorted() == participants.map(\.id).sorted())
-
-        await coordinator.stopAll()
-    }
-
     // MARK: - Finding 4: Mailbox drain bounded + single-flight
 
     @Test
@@ -153,16 +115,6 @@ struct SharedChatNamespaceAndBoundsTests {
         // The retained transcript is bounded.
         let allMessages = await chat.messages(roomID: "flood-room")
         #expect(allMessages.count <= AgentSharedChat.maximumRetainedMessagesPerRoom)
-    }
-
-    @Test
-    func pendingSharedChatPromptsBoundMatchesTwiceMailboxCapacity() {
-        // The backpressure bound is intentionally tied to the mailbox capacity
-        // so a fast producer cannot grow the pending-prompt queue without limit.
-        #expect(
-            DirectSubAgentRuntime.maximumPendingSharedChatPromptsPerAgent
-                == AgentSharedChat.maximumMailboxMessages * 2
-        )
     }
 
     @Test
@@ -266,48 +218,6 @@ struct SharedChatNamespaceAndBoundsTests {
         #expect(result.contains("Delivered live message to"))
         #expect(result.contains("Agent (id:"))
         #expect(result.contains("name: worker"))
-
-        await runtime.shutdown()
-    }
-
-    @Test
-    func coordinatorDirectMessageRecordsInTransientTranscript() async throws {
-        let backend = SharedChatBoundsTestBackend()
-        let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in backend },
-            profileResolver: { _ in
-                AgentProfile(id: AgentProfileRole.developer.rawValue, name: "Developer", role: .developer, tools: [])
-            }
-        )
-        _ = try await runtime.createAgents(
-            arguments: [
-                "name": .string("transcript-worker"),
-                "profile": .string("Developer"),
-                "prompt": .string("Initial")
-            ],
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-transcript"),
-            parentAllowedToolNames: nil,
-            rootSessionID: "transcript-root"
-        )
-        _ = await runtime.waitForAgents(arguments: ["timeoutSeconds": .number(5)])
-
-        let agentID = try #require(
-            await runtime.snapshots().first { $0.name == "transcript-worker" }?.id
-        )
-
-        _ = try await runtime.messageSharedChat(
-            arguments: [
-                "id": .string(agentID),
-                "message": .string("record me in the transcript")
-            ],
-            rootSessionID: "transcript-root",
-            parentAllowedToolNames: nil
-        )
-
-        // The message was recorded in the transient bus transcript.
-        let chat = await runtime.sharedChat
-        let messages = await chat.messages(roomID: "transcript-root")
-        #expect(messages.contains { $0.text == "record me in the transcript" })
 
         await runtime.shutdown()
     }

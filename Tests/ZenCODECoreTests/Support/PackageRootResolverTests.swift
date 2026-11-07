@@ -30,16 +30,4 @@ struct PackageRootResolverTests {
 
         #expect(resolved?.standardizedFileURL == rootURL.standardizedFileURL)
     }
-
-    @Test
-    func sourceDirectoryFallbackStopsAtRequestedAncestor() {
-        let sourcePath = "/tmp/ZenCODE/Sources/Feature/Feature.swift"
-
-        let resolved = PackageRootResolver.sourceDirectory(
-            forSourceFilePath: sourcePath,
-            ancestorCount: 1
-        )
-
-        #expect(resolved.path == "/tmp/ZenCODE/Sources")
-    }
 }

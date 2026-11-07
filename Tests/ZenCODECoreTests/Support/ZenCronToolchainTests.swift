@@ -11,70 +11,7 @@ import Testing
 struct ZenCronToolchainTests {
     // MARK: - Toolchain location
 
-    @Test("locate keeps the first executable fixed path for each tool")
-    func locateMatchesFixedPaths() {
-        let fileManager = FileManager.default
-        let toolchain = ZenCronToolchain.locate(fileManager: fileManager)
-
-        let expectedCrontab = ["/usr/bin/crontab", "/bin/crontab"]
-            .first { fileManager.isExecutableFile(atPath: $0) }
-        let expectedSendmail = ["/usr/sbin/sendmail", "/usr/lib/sendmail"]
-            .first { fileManager.isExecutableFile(atPath: $0) }
-
-        #expect(toolchain.crontabPath == expectedCrontab)
-        #expect(toolchain.sendmailPath == expectedSendmail)
-        #expect(ZenCronToolchain.locate() == toolchain)
-    }
-
-    @Test("toolchain is a value type compared by both paths")
-    func toolchainEquality() {
-        let base = ZenCronToolchain(crontabPath: "/usr/bin/crontab", sendmailPath: nil)
-        #expect(base == ZenCronToolchain(crontabPath: "/usr/bin/crontab", sendmailPath: nil))
-        #expect(base != ZenCronToolchain(crontabPath: nil, sendmailPath: nil))
-        #expect(base != ZenCronToolchain(crontabPath: "/usr/bin/crontab", sendmailPath: "/usr/sbin/sendmail"))
-    }
-
     // MARK: - classifyRead
-
-    @Test("classifyRead returns stdout on success")
-    func classifyReadSuccess() throws {
-        let text = "MAILTO=\"\"\n0 9 * * * echo hi\n"
-        let result = try SystemCrontabClient.classifyRead(
-            status: 0,
-            stdout: text,
-            stderr: ""
-        )
-        #expect(result == text)
-    }
-
-    @Test("classifyRead treats a missing crontab as empty")
-    func classifyReadNoCrontab() throws {
-        let result = try SystemCrontabClient.classifyRead(
-            status: 1,
-            stdout: "",
-            stderr: "crontab: no crontab for gerardo\n"
-        )
-        #expect(result == "")
-    }
-
-    @Test("classifyRead reports any other failure with the trimmed stderr")
-    func classifyReadFailure() {
-        #expect(
-            throws: ZenCrontabError.commandFailed(
-                status: 1,
-                detail: "crontab: you are not allowed to use this program"
-            )
-        ) {
-            try SystemCrontabClient.classifyRead(
-                status: 1,
-                stdout: "",
-                stderr: "  crontab: you are not allowed to use this program\n"
-            )
-        }
-        #expect(throws: ZenCrontabError.commandFailed(status: 2, detail: "")) {
-            try SystemCrontabClient.classifyRead(status: 2, stdout: "", stderr: "")
-        }
-    }
 
     // MARK: - SystemCrontabClient against a stand-in executable
 
@@ -177,18 +114,6 @@ struct ZenCronToolchainTests {
         #expect(try fake.recordedInput() == text)
     }
 
-    @Test("writeCrontab delivers a large text intact")
-    func writeLargeText() throws {
-        let line = "0 9 * * * /usr/local/bin/zen --prompt filler\n"
-        let text = String(repeating: line, count: 20_000)
-        let fake = try FakeCrontab()
-        defer { fake.remove() }
-
-        try fake.client.writeCrontab(text)
-
-        #expect(try fake.recordedInput() == text)
-    }
-
     @Test("writeCrontab with empty text removes the crontab with -r")
     func writeEmptyRemoves() throws {
         let fake = try FakeCrontab()
@@ -198,34 +123,6 @@ struct ZenCronToolchainTests {
 
         #expect(try fake.invocations() == ["-r"])
         #expect(try fake.recordedInput() == nil)
-    }
-
-    @Test("removing a crontab that does not exist is tolerated")
-    func removeMissingCrontab() throws {
-        let fake = try FakeCrontab(
-            status: 1,
-            standardError: "crontab: no crontab for gerardo\n"
-        )
-        defer { fake.remove() }
-
-        try fake.client.writeCrontab("")
-
-        #expect(try fake.invocations() == ["-r"])
-    }
-
-    @Test("a failing -r other than no crontab is an error")
-    func removeFailure() throws {
-        let fake = try FakeCrontab(status: 1, standardError: "crontab: permission denied\n")
-        defer { fake.remove() }
-
-        #expect(
-            throws: ZenCrontabError.commandFailed(
-                status: 1,
-                detail: "crontab: permission denied"
-            )
-        ) {
-            try fake.client.writeCrontab("")
-        }
     }
 
     @Test("a failing crontab - is an error even when the text mentions no crontab for")

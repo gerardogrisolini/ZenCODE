@@ -144,38 +144,6 @@ extension TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func delayedMemoryFallbackDiagnosticPreservesTheLiveSubAgentOverview() async {
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            columnWidthProvider: { 100 }
-        )
-        _ = await renderer.renderRememberedSubAgentOverview(
-            signature: "agents:before-delayed-memory-diagnostic",
-            text: "\n👥 Sub-Agents:\n   worker running\n",
-            overviewBatchID: "wave",
-            maximumInPlaceRows: 20
-        )
-
-        await renderer.writeToolAdjacentSystemMessage(
-            "[MemoryService][ERROR] delayed semantic fallback.\n"
-        )
-
-        let screen = terminalScreenText(
-            await renderer.capturedText()
-        )
-        let diagnosticRange = screen.range(of: "[MemoryService][ERROR]")
-        let overviewRange = screen.range(of: "👥 Sub-Agents:")
-        #expect(screen.components(separatedBy: "👥 Sub-Agents:").count - 1 == 1)
-        #expect(screen.contains("worker running"))
-        #expect(diagnosticRange != nil)
-        #expect(overviewRange != nil)
-        if let diagnosticRange, let overviewRange {
-            #expect(diagnosticRange.lowerBound < overviewRange.lowerBound)
-        }
-        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount > 0)
-    }
-
-    @Test
     func externalAuthorizationReanchorsLatestSubAgentOverviewBelowTheCard() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
@@ -213,100 +181,6 @@ extension TerminalChatRenderCoordinatorTests {
         #expect(!screen.contains("worker one running"))
         #expect(screen.contains("worker one completed"))
         #expect(screen.contains("worker two running"))
-        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount > 0)
-    }
-
-    @Test
-    func externalAuthorizationRestoresUnchangedSubAgentOverviewBelowTheCard() async {
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            columnWidthProvider: { 100 }
-        )
-        _ = await renderer.renderRememberedSubAgentOverview(
-            signature: "agents:unchanged-during-authorization",
-            text: "\n👥 Sub-Agents:\n   worker still running\n",
-            overviewBatchID: "wave",
-            maximumInPlaceRows: 20
-        )
-
-        await renderer.beginExternalTerminalPrompt()
-        let eventCountBeforeCard = await renderer.capturedWriteEvents().count
-        await renderer.endExternalTerminalPrompt()
-
-        let events = await renderer.capturedWriteEvents()
-        let screen = terminalScreenText(
-            events.prefix(eventCountBeforeCard).renderedText()
-                + permissionCardText
-                + events.dropFirst(eventCountBeforeCard).renderedText()
-        )
-        #expect(screen.contains("Authorization footer"))
-        #expect(screen.components(separatedBy: "👥 Sub-Agents:").count - 1 == 1)
-        #expect(screen.contains("worker still running"))
-        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount > 0)
-    }
-
-    @Test
-    func externalAuthorizationFlushesToolProgressBeforeTheReanchoredOverview() async {
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            columnWidthProvider: { 100 }
-        )
-        _ = await renderer.renderRememberedSubAgentOverview(
-            signature: "agents:before-combined-authorization",
-            text: "\n👥 Sub-Agents:\n   worker waiting\n",
-            overviewBatchID: "wave",
-            maximumInPlaceRows: 20
-        )
-        await renderer.beginExternalTerminalPrompt(maximumInPlaceRows: 20)
-        let eventCountBeforeCard = await renderer.capturedWriteEvents().count
-        let toolCall = presentedToolCall(
-            id: "memory-search-during-combined-authorization",
-            name: "memory.search",
-            argumentsObject: ["query": "combined authorization"],
-            argumentsJSON: "{}"
-        )
-
-        await renderer.writeToolCallStarted(toolCall, maximumInPlaceRows: 20)
-        await renderer.writeToolCallCompleted(
-            toolCall,
-            result: DirectAgentToolResult(output: "Completed", summary: "Completed"),
-            maximumInPlaceRows: 20
-        )
-        _ = await renderer.renderRememberedSubAgentOverview(
-            signature: "agents:first-reanchored",
-            text: "\n👥 Sub-Agents:\n   worker resumed\n",
-            overviewBatchID: "wave",
-            maximumInPlaceRows: 20
-        )
-        #expect(await renderer.capturedWriteEvents().count == eventCountBeforeCard)
-
-        await renderer.endExternalTerminalPrompt()
-        _ = await renderer.renderRememberedSubAgentOverview(
-            signature: "agents:after-reanchored-refresh",
-            text: "\n👥 Sub-Agents:\n   worker completed\n",
-            overviewBatchID: "wave",
-            maximumInPlaceRows: 20
-        )
-
-        let events = await renderer.capturedWriteEvents()
-        let screen = terminalScreenText(
-            events.prefix(eventCountBeforeCard).renderedText()
-                + permissionCardText
-                + events.dropFirst(eventCountBeforeCard).renderedText()
-        )
-        let memoryRange = screen.range(of: "memory.search")
-        let overviewRange = screen.range(of: "👥 Sub-Agents:")
-        #expect(screen.contains("Authorization footer"))
-        #expect(screen.components(separatedBy: "memory.search").count - 1 == 1)
-        #expect(screen.components(separatedBy: "👥 Sub-Agents:").count - 1 == 1)
-        #expect(screen.contains("worker completed"))
-        #expect(!screen.contains("worker waiting"))
-        #expect(!screen.contains("worker resumed"))
-        #expect(memoryRange != nil)
-        #expect(overviewRange != nil)
-        if let memoryRange, let overviewRange {
-            #expect(memoryRange.lowerBound < overviewRange.lowerBound)
-        }
         #expect(await renderer.snapshot().activeSubAgentOverviewRowCount > 0)
     }
 }

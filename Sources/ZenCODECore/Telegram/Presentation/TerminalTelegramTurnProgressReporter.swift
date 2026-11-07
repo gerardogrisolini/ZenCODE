@@ -422,11 +422,6 @@ actor TerminalTelegramTurnProgressReporter {
         await draftStreamer?.owns(chatID: chatID, draftID: draftID) == true
     }
 
-    /// Internal observability for deterministic correlation tests.
-    func draftStreamerIDForTesting() async -> Int? {
-        draftStreamer?.draftID
-    }
-
     /// Fences draft/card activity for finish, error, cancellation, rebind and
     /// teardown. Progress cards are deleted; persistent turn messages remain,
     /// the activity and sub-agent status messages included, which receive no

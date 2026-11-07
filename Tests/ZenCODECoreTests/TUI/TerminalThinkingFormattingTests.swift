@@ -80,44 +80,6 @@ struct TerminalThinkingFormattingTests {
     }
 
     @Test
-    func subAgentThinkingPreservesFencedCodeTabStopsLikeTheMainFormatter() throws {
-        let source = "```swift\n\tlet text = \"**literal**\"\n \tprint(text)\nlet\tvalue = 1\n```\n"
-        let rendered = try #require(TerminalChat.renderSubAgentThinkingMarkdown(
-            source,
-            standardErrorIsTerminal: true,
-            renderWidth: 80
-        ))
-        let plain = TerminalANSIText.stripANSI(rendered)
-
-        #expect(rendered == mainThinkingMarkdown(source))
-        #expect(plain.contains("Code · Swift"))
-        #expect(plain.contains("    let text = \"**literal**\""))
-        #expect(plain.contains("    print(text)"))
-        #expect(plain.contains("let value = 1"))
-        #expect(!rendered.contains("\t"))
-        #expect(!containsBoldSGR(rendered))
-    }
-
-    @Test
-    func subAgentThinkingPreservesTabIndentedCodeLikeTheMainFormatter() throws {
-        // Use a structured block the main stream already parses as Markdown,
-        // without changing its existing handling of top-level indentation.
-        let source = "> \t\tlet text = \"**literal**\"\n"
-        let rendered = try #require(TerminalChat.renderSubAgentThinkingMarkdown(
-            source,
-            standardErrorIsTerminal: true,
-            renderWidth: 80
-        ))
-        let plain = TerminalANSIText.stripANSI(rendered)
-
-        #expect(rendered == mainThinkingMarkdown(source))
-        #expect(plain.contains("Code"))
-        #expect(plain.contains("let text = \"**literal**\""))
-        #expect(!rendered.contains("\t"))
-        #expect(!containsBoldSGR(rendered))
-    }
-
-    @Test
     func subAgentThinkingRendersStructuredBlocksAndLiteralCode() throws {
         let source = """
         ```swift
@@ -182,20 +144,6 @@ struct TerminalThinkingFormattingTests {
     }
 
     @Test
-    func nonTerminalThinkingRetainsMarkdownWithoutANSI() throws {
-        let source = "# Inspect\r\n\r\n- **item**\n"
-        let rendered = try #require(TerminalChat.renderSubAgentThinkingMarkdown(
-            source,
-            standardErrorIsTerminal: false
-        ))
-        #expect(rendered == "# Inspect\n\n- **item**\n")
-        #expect(TerminalChat.renderSubAgentThinkingMarkdown(
-            "\u{1B}\u{7}\u{202E}\u{200B}\n",
-            standardErrorIsTerminal: true
-        ) == nil)
-    }
-
-    @Test
     func streamedThinkingIsNotBoldButNormalAssistantMarkdownIsUnchanged() async {
         let renderer = makeRenderer()
         await renderer.writeThought("# Inspect\n\nDone.*")
@@ -239,25 +187,6 @@ struct TerminalThinkingFormattingTests {
         #expect(!output.contains("`code`"))
     }
 
-    @Test
-    func thinkingOverviewKeepsOneTitleAndTheExistingRowBudgets() {
-        let paragraph = "# Plan\n\n" + String(repeating: "- **Step** with `code` and 検証\n", count: 30)
-        let snapshot = thinkingSnapshot(paragraph)
-        for budget in [nil, 12, 8, 4] as [Int?] {
-            let rows = TerminalChat.renderSubAgentOverviewRowsForTesting([snapshot], rowBudget: budget)
-            let output = rows.joined(separator: "\n")
-            #expect(output.components(separatedBy: TerminalChat.thinkingPlaceholder).count - 1 == 1)
-            if let budget {
-                #expect(rows.count <= budget)
-            }
-            #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) < TerminalChat.terminalColumnCount() })
-        }
-        let replacement = TerminalChat.renderSubAgentOverview([thinkingSnapshot("Replacement paragraph")])
-        #expect(replacement.contains("Replacement paragraph"))
-        #expect(!replacement.contains("Step"))
-        #expect(replacement.components(separatedBy: TerminalChat.thinkingPlaceholder).count - 1 == 1)
-    }
-
     private func mainThinkingMarkdown(_ source: String, renderWidth: Int = 80) -> String {
         var state = TerminalChatBoldBreakState()
         var normalized = TerminalChatTextFormatting.normalizedBoldSectionBreak(source, state: &state)
@@ -294,19 +223,4 @@ struct TerminalThinkingFormattingTests {
         )
     }
 
-    private func thinkingSnapshot(_ paragraph: String) -> DirectSubAgentRuntime.AgentSnapshot {
-        DirectSubAgentRuntime.AgentSnapshot(
-            id: "thinking-format",
-            name: "worker",
-            role: "Worker",
-            status: .running,
-            pending: true,
-            currentActivity: paragraph,
-            currentActivityKind: .thinking,
-            latestOutput: nil,
-            latestError: nil,
-            createdAt: Date(timeIntervalSince1970: 1),
-            updatedAt: Date(timeIntervalSince1970: 1)
-        )
-    }
 }

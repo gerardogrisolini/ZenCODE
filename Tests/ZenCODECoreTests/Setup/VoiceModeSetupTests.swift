@@ -9,30 +9,6 @@ import Testing
 
 @Suite
 struct VoiceModeSetupTests {
-    @Test
-    func voiceModeIsAnOptionalSectionThatNeedsNoModels() {
-        #expect(SetupSection.voiceMode.title == "Voice mode")
-        #expect(SetupSection.voiceMode.category == .optional)
-        #expect(!SetupSection.voiceMode.requiresConfiguredModels)
-        #expect(SetupSection.voiceMode.matches("voice"))
-        #expect(SetupSection.voiceMode.matches("voice mode"))
-        #expect(!SetupSection.voiceMode.matches("telegram"))
-    }
-
-    @Test
-    func voiceModeIsOfferedOnLinuxAndMacOS() {
-        let options = ZenCODESetupRunner.setupSectionOptions(currentManifest: nil)
-        #if os(Linux) || os(macOS)
-        #expect(options.map(\.section).contains(.voiceMode))
-        #else
-        #expect(!options.map(\.section).contains(.voiceMode))
-        #endif
-        #if os(macOS)
-        // macOS downloads nothing: the section only picks the reading voice.
-        #expect(options.first { $0.section == .voiceMode }?.detail == "automatic voice")
-        #expect(ZenCODESetupRunner.setupSectionReadinessMarker(for: .voiceMode, currentManifest: nil) == "[-]")
-        #endif
-    }
 
     @Test
     func voicesFollowTheLanguageAndFallBackToEveryVoice() {
@@ -72,11 +48,5 @@ struct VoiceModeSetupTests {
         #expect(installed.first { $0.title == "paola" }?.detail == "it_IT · medium · 67 MB · installed")
         #expect(installed.map(\.value).suffix(2) == [.remove, .back])
         #expect(ZenCODESetupRunner.voiceModeSetupDetail(installation: installation) == "incomplete download")
-    }
-
-    @Test
-    func sizesAreShownInWholeMegabytes() {
-        #expect(ZenCODESetupRunner.megabytes(487_170_055) == "487 MB")
-        #expect(ZenCODESetupRunner.megabytes(643_854) == "1 MB")
     }
 }

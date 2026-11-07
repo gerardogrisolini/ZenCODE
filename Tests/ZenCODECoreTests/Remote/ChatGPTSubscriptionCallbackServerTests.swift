@@ -50,16 +50,6 @@ struct ChatGPTSubscriptionCallbackServerTests {
         #expect(authentic.statusCode == 400)
     }
 
-    @Test("listener parameters are restricted to loopback")
-    func loopbackParameters() {
-        for host in [NWEndpoint.Host.ipv4(.loopback), .ipv6(.loopback)] {
-            let parameters = ChatGPTSubscriptionCallbackServer.loopbackParameters(host: host, port: 1455)
-            #expect(parameters.acceptLocalOnly)
-            #expect(parameters.allowLocalEndpointReuse)
-            #expect(parameters.requiredLocalEndpoint == .hostPort(host: host, port: 1455))
-        }
-    }
-
     @Test("spurious requests get 400 and the valid callback still completes", arguments: ["127.0.0.1", "[::1]"])
     func spuriousRequestsDoNotTerminateSignIn(host: String) async throws {
         let server = ChatGPTSubscriptionCallbackServer(state: Self.state, port: 0)

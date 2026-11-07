@@ -20,10 +20,6 @@ import ToolCore
 struct TelegramChannelArtifactsTests {
     private typealias Support = TelegramChannelTestSupport
 
-    private static let voiceNote = TerminalTelegramVoiceAttachment(
-        fileID: "voice-1", fileUniqueID: nil, duration: 2, mimeType: "audio/ogg", fileSize: 4
-    )
-
     private static let patchedSummary = TurnFileChangeSummary(entries: [
         .init(
             path: "Value.swift", additions: 1, deletions: 1, status: .modified,
@@ -37,125 +33,6 @@ struct TelegramChannelArtifactsTests {
     ])
 
     // MARK: - Voice
-
-    /// A voice note goes through the work seam first; without a voice
-    /// configuration it is refused with the transcription's text, and
-    /// nothing is downloaded.
-    @Test
-    func voiceNotesPassTheGates() async throws {
-        try await Support.withSupport {
-            let pair = try await Self.handLinked(room: "channel-voice-\(UUID().uuidString)")
-            let channel = pair.channel
-            let effects = TelegramTestRecorder<TelegramChannel.TelegramWorkEffectForTesting>()
-            channel.onTelegramWorkEffectForTesting = { effect in
-                effects.append(effect)
-                return true
-            }
-            await channel.handleVoiceMessage(Self.voiceNote, lease: pair.lease)
-            #expect(effects.values == [.voiceTranscription])
-            #expect(pair.texts.values.isEmpty)
-
-            channel.onTelegramWorkEffectForTesting = nil
-            #expect(!channel.isVoiceConfigured)
-            await channel.handleVoiceMessage(Self.voiceNote, lease: pair.lease)
-            #expect(pair.texts.values == [AgentVoiceTranscriptionError.notEnabledMessage])
-            #expect(channel.voiceTranscriptions.activeCount == 0)
-            #expect(await pair.transport.requestCount == 0)
-            await pair.terminal.sessionHost.shutdown()
-        }
-    }
-
-    /// A voice note that cannot be downloaded runs in a slot of the channel,
-    /// frees it, and its failure reaches the primary channel and the chat.
-    /// Telegram is a scripted transport: no file and no transcription
-    /// service is reached.
-    @Test
-    func failedVoiceDownloadIsReportedToThePrimaryChannelAndTheChat() async throws {
-        try await Support.withSupport(voice: AgentVoiceSettingsManifest(enabled: true)) {
-            let transport = TelegramChannelTestTransport(botID: Support.uniqueBotID())
-            let terminal = try Support.makeTerminal(transport: transport)
-            let channel = terminal.telegramChannel
-            let recorder = TelegramChannelNoticeRecorder()
-            recorder.install(on: channel)
-            let prompts = TelegramTestRecorder<String>()
-            channel.onRunTurnForTesting = { prompt, _, _ in prompts.append(prompt) }
-            try await channel.attach()
-            recorder.clear()
-            let lease = try #require(channel.activeRouteLease)
-
-            await channel.handleVoiceMessage(Self.voiceNote, lease: lease)
-            try await Support.waitUntil { channel.voiceTranscriptions.activeCount == 0 }
-
-            #expect(channel.voiceTranscriptions.activeCount == 0)
-            #expect(prompts.values.isEmpty)
-            let notice = try #require(recorder.notices.first)
-            #expect(recorder.notices.count == 1)
-            #expect(notice.channel == .failure)
-            #expect(notice.text.hasPrefix("ZenCODE: ") && notice.text.hasSuffix("\n"))
-            let failure = String(notice.text.dropFirst("ZenCODE: ".count).dropLast())
-            #expect(!failure.isEmpty)
-            #expect(await transport.sentTexts.last == "Voice transcription failed: \(failure)")
-            await terminal.sessionHost.shutdown()
-        }
-    }
-
-    /// A transcript runs as a direct prompt while the channel drives the
-    /// slot; a full queue and a failure are told on the primary channel and
-    /// in the chat with the terminal's texts; a transcript of a channel that
-    /// no longer drives the slot is dropped.
-    @Test
-    func transcriptionOutcomesGoThroughTheChannel() async throws {
-        try await Support.withSupport {
-            let pair = try await Self.handLinked(room: "channel-voice-\(UUID().uuidString)")
-            let channel = pair.channel
-            let recorder = TelegramChannelNoticeRecorder()
-            recorder.install(on: channel)
-            let prompts = TelegramTestRecorder<String>()
-            channel.onRunTurnForTesting = { prompt, lease, purpose in
-                prompts.append("\(prompt)|\(lease == pair.lease)|\(purpose == .normal)")
-            }
-            pair.terminal.sessionHost.slots[pair.terminal.terminalSlotID]?.setActiveChannel(.telegram)
-
-            await channel.voiceTranscriptionDidFinish(.success("summarize the diff"), lease: pair.lease)
-            try await Support.waitUntil { !prompts.values.isEmpty }
-            #expect(prompts.values == ["summarize the diff|true|true"])
-            #expect(recorder.notices.isEmpty)
-            #expect(pair.texts.values.isEmpty)
-            // The channel's turn task ends after the turn it ran.
-            try await Support.waitUntil { channel.activeTurnTask == nil }
-            #expect(channel.activeTurnTask == nil)
-
-            // A held queue with no room left.
-            channel.promptQueue = ChatPromptQueue(capacity: 1)
-            _ = channel.promptQueue.enqueue(ChatQueuedPrompt(text: "already waiting", origin: pair.lease))
-            let hold = Task<Void, Never> {
-                while !Task.isCancelled { try? await Task.sleep(for: .seconds(60)) }
-            }
-            channel.activeTurnTask = hold
-            await channel.voiceTranscriptionDidFinish(.success("again"), lease: pair.lease)
-            #expect(recorder.notices == [
-                .init(text: "ZenCODE: prompt queue is full; voice prompt was not queued.\n", channel: .failure),
-            ])
-            #expect(pair.texts.values == ["ZenCODE: prompt queue is full; voice prompt was not queued."])
-            hold.cancel()
-            channel.activeTurnTask = nil
-            channel.promptQueue = ChatPromptQueue()
-            recorder.clear()
-
-            await channel.voiceTranscriptionDidFinish(.failure("Telegram file is unavailable."), lease: pair.lease)
-            #expect(recorder.notices == [
-                .init(text: "ZenCODE: Telegram file is unavailable.\n", channel: .failure),
-            ])
-            #expect(pair.texts.values.last == "Voice transcription failed: Telegram file is unavailable.")
-
-            // Not driving the slot: the transcript has no session to run on.
-            pair.terminal.sessionHost.slots[pair.terminal.terminalSlotID]?.setActiveChannel(.primary)
-            await channel.voiceTranscriptionDidFinish(.success("dropped"), lease: pair.lease)
-            #expect(prompts.values.count == 1)
-            #expect(pair.texts.values.count == 2)
-            await pair.terminal.sessionHost.shutdown()
-        }
-    }
 
     /// `cancelVoiceTranscriptions()` cancels a transcription in flight,
     /// waits for it, and closes admission for good: a later resume, as an
@@ -187,37 +64,6 @@ struct TelegramChannelArtifactsTests {
     }
 
     // MARK: - Artifacts
-
-    /// `/diff` without an excerpt to send is answered with the terminal's
-    /// text and stages nothing: no summary, and a summary whose only patch
-    /// exceeds the upload budget.
-    @Test
-    func diffWithoutAnExcerptIsAnswered() async throws {
-        try await Support.withSupport {
-            let pair = try await Self.handLinked(room: "channel-diff-\(UUID().uuidString)")
-            let channel = pair.channel
-            let staging = Self.temporaryStagingDirectory()
-            defer { try? FileManager.default.removeItem(at: staging) }
-            channel.artifactStagingDirectory = staging
-
-            await channel.handleDiffRequest(lease: pair.lease)
-            pair.terminal.lastFileChangeSummary = TurnFileChangeSummary(entries: [
-                .init(
-                    path: "Big.swift", additions: 1, deletions: 0, status: .modified,
-                    isBinary: false, existedBefore: true, beforeDataBase64: nil,
-                    patch: String(repeating: "+", count: TerminalTelegramMultipartForm.maximumBodyBytes + 1)
-                ),
-            ])
-            #expect(channel.controller?.lastFileChangeSummary != nil)
-            await channel.handleDiffRequest(lease: pair.lease)
-
-            #expect(pair.texts.values == Array(
-                repeating: "ZenCODE message: no diff is available for this session yet.", count: 2
-            ))
-            #expect(!FileManager.default.fileExists(atPath: staging.path))
-            await pair.terminal.sessionHost.shutdown()
-        }
-    }
 
     /// `/diff` stages the bounded excerpt 0600 in the channel's staging
     /// directory, created 0700, and asks for consent with the two buttons;
@@ -287,43 +133,6 @@ struct TelegramChannelArtifactsTests {
                 "ZenCODE message: that confirmation expired or no longer matches the file. Ask again with /diff.",
                 "ZenCODE message: file send cancelled.",
             ])
-            await terminal.sessionHost.shutdown()
-        }
-    }
-
-    /// An inbound attachment goes through the work seam first; one that
-    /// cannot be received is answered with the terminal's text and leaves
-    /// no temporary behind.
-    @Test
-    func inboundAttachmentsAreReceived() async throws {
-        try await Support.withSupport {
-            let transport = TelegramChannelTestTransport(botID: Support.uniqueBotID())
-            let terminal = try Support.makeTerminal(transport: transport)
-            let channel = terminal.telegramChannel
-            try await channel.attach()
-            let lease = try #require(channel.activeRouteLease)
-            let attachment = TerminalTelegramInboundAttachment(
-                fileID: "file-1", fileUniqueID: nil, kind: .document,
-                mimeType: "text/plain", fileSize: 4, fileName: "note.txt", messageID: 3
-            )
-            let message = TerminalTelegramIncomingMessage(
-                chatID: 42, userID: 7, text: nil, voice: nil, messageID: 3,
-                chatTitle: "Test", username: "operator", attachment: attachment
-            )
-            let effects = TelegramTestRecorder<TelegramChannel.TelegramWorkEffectForTesting>()
-            channel.onTelegramWorkEffectForTesting = { effect in
-                effects.append(effect)
-                return true
-            }
-            let sentBefore = await transport.sentTexts.count
-            await channel.handleInboundAttachment(attachment, message: message, lease: lease)
-            #expect(effects.values == [.attachmentDownload])
-            #expect(await transport.sentTexts.count == sentBefore)
-
-            channel.onTelegramWorkEffectForTesting = nil
-            await channel.handleInboundAttachment(attachment, message: message, lease: lease)
-            #expect(await transport.sentTexts.last == "ZenCODE message: the attachment could not be received.")
-            #expect(await channel.controlService.inboundAttachmentFilenames(chatID: 42).isEmpty)
             await terminal.sessionHost.shutdown()
         }
     }

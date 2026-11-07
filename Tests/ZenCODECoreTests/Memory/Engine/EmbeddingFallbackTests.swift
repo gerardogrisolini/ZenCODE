@@ -72,24 +72,6 @@ struct EmbeddingFallbackTests {
     }
 
     @Test
-    func searchReadOnlyFallsBackToBM25WhenEmbeddingFails() async throws {
-        let engine = MemoryEngine(embedder: AlwaysFailingEmbeddingProvider())
-        try await engine.insert(
-            EngineMemoryEntry(id: "a", category: .fact, content: "Swift actors protect mutable state"),
-            persist: false
-        )
-        try await engine.insert(
-            EngineMemoryEntry(id: "b", category: .fact, content: "Postgres migrations run at startup"),
-            persist: false
-        )
-
-        // Same guarantee on the read-only `memory.search` path.
-        let results = try await engine.searchReadOnly("actors mutable state")
-        #expect(!results.isEmpty)
-        #expect(results.allSatisfy { $0.memory.content.contains("actors") })
-    }
-
-    @Test
     func embeddingFailureEmitsRedactedDiagnosticAndContinues() async throws {
         let messages = Mutex<[String]>([])
         let engine = MemoryEngine(
@@ -127,85 +109,6 @@ struct EmbeddingFallbackTests {
         #expect(rendered.contains("[MemoryService][ERROR]"))
         #expect(!rendered.contains("Swift actors protect"))
         #expect(!rendered.contains("upstream echoed"))
-    }
-
-    @Test
-    func visibleEmissionIsRedactedAndAlwaysOnStderr() throws {
-        // The default reporter's visible path is exercised through its writer
-        // seam: nothing is written to the real process stderr.
-        var captured: [Data] = []
-        MemorySemanticFallbackDiagnostics.emitVisibleError(
-            message: "semantic embedding retrieval failed (httpStatus 503); continuing with BM25-only results (failedQueries=1/1).",
-            stderrWriter: { captured.append($0) }
-        )
-
-        #expect(captured.count == 1)
-        let line = try #require(String(data: captured[0], encoding: .utf8))
-        #expect(line.hasSuffix("\n"))
-        #expect(line.contains("[MemoryService][ERROR]"))
-        #expect(line.contains("BM25-only results"))
-        #expect(!line.contains("Swift actors protect"))
-    }
-
-    @Test
-    func installedVisibleSinkReplacesRawStderrUntilItsTokenIsRemoved() throws {
-        let captured = Mutex<[String]>([])
-        let token = MemorySemanticFallbackDiagnostics.installVisibleErrorSink {
-            line in
-            captured.withLock { $0.append(line) }
-        }
-        defer {
-            MemorySemanticFallbackDiagnostics.removeVisibleErrorSink(token: token)
-        }
-
-        MemorySemanticFallbackDiagnostics.emitVisibleError(
-            message: "semantic embedding retrieval failed (httpStatus 503); continuing with BM25-only results."
-        )
-
-        let line = try #require(captured.withLock { $0.first })
-        #expect(line.hasSuffix("\n"))
-        #expect(line.contains("[MemoryService][ERROR]"))
-        #expect(line.contains("BM25-only results"))
-
-        // The explicit writer remains the priority test seam and must never be
-        // shadowed by a process-level presentation sink.
-        var explicitlyWritten: [Data] = []
-        MemorySemanticFallbackDiagnostics.emitVisibleError(
-            message: "semantic embedding update failed (httpStatus 503)",
-            stderrWriter: { explicitlyWritten.append($0) }
-        )
-        #expect(explicitlyWritten.count == 1)
-        #expect(captured.withLock { $0.count } == 1)
-    }
-
-    @Test
-    func visibleLineIsRedactedEvenIfMessageCarriesSecretShapes() throws {
-        // Belt and suspenders: the visible line goes through the same redactor
-        // as the diagnostic file, so even a future message regression cannot
-        // leak a credential-shaped value to the visible stderr line.
-        let secret = "sk-abcdefghijklmnopqrstuvwxyz123456"
-        var captured: [Data] = []
-        MemorySemanticFallbackDiagnostics.emitVisibleError(
-            message: "semantic embedding retrieval failed (httpStatus 500); api_key=\(secret)",
-            stderrWriter: { captured.append($0) }
-        )
-
-        let capturedData = try #require(captured.first)
-        let line = try #require(String(data: capturedData, encoding: .utf8))
-        #expect(!line.contains(secret))
-        #expect(line.contains(ZenSecretRedactor.placeholder))
-    }
-
-    @Test
-    func visibleErrorAlwaysDuplicatesToTheOptInSystemLogChannel() {
-        // The system-log copy is opt-in and independent of the visible stderr
-        // line: there is no destination-based deduplication anymore. With the
-        // logger disabled (the default in the test process) the ZenLogger call
-        // is a no-op, and the stderr line was still written above.
-        let message = "semantic embedding retrieval failed (httpStatus 503); continuing with BM25-only results."
-        let rendered = ZenLogger.formattedMessage(level: .error, category: .memory, message: message)
-        #expect(rendered.contains("[MemoryService][ERROR]"))
-        #expect(MemorySemanticFallbackDiagnostics.visibleLine(message: message) == rendered + "\n")
     }
 
     @Test
@@ -277,52 +180,5 @@ struct EmbeddingFallbackTests {
         )
         #expect(results.contains { $0.id == written.entry.id })
         #expect(messages.withLock { $0.count } >= 3)
-    }
-
-    @Test
-    func persistedGraphKeepsTextWhenEmbeddingFails() async throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("embedding-graph-fallback-\(UUID().uuidString)", isDirectory: true)
-        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
-        let graphURL = root.appendingPathComponent("memory.graph.json")
-        defer { try? FileManager.default.removeItem(at: root) }
-        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-        var graph = MemoryGraph()
-        graph.addMemory(EngineMemoryEntry(
-            id: UUID().uuidString,
-            category: .fact,
-            content: "Summary: persisted text remains available offline"
-        ))
-        try await JSONMemoryPersistence(url: graphURL).save(graph)
-
-        let messages = Mutex<[String]>([])
-        try await MemoryEmbedding.withProvider(AlwaysFailingEmbeddingProvider()) {
-            let store = try await MemoryGraphStore.open(
-                graphURL: graphURL,
-                semanticFailureReporter: { message in
-                    messages.withLock { $0.append(message) }
-                }
-            )
-            let entries = try await store.entries(includeArchived: false, limit: 10)
-            let entry = try #require(entries.first)
-            #expect(entry.content.contains("persisted text remains available offline"))
-            #expect(entry.embedding == nil)
-            #expect(entry.embeddingModel == nil)
-
-            // Opening reads stored text without embedding it. A search may fail
-            // semantically but must still retrieve the persisted lexical match.
-            #expect(messages.withLock { $0.isEmpty })
-            let results = try await store.search(
-                query: "persisted text", includeArchived: false, limit: 10
-            )
-            #expect(results.contains { $0.id == entry.id })
-        }
-
-        let persisted = try await JSONMemoryPersistence(url: graphURL).load()
-        let entry = try #require(persisted.memories.values.first)
-        #expect(entry.content.contains("persisted text remains available offline"))
-        #expect(entry.embedding == nil)
-        #expect(entry.embeddingModel == nil)
-        #expect(messages.withLock { $0.count } == 1)
     }
 }

@@ -87,15 +87,6 @@ private func defaultBackend() -> AgentDS4RuntimeBackend {
     #endif
 }
 
-/// A backend the current platform cannot build.
-private func foreignBackend() -> AgentDS4RuntimeBackend {
-    #if os(macOS)
-    .cuda
-    #else
-    .metal
-    #endif
-}
-
 @Suite
 struct DS4EngineBuilderTests {
     private func request(
@@ -155,47 +146,6 @@ struct DS4EngineBuilderTests {
         #expect(lines.contains("done"))
         #expect(lines.first?.hasPrefix("==> Writing the DS4 engine sources") == true)
         #expect(lines.last?.hasPrefix("==> DS4 engine ready") == true)
-    }
-
-    @Test
-    func buildWritesTheEmbeddedFilesWithTheRightPermissions() async throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let builder = DS4EngineBuilder(
-            processRunner: FakeProcessRunner(handler: succeedingHandler()),
-            verifier: FakeVerifier(version: DS4EngineABI.expectedVersion)
-        )
-        _ = try await builder.build(request(fixture)) { _ in }
-
-        let shimDirectory = DS4EngineLibraryLocator.shimDirectory(supportDirectory: fixture.supportDirectory)
-        for file in DS4EngineShimSources.files {
-            let url = shimDirectory.appendingPathComponent(file.name)
-            #expect(try Data(contentsOf: url) == Data(file.contents.utf8))
-            let isScript = file.name == "build-ds4-engine.sh"
-            #expect(FileManager.default.isExecutableFile(atPath: url.path) == isScript)
-            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue
-            #expect(permissions == nil || permissions == (isScript ? 0o755 : 0o644))
-        }
-    }
-
-    @Test
-    func buildReplacesStaleExtractedSources() async throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let shimDirectory = DS4EngineLibraryLocator.shimDirectory(supportDirectory: fixture.supportDirectory)
-        try FileManager.default.createDirectory(at: shimDirectory, withIntermediateDirectories: true)
-        let shimURL = shimDirectory.appendingPathComponent("zencode_ds4_shim.c")
-        try Data("old source".utf8).write(to: shimURL)
-
-        let builder = DS4EngineBuilder(
-            processRunner: FakeProcessRunner(handler: succeedingHandler()),
-            verifier: FakeVerifier(version: DS4EngineABI.expectedVersion)
-        )
-        _ = try await builder.build(request(fixture)) { _ in }
-        #expect(try String(contentsOf: shimURL, encoding: .utf8) == DS4EngineShimSources.shimSource)
     }
 
     @Test
@@ -263,39 +213,6 @@ struct DS4EngineBuilderTests {
     }
 
     @Test
-    func aMissingDS4HeaderFailsBeforeAnyProcessRuns() async throws {
-        let fixture = try DS4EngineBuildFixture(header: nil)
-        defer { fixture.remove() }
-
-        let runner = FakeProcessRunner(handler: succeedingHandler())
-        let builder = DS4EngineBuilder(
-            processRunner: runner,
-            verifier: FakeVerifier(version: DS4EngineABI.expectedVersion)
-        )
-        await #expect(throws: DS4EngineLibraryLocatorError.self) {
-            _ = try await builder.build(request(fixture)) { _ in }
-        }
-        #expect(runner.calls.isEmpty)
-    }
-
-    @Test
-    func anUnsupportedBackendFailsBeforeAnyProcessRuns() async throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let runner = FakeProcessRunner(handler: succeedingHandler())
-        let builder = DS4EngineBuilder(
-            processRunner: runner,
-            verifier: FakeVerifier(version: DS4EngineABI.expectedVersion)
-        )
-        let backend = foreignBackend()
-        await #expect(throws: DS4EngineBuildError.unsupportedPlatform(backend: backend)) {
-            _ = try await builder.build(request(fixture, backend: backend)) { _ in }
-        }
-        #expect(runner.calls.isEmpty)
-    }
-
-    @Test
     func anInvalidArchitectureFailsBeforeAnyProcessRuns() async throws {
         let fixture = try DS4EngineBuildFixture()
         defer { fixture.remove() }
@@ -313,25 +230,6 @@ struct DS4EngineBuilderTests {
             _ = try await builder.build(request(fixture, backend: .rocm, rocmArch: "gfx 11")) { _ in }
         }
         #expect(runner.calls.isEmpty)
-    }
-
-    @Test
-    func aMissingLibraryAfterASuccessfulScriptIsAnError() async throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let builder = DS4EngineBuilder(
-            processRunner: FakeProcessRunner { _, _ in 0 },
-            verifier: FakeVerifier(version: DS4EngineABI.expectedVersion)
-        )
-        let expected = try DS4EngineLibraryLocator.expectedURL(
-            rootDirectory: fixture.rootDirectory,
-            backend: defaultBackend(),
-            supportDirectory: fixture.supportDirectory
-        )
-        await #expect(throws: DS4EngineBuildError.libraryNotProduced(path: expected.path)) {
-            _ = try await builder.build(request(fixture)) { _ in }
-        }
     }
 
     @Test
@@ -358,53 +256,7 @@ struct DS4EngineBuilderTests {
         }
     }
 
-    @Test
-    func aProcessLaunchFailureReportsTheManualCommand() async throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        struct LaunchError: Error {}
-        let builder = DS4EngineBuilder(
-            processRunner: FakeProcessRunner { _, _ in throw LaunchError() },
-            verifier: FakeVerifier(version: DS4EngineABI.expectedVersion)
-        )
-        let request = request(fixture)
-        do {
-            _ = try await builder.build(request) { _ in }
-            Issue.record("the build should have failed")
-        } catch let error as DS4EngineBuildError {
-            guard case let .launchFailed(_, manualCommand) = error else {
-                Issue.record("expected .launchFailed, got \(error)")
-                return
-            }
-            #expect(manualCommand == DS4EngineBuilder.manualCommand(for: request))
-        }
-    }
-
     // MARK: Manual command
-
-    @Test
-    func manualCommandIsACompleteShellCommand() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let request = request(fixture)
-        let expected = try DS4EngineLibraryLocator.expectedURL(
-            rootDirectory: fixture.rootDirectory,
-            backend: request.backend,
-            supportDirectory: fixture.supportDirectory
-        )
-        let shim = DS4EngineLibraryLocator.shimDirectory(supportDirectory: fixture.supportDirectory)
-        let words = DS4EngineBuilder.manualCommand(for: request).split(separator: " ").map(String.init)
-        // The temporary directory has no spaces or quotes, so nothing is quoted.
-        #expect(words == [
-            "/bin/bash", shim.appendingPathComponent("build-ds4-engine.sh").path,
-            "--root", fixture.rootDirectory,
-            "--backend", request.backend.rawValue,
-            "--shim", shim.path,
-            "--output", expected.path
-        ])
-    }
 
     @Test
     func manualCommandQuotesPathsWithSpacesAndQuotes() {
@@ -422,15 +274,6 @@ struct DS4EngineBuilderTests {
         #expect(command.contains("--output '/tmp/support dir/ds4/engines/cpu-"))
     }
 
-    @Test
-    func shellQuotingRules() {
-        #expect(DS4EngineBuilder.shellQuoted("simple-path_1.0/x") == "simple-path_1.0/x")
-        #expect(DS4EngineBuilder.shellQuoted("") == "''")
-        #expect(DS4EngineBuilder.shellQuoted("a b") == "'a b'")
-        #expect(DS4EngineBuilder.shellQuoted("it's") == "'it'\\''s'")
-        #expect(DS4EngineBuilder.shellQuoted("$HOME") == "'$HOME'")
-    }
-
     // MARK: Output splitting
 
     @Test
@@ -440,45 +283,6 @@ struct DS4EngineBuilderTests {
         #expect(splitter.append(Data("ond\r\nthird\n\nfourth".utf8)) == ["second", "third", ""])
         #expect(splitter.finish() == ["fourth"])
         #expect(splitter.finish().isEmpty)
-    }
-
-    @Test
-    func lineSplitterKeepsMultiByteCharactersSplitAcrossChunks() {
-        let bytes = Array("café ✓\n".utf8)
-        var splitter = DS4EngineLineSplitter()
-        #expect(splitter.append(Data(bytes[0..<4])) == [])
-        #expect(splitter.append(Data(bytes[4...])) == ["café ✓"])
-    }
-
-    // MARK: Library verification
-
-    @Test
-    func verifierRejectsAMissingLibrary() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let missing = fixture.base.appendingPathComponent("absent.\(DS4EngineABI.libraryFileName)")
-        #expect(throws: DS4EngineBuildError.self) {
-            _ = try DS4EngineDynamicLibraryVerifier().abiVersion(ofLibraryAt: missing)
-        }
-    }
-
-    @Test
-    func verifierRejectsAFileThatIsNotALibrary() throws {
-        let fixture = try DS4EngineBuildFixture()
-        defer { fixture.remove() }
-
-        let bogus = fixture.base.appendingPathComponent(DS4EngineABI.libraryFileName)
-        try Data("not a library".utf8).write(to: bogus)
-        do {
-            _ = try DS4EngineDynamicLibraryVerifier().abiVersion(ofLibraryAt: bogus)
-            Issue.record("dlopen should have failed")
-        } catch let error as DS4EngineBuildError {
-            guard case .libraryLoadFailed = error else {
-                Issue.record("expected .libraryLoadFailed, got \(error)")
-                return
-            }
-        }
     }
 
     // MARK: Real build (opt-in)

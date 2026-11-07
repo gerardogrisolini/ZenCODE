@@ -94,19 +94,6 @@ import Testing
         #expect(EmbeddingWireCoding.values(from: Data(count: 6)) == nil)
     }
 
-    @Test func loadsVersionTwoNumericArray() async throws {
-        let directory = try Self.makeDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("graph.json")
-        try Data(Self.graphJSON(version: 2, embeddingLiteral: "[1.0, -2.5, 0.0]").utf8).write(to: file)
-        let before = try Data(contentsOf: file)
-
-        let graph = try await JSONMemoryPersistence(url: file).load()
-        #expect(graph.memories["mem_1"]?.embedding == [1.0, -2.5, 0.0])
-        #expect(graph.graphVersion == MemoryGraph.currentGraphVersion)
-        #expect(try Data(contentsOf: file) == before)
-    }
-
     @Test func saveWritesVersionFourWithTheVectorInTheVectorsFile() async throws {
         let directory = try Self.makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

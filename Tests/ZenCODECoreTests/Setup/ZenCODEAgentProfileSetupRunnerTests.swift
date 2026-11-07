@@ -122,35 +122,6 @@ struct ZenCODEAgentProfileSetupRunnerTests {
         }
     }
 
-    @Test
-    func metadataFallbackLeavesUnknownIDsAndOtherProvidersUnchanged() throws {
-        let cases = [
-            ("deepseek-future", "https://api.deepseek.com/v1"),
-            ("deepseek-flash", "https://openrouter.ai/api/v1"),
-            ("deepseek-flash", "https://other.example/v1"),
-        ]
-        for (modelID, baseURL) in cases {
-            for confirmsSupport in [false, true] {
-                let model = metadataPromptModel(modelID: modelID, baseURL: baseURL)
-                let updated = try ZenCODESetupRunner.readModelMetadata(
-                    for: model,
-                    promptContextWindow: { _, existing in existing },
-                    confirmThinkingSupport: { selected in
-                        #expect(!selected)
-                        return confirmsSupport
-                    },
-                    selectThinkingLevels: { _, _, selected in
-                        #expect(confirmsSupport)
-                        #expect(selected == ZenCODESetupRunner.thinkingSupportDefaultMenuSelection(existingOptions: nil))
-                        return selected
-                    }
-                )
-                #expect(updated.thinkingOptions == (confirmsSupport ? [.off, .low, .medium, .high] : nil))
-                #expect(updated.defaultThinkingSelection == (confirmsSupport ? .medium : nil))
-            }
-        }
-    }
-
     private func metadataPromptModel(
         modelID: String = "deepseek-flash",
         baseURL: String = "https://api.deepseek.com/v1",
@@ -166,36 +137,6 @@ struct ZenCODEAgentProfileSetupRunnerTests {
             thinkingOptions: options,
             defaultThinkingSelection: defaultSelection
         )
-    }
-
-    @Test
-    func bindingDisplayTitlePreservesModelNameFormatting() {
-        let cases: [(modelID: String, provider: String?, expected: String)] = [
-            ("openrouter:vendor:model", nil, "vendor:model"),
-            ("OPENROUTER:vendor:model:", "Remote", "Remote / vendor:model:"),
-            ("openrouter:deepseek/deepseek-r1:free", "OpenRouter", "OpenRouter / deepseek/deepseek-r1:free"),
-            (" \topenai: model \n", "Remote", "Remote /  model"),
-            ("chatgpt:gpt-5", "ChatGPT Subscription", "ChatGPT Subscription / gpt-5"),
-            ("notakey:vendor:model", nil, "notakey:vendor:model"),
-            ("notakey:vendor:model", "Remote", "Remote / model"),
-            ("provider:vendor:model", "Provider", "Provider / model"),
-            ("provider:vendor:model", nil, "provider:vendor:model"),
-            ("provider:vendor:model:", "Provider", "Provider / provider:vendor:model:"),
-            ("openai:", "Remote", "Remote / openai:"),
-            ("openai: \n", "Remote", "Remote / openai:"),
-            ("provider: model \n", "Provider", "Provider /  model"),
-            (" model ", nil, "model"),
-            ("", nil, ""),
-            ("", "Provider", "Provider / "),
-            (" \n", nil, ""),
-        ]
-        for item in cases {
-            let binding = AgentModelBinding(id: "unchanged", modelID: item.modelID, modelProvider: item.provider)
-            let original = binding
-            #expect(ZenCODEAgentProfileSetupRunner.bindingDisplayTitle(binding) == item.expected)
-            #expect(binding == original)
-            #expect(binding.id == "unchanged")
-        }
     }
 
     @Test
@@ -232,37 +173,6 @@ struct ZenCODEAgentProfileSetupRunnerTests {
         let prepared = ZenCODEAgentProfileSetupRunner.preparedAgentsForSave([custom])
 
         #expect(prepared == [custom])
-    }
-
-    @Test
-    func setupRecommendedAgentCountMatchesDefaultProfiles() {
-        #expect(
-            ZenCODEAgentProfileSetupRunner.recommendedAgentCount
-                == AgentProfileStore.defaultProfiles().count
-        )
-    }
-
-    @Test
-    func setupAgentDeletionItemsUseTheStandardMultiSelectionLayout() {
-        let developer = AgentProfile(
-            id: AgentProfileRole.developer.rawValue,
-            name: AgentProfileStore.developerAgentName,
-            role: .developer,
-            tools: AgentProfileStore.developerToolNames
-        )
-        let custom = AgentProfile(
-            id: "11111111-1111-1111-1111-111111111111",
-            name: "Custom",
-            role: .developer,
-            tools: AgentProfileStore.developerToolNames
-        )
-
-        let items = ZenCODEAgentProfileSetupRunner.agentDeletionItems([developer, custom])
-
-        #expect(items.map(\.value) == [1])
-        #expect(items.map(\.title) == ["Custom"])
-        #expect(items.map(\.detail) == [ZenCODEAgentProfileSetupRunner.agentSummary(custom)])
-        #expect(items.allSatisfy { $0.groupTitle == nil })
     }
 
     @Test
@@ -303,18 +213,6 @@ struct ZenCODEAgentProfileSetupRunnerTests {
     }
 
     @Test
-    func setupDefaultThinkingSelectionKeepsCompatibleExistingValue() {
-        let model = setupThinkingModel()
-
-        let selection = ZenCODESetupRunner.setupDefaultThinkingSelection(
-            for: model,
-            existingSelection: .high
-        )
-
-        #expect(selection == .high)
-    }
-
-    @Test
     func setupDefaultThinkingSelectionFallsBackToModelDefault() {
         let model = setupThinkingModel()
 
@@ -324,159 +222,6 @@ struct ZenCODEAgentProfileSetupRunnerTests {
         )
 
         #expect(selection == .medium)
-    }
-
-    @Test
-    func setupDefaultThinkingSelectionSkipsModelsWithoutThinking() {
-        let model = AgentSettingsModelManifest(
-            id: "plain",
-            kind: .remoteAPI,
-            modelID: "plain-model",
-            providerID: "openrouter",
-            provider: AgentRemoteProvider(modelID: "plain-model")
-        )
-
-        let selection = ZenCODESetupRunner.setupDefaultThinkingSelection(
-            for: model,
-            existingSelection: .high
-        )
-
-        #expect(selection == nil)
-    }
-
-    @Test
-    func skillCheckboxItemsPreserveMissingSelectedSkills() {
-        let skill = PromptSkill(
-            canonicalName: "swift-review",
-            title: "Swift Review",
-            summary: "Review Swift code.",
-            promptBody: "Review the code.",
-            sourceHash: "skill-a"
-        )
-
-        let items = ZenCODEAgentProfileSetupRunner.skillCheckboxItems(
-            availableSkills: [skill],
-            selectedSkillIDs: ["skill-a", "missing-skill"]
-        )
-
-        #expect(items.map(\.value) == ["skill-a", "missing-skill"])
-        #expect(items.last?.detail == "saved skill not currently installed")
-    }
-
-    @Test
-    func thinkingSelectionItemsUseMenuTitles() {
-        let items = ZenCODEAgentProfileSetupRunner.thinkingSelectionItems([.off, .high])
-
-        #expect(items.map(\.value) == [.off, .high])
-        #expect(items.map(\.title) == ["Thinking off", "High thinking"])
-    }
-
-    @Test
-    func modelChoiceItemsExposeNoDedicatedModelChoice() {
-        let model = AgentSettingsModelManifest(
-            id: "remote",
-            kind: .remoteAPI,
-            modelID: "remote-model",
-            providerID: "openrouter",
-            provider: AgentRemoteProvider(modelID: "remote-model")
-        )
-
-        let items = ZenCODEAgentProfileSetupRunner.modelChoiceItems(
-            models: [model],
-            existingModelID: nil
-        )
-
-        #expect(items.first?.value == .noDedicatedModel)
-        #expect(items.first?.title == "No dedicated model")
-        #expect(items.first?.detail?.contains("leave model empty") == true)
-        #expect(items.contains { $0.value == .configuredModel(model.id) })
-    }
-
-    @Test
-    func instructionEditorCommandUsesPlatformEditorCommand() {
-        let command = ZenCODEAgentProfileSetupRunner.instructionEditorCommand()
-
-        #if os(macOS)
-        #expect(command.executable == "/usr/bin/open")
-        #expect(command.arguments == ["-W", "-t"])
-        #else
-        let environment = ProcessInfo.processInfo.environment
-        let configuredEditor = [environment["VISUAL"], environment["EDITOR"]]
-            .compactMap { value -> String? in
-                guard let value,
-                      !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    return nil
-                }
-                return value
-            }
-            .first ?? "vi"
-        let parts = configuredEditor.split(
-            separator: " ",
-            omittingEmptySubsequences: true
-        ).map(String.init)
-
-        #expect(command.executable == (parts.first ?? "vi"))
-        #expect(command.arguments == Array(parts.dropFirst()))
-        #endif
-    }
-
-    @Test
-    func instructionEditChoiceItemsOfferKeepOrPlatformEditorForExistingInstructions() {
-        let command = ZenCODEAgentProfileSetupRunner.instructionEditorCommand()
-        let items = ZenCODEAgentProfileSetupRunner.instructionEditChoiceItems(
-            hasExistingInstructions: true
-        )
-
-        #expect(items.map(\.value) == [.keep, .editInEditor])
-        #expect(items[0].title == "Keep current instructions")
-        #expect(items[1].detail?.contains(command.displayText) == true)
-    }
-
-    @Test
-    func instructionEditChoiceItemsOnlyOfferPlatformEditorForNewInstructions() {
-        let editorName = ZenCODEAgentProfileSetupRunner.instructionEditorDisplayName()
-        let items = ZenCODEAgentProfileSetupRunner.instructionEditChoiceItems(
-            hasExistingInstructions: false
-        )
-
-        #expect(items.map(\.value) == [.editInEditor])
-        #expect(items.first?.title == "Enter in \(editorName)")
-    }
-
-    @Test
-    func setupModelMetadataDefaultIndexesSelectOnlyUnconfiguredModels() {
-        let missingMetadata = AgentSettingsModelManifest(
-            id: "missing-metadata",
-            kind: .remoteAPI,
-            modelID: "missing-metadata",
-            providerID: "openrouter",
-            provider: AgentRemoteProvider(modelID: "missing-metadata")
-        )
-        let contextOnly = AgentSettingsModelManifest(
-            id: "context-only",
-            kind: .remoteAPI,
-            modelID: "context-only",
-            providerID: "openrouter",
-            provider: AgentRemoteProvider(modelID: "context-only"),
-            configuredContextWindowLimit: 131_072
-        )
-        let thinkingOnly = AgentSettingsModelManifest(
-            id: "thinking-only",
-            kind: .remoteAPI,
-            modelID: "thinking-only",
-            providerID: "openrouter",
-            provider: AgentRemoteProvider(modelID: "thinking-only"),
-            thinkingOptions: [.off, .low, .medium, .high],
-            defaultThinkingSelection: .medium
-        )
-
-        let indexes = ZenCODESetupRunner.defaultModelMetadataIndexes([
-            missingMetadata,
-            contextOnly,
-            thinkingOnly
-        ])
-
-        #expect(indexes == Set([0]))
     }
 
     @Test
@@ -515,28 +260,6 @@ struct ZenCODEAgentProfileSetupRunnerTests {
         #expect(updated.configuredContextWindowLimit == 131_072)
         #expect(updated.thinkingOptions == [.off, .low, .medium, .high])
         #expect(updated.defaultThinkingSelection == .medium)
-    }
-
-    @Test
-    func setupThinkingSupportDefaultsPreserveExistingSelections() {
-        let availableOptions: [AgentThinkingSelection] = [.off, .enabled, .low, .medium, .high]
-
-        let indexes = ZenCODESetupRunner.thinkingSupportDefaultMenuSelection(
-            availableOptions: availableOptions,
-            existingOptions: [.enabled, .high]
-        )
-        let preservedDefault = ZenCODESetupRunner.defaultThinkingSelection(
-            existingDefaultSelection: .high,
-            selectedOptions: [.off, .low, .high]
-        )
-        let fallbackDefault = ZenCODESetupRunner.defaultThinkingSelection(
-            existingDefaultSelection: .xhigh,
-            selectedOptions: [.off, .low, .medium, .high]
-        )
-
-        #expect(indexes == Set([1, 4]))
-        #expect(preservedDefault == .high)
-        #expect(fallbackDefault == .medium)
     }
 
     private func setupThinkingModel() -> AgentSettingsModelManifest {

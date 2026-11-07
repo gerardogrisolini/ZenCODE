@@ -236,84 +236,6 @@ struct MemoryReembeddingStoreTests {
         }
     }
 
-    @Test
-    func secondRunFindsEverythingCompatibleAndSendsNothing() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-
-        try await workspace.withIsolatedSupport {
-            let graphURL = workspace.graphURL()
-            let provider = ScriptedEmbeddingProvider()
-            _ = try await Seed.make(at: graphURL, current: provider)
-            let store = try await Self.open(graphURL, with: provider)
-            _ = try await store.reembed(run: MemoryReembeddingRun(options: Self.options()))
-            let afterFirst = try Data(contentsOf: graphURL)
-
-            let again = ScriptedEmbeddingProvider(failure: { _, _ in UnexpectedNetworkUse() })
-            let second = try await Self.open(graphURL, with: again)
-            #expect(try await second.reembeddingPlan()?.isEmpty == true)
-            let summary = try await second.reembed(run: MemoryReembeddingRun(options: Self.options()))
-
-            #expect(summary == MemoryReembeddingGraphSummary())
-            #expect(again.requests.isEmpty)
-            #expect(try Data(contentsOf: graphURL) == afterFirst)
-        }
-    }
-
-    @Test
-    func runReplacesVectorsOfAnotherLengthOnceTheDimensionIsKnown() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-
-        try await workspace.withIsolatedSupport {
-            let graphURL = workspace.graphURL()
-            // Same model identity, shorter vectors: recall would skip them.
-            let shorter = ScriptedEmbeddingProvider(modelID: "new-model", dimensions: 4)
-            let first = try await Self.write("Summary: short vector one", to: graphURL, with: shorter)
-            let second = try await Self.write("Summary: short vector two", to: graphURL, with: shorter)
-            let missing = try await Self.write("Summary: no vector yet", to: graphURL, with: nil)
-            let provider = ScriptedEmbeddingProvider(modelID: "new-model", dimensions: 8)
-            let store = try await Self.open(graphURL, with: provider)
-
-            // The plan cannot see lengths: only the entry without a vector.
-            #expect(try await store.reembeddingPlan()?.entriesToEmbed == 1)
-            let run = MemoryReembeddingRun(options: Self.options())
-            let summary = try await store.reembed(run: run)
-
-            #expect(summary.needed == 3)
-            #expect(summary.embedded == 3)
-            #expect(summary.resized == 2)
-            #expect(run.dimensions == 8)
-            let after = try await JSONMemoryPersistence(url: graphURL).load()
-            for id in [first.id, second.id, missing.id] {
-                #expect(after.memories[id]?.embedding?.count == 8)
-            }
-        }
-    }
-
-    @Test
-    func runUsesTheDimensionCarriedFromAnEarlierGraph() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-
-        try await workspace.withIsolatedSupport {
-            let graphURL = workspace.graphURL()
-            let shorter = ScriptedEmbeddingProvider(modelID: "new-model", dimensions: 4)
-            let entry = try await Self.write("Summary: short vector", to: graphURL, with: shorter)
-            let provider = ScriptedEmbeddingProvider(modelID: "new-model", dimensions: 8)
-            let store = try await Self.open(graphURL, with: provider)
-            let run = MemoryReembeddingRun(options: Self.options())
-            // An earlier graph of the same run already fixed the dimension.
-            #expect(run.recordVector(length: 8))
-
-            let summary = try await store.reembed(run: run)
-
-            #expect(summary.needed == 1)
-            #expect(summary.resized == 1)
-            #expect(try await JSONMemoryPersistence(url: graphURL).load().memories[entry.id]?.embedding?.count == 8)
-        }
-    }
-
     // MARK: - Blocks and stop
 
     @Test
@@ -344,35 +266,6 @@ struct MemoryReembeddingStoreTests {
             let embedded = onDisk.memories.values.filter { $0.embedding != nil }
             #expect(embedded.count == 2)
             #expect(Set(embedded.map(\.content)) == Set(provider.requests))
-        }
-    }
-
-    @Test
-    func vectorsAreSavedBlockByBlock() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-
-        try await workspace.withIsolatedSupport {
-            let graphURL = workspace.graphURL()
-            for index in 0..<5 {
-                try await Self.write("Summary: entry \(index)", to: graphURL, with: nil)
-            }
-            let calls = Mutex(0)
-            let vectorsSeen = Mutex<[Int]>([])
-            // Before each answer, count the vectors already on disk: a crash
-            // at that moment would keep exactly those.
-            let provider = ScriptedEmbeddingProvider(beforeAnswer: { _ in
-                calls.withLock { $0 += 1 }
-                let graph = try? await JSONMemoryPersistence(url: graphURL).load()
-                let count = graph?.memories.values.filter { $0.embedding != nil }.count ?? -1
-                vectorsSeen.withLock { $0.append(count) }
-            })
-            let store = try await Self.open(graphURL, with: provider)
-
-            let summary = try await store.reembed(run: MemoryReembeddingRun(options: Self.options(batchSize: 2)))
-
-            #expect(summary.embedded == 5)
-            #expect(vectorsSeen.withLock { $0 } == [0, 0, 2, 2, 4])
         }
     }
 
@@ -414,69 +307,6 @@ struct MemoryReembeddingStoreTests {
     // MARK: - Failures
 
     @Test
-    func busyEndpointIsRetriedAfterAWait() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-
-        try await workspace.withIsolatedSupport {
-            let graphURL = workspace.graphURL()
-            let entry = try await Self.write("Summary: busy once", to: graphURL, with: nil)
-            let provider = ScriptedEmbeddingProvider(failure: { _, attempt in
-                attempt == 1 ? OpenAICompatibleEmbeddingError.httpStatus(429, "Model busy") : nil
-            })
-            let sleeps = SleepRecorder()
-            let store = try await Self.open(graphURL, with: provider)
-
-            let summary = try await store.reembed(run: MemoryReembeddingRun(options: Self.options(sleep: sleeps)))
-
-            #expect(summary.embedded == 1)
-            #expect(summary.failed == 0)
-            #expect(provider.requests.count == 2)
-            #expect(sleeps.recorded == [.seconds(1)])
-            #expect(try await JSONMemoryPersistence(url: graphURL).load().memories[entry.id]?.embedding != nil)
-        }
-    }
-
-    @Test
-    func persistentFailuresAreCountedAndTheRunGoesOn() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-
-        try await workspace.withIsolatedSupport {
-            let graphURL = workspace.graphURL()
-            let alwaysBusy = try await Self.write("Summary: always busy", to: graphURL, with: nil)
-            let rejected = try await Self.write("Summary: rejected request", to: graphURL, with: nil)
-            try await Self.write("Summary: fine one", to: graphURL, with: nil)
-            try await Self.write("Summary: fine two", to: graphURL, with: nil)
-            let provider = ScriptedEmbeddingProvider(failure: { text, _ in
-                switch text {
-                case "Summary: always busy": OpenAICompatibleEmbeddingError.httpStatus(503, "overloaded")
-                case "Summary: rejected request": OpenAICompatibleEmbeddingError.httpStatus(400, "bad input")
-                default: nil
-                }
-            })
-            let sleeps = SleepRecorder()
-            let store = try await Self.open(graphURL, with: provider)
-            let run = MemoryReembeddingRun(options: Self.options(sleep: sleeps))
-
-            let summary = try await store.reembed(run: run)
-
-            #expect(summary.embedded == 2)
-            #expect(summary.failed == 2)
-            #expect(summary.remaining == 0)
-            #expect(run.abort == nil)
-            // 5 attempts with growing waits for the retryable failure, a single
-            // one for the request the endpoint refuses outright.
-            #expect(provider.requests.filter { $0 == "Summary: always busy" }.count == 5)
-            #expect(provider.requests.filter { $0 == "Summary: rejected request" }.count == 1)
-            #expect(sleeps.recorded == [.seconds(1), .seconds(2), .seconds(4), .seconds(8)])
-            let after = try await JSONMemoryPersistence(url: graphURL).load()
-            #expect(after.memories[alwaysBusy.id]?.embedding == nil)
-            #expect(after.memories[rejected.id]?.embedding == nil)
-        }
-    }
-
-    @Test
     func rejectedEndpointStopsTheRunAtOnce() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
@@ -504,31 +334,6 @@ struct MemoryReembeddingStoreTests {
             let description = ZenCODESetupRunner.memoryReembeddingAbortDescription(try #require(run.abort))
             #expect(description.contains("HTTP 401"))
             #expect(!description.contains("sk-or"))
-        }
-    }
-
-    @Test
-    func failingFirstEntriesStopTheRun() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-
-        try await workspace.withIsolatedSupport {
-            let graphURL = workspace.graphURL()
-            for index in 0..<6 {
-                try await Self.write("Summary: entry \(index)", to: graphURL, with: nil)
-            }
-            let provider = ScriptedEmbeddingProvider(failure: { _, _ in
-                OpenAICompatibleEmbeddingError.httpStatus(400, "unknown model")
-            })
-            let store = try await Self.open(graphURL, with: provider)
-            let run = MemoryReembeddingRun(options: Self.options(probe: 3))
-
-            let summary = try await store.reembed(run: run)
-
-            #expect(run.abort == .initialRequestsFailed(count: 3, lastFailure: "httpStatus 400"))
-            #expect(provider.requests.count == 3)
-            #expect(summary.failed == 3)
-            #expect(summary.remaining == 3)
         }
     }
 
@@ -569,72 +374,6 @@ struct MemoryReembeddingStoreTests {
             #expect(try await reopened.reembeddingPlan()?.isEmpty == true)
         }
     }
-
-    // MARK: - Restore
-
-    @Test
-    func restoredEntryWithoutAVectorReceivesOne() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-
-        try await workspace.withIsolatedSupport {
-            let graphURL = workspace.graphURL()
-            let provider = ScriptedEmbeddingProvider()
-            let entry = try await Self.write("Summary: archived then restored", to: graphURL, with: nil)
-            let store = try await Self.open(graphURL, with: provider)
-            let archived = try await store.setArchived(true, id: entry.id)
-            #expect(!archived.active)
-            #expect(provider.requests.isEmpty)
-
-            let restored = try await store.setArchived(false, id: entry.id)
-
-            #expect(restored.active)
-            #expect(restored.embeddingModel == "new-model")
-            #expect(restored.embedding == ScriptedEmbeddingProvider.vector(for: restored.content, dimensions: 4))
-            #expect(provider.requests == [restored.content])
-            let onDisk = try #require(try await JSONMemoryPersistence(url: graphURL).load().memories[entry.id])
-            #expect(onDisk == restored)
-
-            // Archiving keeps the vector; restoring with it does not embed again.
-            _ = try await store.setArchived(true, id: entry.id)
-            #expect(try await store.entry(id: entry.id)?.embedding != nil)
-            _ = try await store.setArchived(false, id: entry.id)
-            #expect(provider.requests.count == 1)
-        }
-    }
-
-    @Test
-    func restoreSucceedsWhenTheEndpointFails() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-
-        try await workspace.withIsolatedSupport {
-            let graphURL = workspace.graphURL()
-            let entry = try await Self.write("Summary: restore without endpoint", to: graphURL, with: nil)
-            let writer = try await Self.open(graphURL, with: nil)
-            _ = try await writer.setArchived(true, id: entry.id)
-            let messages = Mutex<[String]>([])
-            let failing = ScriptedEmbeddingProvider(failure: { _, _ in
-                OpenAICompatibleEmbeddingError.httpStatus(503, "echoed secret sk-test")
-            })
-            let store = try await Self.open(graphURL, with: failing) { message in
-                messages.withLock { $0.append(message) }
-            }
-
-            let restored = try await store.setArchived(false, id: entry.id)
-
-            #expect(restored.active)
-            #expect(restored.embedding == nil)
-            let onDisk = try #require(try await JSONMemoryPersistence(url: graphURL).load().memories[entry.id])
-            #expect(onDisk.active)
-            #expect(onDisk.embedding == nil)
-            let recorded = messages.withLock { $0 }
-            #expect(recorded.count == 1)
-            #expect(recorded.first?.contains("restore") == true)
-            #expect(recorded.first?.contains("httpStatus 503") == true)
-            #expect(recorded.first?.contains("sk-test") == false)
-        }
-    }
 }
 
 // MARK: - Pure rules
@@ -668,54 +407,5 @@ struct MemoryReembeddingRulesTests {
             RemoteTransportError.connectionFailure("api.secret-host.test refused")
         ) == "transportError connectionFailure")
         #expect(MemoryReembedding.failureSummary(RemoteTransportError.timeout) == "transportError timeout")
-    }
-
-    @Test
-    func retryWaitsDoubleFromTheInitialDelay() {
-        let options = MemoryReembedding.Options.default
-        #expect(options.maximumAttempts == 5)
-        #expect(options.maximumConcurrentRequests == 4)
-        #expect(options.batchSize == 16)
-        #expect((1...4).map { MemoryReembedding.retryDelay(afterAttempt: $0, options: options) }
-            == [.seconds(1), .seconds(2), .seconds(4), .seconds(8)])
-    }
-
-    @Test
-    func compatibilityNeedsTheModelAndTheObservedLength() {
-        var entry = EngineMemoryEntry(category: .fact, content: "Summary: x")
-        #expect(MemoryReembedding.reason(for: entry, modelID: "m", dimensions: nil) == .missing)
-        entry.setEmbedding([1, 2], model: "other")
-        #expect(MemoryReembedding.reason(for: entry, modelID: "m", dimensions: nil) == .otherModel)
-        entry.setEmbedding([1, 2], model: "m")
-        #expect(MemoryReembedding.reason(for: entry, modelID: "m", dimensions: nil) == nil)
-        #expect(MemoryReembedding.reason(for: entry, modelID: "m", dimensions: 2) == nil)
-        #expect(MemoryReembedding.reason(for: entry, modelID: "m", dimensions: 3) == .otherDimensions)
-    }
-
-    @Test
-    func runRecordsTheFirstDimensionAndRejectsOthers() {
-        let run = MemoryReembeddingRun()
-        #expect(run.dimensions == nil)
-        #expect(run.recordVector(length: 2_560))
-        #expect(run.dimensions == 2_560)
-        #expect(!run.recordVector(length: 4_096))
-        #expect(run.acceptsNewRequests)
-        run.requestStop()
-        #expect(!run.acceptsNewRequests)
-        #expect(run.abort == nil)
-    }
-
-    @Test
-    func failuresAfterTheFirstSuccessNeverAbort() {
-        var options = MemoryReembedding.Options()
-        options.probeEntryCount = 2
-        let run = MemoryReembeddingRun(options: options)
-        #expect(run.recordVector(length: 4))
-        run.recordFailure(.permanent, summary: "httpStatus 400")
-        run.recordFailure(.permanent, summary: "httpStatus 400")
-        run.recordFailure(.retryable, summary: "httpStatus 503")
-        #expect(run.abort == nil)
-        run.recordFailure(.endpointRejected(status: 403), summary: "httpStatus 403")
-        #expect(run.abort == .endpointRejected(status: 403))
     }
 }

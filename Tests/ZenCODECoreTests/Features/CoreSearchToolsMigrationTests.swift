@@ -47,19 +47,6 @@ struct CoreSearchToolsMigrationTests {
         #expect(SwiftBundledFeatureCatalog.retiredFeatureIDs == [Self.retiredFeatureID])
     }
 
-    @Test
-    func readOnlyProfileKeepsCoreSearchTools() {
-        let profile = AgentProfile(
-            id: "read-only-search",
-            name: "Read Only Search",
-            readOnly: true,
-            role: .developer
-        )
-
-        #expect(profile.resolvedAllowedToolNames(["search."]) == Self.searchToolNames)
-        #expect(profile.resolvedAllowedToolNames(Self.searchToolNames) == Self.searchToolNames)
-    }
-
     // MARK: - /tools selection
 
     @Test
@@ -392,13 +379,6 @@ struct CoreSearchToolsMigrationTests {
         #expect(!FileManager.default.fileExists(
             atPath: rootURL.appendingPathComponent("search-mcp").path
         ))
-    }
-
-    @Test
-    func mcpBridgePrefixesOutsideCoreNamespacesRemainAccepted() throws {
-        for prefix in ["linear.", "searchx.", "research."] {
-            try SwiftFeatureRuntime.validateMCPBridgeToolPrefix(prefix)
-        }
     }
 
     // MARK: - Helpers

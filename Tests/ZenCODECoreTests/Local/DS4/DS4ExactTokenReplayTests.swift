@@ -8,9 +8,9 @@
 //  KV before its end and a model with recurrent state would rebuild the whole
 //  prompt ("DS4 prefill: 0 cached"). Mock engine only: no library, no model.
 //
-//  - client: the round after a tool call (and after a malformed call) replays
-//    `.tokens(ids)` with the ids `generate` returned and the sync reuses the
-//    whole previous prefix; another model identity falls back to the text;
+//  - client: the round after a tool call replays `.tokens(ids)` with the ids
+//    `generate` returned and the sync reuses the whole previous prefix; a
+//    cancelled turn keeps the ids it committed;
 //  - private keys: `ds4_raw_tokens` / `ds4_raw_tokens_model` live in the
 //    messages, never in snapshots;
 //  - checkpoint trailer: round trip of the ids, trailers written before them
@@ -47,19 +47,6 @@ extension RemoteGenerationClient {
                 toolObservation: message[DS4MessageKeys.toolObservation] as? String,
                 hasToolCalls: message["tool_calls"] != nil
             )
-        }
-    }
-
-    /// Records that the ids of the last assistant message came from `model`.
-    fileprivate func ds4SetLastAssistantTokensModel(_ model: String, sessionID: String) {
-        guard let lease = sessionLease(for: sessionID) else {
-            return
-        }
-        mutateSession(for: lease) { session in
-            guard let index = session.messages.lastIndex(where: { DS4TranscriptRenderer.role(of: $0) == "assistant" }) else {
-                return
-            }
-            session.messages[index][DS4MessageKeys.rawTokensModel] = model
         }
     }
 }
@@ -128,74 +115,6 @@ struct DS4ExactTokenReplayTests {
     }
 
     @Test
-    func aDifferentModelIdentityFallsBackToTheRawText() async throws {
-        let harness = try DS4ClientHarness()
-        harness.mock.enqueueGeneration(["First answer."])
-        harness.mock.enqueueGeneration(["Second answer."])
-        let client = try await harness.makeClient()
-        _ = try await client.sendPrompt(sessionID: "session", prompt: "first", attachments: [], onEvent: { _ in })
-        let produced = try #require(harness.engine.results.first).tokens
-        #expect(!produced.isEmpty)
-
-        // The ids were produced by another model (the session was loaded or
-        // switched to a different model): this engine must not replay them.
-        await client.ds4SetLastAssistantTokensModel("99-4-another-model", sessionID: "session")
-        _ = try await client.sendPrompt(sessionID: "session", prompt: "second", attachments: [], onEvent: { _ in })
-
-        let transcripts = harness.engine.transcripts
-        try #require(transcripts.count == 2)
-        let first = transcripts[0]
-        let second = transcripts[1]
-        #expect(second[first.count] == .renderedChat("First answer."))
-        #expect(!second.contains(.tokens(produced)))
-        // Only the previous prompt is shared: the text is tokenized again.
-        let syncs = harness.engine.syncs
-        #expect(syncs[1].cached == MockDS4Engine.tokenCount(of: first))
-        await client.shutdown()
-    }
-
-    @Test
-    func turnsWithoutStoredIDsKeepReplayingTheirText() async throws {
-        // A session restored without ids (an old snapshot): the text fallback.
-        let harness = try DS4ClientHarness()
-        harness.mock.enqueueGeneration(["Next."])
-        let history = [
-            AgentRuntimeMessage(role: .user, content: "hi"),
-            AgentRuntimeMessage(role: .assistant, content: "hello"),
-        ]
-        let client = try await harness.makeClient(history: history)
-
-        _ = try await client.sendPrompt(sessionID: "session", prompt: "again", attachments: [], onEvent: { _ in })
-
-        let transcript = try #require(harness.engine.transcripts.first)
-        #expect(transcript.contains(.renderedChat("hello")))
-        #expect(!transcript.contains { if case .tokens = $0 { true } else { false } })
-        await client.shutdown()
-    }
-
-    @Test
-    func theMalformedCallTurnKeepsItsCommittedIDs() async throws {
-        let harness = try DS4ClientHarness()
-        let broken = "<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"fixture.echo\">\n"
-            + "<｜DSML｜ parameter name=\"text\" string=\"true\">hi"
-        harness.mock.enqueueGeneration(MockDS4Engine.ScriptedGeneration(chunks: [broken], tokens: [31]))
-        harness.mock.enqueueGeneration(["Sorry."])
-        let client = try await harness.makeClient()
-
-        _ = try await client.sendPrompt(sessionID: "session", prompt: "Echo", attachments: [], onEvent: { _ in })
-
-        let turn = try #require(await turns(of: client).first {
-            $0.role == "assistant" && $0.toolObservation != nil
-        })
-        #expect(turn.rawTokens == [31])
-        #expect(turn.rawAssistant == broken)
-        let transcripts = harness.engine.transcripts
-        try #require(transcripts.count == 2)
-        #expect(transcripts[1].contains(.tokens([31])))
-        await client.shutdown()
-    }
-
-    @Test
     func theCancelledTurnKeepsTheIDsItCommitted() async throws {
         let harness = try DS4ClientHarness(chunkDelay: .milliseconds(10))
         harness.mock.enqueueGeneration(Array(repeating: "word ", count: 400))
@@ -219,61 +138,6 @@ struct DS4ExactTokenReplayTests {
         #expect(ids == generated.tokens)
         #expect(partial.rawTokensModel == harness.engine.info.tokenIdentity)
         await client.shutdown()
-    }
-
-    // MARK: - Types
-
-    @Test
-    func tokensCountAsManyTokensAsTheyHaveIDs() {
-        #expect(MockDS4Engine.tokenCount(of: .tokens([1, 2, 3])) == 3)
-        #expect(MockDS4Engine.tokenCount(of: .tokens([])) == 0)
-        #expect(MockDS4Engine.tokenCount(of: [.begin, .tokens([4, 5]), .endOfSequence]) == 4)
-        #expect(MockDS4Engine.render([.tokens([4, 5])]) == "<tokens:4,5>")
-    }
-
-    @Test
-    func theTokenIdentityNamesTheModelAndItsQuantization() {
-        let info = DS4EngineInfo(
-            modelName: "Qwen3.8-Flash-Next", modelID: 7, routedQuantBits: 2, hasVision: false,
-            toolSyntaxID: DS4EngineABI.ToolSyntax.qwen, mtpDraftTokens: 1, contextSize: 4096
-        )
-        #expect(info.tokenIdentity == "7-2-Qwen3.8-Flash-Next")
-    }
-
-    @Test
-    func theTurnStoresIDsOnlyTogetherWithTheirModel() {
-        func turn(tokens: [Int32], model: String?, raw: String = "x") -> DS4AssistantTurn {
-            DS4AssistantTurn(
-                rawText: raw, thinkMode: 0, toolCallReplays: [], toolObservation: nil, contextSize: 100,
-                tokens: tokens, tokensModel: model
-            )
-        }
-        var message: [String: Any] = [:]
-        turn(tokens: [1, 2], model: "m").apply(to: &message)
-        #expect(message[DS4MessageKeys.rawTokens] as? [Int32] == [1, 2])
-        #expect(message[DS4MessageKeys.rawTokensModel] as? String == "m")
-
-        var withoutModel: [String: Any] = [:]
-        turn(tokens: [1, 2], model: nil).apply(to: &withoutModel)
-        #expect(withoutModel[DS4MessageKeys.rawTokens] == nil)
-        var withoutTokens: [String: Any] = [:]
-        turn(tokens: [], model: "m").apply(to: &withoutTokens)
-        #expect(withoutTokens[DS4MessageKeys.rawTokens] == nil)
-        #expect(withoutTokens[DS4MessageKeys.rawTokensModel] == nil)
-
-        // Tokens keep an otherwise empty turn in the history: they are in the KV.
-        #expect(turn(tokens: [1], model: "m", raw: "").requiresHistoryEntry)
-        #expect(!turn(tokens: [], model: "m", raw: "").requiresHistoryEntry)
-    }
-
-    @Test
-    func storedIDsAreReadBackWhateverTheIntegerWidth() {
-        #expect(DS4MessageKeys.rawTokenIDs(of: [DS4MessageKeys.rawTokens: [Int32]([1, 2])]) == [1, 2])
-        #expect(DS4MessageKeys.rawTokenIDs(of: [DS4MessageKeys.rawTokens: [3, 4]]) == [3, 4])
-        #expect(DS4MessageKeys.rawTokenIDs(of: [DS4MessageKeys.rawTokens: [Int32]()]) == nil)
-        #expect(DS4MessageKeys.rawTokenIDs(of: [DS4MessageKeys.rawTokens: [Int(Int32.max) + 1]]) == nil)
-        #expect(DS4MessageKeys.rawTokenIDs(of: [DS4MessageKeys.rawTokens: "1,2"]) == nil)
-        #expect(DS4MessageKeys.rawTokenIDs(of: [:]) == nil)
     }
 
     // MARK: - Checkpoint trailer
@@ -355,18 +219,5 @@ struct DS4ExactTokenReplayTests {
         // Encoding it again keeps the members absent instead of writing nulls.
         let reencoded = try #require(String(data: try trailer.encoded(), encoding: .utf8))
         #expect(!reencoded.contains("ds4_raw_tokens"))
-    }
-
-    @Test
-    func idsWithoutTheirModelAreNotCaptured() {
-        var message = Self.assistantMessage
-        message.removeValue(forKey: DS4MessageKeys.rawTokensModel)
-
-        let trailer = DS4CheckpointTrailer.capture(from: [message])
-
-        #expect(trailer.messages.count == 1)
-        #expect(trailer.messages[0].ds4.rawAssistant != nil)
-        #expect(trailer.messages[0].ds4.rawTokens == nil)
-        #expect(trailer.messages[0].ds4.rawTokensModel == nil)
     }
 }

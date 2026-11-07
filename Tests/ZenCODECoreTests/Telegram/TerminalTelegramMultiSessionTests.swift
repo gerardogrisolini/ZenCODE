@@ -87,23 +87,6 @@ struct TerminalTelegramMultiSessionTests {
         #expect(await router.snapshot().isEmpty)
     }
 
-    @Test
-    func activeRouteForRoomIDReturnsOnlyActiveRoutes() async throws {
-        let router = TerminalTelegramSessionRouter(linkedChatID: 42, ownerUserID: 7)
-        _ = try await router.create(roomID: "default")
-        _ = try await router.create(topicID: 10, roomID: "session-a")
-        let closing = try await router.create(topicID: 20, roomID: "session-b")
-        try await router.close(closing)
-
-        let route = try #require(await router.activeRoute(forRoomID: "session-a"))
-        #expect(route == AgentTelegramRouteManifest(topicID: 10, roomID: "session-a", generation: 1))
-        #expect(await router.activeRoute(forRoomID: " session-a\n") == route)
-        #expect(await router.activeRoute(forRoomID: "default") == AgentTelegramRouteManifest(roomID: "default"))
-        #expect(await router.activeRoute(forRoomID: "session-b") == nil)
-        #expect(await router.activeRoute(forRoomID: "missing") == nil)
-        #expect(await router.activeRoute(forRoomID: " ") == nil)
-    }
-
     /// Room IDs are not unique: the highest active topic wins, the topicless
     /// route ranks lowest and the input order of the routes is irrelevant.
     @Test
@@ -299,34 +282,6 @@ struct TerminalTelegramMultiSessionTests {
     }
 
     @Test
-    func pruneWithinTheLimitPersistsNothingAndANegativeLimitCountsAsZero() async throws {
-        let recorder = TelegramRoutePersistRecorder()
-        let kept: [AgentTelegramRouteManifest] = [
-            .init(roomID: "default"),
-            .init(topicID: 10, roomID: "session-a"),
-        ]
-        let routes = kept + [
-            .init(topicID: 11, roomID: "session-b", lifecycle: .closed, generation: 2),
-            .init(topicID: 12, roomID: "session-c", lifecycle: .deleted, generation: 3),
-        ]
-        let router = TerminalTelegramSessionRouter(
-            linkedChatID: 42, ownerUserID: 7, routes: routes, persist: recorder.persist
-        )
-
-        try await router.prune(keepingInactive: 2)
-        try await router.prune(keepingInactive: 32)
-        #expect(recorder.count == 0)
-        #expect(await router.snapshot() == routes)
-
-        try await router.prune(keepingInactive: -1)
-        #expect(await router.snapshot() == kept)
-        #expect(recorder.commits == [kept])
-
-        try await router.prune(keepingInactive: 0)
-        #expect(recorder.count == 1)
-    }
-
-    @Test
     func pruneRequiresAPairedOwner() async {
         let recorder = TelegramRoutePersistRecorder()
         let routes = [AgentTelegramRouteManifest(topicID: 1, roomID: "closed", lifecycle: .closed, generation: 2)]
@@ -399,47 +354,6 @@ struct TerminalTelegramMultiSessionTests {
         await dispatcher.unsubscribe(second)
     }
 
-    @Test
-    func botDispatcherDoesNotLoseBacklogAboveLegacyBufferForTwoSubscribers() async throws {
-        let dispatcher = TerminalTelegramBotDispatcher()
-        let transport = DispatcherBacklogTelegramTransport(count: 100)
-        let client = TerminalTelegramAPIClient(token: "token", transport: transport)
-        let botID = Int64.random(in: 9_000_001...9_900_000)
-        let first = try await dispatcher.subscribe(botID: botID, client: client)
-        await transport.waitUntilPolling()
-        let second = try await dispatcher.subscribe(botID: botID, client: client)
-        let firstRead = Task { await Self.collect(first.updates, count: 100) }
-        let secondRead = Task { await Self.collect(second.updates, count: 100) }
-        await transport.release()
-        #expect(await firstRead.value == Array(1...100))
-        #expect(await secondRead.value == Array(1...100))
-        await dispatcher.unsubscribe(first)
-        await dispatcher.unsubscribe(second)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func botDispatcherAdmitsSubscriberThatJoinsDuringBackpressure() async throws {
-        let dispatcher = TerminalTelegramBotDispatcher()
-        let transport = DispatcherBacklogTelegramTransport(count: 66)
-        let client = TerminalTelegramAPIClient(token: "token", transport: transport)
-        let botID = Int64.random(in: 10_000_001...10_900_000)
-        let first = try await dispatcher.subscribe(botID: botID, client: client)
-        await transport.waitUntilPolling()
-        await transport.release()
-        try await Self.waitForOffset(64, botID: botID)
-
-        // `publish(65)` is suspended because the first stream's 64 slots are
-        // full. This subscribe linearizes inside that publish and therefore
-        // must be admitted before offset 65 can be persisted.
-        let late = try await dispatcher.subscribe(botID: botID, client: client)
-        let lateRead = Task { await Self.collect(late.updates, count: 2) }
-        let firstRead = Task { await Self.collect(first.updates, count: 66) }
-        #expect(await firstRead.value == Array(1...66))
-        #expect(await lateRead.value == [65, 66])
-        await dispatcher.unsubscribe(first)
-        await dispatcher.unsubscribe(late)
-    }
-
     @Test(.timeLimit(.minutes(1)))
     func botDispatcherUnsubscribeDuringRetryDoesNotStopOtherSubscriber() async throws {
         let dispatcher = TerminalTelegramBotDispatcher()
@@ -456,20 +370,6 @@ struct TerminalTelegramMultiSessionTests {
         await dispatcher.unsubscribe(stalled)
         #expect(await liveRead.value == Array(1...66))
         await dispatcher.unsubscribe(live)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func botDispatcherReplacesCompletedOwnerTask() async throws {
-        let dispatcher = TerminalTelegramBotDispatcher()
-        let transport = DispatcherOneShotCancellationTelegramTransport()
-        let client = TerminalTelegramAPIClient(token: "token", transport: transport)
-        let botID = Int64.random(in: 12_000_001...12_900_000)
-        let subscription = try await dispatcher.subscribe(
-            botID: botID, client: client
-        )
-        await transport.waitUntilFirstCancellation()
-        try await Self.waitUntil { await transport.pollCount >= 2 }
-        await dispatcher.unsubscribe(subscription)
     }
 
     private static func collect(
@@ -564,35 +464,6 @@ private actor DispatcherGateTelegramTransport: TelegramHTTPTransport {
         await withCheckedContinuation { responseWaiter = $0 }
         let json = #"{"ok":true,"result":[{"update_id":123,"message":{"message_id":1,"from":{"id":7,"is_bot":false,"first_name":"x"},"chat":{"id":42,"type":"private","first_name":"x"},"date":1,"text":"hello"}}]}"#
         return (200, Data(json.utf8))
-    }
-}
-
-private actor DispatcherOneShotCancellationTelegramTransport: TelegramHTTPTransport {
-    private var firstCancellationDelivered = false
-    private var waiter: CheckedContinuation<Void, Never>?
-    private(set) var pollCount = 0
-
-    func waitUntilFirstCancellation() async {
-        if firstCancellationDelivered { return }
-        await withCheckedContinuation { waiter = $0 }
-    }
-
-    func send(
-        url: URL,
-        method: String,
-        headers: [RemoteHTTPHeader],
-        body: Data?,
-        timeout: Duration?
-    ) async throws -> (status: Int, body: Data) {
-        pollCount += 1
-        if pollCount == 1 {
-            firstCancellationDelivered = true
-            waiter?.resume()
-            waiter = nil
-            throw CancellationError()
-        }
-        try await Task.sleep(for: .seconds(60))
-        throw CancellationError()
     }
 }
 

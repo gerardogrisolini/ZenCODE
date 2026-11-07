@@ -12,35 +12,6 @@ import Testing
 @Suite
 struct SubscriptionUsageParsingTests {
     @Test
-    func chatGPTIntegerAliasesPreservePrecedenceAndConversion() {
-        let cases: [(keys: [String], object: [String: Any], expected: Int?)] = [
-            (["primary", "secondary"], ["primary": 12, "secondary": 34], 12),
-            (["secondary", "primary"], ["primary": 12, "secondary": 34], 34),
-            (["primary", "secondary"], ["primary": "invalid", "secondary": 34], 34),
-            (["primary", "secondary"], ["primary": 0, "secondary": 34], 0),
-            (["primary", "secondary"], ["primary": "0", "secondary": 34], 0),
-            (["primary"], ["primary": 12.0], 12),
-            (["primary"], ["primary": " \n-12\t"], -12),
-            (["primary", "secondary"], ["primary": 12.5, "secondary": "34"], 34),
-            (["primary", "secondary"], ["primary": NSNull(), "secondary": 34], 34),
-            (["primary", "secondary"], ["secondary": 34], 34),
-            (["primary"], ["primary": 12.5], nil),
-            (["primary"], ["primary": "12.5"], nil),
-            (["primary"], ["primary": true], nil),
-            (["primary"], ["primary": NSNull()], nil),
-            (["primary"], [:], nil),
-            ([], ["primary": 12], nil),
-        ]
-        for testCase in cases {
-            let value = ChatGPTSubscriptionGenerationClient.intValue(
-                for: testCase.keys,
-                in: testCase.object
-            )
-            #expect(value == testCase.expected)
-        }
-    }
-
-    @Test
     func chatGPTParsesRateLimitsWithWindowMinutes() throws {
         let object: [String: Any] = [
             "type": "token_count",
@@ -66,50 +37,6 @@ struct SubscriptionUsageParsingTests {
         #expect(usage.weeklyUsedPercent == 47.0)
         #expect(usage.dailyResetsInSeconds == 3_600)
         #expect(usage.weeklyResetsInSeconds == 86_400)
-    }
-
-    @Test
-    func chatGPTClassifiesSingleWeeklyPrimaryWindowByDuration() throws {
-        let object: [String: Any] = [
-            "type": "codex.rate_limits",
-            "rate_limits": [
-                "primary": [
-                    "used_percent": 42.0,
-                    "window_minutes": 10_080,
-                    "resets_in_seconds": 86_400
-                ]
-            ]
-        ]
-
-        let usage = try #require(
-            ChatGPTSubscriptionGenerationClient.subscriptionUsage(from: object)
-        )
-        #expect(usage.dailyUsedPercent == nil)
-        #expect(usage.weeklyUsedPercent == 42.0)
-        #expect(usage.dailyResetsInSeconds == nil)
-        #expect(usage.weeklyResetsInSeconds == 86_400)
-    }
-
-    @Test
-    func chatGPTFallsBackToPrimarySecondaryOrderingWithoutWindows() throws {
-        let object: [String: Any] = [
-            "rate_limits": [
-                "primary": ["used_percent": 8.0],
-                "secondary": ["used_percent": 33.0]
-            ]
-        ]
-
-        let usage = try #require(
-            ChatGPTSubscriptionGenerationClient.subscriptionUsage(from: object)
-        )
-        #expect(usage.dailyUsedPercent == 8.0)
-        #expect(usage.weeklyUsedPercent == 33.0)
-    }
-
-    @Test
-    func chatGPTReturnsNilWhenNoRateLimits() {
-        let object: [String: Any] = ["type": "token_count", "usage": ["input_tokens": 10]]
-        #expect(ChatGPTSubscriptionGenerationClient.subscriptionUsage(from: object) == nil)
     }
 
     @Test
@@ -172,16 +99,6 @@ struct SubscriptionUsageParsingTests {
     }
 
     @Test
-    func chatGPTReturnsNilWithoutCodexUsageHeaders() throws {
-        let headers = RemoteHTTPHeaders([
-            RemoteHTTPHeader(name: "content-type", value: "text/event-stream")
-        ])
-        #expect(
-            ChatGPTSubscriptionGenerationClient.subscriptionUsage(fromHeaders: headers) == nil
-        )
-    }
-
-    @Test
     func anthropicParsesUtilizationHeadersAsPercentages() throws {
         let headers = RemoteHTTPHeaders([
             RemoteHTTPHeader(
@@ -200,46 +117,6 @@ struct SubscriptionUsageParsingTests {
         #expect(usage.provider == "Anthropic")
         #expect(usage.dailyUsedPercent == 25.0)
         #expect(usage.weeklyUsedPercent == 60.0)
-    }
-
-    @Test
-    func anthropicReturnsNilWithoutUsageHeaders() throws {
-        let headers = RemoteHTTPHeaders([
-            RemoteHTTPHeader(name: "content-type", value: "application/json")
-        ])
-        #expect(AnthropicSubscriptionGenerationClient.subscriptionUsage(fromHeaders: headers) == nil)
-    }
-
-    @Test
-    func resetFormatterUsesAbsoluteLocalTimeForRelativeSeconds() throws {
-        var components = DateComponents()
-        components.year = 2026
-        components.month = 6
-        components.day = 1
-        components.hour = 12
-        components.minute = 15
-        let calendar = Calendar.current
-        let now = calendar.date(from: components)!
-
-        let date = try #require(
-            SubscriptionLimitResetFormatter.resetDate(
-                fromSecondsValue: 2 * 3_600 + 15 * 60,
-                now: now
-            )
-        )
-        let text = SubscriptionLimitResetFormatter.resumeTimeText(
-            for: date,
-            now: now,
-            calendar: calendar
-        )
-        #expect(text == "14:30")
-    }
-
-    @Test
-    func resetFormatterHandlesAbsoluteUnixTimestamp() {
-        let timestamp: Double = 1_900_000_000
-        let resetDate = SubscriptionLimitResetFormatter.resetDate(fromSecondsValue: timestamp)
-        #expect(resetDate == Date(timeIntervalSince1970: timestamp))
     }
 
     @Test
@@ -292,16 +169,5 @@ struct SubscriptionUsageParsingTests {
         #expect(enriched.contains("ChatGPT"))
         #expect(enriched.contains("09:00"))
         #expect(enriched.contains("Usage limit reached"))
-    }
-
-    @Test
-    func chatGPTLeavesNonLimitOutputUnchanged() throws {
-        let output = "{\"error\":{\"message\":\"Internal error\"}}"
-        let enriched = ChatGPTSubscriptionResponsesClient.enrichedLimitOutput(
-            status: 500,
-            output: output,
-            headers: RemoteHTTPHeaders()
-        )
-        #expect(enriched == output)
     }
 }

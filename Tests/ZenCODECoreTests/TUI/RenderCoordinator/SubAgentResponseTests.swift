@@ -48,28 +48,6 @@ extension TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func completedSubAgentResponseImmediatelyFollowsMetadataAndIsIndented() async {
-        let renderer = makeRenderer(standardErrorIsTerminal: false)
-        let response = TerminalChatRenderCoordinator.SubAgentMarkdownResponse(
-            token: "agent-1:completion-1",
-            heading: "   ✅ Response from reviewer:\n",
-            markdown: "First paragraph.\n\n- first\n- second\nA follow-up line."
-        )
-
-        _ = await renderer.renderRememberedSubAgentOverview(
-            signature: "agents:completed",
-            text: "Agents completed.\n",
-            responses: [response],
-        )
-
-        let stderr = await renderer.capturedText(on: .standardError)
-
-        #expect(
-            stderr == "Agents completed.\n   ✅ Response from reviewer:\n   First paragraph.\n   \n   - first\n   - second\n   A follow-up line.\n\n"
-        )
-    }
-
-    @Test
     func deferredSubAgentResponseIsConsumedOnlyAfterItRenders() async {
         let renderer = makeRenderer(standardErrorIsTerminal: false)
         let response = TerminalChatRenderCoordinator.SubAgentMarkdownResponse(

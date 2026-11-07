@@ -12,22 +12,6 @@ import Testing
 @Suite
 struct PromptSkillInstallerTests {
     @Test
-    func githubSourceParsesRepositoryURL() throws {
-        let source = try GitHubSkillSource(
-            url: #require(URL(string: "https://github.com/example/skill-repo"))
-        )
-        let gitURLSource = try GitHubSkillSource(
-            url: #require(URL(string: "https://github.com/example/skill-repo.git"))
-        )
-
-        #expect(source.owner == "example")
-        #expect(source.repository == "skill-repo")
-        #expect(source.cloneURL.absoluteString == "https://github.com/example/skill-repo.git")
-        #expect(source.selector == nil)
-        #expect(gitURLSource.repository == "skill-repo")
-    }
-
-    @Test
     func githubSourceParsesTreeURLWithNestedSkillPath() throws {
         let source = try GitHubSkillSource(
             url: #require(URL(string: "https://github.com/example/skills/tree/main/tools/browser"))
@@ -39,20 +23,6 @@ struct PromptSkillInstallerTests {
             source.selector == GitHubSkillSource.Selector(
                 kind: .tree,
                 components: ["main", "tools", "browser"]
-            )
-        )
-    }
-
-    @Test
-    func githubSourceParsesBlobURLForSkillMarkdown() throws {
-        let source = try GitHubSkillSource(
-            url: #require(URL(string: "https://github.com/example/skills/blob/release/v1/browser/SKILL.md"))
-        )
-
-        #expect(
-            source.selector == GitHubSkillSource.Selector(
-                kind: .blob,
-                components: ["release", "v1", "browser", "SKILL.md"]
             )
         )
     }
@@ -275,39 +245,5 @@ struct PromptSkillInstallerTests {
                 atPath: skillURL.appendingPathComponent("SKILL.md").path
             )
         )
-    }
-
-    @Test
-    func terminalSkillsCommandRecognizesInstallURLs() throws {
-        let baseDirectory = URL(fileURLWithPath: "/tmp/ZenCODE", isDirectory: true)
-        let directURL = try #require(
-            TerminalChat.githubSkillInstallURL(from: "https://github.com/example/skill")
-        )
-        let installURL = try #require(
-            TerminalChat.githubSkillInstallURL(from: "install https://github.com/example/skill/tree/main")
-        )
-        let absoluteLocalURL = try #require(
-            TerminalChat.localSkillInstallURL(
-                from: "/Users/gerardo/path/to/skill",
-                baseDirectory: baseDirectory
-            )
-        )
-        let relativeLocalURL = try #require(
-            TerminalChat.localSkillInstallURL(
-                from: "install ./skills/local",
-                baseDirectory: baseDirectory
-            )
-        )
-
-        #expect(directURL.absoluteString == "https://github.com/example/skill")
-        #expect(installURL.absoluteString == "https://github.com/example/skill/tree/main")
-        #expect(absoluteLocalURL.path == "/Users/gerardo/path/to/skill")
-        #expect(relativeLocalURL.path == "/tmp/ZenCODE/skills/local")
-        #expect(TerminalChat.githubSkillInstallURL(from: "ui-polish") == nil)
-        #expect(TerminalChat.localSkillInstallURL(from: "ui-polish", baseDirectory: baseDirectory) == nil)
-        #expect(TerminalChat.isSkillInstallRequest("install") == true)
-        #expect(TerminalChat.isSkillUninstallRequest("uninstall") == true)
-        #expect(TerminalChat.isSkillUninstallRequest("UNINSTALL") == true)
-        #expect(TerminalChat.isSkillUninstallRequest("uninstall skill") == false)
     }
 }

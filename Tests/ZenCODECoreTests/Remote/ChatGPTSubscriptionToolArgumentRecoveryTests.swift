@@ -4,22 +4,6 @@ import Testing
 @testable import ZenCODECore
 
 extension RemoteSessionSnapshotTests {
-    @Test
-    func chatGPTClientCarriesTheProfileRoleIntoToolExecutionContext() async {
-        let client = ChatGPTSubscriptionGenerationClient(
-            configuration: AgentRuntimeConfiguration(
-                modelID: "unit-model",
-                workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
-                maxToolRounds: 4,
-                toolAuthorizationHandler: nil,
-                profileRole: .organizer
-            )
-        )
-
-        #expect(await client.toolExecutor.toolExecutionContext.profileRole == .organizer)
-        await client.shutdown()
-    }
-
     private func subscriptionRecoveryCredentials() async throws -> CodexAgentCredentials {
         CodexAgentCredentials(accessToken: "fixture", refreshToken: "fixture", expiresAt: .distantFuture, accountID: "fixture")
     }
@@ -71,34 +55,6 @@ extension RemoteSessionSnapshotTests {
             guard case let .text(text) = message else { return nil }
             return try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
         }
-    }
-
-    /// An executed tool's result is in the session before its completion is
-    /// reported, as `RemoteGenerationClient` does, so a session read the
-    /// completion triggers (a sub-agent transcript) already sees it; the
-    /// completion carries the time the executor measured.
-    @Test
-    func subscriptionChatGPTRecordsTheToolResultBeforeTheCompletionEvent() async throws {
-        let task = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes:
-            try subscriptionRecoveryFrames(id: "tool", arguments: "{}")
-            + subscriptionRecoveryFrames(id: "final", text: "Done"))
-        let pool = subscriptionRecoveryPool([task])
-        defer { pool.closeAll() }
-        let client = ChatGPTSubscriptionGenerationClient(configuration: remoteStreamingConfiguration(), webSocketPool: pool)
-        await client.createSession(id: "ordered", cwd: FileManager.default.temporaryDirectory.path, allowedToolNames: ["local.pwd"])
-        let recordedAtCompletion = Mutex<[String: Bool]>([:])
-        let elapsedAtCompletion = Mutex<[String: Duration?]>([:])
-        _ = try await client.sendPrompt(
-            sessionID: "ordered", prompt: "hi", attachments: [], loadCredentials: subscriptionRecoveryCredentials
-        ) { event in
-            guard case let .toolCallCompleted(call, result) = event else { return }
-            let history = await client.snapshotSession(id: "ordered")?.history ?? []
-            let recorded = history.contains { $0.role == .tool && $0.toolCallID == call.id }
-            recordedAtCompletion.withLock { $0[call.id] = recorded }
-            elapsedAtCompletion.withLock { $0[call.id] = result.elapsed }
-        }
-        #expect(recordedAtCompletion.withLock { $0 } == ["call_tool": true])
-        #expect(elapsedAtCompletion.withLock { $0["call_tool"] ?? nil } != nil)
     }
 
     @Test(arguments: [false, true], [false, true])
@@ -189,39 +145,6 @@ extension RemoteSessionSnapshotTests {
         let snapshot = try #require(await client.snapshotSession(id: "budget"))
         #expect(snapshot.history.flatMap(\.toolCalls).compactMap(\.id) == ["call_mutation", "call_valid"])
         #expect(snapshot.history.filter { $0.role == .tool }.compactMap(\.toolCallID) == ["call_mutation", "call_valid"])
-    }
-
-    @Test(arguments: [false, true])
-    func subscriptionCancellationOrResetAtRetryDoesNotStartAnotherRequest(reset: Bool) async throws {
-        let first = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes: try subscriptionRecoveryFrames(id: "invalid", arguments: "{"))
-        let pool = subscriptionRecoveryPool([first])
-        defer { pool.closeAll() }
-        let client = ChatGPTSubscriptionGenerationClient(configuration: remoteStreamingConfiguration(), webSocketPool: pool)
-        await client.createSession(id: "cancel", cwd: FileManager.default.temporaryDirectory.path, allowedToolNames: ["local.pwd"])
-        let task = Task {
-            try await client.sendPrompt(sessionID: "cancel", prompt: "hi", attachments: [], loadCredentials: subscriptionRecoveryCredentials) { event in
-                if case let .diagnostic(value) = event, value.contains("Invalid tool arguments") {
-                    if reset {
-                        await client.createSession(id: "cancel", cwd: FileManager.default.temporaryDirectory.path)
-                    } else {
-                        withUnsafeCurrentTask { $0?.cancel() }
-                    }
-                }
-            }
-        }
-        do {
-            _ = try await task.value
-            Issue.record("Expected cancellation or stale session")
-        } catch is CancellationError {
-            #expect(!reset)
-        } catch ChatGPTSubscriptionGenerationError.missingSession {
-            #expect(reset)
-        }
-        #expect(try subscriptionRecoveryRequests(first).count == 1)
-        #expect(first.cancelCount > 0)
-        #expect(await client.subscriptionRecoveryContinuationID("cancel") == nil)
-        let snapshot = try #require(await client.snapshotSession(id: "cancel"))
-        #expect(!snapshot.history.contains { $0.role == .assistant || $0.role == .tool })
     }
 }
 

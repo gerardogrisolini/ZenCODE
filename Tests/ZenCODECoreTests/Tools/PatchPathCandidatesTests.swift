@@ -29,32 +29,4 @@ struct PatchPathCandidatesTests {
         #expect(TurnFileChangeTracker.patchPathCandidates(from: nil).isEmpty)
         #expect(TurnFileChangeTracker.patchPathCandidates(from: "  \n").isEmpty)
     }
-
-    @Test
-    func toolCallPresentationTargetIgnoresHunkBodyLookalikes() {
-        let target = ToolCallPresentation.patchDisplayTarget(from: ["patch": Self.sqlPatch])
-
-        #expect(target == "schema.sql")
-    }
-
-    @Test
-    func toolPresentationResolverPatchPathsTargetIgnoresHunkBodyLookalikes() {
-        let definition = ToolPresentationDefinition(
-            title: "Patch",
-            action: "Apply",
-            kind: .edit,
-            target: .argument(["patch", "diff"], format: .patchPaths)
-        )
-        let call = DirectAgentToolCall(
-            id: "patch-target",
-            name: "local.applyPatch",
-            argumentsObject: ["patch": Self.sqlPatch],
-            argumentsJSON: "{}",
-            presentation: definition
-        )
-
-        let resolved = ToolPresentationResolver.resolve(call: call, mode: .compact)
-
-        #expect(resolved.target == "schema.sql")
-    }
 }

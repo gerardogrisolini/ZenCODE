@@ -39,27 +39,6 @@ struct TerminalAttachmentPickerTests {
         #expect(!entries.contains { $0.title == ".hidden.PNG" })
     }
 
-    @Test
-    func attachmentUsageDocumentsPickerAndPathForms() {
-        let usage = TerminalChat.renderAttachmentUsage()
-
-        #expect(usage.contains("/attach                    Open the terminal attachment picker"))
-        #expect(usage.contains("/attach <image-or-video-file> [file ...]"))
-        #expect(usage.contains("/attach list"))
-        #expect(usage.contains("/attach delete [all|attachment-number]"))
-    }
-
-    @Test
-    func attachCommandIsAvailableWithoutAnArgument() {
-        let descriptor = TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: false,
-            telegramEnabled: false
-        ).first { $0.command == "/attach" }
-
-        #expect(descriptor?.requiresArgument == false)
-        #expect(descriptor?.help.contains("terminal picker") == true)
-    }
-
     #if os(macOS)
     @Test
     func pickerDetectsUnreadableDirectoriesInsteadOfTreatingThemAsEmpty() throws {

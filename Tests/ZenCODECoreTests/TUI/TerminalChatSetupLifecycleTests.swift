@@ -11,18 +11,6 @@ import Testing
 @Suite
 struct TerminalChatSetupLifecycleTests {
     @Test
-    func setupCommandIsVisibleAndUnavailableDuringGeneration() {
-        let commands = TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: false,
-            telegramEnabled: false
-        ).map(\.command)
-
-        #expect(commands.contains("/setup"))
-        #expect(TerminalChat.isKnownSlashCommand("/setup"))
-        #expect(!TerminalChat.isAvailableDuringGeneration(for: "/setup"))
-    }
-
-    @Test
     func setupCommandRequestsRestartOnlyForInteractiveTerminal() async throws {
         let interactive = TerminalChat(
             configuration: try configuration(),

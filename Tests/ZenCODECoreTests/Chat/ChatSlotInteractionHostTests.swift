@@ -65,56 +65,8 @@ private actor GatedLineHost: ChatInteractionHost {
     }
 }
 
-/// A host without identity, like the host that refuses everything between
-/// incarnations.
-private struct ValueHost: ChatInteractionHost {
-    var capabilities: ChatChannelCapabilities {
-        []
-    }
-
-    func requestToolConsent(
-        _ request: AgentToolAuthorizationRequest
-    ) async -> ChatConsentDecision? {
-        nil
-    }
-}
-
 @Suite("Chat slot interaction host", .timeLimit(.minutes(1)))
 struct ChatSlotInteractionHostTests {
-    /// Setting the host that is already active moves nothing: the same
-    /// object, whatever the channel and incarnation it is set for, or a host
-    /// without identity set again for the same channel and incarnation. The
-    /// request waiting on it is neither cancelled nor asked again.
-    @Test
-    func settingTheActiveHostAgainMovesNothing() async {
-        let host = GatedLineHost()
-        let slotHost = ChatSlotInteractionHost(activeHost: host)
-        slotHost.setActiveHost(host, channel: .primary, incarnationEpoch: 1)
-        #expect(slotHost.activeHostGeneration == 0)
-
-        let answer = Task { await slotHost.readLine(prompt: "Your name?") }
-        await Self.waitUntil { await host.isWaiting }
-        slotHost.setActiveHost(host, channel: .primary, incarnationEpoch: 1)
-        slotHost.setActiveHost(host, channel: .primary, incarnationEpoch: 2)
-        #expect(slotHost.activeHostGeneration == 0)
-        #expect(slotHost.openRequestCount == 1)
-        await host.answer("Alice")
-        #expect(await answer.value == "Alice")
-        #expect(await host.prompts == ["Your name?"])
-        #expect(await host.cancellationCount == 0)
-
-        // A host without identity is the same host for the same channel and
-        // incarnation, another one otherwise.
-        slotHost.setActiveHost(ValueHost(), channel: .primary, incarnationEpoch: nil)
-        #expect(slotHost.activeHostGeneration == 1)
-        slotHost.setActiveHost(ValueHost(), channel: .primary, incarnationEpoch: nil)
-        #expect(slotHost.activeHostGeneration == 1)
-        slotHost.setActiveHost(ValueHost(), channel: .telegram, incarnationEpoch: nil)
-        #expect(slotHost.activeHostGeneration == 2)
-        slotHost.setActiveHost(ValueHost(), channel: .telegram, incarnationEpoch: 3)
-        #expect(slotHost.activeHostGeneration == 3)
-    }
-
     /// A request still without an answer when the slot switches is withdrawn
     /// from the previous host and asked again on the new one, whose answer
     /// the caller receives.

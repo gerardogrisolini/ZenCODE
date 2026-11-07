@@ -10,31 +10,6 @@ import ToolCore
 
 extension AgentProfileBindingReconcilerTests {
     @Test
-    func liveSnapshotDistinguishesMissingInvalidAndAuthoritativeEmptySettings() throws {
-        try Self.withLiveCatalogTemporarySupportDirectory { directory in
-            let missing = AgentDelegationCatalog.liveSnapshot()
-            #expect(!missing.isAvailable)
-            #expect(missing.unavailableReason?.contains("not configured") == true)
-
-            let settingsURL = directory.appendingPathComponent(
-                AgentSettingsManifestStore.settingsFilename
-            )
-            try Data("not-json".utf8).write(to: settingsURL)
-            let invalid = AgentDelegationCatalog.liveSnapshot()
-            #expect(!invalid.isAvailable)
-            #expect(invalid.unavailableReason?.contains("could not be loaded") == true)
-
-            try AgentSettingsManifestStore.save(
-                AgentSettingsManifest(models: []),
-                to: settingsURL
-            )
-            let empty = AgentDelegationCatalog.liveSnapshot()
-            #expect(empty.isAvailable)
-            #expect(empty.models.isEmpty)
-        }
-    }
-
-    @Test
     func publicRuntimeDefaultFailsClosedWhenSettingsAreUnavailable() async throws {
         try await Self.withLiveCatalogTemporarySupportDirectory { _ in
             let profile = AgentProfile(

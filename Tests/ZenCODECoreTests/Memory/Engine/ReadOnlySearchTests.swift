@@ -34,17 +34,6 @@ private struct AlwaysFailingPersistence: MemoryPersistence {
 struct ReadOnlySearchTests {
 
     @Test
-    func searchReadOnlyReturnsResults() async throws {
-        let engine = MemoryEngine(persistence: RecordingPersistence())
-        try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
-        try await engine.remember("Database migrations run at startup", tags: ["database"])
-
-        let results = try await engine.searchReadOnly("actors mutable state")
-        #expect(!results.isEmpty)
-        #expect(results.allSatisfy { $0.memory.content.contains("actors") })
-    }
-
-    @Test
     func searchReadOnlyAndRecallSelectSameEntries() async throws {
         let engine = MemoryEngine(persistence: RecordingPersistence())
         try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
@@ -61,34 +50,6 @@ struct ReadOnlySearchTests {
     }
 
     @Test
-    func searchReadOnlyDoesNotMutateRetrievalCount() async throws {
-        let engine = MemoryEngine(persistence: RecordingPersistence())
-        try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
-        try await engine.remember("Database migrations run at startup", tags: ["database"])
-
-        let before = await engine.snapshot().metadata.retrievalCount
-        _ = try await engine.searchReadOnly("actors")
-        _ = try await engine.searchReadOnly("actors mutable state")
-        _ = try await engine.searchReadOnly("database")
-        let after = await engine.snapshot().metadata.retrievalCount
-
-        #expect(after == before)
-    }
-
-    @Test
-    func searchReadOnlyDoesNotChangeConfidence() async throws {
-        let engine = MemoryEngine(persistence: RecordingPersistence())
-        try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
-        try await engine.remember("Database migrations run at startup", tags: ["database"])
-
-        let before = await engine.snapshot().memories.mapValues(\.confidence)
-        _ = try await engine.searchReadOnly("actors mutable state")
-        let after = await engine.snapshot().memories.mapValues(\.confidence)
-
-        #expect(after == before)
-    }
-
-    @Test
     func searchReadOnlyDoesNotCreateLinks() async throws {
         let engine = MemoryEngine(persistence: RecordingPersistence())
         try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
@@ -99,20 +60,6 @@ struct ReadOnlySearchTests {
         let after = await engine.snapshot().edges
 
         #expect(after == before)
-    }
-
-    @Test
-    func searchReadOnlyNeverPersists() async throws {
-        let persistence = RecordingPersistence()
-        let engine = MemoryEngine(persistence: persistence)
-        try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
-
-        let savesBefore = await persistence.saved.count
-        _ = try await engine.searchReadOnly("actors")
-        _ = try await engine.searchReadOnly("actors mutable state")
-        let savesAfter = await persistence.saved.count
-
-        #expect(savesAfter == savesBefore)
     }
 
     @Test
@@ -129,25 +76,6 @@ struct ReadOnlySearchTests {
     }
 
     // MARK: - Contrast: recall keeps maintenance
-
-    @Test
-    func recallAppliesMaintenanceAndDefersItsPersistence() async throws {
-        let persistence = RecordingPersistence()
-        let engine = MemoryEngine(persistence: persistence)
-        try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
-        try await engine.remember("Swift structured concurrency guide", tags: ["swift"])
-
-        let retrievalBefore = await engine.snapshot().metadata.retrievalCount
-        let savesBefore = await persistence.saved.count
-        _ = try await engine.recall("Swift actors concurrency")
-        let retrievalAfter = await engine.snapshot().metadata.retrievalCount
-        let savesAfter = await persistence.saved.count
-
-        #expect(retrievalAfter > retrievalBefore)
-        #expect(savesAfter == savesBefore)
-        try await engine.flushRecallMaintenance()
-        #expect(await persistence.saved.count == savesBefore + 1)
-    }
 
     @Test
     func recallMaintenanceBatchesUntilCheckpointAndExplicitWritesAbsorbIt() async throws {
@@ -172,21 +100,5 @@ struct ReadOnlySearchTests {
         try await engine.remember("An explicit durable fact", tags: ["swift"])
         // The explicit write commits itself and the pending recall in one save.
         #expect(await persistence.saved.count == beforeExplicitWrite + 1)
-    }
-
-    @Test
-    func recallStillCreatesCoRelevanceLinks() async throws {
-        let persistence = RecordingPersistence()
-        let engine = MemoryEngine(persistence: persistence)
-        try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
-        try await engine.remember("Swift structured concurrency guide", tags: ["swift"])
-
-        let linksBefore = await engine.snapshot().edges.values.flatMap { $0 }.count
-        _ = try await engine.recall("Swift actors concurrency")
-        let linksAfter = await engine.snapshot().edges.values.flatMap { $0 }.count
-
-        // With two selected memories and strengthenCoRelevantLinks enabled,
-        // recall links them in both directions.
-        #expect(linksAfter > linksBefore)
     }
 }

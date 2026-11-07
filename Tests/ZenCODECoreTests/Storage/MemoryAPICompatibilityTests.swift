@@ -23,36 +23,6 @@ struct MemoryAPICompatibilityTests {
     // MARK: - MemoryEntry DTO contract
 
     @Test
-    func memoryEntryIdIsUUID() {
-        let entry = MemoryEntry(content: "Summary: test fact.")
-        // The public id is typed as UUID.
-        let _: UUID = entry.id
-    }
-
-    @Test
-    func memoryEntryIsHashable() {
-        let entry = MemoryEntry(content: "Summary: hashable entry.")
-        // Hashable conformance is satisfied; the type is usable in Set/Dictionary.
-        let set: Set<MemoryEntry> = [entry]
-        #expect(set.contains(entry))
-        #expect(set.count == 1)
-    }
-
-    @Test
-    func memoryEntryIsIdentifiable() {
-        let id = UUID()
-        let entry = MemoryEntry(content: "x", id: id)
-        #expect(entry.id == id)
-    }
-
-    @Test
-    func memoryEntryScopeIsProject() {
-        let entry = MemoryEntry(content: "x")
-        #expect(entry.scope == .project)
-        #expect(MemoryScope.allCases == [.project])
-    }
-
-    @Test
     func memoryEntryCodableRoundTrips() throws {
         let original = MemoryEntry(
             content: "Summary: codable round-trip.",
@@ -91,13 +61,6 @@ struct MemoryAPICompatibilityTests {
     }
 
     // MARK: - MemoryScope / MemoryCategory contract
-
-    @Test
-    func memoryScopeIsHashableAndCaseIterable() {
-        let scopes: Set<MemoryScope> = [.project, .project]
-        #expect(scopes.count == 1)
-        #expect(MemoryScope.project.rawValue == "project")
-    }
 
     @Test
     func memoryCategoryIsHashableAndCodable() throws {
@@ -226,17 +189,6 @@ struct MemoryAPICompatibilityTests {
         // The normalization shim must still behave like the 1.1.x original.
         #expect(normalize("  Summary:   spaced\r\n  out  ") == "Summary: spaced\n out")
         #expect(normalize("x") == MemoryContent.normalized("x"))
-    }
-
-    @available(*, deprecated)
-    @Test
-    func legacyMemoryToolExecuteIsSynchronousInASyncContext() {
-        // The 1.1.4 spelling: `try MemoryTool.execute(...)`, no `await`.
-        let execute: (ToolRequest, MemoryToolContext, MemoryService) throws -> ToolExecutionOutput =
-            MemoryTool.execute(_:context:memoryService:)
-        // Unapplied reference proves the sync overload exists with the exact
-        // legacy signature; `memoryService` also still has its default value.
-        _ = execute
     }
 
     /// The legacy tool entry point, driven the 1.1.4 way from a synchronous
@@ -759,19 +711,5 @@ struct MemoryAPICompatibilityTests {
                 return "late"
             }
         }
-    }
-
-    /// A mutation that finishes within the budget returns immediately, just
-    /// like the read bridge.
-    @Test
-    func mutationBridgeFastPathReturnsImmediately() throws {
-        let result = try MemoryLegacyBridge.runBlockingMutation(
-            "test-fast-mutation",
-            timeout: 5.0
-        ) {
-            return "fast"
-        }
-
-        #expect(result == "fast")
     }
 }

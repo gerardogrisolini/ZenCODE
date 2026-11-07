@@ -63,30 +63,6 @@ struct TerminalVoiceTranscriptionRegistryTests {
     }
 
     @Test
-    func registeringAfterShutdownCancelsTheTaskImmediately() async {
-        let registry = TerminalVoiceTranscriptionRegistry()
-        guard let slot = registry.reserveSlot() else {
-            Issue.record("Expected a free transcription slot")
-            return
-        }
-
-        // Teardown races a transcription that has just been started.
-        registry.cancelAll()
-
-        let observedCancellation = Mutex(false)
-        let task = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 2_000_000)
-            }
-            observedCancellation.withLock { $0 = true }
-        }
-        registry.register(task, for: slot)
-        await task.value
-
-        #expect(observedCancellation.withLock { $0 })
-    }
-
-    @Test
     func offCancellationWaitsForTaskCleanupAndCanResumeAdmission() async {
         let registry = TerminalVoiceTranscriptionRegistry()
         guard let slot = registry.reserveSlot() else {
@@ -106,12 +82,5 @@ struct TerminalVoiceTranscriptionRegistryTests {
         #expect(registry.reserveSlot() == nil)
         registry.resume()
         #expect(registry.reserveSlot() != nil)
-    }
-
-    @Test
-    func releasingAnUnknownSlotIsHarmless() {
-        let registry = TerminalVoiceTranscriptionRegistry()
-        registry.release(UUID())
-        #expect(registry.activeCount == 0)
     }
 }

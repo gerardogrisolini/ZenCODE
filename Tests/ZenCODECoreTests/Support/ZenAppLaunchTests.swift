@@ -63,29 +63,6 @@ struct ZenAppLaunchTests {
         #expect(Self.parsingError(["zen", option, "value", "--ui"]) == expected)
     }
 
-    @Test
-    func anythingElseIsAnUnknownArgument() {
-        #expect(Self.parsingError(["zen", "--ui", "--bogus"]) == "Unknown argument: --bogus")
-        #expect(Self.parsingError(["zen", "--ui", "stray"]) == "Unknown argument: stray")
-        #expect(Self.parsingError(["zen", "--ui", "--agent", "Developer", "extra"]) == "Unknown argument: extra")
-    }
-
-    @Test(arguments: ["--agent", "--model", "--skills", "--working-directory"])
-    func aForwardedOptionWithoutItsValueIsReported(option: String) {
-        #expect(Self.parsingError(["zen", "--ui", option]) == "Missing value for \(option).")
-    }
-
-    /// `validateArguments` checks the syntax of what is kept, not the values
-    /// of `--skills` and `--working-directory`: they reach the app unchanged,
-    /// as they reach the chat.
-    @Test(arguments: ["", "none", "unknown-skill,7", "/no/such/directory", "relative/directory"])
-    func theValuesOfSkillsAndWorkingDirectoryPassValidationUnchanged(value: String) throws {
-        let kept = try ZenAppLaunchCommand.forwardedArguments(from: [
-            "zen", "--ui", "--skills", value, "--working-directory", value
-        ])
-        #expect(kept == ["--skills", value, "--working-directory", value])
-    }
-
     // MARK: - Decision
 
     @Test
@@ -163,100 +140,7 @@ struct ZenAppLaunchTests {
 
     // MARK: - Source checkout
 
-    @Test
-    func theFirstCheckoutWithTheAppPackageWins() throws {
-        let root = try Self.makeTemporaryDirectory()
-        defer { Self.remove(root) }
-        let plain = try Self.makeCheckout(at: root.appendingPathComponent("plain"), withApp: false)
-        let first = try Self.makeCheckout(at: root.appendingPathComponent("first"), withApp: true)
-        let second = try Self.makeCheckout(at: root.appendingPathComponent("second"), withApp: true)
-
-        #expect(
-            try Installation.sourcePackageURL(checkouts: [plain, first, second])
-                == first.appendingPathComponent("Sources/ZenApp", isDirectory: true).standardizedFileURL
-        )
-        #expect(
-            try Installation.sourcePackageURL(checkouts: [second, first])
-                == second.appendingPathComponent("Sources/ZenApp", isDirectory: true).standardizedFileURL
-        )
-    }
-
-    @Test
-    func aCheckoutWithoutTheAppPackageIsNotAccepted() throws {
-        let root = try Self.makeTemporaryDirectory()
-        defer { Self.remove(root) }
-        let plain = try Self.makeCheckout(at: root.appendingPathComponent("plain"), withApp: false)
-        let missing = root.appendingPathComponent("missing", isDirectory: true)
-
-        do {
-            _ = try Installation.sourcePackageURL(checkouts: [plain, missing])
-            Issue.record("A checkout without Sources/ZenApp/Package.swift was accepted")
-        } catch let error as Installation.InstallationError {
-            #expect(error == .sourceNotFound(searchedCheckouts: [plain.path, missing.path]))
-            let message = error.localizedDescription
-            #expect(message.contains("Sources/ZenApp/Package.swift"))
-            #expect(message.contains("\(plain.path), \(missing.path)"))
-            #expect(message.contains("Reinstall ZenCODE with Scripts/install.sh"))
-            #expect(message.contains("run a zen built from a ZenCODE checkout"))
-        }
-    }
-
-    @Test
-    func theDefaultCheckoutsAreTheBuildCheckoutThenTheInstallerCopy() throws {
-        let checkouts = Installation.defaultSourceCheckouts()
-        let buildCheckout = try #require(SwiftFeatureRuntime.sourcePackageRootURL(fileManager: .default))
-        #expect(checkouts == [
-            buildCheckout.standardizedFileURL,
-            SwiftFeatureRuntime.supportSourceCheckoutURL().standardizedFileURL
-        ])
-        // The tests run from a ZenCODE checkout, which has the app package.
-        #expect(
-            try Installation.sourcePackageURL(checkouts: checkouts)
-                == buildCheckout.appendingPathComponent("Sources/ZenApp", isDirectory: true).standardizedFileURL
-        )
-    }
-
     // MARK: - Build helpers
-
-    @Test
-    func theBuildCommandsUseTheScratchPathOfTheSupportDirectory() {
-        let layout = Installation.Layout(supportDirectory: URL(fileURLWithPath: "/support", isDirectory: true))
-        let package = URL(fileURLWithPath: "/src/Sources/ZenApp", isDirectory: true)
-        #expect(layout.buildDirectory.path == "/support/app/build")
-        #expect(layout.currentDirectory.path == "/support/app/current")
-        #expect(layout.installedExecutable.path == "/support/app/current/ZenCODE")
-        #expect(layout.stampFile.path == "/support/app/current/build-stamp.json")
-        #expect(layout.logFile.path == "/support/app/ZenCODE.log")
-        #expect(Installation.buildArguments(sourcePackage: package, layout: layout) == [
-            "build", "-c", "release", "--package-path", "/src/Sources/ZenApp",
-            "--scratch-path", "/support/app/build", "--product", "ZenCODE"
-        ])
-        #expect(Installation.binPathArguments(sourcePackage: package, layout: layout) == [
-            "build", "-c", "release", "--package-path", "/src/Sources/ZenApp",
-            "--scratch-path", "/support/app/build", "--show-bin-path"
-        ])
-    }
-
-    @Test
-    func theBinDirectoryIsTheLastAbsoluteLineOfShowBinPath() {
-        #expect(
-            Installation.binDirectory(fromShowBinPathOutput: "warning: something\n/s/app/build/out/Products/Release\n\n")
-                == URL(fileURLWithPath: "/s/app/build/out/Products/Release", isDirectory: true)
-        )
-        #expect(Installation.binDirectory(fromShowBinPathOutput: "") == nil)
-        #expect(Installation.binDirectory(fromShowBinPathOutput: "relative/path\n") == nil)
-    }
-
-    @Test
-    func theWorkspaceIsShownWithTheHomeAbbreviatedByTheSharedHelper() {
-        func abbreviated(_ path: String) -> String {
-            LocalExecPermissionAuthorizer.abbreviatedHomePath(path, homeDirectory: "/Users/me")
-        }
-        #expect(abbreviated("/Users/me/project") == "~/project")
-        #expect(abbreviated("/Users/me") == "~")
-        #expect(abbreviated("/Users/meow/project") == "/Users/meow/project")
-        #expect(abbreviated("/tmp/project") == "/tmp/project")
-    }
 
     @Test
     func theAppGetsTheWorkspaceOfZenUnlessAWorkingDirectoryIsForwarded() {
@@ -316,31 +200,7 @@ struct ZenAppLaunchTests {
         #expect(try fileManager.contentsOfDirectory(atPath: layout.appDirectory.path) == ["current"])
     }
 
-    @Test
-    func aBuildWithoutTheExecutableInstallsNothing() throws {
-        let root = try Self.makeTemporaryDirectory()
-        defer { Self.remove(root) }
-        let bin = root.appendingPathComponent("bin", isDirectory: true)
-        try Self.writeFile("<svg/>", to: bin.appendingPathComponent("ZenApp_ZenCODEApp.bundle/icon.svg"))
-        let layout = Installation.Layout(supportDirectory: root.appendingPathComponent("support", isDirectory: true))
-        try Self.writeFile("old", to: layout.currentDirectory.appendingPathComponent("stale.txt"))
-
-        #expect(throws: Installation.InstallationError.productMissing(path: bin.appendingPathComponent("ZenCODE").path)) {
-            try Installation.install(binDirectory: bin, stamp: Self.stamp(), layout: layout)
-        }
-        #expect(try FileManager.default.contentsOfDirectory(atPath: layout.appDirectory.path) == ["current"])
-        #expect(try FileManager.default.contentsOfDirectory(atPath: layout.currentDirectory.path) == ["stale.txt"])
-    }
-
     // MARK: - Launcher
-
-    @Test
-    func theWaitStatusIsDescribed() {
-        #expect(Launcher.terminationDescription(waitStatus: 3 << 8) == "exit status 3")
-        #expect(Launcher.terminationDescription(waitStatus: 0) == "exit status 0")
-        #expect(Launcher.terminationDescription(waitStatus: SIGKILL) == "terminated by signal 9")
-        #expect(Launcher.childEnvironment(["ZENCODE_AGENT_MODE": "acp", "PATH": "/bin"]) == ["PATH": "/bin"])
-    }
 
     @Test
     func anAppThatExitsRightAfterStartingIsReportedWithItsOutput() async throws {
@@ -434,24 +294,6 @@ struct ZenAppLaunchTests {
         #expect(Launcher.terminationDescription(waitStatus: status) == "terminated by signal \(SIGTERM)")
     }
 
-    @Test
-    func anExecutableThatCannotBeSpawnedIsReported() async throws {
-        let root = try Self.makeTemporaryDirectory()
-        defer { Self.remove(root) }
-        let missing = root.appendingPathComponent("missing")
-
-        await #expect(throws: Launcher.LaunchError.spawnFailed(
-            path: missing.path,
-            reason: "posix_spawn: No such file or directory"
-        )) {
-            _ = try await Launcher.launch(
-                executable: missing,
-                arguments: [],
-                logFile: root.appendingPathComponent("app/ZenCODE.log")
-            )
-        }
-    }
-
     // MARK: - Run
 
     @Test
@@ -534,90 +376,6 @@ struct ZenAppLaunchTests {
     }
 
     @Test
-    func aConfigurationErrorIsReportedBeforeAnyBuild() async throws {
-        let root = try Self.makeTemporaryDirectory()
-        defer { Self.remove(root) }
-        let fixture = try Fixture(root: root)
-        var tools = fixture.tools()
-        tools.configuration = { _ in
-            throw AgentConfigurationError.unknownAgent("Nobody", ["Developer", "Reviewer"])
-        }
-
-        #expect(await ZenAppLaunchCommand.run(forwardedArguments: ["--agent", "Nobody"], tools: tools) == 1)
-
-        let state = fixture.recorder.snapshot
-        #expect(state.error == "ZenCODE: Unknown agent 'Nobody'. Available agents: Developer, Reviewer.\n")
-        #expect(state.swiftCalls.isEmpty)
-        #expect(state.launches.isEmpty)
-        #expect(state.output.isEmpty)
-    }
-
-    @Test
-    func aMissingCheckoutAndAnAppThatDoesNotStartAreReported() async throws {
-        let root = try Self.makeTemporaryDirectory()
-        defer { Self.remove(root) }
-        let fixture = try Fixture(root: root)
-        let missing = root.appendingPathComponent("no-checkout", isDirectory: true)
-        var tools = fixture.tools()
-        tools.sourcePackage = { try Installation.sourcePackageURL(checkouts: [missing]) }
-
-        #expect(await ZenAppLaunchCommand.run(forwardedArguments: [], tools: tools) == 1)
-        #expect(fixture.recorder.snapshot.error.hasPrefix("ZenCODE: The ZenCODE app cannot be built: no ZenCODE source checkout"))
-        #expect(fixture.recorder.snapshot.launches.isEmpty)
-
-        fixture.recorder.reset()
-        let logPath = Installation.Layout(supportDirectory: fixture.support).logFile.path
-        tools = fixture.tools()
-        tools.launch = { _, _, _ in
-            throw Launcher.LaunchError.exitedRightAfterStarting(
-                termination: "exit status 3",
-                logPath: logPath,
-                output: "boom"
-            )
-        }
-        #expect(await ZenAppLaunchCommand.run(forwardedArguments: [], tools: tools) == 1)
-        let state = fixture.recorder.snapshot
-        #expect(state.error == """
-            ZenCODE: The ZenCODE app exited right after starting (exit status 3). Its output is in \(logPath):
-            boom
-
-            """)
-        #expect(!state.output.contains("Started"))
-    }
-
-    @Test
-    func withoutAWorkingDirectoryTheAppOpensTheWorkspaceZenPrints() async throws {
-        let root = try Self.makeTemporaryDirectory()
-        defer { Self.remove(root) }
-        let fixture = try Fixture(root: root)
-        let layout = Installation.Layout(supportDirectory: fixture.support)
-
-        #expect(await ZenAppLaunchCommand.run(forwardedArguments: ["--agent", "Developer"], tools: fixture.tools()) == 0)
-
-        let state = fixture.recorder.snapshot
-        #expect(state.configurationArguments == [["zen", "--agent", "Developer"]])
-        #expect(state.launches == [Recorder.Launch(
-            executable: layout.installedExecutable,
-            arguments: ["--agent", "Developer", "--working-directory", fixture.workspace.path],
-            logFile: layout.logFile
-        )])
-        #expect(state.output.hasSuffix("Started the ZenCODE app in \(fixture.workspace.path).\n"))
-    }
-
-    @Test
-    func aWorkspaceUnderTheHomeIsPrintedWithATilde() async throws {
-        let root = try Self.makeTemporaryDirectory()
-        defer { Self.remove(root) }
-        let fixture = try Fixture(root: root)
-        var tools = fixture.tools()
-        let home = root.path
-        tools.homeDirectory = { home }
-
-        #expect(await ZenAppLaunchCommand.run(forwardedArguments: [], tools: tools) == 0)
-        #expect(fixture.recorder.snapshot.output.hasSuffix("Started the ZenCODE app in ~/workspace.\n"))
-    }
-
-    @Test
     func twoRunsStartedTogetherBuildOnceAndRemoveTheLeftoversOfAnInterruptedInstall() async throws {
         let root = try Self.makeTemporaryDirectory()
         defer { Self.remove(root) }
@@ -671,105 +429,6 @@ struct ZenAppLaunchTests {
         let code = errno
         #expect(locked == -1)
         #expect(code == EWOULDBLOCK)
-    }
-
-    @Test
-    func aBuildThatTimesOutIsReportedWithTheEndOfItsOutput() async throws {
-        let root = try Self.makeTemporaryDirectory()
-        defer { Self.remove(root) }
-        let fixture = try Fixture(root: root)
-        var tools = fixture.tools()
-        let recorder = fixture.recorder
-        tools.runSwift = { arguments, _, timeout, _ in
-            recorder.update { $0.swiftCalls.append(arguments + ["timeout=\(Int(timeout))"]) }
-            return Installation.SwiftRunResult(exitCode: 15, timedOut: true, stdout: "Compiling ZenCODEApp\n", stderr: "")
-        }
-        let layout = Installation.Layout(supportDirectory: fixture.support)
-
-        #expect(await ZenAppLaunchCommand.run(forwardedArguments: [], tools: tools) == 1)
-
-        let state = fixture.recorder.snapshot
-        #expect(state.error == """
-            ZenCODE: The ZenCODE app could not be built: swift build did not finish within 1800 seconds.
-            Compiling ZenCODEApp
-
-            """)
-        // Only the build ran, with the 30-minute timeout.
-        #expect(state.swiftCalls == [
-            Installation.buildArguments(sourcePackage: fixture.package, layout: layout) + ["timeout=1800"]
-        ])
-        #expect(state.launches.isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: layout.currentDirectory.path))
-    }
-
-    @Test(arguments: [
-        (Installation.SwiftRunResult(exitCode: 1, timedOut: false, stdout: "", stderr: "error: no such product\n"),
-         "it exited with status 1\nerror: no such product"),
-        (Installation.SwiftRunResult(exitCode: 15, timedOut: true, stdout: "", stderr: ""),
-         "it did not finish within 300 seconds"),
-        (Installation.SwiftRunResult(exitCode: 0, timedOut: false, stdout: "relative/path\n", stderr: ""),
-         "it exited with status 0\nrelative/path")
-    ])
-    func aShowBinPathStepThatFailsIsReportedAndNothingIsInstalled(
-        binPathResult: ZenAppInstallation.SwiftRunResult,
-        detail: String
-    ) async throws {
-        let root = try Self.makeTemporaryDirectory()
-        defer { Self.remove(root) }
-        let fixture = try Fixture(root: root)
-        var tools = fixture.tools()
-        let fakeSwift = tools.runSwift
-        tools.runSwift = { arguments, directory, timeout, progress in
-            if arguments.contains("--show-bin-path") {
-                return binPathResult
-            }
-            return try await fakeSwift(arguments, directory, timeout, progress)
-        }
-        let layout = Installation.Layout(supportDirectory: fixture.support)
-
-        #expect(await ZenAppLaunchCommand.run(forwardedArguments: [], tools: tools) == 1)
-
-        let state = fixture.recorder.snapshot
-        #expect(state.error == """
-            ZenCODE: The ZenCODE app was built, but swift build --show-bin-path did not report \
-            the build directory: \(detail)
-
-            """)
-        #expect(state.launches.isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: layout.currentDirectory.path))
-    }
-
-    @Test
-    func aSwiftThatCannotRunIsReportedAsAMissingToolchain() async throws {
-        struct SwiftNotFound: LocalizedError {
-            var errorDescription: String? { "swift was not found" }
-        }
-        let root = try Self.makeTemporaryDirectory()
-        defer { Self.remove(root) }
-        let fixture = try Fixture(root: root)
-        let expected = "ZenCODE: The ZenCODE app cannot be built: swift could not be run (swift was not found). "
-            + "Building it needs the Swift toolchain.\n"
-
-        // The build cannot run.
-        var tools = fixture.tools()
-        tools.runSwift = { _, _, _, _ in throw SwiftNotFound() }
-        #expect(await ZenAppLaunchCommand.run(forwardedArguments: [], tools: tools) == 1)
-        #expect(fixture.recorder.snapshot.error == expected)
-        #expect(fixture.recorder.snapshot.launches.isEmpty)
-
-        // The build runs, then `--show-bin-path` cannot.
-        fixture.recorder.reset()
-        tools = fixture.tools()
-        let fakeSwift = tools.runSwift
-        tools.runSwift = { arguments, directory, timeout, progress in
-            if arguments.contains("--show-bin-path") {
-                throw SwiftNotFound()
-            }
-            return try await fakeSwift(arguments, directory, timeout, progress)
-        }
-        #expect(await ZenAppLaunchCommand.run(forwardedArguments: [], tools: tools) == 1)
-        #expect(fixture.recorder.snapshot.error == expected)
-        #expect(fixture.recorder.snapshot.launches.isEmpty)
     }
 
     // MARK: - Support

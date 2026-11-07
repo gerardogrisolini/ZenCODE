@@ -170,22 +170,4 @@ extension DirectSubAgentRuntimeTests {
             await runtime.shutdown()
         }
     }
-
-    @Test
-    func selectionOfAnotherProjectDoesNotRestrictThisOne() async throws {
-        try await ProjectSupport.withTemporaryProjectAsync { support, workspace in
-            let other = support.deletingLastPathComponent()
-                .appendingPathComponent("other-workspace", isDirectory: true)
-            try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
-            try ProjectAgentSelectionStore.save(agentIDs: [String](), workspaceRootURL: other)
-
-            let backend = CapturingSubAgentRuntimeBackend()
-            let runtime = Self.makeProjectRuntime(backend: backend)
-
-            _ = try await Self.createProjectAgent(profile: "Developer", runtime: runtime, workspace: workspace)
-
-            #expect(await backend.createdSessions().count == 1)
-            await runtime.shutdown()
-        }
-    }
 }

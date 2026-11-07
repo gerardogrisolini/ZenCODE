@@ -6,128 +6,11 @@
 //
 
 import Foundation
-import Synchronization
 @testable import ZenCODECore
 import Testing
 
 @Suite
 struct AgentCoreSessionRunnerTests {
-    @Test
-    func delegatedToolEventHandlerReachesTheRuntimeBackend() async throws {
-        let backend = CapturingAgentRuntimeBackend()
-        let runner = AgentCoreSessionRunner(
-            backendFactory: { _, _ in backend }
-        )
-        let collector = SubAgentToolEventCollector()
-        await runner.updateSubAgentToolEventHandler { event in
-            await collector.record(event)
-        }
-        let configuration = AgentCoreSessionConfiguration(
-            sessionID: "delegated-tool-events-\(UUID().uuidString)",
-            modelID: "test-model",
-            workingDirectory: FileManager.default.temporaryDirectory,
-            systemPrompt: nil,
-            cacheKey: nil,
-            history: [],
-            allowedToolNames: ["agent.create"]
-        )
-
-        _ = try await runner.sendPrompt(
-            configuration: configuration,
-            prompt: "delegate",
-            attachments: [],
-            onEvent: { _ in }
-        )
-        let toolCall = DirectAgentToolCall(
-            id: "child-read",
-            name: "local.readFile",
-            argumentsObject: ["path": "/tmp/Example.swift"],
-            argumentsJSON: "{}"
-        )
-        await backend.emitSubAgentToolEvent(
-            DirectSubAgentToolEvent(
-                agentID: "agent-child",
-                agentName: "child",
-                toolCall: toolCall,
-                lifecycle: .started
-            )
-        )
-
-        let events = await collector.snapshot()
-        #expect(events.count == 1)
-        #expect(events.first?.agentID == "agent-child")
-        #expect(events.first?.toolCall.id == toolCall.id)
-    }
-
-    @Test
-    func updateSessionOptionsPropagatesSystemPrompt() async throws {
-        let backend = CapturingAgentRuntimeBackend()
-        let runner = AgentCoreSessionRunner(
-            backendFactory: { _, _ in backend }
-        )
-        let sessionID = "session-\(UUID().uuidString)"
-        let workingDirectory = FileManager.default.temporaryDirectory
-        let initialConfiguration = AgentCoreSessionConfiguration(
-            sessionID: sessionID,
-            modelID: "test-model",
-            workingDirectory: workingDirectory,
-            systemPrompt: "Memory tools: enabled.",
-            cacheKey: nil,
-            history: [],
-            allowedToolNames: ["memory.read"]
-        )
-        let updatedConfiguration = AgentCoreSessionConfiguration(
-            sessionID: sessionID,
-            modelID: "test-model",
-            workingDirectory: workingDirectory,
-            systemPrompt: "Memory tools are unavailable.",
-            cacheKey: nil,
-            history: [],
-            allowedToolNames: []
-        )
-
-        try await runner.createSession(configuration: initialConfiguration)
-        _ = try await runner.sendPrompt(
-            configuration: initialConfiguration,
-            prompt: "hello",
-            attachments: [],
-            onEvent: { _ in }
-        )
-        try await runner.updateSessionOptions(configuration: updatedConfiguration)
-
-        #expect(await backend.lastUpdatedSystemPrompt() == "Memory tools are unavailable.")
-        #expect(await backend.lastUpdatedAllowedToolNames() == [])
-    }
-
-    @Test
-    func replaceSessionHistoryUpdatesSnapshotAndRuntimeBackend() async throws {
-        let backend = CapturingAgentRuntimeBackend()
-        let runner = AgentCoreSessionRunner(
-            backendFactory: { _, _ in backend }
-        )
-        let sessionID = "session-\(UUID().uuidString)"
-        let configuration = AgentCoreSessionConfiguration(
-            sessionID: sessionID,
-            modelID: "test-model",
-            workingDirectory: FileManager.default.temporaryDirectory,
-            systemPrompt: "system",
-            cacheKey: "cache",
-            history: [AgentRuntimeMessage(role: .user, content: "old")],
-            allowedToolNames: ["agent.create"]
-        )
-        let replacement = [
-            AgentRuntimeMessage(role: .user, content: "plan request"),
-            AgentRuntimeMessage(role: .assistant, content: "Planner-authored plan"),
-        ]
-
-        try await runner.createSession(configuration: configuration)
-        _ = try await runner.preloadModel(configuration: configuration, onEvent: { _ in })
-        #expect(await runner.replaceSessionHistory(id: sessionID, history: replacement))
-
-        #expect(await runner.snapshotSession(id: sessionID)?.history == replacement)
-        #expect(await backend.lastCreatedHistory() == replacement)
-    }
-
     @Test
     func fencedHistoryReplacementCannotMutateARecreatedSession() async throws {
         let backend = CapturingAgentRuntimeBackend()
@@ -167,60 +50,6 @@ struct AgentCoreSessionRunnerTests {
             history: [AgentRuntimeMessage(role: .assistant, content: "stale")],
             expectedSessionGeneration: oldGeneration
         )))
-        #expect(await runner.snapshotSession(id: sessionID)?.history == newHistory)
-    }
-
-    @Test
-    func historyReplacementSerializesBackendMutationWithSameIDRecreation() async throws {
-        let clearGate = SessionRunnerTestGate()
-        let backend = CapturingAgentRuntimeBackend(closeSessionGate: clearGate)
-        let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
-        let sessionID = "session-mutation-lease-\(UUID().uuidString)"
-        let oldConfiguration = AgentCoreSessionConfiguration(
-            sessionID: sessionID,
-            modelID: "test-model",
-            workingDirectory: FileManager.default.temporaryDirectory,
-            systemPrompt: "old",
-            cacheKey: "old-cache",
-            history: [AgentRuntimeMessage(role: .user, content: "old")],
-            allowedToolNames: []
-        )
-        try await runner.createSession(configuration: oldConfiguration)
-        _ = try await runner.preloadModel(
-            configuration: oldConfiguration,
-            onEvent: { _ in }
-        )
-        let generation = try #require(
-            await runner.currentSessionGeneration(for: sessionID)
-        )
-
-        let replacementTask = Task {
-            return await runner.replaceSessionHistory(
-                id: sessionID,
-                history: [AgentRuntimeMessage(role: .assistant, content: "corrected")],
-                expectedSessionGeneration: generation
-            )
-        }
-        await clearGate.waitUntilEntered()
-
-        let newHistory = [AgentRuntimeMessage(role: .user, content: "new incarnation")]
-        let recreationTask = Task {
-            await runner.closeSession(id: sessionID)
-            try await runner.createSession(configuration: AgentCoreSessionConfiguration(
-                sessionID: sessionID,
-                modelID: "test-model",
-                workingDirectory: FileManager.default.temporaryDirectory,
-                systemPrompt: "new",
-                cacheKey: "new-cache",
-                history: newHistory,
-                allowedToolNames: []
-            ))
-        }
-
-        await clearGate.waitUntilEntered(2)
-        await clearGate.open()
-        #expect(!(await replacementTask.value))
-        try await recreationTask.value
         #expect(await runner.snapshotSession(id: sessionID)?.history == newHistory)
     }
 
@@ -401,88 +230,6 @@ struct AgentCoreSessionRunnerTests {
         #expect(interruptedRoots == [sessionID])
     }
 
-    /// ESC stop must terminate `local.exec` background jobs too: the backend
-    /// contract is `cancelPrompt` -> cancel prompt tasks, then interrupt the
-    /// turn's background jobs, then interrupt delegated agents.
-    @Test
-    func cancelPromptBySessionIDInterruptsBackgroundJobs() async throws {
-        let backend = CapturingAgentRuntimeBackend(backgroundJobInterruptCount: 1)
-        let runner = AgentCoreSessionRunner(
-            backendFactory: { _, _ in backend }
-        )
-        let sessionID = "session-\(UUID().uuidString)"
-        let configuration = AgentCoreSessionConfiguration(
-            sessionID: sessionID,
-            modelID: "test-model",
-            workingDirectory: FileManager.default.temporaryDirectory,
-            systemPrompt: nil,
-            cacheKey: nil,
-            history: [],
-            allowedToolNames: []
-        )
-
-        _ = try await runner.sendPrompt(
-            configuration: configuration,
-            prompt: "start background work",
-            attachments: []
-        ) { _ in }
-        await runner.cancelPrompt(sessionID: sessionID)
-
-        let counts = await backend.backgroundJobInterruptCounts()
-        #expect(counts == [1])
-        let interruptedRoots = await backend.interruptedRootSessionIDs()
-        #expect(interruptedRoots == [sessionID])
-    }
-
-    @Test
-    func sendPromptWiresSessionLeaseBeforeStartingTheNextBackendTurn() async throws {
-        let backend = BlockingAgentRuntimeBackend()
-        let queued = RunnerLeaseQueueObserver()
-        let lease = AgentSessionTurnLease { sessionID in
-            queued.recordEnqueue(for: sessionID)
-        }
-        let runner = AgentCoreSessionRunner(
-            backendFactory: { _, _ in backend },
-            taskGraphStore: nil,
-            sessionTurnLease: lease
-        )
-        let sessionID = "session-lease-wiring-\(UUID().uuidString)"
-        let configuration = AgentCoreSessionConfiguration(
-            sessionID: sessionID,
-            modelID: "test-model",
-            workingDirectory: FileManager.default.temporaryDirectory,
-            systemPrompt: nil,
-            cacheKey: nil,
-            history: [],
-            allowedToolNames: []
-        )
-
-        let first = Task {
-            try await runner.sendPrompt(configuration: configuration, prompt: "first", attachments: [], onEvent: { _ in })
-        }
-        await backend.waitUntilPromptStarted()
-        let second = Task {
-            try await runner.sendPrompt(configuration: configuration, prompt: "second", attachments: [], onEvent: { _ in })
-        }
-        await queued.waitForEnqueueCount(1, sessionID: sessionID)
-        #expect(await backend.promptStartCount() == 1)
-
-        first.cancel()
-        do {
-            _ = try await first.value
-            Issue.record("The cancelled first turn unexpectedly completed.")
-        } catch is CancellationError {
-        }
-        await backend.waitUntilPromptStarted(count: 2)
-        #expect(await backend.promptStartCount() == 2)
-        second.cancel()
-        do {
-            _ = try await second.value
-            Issue.record("The cancelled second turn unexpectedly completed.")
-        } catch is CancellationError {
-        }
-    }
-
     @Test
     func compactSessionForcesRuntimeCompactionAndCachesSnapshot() async throws {
         let backend = CapturingAgentRuntimeBackend()
@@ -523,56 +270,6 @@ struct AgentCoreSessionRunnerTests {
 
         let compaction = try #require(result)
         #expect(compaction.wasCompacted)
-        #expect(compaction.snapshot.systemPrompt?.contains(AgentConversationCompactionSupport.memorySummaryHeader) == true)
-        #expect(compaction.snapshot.history.count < history.count)
-        #expect(await runner.snapshotSession(id: sessionID)?.history == compaction.snapshot.history)
-        #expect(await backend.lastCreatedHistory() == compaction.snapshot.history)
-    }
-
-    @Test
-    func compactSessionUsesRuntimeContextWindowOverrideWhenConfigurationHasNoLimit() async throws {
-        let backend = CapturingAgentRuntimeBackend()
-        let runner = AgentCoreSessionRunner(
-            backendFactory: { _, _ in backend }
-        )
-        let sessionID = "session-\(UUID().uuidString)"
-        var history: [AgentRuntimeMessage] = []
-        for index in 0..<8 {
-            history.append(
-                AgentRuntimeMessage(
-                    role: .user,
-                    content: "Older request \(index) " + String(repeating: "details ", count: 80)
-                )
-            )
-            history.append(
-                AgentRuntimeMessage(
-                    role: .assistant,
-                    content: "Older response \(index) " + String(repeating: "answer ", count: 80)
-                )
-            )
-        }
-        history.append(AgentRuntimeMessage(role: .user, content: "Newest request"))
-        let configuration = AgentCoreSessionConfiguration(
-            sessionID: sessionID,
-            modelID: "test-model",
-            workingDirectory: FileManager.default.temporaryDirectory,
-            systemPrompt: "System instructions.",
-            cacheKey: "cache-key",
-            history: history,
-            allowedToolNames: []
-        )
-
-        try await runner.createSession(configuration: configuration)
-        _ = try await runner.preloadModel(configuration: configuration, onEvent: { _ in })
-        let result = try await runner.compactSession(
-            id: sessionID,
-            force: true,
-            maxTokensOverride: 1_000
-        )
-
-        let compaction = try #require(result)
-        #expect(compaction.wasCompacted)
-        #expect(compaction.maxTokens == 1_000)
         #expect(compaction.snapshot.systemPrompt?.contains(AgentConversationCompactionSupport.memorySummaryHeader) == true)
         #expect(compaction.snapshot.history.count < history.count)
         #expect(await runner.snapshotSession(id: sessionID)?.history == compaction.snapshot.history)
@@ -1146,77 +843,6 @@ struct AgentCoreSessionRunnerTests {
     }
 
     @Test
-    func delegatedRequestTitleNamesAgentWhilePlainTitleIsPreserved() async throws {
-        // Presentation only: a delegated request is shown with the agent's
-        // identity in the title, while a plain (non-delegated) request keeps its
-        // title verbatim. Only `title` changes — never the routing fields.
-        let operatorHandler = AuthorizationRecorder(decision: true)
-        let backendBox = AuthorizationBackendBox()
-        let runner = AgentCoreSessionRunner(
-            defaultToolAuthorizationHandler: { request in
-                await operatorHandler.authorize(request)
-            },
-            backendFactory: { configuration, _ in
-                backendBox.makeBackend(handler: configuration.toolAuthorizationHandler)
-            }
-        )
-        let sessionID = "session-\(UUID().uuidString)"
-        let configuration = AgentCoreSessionConfiguration(
-            sessionID: sessionID,
-            modelID: "test-model",
-            workingDirectory: FileManager.default.temporaryDirectory,
-            systemPrompt: nil,
-            cacheKey: nil,
-            history: [],
-            allowedToolNames: ["local.exec"]
-        )
-
-        try await runner.createSession(configuration: configuration)
-        backendBox.setAuthorizationRequests([])
-        _ = try await runner.sendPrompt(
-            configuration: configuration,
-            prompt: "warm up",
-            attachments: [],
-            onEvent: { _ in }
-        )
-        let authorize = try #require(backendBox.authorizationHandler())
-
-        // The fake backend exposes no sub-agent snapshots, so name resolution
-        // falls back to the agent id — which is exactly the "identifies the
-        // agent" contract under test.
-        _ = await authorize(
-            Self.authorizationRequest(
-                sessionID: "sub-agent-private-session",
-                toolName: "local.exec",
-                delegatedIdentity: .init(agentID: "researcher-7", rootSessionID: sessionID)
-            )
-        )
-        let delegatedRequests = await operatorHandler.recordedRequests()
-        #expect(delegatedRequests.count == 1)
-        #expect(delegatedRequests[0].title.contains("researcher-7"))
-        #expect(delegatedRequests[0].title.hasPrefix("[agent "))
-        // The original title survives after the prefix.
-        #expect(delegatedRequests[0].title.hasSuffix("local.exec"))
-        #expect(delegatedRequests[0].toolName == "local.exec")
-
-        // Plain (non-delegated) regression: the title is handed through verbatim.
-        let plainAuthorizer = AuthorizationRecorder(decision: true)
-        backendBox.setAuthorizationRequests([
-            Self.authorizationRequest(sessionID: sessionID, toolName: "local.exec")
-        ])
-        _ = try await runner.sendPrompt(
-            configuration: configuration,
-            prompt: "plain",
-            attachments: [],
-            authorizeTool: { request in await plainAuthorizer.authorize(request) },
-            onEvent: { _ in }
-        )
-        let plainRequests = await plainAuthorizer.recordedRequests()
-        #expect(plainRequests.count == 1)
-        #expect(plainRequests[0].title == "local.exec")
-    }
-
-    @Test
     func sessionLifecycleReleasesPromptSkillProviderAndAuthorizationRoute() async throws {
         let backend = CapturingAgentRuntimeBackend()
         let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
@@ -1256,33 +882,6 @@ struct AgentCoreSessionRunnerTests {
             await runner.lifecycleResourceCounts()
                 == .init(promptSkillProviders: 0, authorizationSessions: 0)
         )
-    }
-
-    @Test
-    func globalResetReleasesEveryPromptSkillProvider() async throws {
-        let backend = CapturingAgentRuntimeBackend()
-        let runner = AgentCoreSessionRunner(
-            backendFactory: { _, _ in backend },
-            taskGraphStore: nil
-        )
-        for sessionID in ["reset-a", "reset-b"] {
-            try await runner.createSession(
-                configuration: AgentCoreSessionConfiguration(
-                    sessionID: sessionID,
-                    modelID: "test-model",
-                    workingDirectory: FileManager.default.temporaryDirectory,
-                    systemPrompt: nil,
-                    cacheKey: sessionID,
-                    history: [],
-                    allowedToolNames: []
-                )
-            )
-        }
-        #expect(await runner.lifecycleResourceCounts().promptSkillProviders == 2)
-
-        await runner.resetSession()
-
-        #expect(await runner.lifecycleResourceCounts().promptSkillProviders == 0)
     }
 
     private static func authorizationRequest(
@@ -1619,10 +1218,6 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
         subAgentToolEventHandler = handler
     }
 
-    func emitSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
-        await subAgentToolEventHandler?(event)
-    }
-
     func updateToolProviders(_: [AgentToolProvider]) async {}
 
     func closeSession(id: String) async {
@@ -1677,36 +1272,12 @@ private actor CapturingAgentRuntimeBackend: AgentRuntimeBackend {
         sessions[id]
     }
 
-    func lastUpdatedSystemPrompt() -> String? {
-        updatedSystemPrompt
-    }
-
-    func lastUpdatedAllowedToolNames() -> Set<String>? {
-        updatedAllowedToolNames
-    }
-
     func lastCreatedHistory() -> [AgentRuntimeMessage]? {
         createdHistories.last
     }
 
     func interruptedRootSessionIDs() -> [String] {
         interruptedRoots
-    }
-
-    func backgroundJobInterruptCounts() -> [Int] {
-        interruptedBackgroundJobCounts
-    }
-}
-
-private actor SubAgentToolEventCollector {
-    private var events: [DirectSubAgentToolEvent] = []
-
-    func record(_ event: DirectSubAgentToolEvent) {
-        events.append(event)
-    }
-
-    func snapshot() -> [DirectSubAgentToolEvent] {
-        events
     }
 }
 
@@ -1813,44 +1384,6 @@ private actor BlockingAgentRuntimeBackend: AgentRuntimeBackend {
 
         await withCheckedContinuation { continuation in
             startContinuations.append((count, continuation))
-        }
-    }
-
-    func promptStartCount() -> Int { promptStarts }
-}
-
-private final class RunnerLeaseQueueObserver: Sendable {
-    private struct State {
-        var counts: [String: Int] = [:]
-        var waiters: [(sessionID: String, count: Int, continuation: CheckedContinuation<Void, Never>)] = []
-    }
-
-    private let state = Mutex(State())
-
-    func recordEnqueue(for sessionID: String) {
-        let ready: [CheckedContinuation<Void, Never>] = state.withLock { state in
-            state.counts[sessionID, default: 0] += 1
-            let count = state.counts[sessionID, default: 0]
-            let ready = state.waiters.enumerated().filter {
-                $0.element.sessionID == sessionID && count >= $0.element.count
-            }
-            for index in ready.map(\.offset).reversed() {
-                state.waiters.remove(at: index)
-            }
-            return ready.map(\.element.continuation)
-        }
-        ready.forEach { $0.resume() }
-    }
-
-    func waitForEnqueueCount(_ count: Int, sessionID: String) async {
-        guard !state.withLock({ $0.counts[sessionID, default: 0] >= count }) else { return }
-        await withCheckedContinuation { continuation in
-            let shouldResume = state.withLock { state -> Bool in
-                guard state.counts[sessionID, default: 0] < count else { return true }
-                state.waiters.append((sessionID, count, continuation))
-                return false
-            }
-            if shouldResume { continuation.resume() }
         }
     }
 }

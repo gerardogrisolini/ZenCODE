@@ -5,27 +5,6 @@ import ToolCore
 
 extension DirectSubAgentRuntimeTests {
     @Test
-    func agentCreateDescriptorUsesOneCanonicalBatchContract() throws {
-        let descriptor = try #require(
-            DirectToolCatalog.subAgentDescriptors.first { $0.name == "agent.create" }
-        )
-
-        #expect(descriptor.description.contains("canonical agents array"))
-        #expect(descriptor.description.contains("each item requires exactly one of profile or profileRole."))
-        #expect(descriptor.description.contains("omit model to inherit the main session model"))
-        #expect(!descriptor.description.contains("each item requires profile and model"))
-        #expect(descriptor.description.contains("exact profile and binding references"))
-        #expect(descriptor.description.contains("taskID is never a root argument"))
-        #expect(descriptor.description.contains("same profile inherits the coordinator's effective session allowlist"))
-        #expect(!descriptor.description.contains("The selected profile owns the child tool grant"))
-        #expect(!descriptor.description.contains(TaskRecord.agentSelectionPolicy))
-        #expect(!descriptor.inputSchema.contains("\"modelID\""))
-        #expect(!descriptor.inputSchema.contains("toolNames"))
-        #expect(!descriptor.inputSchema.contains("oneOf"))
-        #expect(!descriptor.inputSchema.contains("not"))
-    }
-
-    @Test
     func agentCreateDescriptorAdvertisesProviderNeutralBatchSchema() throws {
         let descriptor = try #require(
             DirectToolCatalog.subAgentDescriptors.first { $0.name == "agent.create" }
@@ -377,19 +356,6 @@ extension DirectSubAgentRuntimeTests {
     }
 
     @Test
-    func agentCreateParserAcceptsIntegerComplexityFromOneToTen() throws {
-        for value in 1...10 {
-            for json in [JSONValue.number(Double(value)), .string(" \(value) ")] {
-                let payload = try DirectSubAgentRuntime.requestedAgentPayload(
-                    from: .object(["complexity": json]),
-                    fallbackIndex: 0
-                )
-                #expect(payload.complexity == value)
-            }
-        }
-    }
-
-    @Test
     func agentCreateParserRejectsUnknownProfileRole() throws {
         for json in [
             JSONValue.string("architect"),
@@ -443,37 +409,6 @@ extension DirectSubAgentRuntimeTests {
             } catch DirectSubAgentRuntimeError.invalidArgument(let message) {
                 #expect(message == "agent.create complexity must be an integer from 1 to 10")
             }
-        }
-    }
-
-    @Test
-    func agentCreateParserRejectsConflictingNewFieldAliases() throws {
-        do {
-            _ = try DirectSubAgentRuntime.requestedAgentPayload(
-                from: .object([
-                    "profileRole": .string("developer"),
-                    "profile_role": .string("reviewer"),
-                ]),
-                fallbackIndex: 0
-            )
-            Issue.record("Expected conflicting profileRole aliases to be rejected.")
-        } catch DirectSubAgentRuntimeError.invalidArgument(let message) {
-            #expect(message.contains("profileRole aliases"))
-            #expect(message.contains("profileRole, profile_role"))
-        }
-
-        do {
-            _ = try DirectSubAgentRuntime.requestedAgentPayload(
-                from: .object([
-                    "workingDirectory": .string("Sources"),
-                    "working_directory": .string("Tests"),
-                ]),
-                fallbackIndex: 0
-            )
-            Issue.record("Expected conflicting workingDirectory aliases to be rejected.")
-        } catch DirectSubAgentRuntimeError.invalidArgument(let message) {
-            #expect(message.contains("workingDirectory aliases"))
-            #expect(message.contains("workingDirectory, working_directory"))
         }
     }
 

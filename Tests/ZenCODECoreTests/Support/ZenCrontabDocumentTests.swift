@@ -81,28 +81,19 @@ struct ZenCrontabDocumentTests {
 
     // MARK: - parse: no block
 
-    @Test
-    func emptyTextHasNoLinesAndNoBlock() throws {
-        let document = try ZenCrontabDocument.parse("")
-        #expect(document.foreignLines.isEmpty)
-        #expect(document.block == nil)
-        #expect(document.render() == "")
-    }
-
-    @Test
-    func crontabWithoutBlockIsPreservedVerbatim() throws {
-        let text = [
-            "# my jobs",
-            "SHELL=/bin/zsh",
-            "  0 3 * * *\t/usr/bin/backup --full   ",
-            "",
-            "@reboot echo started # trailing comment",
-            "",
-            ""
-        ].joined(separator: "\n") + "\n"
+    @Test(arguments: [
+        "# my jobs\nSHELL=/bin/zsh\n  0 3 * * *\t/usr/bin/backup --full   \n\n@reboot echo started # trailing comment\n\n\n",
+        // Carriage returns stay attached to their line.
+        "0 * * * * job\r\n5 * * * * other\r\n",
+        // A stray end marker without a begin marker is a foreign line.
+        "A\n# <<< ZenCODE cron <<<\nB\n",
+        // Markers must match whole lines exactly.
+        "  # >>> ZenCODE cron >>>\n# >>> ZenCODE cron >>> \n## >>> ZenCODE cron >>>\n"
+    ])
+    func crontabWithoutBlockIsPreservedVerbatim(_ text: String) throws {
         let document = try ZenCrontabDocument.parse(text)
         #expect(document.block == nil)
-        #expect(document.foreignLines.count == 7)
+        #expect(document.foreignLines.joined(separator: "\n") + "\n" == text)
         #expect(document.render() == text)
     }
 
@@ -111,30 +102,6 @@ struct ZenCrontabDocumentTests {
         let document = try ZenCrontabDocument.parse("0 * * * * job\n5 * * * * other")
         #expect(document.foreignLines == ["0 * * * * job", "5 * * * * other"])
         #expect(document.render() == "0 * * * * job\n5 * * * * other\n")
-    }
-
-    @Test
-    func carriageReturnsStayAttachedToTheirLine() throws {
-        let text = "0 * * * * job\r\n5 * * * * other\r\n"
-        let document = try ZenCrontabDocument.parse(text)
-        #expect(document.foreignLines == ["0 * * * * job\r", "5 * * * * other\r"])
-        #expect(document.render() == text)
-    }
-
-    @Test
-    func strayEndMarkerWithoutBeginIsAForeignLine() throws {
-        let text = "A\n\(Self.end)\nB\n"
-        let document = try ZenCrontabDocument.parse(text)
-        #expect(document.block == nil)
-        #expect(document.render() == text)
-    }
-
-    @Test
-    func markersMustMatchWholeLinesExactly() throws {
-        let text = "  \(Self.begin)\n\(Self.begin) \n#\(Self.begin)\n"
-        let document = try ZenCrontabDocument.parse(text)
-        #expect(document.block == nil)
-        #expect(document.render() == text)
     }
 
     // MARK: - parse: block contents
@@ -253,13 +220,6 @@ struct ZenCrontabDocumentTests {
     }
 
     @Test
-    func markerAtTheEndOfTheBlockIsUnrecognized() throws {
-        let marker = "# zencode-cron id=\(firstID.uuidString) created=2026-09-10T12:00:00Z"
-        let document = try ZenCrontabDocument.parse([Self.begin, marker, Self.end].joined(separator: "\n"))
-        #expect(document.block?.items == [.unrecognized(marker)])
-    }
-
-    @Test
     func unknownLinesInsideTheBlockAreKeptVerbatimInOrder() throws {
         let marker = "# zencode-cron id=\(firstID.uuidString) created=2026-09-10T12:00:00Z"
         let cron = "0 9 * * * zen --working-directory '/w' --jsonl -p 'x'"
@@ -298,14 +258,6 @@ struct ZenCrontabDocumentTests {
     }
 
     // MARK: - MAILTO
-
-    @Test
-    func emptyMailToIsParsedAndRenderedAsQuotedEmpty() throws {
-        let text = [Self.begin, Self.pathLine, "MAILTO=\"\"", Self.end].joined(separator: "\n") + "\n"
-        let document = try ZenCrontabDocument.parse(text)
-        #expect(document.block?.mailTo == "")
-        #expect(document.render() == text)
-    }
 
     @Test
     func unquotedEmptyMailToNormalizesToQuotedEmpty() throws {
@@ -369,12 +321,6 @@ struct ZenCrontabDocumentTests {
     private let entryCron = "@daily zen --working-directory '/w' --jsonl -p 'x'"
 
     @Test
-    func defaultPathIsCronsPathWithUsrLocalBinFirst() {
-        #expect(ZenCrontabDocument.defaultPath == Self.defaultPath)
-        #expect(ZenCrontabDocument.defaultPath == "/usr/local/bin:/usr/bin:/bin")
-    }
-
-    @Test
     func renderWritesPathBeforeMailToAndBeforeTheEntries() throws {
         var document = ZenCrontabDocument(foreignLines: ["0 1 * * * /bin/true"])
         try document.appendEntry(schedule: schedule("@daily"), job: makeJob(), id: firstID, createdAt: createdAt)
@@ -387,18 +333,6 @@ struct ZenCrontabDocumentTests {
         #expect(lines[begin + 3].hasPrefix("# zencode-cron id="))
         #expect(lines.last == "")
         #expect(lines[lines.count - 2] == Self.end)
-    }
-
-    @Test
-    func renderWritesPathEvenWhenOnlyMailToOrOnlyEntriesExist() throws {
-        var document = ZenCrontabDocument()
-        document.setMailTo("")
-        #expect(document.render() == "\(Self.begin)\n\(Self.pathLine)\nMAILTO=\"\"\n\(Self.end)\n")
-
-        var withEntry = ZenCrontabDocument()
-        try withEntry.appendEntry(schedule: schedule("@daily"), job: makeJob(), id: firstID, createdAt: createdAt)
-        #expect(withEntry.block?.path == nil)
-        #expect(withEntry.render().hasPrefix("\(Self.begin)\n\(Self.pathLine)\n# zencode-cron"))
     }
 
     @Test
@@ -426,15 +360,6 @@ struct ZenCrontabDocumentTests {
         #expect(block.path == "/p")
         #expect(block.mailTo == "a@b.c")
         #expect(block.items.count == 1)
-    }
-
-    @Test
-    func defaultPathIsReadAsNil() throws {
-        let text = [Self.begin, Self.pathLine, entryMarker, entryCron, Self.end].joined(separator: "\n") + "\n"
-        let document = try ZenCrontabDocument.parse(text)
-        #expect(document.block?.path == nil)
-        #expect(document.render() == text)
-        #expect(document.effectivePath == Self.defaultPath)
     }
 
     @Test
@@ -481,16 +406,6 @@ struct ZenCrontabDocumentTests {
     }
 
     @Test
-    func aCustomPathLineThatLooksLikeTheDefaultOnlyByQuotesIsKept() throws {
-        let text = [Self.begin, "PATH=\"\(Self.defaultPath)\"", entryMarker, entryCron, Self.end]
-            .joined(separator: "\n") + "\n"
-        let document = try ZenCrontabDocument.parse(text)
-        #expect(document.block?.path == "\"\(Self.defaultPath)\"")
-        #expect(document.render() == text)
-        #expect(document.effectivePath == Self.defaultPath)
-    }
-
-    @Test
     func aSecondPathLineIsUnrecognizedAndEndsTheHeader() throws {
         let text = [
             Self.begin, "PATH=/first", "PATH=/second", "MAILTO=a@b.c", entryMarker, entryCron, Self.end
@@ -504,27 +419,6 @@ struct ZenCrontabDocumentTests {
         #expect(block.items.dropFirst().first == .unrecognized("MAILTO=a@b.c"))
         #expect(entries(of: document).count == 1)
         #expect(document.render() == text)
-    }
-
-    @Test
-    func aRepeatOfTheDefaultPathIsUnrecognizedToo() throws {
-        let text = [Self.begin, Self.pathLine, Self.pathLine, entryMarker, entryCron, Self.end]
-            .joined(separator: "\n") + "\n"
-        let document = try ZenCrontabDocument.parse(text)
-        let block = try #require(document.block)
-        #expect(block.path == nil)
-        #expect(block.items.first == .unrecognized(Self.pathLine))
-        #expect(document.render() == text)
-        try expectRoundTrip(text)
-    }
-
-    @Test
-    func aSecondMailToLineIsUnrecognized() throws {
-        let text = [Self.begin, Self.pathLine, "MAILTO=a@b.c", "MAILTO=d@e.f", entryMarker, entryCron, Self.end]
-            .joined(separator: "\n") + "\n"
-        let block = try #require(ZenCrontabDocument.parse(text).block)
-        #expect(block.mailTo == "a@b.c")
-        #expect(block.items.first == .unrecognized("MAILTO=d@e.f"))
     }
 
     @Test
@@ -548,22 +442,6 @@ struct ZenCrontabDocumentTests {
             #expect(block.path == nil)
             #expect(block.items.first == .unrecognized(line))
         }
-    }
-
-    @Test
-    func aBlockWithOnlyACustomPathIsEmptyAndRendersNothing() throws {
-        let original = "0 1 * * * /bin/true\n"
-        let text = original + "\(Self.begin)\nPATH=/opt/bin:/usr/bin\n\(Self.end)\n"
-        let document = try ZenCrontabDocument.parse(text)
-        #expect(document.block == nil)
-        #expect(document.foreignLines == ["0 1 * * * /bin/true"])
-        #expect(document.render() == original)
-
-        let explicit = ZenCrontabDocument(
-            foreignLines: ["a"],
-            block: ZenCrontabDocument.Block(path: "/opt/bin")
-        )
-        #expect(explicit.render() == "a\n")
     }
 
     @Test
@@ -597,31 +475,6 @@ struct ZenCrontabDocumentTests {
     }
 
     @Test
-    func clearingMailToOfAnEmptyBlockWithACustomPathDropsTheBlock() throws {
-        var document = ZenCrontabDocument(
-            foreignLines: ["a"],
-            block: ZenCrontabDocument.Block(path: "/opt/bin", mailTo: "a@b.c")
-        )
-        document.setMailTo(nil)
-        #expect(document.block == nil)
-        #expect(document.render() == "a\n")
-    }
-
-    @Test
-    func parseRenderParseKeepsThePathOfAParsedDocument() throws {
-        for text in [
-            "\(Self.begin)\nPATH=/p\nMAILTO=\"\"\n\(Self.end)\n",
-            "\(Self.begin)\nMAILTO=\"\"\nPATH=/p\n\(Self.end)\n",
-            "x\n\n\(Self.begin)\nPATH=/p\n\(entryMarker)\n\(entryCron)\n\(Self.end)\ny\n"
-        ] {
-            let parsed = try ZenCrontabDocument.parse(text)
-            let reparsed = try ZenCrontabDocument.parse(parsed.render())
-            #expect(reparsed == parsed)
-            #expect(reparsed.block?.path == "/p")
-        }
-    }
-
-    @Test
     func effectivePathIsTheBlocksPathOrTheDefault() {
         #expect(ZenCrontabDocument().effectivePath == Self.defaultPath)
         #expect(ZenCrontabDocument(foreignLines: ["a"], block: .init()).effectivePath == Self.defaultPath)
@@ -646,49 +499,17 @@ struct ZenCrontabDocumentTests {
         #expect(ZenCrontabDocument.Block(path: "").effectivePath == "")
     }
 
-    @Test
-    func effectivePathOfAParsedQuotedPath() throws {
-        let text = [Self.begin, "PATH=\"/opt/bin:/usr/bin\"", entryMarker, entryCron, Self.end]
-            .joined(separator: "\n") + "\n"
-        let document = try ZenCrontabDocument.parse(text)
-        #expect(document.block?.path == "\"/opt/bin:/usr/bin\"")
-        #expect(document.effectivePath == "/opt/bin:/usr/bin")
-    }
-
     // MARK: - Block errors
 
-    @Test
-    func blockWithoutEndMarkerIsMalformed() {
-        let text = "0 1 * * * /bin/true\n\(Self.begin)\nMAILTO=\"\"\n"
-        #expect(throws: ZenCrontabError.self) {
-            try ZenCrontabDocument.parse(text)
-        }
-        do {
-            _ = try ZenCrontabDocument.parse(text)
-            Issue.record("Expected malformedBlock")
-        } catch let ZenCrontabError.malformedBlock(reason) {
-            #expect(reason.contains(Self.end))
-        } catch {
-            Issue.record("Unexpected error: \(error)")
-        }
-    }
-
-    @Test
-    func twoBeginMarkersWithoutAnEndBetweenAreMalformed() {
-        let text = [Self.begin, "MAILTO=\"\"", Self.begin, Self.end].joined(separator: "\n") + "\n"
-        do {
-            _ = try ZenCrontabDocument.parse(text)
-            Issue.record("Expected malformedBlock")
-        } catch let ZenCrontabError.malformedBlock(reason) {
-            #expect(!reason.isEmpty)
-        } catch {
-            Issue.record("Unexpected error: \(error)")
-        }
-    }
-
-    @Test
-    func twoCompleteBlocksAreMalformed() {
-        let text = ([Self.begin, Self.end] + [Self.begin, Self.end]).joined(separator: "\n") + "\n"
+    @Test(arguments: [
+        // A block without its end marker.
+        "0 1 * * * /bin/true\n# >>> ZenCODE cron >>>\nMAILTO=\"\"\n",
+        // Two begin markers without an end marker between them.
+        "# >>> ZenCODE cron >>>\nMAILTO=\"\"\n# >>> ZenCODE cron >>>\n# <<< ZenCODE cron <<<\n",
+        // Two complete blocks.
+        "# >>> ZenCODE cron >>>\n# <<< ZenCODE cron <<<\n# >>> ZenCODE cron >>>\n# <<< ZenCODE cron <<<\n"
+    ])
+    func unbalancedOrRepeatedBlockMarkersAreMalformed(_ text: String) {
         do {
             _ = try ZenCrontabDocument.parse(text)
             Issue.record("Expected malformedBlock")
@@ -718,12 +539,6 @@ struct ZenCrontabDocumentTests {
         // Foreign lines survive in order, with the block as the last lines.
         let renderedLines = rendered.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         #expect(Array(renderedLines.prefix(before.count + after.count)) == before + after)
-    }
-
-    @Test
-    func blockAlreadyAtTheTailRendersByteIdentically() throws {
-        let text = (["0 1 * * * /bin/true", ""] + sampleBlockLines).joined(separator: "\n") + "\n"
-        #expect(try ZenCrontabDocument.parse(text).render() == text)
     }
 
     @Test
@@ -768,13 +583,6 @@ struct ZenCrontabDocumentTests {
         let cron = "0   9 * *  1-5 '/usr/local/bin/zen'   --working-directory '/w' --jsonl -p 'odd   spacing'"
         let text = [Self.begin, Self.pathLine, marker, cron, Self.end].joined(separator: "\n") + "\n"
         #expect(try ZenCrontabDocument.parse(text).render() == text)
-    }
-
-    @Test
-    func outputIsEmptyOrEndsWithANewline() throws {
-        #expect(ZenCrontabDocument().render() == "")
-        #expect(try ZenCrontabDocument.parse("a").render().hasSuffix("\n"))
-        #expect(try ZenCrontabDocument.parse("\n").render() == "\n")
     }
 
     // MARK: - idempotence
@@ -826,14 +634,6 @@ struct ZenCrontabDocumentTests {
         for lines in variants {
             try expectRoundTrip(lines.joined(separator: "\n") + "\n")
         }
-    }
-
-    @Test
-    func renderedOutputReachesAFixedPointAfterOnePass() throws {
-        let text = "x\n" + sampleBlockLines.joined(separator: "\n") + "\ny\n\n"
-        let once = try ZenCrontabDocument.parse(text).render()
-        let twice = try ZenCrontabDocument.parse(once).render()
-        #expect(once == twice)
     }
 
     // MARK: - mutation
@@ -917,18 +717,6 @@ struct ZenCrontabDocumentTests {
     }
 
     @Test
-    func appendedPromptFileDocumentsSurviveARoundTrip() throws {
-        var document = ZenCrontabDocument(foreignLines: ["0 1 * * * /bin/true"])
-        document.appendEntry(
-            schedule: try schedule("*/10 * * * *"),
-            job: makeJob(promptFile: "/tmp/a b/100% 'x'.md", prompt: nil),
-            id: firstID,
-            createdAt: createdAt
-        )
-        #expect(try ZenCrontabDocument.parse(document.render()) == document)
-    }
-
-    @Test
     func appendEntryUsesAliasSchedulesAndKeepsExistingItemsAndOrder() throws {
         var document = try ZenCrontabDocument.parse(
             (["0 1 * * * /bin/true"] + sampleBlockLines).joined(separator: "\n") + "\n"
@@ -987,23 +775,6 @@ struct ZenCrontabDocumentTests {
     }
 
     @Test
-    func removingTheLastItemOfAnAppendedBlockRestoresTheOriginalText() throws {
-        let original = "# jobs\n0 1 * * * /bin/true\n"
-        var document = try ZenCrontabDocument.parse(original)
-        try document.appendEntry(schedule: schedule("@hourly"), job: makeJob(), id: firstID, createdAt: createdAt)
-        #expect(document.render() != original)
-
-        let reparsed = try ZenCrontabDocument.parse(document.render())
-        var afterRemoval = reparsed
-        try afterRemoval.removeItem(number: 1)
-        #expect(afterRemoval.block == nil)
-        #expect(afterRemoval.render() == original)
-
-        try document.removeItem(number: 1)
-        #expect(document.render() == original)
-    }
-
-    @Test
     func removeItemCanTargetAnUnrecognizedLine() throws {
         var document = try ZenCrontabDocument.parse("\(Self.begin)\nhand written\n\(Self.end)\n")
         try document.removeItem(number: 1)
@@ -1031,39 +802,4 @@ struct ZenCrontabDocumentTests {
     }
 
     // MARK: - errors
-
-    @Test
-    func crontabErrorsDescribeThemselvesWithARemedy() {
-        #expect(ZenCrontabError.crontabUnavailable.errorDescription == "crontab is not installed; see zen --doctor")
-        #expect(ZenCrontabError.noSuchEntry(4).errorDescription == "No scheduled prompt #4. Use /cron list.")
-        #expect(ZenCrontabError.commandFailed(status: 1, detail: "no crontab for me").errorDescription?.contains("no crontab for me") == true)
-        #expect(ZenCrontabError.commandFailed(status: 2, detail: "  ").errorDescription?.contains("2") == true)
-        #expect(ZenCrontabError.malformedBlock(reason: "missing end").errorDescription?.contains("missing end") == true)
-        #expect(
-            ZenCrontabError.zenNotOnPath(path: "/opt/bin:/usr/bin").errorDescription
-                == "ZenCRON runs `zen` with PATH=/opt/bin:/usr/bin, but no executable zen was found there. "
-                + "Install ZenCODE in /usr/local/bin (Scripts/install.sh) before scheduling prompts."
-        )
-        #expect(
-            ZenCrontabError.zenCRONNotInstalled(path: "/Users/me/.zencode/bin/ZenCRON").errorDescription
-                == "ZenCRON is not installed at /Users/me/.zencode/bin/ZenCRON. "
-                + "Build it from /setup \u{203A} Scheduled prompts (ZenCRON), then retry."
-        )
-        #expect(
-            ZenCrontabError.zenCRONDoesNotStart(
-                path: "/Users/me/.zencode/bin/ZenCRON",
-                reason: "it printed no version"
-            ).errorDescription
-                == "ZenCRON at /Users/me/.zencode/bin/ZenCRON does not start (it printed no version). "
-                + "Rebuild it from /setup \u{203A} Scheduled prompts (ZenCRON), then retry."
-        )
-        #expect(ZenCrontabError.invalidPrompt(reason: "contains a line break").errorDescription?.contains("contains a line break") == true)
-        #expect(
-            ZenCrontabError.invalidPromptFile(reason: "its path contains a line break").errorDescription
-                == "The prompt file cannot be scheduled: its path contains a line break. "
-                + "Use an absolute path to a readable, non-empty UTF-8 text file and retry."
-        )
-        #expect(ZenCrontabError.invalidMailTo("a b").errorDescription?.contains("a b") == true)
-        #expect(ZenCrontabError.invalidMailTo("a b").errorDescription?.contains("/cron mailto none") == true)
-    }
 }

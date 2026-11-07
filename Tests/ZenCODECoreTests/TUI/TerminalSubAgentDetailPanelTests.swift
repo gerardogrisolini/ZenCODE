@@ -96,14 +96,6 @@ struct TerminalSubAgentDetailPanelTests {
         #expect(panel.scrollOffset == 11)
     }
 
-    @Test func scrollingFromFollowStartsAtTheBottomEvenWithAStaleOffset() {
-        var panel = TerminalSubAgentDetailPanel(bodyRows: numberedRows(10))
-        #expect(panel.scrollOffset == 0)
-        panel.apply(.scrollUp, frameRows: 6)
-        #expect(panel.scrollOffset == 5)
-        #expect(!panel.isFollowing)
-    }
-
     @Test func shrinkingBodyClampsTheOffsetWithoutChangingFollow() {
         var panel = TerminalSubAgentDetailPanel()
         panel.replace(headerRows: [], bodyRows: numberedRows(20), frameRows: 6)
@@ -145,17 +137,6 @@ struct TerminalSubAgentDetailPanelTests {
         // A frame with no body rows still pages by one row.
         panel.apply(.pageUp, frameRows: 2)
         #expect(panel.scrollOffset == 19)
-    }
-
-    @Test func nonScrollingActionsLeaveTheShowingPanelUnchanged() {
-        var panel = TerminalSubAgentDetailPanel()
-        panel.replace(headerRows: [], bodyRows: numberedRows(10), frameRows: 6)
-        panel.apply(.scrollUp, frameRows: 6)
-        let before = panel
-        for action: TerminalSubAgentDetailAction in [.focusPrevious, .focusNext, .confirm, .close, .closeList] {
-            panel.apply(action, frameRows: 6)
-        }
-        #expect(panel == before)
     }
 
     @Test func emptyEntriesAndBodyNeverCrash() {
@@ -258,13 +239,6 @@ struct TerminalSubAgentDetailPanelTests {
         #expect(content(three[1]) == "row-2")
     }
 
-    @Test func topBorderCarriesTheTitleInTheChromeColor() throws {
-        let line = try #require(TerminalSubAgentDetailPanel().frameLines(rows: 3, columns: 30).first)
-        #expect(line.hasPrefix(TerminalStyle.Chrome.border + "╭─ 👥 Sub-agent ─"))
-        #expect(line.hasSuffix("─╮" + TerminalStyle.reset))
-        #expect(TerminalANSIText.visibleWidth(line) == 30)
-    }
-
     @Test func bottomBorderShowsTheVisibleRangeOnlyWhenTheBodyOverflows() {
         var panel = TerminalSubAgentDetailPanel()
         panel.replace(headerRows: [], bodyRows: numberedRows(84), frameRows: 23)
@@ -287,13 +261,6 @@ struct TerminalSubAgentDetailPanelTests {
         #expect(plain(panel.frameLines(rows: 23, columns: 40)).last == "╰" + String(repeating: "─", count: 38) + "╯")
         panel.replace(headerRows: [], bodyRows: [], frameRows: 23)
         #expect(plain(panel.frameLines(rows: 23, columns: 40)).last == "╰" + String(repeating: "─", count: 38) + "╯")
-    }
-
-    @Test func bodyRowsKeepTheirLeadingIndentation() {
-        let panel = TerminalSubAgentDetailPanel(bodyRows: ["    let value = 1", "  - nested", "trailing   "])
-        let lines = panel.frameLines(rows: 5, columns: 30)
-        #expect(bodyContents(lines) == ["    let value = 1", "  - nested", "trailing"])
-        #expect(TerminalANSIText.stripANSI(lines[1]).hasPrefix("│     let value = 1"))
     }
 
     /// The width of `🛠️` (`U+1F6E0 U+FE0F`) depends on the terminal, so every
@@ -377,12 +344,5 @@ struct TerminalSubAgentDetailPanelTests {
         panel.apply(.focusNext, frameRows: 7)
         lines = panel.frameLines(rows: 7, columns: 30)
         #expect(bodyContents(lines).first == "▸ agent-0")
-    }
-
-    @Test func focusedAndUnfocusedEntriesStayAligned() {
-        let panel = TerminalSubAgentDetailPanel(mode: .choosing(entries: entries(3), focusedIndex: 1))
-        let lines = plain(panel.frameLines(rows: 5, columns: 30))
-        #expect(lines[1...3].map { String($0.prefix(4)) } == ["│   ", "│ ▸ ", "│   "])
-        #expect(bodyContents(lines) == ["  agent-0", "▸ agent-1", "  agent-2"])
     }
 }

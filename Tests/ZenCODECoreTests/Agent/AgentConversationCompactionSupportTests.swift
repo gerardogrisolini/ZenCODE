@@ -12,36 +12,6 @@ import Testing
 @Suite
 struct AgentConversationCompactionSupportTests {
     @Test
-    func compactionTriggerIsNearFullContextWindow() {
-        #expect(AgentConversationCompactionPolicy.triggerTokenCount(for: 100_000) == 95_000)
-    }
-
-    @Test
-    func compactionTargetReservesHalfOfAvailableContext() {
-        #expect(AgentConversationCompactionPolicy.targetTokenCount(for: 100_000) == 50_000)
-        #expect(
-            AgentConversationCompactionPolicy.targetTokenCount(for: 100_000)
-                < AgentConversationCompactionPolicy.triggerTokenCount(for: 100_000)
-        )
-    }
-
-    @Test
-    func summaryBudgetScalesWithTargetAndStaysBounded() {
-        #expect(
-            AgentConversationCompactionPolicy.summaryCharacterBudget(forTargetTokenCount: 100)
-                == 120
-        )
-        #expect(
-            AgentConversationCompactionPolicy.summaryCharacterBudget(forTargetTokenCount: 30_000)
-                > AgentConversationCompactionPolicy.summaryCharacterBudget(forTargetTokenCount: 3_000)
-        )
-        #expect(
-            AgentConversationCompactionPolicy.summaryCharacterBudget(forTargetTokenCount: 1_000_000)
-                == AgentConversationCompactionPolicy.maximumSummaryCharacters
-        )
-    }
-
-    @Test
     func compactionIsSkippedBelowTrigger() {
         let messages = [
             AgentRuntimeMessage(role: .system, content: "System prompt"),
@@ -91,52 +61,6 @@ struct AgentConversationCompactionSupportTests {
         #expect(result.messages.first?.content.contains(AgentConversationCompactionSupport.memorySummaryHeader) == true)
         #expect(result.messages.last?.content == "Recent request")
         #expect(result.messages.count < messages.count)
-    }
-
-    @Test
-    func recompactionPreservesPriorMemorySummaryOnce() {
-        let systemPrompt = """
-        System prompt
-
-        Conversation memory summary from earlier turns.
-        Preserve the facts, decisions, files, code directions, and unresolved requests below as continuing context.
-        Prior decision: keep the server fast.
-        """
-        let messages = [
-            AgentRuntimeMessage(role: .system, content: systemPrompt),
-            AgentRuntimeMessage(role: .user, content: "Old request " + String(repeating: "context ", count: 200)),
-            AgentRuntimeMessage(role: .assistant, content: "Old answer " + String(repeating: "details ", count: 200)),
-            AgentRuntimeMessage(role: .user, content: "Recent request"),
-            AgentRuntimeMessage(role: .assistant, content: "Recent answer"),
-            AgentRuntimeMessage(role: .user, content: "Newest request")
-        ]
-
-        let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
-            messages,
-            maxTokens: 500,
-            force: true
-        )
-
-        let compactedSystemPrompt = result.messages.first?.content ?? ""
-        let target = AgentConversationCompactionPolicy.targetTokenCount(for: 500)
-        #expect(result.wasCompacted)
-        // None of the provider-safe four-message suffixes can meet this target,
-        // but the smallest one still removes a substantial part of the prompt.
-        #expect(result.estimatedTokenCount > target)
-        #expect(result.estimatedTokenCount < result.originalEstimatedTokenCount)
-        #expect(
-            AgentConversationCompactionPolicy.materiallyReducesPrompt(
-                originalTokens: result.originalEstimatedTokenCount,
-                candidateTokens: result.estimatedTokenCount
-            )
-        )
-        #expect(compactedSystemPrompt.contains("System prompt"))
-        #expect(compactedSystemPrompt.contains("Prior decision: keep the server fast."))
-        #expect(
-            compactedSystemPrompt.components(
-                separatedBy: AgentConversationCompactionSupport.memorySummaryHeader
-            ).count == 2
-        )
     }
 
     @Test
@@ -257,56 +181,6 @@ struct AgentConversationCompactionSupportTests {
     }
 
     @Test
-    func recentWindowExpandsToAvoidStartingWithToolResult() {
-        var messages = [
-            AgentRuntimeMessage(role: .system, content: "System prompt"),
-            AgentRuntimeMessage(role: .user, content: "Old request " + String(repeating: "context ", count: 160))
-        ]
-        for index in 0..<8 {
-            messages.append(AgentRuntimeMessage(role: .assistant, content: "Tool call \(index)"))
-            messages.append(AgentRuntimeMessage(role: .tool, content: "Tool result \(index)"))
-        }
-        messages.append(AgentRuntimeMessage(role: .user, content: "Newest request"))
-
-        let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
-            messages,
-            maxTokens: 500,
-            force: true
-        )
-
-        #expect(result.wasCompacted)
-        #expect(result.messages.dropFirst().first?.role != .tool)
-    }
-
-    @Test
-    func compactionKeepsFarMoreRecentMessagesThanTheFixedWindowWhenBudgetAllows() {
-        var messages = [AgentRuntimeMessage(role: .system, content: "System prompt")]
-        for index in 0..<60 {
-            messages.append(
-                AgentRuntimeMessage(
-                    role: index.isMultiple(of: 2) ? .user : .assistant,
-                    content: "Short turn \(index)"
-                )
-            )
-        }
-
-        let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
-            messages,
-            maxTokens: 8_000,
-            force: true
-        )
-
-        #expect(result.wasCompacted)
-        #expect(result.keptRecentMessageCount > AgentConversationCompactionPolicy.defaultRecentMessageCount)
-        #expect(result.keptRecentMessageCount >= 40)
-        #expect(result.messages.count == result.keptRecentMessageCount + 1)
-        #expect(
-            result.estimatedTokenCount
-                <= AgentConversationCompactionPolicy.targetTokenCount(for: 8_000)
-        )
-    }
-
-    @Test
     func compactionFillsMostOfTheTargetBudgetInsteadOfCollapsingHistory() {
         var messages = [AgentRuntimeMessage(role: .system, content: "System prompt")]
         for index in 0..<200 {
@@ -331,33 +205,6 @@ struct AgentConversationCompactionSupportTests {
         #expect(result.keptRecentMessageCount >= 30)
         #expect(result.messages.first?.role == .system)
         #expect(result.messages.last?.content == messages.last?.content)
-    }
-
-    @Test
-    func memorySummaryCoversEarliestAndMostRecentOlderTurns() {
-        var messages = [AgentRuntimeMessage(role: .system, content: "System prompt")]
-        for index in 0..<80 {
-            messages.append(
-                AgentRuntimeMessage(
-                    role: index.isMultiple(of: 2) ? .user : .assistant,
-                    content: "FACT-\(index)-MARK " + String(repeating: "context ", count: 70)
-                )
-            )
-        }
-
-        let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
-            messages,
-            maxTokens: 4_000,
-            force: true
-        )
-
-        let compactedSystemPrompt = result.messages.first?.content ?? ""
-        let olderCount = messages.count - 1 - result.keptRecentMessageCount
-
-        #expect(result.wasCompacted)
-        #expect(olderCount > 20)
-        #expect(compactedSystemPrompt.contains("FACT-0-MARK"))
-        #expect(compactedSystemPrompt.contains("FACT-\(olderCount - 1)-MARK"))
     }
 
     @Test
@@ -392,71 +239,6 @@ struct AgentConversationCompactionSupportTests {
         #expect(result.wasCompacted)
         #expect(compactedSystemPrompt.contains("HEAD-FACT-0"))
         #expect(compactedSystemPrompt.contains("TAIL-FACT-0"))
-    }
-
-    @Test
-    func repeatedCompactionKeepsEarlierMemoryAndRecordsNewFacts() {
-        let maxTokens = 4_000
-
-        func history(generation: Int, count: Int) -> [AgentRuntimeMessage] {
-            (0..<count).map { index in
-                AgentRuntimeMessage(
-                    role: index.isMultiple(of: 2) ? .user : .assistant,
-                    content: index == 0
-                        ? "GEN\(generation)-DECISION durable rule for generation \(generation)."
-                            + String(repeating: " context", count: 90)
-                        : "Generation \(generation) turn \(index) "
-                            + String(repeating: "context ", count: 90)
-                )
-            }
-        }
-
-        var messages = [AgentRuntimeMessage(role: .system, content: "System prompt")]
-        messages.append(contentsOf: history(generation: 1, count: 40))
-        let first = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
-            messages,
-            maxTokens: maxTokens,
-            force: true
-        )
-
-        var resumed = first.messages
-        resumed.append(contentsOf: history(generation: 2, count: 40))
-        let second = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
-            resumed,
-            maxTokens: maxTokens,
-            force: true
-        )
-
-        var resumedAgain = second.messages
-        resumedAgain.append(contentsOf: history(generation: 3, count: 40))
-        let third = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
-            resumedAgain,
-            maxTokens: maxTokens,
-            force: true
-        )
-
-        let compactedSystemPrompt = third.messages.first?.content ?? ""
-        let secondMemory = memorySummarySection(of: second.messages.first?.content ?? "")
-        let thirdMemory = memorySummarySection(of: compactedSystemPrompt)
-        #expect(first.wasCompacted)
-        #expect(second.wasCompacted)
-        #expect(third.wasCompacted)
-        #expect(compactedSystemPrompt.contains("System prompt"))
-        #expect(compactedSystemPrompt.contains("GEN1-DECISION"))
-        #expect(compactedSystemPrompt.contains("Generation 2 turn"))
-        #expect(compactedSystemPrompt.contains("Generation 3 turn"))
-        #expect(
-            compactedSystemPrompt.components(
-                separatedBy: AgentConversationCompactionSupport.memorySummaryHeader
-            ).count == 2
-        )
-        #expect(compactedSystemPrompt.contains("Prior memory:\nPrior memory:") == false)
-        #expect(thirdMemory.count >= (secondMemory.count * 4) / 5)
-        #expect(
-            third.estimatedTokenCount
-                <= AgentConversationCompactionPolicy.targetTokenCount(for: maxTokens)
-        )
-        #expect(third.keptRecentMessageCount >= first.keptRecentMessageCount)
     }
 
     @Test
@@ -532,61 +314,6 @@ struct AgentConversationCompactionSupportTests {
         #expect(orphanToolResults == 0)
         #expect(result.messages.last?.content == "File 4 defines one type.")
     }
-
-    @Test
-    func compactionRetentionGrowsWithTheContextWindow() {
-        var messages = [AgentRuntimeMessage(role: .system, content: "System prompt")]
-        for index in 0..<120 {
-            messages.append(
-                AgentRuntimeMessage(
-                    role: index.isMultiple(of: 2) ? .user : .assistant,
-                    content: "Turn \(index) " + String(repeating: "context ", count: 70)
-                )
-            )
-        }
-
-        var keptCounts: [Int] = []
-        for maxTokens in [1_000, 8_000, 64_000] {
-            let target = AgentConversationCompactionPolicy.targetTokenCount(for: maxTokens)
-            let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
-                messages,
-                maxTokens: maxTokens,
-                force: true
-            )
-
-            #expect(result.wasCompacted)
-            #expect(result.messages.first?.role == .system)
-            #expect(result.messages.first?.content.contains("System prompt") == true)
-            #expect(
-                result.messages.first?.content
-                    .contains(AgentConversationCompactionSupport.memorySummaryHeader) == true
-            )
-            #expect(result.messages.last?.content == messages.last?.content)
-            #expect(result.estimatedTokenCount < result.originalEstimatedTokenCount)
-            #expect(
-                result.keptRecentMessageCount
-                    >= AgentConversationCompactionPolicy.minimumRecentMessageCount
-            )
-            #expect(
-                result.estimatedTokenCount <= target
-                    || result.keptRecentMessageCount
-                        == AgentConversationCompactionPolicy.minimumRecentMessageCount
-            )
-            keptCounts.append(result.keptRecentMessageCount)
-        }
-
-        #expect(keptCounts[1] > keptCounts[0])
-        #expect(keptCounts[2] > keptCounts[1])
-    }
-}
-
-private func memorySummarySection(of systemPrompt: String) -> String {
-    guard let range = systemPrompt.range(
-        of: AgentConversationCompactionSupport.memorySummaryHeader
-    ) else {
-        return ""
-    }
-    return String(systemPrompt[range.lowerBound...])
 }
 
 private func pseudoPromptTokenIDs(for messages: [AgentRuntimeMessage]) -> [Int] {

@@ -300,7 +300,7 @@ extension TerminalChatRenderCoordinator {
     // MARK: - Direct terminal writes
 
     func ownsScreenReceipt(_ receipt: TerminalPrimaryScreen.Anchor?) -> Bool {
-        if let screen = injectedPrimaryScreen ?? TerminalPrimaryScreen.active {
+        if let screen = TerminalPrimaryScreen.active {
             guard let receipt else { return false }
             return receipt == screen.validReceipt
         }
@@ -308,7 +308,6 @@ extension TerminalChatRenderCoordinator {
     }
 
     func primaryScreen(for channel: OutputChannel) -> TerminalPrimaryScreen? {
-        if let injectedPrimaryScreen { return injectedPrimaryScreen }
         let handle = channel == .standardOutput ? standardOutput : standardError
         guard let handle, let screen = TerminalPrimaryScreen.active,
               screen.handles(handle) else { return nil }

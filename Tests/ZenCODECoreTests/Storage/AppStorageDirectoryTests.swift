@@ -116,11 +116,7 @@ struct AppStorageDirectoryTests {
     @Test
     func coderSupportFilesUseTheEffectiveZenCodeDirectory() {
         AppStorageDirectory.configureSupportDirectoryURL(nil)
-        AgentSettingsManifestStore.resetDefaultCacheForTesting()
-        defer {
-            AppStorageDirectory.configureSupportDirectoryURL(nil)
-            AgentSettingsManifestStore.resetDefaultCacheForTesting()
-        }
+        defer { AppStorageDirectory.configureSupportDirectoryURL(nil) }
 
         let defaultSupportDirectory = UserHomeDirectory.current()
             .appendingPathComponent(".zencode", isDirectory: true)
@@ -146,11 +142,7 @@ struct AppStorageDirectoryTests {
         // hopping onto a detached task, must still not write into the
         // developer's `~/.zencode`.
         AppStorageDirectory.configureSupportDirectoryURL(nil)
-        AgentSettingsManifestStore.resetDefaultCacheForTesting()
-        defer {
-            AppStorageDirectory.configureSupportDirectoryURL(nil)
-            AgentSettingsManifestStore.resetDefaultCacheForTesting()
-        }
+        defer { AppStorageDirectory.configureSupportDirectoryURL(nil) }
 
         #expect(AppStorageDirectory.isRunningUnderTestHarness)
         let sandbox = AppStorageDirectory.testHarnessSandboxURL()

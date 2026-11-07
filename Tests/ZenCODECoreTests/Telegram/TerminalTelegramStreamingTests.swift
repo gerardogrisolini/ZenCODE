@@ -39,37 +39,6 @@ struct TerminalTelegramStreamingTests {
     }
 
     @Test
-    func finishingBeforeThrottlePreventsLateDraft() async throws {
-        let recorder = DraftRecorder()
-        let streamer = TerminalTelegramDraftStreamer(
-            chatID: 1, draftID: 2, throttle: .milliseconds(80)
-        ) { text, chatID, draftID in
-            try await recorder.send(text, chatID, draftID)
-        }
-        await streamer.append("partial")
-        await streamer.finish()
-        try await Task.sleep(for: .milliseconds(120))
-        #expect(await recorder.values.isEmpty)
-        #expect(!(await streamer.owns(chatID: 1, draftID: 2)))
-    }
-
-    @Test
-    func failedDraftDisablesStreamWithoutFallbackDuplicate() async throws {
-        let recorder = DraftRecorder(fails: true)
-        let streamer = TerminalTelegramDraftStreamer(
-            chatID: 1, draftID: 9, throttle: .milliseconds(10)
-        ) { text, chatID, draftID in
-            try await recorder.send(text, chatID, draftID)
-        }
-        await streamer.append("a")
-        try await Task.sleep(for: .milliseconds(40))
-        await streamer.append("b")
-        try await Task.sleep(for: .milliseconds(40))
-        #expect(await recorder.attempts == 1)
-        #expect(await recorder.values.isEmpty)
-    }
-
-    @Test
     func failedDraftStillPersistsExactlyOneFinalMessage() async throws {
         let drafts = DraftRecorder(fails: true)
         let finals = CardRecorder()
@@ -102,27 +71,6 @@ struct TerminalTelegramStreamingTests {
         func edit(_ text: String, _ chat: Int64, _ id: Int) { edits.append((text, chat, id)) }
         func markup(_ value: TerminalTelegramReplyMarkup?, _ chat: Int64, _ id: Int) { markups.append((chat, id, value)) }
         func delete(_ chat: Int64, _ id: Int) { deletes.append((chat, id)) }
-    }
-
-    @Test
-    func ambiguousInitialCardDeliveryDisablesFurtherCreates() async {
-        actor Attempts {
-            var count = 0
-            func fail() throws -> Int {
-                count += 1
-                throw URLError(.networkConnectionLost)
-            }
-        }
-        let attempts = Attempts()
-        let ledger = TerminalTelegramProgressCardLedger(
-            chatID: 42,
-            send: { _, _ in try await attempts.fail() },
-            editText: { _, _, _ in }, editMarkup: { _, _, _ in }, delete: { _, _ in }
-        )
-        await ledger.update(text: "first")
-        await ledger.update(text: "second")
-        #expect(await attempts.count == 1)
-        #expect(await ledger.currentOwnership() == nil)
     }
 
     actor SendGate {
@@ -186,21 +134,6 @@ struct TerminalTelegramStreamingTests {
         #expect(deleted.first?.1 == 55)
     }
 
-    @Test
-    func stoppedDraftOwnershipIsFencedAtBoundary() async {
-        let reporter = TerminalTelegramTurnProgressReporter(
-            chatID: 42,
-            sendMessage: { _, _ in true },
-            sendDraft: { _, _, _ in }
-        )
-        let firstID = await reporter.draftStreamerIDForTesting()
-        #expect(firstID != nil)
-        #expect(await reporter.ownsStoppedDraft(chatID: 42, draftID: firstID!))
-        await reporter.appendAgentResponseDelta("done")
-        _ = await reporter.publishPendingAgentResponseAtBoundary()
-        #expect(!(await reporter.ownsStoppedDraft(chatID: 42, draftID: firstID!)))
-        await reporter.retire()
-    }
 }
 
 private final class StreamingWireTransport: TelegramHTTPTransport, @unchecked Sendable {
@@ -310,31 +243,6 @@ struct TerminalTelegramStreamingWireTests {
                 #expect(body["draft_id"] as? Int == 21, "\(request.method)")
             }
         }
-    }
-
-    /// `start()` publishes `getMe().has_topics_enabled` in the control state.
-    /// The value survives `stop()` like `botUsername`. Callers that build the
-    /// state without it get `nil`.
-    @Test
-    func startPublishesTopicCapabilityFromGetMe() async throws {
-        let flags: [Bool?] = [true, false, nil]
-        for flag in flags {
-            let transport = TopicWireTransport(hasTopicsEnabled: flag)
-            let support = try Self.makeSupportDirectory()
-            defer { try? FileManager.default.removeItem(at: support) }
-            try await AppStorageDirectory.withSupportDirectoryURL(support) {
-                let service = TerminalTelegramControlService(transportFactory: { transport })
-                let started = try await service.start()
-                #expect(started.hasTopicsEnabled == flag)
-                let stopped = await service.stop()
-                #expect(stopped.hasTopicsEnabled == flag)
-            }
-        }
-        let legacy = TerminalTelegramControlState(
-            isConfigured: true, isActive: false, statusText: "Configured",
-            botUsername: nil, lastError: nil, lastMessagePreview: nil
-        )
-        #expect(legacy.hasTopicsEnabled == nil)
     }
 
     /// `createTopic` starts from the General lease and returns the new

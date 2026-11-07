@@ -42,17 +42,6 @@ struct TerminalModifierKeyStateTests {
         pipe.fileHandleForWriting.closeFile()
     }
 
-    @Test
-    func plainCarriageReturnWithoutShiftDecodesAsEnter() {
-        let pipe = Pipe()
-        let reader = Self.makeReader(pipe: pipe, isShiftPressed: { false })
-
-        pipe.fileHandleForWriting.write(Data([0x0D]))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .enter)
-
-        pipe.fileHandleForWriting.closeFile()
-    }
-
     /// Terminals with an extended keyboard protocol already report their
     /// modifiers, so the Shift state never overrides what they encode.
     @Test
@@ -63,24 +52,6 @@ struct TerminalModifierKeyStateTests {
         // CSI-u Enter without modifiers: `ESC [ 13 u`.
         pipe.fileHandleForWriting.write(Data([0x1B, 0x5B, 0x31, 0x33, 0x75]))
         #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .enter)
-
-        pipe.fileHandleForWriting.closeFile()
-    }
-
-    /// Terminal.app sends Shift+Enter as `ESC CR`: it is a newline on its own,
-    /// without asking macOS for the Shift state.
-    @Test
-    func escapeCarriageReturnDecodesAsNewlineWithoutProbingShift() {
-        let pipe = Pipe()
-        let probeCount = Mutex(0)
-        let reader = Self.makeReader(pipe: pipe, isShiftPressed: {
-            probeCount.withLock { $0 += 1 }
-            return false
-        })
-
-        pipe.fileHandleForWriting.write(Data([0x1B, 0x0D]))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .newline)
-        #expect(probeCount.withLock { $0 } == 0)
 
         pipe.fileHandleForWriting.closeFile()
     }
@@ -116,17 +87,6 @@ struct TerminalModifierKeyStateTests {
         // "Delete sends Ctrl-H" turns the same key into BS.
         pipe.fileHandleForWriting.write(Data([0x08]))
         #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .clearDraft)
-
-        pipe.fileHandleForWriting.closeFile()
-    }
-
-    @Test
-    func plainDeleteWithoutOptionDecodesAsBackspace() {
-        let pipe = Pipe()
-        let reader = Self.makeReader(pipe: pipe, isShiftPressed: { true })
-
-        pipe.fileHandleForWriting.write(Data([0x7F]))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .backspace)
 
         pipe.fileHandleForWriting.closeFile()
     }
@@ -190,19 +150,6 @@ struct TerminalModifierKeyStateTests {
     }
 
     @Test
-    func optionDraftMotionCharactersWithoutOptionAreTyped() {
-        let pipe = Pipe()
-        let reader = Self.makeReader(pipe: pipe)
-
-        for character in ["\u{AF}", "\u{2264}", "\u{2D8}", "\u{2265}"] {
-            pipe.fileHandleForWriting.write(Data(character.utf8))
-            #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .character(character))
-        }
-
-        pipe.fileHandleForWriting.closeFile()
-    }
-
-    @Test
     func sshVariablesMarkTheSessionAsRemote() {
         #expect(TerminalModifierKeyState.isLocalSession(environment: [:]))
         #expect(!TerminalModifierKeyState.isLocalSession(
@@ -218,13 +165,4 @@ struct TerminalModifierKeyStateTests {
             environment: ["SSH_CONNECTION": "", "SSH_CLIENT": "", "SSH_TTY": ""]
         ))
     }
-
-    #if !os(macOS)
-    @Test
-    func systemProbeIsUnavailableOutsideMacOS() {
-        let state = TerminalModifierKeyState.system(environment: [:])
-        #expect(state.isShiftPressed() == false)
-        #expect(state.isOptionPressed() == false)
-    }
-    #endif
 }

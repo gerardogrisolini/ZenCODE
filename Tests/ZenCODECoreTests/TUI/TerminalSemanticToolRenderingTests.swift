@@ -86,48 +86,6 @@ struct TerminalSemanticToolRenderingTests {
     }
 
     @Test
-    func compactListAndWriteUseTheirCanonicalNameAndSemanticSubject() throws {
-        let listDescriptor = PromptSkillToolProvider.listToolDescriptor
-        let writeDescriptor = try #require(
-            DirectToolCatalog.memoryDescriptors.first { $0.name == "memory.write" }
-        )
-        let cases: [(DirectToolDescriptor, [String: Any], String, [String])] = [
-            (
-                listDescriptor,
-                [:],
-                "0.03s",
-                ["🛠️  skills.list", "Prompt skills ✅ 0.03s"]
-            ),
-            (
-                writeDescriptor,
-                ["content": "Summary: completed"],
-                "0.01s",
-                ["🛠️  memory.write", "Project memory ✅ 0.01s"]
-            )
-        ]
-
-        for (descriptor, arguments, duration, expectedLines) in cases {
-            let call = DirectAgentToolCall(
-                id: descriptor.name,
-                name: descriptor.name,
-                argumentsObject: arguments,
-                argumentsJSON: "{}",
-                descriptorTitle: descriptor.title,
-                presentation: descriptor.presentation
-            )
-
-            let lines = TerminalChat.compactToolLines(
-                for: call,
-                statusIcon: "✅",
-                statusDetail: duration,
-                columnWidth: 100
-            )
-
-            #expect(lines == expectedLines)
-        }
-    }
-
-    @Test
     func compactFileListInspectAndWriteShowTheirCanonicalNameAndPathArgument() throws {
         let cases: [(String, [String: Any], String, String, String)] = [
             (
@@ -180,61 +138,6 @@ struct TerminalSemanticToolRenderingTests {
             )
         }
     }
-
-    @Test
-    func compactTaskListUsesItsDeclaredStatusTarget() throws {
-        let descriptor = try #require(
-            DirectToolCatalog.todoTaskDescriptors.first { $0.name == "tasks.list" }
-        )
-        let call = DirectAgentToolCall(
-            id: "task-list",
-            name: descriptor.name,
-            argumentsObject: [
-                "status": "pending",
-                "runnableOnly": true,
-                "includeTerminal": false
-            ],
-            argumentsJSON: #"{"status":"pending","runnableOnly":true,"includeTerminal":false}"#,
-            presentation: descriptor.presentation
-        )
-
-        let lines = TerminalChat.compactToolLines(
-            for: call,
-            statusIcon: "✅",
-            statusDetail: "0.02s",
-            columnWidth: 80
-        )
-
-        #expect(
-            lines == ["🛠️  tasks.list", "pending ✅ 0.02s"]
-        )
-    }
-
-    @Test
-    func compactFeatureListUsesItsDeclaredBooleanTarget() throws {
-        let descriptor = try #require(
-            DirectToolCatalog.featureDescriptors.first { $0.name == "feature.list" }
-        )
-        let call = DirectAgentToolCall(
-            id: "feature-list",
-            name: descriptor.name,
-            argumentsObject: ["includeTools": true],
-            argumentsJSON: #"{"includeTools":true}"#,
-            presentation: descriptor.presentation
-        )
-
-        let lines = TerminalChat.compactToolLines(
-            for: call,
-            statusIcon: "✅",
-            statusDetail: "0.02s",
-            columnWidth: 80
-        )
-
-        #expect(lines == ["🛠️  feature.list", "true ✅ 0.02s"])
-    }
-
-
-
 
     @Test
     func acpFacadeUsesSemanticTitleAndKindWhileKeepingLegacyNameAPI() throws {

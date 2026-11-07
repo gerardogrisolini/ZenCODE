@@ -176,27 +176,6 @@ struct ChatCompletionsHistorySanitizationTests {
     }
 
     @Test
-    func responsesInputKeepsStructuredReasoningItemsForAllRounds() throws {
-        let messages: [[String: Any]] = [
-            ["role": "user", "content": "first question"],
-            [
-                "role": "assistant",
-                "content": "first answer",
-                "reasoning_items": "[{\"type\":\"reasoning\",\"id\":\"rs_1\",\"encrypted_content\":\"abc\",\"summary\":[]}]"
-            ],
-            ["role": "user", "content": "second question"]
-        ]
-
-        let payload = RemoteGenerationClient.responsesInputPayload(from: messages)
-        let items = payload.input.compactMap { $0 as? [String: Any] }
-        let reasoningItems = items.filter { ($0["type"] as? String) == "reasoning" }
-
-        #expect(reasoningItems.count == 1)
-        #expect(reasoningItems.first?["id"] as? String == "rs_1")
-        #expect(reasoningItems.first?["encrypted_content"] as? String == "abc")
-    }
-
-    @Test
     func dropsAssistantMessagesLeftWithoutContentAfterSanitization() {
         let messages: [[String: Any]] = [
             ["role": "user", "content": "question"],

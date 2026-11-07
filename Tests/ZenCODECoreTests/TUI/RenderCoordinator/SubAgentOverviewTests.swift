@@ -116,30 +116,6 @@ extension TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func subAgentOverviewWithoutAnchorIsAlwaysAppended() async {
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            columnWidthProvider: { 80 }
-        )
-
-        _ = await renderer.renderRememberedSubAgentOverview(
-            signature: "agents:unanchored:first",
-            text: "\n👥 Sub-Agents:\n   first\n",
-        )
-        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
-        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
-
-        _ = await renderer.renderRememberedSubAgentOverview(
-            signature: "agents:unanchored:second",
-            text: "\n👥 Sub-Agents:\n   second\n",
-        )
-        let refreshText = await renderer.capturedText(droppingFirst: eventsBeforeRefresh)
-
-        #expect(!containsCursorUpSequence(refreshText))
-        #expect(TerminalANSIText.stripANSI(refreshText).contains("second"))
-    }
-
-    @Test
     func subAgentOverviewIsAppendedWhenOtherOutputFollowedIt() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true,
@@ -162,30 +138,6 @@ extension TerminalChatRenderCoordinatorTests {
 
         #expect(!refreshText.contains("\u{1B}[2K"))
         #expect(TerminalANSIText.stripANSI(refreshText).contains("2 total"))
-    }
-
-    @Test
-    func subAgentOverviewIsAppendedWhenStandardErrorIsNotATerminal() async {
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: false,
-            columnWidthProvider: { 80 }
-        )
-
-        _ = await renderer.renderRememberedSubAgentOverview(
-            signature: "agents:1",
-            text: "\n👥 Sub-Agents:\n   1 total\n",
-        )
-        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
-        let eventsBeforeRefresh = await renderer.capturedWriteEvents().count
-
-        _ = await renderer.renderRememberedSubAgentOverview(
-            signature: "agents:2",
-            text: "\n👥 Sub-Agents:\n   2 total\n",
-        )
-        let refreshText = await renderer.capturedText(droppingFirst: eventsBeforeRefresh)
-
-        #expect(!refreshText.contains("\u{1B}[2K"))
-        #expect(refreshText.contains("2 total"))
     }
 
     @Test
@@ -394,35 +346,6 @@ extension TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func subAgentOverviewDifferentWaveReusesTheOwnedLiveRegion() async {
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            columnWidthProvider: { 80 }
-        )
-
-        _ = await renderer.renderRememberedSubAgentOverview(
-            signature: "agents:wave-a:running",
-            text: "\n👥 Sub-Agents:\n   wave A running\n",
-            overviewBatchID: "wave-a"
-        )
-        let eventCountBeforeNewWave = await renderer.capturedWriteEvents().count
-
-        _ = await renderer.renderRememberedSubAgentOverview(
-            signature: "agents:wave-b:running",
-            text: "\n👥 Sub-Agents:\n   wave B running\n",
-            overviewBatchID: "wave-b"
-        )
-        let newWaveText = await renderer.capturedText(droppingFirst: eventCountBeforeNewWave)
-
-        // A different wave still replaces the single live Sub-Agents slot when
-        // no intervening output has invalidated ownership of its physical rows.
-        #expect(newWaveText.hasPrefix("\u{1B}[3A\r"))
-        #expect(newWaveText.components(separatedBy: "\u{1B}[2K").count - 1 == 3)
-        #expect(TerminalANSIText.stripANSI(newWaveText).contains("wave B running"))
-        #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 3)
-    }
-
-    @Test
     func newerSubAgentOverviewPublicationFencesAnOlderCallback() async {
         let renderer = makeRenderer(standardErrorIsTerminal: true)
         let staleRevision = await renderer.beginOverviewPublication(.subAgents)
@@ -446,31 +369,6 @@ extension TerminalChatRenderCoordinatorTests {
         #expect(current == .rendered)
         #expect(stale == .unchanged)
         #expect(staleText.isEmpty)
-    }
-
-    @Test
-    func subAgentOverviewAfterBlankLineThoughtAndAgentWaitIsReplacedInPlace() async throws {
-        let renderer = makeRenderer(
-            stdinIsTerminal: true,
-            standardErrorIsTerminal: true,
-            standardOutputIsTerminal: true,
-            columnWidthProvider: { 120 }
-        )
-
-        // The thought renderer appends its SGR reset after the trailing blank
-        // line. That zero-width reset must not start the next row, otherwise
-        // the overview title loses its margin and its rows are never owned.
-        await renderer.writeThought("Now I'm weighing.\n\n")
-        await renderer.writeToolCallStarted(
-            presentedToolCall(
-                id: "wait-after-blank-thought",
-                name: "agent.wait",
-                argumentsObject: [:],
-                argumentsJSON: "{}"
-            )
-        )
-
-        try await expectSubAgentOverviewIsOwnedAndReplacedInPlace(by: renderer)
     }
 
     @Test

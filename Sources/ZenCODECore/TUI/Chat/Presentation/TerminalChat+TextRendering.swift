@@ -45,12 +45,10 @@ extension TerminalChat {
     }
 
     func writeFailureMessage(_ text: String) async {
-        capturedCommandOutputForTesting?.append(text)
         await renderCoordinator.writeFailureMessage(text)
     }
 
     func writeSystemMessage(_ text: String) async {
-        capturedCommandOutputForTesting?.append(text)
         await renderCoordinator.writeSystemMessage(text)
     }
 
@@ -64,7 +62,6 @@ extension TerminalChat {
     /// terminal formatter used for assistant responses. A dedicated formatter
     /// keeps command output from sharing buffered streaming state.
     func writeMarkdownMessage(_ markdown: String) async {
-        capturedCommandOutputForTesting?.append(markdown)
         await renderCoordinator.writeMarkdownMessage(markdown)
     }
 

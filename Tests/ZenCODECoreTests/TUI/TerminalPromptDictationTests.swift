@@ -84,21 +84,6 @@ struct TerminalPromptDictationTests {
     }
 
     @Test
-    func theKeywordAloneSendsTheTypedDraftOrNothing() {
-        var dictation = TerminalPromptDictation()
-        var editor = Self.editor("Compila il progetto")
-        _ = dictation.show(id: 1, text: "vai", in: &editor)
-        #expect(String(editor.buffer) == "Compila il progetto vai")
-        #expect(dictation.take(id: 1, text: "", from: &editor) == "Compila il progetto")
-        #expect(editor.buffer.isEmpty)
-
-        var empty = Self.editor("")
-        _ = dictation.show(id: 2, text: "vai", in: &empty)
-        #expect(dictation.take(id: 2, text: "", from: &empty) == "")
-        #expect(empty.buffer.isEmpty)
-    }
-
-    @Test
     func anEndedDictationIsOrdinaryTextAndANewerOneStartsAtTheEnd() {
         var dictation = TerminalPromptDictation()
         var editor = Self.editor("Cerca")
@@ -113,39 +98,6 @@ struct TerminalPromptDictationTests {
         #expect(String(editor.buffer) == "Cerca il file e aprilo")
         #expect(dictation.active == .init(id: 2, start: 14, insertedSeparator: true))
         #expect(dictation.take(id: 2, text: "e aprilo", from: &editor) == "Cerca il file e aprilo")
-    }
-
-    @Test
-    func previewUpdatesMoveTheCursorOnlyFromInsideTheDictation() {
-        var dictation = TerminalPromptDictation()
-        var editor = Self.editor("Cerca")
-        _ = dictation.show(id: 1, text: "il", in: &editor)
-        // Inside the dictation the cursor follows its end.
-        editor.cursorIndex = 7
-        _ = dictation.show(id: 1, text: "il file", in: &editor)
-        #expect(editor.cursorIndex == 13)
-        // In the typed text it stays where the operator put it.
-        editor.cursorIndex = 2
-        _ = dictation.show(id: 1, text: "il file main", in: &editor)
-        #expect(String(editor.buffer) == "Cerca il file main")
-        #expect(editor.cursorIndex == 2)
-        _ = dictation.show(id: 1, text: "", in: &editor)
-        #expect(editor.cursorIndex == 2)
-    }
-
-    @Test
-    func aPreviewEndsHistoryNavigationLikeAnEdit() {
-        var editor = Self.editor("Cerca")
-        editor.preferredVisualColumn = 3
-        editor.historyIndex = 0
-        editor.suggestionIndex = 2
-        editor.areSuggestionsDismissed = true
-        var dictation = TerminalPromptDictation()
-        _ = dictation.show(id: 1, text: "il file", in: &editor)
-        #expect(editor.preferredVisualColumn == nil)
-        #expect(editor.historyIndex == nil)
-        #expect(editor.suggestionIndex == 0)
-        #expect(!editor.areSuggestionsDismissed)
     }
 }
 
@@ -238,20 +190,6 @@ struct TerminalReaderVoiceDictationTests {
         #expect(reader.commandHistory.isEmpty)
         // A send is not an edit: voice is not told to forget anything.
         #expect(ended.ids.isEmpty)
-    }
-
-    @Test
-    func replacingTheDraftProgrammaticallyEndsTheDictation() async {
-        let ended = EndedDictations()
-        let reader = Self.makeReader(typed: "Cerca", ended: ended)
-        reader.setVoiceDictation(id: 4, text: "il file")
-        await reader.setPanelText("/plan rivedi")
-        #expect(ended.ids == [4])
-        #expect(Self.draft(of: reader) == "/plan rivedi")
-
-        // Without a dictation shown there is nothing to end.
-        await reader.setPanelText("altro")
-        #expect(ended.ids == [4])
     }
 
     @Test

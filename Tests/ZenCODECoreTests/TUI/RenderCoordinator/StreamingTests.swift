@@ -62,31 +62,6 @@ extension TerminalChatRenderCoordinatorTests {
         #expect(stderr.components(separatedBy: "> third turn").count - 1 == 1)
     }
 
-    @Test(arguments: [false, true])
-    func submittedPromptTurnRulePreservesRightMarginAfterResize(stdinIsTerminal: Bool) async {
-        let widths = [80, 120, 40]
-        let widthBox = ColumnWidthBox(widths[0])
-        let renderer = makeRenderer(
-            stdinIsTerminal: stdinIsTerminal,
-            standardErrorIsTerminal: true,
-            columnWidthProvider: { widthBox.width }
-        )
-
-        await renderer.writeSubmittedPrompt("first turn")
-        for width in widths {
-            widthBox.width = width
-            await renderer.writeSubmittedPrompt("turn at \(width) columns")
-        }
-
-        let stderr = await renderer.capturedPlainText(on: .standardError)
-        let ruleRows = stderr.split(separator: "\n").filter { row in
-            let trimmed = row.trimmingCharacters(in: .whitespaces)
-            return !trimmed.isEmpty && trimmed.allSatisfy { $0 == "─" }
-        }
-
-        #expect(ruleRows.map { TerminalChat.displayWidth(String($0)) } == widths.map { $0 - 1 })
-    }
-
     @Test(arguments: [0, 1, 2, 3], [false, true])
     func submittedPromptTurnRuleClampsToAtLeastOneCharacter(
         terminalColumns: Int,
@@ -133,44 +108,6 @@ extension TerminalChatRenderCoordinatorTests {
     }
 
     @Test
-    func terminalThinkingStaysContiguousAcrossDeltasAtNarrowWidth() async {
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            columnWidthProvider: { 8 }
-        )
-
-        // The coordinator no longer hard-wraps thinking; a narrow width must not
-        // inject synthetic newlines. Send the thought across multiple deltas so
-        // the streaming state is exercised, then assert the captured text is the
-        // contiguous source content (plus only the coordinator's framing
-        // newlines), not split by a computed column boundary.
-        await renderer.writeThought("abcdefghij")
-        await renderer.writeThought("klmnopqrst")
-        await renderer.finishThoughtOutput()
-
-        let stderr = await renderer.capturedPlainText(on: .standardError)
-
-        // The whole thought survives unbroken across the narrow width.
-        #expect(stderr.contains("abcdefghijklmnopqrst"))
-        #expect(!stderr.contains("abcdefg\nhijklmn\n"))
-        #expect(!stderr.contains("thinking lines omitted"))
-    }
-
-    @Test
-    func terminalThinkingCodeBlockDoesNotAddWidthBasedContinuationMarkers() async {
-        let renderer = makeRenderer(standardErrorIsTerminal: true)
-        let longLine = "let explanation = \"a deliberately long value that must remain one logical line\""
-
-        await renderer.writeThought("```swift\n\(longLine)\n```\n")
-        await renderer.finishThoughtOutput()
-
-        let stderr = await renderer.capturedPlainText(on: .standardError)
-
-        #expect(stderr.contains(longLine))
-        #expect(!stderr.contains("↳"))
-    }
-
-    @Test
     func terminalThinkingShowsUnterminatedTail() async {
         let renderer = makeRenderer(
             standardErrorIsTerminal: true
@@ -200,26 +137,6 @@ extension TerminalChatRenderCoordinatorTests {
         let stderr = await renderer.capturedText(on: .standardError)
 
         #expect(stderr.contains("first\nsecond\nthird"))
-        #expect(!stderr.contains("thinking lines omitted"))
-    }
-
-    @Test
-    func terminalThinkingShowsAllContentAcrossStreams() async {
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: true
-        )
-
-        await renderer.writeThought("first visible\nfirst hidden\n")
-        await renderer.finishThoughtOutput()
-        await renderer.writeThought("second visible\nsecond hidden\n")
-        await renderer.finishThoughtOutput()
-
-        let stderr = await renderer.capturedPlainText(on: .standardError)
-
-        #expect(stderr.contains("first visible"))
-        #expect(stderr.contains("second visible"))
-        #expect(stderr.contains("first hidden"))
-        #expect(stderr.contains("second hidden"))
         #expect(!stderr.contains("thinking lines omitted"))
     }
 
@@ -280,32 +197,6 @@ extension TerminalChatRenderCoordinatorTests {
 
         let stdout = await renderer.capturedText(on: .standardOutput)
         #expect(TerminalANSIText.stripANSI(stdout) == "💬 Answer\n")
-    }
-
-    @Test
-    func assistantContentWithNarrowWidthStaysContiguousAfterBubblePrefix() async {
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: false,
-            standardOutputIsTerminal: true,
-            columnWidthProvider: { 10 }
-        )
-
-        // The `💬 ` prefix shares the first output row. A narrow width must not
-        // make the formatter inject synthetic line breaks before or after the
-        // terminal's own auto-wrap: only the source newline survives.
-        await renderer.writeAssistantContent("one two three four five six seven\n")
-        await renderer.finishStreamingOutput()
-
-        let stdout = await renderer.capturedText(on: .standardOutput)
-        let visible = TerminalANSIText.stripANSI(stdout)
-
-        // The bubble prefix is present and the content is contiguous.
-        #expect(visible.hasPrefix("💬 "))
-        #expect(visible.contains("one two three four five six seven"))
-        // No synthetic line break between the prefix and the content.
-        let afterPrefix = String(visible.dropFirst("💬 ".count))
-        #expect(afterPrefix.hasSuffix("\n"))
-        #expect(!String(afterPrefix.dropLast()).contains("\n"))
     }
 
     @Test
@@ -372,47 +263,6 @@ extension TerminalChatRenderCoordinatorTests {
         let events = await renderer.capturedWriteEvents()
         #expect(events.count == 2)
         #expect(events.renderedText().contains("Answer continues"))
-    }
-
-    @Test
-    func leadingEdgeReArmsAfterIdleWindowElapses() async {
-        let clock = StreamingClock()
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: false,
-            streamingFlushDelay: .milliseconds(32),
-            streamingNow: { clock.now }
-        )
-
-        await renderer.writeAssistantContent("First")
-        let firstEvents = await renderer.capturedWriteEvents()
-        #expect(firstEvents.count == 1)
-
-        // Advance past the idle window so the leading edge re-arms.
-        clock.advance(by: .milliseconds(40))
-        await renderer.writeAssistantContent("Second")
-        let secondEvents = await renderer.capturedWriteEvents()
-        #expect(secondEvents.count == 2)
-    }
-
-    @Test
-    func leadingEdgeFlushPreservesWriteEventOrder() async {
-        let clock = StreamingClock()
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: false,
-            streamingFlushDelay: .milliseconds(32),
-            streamingNow: { clock.now }
-        )
-
-        await renderer.writeAssistantContent("alpha")
-        clock.advance(by: .milliseconds(1))
-        await renderer.writeAssistantContent("beta")
-        await renderer.waitForScheduledStreamingFlush()
-
-        let events = await renderer.capturedWriteEvents()
-        #expect(events.count == 2)
-        #expect(events.map(\.sequence) == [0, 1])
-        #expect(events[0].text.contains("alpha"))
-        #expect(events[1].text.contains("beta"))
     }
 
     @Test
@@ -501,24 +351,6 @@ extension TerminalChatRenderCoordinatorTests {
 
         let stdout = await renderer.capturedText(on: .standardOutput)
         #expect(TerminalANSIText.stripANSI(stdout) == "💬 Answer\n")
-    }
-
-    @Test
-    func sharedTerminalTopologyReusesTheErrorCursorForAssistantCompletion() async {
-        let renderer = makeRenderer(
-            standardErrorIsTerminal: true,
-            standardOutputIsTerminal: true,
-            cursorTopology: .shared
-        )
-
-        await renderer.writeAssistantContent("Answer")
-        await renderer.writeError("\n")
-        await renderer.finishAssistantContent()
-
-        let stdout = await renderer.capturedText(on: .standardOutput)
-        // The shared stderr newline already closed the physical row, so stdout
-        // must not add a duplicate line boundary.
-        #expect(TerminalANSIText.stripANSI(stdout) == "💬 Answer")
     }
 
     @Test

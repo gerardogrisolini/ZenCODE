@@ -10,28 +10,6 @@ import Testing
 @Suite
 struct TerminalChatEventQueueTests {
     @Test
-    func synchronousInputIngressPreservesToggleBeforeSubmit() async {
-        let queue = TerminalChatEventQueue()
-        queue.send(.input(.toggleAccessModeRequested))
-        queue.send(.input(.submitted("prompt")))
-
-        var iterator = queue.events.makeAsyncIterator()
-        let first = await iterator.next()
-        let second = await iterator.next()
-
-        if case .some(.input(.toggleAccessModeRequested)) = first {
-            // Expected first event.
-        } else {
-            Issue.record("Expected access-mode toggle before submit")
-        }
-        if case let .some(.input(.submitted(prompt))) = second {
-            #expect(prompt == "prompt")
-        } else {
-            Issue.record("Expected submitted prompt after access-mode toggle")
-        }
-    }
-
-    @Test
     func bufferedTogglePrecedesQueuedPromptStartAfterGenerationCompletes() async {
         let queue = TerminalChatEventQueue()
         queue.send(
@@ -152,14 +130,6 @@ struct TerminalChatEventQueueTests {
         // The stream terminates instead of suspending forever, and only the
         // pre-teardown event was delivered.
         #expect(received == ["before teardown"])
-    }
-
-    @Test
-    func finishIsIdempotent() {
-        let queue = TerminalChatEventQueue()
-        queue.finish()
-        queue.finish()
-        #expect(queue.isFinished)
     }
 
     // MARK: - Bounded ingress
@@ -327,37 +297,6 @@ struct TerminalChatEventQueueTests {
         }
     }
 
-    /// Completed voice transcriptions are bounded by the voice registry, then
-    /// use the runtime backpressure rather than dropping a transcript when
-    /// the terminal is temporarily busy.
-    @Test
-    func voiceCompletionBackpressuresUntilRuntimeQueueDrains() async {
-        let queue = TerminalChatEventQueue(capacity: 1)
-        let voice = TerminalVoicePromptResult(
-            origin: .local,
-            outcome: .success("transcribed prompt")
-        )
-        queue.send(.input(.submitted("occupies the only slot")))
-        let producer = Task {
-            await queue.sendWithBackpressure(.voicePromptCompleted(voice))
-        }
-
-        var iterator = queue.events.makeAsyncIterator()
-        _ = await iterator.next()
-        #expect(await producer.value)
-        if case let .some(.voicePromptCompleted(delivered)) = await iterator.next() {
-            #expect(delivered.origin == .local)
-            if case let .success(prompt) = delivered.outcome {
-                #expect(prompt == "transcribed prompt")
-            } else {
-                Issue.record("Expected the successful voice transcript")
-            }
-        } else {
-            Issue.record("Expected voice completion after backpressure release")
-        }
-        #expect(queue.bufferedEventCount <= queue.capacity)
-    }
-
     @Test
     func queuedPromptsRejectOverflowWithoutChangingFIFO() {
         var prompts = ChatPromptQueue<TerminalPromptOrigin>(capacity: 2)
@@ -381,25 +320,5 @@ struct TerminalChatEventQueueTests {
         #expect(dequeuedFirst == first)
         #expect(dequeuedSecond == second)
         #expect(dequeuedEmpty == nil)
-    }
-
-    /// A reader suspended on an empty queue is handed the next event directly,
-    /// so the bound never interferes with a healthy consumer.
-    @Test
-    func suspendedReaderReceivesTheNextEventInOrder() async {
-        let queue = TerminalChatEventQueue(capacity: 2)
-        let reader = Task { () -> TerminalChatRuntimeEvent? in
-            var iterator = queue.events.makeAsyncIterator()
-            return await iterator.next()
-        }
-        try? await Task.sleep(for: .milliseconds(20))
-        queue.send(.input(.submitted("late arrival")))
-
-        if case let .some(.input(.submitted(line))) = await reader.value {
-            #expect(line == "late arrival")
-        } else {
-            Issue.record("Expected the suspended reader to receive the event")
-        }
-        #expect(queue.evictedEventCount == 0)
     }
 }

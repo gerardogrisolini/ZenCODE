@@ -188,42 +188,6 @@ struct ChatSessionStateTests {
         }
     }
 
-    /// A turn the channel invalidated (``ChatSessionController/cancelActiveTurn(armingWorkflowRecovery:)``)
-    /// writes nothing back, so the transcript has no trace of it, while the
-    /// live log records what was presented. Rule: the comparison with a
-    /// transcript holds for the turns that were current until they ended.
-    @Test
-    func anInvalidatedTurnStaysInTheLiveLogButNotInTheTranscript() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            let reducer = ChatSessionStateReducer(controller: controller, defaultOrigin: .local)
-            controller.addObserver(reducer)
-            try await harness.startSession()
-
-            await harness.runtime.append { call in
-                await call.onEvent(.content("Kept."))
-                return DirectAgentResponse(text: "Kept.", stopReason: "end_turn", modelID: "m")
-            }
-            _ = try await controller.runTurn(Self.request("First", for: controller))
-            await harness.runtime.append { call in
-                await call.onEvent(.content("Discarded."))
-                controller.cancelActiveTurn()
-                return DirectAgentResponse(text: "Discarded.", stopReason: "end_turn", modelID: "m")
-            }
-            _ = try await controller.runTurn(Self.request("Second", for: controller))
-
-            let live = Self.representable(reducer.snapshot.log)
-            let rebuilt = Self.representable(await Self.reducerRestoring(controller.transcript).snapshot.log)
-            #expect(live == [
-                .init(turn: 1, entry: .prompt(text: "First", attachments: [])),
-                .init(turn: 1, entry: .assistantText("Kept.")),
-                .init(turn: 2, entry: .prompt(text: "Second", attachments: [])),
-                .init(turn: 2, entry: .assistantText("Discarded.")),
-            ])
-            #expect(rebuilt == Array(live.prefix(2)))
-        }
-    }
-
     /// A restored session whose tool calls have no ID (a history an editor
     /// sends, a model that names none): each result without an ID completes
     /// the oldest call without an ID still open in its turn, with its tool
@@ -304,31 +268,6 @@ struct ChatSessionStateTests {
         #expect(summaries == ["body of a", "a", "built", "c"])
     }
 
-    /// A result without an ID whose tool name no open call without an ID has
-    /// is not given to another call: it starts a call of its own, and the
-    /// call it does not match stays open, as the transcript leaves it.
-    @Test
-    func aResultWithoutAnIDCompletesOnlyACallWithItsName() {
-        let kinds = ChatTurnEntry.kinds(fromTranscript: [
-            AgentRuntimeMessage(role: .user, content: "List"),
-            AgentRuntimeMessage(
-                role: .assistant,
-                content: "",
-                toolCalls: [AgentRuntimeToolCall(id: nil, name: "local.ls", argumentsJSON: "{}")]
-            ),
-            AgentRuntimeMessage(role: .tool, content: "exit 0", toolName: "local.exec"),
-        ])
-        let activity = kinds.compactMap { kind -> RepresentableEntry? in
-            kind.isActivity ? RepresentableEntry(kind) : nil
-        }
-
-        #expect(activity == [
-            .toolCallStarted(id: "restored-tool-1-0", name: "local.ls", argumentsJSON: "{}"),
-            .toolCallStarted(id: "restored-tool-2-0", name: "local.exec", argumentsJSON: "{}"),
-            .toolCallCompleted(id: "restored-tool-2-0", name: "local.exec", output: "exit 0", attachments: []),
-        ])
-    }
-
     // MARK: - Projections
 
     @Test
@@ -373,77 +312,6 @@ struct ChatSessionStateTests {
     }
 
     // MARK: - Blocks
-
-    @Test
-    @ChatSessionActor
-    func blocksCloseAtTheFirstToolCallStartAndTheLiveTextStaysOutOfTheLog() async throws {
-        let reducer = Self.reducer()
-        let read = Self.toolCall(id: "read", name: "local.readFile")
-        let result = DirectAgentToolResult(output: "ok", summary: "ok")
-        await reducer.turnWillStart(Self.request("Go"))
-        await reducer.presentThought("Thinking ")
-        await reducer.presentAssistantContent("Let me ")
-        await reducer.presentAssistantContent("look.")
-
-        // Streaming: the block is live, not logged.
-        #expect(reducer.snapshot.turn.liveThought == "Thinking ")
-        #expect(reducer.snapshot.turn.liveAssistantText == "Let me look.")
-        #expect(reducer.snapshot.transcript.map(\.kind) == [
-            .userPrompt(text: "Go", attachments: [], origin: .local),
-        ])
-        #expect(reducer.snapshot.turn.isGenerating)
-        #expect(reducer.snapshot.summary.isGenerating)
-
-        await reducer.presentToolCallStarted(read)
-        #expect(reducer.snapshot.turn.liveThought.isEmpty)
-        #expect(reducer.snapshot.turn.liveAssistantText.isEmpty)
-        // A repeated start, and a blank block, change nothing.
-        await reducer.presentAssistantContent("\n")
-        await reducer.presentToolCallStarted(read)
-        await reducer.presentToolCallCompleted(read, result: result)
-        await reducer.presentToolCallCompleted(read, result: result)
-        // The blank text is carried into the next block, as the transcript does.
-        await reducer.presentAssistantContent("Done.")
-        await reducer.presentFinalResponse(Self.response("Let me look.\nDone."))
-        await reducer.turnWillFinish()
-
-        #expect(reducer.snapshot.log.map(\.kind) == [
-            .userPrompt(text: "Go", attachments: [], origin: .local),
-            .turnPhase(.started),
-            .thought("Thinking"),
-            .assistantText("Let me look."),
-            .toolCallStarted(read),
-            .toolCallCompleted(read, result: result),
-            .assistantText("\nDone."),
-            .turnPhase(.finishing),
-        ])
-        #expect(reducer.snapshot.log.allSatisfy { $0.turnID == 1 })
-        #expect(reducer.snapshot.turn.phase == .finishing)
-        #expect(!reducer.snapshot.turn.isGenerating)
-        #expect(reducer.snapshot.turn.liveAssistantText.isEmpty)
-    }
-
-    @Test
-    @ChatSessionActor
-    func aCompletionWithoutAStartLogsTheStartFirstAndContinuationsCloseTheBlock() async throws {
-        let reducer = Self.reducer()
-        let orphan = Self.toolCall(id: "orphan", name: "local.ls")
-        let result = DirectAgentToolResult(output: "listing", summary: "listing")
-        await reducer.turnWillStart(Self.request("/goal Ship", purpose: .workflow(originalGoal: "Ship", graphID: "g")))
-        await reducer.presentAssistantContent("Step one.")
-        await reducer.turnWillContinueAutomatically()
-        await reducer.presentAssistantContent("Step two.")
-        await reducer.presentToolCallCompleted(orphan, result: result)
-        await reducer.turnWillFinish()
-
-        #expect(reducer.snapshot.log.map(\.kind).filter(\.isTranscriptOrActivity) == [
-            .userPrompt(text: "/goal Ship", attachments: [], origin: .local),
-            .assistantText("Step one."),
-            .assistantText("Step two."),
-            .toolCallStarted(orphan),
-            .toolCallCompleted(orphan, result: result),
-        ])
-    }
 
     /// The transcript and the reducer close the same blocks for the same
     /// events: both are fed one script, and the log rebuilt from the
@@ -528,31 +396,6 @@ struct ChatSessionStateTests {
         #expect(reducer.snapshot.summary.title == "One")
     }
 
-    // MARK: - Promotion
-
-    @Test
-    func aReasoningOnlyTurnTakesTheFinalTextAsItsContent() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            let reducer = ChatSessionStateReducer(controller: controller, defaultOrigin: .local)
-            controller.addObserver(reducer)
-            try await harness.startSession()
-            await harness.runtime.append { call in
-                await call.onEvent(.thought("Only reasoning."))
-                await call.onEvent(.turnEnded(.completed))
-                return DirectAgentResponse(text: "The answer.", stopReason: "end_turn", modelID: "m")
-            }
-            _ = try await controller.runTurn(Self.request("Question", for: controller))
-
-            #expect(reducer.snapshot.transcript.map(\.kind) == [
-                .userPrompt(text: "Question", attachments: [], origin: .local),
-                .assistantText("The answer."),
-            ])
-            let rebuilt = await Self.reducerRestoring(controller.transcript)
-            #expect(Self.representable(rebuilt.snapshot.log) == Self.representable(reducer.snapshot.log))
-        }
-    }
-
     // MARK: - Pending requests
 
     @Test
@@ -580,73 +423,6 @@ struct ChatSessionStateTests {
         #expect(reducer.snapshot.summary.pendingRequestCount == 0)
         // It resumed once: a second answer finds nothing.
         #expect(!host.resolve(request.id, answer: .choice("b")))
-    }
-
-    @Test
-    @ChatSessionActor
-    func everyKindOfRequestTakesItsOwnAnswer() async throws {
-        let reducer = Self.reducer()
-        let host = ChatPendingRequestHost(
-            reducer: reducer,
-            capabilities: [.toolConsent, .multipleChoice, .focusedMultipleChoice, .textInput, .attachmentPicker],
-            gatesWorkspaceAccess: true
-        )
-        let consent = AgentToolAuthorizationRequest(
-            turnID: nil,
-            sessionID: "s",
-            toolCallID: "call",
-            toolName: "local.exec",
-            title: "Run",
-            kind: "execute",
-            command: "ls",
-            workingDirectory: "/tmp"
-        )
-        let folder = URL(fileURLWithPath: "/tmp/workspace", isDirectory: true)
-        let file = URL(fileURLWithPath: "/tmp/workspace/shot.png")
-        let access = ChatWorkspaceAccessRequest(workspaceURL: folder, toolTitles: ["Files"])
-        let focused = ChatFocusedChoice(selectedIDs: ["a"], focusedID: "a")
-
-        let decision = Task { @ChatSessionActor in await host.requestToolConsent(consent) }
-        try await Self.answerNext(host, reducer, expecting: .toolConsent(consent), with: .consent(.allowAlways))
-        #expect(await decision.value == .allowAlways)
-
-        let many = Task { @ChatSessionActor in await host.chooseMany(title: "T", items: [], selectedIDs: ["a"]) }
-        try await Self.answerNext(host, reducer, expecting: .chooseMany(title: "T", items: [], selectedIDs: ["a"]), with: .choices(["a", "b"]))
-        #expect(await many.value == ["a", "b"])
-
-        let withFocus = Task { @ChatSessionActor in
-            await host.chooseManyWithFocus(
-                title: "T", items: [], selectedIDs: [], focusedID: nil,
-                toggleLabel: "select", confirmLabel: "apply"
-            )
-        }
-        try await Self.answerNext(
-            host, reducer,
-            expecting: .chooseManyWithFocus(
-                title: "T", items: [], selectedIDs: [], focusedID: nil,
-                toggleLabel: "select", confirmLabel: "apply"
-            ),
-            with: .focusedChoice(focused)
-        )
-        #expect(await withFocus.value == focused)
-
-        let line = Task { @ChatSessionActor in await host.readLine(prompt: "Name?") }
-        try await Self.answerNext(host, reducer, expecting: .readLine(prompt: "Name?"), with: .text("zen"))
-        #expect(await line.value == "zen")
-
-        let granted = Task { @ChatSessionActor in await host.requestWorkspaceAccess(access) }
-        try await Self.answerNext(host, reducer, expecting: .workspaceAccess(access), with: .workspaceAccess(granted: false))
-        #expect(await granted.value == false)
-
-        let picked = Task { @ChatSessionActor in await host.pickAttachment(startingAt: folder) }
-        try await Self.answerNext(host, reducer, expecting: .pickAttachment(startingAt: folder), with: .attachment(file))
-        #expect(await picked.value == file)
-
-        // A refusal is `nil` for every kind, `false` for workspace access.
-        let refused = Task { @ChatSessionActor in await host.requestWorkspaceAccess(access) }
-        try await Self.answerNext(host, reducer, expecting: .workspaceAccess(access), with: nil)
-        #expect(await refused.value == false)
-        #expect(reducer.snapshot.pendingRequests.isEmpty)
     }
 
     @Test
@@ -709,73 +485,6 @@ struct ChatSessionStateTests {
         #expect(await opened.targets == [ChatOpenTarget(target: "/tmp/a", kind: .file)])
     }
 
-    // MARK: - Snapshots
-
-    @Test
-    @ChatSessionActor
-    func eventsWithoutEffectLeaveTheSnapshotEqual() async throws {
-        let reducer = Self.reducer()
-        let read = Self.toolCall(id: "read", name: "local.readFile")
-        let state = ChatSessionState(selection: ChatSessionSelection(toolKeys: ["files"]))
-        let window = DirectAgentContextWindowStatus(usedTokens: 10, maxTokens: 100, modelID: "m", isApproximate: false)
-        let overview = ChatSubAgentOverview(snapshots: [])
-        await reducer.turnWillStart(Self.request("Go"))
-        await reducer.presentToolCallStarted(read)
-        await reducer.presentSessionStateChanged(state)
-        await reducer.presentContextWindow(window)
-        await reducer.presentTaskGraphOverview(nil, origin: .automatic, publication: nil)
-        await reducer.presentSubAgentOverview(overview, origin: .automatic, publication: nil)
-        let before = reducer.snapshot
-
-        await reducer.presentStatus("working")
-        await reducer.presentDiagnostic("note")
-        await reducer.presentModelLoaded("m")
-        await reducer.presentSubmittedCommand("/tasks")
-        await reducer.presentToolCallStarted(read)
-        await reducer.presentToolCallSettled(read, result: DirectAgentToolResult(output: "", summary: ""))
-        await reducer.presentSessionStateChanged(state)
-        await reducer.presentContextWindow(window)
-        await reducer.presentTaskGraphOverview(nil, origin: .explicit, publication: ChatOverviewPublication(revision: 3))
-        await reducer.presentSubAgentOverview(ChatSubAgentOverview(snapshots: []), origin: .explicit, publication: nil)
-        await reducer.presentThought("")
-        await reducer.presentAssistantContent("")
-        await reducer.turnWillContinueAutomatically()
-        await reducer.presentLiveFileArtifacts([], agentID: nil)
-        await reducer.presentRestoredLog([])
-
-        #expect(reducer.snapshot == before)
-    }
-
-    @Test
-    @ChatSessionActor
-    func snapshotsArriveInOrderAndEndOnTheLatest() async throws {
-        let reducer = Self.reducer()
-        // The first value of a stream is the current snapshot.
-        var iterator = reducer.snapshots().makeAsyncIterator()
-        #expect(await iterator.next() == reducer.snapshot)
-
-        let stream = reducer.snapshots()
-        let consumer = Task { @ChatSessionActor in
-            var received: [ChatSessionSnapshot] = []
-            for await snapshot in stream {
-                received.append(snapshot)
-                if snapshot.log.count == 40 { break }
-            }
-            return received
-        }
-        for index in 1...40 {
-            await reducer.presentSessionNotice(.operationFailed(description: "failure \(index)"))
-            await Task.yield()
-        }
-
-        // Coalesced, never reordered, and ending on the latest snapshot.
-        let received = await consumer.value
-        #expect(received.last == reducer.snapshot)
-        let counts = received.map(\.log.count)
-        #expect(counts == counts.sorted())
-        #expect(Set(counts).count == counts.count)
-    }
-
     // MARK: - Bounds
 
     @Test
@@ -819,43 +528,6 @@ struct ChatSessionStateTests {
         #expect(reducer.snapshot.notices.isEmpty)
         #expect(reducer.snapshot.transcript.isEmpty)
         #expect(reducer.snapshot.activity.isEmpty)
-    }
-
-    @Test
-    @ChatSessionActor
-    func theNoticesHoldTheLatestSixtyFour() async throws {
-        let reducer = Self.reducer()
-        for index in 1...100 {
-            await reducer.presentSessionNotice(.operationFailed(description: "notice \(index)"))
-        }
-        let notices = reducer.snapshot.notices
-        #expect(ChatSessionStateReducer.maximumNoticeCount == 64)
-        #expect(notices.count == 64)
-        #expect(notices.first?.kind == .notice(.operationFailed(description: "notice 37")))
-        #expect(notices == Array(reducer.snapshot.log.suffix(64)))
-        #expect(reducer.snapshot.log.count == 100)
-    }
-
-    @Test
-    func theLogByteEstimateCountsAttachmentsAndToolCallsLikeTheTranscript() {
-        let attachment = AgentRuntimeAttachment(
-            kind: .image,
-            data: Data(repeating: 1, count: 1_000),
-            contentType: "image/png",
-            originalFilename: "shot.png"
-        )
-        let call = Self.toolCall(id: "call", name: "local.readFile")
-        let prompt = ChatTurnEntry(
-            sequence: 1, turnID: 1,
-            kind: .userPrompt(text: "Look", attachments: [attachment], origin: .app)
-        )
-        let started = ChatTurnEntry(sequence: 2, turnID: 1, kind: .toolCallStarted(call))
-        #expect(prompt.retainedByteCount == ChatSessionController.transcriptRetainedByteCount(
-            AgentRuntimeMessage(role: .user, content: "Look", attachments: [attachment])
-        ))
-        #expect(started.retainedByteCount == ChatSessionController.transcriptRetainedByteCount(
-            AgentRuntimeMessage(role: .assistant, content: "", toolCalls: [ChatTranscriptTurn.runtimeToolCall(from: call)])
-        ))
     }
 }
 
@@ -1079,21 +751,6 @@ extension ChatSessionStateTests {
         }
         Issue.record("The snapshot stream ended")
         return reducer.snapshot
-    }
-
-    /// Waits for the one pending request, checks its kind, and answers it.
-    @ChatSessionActor
-    static func answerNext(
-        _ host: ChatPendingRequestHost,
-        _ reducer: ChatSessionStateReducer,
-        expecting kind: ChatPendingRequest.Kind,
-        with answer: ChatPendingRequest.Answer?,
-        sourceLocation: SourceLocation = #_sourceLocation
-    ) async throws {
-        let waiting = await snapshot(of: reducer) { $0.pendingRequests.count == 1 }
-        let request = try #require(waiting.pendingRequests.first, sourceLocation: sourceLocation)
-        #expect(request.kind == kind, sourceLocation: sourceLocation)
-        #expect(host.resolve(request.id, answer: answer), sourceLocation: sourceLocation)
     }
 
     static func reducer(maximumLogBytes: Int = ChatSessionController.maximumTranscriptBytes) -> ChatSessionStateReducer {

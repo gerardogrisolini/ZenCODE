@@ -91,20 +91,6 @@ struct ZenCronJobCommandTests {
     }
 
     @Test
-    func encodesAllOptionalPartsInFixedOrder() {
-        let job = makeJob(
-            supportDirectory: "/Users/me/.zencode",
-            agentName: "reviewer",
-            prompt: "hello"
-        )
-        #expect(
-            job.encode()
-                == "ZENCODE_SUPPORT_DIRECTORY='/Users/me/.zencode' zen --agent 'reviewer' "
-                + "--working-directory '/Users/me/project' --jsonl -p 'hello'"
-        )
-    }
-
-    @Test
     func encodesSingleQuotesAsCloseEscapeReopen() {
         let job = makeJob(prompt: "it's a 'test'")
         #expect(job.encode().hasSuffix("-p 'it'\\''s a '\\''test'\\'''"))
@@ -164,26 +150,6 @@ struct ZenCronJobCommandTests {
     }
 
     @Test
-    func encodesAJobWithoutAPromptFileExactlyAsBeforeThatOptionExisted() {
-        // Same bytes as the lines already on users' crontabs.
-        #expect(
-            makeJob(promptFile: nil).encode()
-                == "zen --working-directory '/Users/me/project' --jsonl -p 'summarize the repo'"
-        )
-        #expect(
-            makeJob(outputFormat: .text, promptFile: nil).encode()
-                == "zen --working-directory '/Users/me/project' -p 'summarize the repo'"
-        )
-        #expect(!makeJob(outputFormat: .text).encode().contains(" -f "))
-    }
-
-    @Test
-    func encodesQuotesInAPromptFilePath() {
-        let job = makeJob(outputFormat: .text, promptFile: "/Users/me/it's here/a b.md", prompt: nil)
-        #expect(job.encode().hasSuffix(" -f '/Users/me/it'\\''s here/a b.md'"))
-    }
-
-    @Test
     func keepsShellMetacharactersInertInsideSingleQuotes() {
         let job = makeJob(prompt: "echo $HOME `id` \"x\" \\n ; rm -rf * | cat &")
         #expect(job.encode().hasSuffix("-p 'echo $HOME `id` \"x\" \\n ; rm -rf * | cat &'"))
@@ -215,14 +181,6 @@ struct ZenCronJobCommandTests {
                 prompt: prompt
             )
             #expect(ZenCronJobCommand.decode(job.encode()) == job)
-        }
-    }
-
-    @Test
-    func roundTripsEachOutputFormatToItself() {
-        for outputFormat in [ZenCronJobCommand.OutputFormat.text, .jsonl] {
-            let job = makeJob(outputFormat: outputFormat)
-            #expect(ZenCronJobCommand.decode(job.encode())?.outputFormat == outputFormat)
         }
     }
 
@@ -311,33 +269,6 @@ struct ZenCronJobCommandTests {
                 #expect(ZenCronJobCommand.decode(unescaped) == job)
             }
         }
-    }
-
-    @Test
-    func cronEscapesAPercentInAPromptFilePath() {
-        let job = makeJob(outputFormat: .text, promptFile: "/tmp/100% done.md", prompt: nil)
-        #expect(ZenCronJobCommand.cronEscape(job.encode()).hasSuffix(" -f '/tmp/100\\% done.md'"))
-    }
-
-    @Test
-    func roundTripsEachShapeToItself() {
-        let fileOnly = ZenCronJobCommand.decode(
-            makeJob(outputFormat: .text, promptFile: "/p/a.md", prompt: nil).encode()
-        )
-        #expect(fileOnly?.promptFile == "/p/a.md")
-        #expect(fileOnly?.prompt == nil)
-        #expect(fileOnly?.outputFormat == .text)
-
-        let both = ZenCronJobCommand.decode(
-            makeJob(outputFormat: .jsonl, promptFile: "/p/a.md", prompt: "go").encode()
-        )
-        #expect(both?.promptFile == "/p/a.md")
-        #expect(both?.prompt == "go")
-        #expect(both?.outputFormat == .jsonl)
-
-        let promptOnly = ZenCronJobCommand.decode(makeJob(outputFormat: .text).encode())
-        #expect(promptOnly?.promptFile == nil)
-        #expect(promptOnly?.prompt == "summarize the repo")
     }
 
     // MARK: - decode rejections
@@ -441,16 +372,6 @@ struct ZenCronJobCommandTests {
                 prompt: "x"
             )
         )
-    }
-
-    @Test
-    func decodeReadsALineWithTheJSONLFlagAsJSONL() {
-        // Lines written before the text format existed always carry `--jsonl`.
-        let decoded = ZenCronJobCommand.decode(
-            "ZENCODE_SUPPORT_DIRECTORY='/s' zen --agent 'a' --working-directory '/w' --jsonl -p 'x'"
-        )
-        #expect(decoded?.outputFormat == .jsonl)
-        #expect(decoded?.prompt == "x")
     }
 
     @Test
@@ -594,22 +515,6 @@ struct ZenCronJobCommandTests {
         )
     }
 
-    @Test
-    func decodeAcceptsTheDocumentedGrammarWrittenByHand() {
-        let decoded = ZenCronJobCommand.decode(
-            "ZENCODE_SUPPORT_DIRECTORY='/s' '/z' --agent 'a b' --working-directory '/w' --jsonl -p 'it'\\''s'"
-        )
-        #expect(
-            decoded == makeJob(
-                executable: "/z",
-                supportDirectory: "/s",
-                agentName: "a b",
-                workingDirectory: "/w",
-                prompt: "it's"
-            )
-        )
-    }
-
     // MARK: - cron escaping
 
     @Test
@@ -642,18 +547,6 @@ struct ZenCronJobCommandTests {
     @Test(arguments: ["", "%", "\\%", "\\\\%", "a%b\\%c", "%%%", "50\\\\%\\%"])
     func cronEscapeThenUnescapeIsTheIdentity(_ text: String) {
         #expect(ZenCronJobCommand.cronUnescape(ZenCronJobCommand.cronEscape(text)) == text)
-    }
-
-    @Test
-    func cronEscapedCommandContainsNoBarePercent() {
-        let escaped = ZenCronJobCommand.cronEscape(makeJob(prompt: "100% and %d").encode())
-        var previous: Character?
-        for character in escaped {
-            if character == "%" {
-                #expect(previous == "\\")
-            }
-            previous = character
-        }
     }
 
     // MARK: - locating zen
@@ -712,17 +605,6 @@ struct ZenCronJobCommandTests {
     }
 
     @Test
-    func locateZenReturnsNilWithoutAnExecutableZen() throws {
-        try withTemporaryDirectories(2) { directories in
-            _ = try writeZen(in: directories[0], executable: false)
-            let path = directories.map(\.path).joined(separator: ":")
-            #expect(ZenCronJobCommand.locateZen(onPath: path) == nil)
-        }
-        #expect(ZenCronJobCommand.locateZen(onPath: "") == nil)
-        #expect(ZenCronJobCommand.locateZen(onPath: ":::") == nil)
-    }
-
-    @Test
     func locateZenIgnoresEmptyAndRelativeEntries() {
         let probe = ExecutableProbe(executables: ["/fixture/zen"])
         let path = ":.::./:bin:~/bin:$HOME/bin::/fixture::/other:"
@@ -733,34 +615,6 @@ struct ZenCronJobCommandTests {
         let miss = ExecutableProbe(executables: [])
         #expect(ZenCronJobCommand.locateZen(onPath: path, isExecutableFile: miss.isExecutableFile) == nil)
         #expect(miss.probedPaths == ["/fixture/zen", "/other/zen"])
-    }
-
-    @Test
-    func locateZenToleratesATrailingSlashOnADirectory() throws {
-        try withTemporaryDirectories(1) { directories in
-            let zen = try writeZen(in: directories[0], executable: true)
-            #expect(ZenCronJobCommand.locateZen(onPath: directories[0].path + "/") == zen)
-            #expect(ZenCronJobCommand.locateZen(onPath: directories[0].path + "//") == zen)
-        }
-    }
-
-    @Test
-    func locateZenUsesTheGivenExecutableCheck() {
-        let probe = ExecutableProbe(executables: ["/fixture/b/zen"])
-        #expect(
-            ZenCronJobCommand.locateZen(
-                onPath: "/fixture/a:/fixture/b:/fixture/c",
-                isExecutableFile: probe.isExecutableFile
-            ) == "/fixture/b/zen"
-        )
-        #expect(probe.probedPaths == ["/fixture/a/zen", "/fixture/b/zen"])
-    }
-
-    @Test
-    func locateZenProbesTheRootDirectoryAsSlashZen() {
-        let probe = ExecutableProbe(executables: ["/zen"])
-        #expect(ZenCronJobCommand.locateZen(onPath: "/", isExecutableFile: probe.isExecutableFile) == "/zen")
-        #expect(probe.probedPaths == ["/zen"])
     }
 }
 

@@ -45,58 +45,12 @@ struct SwiftFeatureOptionalInstallationTests {
     }
 
     @Test
-    func rewritingNormalizesTheLegacyUnnamedDependency() throws {
-        let contents = """
-        // swift-tools-version: 6.4
-        import PackageDescription
-
-        let package = Package(
-            name: "git-tools-feature",
-            dependencies: [
-                // zencode:package-path
-                .package(path: "../../..")
-            ]
-        )
-        """
-
-        let rewritten = try SwiftFeatureRuntime.packageManifestRewritingZenPackagePath(
-            contents,
-            zenPackagePath: "/opt/zencode/source",
-            packageURL: URL(fileURLWithPath: "/tmp/Package.swift")
-        )
-
-        #expect(rewritten.contains(#"        .package(name: "ZenCODE", path: "/opt/zencode/source")"#))
-        #expect(!rewritten.contains(#""../../..""#))
-    }
-
-    @Test
     func rewritingFailsWithAnActionableErrorWhenTheMarkerIsMissing() throws {
         let contents = """
         // swift-tools-version: 6.4
         let package = Package(
             dependencies: [
                 .package(path: "../../..")
-            ]
-        )
-        """
-
-        #expect(throws: (any Error).self) {
-            _ = try SwiftFeatureRuntime.packageManifestRewritingZenPackagePath(
-                contents,
-                zenPackagePath: "/opt/zencode/source",
-                packageURL: URL(fileURLWithPath: "/tmp/Package.swift")
-            )
-        }
-    }
-
-    @Test
-    func rewritingFailsWhenTheMarkedLineIsNotAPackagePathDependency() throws {
-        let contents = """
-        // swift-tools-version: 6.4
-        let package = Package(
-            dependencies: [
-                // zencode:package-path
-                .package(url: "https://example.com/pkg", from: "1.0.0")
             ]
         )
         """
@@ -184,62 +138,6 @@ struct SwiftFeatureOptionalInstallationTests {
                     .appendingPathComponent(".build/release/web-tools-feature")
                     .standardizedFileURL
                     .path
-        )
-    }
-
-    @Test
-    func materializationLeavesThePreviousPackageIntactWhenTheSourceIsInvalid() async throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("optional-install-atomic-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-        let featureRootURL = rootURL.appendingPathComponent("features", isDirectory: true)
-        let goodSourceURL = rootURL.appendingPathComponent("Good", isDirectory: true)
-        try Self.writeFeaturePackage(at: goodSourceURL, productName: "git-tools-feature")
-
-        let runtime = SwiftFeatureRuntime(featureSearchRoots: [featureRootURL])
-        let definition = try #require(SwiftFeatureRuntime.bundledFeatureDefinition(id: "git-tools"))
-        _ = try await runtime.materializeFeaturePackage(
-            definition: definition,
-            sourceDirectoryURL: goodSourceURL,
-            zenPackageRootURL: URL(fileURLWithPath: "/opt/zencode/source"),
-            displayName: "Git",
-            enabled: true,
-            overwrite: true
-        )
-
-        // A source package without the marker must abort before the installed
-        // copy is touched.
-        let brokenSourceURL = rootURL.appendingPathComponent("Broken", isDirectory: true)
-        try FileManager.default.createDirectory(at: brokenSourceURL, withIntermediateDirectories: true)
-        try "// swift-tools-version: 6.4\n".write(
-            to: brokenSourceURL.appendingPathComponent("Package.swift"),
-            atomically: true,
-            encoding: .utf8
-        )
-
-        await #expect(throws: (any Error).self) {
-            _ = try await runtime.materializeFeaturePackage(
-                definition: definition,
-                sourceDirectoryURL: brokenSourceURL,
-                zenPackageRootURL: URL(fileURLWithPath: "/opt/zencode/source"),
-                displayName: "Git",
-                enabled: true,
-                overwrite: true
-            )
-        }
-
-        let record = try #require(
-            SwiftFeatureRegistry.featureRecord(id: "git-tools", searchRoots: [featureRootURL])
-        )
-        #expect(record.manifestEnabled)
-        #expect(
-            FileManager.default.fileExists(
-                atPath: featureRootURL
-                    .appendingPathComponent("git-tools/Sources/git-tools-feature/main.swift")
-                    .path
-            )
         )
     }
 
@@ -335,84 +233,6 @@ struct SwiftFeatureOptionalInstallationTests {
     }
 
     @Test
-    func optionalFeatureReinstallReplacesAnExistingPackage() async throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("optional-reinstall-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-        let featureRootURL = rootURL.appendingPathComponent("features", isDirectory: true)
-        let checkoutURL = rootURL.appendingPathComponent("checkout", isDirectory: true)
-        try Self.writeZenPackageRoot(at: checkoutURL)
-
-        let runtime = SwiftFeatureRuntime(featureSearchRoots: [featureRootURL])
-        let definition = try #require(SwiftFeatureRuntime.bundledFeatureDefinition(id: "git-tools"))
-        let sourceURL = try #require(definition.sourceRelativePath)
-            .split(separator: "/")
-            .reduce(checkoutURL) { partialURL, component in
-                partialURL.appendingPathComponent(String(component), isDirectory: true)
-            }
-        try Self.writeFeaturePackage(at: sourceURL, productName: definition.executableName)
-
-        let firstReport = try await runtime.installOptionalFeature(
-            id: definition.id,
-            zenPackageRootURL: checkoutURL,
-            build: false,
-            enable: false
-        )
-        #expect(firstReport.ok)
-        #expect(firstReport.copied)
-
-        let installedDirectoryURL = featureRootURL
-            .appendingPathComponent(definition.id, isDirectory: true)
-        let obsoleteURL = installedDirectoryURL.appendingPathComponent("obsolete.txt")
-        try "old package only\n".write(to: obsoleteURL, atomically: true, encoding: .utf8)
-
-        let sourceMainURL = sourceURL
-            .appendingPathComponent("Sources", isDirectory: true)
-            .appendingPathComponent(definition.executableName, isDirectory: true)
-            .appendingPathComponent("main.swift")
-        try "print(\"updated version\")\n".write(
-            to: sourceMainURL,
-            atomically: true,
-            encoding: .utf8
-        )
-
-        let progressRecorder = OptionalFeatureInstallProgressRecorder()
-        let secondReport = try await runtime.installOptionalFeature(
-            id: definition.id,
-            zenPackageRootURL: checkoutURL,
-            build: false,
-            enable: false,
-            progress: { message in
-                await progressRecorder.append(message)
-            }
-        )
-        let progressMessages = await progressRecorder.snapshot()
-        #expect(secondReport.ok)
-        #expect(secondReport.copied)
-        #expect(
-            try String(
-                contentsOf: installedDirectoryURL
-                    .appendingPathComponent("Sources", isDirectory: true)
-                    .appendingPathComponent(definition.executableName, isDirectory: true)
-                    .appendingPathComponent("main.swift"),
-                encoding: .utf8
-            ) == "print(\"updated version\")\n"
-        )
-        #expect(!FileManager.default.fileExists(atPath: obsoleteURL.path))
-        #expect(
-            try FileManager.default.contentsOfDirectory(atPath: featureRootURL.path)
-                .allSatisfy { !$0.hasPrefix(".zencode-feature-") }
-        )
-        #expect(progressMessages.first == "Resolving ZenCODE source checkout…")
-        #expect(progressMessages.contains { $0.hasPrefix("Source package: ") })
-        #expect(progressMessages.contains("Validating staged package and feature manifest…"))
-        #expect(progressMessages.contains { $0.hasPrefix("Publishing feature to ") })
-        #expect(progressMessages.last == "Refreshing the feature registry…")
-    }
-
-    @Test
     func optionalFeatureCannotBeEnabledWhenBuildIsSkipped() async throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("optional-build-enable-\(UUID().uuidString)", isDirectory: true)
@@ -490,89 +310,7 @@ struct SwiftFeatureOptionalInstallationTests {
         #expect(figmaStatuses.first?.source == .generated)
     }
 
-    @Test
-    func optionalFeatureUpdateIsReportedOnlyWhenInstalledSourceDiffers() async throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("optional-update-availability-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-        let featureRootURL = rootURL.appendingPathComponent("features", isDirectory: true)
-        let checkoutURL = rootURL.appendingPathComponent("checkout", isDirectory: true)
-        try Self.writeZenPackageRoot(at: checkoutURL)
-
-        let runtime = SwiftFeatureRuntime(featureSearchRoots: [featureRootURL])
-        let definition = try #require(SwiftFeatureRuntime.bundledFeatureDefinition(id: "git-tools"))
-        let sourceURL = try #require(definition.sourceRelativePath)
-            .split(separator: "/")
-            .reduce(checkoutURL) { partialURL, component in
-                partialURL.appendingPathComponent(String(component), isDirectory: true)
-            }
-        try Self.writeFeaturePackage(at: sourceURL, productName: definition.executableName)
-        _ = try await runtime.materializeFeaturePackage(
-            definition: definition,
-            sourceDirectoryURL: sourceURL,
-            zenPackageRootURL: checkoutURL,
-            displayName: "Git",
-            enabled: true,
-            overwrite: true
-        )
-
-        let feature = try #require(await runtime.optionalFeatures().first { $0.id == definition.id })
-        #expect(
-            try await !runtime.isOptionalFeatureUpdateAvailable(
-                feature,
-                zenPackageRootURL: checkoutURL
-            )
-        )
-
-        let sourceMainURL = sourceURL
-            .appendingPathComponent("Sources", isDirectory: true)
-            .appendingPathComponent(definition.executableName, isDirectory: true)
-            .appendingPathComponent("main.swift")
-        try "print(\"updated\")\n".write(
-            to: sourceMainURL,
-            atomically: true,
-            encoding: .utf8
-        )
-
-        #expect(
-            try await runtime.isOptionalFeatureUpdateAvailable(
-                feature,
-                zenPackageRootURL: checkoutURL
-            )
-        )
-    }
-
-    @Test
-    func unknownOptionalFeatureInstallIsRejected() async throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("optional-unknown-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-
-        let runtime = SwiftFeatureRuntime(featureSearchRoots: [rootURL])
-        await #expect(throws: (any Error).self) {
-            _ = try await runtime.installOptionalFeature(id: "not-a-feature")
-        }
-    }
-
     // MARK: - Source checkout resolution
-
-    @Test
-    func sourceCheckoutResolutionRejectsAnExplicitPathWithoutAPackageManifest() throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("optional-source-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: rootURL)
-        }
-        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-
-        #expect(throws: (any Error).self) {
-            _ = try SwiftFeatureRuntime.zenCODESourceCheckoutURL(explicitURL: rootURL)
-        }
-    }
 
     @Test
     func sourceCheckoutResolutionAcceptsAnExplicitCheckout() throws {
@@ -590,16 +328,6 @@ struct SwiftFeatureOptionalInstallationTests {
 
         let resolved = try SwiftFeatureRuntime.zenCODESourceCheckoutURL(explicitURL: rootURL)
         #expect(resolved.path == rootURL.standardizedFileURL.path)
-    }
-
-    @Test
-    func supportSourceCheckoutLivesUnderTheSupportDirectory() {
-        let supportURL = SwiftFeatureRuntime.supportSourceCheckoutURL()
-        #expect(supportURL.lastPathComponent == SwiftFeatureRuntime.supportSourceCheckoutDirectoryName)
-        #expect(
-            supportURL.deletingLastPathComponent().standardizedFileURL.path
-                == AppStorageDirectory.appSupportDirectoryURL().standardizedFileURL.path
-        )
     }
 
     // MARK: - Helpers

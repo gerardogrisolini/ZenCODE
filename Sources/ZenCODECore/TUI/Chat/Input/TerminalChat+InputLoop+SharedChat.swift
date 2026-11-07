@@ -217,9 +217,6 @@ extension TerminalChat {
     /// Runs one generation turn and folds its outcome into a queue-deliverable result.
     func generationResult(for attempt: TerminalPromptAttempt) async -> TerminalChatGenerationResult {
         do {
-            if let onGenerateResponseForTesting {
-                return .success(try await onGenerateResponseForTesting(attempt))
-            }
             return .success(try await generateResponse(attempt: attempt))
         } catch is CancellationError {
             return .failure(

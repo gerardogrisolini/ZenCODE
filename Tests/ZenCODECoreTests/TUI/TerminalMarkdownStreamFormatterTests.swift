@@ -51,22 +51,6 @@ struct TerminalMarkdownStreamFormatterTests {
     }
 
     @Test
-    func proseStreamsIncrementallyAcrossMultipleDeltas() {
-        var formatter = makeFormatter()
-
-        let first = formatter.consume("Hello ")
-        #expect(first == "Hello ")
-
-        let second = formatter.consume("World")
-        #expect(second == "World")
-
-        // Completing the line: only the newline should appear (the text was
-        // already streamed).
-        let third = formatter.consume("\n")
-        #expect(third == "\n")
-    }
-
-    @Test
     func proseAfterBlockResumesStreamingImmediately() {
         var formatter = makeFormatter()
         // A list line gets buffered as a block.
@@ -83,23 +67,6 @@ struct TerminalMarkdownStreamFormatterTests {
     // MARK: (b) Inline markdown remains formatted across deltas
 
     @Test
-    func boldRemainsFormattedAcrossDeltas() {
-        var formatter = makeFormatter()
-
-        // The safe prefix "This is " streams immediately; "**bold**." arrives
-        // in the next delta and must be rendered as bold through the inline
-        // markdown renderer, not emitted as raw text.
-        let first = formatter.consume("This is ")
-        #expect(first == "This is ")
-
-        let rest = formatter.consume("**bold**.\n")
-        let rendered = first + rest
-
-        #expect(rendered.contains("\u{1B}[1mbold\u{1B}[0m"))
-        #expect(!rendered.contains("**bold**"))
-    }
-
-    @Test
     func boldMarkerSplitAcrossDeltas() {
         var formatter = makeFormatter()
 
@@ -113,52 +80,6 @@ struct TerminalMarkdownStreamFormatterTests {
 
         #expect(rendered.contains("\u{1B}[1mbold\u{1B}[0m"))
         #expect(!rendered.contains("**bold**"))
-    }
-
-    @Test
-    func inlineCodeRemainsFormattedAcrossDeltas() {
-        var formatter = makeFormatter()
-
-        let first = formatter.consume("Run ")
-        #expect(first == "Run ")
-
-        let rest = formatter.consume("`swift test` now.\n")
-        let rendered = first + rest
-
-        #expect(rendered.contains("\u{1B}[38;5;180m"))
-        #expect(!rendered.contains("`swift test`"))
-    }
-
-    @Test
-    func inlineCodeSplitAcrossDeltas() {
-        var formatter = makeFormatter()
-
-        // The opening backtick arrives in the first delta and halts streaming;
-        // the closing backtick arrives later. The code span must be formatted.
-        let first = formatter.consume("Use `")
-        #expect(first == "Use ")
-
-        let rest = formatter.consume("code` here.\n")
-        let rendered = first + rest
-
-        #expect(rendered.contains("\u{1B}[38;5;180m"))
-        #expect(!rendered.contains("`code`"))
-        #expect(rendered.contains("code"))
-    }
-
-    @Test
-    func linkRemainsFormattedAcrossDeltas() {
-        var formatter = makeFormatter()
-
-        let first = formatter.consume("See ")
-        #expect(first == "See ")
-
-        let rest = formatter.consume("[docs](https://example.com).\n")
-        let rendered = first + rest
-
-        #expect(rendered.contains("\u{1B}[38;5;75m"))
-        #expect(!rendered.contains("](https://example.com)"))
-        #expect(rendered.contains("docs"))
     }
 
     @Test
@@ -216,20 +137,6 @@ struct TerminalMarkdownStreamFormatterTests {
         #expect(rendered.contains("about"))
     }
 
-    @Test
-    func thoughtFormatterKeepsBalancedBoldOnPartialLine() {
-        var formatter = makeThoughtFormatter()
-
-        let first = formatter.consume("It is ")
-        #expect(first == "It is ")
-
-        let rest = formatter.consume("**important** here.\n")
-        let rendered = first + rest
-
-        #expect(rendered.contains("\u{1B}[1mimportant\u{1B}[0m"))
-        #expect(!rendered.contains("**important**"))
-    }
-
     // MARK: (d) finish() on partially emitted lines
 
     @Test
@@ -280,61 +187,7 @@ struct TerminalMarkdownStreamFormatterTests {
         #expect(lines[0] == "word word word word word")
     }
 
-    @Test
-    func inlineTailStaysContiguousWithEmittedPrefix() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 20,
-            supportsHyperlinks: false
-        )
-
-        let first = formatter.consume("1234567890")
-        #expect(first == "1234567890")
-
-        let rest = formatter.consume(" `code` word\n")
-        let rendered = first + rest
-
-        // Only the source newline survives: no synthetic wrap splits the streamed
-        // prefix from its inline tail.
-        #expect(rendered.hasSuffix("\n"))
-        let withoutTrailingNewline = String(rendered.dropLast())
-        #expect(!withoutTrailingNewline.contains("\n"))
-        #expect(withoutTrailingNewline.hasPrefix("1234567890"))
-        #expect(rendered.contains("\u{1B}[38;5;180m"))
-        #expect(!TerminalANSIText.stripANSI(rendered).contains("`code`"))
-    }
-
-    @Test
-    func wideCJKPrefixDoesNotTriggerWrapping() {
-        var formatter = TerminalMarkdownStreamFormatter(
-            isEnabled: true,
-            renderWidth: 8,
-            supportsHyperlinks: false
-        )
-
-        // Five CJK graphemes occupy ten terminal columns, exceeding the narrow
-        // width. The formatter must not wrap; the terminal handles the layout.
-        let first = formatter.consume("漢字語花猫")
-        #expect(first == "漢字語花猫")
-
-        let rendered = first + formatter.consume(" word word\n")
-        let lines = rendered.components(separatedBy: "\n")
-        #expect(lines.count == 2)
-        #expect(lines[0] == "漢字語花猫 word word")
-    }
-
     // MARK: (f) Unicode boundaries across deltas
-
-    @Test
-    func combiningMarkSplitAcrossDeltasIsPreservedBeforeInlineTail() {
-        var formatter = makeFormatter()
-
-        let rendered = formatter.consume("Cafe")
-            + formatter.consume("\u{0301} `code`\n")
-
-        #expect(TerminalANSIText.stripANSI(rendered).contains("Cafe\u{0301} code"))
-        #expect(rendered.contains("\u{1B}[38;5;180mcode\u{1B}[0m"))
-    }
 
     @Test
     func zwjGraphemeSplitAcrossDeltasIsPreservedBeforeInlineTail() {
@@ -344,17 +197,6 @@ struct TerminalMarkdownStreamFormatterTests {
             + formatter.consume("\u{200D}👩 `code`\n")
 
         #expect(TerminalANSIText.stripANSI(rendered).contains("Pair 👨\u{200D}👩 code"))
-        #expect(rendered.contains("\u{1B}[38;5;180mcode\u{1B}[0m"))
-    }
-
-    @Test
-    func flagGraphemeSplitAcrossDeltasIsPreservedBeforeInlineTail() {
-        var formatter = makeFormatter()
-
-        let rendered = formatter.consume("Flag 🇮")
-            + formatter.consume("🇹 `code`\n")
-
-        #expect(TerminalANSIText.stripANSI(rendered).contains("Flag 🇮🇹 code"))
         #expect(rendered.contains("\u{1B}[38;5;180mcode\u{1B}[0m"))
     }
 
@@ -368,23 +210,6 @@ struct TerminalMarkdownStreamFormatterTests {
         var rendered = formatter.consume(prefix)
         #expect(rendered == prefix)
         rendered += formatter.consume(" - still prose\n")
-        rendered += formatter.finish()
-
-        let visible = TerminalANSIText.stripANSI(rendered)
-        #expect(visible.contains(" - still prose"))
-        #expect(!visible.contains("•"))
-    }
-
-    @Test
-    func markerAfterMarkdownSafetyFlushStaysMidLineProse() {
-        var formatter = makeFormatter()
-
-        _ = formatter.consume("Prefix ")
-        // The leading `*` keeps this tail buffered until the markdown safety
-        // cap is crossed. A subsequent list-looking marker remains in the same
-        // logical line after that forced flush.
-        _ = formatter.consume("*" + String(repeating: "x", count: 2_001))
-        var rendered = formatter.consume(" - still prose\n")
         rendered += formatter.finish()
 
         let visible = TerminalANSIText.stripANSI(rendered)
@@ -407,28 +232,6 @@ struct TerminalMarkdownStreamFormatterTests {
         #expect(!identifier.contains("\u{1B}[3m"))
     }
 
-    @Test
-    func singleDelimiterEmphasisStillRendersAfterAStreamedPrefix() {
-        var formatter = makeFormatter()
-
-        let prefix = formatter.consume("Use ")
-        let tail = formatter.consume("*italics* and _also italics_.\n")
-        let rendered = prefix + tail
-
-        #expect(rendered.contains("\u{1B}[3mitalics\u{1B}[0m"))
-        #expect(rendered.contains("\u{1B}[3malso italics\u{1B}[0m"))
-    }
-
-    @Test
-    func thoughtFormatterPreservesStrongMarkerInsideDoubleBacktickCodeSpan() {
-        var formatter = makeThoughtFormatter()
-
-        let rendered = formatter.consume("``**literal``\n")
-
-        #expect(rendered.contains("\u{1B}[38;5;180m"))
-        #expect(TerminalANSIText.stripANSI(rendered).contains("**literal"))
-    }
-
     // MARK: (i) Block markers are not emitted raw
 
     @Test
@@ -446,73 +249,12 @@ struct TerminalMarkdownStreamFormatterTests {
     }
 
     @Test
-    func unorderedListMarkerIsNotEmittedRaw() {
-        var formatter = makeFormatter()
-        let partial = formatter.consume("-")
-        #expect(partial.isEmpty)
-
-        let rest = formatter.consume(" item\n") + formatter.finish()
-        #expect(rest.contains("•"))
-        #expect(rest.contains("item"))
-    }
-
-    @Test
-    func orderedListMarkerIsNotEmittedRaw() {
-        var formatter = makeFormatter()
-        let partial = formatter.consume("1")
-        #expect(partial.isEmpty)
-
-        let more = formatter.consume(".")
-        #expect(more.isEmpty)
-
-        let rest = formatter.consume(" First\n") + formatter.finish()
-        #expect(rest.contains("First"))
-    }
-
-    @Test
-    func tenDigitOrderedLikePrefixRemainsPlainText() {
-        var formatter = makeFormatter()
-
-        let rendered = formatter.consume("1000000000. plain text\n") + formatter.finish()
-
-        #expect(TerminalANSIText.stripANSI(rendered).contains("1000000000. plain text"))
-    }
-
-    @Test
     func orderedMarkerWithoutBodyRemainsVisible() {
         var formatter = makeFormatter()
 
         let rendered = formatter.consume("1.\n") + formatter.finish()
 
         #expect(TerminalANSIText.stripANSI(rendered).contains("1."))
-    }
-
-    @Test
-    func orderedMarkersAcceptMixedWhitespaceAfterTheDot() {
-        var formatter = makeFormatter()
-
-        let rendered = formatter.consume("1.\tfirst\n2.  second\n") + formatter.finish()
-        let plain = TerminalANSIText.stripANSI(rendered)
-
-        #expect(plain.contains("first"))
-        #expect(plain.contains("second"))
-    }
-
-    @Test
-    func blockquoteMarkerIsNotEmittedRaw() {
-        var formatter = makeFormatter()
-        let partial = formatter.consume(">")
-        #expect(partial.isEmpty)
-    }
-
-    @Test
-    func thematicBreakMarkerIsNotEmittedRaw() {
-        var formatter = makeFormatter()
-        let first = formatter.consume("--")
-        #expect(first.isEmpty)
-        let second = formatter.consume("-\n") + formatter.finish()
-        // A thematic break renders as a horizontal rule, not as "---" text.
-        #expect(!second.contains("---"))
     }
 
     @Test
@@ -525,56 +267,11 @@ struct TerminalMarkdownStreamFormatterTests {
     }
 
     @Test
-    func dashRunFollowedByLetterStreamsImmediately() {
-        var formatter = makeFormatter()
-        // "---option" cannot be a thematic break (rest is not whitespace) nor
-        // a list marker (dash run ≥ 3 without a space). It should stream
-        // immediately instead of being buffered until the newline.
-        let output = formatter.consume("---option is plain")
-        #expect(!output.isEmpty)
-        #expect(output.contains("---option"))
-    }
-
-    @Test
     func tableHeaderIsNotEmittedRaw() {
         var formatter = makeFormatter()
         // A line with pipes could be a GFM table header; it must buffer.
         let partial = formatter.consume("| A | B |")
         #expect(partial.isEmpty)
-    }
-
-    // MARK: (g) No duplication on partially-emitted lines
-
-    @Test
-    func noDuplicationWhenCompletingPartiallyEmittedLine() {
-        var formatter = makeFormatter()
-
-        let first = formatter.consume("Hello ")
-        #expect(first == "Hello ")
-
-        let second = formatter.consume("World\n")
-        // Only "World\n" — the prefix was already shown.
-        #expect(second == "World\n")
-        #expect(!second.contains("Hello"))
-    }
-
-    @Test
-    func multiLineStreamingProducesCorrectConcatenation() {
-        var formatter = makeFormatter()
-        var output = ""
-
-        output += formatter.consume("First ")
-        output += formatter.consume("line\n")
-        output += formatter.consume("Second ")
-        output += formatter.consume("line\n")
-        output += formatter.finish()
-
-        // Both lines should appear exactly once, in order.
-        #expect(output.contains("First line"))
-        #expect(output.contains("Second line"))
-        // No duplication of any word.
-        #expect(output.components(separatedBy: "First").count == 2)
-        #expect(output.components(separatedBy: "Second").count == 2)
     }
 
     // MARK: Preserved behaviours

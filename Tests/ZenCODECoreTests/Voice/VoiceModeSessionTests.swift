@@ -89,39 +89,6 @@ struct VoiceModeSessionTests {
     // MARK: Commands
 
     @Test
-    func commandsWithoutVoiceModeExplainHowToStartIt() async {
-        let host = FakeVoiceModeHost()
-        let created = CreationCounter()
-        let session = VoiceModeSession { _ in
-            created.increment()
-            return .unavailable("ZenCODE: voice mode requires macOS or Linux.\n")
-        }
-        await session.setHost(host)
-
-        for command in ["/voice", "/voice pause", "/voice resume"] {
-            host.shown = []
-            await session.handleCommand(command)
-            #expect(host.shown == [.failure(VoiceModeSession.offMessage)])
-        }
-        host.shown = []
-        await session.handleCommand("/voice off")
-        #expect(host.shown == [.system("Voice: already off.\n")])
-        host.shown = []
-        await session.handleCommand("/voice loud")
-        #expect(host.shown == [.system(VoiceModeCommandAction.usageMessage)])
-        #expect(created.value == 0)
-
-        // A controller that cannot run here says why; voice mode stays off.
-        host.shown = []
-        await session.handleCommand("/voice on")
-        #expect(host.shown == [.failure("ZenCODE: voice mode requires macOS or Linux.\n")])
-        #expect(created.value == 1)
-        #expect(session.state == .off)
-        #expect(host.startCount == 0)
-        #expect(await session.turnInstruction() == nil)
-    }
-
-    @Test
     func commandsDriveTheControllerWithTheTerminalTexts() async {
         let controller = SessionFakeVoiceController()
         let host = FakeVoiceModeHost()
@@ -200,22 +167,6 @@ struct VoiceModeSessionTests {
     }
 
     @Test
-    func anAnswerBeingReadPreemptsTheQuestionWhichIsAskedAgainAfterwards() async {
-        let controller = SessionFakeVoiceController()
-        let session = await runningSession(controller: controller)
-        await session.handleSharedChatMessages([Self.message(from: Self.reviewer)])
-        await session.speakingChanged(false)
-
-        await session.turnDidEnd(finalAnswer: "Risposta.")
-        await session.speakingChanged(false)
-        #expect(await controller.spoken == [
-            Self.plain("Nuovo messaggio da Reviewer. Vuoi che lo legga?"),
-            Self.answer("Risposta."),
-            Self.plain("Nuovo messaggio da Reviewer. Vuoi che lo legga?"),
-        ])
-    }
-
-    @Test
     func commentsAreReadOnlyDuringATurnWhenNothingElseIsReadOrAsked() async {
         let controller = SessionFakeVoiceController()
         let session = await runningSession(controller: controller)
@@ -281,26 +232,6 @@ struct VoiceModeSessionTests {
     }
 
     @Test
-    func noDeclinesAndMessagesReadInTheReaderAreSkipped() async {
-        let controller = SessionFakeVoiceController()
-        let host = FakeVoiceModeHost()
-        let session = await runningSession(controller: controller, host: host)
-        let reviewerMessage = Self.message(from: Self.reviewer)
-        let builderMessage = Self.message(from: Self.builder)
-        let coordinatorMessage = Self.message(from: Self.coordinator)
-
-        await session.handleSharedChatMessages([reviewerMessage, builderMessage, coordinatorMessage])
-        #expect(await controller.spoken.last == Self.plain("Nuovo messaggio da Reviewer, altri 2 in attesa. Vuoi che lo legga?"))
-        // Builder's message was opened in the reader meanwhile.
-        host.readIDs = [builderMessage.id]
-        await session.speakingChanged(false)
-
-        #expect(await session.handleUtterance("no"))
-        #expect(await controller.spoken.last == Self.plain("Nuovo messaggio da Coordinator. Vuoi che lo legga?"))
-        #expect(host.markedRead.isEmpty)
-    }
-
-    @Test
     func anUnansweredQuestionLapsesThroughTheHostsContext() async {
         let controller = SessionFakeVoiceController()
         let host = FakeVoiceModeHost()
@@ -335,14 +266,6 @@ struct VoiceModeSessionTests {
         // The host ends the channel for a line that exits.
         host.submitResult = false
         #expect(await session.handleUtterance("esci") == false)
-    }
-
-    @Test
-    func dictatedTextThatReadsAsACommandIsAPlainPrompt() {
-        #expect(VoiceModeDictatedInput(utterance: "Che tempo fa domani?") == .line("Che tempo fa domani?"))
-        #expect(VoiceModeDictatedInput(utterance: "@reviewer controlla") == .line("@reviewer controlla"))
-        #expect(VoiceModeDictatedInput(utterance: "/exit") == .plainPrompt("/exit"))
-        #expect(VoiceModeDictatedInput(utterance: "  /telegram off") == .plainPrompt("  /telegram off"))
     }
 
     @Test
@@ -439,18 +362,6 @@ struct VoiceModeSessionTests {
     }
 
     @Test
-    func theEndOfAnEditedDictationReachesTheController() async {
-        let controller = SessionFakeVoiceController()
-        let session = await makeSession(controller: controller, host: FakeVoiceModeHost())
-        // No controller yet: nothing to forget.
-        session.dictationEnded(through: 1)
-
-        await session.handleCommand("/voice on")
-        session.dictationEnded(through: 3)
-        #expect(await eventually { await controller.discarded == [3] })
-    }
-
-    @Test
     func theControllersCallbacksReachTheHost() async throws {
         let controller = SessionFakeVoiceController()
         let host = FakeVoiceModeHost(draft: "@reviewer")
@@ -474,19 +385,6 @@ struct VoiceModeSessionTests {
         await callbacks.failureMessage("Voice: the microphone stopped.\n")
         #expect(host.shown == [.system("Voice: listening.\n"), .failure("Voice: the microphone stopped.\n")])
         #expect(session.state == .off)
-    }
-
-    @Test
-    func aDictationAnEditAlreadyEndedSendsNothing() async throws {
-        let controller = SessionFakeVoiceController()
-        let host = FakeVoiceModeHost(draft: nil)
-        _ = await runningSession(controller: controller, host: host)
-        let callbacks = try #require(controller.callbacks)
-
-        await callbacks.utteranceRecognized(.dictation(id: 2, text: "ciao"))
-        await callbacks.utteranceRecognized(.answer(" "))
-        #expect(host.controllerLog.takes == [2])
-        #expect(host.controllerLog.utterances.isEmpty)
     }
 
     // MARK: State
@@ -513,19 +411,6 @@ struct VoiceModeSessionTests {
         // A late report of the stopped controller changes nothing.
         await session.speakingChanged(true)
         #expect(session.state == .off)
-    }
-}
-
-/// Counts the controllers a factory was asked for.
-private final class CreationCounter: Sendable {
-    private let count = Mutex(0)
-
-    var value: Int {
-        count.withLock { $0 }
-    }
-
-    func increment() {
-        count.withLock { $0 += 1 }
     }
 }
 

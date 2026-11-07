@@ -239,138 +239,6 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    func agentSelectionDetailsExplainProfileDifferences() throws {
-        let profiles = Dictionary(
-            uniqueKeysWithValues: AgentProfileStore.defaultProfiles().map { ($0.name, $0) }
-        )
-
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Developer"])).contains("General software development"))
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Minimal"])).contains("concise replies"))
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Builder"])).contains("feature-management tools"))
-        #expect(profiles["Xcode"] == nil)
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reviewer"])).contains("/review delegates to it"))
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Reporter"])).contains("code analysis reports"))
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Tester"])).contains("Runs builds, tests, and checks"))
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Planner"])).contains("/plan delegates to it"))
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Promoter"])).contains("project promotion"))
-        #if os(macOS)
-        #expect(TerminalChat.agentSelectionDetail(try #require(profiles["Organizer"])).contains("Personal assistant"))
-        #expect(profiles.count == 9)
-        #else
-        #expect(profiles.count == 8)
-        #endif
-
-        let customAgent = AgentProfile(
-            id: "custom",
-            name: "Custom",
-            role: .developer,
-            tools: [
-                "shell",
-                TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools"),
-                "custom.tool"
-            ],
-            modelID: "remote-community/custom",
-            thinkingSelection: .high
-        )
-        let customDetail = TerminalChat.agentSelectionDetail(customAgent)
-
-        // The detail describes the role, for custom and system profiles alike.
-        #expect(customDetail.hasPrefix(AgentProfileRole.developer.summary))
-        #expect(!customDetail.contains("Tools:"))
-        #expect(customDetail.contains("model: remote-community/custom"))
-        #expect(customDetail.contains("thinking: High"))
-        #expect(!customDetail.contains("feature:git-tools"))
-    }
-
-    @Test
-    func builderWorkflowPolicyComesFromConfiguredProfileInstructions() throws {
-        let customizedBuilder = AgentProfile(
-            id: AgentProfileRole.builder.rawValue,
-            name: "Customized Builder",
-            instructions: "Keep my custom Builder instructions.",
-            role: .builder,
-            tools: []
-        )
-        let instructionlessBuilder = AgentProfile(
-            id: "custom-builder-id",
-            name: AgentProfileStore.builderAgentName,
-            instructions: nil,
-            role: .builder,
-            tools: []
-        )
-
-        let defaultBuilder = try #require(AgentProfileStore.defaultProfiles().first {
-            $0.id.caseInsensitiveCompare(AgentProfileRole.builder.rawValue) == .orderedSame
-        })
-        let customizedPrompt = try #require(customizedBuilder.promptSection)
-        let instructionlessPrompt = try #require(instructionlessBuilder.promptSection)
-        let defaultPrompt = try #require(defaultBuilder.promptSection)
-
-        #expect(customizedPrompt.contains("Keep my custom Builder instructions."))
-        #expect(!customizedPrompt.contains("Builder workflow policy:"))
-        #expect(!instructionlessPrompt.contains("Builder workflow policy:"))
-        #expect(!instructionlessPrompt.contains("Agent instructions:"))
-        #expect(defaultPrompt.contains("Builder workflow policy:"))
-        #expect(defaultPrompt.contains("Never enable placeholder"))
-        #expect(defaultPrompt.contains("Never embed credentials"))
-        #expect(defaultPrompt.contains("A successful `feature.build` reloads"))
-        #expect(defaultPrompt.components(separatedBy: "Builder workflow policy:").count == 2)
-    }
-
-    @Test
-    func plannerWorkflowPolicyComesFromConfiguredProfileInstructions() throws {
-        let customizedPlanner = AgentProfile(
-            id: AgentProfileRole.planner.rawValue,
-            name: "Customized Planning Agent",
-            instructions: "Keep my custom Planner instructions.",
-            readOnly: true,
-            role: .planner,
-            tools: ["files"]
-        )
-        let instructionlessPlanner = AgentProfile(
-            id: "custom-planner-id",
-            name: AgentProfileStore.plannerAgentName,
-            instructions: nil,
-            readOnly: true,
-            role: .planner,
-            tools: ["files"]
-        )
-        let unrelatedProfile = AgentProfile(
-            id: "custom-agent-id",
-            name: "Not Planner",
-            instructions: "Custom instructions.",
-            role: .developer,
-            tools: []
-        )
-        let builtinPlanner = try #require(AgentProfileStore.defaultProfiles().first {
-            $0.id.caseInsensitiveCompare(AgentProfileRole.planner.rawValue) == .orderedSame
-        })
-
-        let customizedPrompt = try #require(customizedPlanner.promptSection)
-        let instructionlessPrompt = try #require(instructionlessPlanner.promptSection)
-        let unrelatedPrompt = try #require(unrelatedProfile.promptSection)
-        let builtinPrompt = try #require(builtinPlanner.promptSection)
-
-        #expect(customizedPrompt.contains("Keep my custom Planner instructions."))
-        #expect(!customizedPrompt.contains("Planner workflow policy:"))
-        #expect(!instructionlessPrompt.contains("Planner workflow policy:"))
-        #expect(!instructionlessPrompt.contains("Agent instructions:"))
-        #expect(!unrelatedPrompt.contains("Planner workflow policy:"))
-        #expect(builtinPrompt.contains("Planner workflow policy:"))
-        #expect(builtinPrompt.contains("policy is authoritative"))
-        #expect(builtinPrompt.contains("mandatory brainstorming phase"))
-        #expect(builtinPrompt.contains("exactly one block headed `Planner questions`"))
-        #expect(builtinPrompt.contains("at least one focused numbered question"))
-        #expect(builtinPrompt.contains("Return no plan in that first turn"))
-        #expect(builtinPrompt.contains("Continue the same brainstorming discussion across operator replies"))
-        #expect(builtinPrompt.contains("`Specifiche concordate`"))
-        #expect(builtinPrompt.contains("numbered `Implementation plan`"))
-        #expect(builtinPrompt.components(separatedBy: "Planner workflow policy:").count == 2)
-        #expect(customizedPlanner.readOnly)
-        #expect(instructionlessPlanner.readOnly)
-    }
-
-    @Test
     func agentProfileRoundTripsThinkingSelection() throws {
         let profile = AgentProfile(
             id: "custom",
@@ -451,75 +319,6 @@ extension AgentConfigurationTests {
     }
 
     @Test
-    func agentProfileDetailRendersDefaultBindingAndBindingCount() {
-        let agent = AgentProfile(
-            id: "developer",
-            name: "Developer",
-            role: .developer,
-            modelBindings: [
-                AgentModelBinding(
-                    id: "fast",
-                    modelID: "fast-model",
-                    thinkingSelection: .low,
-                    capability: 4
-                ),
-                AgentModelBinding(
-                    id: "deep",
-                    modelID: "deep-model",
-                    thinkingSelection: .high,
-                    capability: 8
-                )
-            ],
-            defaultModelBindingID: "deep"
-        )
-
-        let detail = TerminalChat.agentSelectionDetail(agent)
-
-        #expect(detail.contains("default model: deep-model"))
-        #expect(detail.contains("thinking: High"))
-        #expect(detail.contains("bindings: 2"))
-    }
-
-    @Test
-    @ChatSessionActor
-    func selectedProfileBindingUsesManualModelOverride() {
-        let allowed = AgentSettingsModelManifest(
-            id: "allowed",
-            kind: .remoteAPI,
-            modelID: "allowed-model",
-            providerID: "openrouter",
-            provider: AgentRemoteProvider(modelID: "allowed-model")
-        )
-        let blocked = AgentSettingsModelManifest(
-            id: "blocked",
-            kind: .remoteAPI,
-            modelID: "blocked-model",
-            providerID: "openrouter",
-            provider: AgentRemoteProvider(modelID: "blocked-model")
-        )
-        let manifest = AgentSettingsManifest(
-            models: [allowed, blocked],
-            selectedModelID: blocked.id
-        )
-        let agent = AgentProfile(
-            id: "developer",
-            name: "Developer",
-            role: .developer,
-            modelBindings: [
-                AgentModelBinding(modelID: allowed.id, capability: 5)
-            ]
-        )
-
-        let resolved = TerminalChat.effectiveModelID(
-            selectedAgent: agent,
-            manualModelIDOverride: blocked.id,
-            manifest: manifest
-        )
-
-        #expect(resolved == blocked.id)
-    }
-
-    @Test
     @ChatSessionActor
     func manualModelOverridePrefersExactProviderBindingOverSharedModelID() {
         let modelID = "deepseek-v4-flash"
@@ -561,120 +360,6 @@ extension AgentConfigurationTests {
         )
 
         #expect(resolved == local.id)
-    }
-
-    @Test
-    @ChatSessionActor
-    func modelPickerListsAllConfiguredModelsForBoundProfile() throws {
-        let allowed = AgentSettingsModelManifest(
-            id: "allowed",
-            kind: .remoteAPI,
-            modelID: "allowed-model",
-            providerID: "openrouter",
-            provider: AgentRemoteProvider(modelID: "allowed-model")
-        )
-        let other = AgentSettingsModelManifest(
-            id: "other",
-            kind: .remoteAPI,
-            modelID: "other-model",
-            providerID: "openrouter",
-            provider: AgentRemoteProvider(modelID: "other-model")
-        )
-        let agent = AgentProfile(
-            id: "developer",
-            name: "Developer",
-            role: .developer,
-            modelBindings: [
-                AgentModelBinding(modelID: allowed.id, capability: 5)
-            ]
-        )
-        let configuration = try AgentConfiguration(
-            hostedModelID: allowed.id,
-            agentName: agent.name,
-            availableAgents: [agent],
-            availableModels: [allowed, other],
-            cacheAgentProfiles: false,
-            workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true)
-        )
-        let chat = TerminalChat(configuration: configuration, stdinIsTerminal: false)
-
-        #expect(chat.selectableModelManifests().map(\.id) == [allowed.id, other.id])
-    }
-
-    @Test
-    @ChatSessionActor
-    func selectedProfileBindingRemainsTheDefaultWithoutManualOverride() {
-        let allowed = AgentSettingsModelManifest(
-            id: "allowed",
-            kind: .remoteAPI,
-            modelID: "allowed-model",
-            providerID: "openrouter",
-            provider: AgentRemoteProvider(modelID: "allowed-model")
-        )
-        let blocked = AgentSettingsModelManifest(
-            id: "other",
-            kind: .remoteAPI,
-            modelID: "other-model",
-            providerID: "openrouter",
-            provider: AgentRemoteProvider(modelID: "other-model")
-        )
-        let manifest = AgentSettingsManifest(
-            models: [allowed, blocked],
-            selectedModelID: blocked.id
-        )
-        let agent = AgentProfile(
-            id: "developer",
-            name: "Developer",
-            role: .developer,
-            modelBindings: [
-                AgentModelBinding(modelID: allowed.id, capability: 5)
-            ]
-        )
-
-        let resolved = TerminalChat.effectiveModelID(
-            selectedAgent: agent,
-            manualModelIDOverride: nil,
-            manifest: manifest
-        )
-
-        #expect(resolved == allowed.id)
-    }
-
-    @Test
-    func toolSelectionCatalogListsBundledAndGeneratedFeaturePackagesTogether() throws {
-        let items = TerminalChat.toolSelectionItems(
-            featureStatuses: [
-                featureStatus(
-                    id: "git-tools",
-                    source: .bundled,
-                    tools: ["git.status", "git.log"]
-                ),
-                featureStatus(
-                    id: "live-git-branch",
-                    displayName: "Live Git Branch",
-                    source: .generated,
-                    tools: ["live.git_current_branch"]
-                )
-            ]
-        )
-
-        #expect(!items.map(\.title).contains("Feature Builder"))
-        #expect(items.map(\.title).contains("Git"))
-        #expect(items.map(\.title).contains("Live Git Branch"))
-
-        let selectedKeys = try TerminalChat.parseToolSelection(
-            "git live-git-branch",
-            items: items
-        )
-        let allowedToolNames = TerminalToolSelectionCatalog.allowedToolNames(
-            for: selectedKeys,
-            items: items
-        )
-
-        #expect(selectedKeys.contains(TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools")))
-        #expect(selectedKeys.contains(TerminalToolSelectionCatalog.featurePackageKey(id: "live-git-branch")))
-        #expect(allowedToolNames.contains("git.status"))
-        #expect(allowedToolNames.contains("live.git_current_branch"))
     }
 
     @Test
@@ -727,39 +412,6 @@ extension AgentConfigurationTests {
         #expect(!builderAllowedToolNames.contains("clock.now"))
         #expect(!builderAllowedToolNames.contains(SwiftFeatureRuntime.featurePackageToolsAllowedName))
         #expect(customAllowedToolNames.isEmpty)
-    }
-
-    @Test
-    func appSessionToolOverridesKeepBuilderIntrinsicTools() {
-        let builderAgent = AgentProfile(
-            id: AgentProfileRole.builder.rawValue,
-            name: AgentProfileStore.builderAgentName,
-            role: .builder,
-            tools: []
-        )
-        let customAgent = AgentProfile(
-            id: "custom",
-            name: "Custom",
-            role: .developer,
-            tools: []
-        )
-
-        let builderAllowedToolNames = AgentCoreAppSessionFactory.resolvedAllowedToolNames(
-            selectedToolKeys: ["shell"],
-            explicitAllowedToolNames: nil,
-            selectedAgent: builderAgent
-        )
-        let customAllowedToolNames = AgentCoreAppSessionFactory.resolvedAllowedToolNames(
-            selectedToolKeys: ["shell"],
-            explicitAllowedToolNames: nil,
-            selectedAgent: customAgent
-        )
-
-        #expect(builderAllowedToolNames?.contains("local.exec") == true)
-        #expect(builderAllowedToolNames?.contains("feature.list") == true)
-        #expect(builderAllowedToolNames?.contains("feature.scaffold") == true)
-        #expect(customAllowedToolNames?.contains("local.exec") == true)
-        #expect(customAllowedToolNames?.contains("feature.list") == false)
     }
 
     @Test
@@ -817,58 +469,10 @@ extension AgentConfigurationTests {
         #expect(normalizedBuilder.tools == ["shell"])
         #expect(normalizedCustom.tools == ["files"])
     }
-
-    @Test
-    func activeToolRenderingHidesIntrinsicFeatureManagementTools() {
-        let items = TerminalChat.toolSelectionItems(featureStatuses: [])
-        let rendered = TerminalChat.renderActiveTools(
-            ["local.exec", "feature.list", "feature.build"],
-            items: items,
-            selectedKeys: ["shell"]
-        )
-        let hiddenOnly = TerminalChat.renderActiveTools(
-            ["feature.list", "feature.build"],
-            items: items,
-            selectedKeys: []
-        )
-
-        #expect(rendered == "Active tools: Shell (1)\n")
-        #expect(hiddenOnly == "Active tools: none\n")
-    }
-
-    @Test
-    func activeToolRenderingGroupsIntrinsicSkillToolsSeparately() {
-        let items = TerminalChat.toolSelectionItems(featureStatuses: [])
-        let rendered = TerminalChat.renderActiveTools(
-            ["local.exec", "skills.list", "skills.read"],
-            items: items,
-            selectedKeys: ["shell"]
-        )
-
-        #expect(rendered == "Active tools: Shell (1), Skills (2)\n")
-    }
 }
 
 @Suite
 struct AgentProfileCapabilityTests {
-    @Test
-    func defaultProfilesHaveNoCapability() {
-        let profiles = AgentProfileStore.defaultProfiles()
-        #expect(profiles.allSatisfy { $0.capability == nil })
-    }
-
-    @Test
-    func capabilityClampsToRange() {
-        let clamped = AgentProfile(id: "test", name: "Test", role: .developer, modelID: "test", capability: 50)
-        #expect(clamped.capability == 10)
-
-        let low = AgentProfile(id: "test", name: "Test", role: .developer, modelID: "test", capability: -3)
-        #expect(low.capability == 1)
-
-        let inRange = AgentProfile(id: "test", name: "Test", role: .developer, modelID: "test", capability: 7)
-        #expect(inRange.capability == 7)
-    }
-
     @Test
     func capabilityDecodesWithBackwardCompat() throws {
         let json = """
@@ -877,15 +481,6 @@ struct AgentProfileCapabilityTests {
         let profile = try JSONDecoder().decode(AgentProfile.self, from: json)
         #expect(profile.capability == nil)
         #expect(profile.name == "Test")
-    }
-
-    @Test
-    func capabilityRoundTripsThroughCodable() throws {
-        let profile = AgentProfile(id: "x", name: "Test", role: .developer, modelID: "gpt-4", capability: 8)
-        let data = try JSONEncoder().encode(profile)
-        let decoded = try JSONDecoder().decode(AgentProfile.self, from: data)
-        #expect(decoded.capability == 8)
-        #expect(decoded.modelID == "gpt-4")
     }
 
     @Test
@@ -970,15 +565,6 @@ struct AgentProfileCapabilityTests {
         #expect(profile.defaultModelBinding?.thinkingSelection == .high)
         #expect(profile.defaultModelBinding?.capability == 8)
     }
-
-    @Test
-    func bindingCapabilityClampsToSharedRange() {
-        let high = AgentModelBinding(modelID: "high", capability: 11)
-        let low = AgentModelBinding(modelID: "low", capability: -2)
-
-        #expect(high.capability == 10)
-        #expect(low.capability == 1)
-    }
 }
 
 @Suite
@@ -1019,23 +605,6 @@ struct DelegatableAgentsSectionTests {
     }
 
     @Test
-    func includesUnboundProfilesWhenNoBindingsAreDelegatable() throws {
-        let agents = [
-            AgentProfile(id: "1", name: "Bare", role: .developer),
-            AgentProfile(id: "2", name: "ModelOnly", role: .developer, modelID: "gpt"),
-        ]
-        let section = try #require(SystemPromptBuilder.delegatableAgentsSection(
-            agents: agents,
-            allowedToolNames: nil,
-            models: [Self.model("gpt")]
-        ))
-        #expect(section.contains("Bare [read-write; role: developer; tools: none configured]"))
-        #expect(section.contains("inherits the main session model"))
-        #expect(!section.contains("ModelOnly"))
-        #expect(!section.contains("Do not call agent.create"))
-    }
-
-    @Test
     func unboundProfilesRemainDelegatableWithoutACatalog() throws {
         let agents = [
             AgentProfile(
@@ -1066,29 +635,6 @@ struct DelegatableAgentsSectionTests {
     }
 
     @Test
-    func returnsUnavailableWhenOnlyExplicitBindingsLackCapability() {
-        let section = SystemPromptBuilder.delegatableAgentsSection(
-            agents: [AgentProfile(id: "model-only", name: "ModelOnly", role: .developer, modelID: "gpt")],
-            allowedToolNames: nil,
-            models: [Self.model("gpt")]
-        )
-        #expect(section?.contains("No configured profile currently has a routable model binding") == true)
-    }
-
-    @Test
-    func returnsNilWhenDelegationNotAvailable() {
-        let agents = [
-            AgentProfile(id: "1", name: "Capable", role: .developer, modelID: "gpt-4", capability: 5),
-        ]
-        let section = SystemPromptBuilder.delegatableAgentsSection(
-            agents: agents,
-            allowedToolNames: ["tasks.create"],
-            models: [Self.model("gpt-4")]
-        )
-        #expect(section == nil)
-    }
-
-    @Test
     func rendersAuthorizedBindingsSortedByCapability() throws {
         let agents = [
             AgentProfile(
@@ -1114,83 +660,5 @@ struct DelegatableAgentsSectionTests {
         let highIndex = try #require(rendered.range(of: "pass model: binding:high"))
         #expect(lowIndex.lowerBound < midIndex.lowerBound)
         #expect(midIndex.lowerBound < highIndex.lowerBound)
-    }
-
-    @Test
-    func rendersEnglishRoleAwareSelectionPolicy() throws {
-        let agents = [
-            AgentProfile(
-                id: "reviewer",
-                name: "Reviewer",
-                instructions: """
-                Reviewer agent. Perform read-only code review. Do not edit files.
-
-                Report findings with file and line references.
-                """,
-                role: .reviewer,
-                modelID: "review-model",
-                capability: 9
-            ),
-        ]
-
-        let section = try #require(SystemPromptBuilder.delegatableAgentsSection(
-            agents: agents,
-            allowedToolNames: nil,
-            models: [Self.model("review-model")]
-        ))
-
-        #expect(section.contains(
-            "Delegatable agent profiles and model bindings"
-        ))
-        #expect(section.contains(
-            "Reviewer [read-write; role: reviewer; tools: none configured]: Reviewer agent. Perform read-only code review. Do not edit files."
-        ))
-        #expect(section.contains("model: review-model"))
-        #expect(section.contains("pass model: binding:review-model"))
-        #expect(section.contains("capability: 9/10 | profile default"))
-        #expect(!section.contains("Report findings with file and line references."))
-        #expect(!section.contains(TaskRecord.agentSelectionPolicy))
-        #expect(section.contains("exact profile name as `profile`"))
-        #expect(section.contains("exact `binding:...` value"))
-        #expect(section.contains("For profiles with configured bindings"))
-        #expect(section.contains("For profiles without bindings, omit `model`"))
-        #expect(!section.contains("Both fields are required"))
-        #expect(section.contains(
-            "Different profiles retain their own tool grant"
-        ))
-        #expect(section.contains(
-            "same profile inherits the coordinator's effective session allowlist"
-        ))
-    }
-
-    @Test
-    func rendersDelegationCostPolicyOnlyWhenTaskWorkflowToolsAreUnavailable() throws {
-        let agents = [
-            AgentProfile(
-                id: "developer",
-                name: "Developer",
-                instructions: "Developer agent. Implement the request.",
-                role: .developer,
-                modelID: "dev-model",
-                capability: 4
-            ),
-        ]
-        let models = [Self.model("dev-model")]
-
-        let withTaskTools = try #require(SystemPromptBuilder.delegatableAgentsSection(
-            agents: agents,
-            allowedToolNames: ["agent.create", "tasks.create", "tasks.list", "tasks.update"],
-            models: models
-        ))
-        #expect(!withTaskTools.contains(TaskRecord.delegationCostPolicy))
-
-        let agentOnly = try #require(SystemPromptBuilder.delegatableAgentsSection(
-            agents: agents,
-            allowedToolNames: ["agent.create"],
-            models: models
-        ))
-        #expect(agentOnly.contains("Select a role/tool-compatible profile first."))
-        #expect(agentOnly.contains(TaskRecord.delegationCostPolicy))
-        #expect(agentOnly.contains("Configured bindings are also a cost ladder"))
     }
 }

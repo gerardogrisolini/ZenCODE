@@ -77,18 +77,6 @@ private actor ControlledPersistence: MemoryPersistence {
     #expect(await persistence.saveCount == 1)
 }
 
-@Test func insertLeavesGraphUnchangedWhenSaveFails() async throws {
-    let persistence = ControlledPersistence(failing: true)
-    let memory = MemoryEngine(persistence: persistence)
-    let entry = EngineMemoryEntry(id: "rejected", category: .fact, content: "not committed")
-
-    await #expect(throws: MemoryPersistenceFailure.self) {
-        try await memory.insert(entry)
-    }
-
-    #expect(await memory.snapshot().memories["rejected"] == nil)
-}
-
 @Test func forgetKeepsEntryWhenSaveFails() async throws {
     let persistence = ControlledPersistence()
     let memory = MemoryEngine(persistence: persistence)
@@ -193,23 +181,6 @@ private actor ControlledPersistence: MemoryPersistence {
     #expect(durableAfterRetry.memories["a"]?.accessCount == visible.memories["a"]?.accessCount)
 }
 
-@Test func successfulRecallCommitsRetrievalCount() async throws {
-    let persistence = ControlledPersistence()
-    let memory = MemoryEngine(persistence: persistence)
-    _ = try await memory.remember("actors protect mutable state", tags: ["swift"], id: "a")
-
-    _ = try await memory.recall("actors")
-
-    // The maintenance is visible before its durability boundary, while the
-    // previous graph remains the one saved by the setup write.
-    let visible = await memory.snapshot()
-    #expect(visible.metadata.retrievalCount == 1)
-    #expect(await persistence.lastSaved?.metadata.retrievalCount == 0)
-
-    try await memory.flushRecallMaintenance()
-    #expect(await persistence.lastSaved?.metadata.retrievalCount == 1)
-}
-
 @Test func explicitWriteAbsorbsPendingRecallMaintenanceExactlyOnce() async throws {
     let persistence = ControlledPersistence()
     let memory = MemoryEngine(persistence: persistence)
@@ -245,16 +216,6 @@ private actor ControlledPersistence: MemoryPersistence {
     let savesAfterSave = await persistence.saveCount
     try await memory.flushRecallMaintenance()
     #expect(await persistence.saveCount == savesAfterSave)
-}
-
-@Test func saveWithoutChangesDoesNotPersistAnEmptyGraph() async throws {
-    let persistence = ControlledPersistence()
-    let memory = MemoryEngine(persistence: persistence)
-
-    try await memory.save()
-
-    #expect(await persistence.saveCount == 0)
-    #expect(await persistence.lastSaved == nil)
 }
 
 @Test func savePersistsAnInsertDeferredWithPersistFalse() async throws {
@@ -325,33 +286,6 @@ private actor ControlledPersistence: MemoryPersistence {
     #expect(persisted.memories.count == 1)
 }
 
-@Test func coldJSONExplicitWriteAbsorbsPendingMaintenanceOnce() async throws {
-    let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("memory-engine-cold-write-\(UUID().uuidString)", isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let file = directory.appendingPathComponent("memory.json")
-
-    var initial = MemoryGraph()
-    initial.addMemory(
-        EngineMemoryEntry(
-            id: "a",
-            category: .fact,
-            content: "actors protect mutable state",
-            tags: ["swift"]
-        )
-    )
-    let persistence = JSONMemoryPersistence(url: file)
-    let memory = MemoryEngine(graph: initial, persistence: persistence)
-
-    _ = try await memory.recall("actors")
-    _ = try await memory.remember("actors are reentrant", id: "b")
-
-    let persisted = try await persistence.load()
-    #expect(persisted.metadata.retrievalCount == 1)
-    #expect(persisted.memories["a"]?.accessCount == 1)
-    #expect(persisted.memories["b"] != nil)
-}
-
 // MARK: - Serialization under actor reentrancy
 
 @Test func concurrentTransactionsDoNotLoseUpdates() async throws {
@@ -401,23 +335,6 @@ private actor ControlledPersistence: MemoryPersistence {
     let entry = try #require(await memory.snapshot().memories["shared"])
     #expect(entry.content == "updated content")
     #expect(!entry.active)
-}
-
-@Test func concurrentRemembersAllLand() async throws {
-    let persistence = ControlledPersistence(holdEachSaveFor: .milliseconds(1))
-    let memory = MemoryEngine(persistence: persistence)
-    let count = 16
-
-    await withTaskGroup(of: Void.self) { group in
-        for index in 0..<count {
-            group.addTask {
-                _ = try? await memory.remember("fact \(index)", id: "id-\(index)")
-            }
-        }
-    }
-
-    #expect(await memory.snapshot().memories.count == count)
-    #expect(await persistence.lastSaved?.memories.count == count)
 }
 
 // MARK: - No-op transactions

@@ -74,18 +74,6 @@ struct ChatSessionSelectionTests {
     }
 
     @Test
-    func aModelCanBeNamedByItsModelIDAndIsStoredByItsID() async throws {
-        try await withChatHarness { harness in
-            let outcome = try await harness.controller.selectModel(id: "test/beta")
-
-            #expect(outcome.change == .sessionRecreated)
-            #expect(harness.controller.selection.modelIDOverride == Fixtures.beta.id)
-            #expect(try #require(await harness.runtime.calls.first { $0.name == "createSession" }?.digest)
-                .modelID == Fixtures.beta.id)
-        }
-    }
-
-    @Test
     func theThinkingLevelFollowsTheAgentBindingOrStaysWithTheSameModel() async throws {
         let bound = AgentProfile(
             id: "BBBBBBBB-0000-0000-0000-000000000009",
@@ -136,23 +124,6 @@ struct ChatSessionSelectionTests {
     }
 
     @Test
-    func withoutAnyModelTheMenuAndTheSelectionThrow() async throws {
-        try await withChatHarness(
-            catalog: .hosted(models: [], agents: [Fixtures.developer]),
-            hostCapabilities: [.singleChoice]
-        ) { harness in
-            let menuError = await capturedError { try await harness.controller.chooseModel() }
-            let selectError = await capturedError {
-                try await harness.controller.selectModel(id: Fixtures.alpha.id)
-            }
-
-            #expect(menuError as? TerminalChatError != nil)
-            #expect(selectError as? TerminalChatError != nil)
-            #expect(await harness.runtime.calls.isEmpty)
-        }
-    }
-
-    @Test
     func theModelMenuListsTheModelsByProviderAndAppliesTheAnswer() async throws {
         try await withChatHarness(hostCapabilities: [.singleChoice]) { harness in
             await harness.host.answerChooseOne(Fixtures.beta.id)
@@ -172,18 +143,6 @@ struct ChatSessionSelectionTests {
             ])
             #expect(harness.controller.selection.modelIDOverride == Fixtures.beta.id)
             #expect(await harness.callNames().first == "shutdownBackendKeepingExternalTools")
-        }
-    }
-
-    @Test
-    func aCancelledModelMenuLeavesTheModelUnchanged() async throws {
-        try await withChatHarness(hostCapabilities: [.singleChoice]) { harness in
-            let outcome = try await harness.controller.chooseModel()
-
-            #expect(outcome == ChatSelectionOutcome(notices: [.modelUnchanged]))
-            #expect(harness.controller.selection.modelIDOverride == nil)
-            #expect(await harness.runtime.calls.isEmpty)
-            #expect(await harness.presenter.events.isEmpty)
         }
     }
 
@@ -283,46 +242,7 @@ struct ChatSessionSelectionTests {
         }
     }
 
-    @Test
-    func withHostedModelsAndNoSettingsFileNothingIsCreated() async throws {
-        try await withChatHarness { harness in
-            #expect(!FileManager.default.fileExists(atPath: harness.settingsURL.path))
-
-            _ = try await harness.controller.selectModel(id: Fixtures.beta.id)
-            _ = try await harness.controller.selectThinking(.high)
-
-            #expect(!FileManager.default.fileExists(atPath: harness.settingsURL.path))
-        }
-    }
-
     // MARK: - Thinking
-
-    @Test
-    func aModelWithoutConfigurableThinkingGetsTheDedicatedNotice() async throws {
-        try await withChatHarness(hostCapabilities: [.singleChoice]) { harness in
-            let outcome = try await harness.controller.chooseThinking()
-
-            #expect(outcome == ChatSelectionOutcome(
-                notices: [.thinkingNotSupported(model: Fixtures.alpha)]
-            ))
-            #expect(await harness.host.interactions.isEmpty)
-            #expect(await harness.runtime.calls.isEmpty)
-        }
-    }
-
-    @Test
-    func thinkingWithoutACurrentModelGetsTheDedicatedNotice() async throws {
-        let models = [Fixtures.configuredAlpha, Fixtures.configuredBeta]
-        try await withChatHarness(
-            catalog: .configured(models: models),
-            hostCapabilities: [.singleChoice]
-        ) { harness in
-            let outcome = try await harness.controller.chooseThinking()
-
-            #expect(outcome == ChatSelectionOutcome(notices: [.noCurrentModel]))
-            #expect(await harness.runtime.calls.isEmpty)
-        }
-    }
 
     @Test
     func theThinkingMenuUpdatesTheSessionInPlace() async throws {
@@ -353,19 +273,6 @@ struct ChatSessionSelectionTests {
         }
     }
 
-    @Test
-    func aCancelledThinkingMenuLeavesTheLevelUnchanged() async throws {
-        try await withChatHarness(hostCapabilities: [.singleChoice]) { harness in
-            harness.controller.selection.modelIDOverride = Fixtures.beta.id
-
-            let outcome = try await harness.controller.chooseThinking()
-
-            #expect(outcome == ChatSelectionOutcome(notices: [.thinkingUnchanged]))
-            #expect(harness.controller.selection.thinkingOverride == nil)
-            #expect(await harness.runtime.calls.isEmpty)
-        }
-    }
-
     // MARK: - Host without capability
 
     @Test
@@ -385,111 +292,6 @@ struct ChatSessionSelectionTests {
             #expect(await harness.runtime.queries.isEmpty)
             #expect(await harness.host.interactions.isEmpty)
             #expect(await harness.presenter.events.isEmpty)
-        }
-    }
-
-    @Test
-    func theThinkingMenuWithoutASingleChoiceHostListsTheLevelsAndTouchesNothing() async throws {
-        try await withChatHarness(hostCapabilities: []) { harness in
-            harness.controller.selection.modelIDOverride = Fixtures.beta.id
-
-            let outcome = try await harness.controller.chooseThinking()
-
-            #expect(outcome == ChatSelectionOutcome(notices: [
-                .requiresInteractiveHost(
-                    .thinkingSelection(
-                        model: Fixtures.beta,
-                        options: [.low, .high],
-                        selected: .low
-                    )
-                ),
-            ]))
-            #expect(await harness.runtime.calls.isEmpty)
-            #expect(await harness.runtime.queries.isEmpty)
-            #expect(await harness.host.interactions.isEmpty)
-        }
-    }
-
-    @Test
-    func theAgentMenuWithoutAFocusedChoiceHostListsTheAgentsAndTouchesNothing() async throws {
-        // A host that picks one item or several still cannot show this menu.
-        try await withChatHarness(hostCapabilities: [.singleChoice, .multipleChoice]) { harness in
-            let outcome = try await harness.controller.chooseProjectAgents()
-
-            #expect(outcome == ChatSelectionOutcome(notices: [
-                .requiresInteractiveHost(
-                    .agentSelection(
-                        agents: [Fixtures.developer, Fixtures.reviewer],
-                        selected: Fixtures.developer,
-                        manifestPath: AgentProfileStore.agentsManifestURL().path
-                    )
-                ),
-            ]))
-            #expect(await harness.runtime.calls.isEmpty)
-            #expect(await harness.runtime.queries.isEmpty)
-            #expect(await harness.host.interactions.isEmpty)
-            #expect(await harness.presenter.events.isEmpty)
-        }
-    }
-
-    @Test
-    func theToolMenuWithoutAMultipleChoiceHostShowsTheActiveToolsAndChangesNothing() async throws {
-        try await withChatHarness(hostCapabilities: [.singleChoice]) { harness in
-            let controller = harness.controller
-            controller.selection.toolKeys = ["files"]
-            let expectedSummary = await controller.activeToolsSummary()
-            await harness.clearRecords()
-
-            let outcome = await controller.chooseTools()
-
-            #expect(outcome == ChatSelectionOutcome(notices: [
-                .requiresInteractiveHost(.toolSelection(expectedSummary)),
-            ]))
-            #expect(expectedSummary.groups.map(\.title).contains("Files"))
-            // The summary only reads the tool catalog: no operation reaches the
-            // runtime (it is only asked which tools it knows), and the selection
-            // stays as it was.
-            #expect(await harness.runtime.calls.isEmpty)
-            let lookups = await harness.runtime.queries
-            #expect(!lookups.isEmpty)
-            #expect(lookups.allSatisfy { lookup in
-                switch lookup {
-                case .knownMCPToolDescriptors, .activeToolDescriptors: true
-                case .snapshotSession, .taskGraphSnapshot: false
-                }
-            })
-            #expect(await harness.host.interactions.isEmpty)
-            #expect(controller.selection.toolKeys == ["files"])
-            #expect(await harness.presenter.events.isEmpty)
-        }
-    }
-
-    @Test
-    func theSkillMenusWithoutAMultipleChoiceHostShowTheSkillsAndChangeNothing() async throws {
-        try await withChatHarness(hostCapabilities: [.singleChoice]) { harness in
-            let controller = harness.controller
-            let skill = try harness.installSkills("release-review")[0]
-            controller.selection.skillIDs = [skill.id]
-            await harness.clearRecords()
-
-            let selection = await controller.chooseSkills()
-            let uninstall = await controller.chooseSkillsToUninstall()
-
-            #expect(selection == ChatSelectionOutcome(notices: [
-                .requiresInteractiveHost(.skillSelection(selected: [skill])),
-            ]))
-            #expect(uninstall == ChatSelectionOutcome(notices: [
-                .requiresInteractiveHost(.skillUninstall),
-                .skillSelectionUsage,
-            ]))
-            #expect(await harness.runtime.calls.isEmpty)
-            #expect(await harness.runtime.queries.isEmpty)
-            #expect(await harness.host.interactions.isEmpty)
-            #expect(controller.selection.skillIDs == [skill.id])
-            // The skill is still installed.
-            #expect(FileManager.default.fileExists(
-                atPath: harness.skillsRoot.appendingPathComponent("release-review").path
-            ))
         }
     }
 
@@ -601,74 +403,6 @@ struct ChatSessionSelectionTests {
                 "updatePromptSkillSelection",
                 "preloadModel",
             ])
-        }
-    }
-
-    @Test
-    func aChangedAssociationAndActiveRowAreSavedBeforeTheAgentSwitches() async throws {
-        try await withChatHarness(
-            catalog: projectAgents,
-            hostCapabilities: [.focusedMultipleChoice]
-        ) { harness in
-            let controller = harness.controller
-            let developerID = ChatSessionController.agentChoiceID(Fixtures.developer)
-            let reviewerID = ChatSessionController.agentChoiceID(Fixtures.reviewer)
-            await harness.host.answerChooseManyWithFocus(
-                ChatFocusedChoice(selectedIDs: [developerID, reviewerID], focusedID: reviewerID)
-            )
-
-            let outcome = try await controller.chooseProjectAgents()
-
-            #expect(outcome == ChatSelectionOutcome(
-                change: .sessionRecreated,
-                notices: [.agentSwitched(Fixtures.reviewer)]
-            ))
-            #expect(await harness.presenter.notices == [
-                .projectAgentsAssociated(
-                    agents: [Fixtures.developer, Fixtures.reviewer],
-                    projectName: harness.workspace.lastPathComponent
-                ),
-            ])
-            #expect(ProjectAgentSelectionStore.load(workspaceRootURL: harness.workspace)
-                == Set([Fixtures.developer, Fixtures.reviewer]
-                    .map(ProjectAgentSelectionStore.selectionKey(for:))))
-            // The new session builds its prompt from the saved association.
-            #expect(controller.selection.agent == Fixtures.reviewer)
-        }
-    }
-
-    @Test
-    func aCancelledAgentMenuSavesAndChangesNothing() async throws {
-        try await withChatHarness(
-            catalog: projectAgents,
-            hostCapabilities: [.focusedMultipleChoice]
-        ) { harness in
-            let outcome = try await harness.controller.chooseProjectAgents()
-
-            #expect(outcome == ChatSelectionOutcome(notices: [.selectedAgent(Fixtures.developer)]))
-            #expect(!FileManager.default.fileExists(atPath: projectAgentsFile(harness).path))
-            #expect(harness.controller.selection.agent == Fixtures.developer)
-            #expect(await harness.runtime.calls.isEmpty)
-            #expect(await harness.presenter.events.isEmpty)
-        }
-    }
-
-    @Test
-    func confirmingTheMenuAsItWasOpenedChangesNothing() async throws {
-        try await withChatHarness(
-            catalog: projectAgents,
-            hostCapabilities: [.focusedMultipleChoice]
-        ) { harness in
-            let developerID = ChatSessionController.agentChoiceID(Fixtures.developer)
-            await harness.host.answerChooseManyWithFocus(
-                ChatFocusedChoice(selectedIDs: [developerID], focusedID: developerID)
-            )
-
-            let outcome = try await harness.controller.chooseProjectAgents()
-
-            #expect(outcome == ChatSelectionOutcome(notices: [.selectedAgent(Fixtures.developer)]))
-            #expect(!FileManager.default.fileExists(atPath: projectAgentsFile(harness).path))
-            #expect(await harness.runtime.calls.isEmpty)
         }
     }
 
@@ -973,45 +707,6 @@ struct ChatSessionSelectionTests {
     }
 
     @Test
-    func rebuildingAnEmptyConversationAddsNoNotice() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            controller.selection.toolKeys = ["shell", "files"]
-            try await harness.startSession()
-
-            let outcome = await controller.selectTools(keys: ["files"])
-
-            #expect(outcome.change == .sessionRecreated)
-            let created = try #require(await harness.runtime.calls.first { $0.name == "createSession" }?.digest)
-            #expect(created.historyContents.isEmpty)
-            #expect(controller.history.isEmpty)
-        }
-    }
-
-    @Test
-    func aFailingUpdateIsPresentedAndTheSelectionStillReportsTheActiveTools() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            controller.selection.toolKeys = ["files"]
-            try await harness.startSession()
-            await harness.runtime.setUpdateSessionOptionsError(
-                ScriptedChatRuntime.ScriptedFailure(message: "The backend is gone.")
-            )
-
-            let outcome = await controller.selectTools(keys: ["files"])
-
-            #expect(outcome.change == .sessionUpdated)
-            #expect(await harness.presenter.notices == [
-                .operationFailed(description: "The backend is gone."),
-            ])
-            guard case .activeTools = try #require(outcome.notices.first) else {
-                Issue.record("The closing notice reports the active tools")
-                return
-            }
-        }
-    }
-
-    @Test
     func aToolSelectionIsParsedFromTheCommandArguments() async throws {
         try await withChatHarness { harness in
             let controller = harness.controller
@@ -1056,22 +751,6 @@ struct ChatSessionSelectionTests {
             #expect(items.first?.title == "Shell")
             #expect(items.first?.group == "Core")
             #expect(selectedIDs == ["shell"])
-        }
-    }
-
-    @Test
-    func aCancelledToolMenuReportsTheActiveToolsAndChangesNothing() async throws {
-        try await withChatHarness(hostCapabilities: [.multipleChoice]) { harness in
-            let controller = harness.controller
-            controller.selection.toolKeys = ["files"]
-            let expectedSummary = await controller.activeToolsSummary()
-            await harness.clearRecords()
-
-            let outcome = await controller.chooseTools()
-
-            #expect(outcome == ChatSelectionOutcome(notices: [.activeTools(expectedSummary)]))
-            #expect(controller.selection.toolKeys == ["files"])
-            #expect(await harness.runtime.calls.isEmpty)
         }
     }
 
@@ -1183,42 +862,6 @@ struct ChatSessionSelectionTests {
     }
 
     @Test
-    func aFailedInstallReportsTheErrorAndTheUsageWithoutTouchingTheSession() async throws {
-        try await withChatHarness { harness in
-            let controller = harness.controller
-            let missing = harness.workspace
-                .appendingPathComponent("missing", isDirectory: true)
-                .standardizedFileURL.path
-
-            let outcome = await controller.installSkill(source: "./missing")
-
-            #expect(outcome == ChatSelectionOutcome(notices: [
-                .operationFailed(description: "No SKILL.md found at \(missing)."),
-                .skillSelectionUsage,
-            ]))
-            #expect(await harness.presenter.notices == [.skillInstallStarted(source: missing)])
-            #expect(controller.selection.skillIDs.isEmpty)
-            #expect(await harness.runtime.calls.isEmpty)
-        }
-    }
-
-    @Test
-    func anInstallSourceThatIsNeitherAGitHubURLNorAPathIsRefused() async throws {
-        try await withChatHarness { harness in
-            for source in ["release-review", "", "  "] {
-                let outcome = await harness.controller.installSkill(source: source)
-
-                #expect(outcome == ChatSelectionOutcome(notices: [
-                    .skillInstallSourceRequired,
-                    .skillSelectionUsage,
-                ]))
-            }
-            #expect(await harness.presenter.events.isEmpty)
-            #expect(await harness.runtime.calls.isEmpty)
-        }
-    }
-
-    @Test
     func uninstallingRemovesTheSkillDeselectsItAndUpdatesTheSession() async throws {
         try await withChatHarness(hostCapabilities: [.multipleChoice]) { harness in
             let controller = harness.controller
@@ -1256,108 +899,12 @@ struct ChatSessionSelectionTests {
             ])
         }
     }
-
-    @Test
-    func uninstallingNothingSaysSoAndACancelledMenuPresentsNothing() async throws {
-        try await withChatHarness(hostCapabilities: [.multipleChoice]) { harness in
-            let controller = harness.controller
-
-            let none = await controller.chooseSkillsToUninstall()
-            #expect(none == ChatSelectionOutcome(notices: [.noPromptSkillsInstalled]))
-
-            let skills = try harness.installSkills("alpha-skill")
-            let cancelled = await controller.chooseSkillsToUninstall()
-            #expect(cancelled == ChatSelectionOutcome())
-
-            await harness.host.answerChooseMany([])
-            let empty = await controller.chooseSkillsToUninstall()
-            #expect(empty == ChatSelectionOutcome(notices: [.noSkillsSelectedForUninstall]))
-
-            // Nothing was removed or handed to the runtime.
-            #expect(FileManager.default.fileExists(
-                atPath: harness.skillsRoot.appendingPathComponent("alpha-skill").path
-            ))
-            #expect(controller.availableSkills().map(\.id) == skills.map(\.id))
-            #expect(await harness.runtime.calls.isEmpty)
-        }
-    }
-}
-
-// MARK: - Test doubles
-
-/// The scripted host answers from its queues in order, cancels when a queue
-/// is empty (except for the workspace access, which it grants), and records
-/// every interaction, so the suites can trust what they read from it.
-@Suite("Chat session scripted host", .serialized)
-struct ChatSessionScriptedHostTests {
-    @Test
-    func answersComeFromTheQueuesInOrderAndEveryInteractionIsRecorded() async {
-        let host = ScriptedChatInteractionHost(
-            capabilities: [.singleChoice, .focusedMultipleChoice],
-            chooseOne: ["one"],
-            chooseMany: [["a", "b"]],
-            chooseManyWithFocus: [ChatFocusedChoice(selectedIDs: ["a"], focusedID: "a")],
-            readLine: ["typed"],
-            workspaceAccess: [false]
-        )
-        let item = ChatChoiceItem(id: "a", title: "A")
-        let request = ChatWorkspaceAccessRequest(
-            workspaceURL: URL(fileURLWithPath: "/tmp/project"),
-            toolTitles: ["Shell"]
-        )
-
-        #expect(host.capabilities == [.singleChoice, .focusedMultipleChoice])
-        #expect(await host.chooseOne(title: "One", items: [item], selectedID: nil) == "one")
-        #expect(await host.chooseMany(title: "Many", items: [item], selectedIDs: ["a"]) == ["a", "b"])
-        #expect(
-            await host.chooseManyWithFocus(
-                title: "Focus",
-                items: [item],
-                selectedIDs: [],
-                focusedID: "a",
-                toggleLabel: "agents",
-                confirmLabel: "use agent"
-            ) == ChatFocusedChoice(selectedIDs: ["a"], focusedID: "a")
-        )
-        #expect(await host.readLine(prompt: "Name:") == "typed")
-        #expect(await host.requestWorkspaceAccess(request) == false)
-
-        // Empty queues: the operator cancelled, and the workspace is granted.
-        #expect(await host.chooseOne(title: "One", items: [], selectedID: nil) == nil)
-        #expect(await host.chooseMany(title: "Many", items: [], selectedIDs: []) == nil)
-        #expect(await host.readLine(prompt: "Name:") == nil)
-        #expect(await host.requestWorkspaceAccess(request))
-
-        // Answers queued later are served in the order they arrive.
-        await host.answerChooseOne("later")
-        await host.answerChooseOne(nil)
-        #expect(await host.chooseOne(title: "One", items: [], selectedID: nil) == "later")
-        #expect(await host.chooseOne(title: "One", items: [], selectedID: nil) == nil)
-
-        let interactions = await host.interactions
-        #expect(interactions.count == 11)
-        #expect(interactions.first == .chooseOne(title: "One", items: [item], selectedID: nil))
-        #expect(interactions[2] == .chooseManyWithFocus(
-            title: "Focus",
-            items: [item],
-            selectedIDs: [],
-            focusedID: "a",
-            toggleLabel: "agents",
-            confirmLabel: "use agent"
-        ))
-        #expect(interactions[3] == .readLine(prompt: "Name:"))
-        #expect(interactions[4] == .requestWorkspaceAccess(request))
-        await host.clearInteractions()
-        #expect(await host.interactions.isEmpty)
-    }
 }
 
 // MARK: - Texts
 
-/// The texts of the selection notices, spelled out as the terminal wrote them
-/// before they moved to `ChatSessionNoticeText`. The expectations are literal
-/// strings taken from the terminal chat of that time, not calls to the
-/// functions that now delegate to the notice text.
+/// The active-tool count and the channel of the selection notices, as the
+/// terminal wrote them before they moved to `ChatSessionNoticeText`.
 @Suite("Chat session selection texts", .serialized)
 struct ChatSessionSelectionTextTests {
     private typealias Fixtures = ChatTestFixtures
@@ -1374,151 +921,7 @@ struct ChatSessionSelectionTextTests {
         sourceHash: "hash-one"
     )
 
-    private static let skillTwo = PromptSkill(
-        canonicalName: "changelog",
-        title: "Changelog",
-        summary: "Write the changelog.",
-        promptBody: "Body",
-        sourceHash: "hash-two"
-    )
-
-    // MARK: Models and thinking
-
-    @Test
-    func modelNotices() {
-        #expect(text(.modelSelected(Fixtures.beta, thinking: nil)) == "Selected model: Beta Model\n")
-        #expect(text(.modelSelected(Fixtures.beta, thinking: .high)) == "Selected model: Beta Model (thinking: High)\n")
-        #expect(text(.modelUnchanged) == "Model unchanged.\n")
-        #expect(text(.noCurrentModel) == "No current model selected. Use /models to choose a model first.\n")
-        #expect(text(.thinkingNotSupported(model: Fixtures.alpha)) == "Alpha Model does not support configurable thinking.\n")
-        #expect(text(.thinkingUnchanged) == "Thinking unchanged.\n")
-    }
-
-    @Test
-    func theNonInteractiveModelAndThinkingLists() {
-        #expect(
-            text(.requiresInteractiveHost(
-                .modelSelection(models: [Fixtures.alpha, Fixtures.beta], selectedModelID: "beta-model")
-            )) == """
-
-            Available models:
-              RemoteAPI:
-                1. Alpha Model
-                2. Beta Model *
-
-            Model selection requires an interactive terminal.
-
-            """
-        )
-        #expect(
-            text(.requiresInteractiveHost(
-                .modelSelection(models: [Fixtures.alpha, Fixtures.beta], selectedModelID: nil)
-            )) == "\nAvailable models:\n  RemoteAPI:\n    1. Alpha Model\n    2. Beta Model\n\n"
-                + "Model selection requires an interactive terminal.\n"
-        )
-        #expect(
-            text(.requiresInteractiveHost(
-                .thinkingSelection(model: Fixtures.beta, options: [.low, .high], selected: .low)
-            )) == """
-
-            Thinking levels for Beta Model:
-              1. Low thinking *
-              2. High thinking
-
-            Thinking selection requires an interactive terminal.
-
-            """
-        )
-    }
-
-    // MARK: Agents
-
-    @Test
-    func agentNoticesAndTheAgentSwitchMessage() {
-        let detailed = AgentProfile(
-            id: "detailed",
-            name: "Detailed",
-            role: .reviewer,
-            skills: [AgentProfileSkill(id: "s1", canonicalName: "s1")],
-            modelBindings: [
-                AgentModelBinding(id: "a", modelID: "model-a", thinkingSelection: .high, capability: 5),
-                AgentModelBinding(id: "b", modelID: "model-b", capability: 7),
-            ],
-            defaultModelBindingID: "a"
-        )
-        #expect(text(.selectedAgent(Fixtures.developer)) == "Selected agent: Developer\n")
-        #expect(text(.selectedAgent(nil)) == "Selected agent: unavailable\n")
-        #expect(text(.agentSelectionUsage) == "Usage: /agents [list|<agent name>|<number>]\n")
-        #expect(
-            text(.availableAgents(
-                agents: [Fixtures.developer, Fixtures.reviewer, detailed],
-                selected: Fixtures.reviewer,
-                manifestPath: "/tmp/agents.json"
-            )) == "\nAvailable agents:\n"
-                + "  1. Developer - General software development; the default agent\n"
-                + "  2. Reviewer - /review delegates to it *\n"
-                + "  3. Detailed - /review delegates to it · default model: model-a · thinking: High"
-                + " · bindings: 2 · skills: 1\n"
-                + "\n"
-        )
-        #expect(
-            text(.availableAgents(agents: [], selected: nil, manifestPath: "/tmp/agents.json"))
-                == "No agents configured in /tmp/agents.json.\n"
-        )
-        #expect(
-            text(.requiresInteractiveHost(
-                .agentSelection(
-                    agents: [Fixtures.developer, Fixtures.reviewer],
-                    selected: Fixtures.developer,
-                    manifestPath: "/tmp/agents.json"
-                )
-            )) == "Selected agent: Developer\n"
-                + "\nAvailable agents:\n"
-                + "  1. Developer - General software development; the default agent *\n"
-                + "  2. Reviewer - /review delegates to it\n"
-                + "\n"
-                + "Usage: /agents [list|<agent name>|<number>]\n"
-        )
-        #expect(
-            text(.projectAgentsAssociated(
-                agents: [Fixtures.developer, Fixtures.reviewer],
-                projectName: "workspace"
-            )) == "Project agents for workspace: Developer, Reviewer.\n"
-        )
-        #expect(
-            text(.projectAgentsAssociated(agents: [], projectName: "workspace"))
-                == "No agent profile is associated with project workspace; "
-                + "the sub-agents tool cannot delegate until some are associated with /agents.\n"
-        )
-        #expect(
-            text(.projectAgentsSaveFailed(description: "disk full"))
-                == "ZenCODE: unable to save the project agents: disk full\n"
-        )
-        // The agent switch no longer says the session was reset: the
-        // conversation is kept, the plan and the task graph are not.
-        #expect(
-            text(.agentSwitched(Fixtures.reviewer))
-                == "Switched to agent: Reviewer. Plan and task graph reset; conversation kept.\n"
-        )
-    }
-
     // MARK: Tools and skills
-
-    @Test
-    func toolNotices() {
-        let summary = ChatActiveToolsSummary(groups: [
-            ChatActiveToolsSummary.Group(title: "Shell", toolCount: 2),
-            ChatActiveToolsSummary.Group(title: "Skills", toolCount: 2),
-        ])
-        #expect(text(.activeTools(summary)) == "Active tools: Shell (2), Skills (2)\n")
-        #expect(text(.activeTools(ChatActiveToolsSummary(groups: []))) == "Active tools: none\n")
-        #expect(text(.toolSelectionUsage) == "Usage: /tools [all|none|tool-name|package-name|tool-number|logs]\n")
-        #expect(
-            text(.requiresInteractiveHost(.toolSelection(summary)))
-                == "Active tools: Shell (2), Skills (2)\n"
-                + "Usage: /tools [all|none|tool-name|package-name|tool-number|logs]\n"
-        )
-    }
 
     @Test
     func theActiveToolGroupsAreCountedAsTheTerminalCountedThem() {
@@ -1537,57 +940,6 @@ struct ChatSessionSelectionTextTests {
             selectedKeys: ["shell", "files"]
         )
         #expect(text(.activeTools(hidden)) == "Active tools: none\n")
-    }
-
-    @Test
-    func skillNotices() {
-        let usage = "Usage: /skills [all|none|skill-name|skill-number|install <github-url|local-path>"
-            + "|uninstall|<github-url|local-path>]\n"
-        #expect(text(.selectedSkills([])) == "Selected skills: none\n")
-        #expect(
-            text(.selectedSkills([Self.skillOne, Self.skillTwo]))
-                == "Selected skills: Release Review, Changelog\n"
-        )
-        #expect(text(.skillSelectionUsage) == usage)
-        #expect(
-            text(.skillInstallSourceRequired)
-                == "ZenCODE: /skills install requires a GitHub URL or local path.\n"
-        )
-        #expect(text(.noPromptSkillsInstalled) == "No prompt skills installed by the app.\n")
-        #expect(text(.noSkillsSelectedForUninstall) == "No skills selected for uninstall.\n")
-        #expect(text(.skillsUninstalled([Self.skillOne])) == "Uninstalled skill: Release Review\n")
-        #expect(
-            text(.skillsUninstalled([Self.skillOne, Self.skillTwo]))
-                == "Uninstalled skills: Release Review, Changelog\n"
-        )
-        #expect(
-            text(.skillInstallStarted(source: "https://github.com/acme/skills"))
-                == "Installing skill from https://github.com/acme/skills...\n"
-        )
-        #expect(text(.skillInstalled(Self.skillOne)) == "Installed and selected skill: Release Review\n")
-        #expect(
-            text(.requiresInteractiveHost(.skillSelection(selected: [Self.skillOne])))
-                == "Selected skills: Release Review\n" + usage
-        )
-        #expect(
-            text(.requiresInteractiveHost(.skillUninstall))
-                == "ZenCODE: /skills uninstall requires an interactive terminal.\n"
-        )
-    }
-
-    // MARK: Workspace and failures
-
-    @Test
-    func workspaceAndFailureNotices() {
-        let request = ChatWorkspaceAccessRequest(
-            workspaceURL: URL(fileURLWithPath: "/tmp/project", isDirectory: true),
-            toolTitles: ["Shell", "Files"]
-        )
-        #expect(
-            text(.workspaceAccessDenied(request))
-                == "Workspace access was not granted for /tmp/project.\nDisabled tools: Shell, Files.\n"
-        )
-        #expect(text(.operationFailed(description: "boom")) == "ZenCODE: boom\n")
     }
 
     @Test

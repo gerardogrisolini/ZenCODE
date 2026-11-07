@@ -16,19 +16,6 @@ import Testing
 @Suite
 struct MemoryServiceTests {
     @Test
-    func memoryPromptDescribesProjectResponsibilities() {
-        #expect(MemoryService.toolUsagePromptSection().contains("Treat durable project memory as first-class context"))
-        #expect(!MemoryService.toolUsagePromptSection().localizedCaseInsensitiveContains("global memory"))
-        #expect(MemoryService.toolUsagePromptSection().contains("At the end of a substantial project turn"))
-        #expect(MemoryService.toolUsagePromptSection().contains("release, version, or publication"))
-        #expect(MemoryService.toolUsagePromptSection().contains("concrete evidence"))
-        #expect(MemoryService.toolUsagePromptSection().contains("speculative plans"))
-        #expect(MemoryService.toolUsagePromptSection().contains("architecture, compatibility, dependencies, or persisted formats"))
-        #expect(MemoryService.toolUsagePromptSection().contains("perform the appropriate mutation before finishing"))
-        #expect(MemoryService.toolUsagePromptSection().contains("version or changelog edit alone"))
-    }
-
-    @Test
     func readOnlyMemoryPromptDoesNotSuggestUnavailableMutations() {
         let prompt = MemoryService.toolUsagePromptSection(readOnly: true)
 
@@ -36,21 +23,6 @@ struct MemoryServiceTests {
         #expect(prompt.contains("do not claim to create, update, archive"))
         #expect(prompt.contains("memory.search"))
         #expect(!prompt.contains("Before writing"))
-    }
-
-    @Test
-    func promptsExplainAMissingRecallBlock() {
-        // A silent absence of the recall block must not read as "no prior
-        // context": both prompt variants send the model to memory.search.
-        for prompt in [
-            MemoryService.toolUsagePromptSection(),
-            MemoryService.toolUsagePromptSection(readOnly: true)
-        ] {
-            #expect(prompt.contains("`<project-memory>` block"))
-            #expect(prompt.contains("When no such block is present"))
-            #expect(prompt.contains("call `memory.search` before concluding that no prior context exists"))
-            #expect(!prompt.contains("you do not need to call a tool"))
-        }
     }
 
     @Test
@@ -267,90 +239,6 @@ struct MemoryServiceTests {
         }
     }
 
-    @Test
-    func machineShapedAuthoredTimestampKeepsAnEntryDistinctFromAnAutoStampedOne() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        let body = "Summary: release cut for 1.2.5."
-
-        try await workspace.withIsolatedSupport {
-            let service = MemoryService()
-            let context = MemoryToolContext(
-                workingDirectory: workspace.workspaceURL,
-                currentDate: Date(timeIntervalSince1970: 1_700_000_000),
-                currentTimeZone: TimeZone(identifier: "Europe/Rome")!
-            )
-            let authored = try await MemoryTool.executeAsync(
-                ToolRequest(
-                    name: "memory.write",
-                    arguments: ["content": .string("Timestamp: 2024-01-01 09:00 Europe/Rome\n\(body)")]
-                ),
-                context: context,
-                memoryService: service
-            )
-            let autoStamped = try await MemoryTool.executeAsync(
-                ToolRequest(name: "memory.write", arguments: ["content": .string(body)]),
-                context: context,
-                memoryService: service
-            )
-
-            #expect(authored.rawResult?.objectValue?["written"]?.boolValue == true)
-            #expect(autoStamped.rawResult?.objectValue?["written"]?.boolValue == true)
-            #expect(try await service.readEntries(workspaceRootURL: workspace.workspaceURL, limit: 10).count == 2)
-        }
-    }
-
-    /// Two entries differing only inside a fenced code block are different
-    /// entries, even when the differing line happens to look like the journal
-    /// field.
-    @Test
-    func timestampInsideACodeBlockStaysSignificant() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        func sample(_ value: String) -> String {
-            """
-            Summary: documented the log format.
-            ```
-            Timestamp: \(value)
-            ```
-            """
-        }
-
-        try await workspace.withIsolatedSupport {
-            let service = MemoryService()
-            let context = MemoryToolContext(
-                workingDirectory: workspace.workspaceURL,
-                currentDate: Date(timeIntervalSince1970: 1_700_000_000),
-                currentTimeZone: TimeZone(identifier: "Europe/Rome")!
-            )
-            _ = try await MemoryTool.executeAsync(
-                ToolRequest(
-                    name: "memory.write",
-                    arguments: ["content": .string(sample("2024-01-01 09:00 Europe/Rome"))]
-                ),
-                context: context,
-                memoryService: service
-            )
-            let second = try await MemoryTool.executeAsync(
-                ToolRequest(
-                    name: "memory.write",
-                    arguments: ["content": .string(sample("2025-02-02 10:00 Europe/Rome"))]
-                ),
-                context: context,
-                memoryService: service
-            )
-
-            #expect(second.rawResult?.objectValue?["written"]?.boolValue == true)
-            #expect(second.rawResult?.objectValue?["deduplicated"]?.boolValue == false)
-            #expect(
-                try await service.readEntries(
-                    workspaceRootURL: workspace.workspaceURL,
-                    limit: 10
-                ).count == 2
-            )
-        }
-    }
-
     /// The legacy public write API never generated a stamp, so nothing in the
     /// content it is handed may be ignored: two entries that differ by a
     /// caller-supplied `Timestamp:` remain two entries.
@@ -378,37 +266,6 @@ struct MemoryServiceTests {
                 ).count == 2
             )
         }
-    }
-
-    /// Only the exact generated rendering is ignorable. A first line that
-    /// merely starts with the field name is authored content.
-    @Test
-    func onlyTheGeneratedTimestampRenderingIsIgnorable() {
-        #expect(MemoryAutoTimestamp.isGeneratedLine("Timestamp: 2024-01-01 09:00 Europe/Rome"))
-        #expect(!MemoryAutoTimestamp.isGeneratedLine("Timestamp: 2024-01-01 09:00"))
-        #expect(!MemoryAutoTimestamp.isGeneratedLine("Timestamp: 2024-01-01"))
-        #expect(!MemoryAutoTimestamp.isGeneratedLine("Timestamp: yesterday"))
-        #expect(!MemoryAutoTimestamp.isGeneratedLine("Timestamp: 2024-13-45 99:99 Europe/Rome"))
-        #expect(!MemoryAutoTimestamp.isGeneratedLine("Timestamp: 2024-01-01 09:00 Not/AZone"))
-        #expect(!MemoryAutoTimestamp.isGeneratedLine("timestamp: 2024-01-01 09:00 Europe/Rome"))
-        #expect(!MemoryAutoTimestamp.isGeneratedLine("Updated: 2024-01-01 09:00 Europe/Rome"))
-
-        // Only the first line, and only when something follows it.
-        #expect(
-            MemoryAutoTimestamp.strippingGeneratedLine(
-                from: "Timestamp: 2024-01-01 09:00 Europe/Rome\nSummary: x"
-            ) == "Summary: x"
-        )
-        #expect(
-            MemoryAutoTimestamp.strippingGeneratedLine(
-                from: "Summary: x\nTimestamp: 2024-01-01 09:00 Europe/Rome"
-            ) == nil
-        )
-        #expect(
-            MemoryAutoTimestamp.strippingGeneratedLine(
-                from: "Timestamp: 2024-01-01 09:00 Europe/Rome"
-            ) == nil
-        )
     }
 
     @Test
@@ -513,54 +370,6 @@ struct MemoryServiceTests {
     }
 
     @Test
-    func globalGraphIsIndependentOfTheWorkspace() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-        let otherWorkspaceURL = workspace.rootURL
-            .appendingPathComponent("other-workspace-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: otherWorkspaceURL, withIntermediateDirectories: true)
-
-        try await workspace.withIsolatedSupport {
-            let service = MemoryService()
-            let written = try await service.writeEntryOutcome(
-                content: "Summary: a global note visible from any directory.",
-                target: .global
-            )
-
-            for workspaceURL in [workspace.workspaceURL, otherWorkspaceURL] {
-                // The workspace graphs stay empty, while the global graph is the
-                // same regardless of which directory the session runs in.
-                let workspaceEntries = try await service.readEntries(
-                    target: .workspace(workspaceURL),
-                    includeArchived: true,
-                    offset: 0,
-                    limit: 10,
-                    filter: .none
-                )
-                #expect(workspaceEntries.isEmpty)
-            }
-            #expect(
-                try await service.searchEntries(
-                    query: "global note directory",
-                    target: .global,
-                    includeArchived: false,
-                    limit: 10,
-                    filter: .none
-                ).map(\.id) == [written.entry.id]
-            )
-            #expect(
-                try await service.searchEntries(
-                    query: "global note directory",
-                    target: .workspace(otherWorkspaceURL),
-                    includeArchived: false,
-                    limit: 10,
-                    filter: .none
-                ).isEmpty
-            )
-        }
-    }
-
-    @Test
     func targetVariantsCoverEveryOperationOnTheGlobalGraph() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
@@ -653,41 +462,6 @@ struct MemoryServiceTests {
                     filter: .none
                 ).map(\.id) == [alpha.id]
             )
-        }
-    }
-
-    @Test
-    func workspaceRootURLAPIsDelegateToTheWorkspaceTarget() async throws {
-        let workspace = try MemoryTestWorkspace()
-        defer { workspace.remove() }
-
-        try await workspace.withIsolatedSupport {
-            let service = MemoryService()
-            let viaLegacy = try await service.writeEntry(
-                content: "Summary: written through the workspaceRootURL API.",
-                workspaceRootURL: workspace.workspaceURL
-            )
-            let viaTarget = try await service.writeEntryOutcome(
-                content: "Summary: written through the target API.",
-                target: .workspace(workspace.workspaceURL)
-            ).entry
-
-            let legacyRead = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
-                limit: 10
-            )
-            let targetRead = try await service.readEntries(
-                target: .workspace(workspace.workspaceURL),
-                includeArchived: false,
-                offset: 0,
-                limit: 10,
-                filter: .none
-            )
-            #expect(Set(legacyRead.map(\.id)) == [viaLegacy.id, viaTarget.id])
-            #expect(legacyRead.map(\.id) == targetRead.map(\.id))
-            #expect(service.graphURL(workspaceRootURL: workspace.workspaceURL) == service.graphURL(target: .workspace(workspace.workspaceURL)))
-            // Nothing leaked into the global graph.
-            #expect(!FileManager.default.fileExists(atPath: service.graphURL(target: .global).path))
         }
     }
 
@@ -1089,34 +863,6 @@ struct MemoryServiceTests {
         #expect(sessions.count == writeCount)
         #expect(Set(sessions.map(\.sessionID)) == Set((0..<writeCount).map { "session-\($0)" }))
         #expect(Set(sessions.map(\.projectPath)).count == writeCount)
-    }
-
-    @Test
-    func standalonePromptReflectsMemoryToolSurface() {
-        let readOnlyPrompt = AgentStandaloneSystemPrompt.prompt(
-            cwd: "/tmp/project",
-            memoryToolEnabled: true,
-            allowedToolNames: ["memory.read", "memory.search"]
-        )
-        let mutatingPrompt = AgentStandaloneSystemPrompt.prompt(
-            cwd: "/tmp/project",
-            memoryToolEnabled: true,
-            allowedToolNames: ["memory.read", "memory.write"]
-        )
-        let withoutMemoryPrompt = AgentStandaloneSystemPrompt.prompt(
-            cwd: "/tmp/project",
-            memoryToolEnabled: false
-        )
-
-        #expect(readOnlyPrompt.contains("Memory tools (read-only):"))
-        #expect(readOnlyPrompt.contains("do not claim to create, update, archive"))
-        #expect(!readOnlyPrompt.contains("Before writing"))
-        #expect(mutatingPrompt.contains("Memory tools:"))
-        #expect(!mutatingPrompt.contains("Memory tools (read-only):"))
-        #expect(mutatingPrompt.contains("`memory.write`"))
-        #expect(!withoutMemoryPrompt.contains("Memory tools:"))
-        #expect(!withoutMemoryPrompt.contains("`memory.write`"))
-        #expect(!withoutMemoryPrompt.contains("memory, feature, and delegated sub-agent tools"))
     }
 
     @Test

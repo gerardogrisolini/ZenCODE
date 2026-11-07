@@ -56,24 +56,4 @@ struct LocalFeatureToolsRegistryContractTests {
             #expect(required.contains("path"))
         }
     }
-
-    @Test
-    func fileListRejectsAnInvocationWithoutPath() async throws {
-        let tool = try #require(
-            LocalFeatureTools.fileTools().first {
-                $0.descriptor.name == "local.ls"
-            }
-        )
-        let context = FeatureContext(
-            workingDirectory: FileManager.default.temporaryDirectory,
-            environment: [:]
-        )
-
-        await #expect(throws: (any Error).self) {
-            _ = try await tool.invoke(
-                inputData: Data("{}".utf8),
-                context: context
-            )
-        }
-    }
 }

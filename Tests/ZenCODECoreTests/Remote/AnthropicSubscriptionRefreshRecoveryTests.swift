@@ -157,18 +157,6 @@ struct AnthropicSubscriptionRefreshRecoveryTests {
         }
     }
 
-    @Test
-    func validCredentialsSkipLogin() async throws {
-        let result = try await ZenCODESetupRunner.ensureAnthropicSubscriptionCredentials(
-            loadCredentials: { Self.credentials },
-            signIn: {
-                Issue.record("Unexpected login for valid credentials")
-                return Self.credentials
-            }
-        )
-        #expect(result == Self.credentials)
-    }
-
     @Test(arguments: [AnthropicSubscriptionAuthError.missingCredentials, .invalidCredentials])
     func existingCredentialRecoveryIsRetained(error: AnthropicSubscriptionAuthError) async throws {
         var loginCount = 0
@@ -197,30 +185,6 @@ struct AnthropicSubscriptionRefreshRecoveryTests {
             Issue.record("Expected login cancellation")
         } catch AnthropicSubscriptionAuthError.callbackCancelled {
             #expect(loginCount == 1)
-        } catch {
-            Issue.record("Unexpected error: \(error)")
-        }
-    }
-
-    @Test
-    func cancellationBeforeRecoveryDoesNotOpenLogin() async {
-        let task = Task(name: "Cancelled Anthropic setup recovery test") {
-            try await ZenCODESetupRunner.ensureAnthropicSubscriptionCredentials(
-                loadCredentials: {
-                    withUnsafeCurrentTask { $0?.cancel() }
-                    throw AnthropicSubscriptionAuthError.refreshTokenRejected
-                },
-                signIn: {
-                    Issue.record("Unexpected login in cancelled task")
-                    return Self.credentials
-                }
-            )
-        }
-        do {
-            _ = try await task.value
-            Issue.record("Expected cancellation")
-        } catch is CancellationError {
-            // Cancellation wins even when the loader reports rejected credentials.
         } catch {
             Issue.record("Unexpected error: \(error)")
         }

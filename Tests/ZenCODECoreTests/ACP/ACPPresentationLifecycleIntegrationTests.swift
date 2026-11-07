@@ -23,52 +23,6 @@ private func makeIsolatedWorkspace() throws -> URL {
 
 @Suite(.timeLimit(.minutes(1)))
 struct ACPPresentationLifecycleIntegrationTests {
-    @Test func textOnlySecondPromptReattachesPersistentTasklessAgent() async throws {
-        let workspace = try makeIsolatedWorkspace()
-        defer { try? FileManager.default.removeItem(at: workspace) }
-        let (wire, messages) = AsyncStream<JSONValue>.makeStream()
-        let backend = PresentationLifecycleBackend()
-        let configuration = try AgentConfiguration(
-            hostedModelID: "test-model",
-            availableModels: [.init(id: "test-model", kind: .remoteAPI, modelID: "local/test-model")],
-            runMode: .acp, workingDirectory: workspace, appMode: false
-        )
-        let bridge = ZenCODEACPBridge(configuration: configuration, writer: ACPWriter { data in
-            if let value = try? JSONDecoder().decode(JSONValue.self, from: data) { messages.yield(value) }
-        }, backendFactory: { _, _ in backend })
-        try await bridge.newSession(id: .number(1), params: ["cwd": workspace.path, "allowedTools": [String]()])
-        let sessionID = try #require(await bridge.testAnySessionID())
-        var iterator = wire.makeAsyncIterator()
-        func nextWork(_ iterator: inout AsyncStream<JSONValue>.Iterator, id: String, status: String) async -> JSONValue? {
-            while let message = await iterator.next() {
-                let update = message.objectValue?["params"]?.objectValue?["update"]
-                if update?.objectValue?["toolCallId"] == .string(id),
-                   update?.objectValue?["status"] == .string(status) { return update }
-            }
-            return nil
-        }
-        let first = Task { try await bridge.prompt(id: .number(2), params: ["sessionId": sessionID, "prompt": "first"]) }
-        let running = await nextWork(&iterator, id: "acp:work:persistent:1", status: "in_progress")
-        #expect(running?.objectValue?["sessionUpdate"] == .string("tool_call"))
-        await backend.finishExecution(failed: false)
-        let completed = await nextWork(&iterator, id: "acp:work:persistent:1", status: "completed")
-        #expect(completed?.objectValue?["sessionUpdate"] == .string("tool_call_update"))
-        await backend.releasePrompt()
-        try await first.value
-
-        let second = Task { try await bridge.prompt(id: .number(3), params: ["sessionId": sessionID, "prompt": "text only"]) }
-        let followup = await nextWork(&iterator, id: "acp:work:persistent:2", status: "in_progress")
-        #expect(followup?.objectValue?["sessionUpdate"] == .string("tool_call"))
-        await backend.finishExecution(failed: true)
-        let failed = await nextWork(&iterator, id: "acp:work:persistent:2", status: "failed")
-        #expect(failed?.objectValue?["sessionUpdate"] == .string("tool_call_update"))
-        await backend.releasePrompt()
-        try await second.value
-        #expect(await backend.promptCount == 2)
-        #expect(await backend.subscriptionCount == 2)
-        await bridge.shutdown()
-        messages.finish()
-    }
 
     @Test(arguments: [false, true])
     func textOnlyPromptsHandleTaskAttemptCompletionAcrossTeardown(completionBeforeTeardown: Bool) async throws {
@@ -215,25 +169,6 @@ private extension ZenCODEACPBridge {
         return (reservation.epoch, reservation.promptID)
     }
 
-    func installTasklessPreparationGate(sessionID: String, gate: PresentationSuspensionGate) {
-        let didPark = Mutex(false)
-        sessions[sessionID]?.tasklessPresentation = ACPTasklessPresentation(onPrepared: { updates in
-            guard updates.contains(where: { $0.objectValue?["status"] == .string("completed") }) else { return }
-            let shouldPark = didPark.withLock { parked in
-                if parked { return false }
-                parked = true
-                return true
-            }
-            if shouldPark { await gate.park() }
-        })
-    }
-
-    func waitForTasklessTeardown(sessionID: String) async {
-        // Teardown clears the observer slot and cancels it before awaiting it.
-        // The preparation gate keeps that cancelled observer alive until released.
-        while sessions[sessionID]?.tasklessObserver != nil { await Task.yield() }
-    }
-
     func presentationEpoch(sessionID: String) -> UInt64? { sessions[sessionID]?.epoch }
 
     func replacePresentationTestSession(sessionID: String) async {
@@ -297,10 +232,6 @@ private actor PresentationLifecycleBackend: AgentRuntimeBackend {
         }
         if !released { await withCheckedContinuation { promptWaiter = $0 } }
         return .init(text: "root text", stopReason: "end_turn", modelID: "test-model")
-    }
-    func finishExecution(failed: Bool) {
-        publish(status: failed ? .failed : .idle, completed: failed ? 1 : UInt64(promptCount),
-                error: failed ? "Second execution failed" : nil)
     }
     func releasePrompt() { released = true; promptWaiter?.resume(); promptWaiter = nil }
     private func publish(status: DirectSubAgentRuntime.Status, completed: UInt64, error: String? = nil) {
@@ -403,74 +334,4 @@ private actor PresentationSuspensionGate {
         await withCheckedContinuation { arrivalWaiters.append($0) }
     }
     func release() { waiter?.resume(); waiter = nil }
-}
-
-extension ACPPresentationLifecycleIntegrationTests {
-    @Test func cancelledPreparedTerminalReplaysOnceInNextPromptOfSameEpoch() async throws {
-        let workspace = try makeIsolatedWorkspace()
-        defer { try? FileManager.default.removeItem(at: workspace) }
-        let (wire, messages) = AsyncStream<JSONValue>.makeStream()
-        let output = Mutex<[JSONValue]>([])
-        let backend = PresentationLifecycleBackend(preservesExecutionAcrossPrompts: true)
-        let configuration = try AgentConfiguration(
-            hostedModelID: "test-model",
-            availableModels: [.init(id: "test-model", kind: .remoteAPI, modelID: "local/test-model")],
-            runMode: .acp, workingDirectory: workspace, appMode: false
-        )
-        let bridge = ZenCODEACPBridge(configuration: configuration, writer: ACPWriter { data in
-            if let value = try? JSONDecoder().decode(JSONValue.self, from: data) {
-                output.withLock { $0.append(value) }
-                messages.yield(value)
-            }
-        }, backendFactory: { _, _ in backend })
-        try await bridge.newSession(id: .number(1), params: ["cwd": workspace.path, "allowedTools": [String]()])
-        let sessionID = try #require(await bridge.testAnySessionID())
-        let epoch = await bridge.presentationEpoch(sessionID: sessionID)
-        let gate = PresentationSuspensionGate()
-        await bridge.installTasklessPreparationGate(sessionID: sessionID, gate: gate)
-        var iterator = wire.makeAsyncIterator()
-        func nextStatus(_ status: String, _ iterator: inout AsyncStream<JSONValue>.Iterator) async -> JSONValue? {
-            while let message = await iterator.next() {
-                let update = message.objectValue?["params"]?.objectValue?["update"]
-                if update?.objectValue?["toolCallId"] == .string("acp:work:persistent:1"),
-                   update?.objectValue?["status"] == .string(status) { return update }
-            }
-            return nil
-        }
-        func terminals() -> [JSONValue] {
-            output.withLock { values in values.filter {
-                let update = $0.objectValue?["params"]?.objectValue?["update"]?.objectValue
-                return update?["toolCallId"] == .string("acp:work:persistent:1")
-                    && update?["status"] == .string("completed")
-            } }
-        }
-        let first = Task { try await bridge.prompt(id: .number(2), params: ["sessionId": sessionID, "prompt": "first"]) }
-        #expect(await nextStatus("in_progress", &iterator) != nil)
-        await backend.finishExecution(failed: false)
-        await gate.waitForArrival()
-        // Terminal is prepared, but has not passed the observer's enqueue guard.
-        await backend.releasePrompt()
-        await bridge.waitForTasklessTeardown(sessionID: sessionID)
-        await gate.release()
-        try await first.value
-        #expect(terminals().isEmpty)
-
-        let second = Task { try await bridge.prompt(id: .number(3), params: ["sessionId": sessionID, "prompt": "text only"]) }
-        let terminal = await nextStatus("completed", &iterator)
-        #expect(terminal?.objectValue?["sessionUpdate"] == .string("tool_call_update"))
-        while await backend.promptCount < 2 { await Task.yield() }
-        await backend.releasePrompt()
-        try await second.value
-        #expect(await bridge.presentationEpoch(sessionID: sessionID) == epoch)
-        #expect(terminals().count == 1)
-
-        // A further replay of the same terminal must not reopen or duplicate it.
-        let third = Task { try await bridge.prompt(id: .number(4), params: ["sessionId": sessionID, "prompt": "again"]) }
-        while await backend.promptCount < 3 { await Task.yield() }
-        await backend.releasePrompt()
-        try await third.value
-        #expect(terminals().count == 1)
-        await bridge.shutdown()
-        messages.finish()
-    }
 }

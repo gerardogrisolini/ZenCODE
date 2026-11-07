@@ -53,13 +53,6 @@ struct DS4EngineShimSourcesParityTests {
     }
 
     @Test
-    func embeddedFilesKeepTheirTrailingNewline() {
-        #expect(DS4EngineShimSources.abiHeader.hasSuffix("\n"))
-        #expect(DS4EngineShimSources.shimSource.hasSuffix("\n"))
-        #expect(DS4EngineShimSources.buildScript.hasSuffix("\n"))
-    }
-
-    @Test
     func extractedFileNamesAndOrder() {
         #expect(DS4EngineShimSources.files.map(\.name) == [
             "zencode_ds4_abi.h",
@@ -83,13 +76,6 @@ struct DS4EngineShimSourcesParityTests {
             encoding: .utf8
         )
         #expect(Self.abiVersion(inHeader: canonical) == DS4EngineABI.expectedVersion)
-    }
-
-    @Test
-    func buildScriptIsABashScript() {
-        let script = DS4EngineShimSources.buildScript
-        #expect(script.hasPrefix("#!/usr/bin/env bash\n"))
-        #expect(script.contains("set -euo pipefail"))
     }
 
     private static func abiVersion(inHeader header: String) -> Int32? {

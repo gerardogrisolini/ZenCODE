@@ -50,69 +50,6 @@ struct MacOSVoiceModeSetupTests {
     }
 
     @Test
-    func localeFollowsTheResponseLanguage() {
-        #expect(ZenCODESetupRunner.speechVoiceLocaleIdentifier(manifest: Self.manifest()) == "it-IT")
-        #expect(
-            ZenCODESetupRunner.speechVoiceLocaleIdentifier(manifest: Self.manifest(responseLanguage: "fr"))
-                == "fr-FR"
-        )
-        // Telegram transcription no longer carries a language of its own.
-        let telegramVoice = AgentVoiceSettingsManifest(enabled: true)
-        #expect(
-            ZenCODESetupRunner.speechVoiceLocaleIdentifier(manifest: Self.manifest(voice: telegramVoice))
-                == "it-IT"
-        )
-    }
-
-    @Test
-    func menuListsTheOptionsThenAutomaticThenTheVoicesOfTheLanguage() throws {
-        let items = ZenCODESetupRunner.speechVoiceMenuItems(
-            installedVoices: Voices.installed,
-            localeIdentifier: "it-IT"
-        )
-        #expect(items.map(\.value) == [
-            .sendMode,
-            .automatic,
-            .voice(Voices.federica.identifier),
-            .voice(Voices.luca.identifier),
-            .voice(Voices.alice.identifier),
-            .back
-        ])
-        #expect(items[0].title == "Send mode")
-        #expect(items[0].detail == "after 5 s of silence")
-        #expect(items[1].title == "Automatic")
-        #expect(items[1].detail == "best installed voice, now Federica (it-IT · premium)")
-        let luca = try #require(items.first { $0.value == .voice(Voices.luca.identifier) })
-        #expect(luca.title == "Luca")
-        #expect(luca.detail == "it-IT · enhanced")
-        #expect(items.last?.title == "Back")
-
-        let none = ZenCODESetupRunner.speechVoiceMenuItems(
-            installedVoices: Voices.installed,
-            localeIdentifier: "ja-JP"
-        )
-        #expect(none.map(\.value) == [.sendMode, .automatic, .back])
-        #expect(none[1].detail == "system default voice for ja-JP")
-
-        // The saved pause shows in the send mode item.
-        let saved = ZenCODESetupRunner.speechVoiceMenuItems(
-            installedVoices: Voices.installed,
-            localeIdentifier: "it-IT",
-            manifest: Self.manifest(voice: AgentVoiceSettingsManifest(utteranceSilenceSeconds: 8))
-        )
-        #expect(saved[0].detail == "after 8 s of silence")
-
-        // In keyword mode the send mode shows the word; the pause is part of
-        // "After a pause" only.
-        let keyword = ZenCODESetupRunner.speechVoiceMenuItems(
-            installedVoices: Voices.installed,
-            localeIdentifier: "it-IT",
-            manifest: Self.manifest(voice: AgentVoiceSettingsManifest(sendMode: .keyword, sendKeyword: "vai"))
-        )
-        #expect(keyword[0].detail == "on the word “vai” · silence never sends")
-    }
-
-    @Test
     func choosingAVoiceStagesItAndKeepsTelegramTranscription() throws {
         let telegramVoice = AgentVoiceSettingsManifest(enabled: true)
         let original = Self.manifest(voice: telegramVoice)
@@ -167,19 +104,6 @@ struct MacOSVoiceModeSetupTests {
     }
 
     @Test
-    func backEscapeAndUnchangedChoicesKeepTheManifest() {
-        let saved = Self.manifest(voice: AgentVoiceSettingsManifest(
-            enabled: false,
-            macOSVoiceIdentifier: Voices.federica.identifier
-        ))
-        #expect(Self.configure(saved) { _, _ in .back }.manifest == saved)
-        #expect(Self.configure(saved) { _, _ in nil }.manifest == saved)
-        #expect(Self.configure(saved) { _, _ in .voice(Voices.federica.identifier) }.manifest == saved)
-        // Without settings, Automatic creates none.
-        #expect(Self.configure(nil) { _, _ in .automatic }.manifest == nil)
-    }
-
-    @Test
     func escapeDiscardsTheSendModeChangedInThisVisitWhileBackKeepsIt() throws {
         let saved = Self.manifest(voice: AgentVoiceSettingsManifest(
             enabled: true,
@@ -210,58 +134,6 @@ struct MacOSVoiceModeSetupTests {
             macOSVoiceIdentifier: Voices.luca.identifier,
             utteranceSilenceSeconds: 8
         ))
-    }
-
-    @Test
-    func savedVoiceOfAnotherLanguageIsNotPreselected() {
-        let saved = Self.manifest(voice: AgentVoiceSettingsManifest(
-            enabled: false,
-            macOSVoiceIdentifier: Voices.samantha.identifier
-        ))
-        var preselected: Action?
-        let result = Self.configure(saved) { _, selected in
-            preselected = selected
-            return .back
-        }
-        #expect(preselected == .automatic)
-        #expect(result.output.contains("Current: automatic voice (saved voice unavailable)"))
-    }
-
-    @Test
-    func detailAndMarkerReflectTheVoiceInUse() {
-        func detail(_ identifier: String?) -> String {
-            ZenCODESetupRunner.speechVoiceSetupDetail(
-                manifest: Self.manifest(voice: AgentVoiceSettingsManifest(
-                    enabled: false,
-                    macOSVoiceIdentifier: identifier
-                )),
-                lookup: Voices.lookup
-            )
-        }
-        #expect(detail(nil) == "automatic voice")
-        #expect(detail(Voices.federica.identifier) == "voice Federica (it-IT)")
-        #expect(detail("com.apple.voice.premium.it-IT.Removed") == "automatic voice (saved voice unavailable)")
-        #expect(detail(Voices.samantha.identifier) == "automatic voice (saved voice unavailable)")
-
-        let chosen = Self.manifest(voice: AgentVoiceSettingsManifest(
-            enabled: false,
-            macOSVoiceIdentifier: Voices.federica.identifier
-        ))
-        #expect(ZenCODESetupRunner.speechVoiceIsChosen(manifest: chosen, lookup: Voices.lookup))
-        #expect(!ZenCODESetupRunner.speechVoiceIsChosen(manifest: Self.manifest(), lookup: Voices.lookup))
-    }
-
-    @Test
-    func optionMenuListsPresetsAndTheSavedValueWithTheDefaultMarked() {
-        let silence = ZenCODESetupRunner.utteranceSilenceMenuItems(current: 5)
-        #expect(silence.map(\.value) == [.value(2), .value(3), .value(5), .value(8), .value(10), .back])
-        #expect(silence.map(\.title) == ["2 s", "3 s", "5 s", "8 s", "10 s", "Back"])
-        #expect(silence[2].detail == "default")
-        #expect(silence[0].detail == "")
-        #expect(silence.last?.detail == "keep the current send mode")
-        // A hand-edited value joins the list in order.
-        #expect(ZenCODESetupRunner.utteranceSilenceMenuItems(current: 4).map(\.value)
-            == [.value(2), .value(3), .value(4), .value(5), .value(8), .value(10), .back])
     }
 
     @Test

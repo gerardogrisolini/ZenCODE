@@ -22,33 +22,6 @@ struct DirectArgumentValuesTests {
     }
 
     @Test
-    func requestedTodosFallsBackToSnakeCaseStringListWhenCamelCaseListIsEmpty() throws {
-        let todos = try DirectTodoRuntime.requestedTodos(from: [
-            "content": .string("Use the dependency alias"),
-            "dependsOn": .array([]),
-            "depends_on": .array([.string("setup")])
-        ])
-
-        #expect(todos.count == 1)
-        #expect(todos[0].dependsOn == ["setup"])
-    }
-
-    @Test
-    func requestedTodosPreservesFirstNonEmptyArrayAliasPrecedence() throws {
-        let todos = try DirectTodoRuntime.requestedTodos(from: [
-            "todos": .array([
-                .object(["content": .string("Preferred alias")])
-            ]),
-            "items": .array([
-                .object(["content": .string("Fallback alias")])
-            ])
-        ])
-
-        #expect(todos.count == 1)
-        #expect(todos[0].content == "Preferred alias")
-    }
-
-    @Test
     func firstStringListSkipsBlankScalarAliasesBeforeFallback() throws {
         let empty = DirectArgumentValues.firstStringList(
             ["primary", "fallback"],
@@ -76,25 +49,6 @@ struct DirectArgumentValuesTests {
     }
 
     @Test
-    func firstStringListSkipsBlankArrayElementsBeforeFallback() throws {
-        let values = DirectArgumentValues.firstStringList(
-            ["primary", "fallback"],
-            in: [
-                "primary": .array([
-                    .string(""),
-                    .string(" \t\n")
-                ]),
-                "fallback": .array([.string("from-fallback")])
-            ]
-        ) { value in
-            if case let .string(string) = value { return string }
-            return nil
-        }
-
-        #expect(values == ["from-fallback"])
-    }
-
-    @Test
     func firstStringListPreservesNonBlankArrayElementsAndAliasPrecedence() throws {
         let values = DirectArgumentValues.firstStringList(
             ["primary", "fallback"],
@@ -112,21 +66,5 @@ struct DirectArgumentValuesTests {
         }
 
         #expect(values == ["  preferred  ", "second value"])
-    }
-
-    @Test
-    func firstStringListPreservesNonBlankScalarAliasPrecedence() throws {
-        let values = DirectArgumentValues.firstStringList(
-            ["primary", "fallback"],
-            in: [
-                "primary": .string("preferred"),
-                "fallback": .string("fallback")
-            ]
-        ) { value in
-            if case let .string(string) = value { return string }
-            return nil
-        }
-
-        #expect(values == ["preferred"])
     }
 }

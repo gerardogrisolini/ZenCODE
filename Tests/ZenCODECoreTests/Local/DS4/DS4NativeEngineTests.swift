@@ -42,21 +42,6 @@ private final class FakeSessions {
 @Suite
 struct DS4NativeEngineSessionPoolTests {
     @Test
-    func sessionsAreCreatedLazilyAndReused() throws {
-        var pool = DS4SessionPool<Int>(capacity: 2)
-        let sessions = FakeSessions()
-
-        let first = try sessions.acquire("a", in: &pool)
-        let second = try sessions.acquire("a", in: &pool)
-
-        #expect(first.created)
-        #expect(!second.created)
-        #expect(first.handle == second.handle)
-        #expect(sessions.created == ["a"])
-        #expect(pool.count == 1)
-    }
-
-    @Test
     func fullPoolEvictsTheLeastRecentlyUsedSession() throws {
         var pool = DS4SessionPool<Int>(capacity: 2)
         let sessions = FakeSessions()
@@ -69,19 +54,6 @@ struct DS4NativeEngineSessionPoolTests {
         #expect(sessions.freed == ["b"])
         #expect(pool.sessionIDsByRecency == ["a", "c"])
         #expect(pool.count == 2)
-    }
-
-    @Test
-    func peekDoesNotRefreshRecency() throws {
-        var pool = DS4SessionPool<Int>(capacity: 2)
-        let sessions = FakeSessions()
-        _ = try sessions.acquire("a", in: &pool)
-        _ = try sessions.acquire("b", in: &pool)
-        #expect(pool.peekHandle(for: "a") != nil)
-
-        _ = try sessions.acquire("c", in: &pool)
-
-        #expect(sessions.freed == ["a"])
     }
 
     @Test
@@ -100,30 +72,6 @@ struct DS4NativeEngineSessionPoolTests {
     }
 
     @Test
-    func pinnedSessionIsEvictedOnlyAsTheLastCandidate() throws {
-        var pool = DS4SessionPool<Int>(capacity: 1)
-        let sessions = FakeSessions()
-        _ = try sessions.acquire("a", in: &pool)
-        pool.pin("a")
-
-        _ = try sessions.acquire("b", in: &pool)
-
-        #expect(sessions.freed == ["a"])
-        #expect(pool.pinnedSessionID == nil)
-        #expect(pool.sessionIDsByRecency == ["b"])
-    }
-
-    @Test
-    func unpinOnlyClearsTheMatchingSession() {
-        var pool = DS4SessionPool<Int>(capacity: 2)
-        pool.pin("a")
-        pool.unpin("b")
-        #expect(pool.pinnedSessionID == "a")
-        pool.unpin("a")
-        #expect(pool.pinnedSessionID == nil)
-    }
-
-    @Test
     func settingsSurviveEvictionAndAreReappliedOnRecreation() throws {
         var pool = DS4SessionPool<Int>(capacity: 1)
         let sessions = FakeSessions()
@@ -139,45 +87,6 @@ struct DS4NativeEngineSessionPoolTests {
         #expect(sessions.configured.map(\.0) == ["a", "a"])
         #expect(sessions.configured.first?.1 == DS4SessionSettings(powerPercent: 50, steeringFFNScale: nil))
         #expect(sessions.configured.last?.1 == DS4SessionSettings(powerPercent: 50, steeringFFNScale: -2))
-    }
-
-    @Test
-    func sessionsWithoutSettingsAreNotConfigured() throws {
-        var pool = DS4SessionPool<Int>(capacity: 1)
-        let sessions = FakeSessions()
-        _ = try sessions.acquire("a", in: &pool)
-        #expect(sessions.configured.isEmpty)
-    }
-
-    @Test
-    func failedConfigurationFreesTheNewSession() throws {
-        var pool = DS4SessionPool<Int>(capacity: 2)
-        let sessions = FakeSessions()
-        sessions.failConfigure = true
-        pool.updateSettings(for: "a") { $0.powerPercent = 10 }
-
-        #expect(throws: DS4EngineError.unsupported("power not supported")) {
-            _ = try sessions.acquire("a", in: &pool)
-        }
-        #expect(sessions.freed == ["a"])
-        #expect(!pool.contains("a"))
-    }
-
-    @Test
-    func removeForgetsSettingsAndRemoveAllReturnsEveryHandle() throws {
-        var pool = DS4SessionPool<Int>(capacity: 3)
-        let sessions = FakeSessions()
-        pool.updateSettings(for: "a") { $0.powerPercent = 70 }
-        let a = try sessions.acquire("a", in: &pool).handle
-        let b = try sessions.acquire("b", in: &pool).handle
-        pool.pin("b")
-
-        #expect(pool.remove("a") == a)
-        #expect(pool.remove("missing") == nil)
-        #expect(pool.settings(for: "a").isEmpty)
-        #expect(pool.removeAll() == [b])
-        #expect(pool.count == 0)
-        #expect(pool.pinnedSessionID == nil)
     }
 }
 

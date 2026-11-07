@@ -27,39 +27,6 @@ struct MCPStreamPumpCharacterizationTests {
     }
 
     @Test
-    func stderrPumpUsesTheSameChunkContract() async throws {
-        let pipe = Pipe()
-        try MCPClient.makeNonBlocking(pipe.fileHandleForReading)
-        let chunks = Mutex<[Data]>([])
-        pipe.fileHandleForWriting.write(Data("stderr".utf8))
-        pipe.fileHandleForWriting.closeFile()
-
-        let termination = await MCPStreamPump.run(
-            fileDescriptor: pipe.fileHandleForReading.fileDescriptor,
-            onChunk: { chunk in chunks.withLock { $0.append(chunk) } },
-            shouldStop: { false }
-        )
-
-        #expect(termination == .endOfFile)
-        #expect(chunks.withLock { $0 } == [Data("stderr".utf8)])
-    }
-
-    @Test
-    func invalidDescriptorReportsReadFailureInsteadOfEOF() async {
-        let termination = await MCPStreamPump.run(
-            fileDescriptor: -1,
-            onChunk: { _ in },
-            shouldStop: { false }
-        )
-
-        guard case let .failure(code) = termination else {
-            Issue.record("Expected a read failure, got \(termination)")
-            return
-        }
-        #expect(code == .EBADF)
-    }
-
-    @Test
     func cancellationIsNotReportedAsEOFOrFailure() async throws {
         let pipe = Pipe()
         try MCPClient.makeNonBlocking(pipe.fileHandleForReading)

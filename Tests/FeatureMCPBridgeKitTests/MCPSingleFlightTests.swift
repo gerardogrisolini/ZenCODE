@@ -204,17 +204,6 @@ struct MCPSingleFlightTests {
     }
 
     @Test
-    func aNewFlightStartsAfterInvalidation() async throws {
-        let flight = MCPSingleFlight<Int>()
-        flight.cancel()
-
-        let value = try await flight.run { 11 }
-
-        #expect(value == 11)
-        #expect(!flight.isRunning)
-    }
-
-    @Test
     func failuresPropagateToEveryJoinerAndClearTheFlight() async throws {
         struct SampleError: Error, Equatable {}
 

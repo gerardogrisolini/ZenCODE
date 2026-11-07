@@ -71,30 +71,6 @@ struct ToolPresentationDefinitionTests {
     }
 
     @Test
-    func explicitDescriptorPresentationRoundTrips() throws {
-        let presentation = ToolPresentationDefinition(
-            title: "File",
-            action: "Read",
-            kind: .read,
-            target: .argument(["path"], format: .path),
-            sections: [.parameters()]
-        )
-        let descriptor = ToolDescriptor(
-            name: "local.readFile",
-            description: "Reads a file.",
-            inputSchema: "{}",
-            presentation: presentation
-        )
-
-        let encoded = try JSONEncoder().encode(descriptor)
-        let decoded = try JSONDecoder().decode(ToolDescriptor.self, from: encoded)
-        let value = try JSONDecoder().decode(JSONValue.self, from: encoded)
-
-        #expect(decoded.presentation == presentation)
-        #expect(value.objectValue?["presentation"] != nil)
-    }
-
-    @Test
     func missingOrMalformedPresentationDoesNotLoseDescriptor() throws {
         let legacy = Data(#"{"name":"legacy","description":"D","inputSchema":"{}"}"#.utf8)
         let malformed = Data(

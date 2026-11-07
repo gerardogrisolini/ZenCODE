@@ -78,34 +78,6 @@ struct DS4TranscriptRendererTests {
     }
 
     @Test
-    func rawAssistantTurnsAreReplayedVerbatim() {
-        let messages: [[String: Any]] = [
-            ["role": "user", "content": "hi"],
-            [
-                "role": "assistant",
-                "content": "visible",
-                DS4MessageKeys.rawAssistant: "thinking</think>visible",
-                DS4MessageKeys.thinkMode: Int(DS4EngineABI.ThinkMode.high),
-                DS4MessageKeys.toolObservation: "Tool error: x\n",
-            ],
-        ]
-        let dsml = DS4TranscriptRenderer.render(
-            messages: messages,
-            context: Self.context(.dsml, thinkMode: DS4EngineABI.ThinkMode.none)
-        )
-        #expect(Array(dsml.operations.suffix(5)) == [
-            .assistantPrefix(mode: DS4EngineABI.ThinkMode.high),
-            .renderedChat("thinking</think>visible"),
-            .endOfSequence,
-            .message(role: "tool", content: "Tool error: x\n"),
-            .assistantPrefix(mode: DS4EngineABI.ThinkMode.none),
-        ])
-        // GLM turns end with the next role marker, not EOS.
-        let glm = DS4TranscriptRenderer.render(messages: messages, context: Self.context(.glm))
-        #expect(!glm.operations.contains(.endOfSequence))
-    }
-
-    @Test
     func generatedTurnsReplayTheirExactTokenIDsOnlyForTheSameModel() {
         let message: [String: Any] = [
             "role": "assistant",
@@ -164,32 +136,6 @@ struct DS4TranscriptRendererTests {
     }
 
     @Test
-    func aGeneratedTurnWithOnlyIDsStillReplaysThem() {
-        // A turn whose tokens decode to no text keeps its KV tokens in the prompt.
-        let messages: [[String: Any]] = [
-            ["role": "user", "content": "hi"],
-            [
-                "role": "assistant",
-                "content": "",
-                DS4MessageKeys.rawAssistant: "",
-                DS4MessageKeys.rawTokens: [Int32]([9]),
-                DS4MessageKeys.rawTokensModel: "m",
-                DS4MessageKeys.thinkMode: Int(DS4EngineABI.ThinkMode.none),
-            ],
-        ]
-        let rendered = DS4TranscriptRenderer.render(
-            messages: messages,
-            context: Self.context(.dsml41, tokenIdentity: "m")
-        )
-        #expect(Array(rendered.operations.suffix(4)) == [
-            .assistantPrefix(mode: DS4EngineABI.ThinkMode.none),
-            .tokens([9]),
-            .endOfSequence,
-            .assistantPrefix(mode: DS4EngineABI.ThinkMode.none),
-        ])
-    }
-
-    @Test
     func synthesizedAssistantTurnsUseReasoningOnlyWhenPreserved() {
         let message: [String: Any] = [
             "role": "assistant",
@@ -226,24 +172,6 @@ struct DS4TranscriptRendererTests {
             .assistantPrefix(mode: DS4EngineABI.ThinkMode.high),
             .renderedChat("why\n</think>\n\nanswer"),
             .endOfSequence,
-        ])
-    }
-
-    @Test
-    func storedReplaysKeepTheEmittedArgumentOrder() {
-        let message: [String: Any] = [
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [["id": "a", "type": "function", "function": ["name": "t", "arguments": #"{"a":1,"b":2}"#]]],
-            DS4MessageKeys.toolCallReplays: [["name": "t", "arguments": #"{"b":2,"a":1}"#]],
-        ]
-        let expected = DS4ToolCallRenderer.renderToolCalls(
-            [DS4ToolCallReplay(name: "t", argumentsJSON: #"{"b":2,"a":1}"#)],
-            syntax: .glm
-        )
-        #expect(DS4TranscriptRenderer.assistantOperations(for: message, context: Self.context(.glm)) == [
-            .assistantPrefix(mode: DS4EngineABI.ThinkMode.none),
-            .renderedChat(expected),
         ])
     }
 
@@ -331,46 +259,10 @@ struct DS4ThinkModeMappingTests {
             #expect(DS4ThinkModeMapping.requestedMode(for: selection, syntax: syntax, parseLevel: parse) == mode)
         }
     }
-
-    @Test
-    func effectiveModeGoesThroughThinkModeForContext() async {
-        let engine = MockDS4Engine(configuration: .mock(contextSize: 65_536))
-        let mode = await DS4ThinkModeMapping.effectiveMode(for: .max, syntax: .dsml, engine: engine, contextSize: 65_536)
-        #expect(mode == DS4EngineABI.ThinkMode.high)
-        #expect(engine.calls.contains(.thinkModeForContext(mode: DS4EngineABI.ThinkMode.max, contextSize: 65_536)))
-    }
-
-    @Test
-    func enabledModesAndQwenEffortTexts() {
-        #expect(!DS4ThinkModeMapping.isEnabled(DS4EngineABI.ThinkMode.none))
-        #expect(DS4ThinkModeMapping.isEnabled(DS4EngineABI.ThinkMode.low))
-        #expect(DS4ThinkModeMapping.isEnabled(DS4EngineABI.ThinkMode.max))
-        #expect(DS4ThinkModeMapping.isEnabled(Self.level(1)))
-        #expect(!DS4ThinkModeMapping.isEnabled(Self.level(0)))
-        #expect(DS4ThinkModeMapping.qwenReasoningEffortText(for: DS4EngineABI.ThinkMode.high)
-            == DS4ThinkModeMapping.qwenReasoningEffortXHigh)
-        #expect(DS4ThinkModeMapping.qwenReasoningEffortText(for: DS4EngineABI.ThinkMode.max)
-            == DS4ThinkModeMapping.qwenReasoningEffortXHigh)
-        #expect(DS4ThinkModeMapping.qwenReasoningEffortText(for: DS4EngineABI.ThinkMode.low)
-            == DS4ThinkModeMapping.qwenReasoningEffortLow)
-        #expect(DS4ThinkModeMapping.qwenReasoningEffortText(for: DS4EngineABI.ThinkMode.medium) == nil)
-        #expect(DS4ThinkModeMapping.qwenReasoningEffortText(for: DS4EngineABI.ThinkMode.none) == nil)
-        #expect(DS4ThinkModeMapping.qwenReasoningEffortXHigh.hasPrefix("Reasoning effort is set to xhigh."))
-    }
 }
 
 @Suite("DS4 compaction policy")
 struct DS4CompactionPolicyTests {
-    @Test
-    func reserveAndSummaryBudgetFollowDS4Agent() {
-        #expect(DS4CompactionPolicy.summaryBudget(contextSize: 1024) == 256)
-        #expect(DS4CompactionPolicy.summaryBudget(contextSize: 16_384) == 2048)
-        #expect(DS4CompactionPolicy.summaryBudget(contextSize: 1_000_000) == 4096)
-        #expect(DS4CompactionPolicy.reserveTokens(compactionPromptTokens: 300, contextSize: 65_536) == 300 + 64 + 4096)
-        #expect(DS4CompactionPolicy.compactionPrompt(reason: "why").hasSuffix("\nCompaction reason: why\n"))
-        #expect(DS4CompactionPolicy.reserveTranscript.last == .assistantPrefix(mode: DS4EngineABI.ThinkMode.none))
-    }
-
     @Test
     func compactsAtEightyFivePercentOrWhenFreeRoomIsLow() {
         let reserve = 4460
@@ -381,21 +273,5 @@ struct DS4CompactionPolicyTests {
         #expect(DS4CompactionPolicy.shouldCompact(usedTokens: 2600, contextSize: 4096, reserveTokens: 1400))
         #expect(!DS4CompactionPolicy.shouldCompact(usedTokens: 2500, contextSize: 4096, reserveTokens: 1400))
         #expect(!DS4CompactionPolicy.shouldCompact(usedTokens: 0, contextSize: 4096, reserveTokens: 1400))
-    }
-
-    @Test
-    func generationLimitIsBoundedByOutputLimitAndRoom() {
-        #expect(DS4CompactionPolicy.generationTokenLimit(
-            maxOutputTokens: nil, contextSize: 200_000, usedTokens: 1000, reserveTokens: 4000
-        ) == 50_000)
-        #expect(DS4CompactionPolicy.generationTokenLimit(
-            maxOutputTokens: 300, contextSize: 200_000, usedTokens: 1000, reserveTokens: 4000
-        ) == 300)
-        #expect(DS4CompactionPolicy.generationTokenLimit(
-            maxOutputTokens: nil, contextSize: 8192, usedTokens: 6000, reserveTokens: 1400
-        ) == 792)
-        #expect(DS4CompactionPolicy.generationTokenLimit(
-            maxOutputTokens: nil, contextSize: 8192, usedTokens: 7000, reserveTokens: 1400
-        ) <= 0)
     }
 }

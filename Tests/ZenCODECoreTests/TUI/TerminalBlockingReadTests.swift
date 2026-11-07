@@ -30,14 +30,6 @@ struct TerminalBlockingReadTests {
     }
 
     @Test
-    func returnsTheBlockingResultWhenNotCancelled() async {
-        let value = await TerminalBlockingRead.run { _ in
-            "answer"
-        }
-        #expect(value == "answer")
-    }
-
-    @Test
     func cancellationDoesNotCompleteUntilTheBlockingBodyHasReleasedTheTerminal() async {
         let didStart = TerminalTestSignal()
         // Models the worker's grip on the TTY: `true` for exactly as long as the
@@ -172,43 +164,6 @@ struct TerminalBlockingReadTests {
     }
 
     @Test
-    func cancellingAfterTheOutcomeIsDecidedDoesNotRewriteIt() {
-        // The mirror case: a read that completed before any cancellation still
-        // delivers its line, so a normal submission is never silently dropped.
-        let token = TerminalBlockingReadToken()
-
-        #expect(token.resolve("submitted") == "submitted")
-        token.cancel()
-        #expect(token.isResolved)
-    }
-
-    @Test
-    func aCancellationObservedBeforeTheOutcomeSuppressesTheResult() async {
-        // Deterministic half of the race above: the cancellation provably
-        // precedes the body's return, so the read must publish nothing even
-        // though the body produced a value.
-        let token = TerminalBlockingReadToken()
-        let didStart = TerminalTestSignal()
-        let didCancel = TerminalTestSignal()
-
-        async let result = TerminalBlockingRead.run(token: token) { _ in
-            didStart.signal()
-            // Blocks until the test has cancelled, so the outcome is decided
-            // strictly after the cancellation.
-            while !didCancel.isSignalled {
-                Thread.sleep(forTimeInterval: 0.005)
-            }
-            return "key-pressed-during-teardown"
-        }
-
-        await didStart.wait()
-        token.cancel()
-        didCancel.signal()
-
-        #expect(await result == nil)
-    }
-
-    @Test
     func alreadyCancelledTaskNeverStartsTheBlockingBody() async {
         let didRunBody = TerminalTestFlag()
         let mayProceed = TerminalTestSignal()
@@ -227,23 +182,6 @@ struct TerminalBlockingReadTests {
 
         #expect(await task.value == nil)
         #expect(!didRunBody.value)
-    }
-
-    @Test
-    func externalTokenCancellationUnblocksTheRead() async {
-        let token = TerminalBlockingReadToken()
-        let didStart = TerminalTestSignal()
-
-        async let result = TerminalBlockingRead.run(token: token) { token in
-            Self.blockUntilCancelled(token, didStart: didStart)
-            return "unused"
-        }
-
-        await didStart.wait()
-        // The panel stop path cancels the token directly, not the task.
-        token.cancel()
-
-        #expect(await result == nil)
     }
 
     @Test

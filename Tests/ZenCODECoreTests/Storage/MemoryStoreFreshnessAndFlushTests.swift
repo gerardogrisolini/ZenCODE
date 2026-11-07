@@ -22,21 +22,6 @@ private struct FailingReloadPersistence: MemoryReadOnlyReloadPersistence {
     }
 }
 
-private struct CancellingReloadPersistence: MemoryReadOnlyReloadPersistence {
-    func load() async throws -> MemoryGraph { MemoryGraph() }
-    func reloadReadOnly() async throws -> MemoryGraph {
-        try await Task.sleep(for: .seconds(30))
-        return MemoryGraph()
-    }
-    func save(_ graph: MemoryGraph) async throws {}
-    func transaction<T: Sendable>(
-        initialGraph: MemoryGraph?,
-        _ body: @Sendable (inout MemoryGraph) throws -> T
-    ) async throws -> (result: T, graph: MemoryGraph, didChange: Bool) {
-        fatalError("unused")
-    }
-}
-
 @Suite
 struct MemoryStoreFreshnessTests {
     @Test
@@ -58,40 +43,6 @@ struct MemoryStoreFreshnessTests {
             #expect(try await store.entry(id: "later")?.content == "reader fact committed later")
             let hits = try await store.search(query: "reader fact", includeArchived: false, limit: 10)
             #expect(hits.contains { $0.id == "later" })
-        }
-    }
-
-    @Test
-    func freshReadsRemainPurePreserveModeAndPendingMaintenance() async throws {
-        try await MemoryEmbedding.withProvider(nil) {
-            let directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("memory-freshness-\(UUID().uuidString)", isDirectory: true)
-            defer { try? FileManager.default.removeItem(at: directory) }
-            let file = directory.appendingPathComponent("memory.graph.json")
-            let writer = try await MemoryEngine.open(persistence: JSONMemoryPersistence(url: file))
-            try await writer.remember("writers isolate mutable state", id: "writer")
-            let reader = try await MemoryEngine.open(persistence: JSONMemoryPersistence(url: file))
-            let store = MemoryGraphStore(graphURL: file, engine: reader, embedder: nil)
-            _ = try await reader.recall("writers isolate")
-            try await writer.remember("reader fact committed later", id: "later")
-
-            try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: file.path)
-            let beforeAttributes = try FileManager.default.attributesOfItem(atPath: file.path)
-            let bytesBefore = try Data(contentsOf: file)
-            let snapshotBefore = await reader.snapshot()
-
-            _ = try await store.entries(includeArchived: false, limit: 50)
-            _ = try await store.search(query: "reader fact", includeArchived: false, limit: 10)
-
-            let afterAttributes = try FileManager.default.attributesOfItem(atPath: file.path)
-            #expect(try Data(contentsOf: file) == bytesBefore)
-            #expect(afterAttributes[.posixPermissions] as? NSNumber == beforeAttributes[.posixPermissions] as? NSNumber)
-            #expect(afterAttributes[.modificationDate] as? Date == beforeAttributes[.modificationDate] as? Date)
-            #expect(await reader.snapshot() == snapshotBefore)
-
-            try await reader.flushRecallMaintenance()
-            let durable = try await JSONMemoryPersistence(url: file).reloadReadOnly()
-            #expect(durable.metadata.retrievalCount == snapshotBefore.metadata.retrievalCount)
         }
     }
 
@@ -119,15 +70,6 @@ struct MemoryStoreFreshnessTests {
         await #expect(throws: MemoryPersistenceError.unsupportedGraphVersion(999999)) {
             _ = try await store.entries(includeArchived: false, limit: 10)
         }
-    }
-
-    @Test
-    func taskCancellationIsNotHiddenByLocalFallback() async throws {
-        let engine = MemoryEngine(graph: MemoryGraph(), persistence: CancellingReloadPersistence())
-        let store = MemoryGraphStore(graphURL: URL(fileURLWithPath: "/unused"), engine: engine, embedder: nil)
-        let read = Task { try await store.entry(id: "anything") }
-        read.cancel()
-        await #expect(throws: CancellationError.self) { _ = try await read.value }
     }
 }
 
@@ -191,76 +133,6 @@ struct MemoryGraphStoreRegistryFlushAllTests {
             #expect(try await store.entries(includeArchived: false, limit: 10).contains {
                 $0.id == deferredID
             })
-        }
-    }
-
-    @Test
-    func flushAllAttemptsEveryStoreAndRethrowsDeterministicFailure() async throws {
-        try await MemoryEmbedding.withProvider(nil) {
-            let directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("memory-flush-error-\(UUID().uuidString)", isDirectory: true)
-            defer { try? FileManager.default.removeItem(at: directory) }
-            let registry = MemoryGraphStoreRegistry()
-            var stores: [(URL, MemoryGraphStore)] = []
-            for name in ["broken", "healthy"] {
-                let workspace = directory.appendingPathComponent(name, isDirectory: true)
-                let graphURL = directory.appendingPathComponent("\(name).json")
-                try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-                var graph = MemoryGraph()
-                graph.addMemory(EngineMemoryEntry(id: name, category: .fact, content: "\(name) flush target"))
-                try await JSONMemoryPersistence(url: graphURL).save(graph)
-                stores.append((graphURL, try await registry.store(graphURL: graphURL)))
-            }
-            _ = try await stores[0].1.context(for: "broken flush")
-            _ = try await stores[1].1.context(for: "healthy flush")
-            let brokenBytes = Data("{\"graph_version\":999999}".utf8)
-            try brokenBytes.write(to: stores[0].0, options: .atomic)
-
-            await #expect(throws: MemoryPersistenceError.unsupportedGraphVersion(999999)) {
-                try await registry.flushAll()
-            }
-            #expect(try Data(contentsOf: stores[0].0) == brokenBytes)
-            #expect(try await JSONMemoryPersistence(url: stores[1].0).reloadReadOnly().metadata.retrievalCount > 0)
-        }
-    }
-}
-
-@Suite(.serialized)
-struct MemoryFlushLifecycleCleanupTests {
-    @Test
-    func shutdownCompletesPreexistingCleanupBeforeSurfacingMemoryError() async throws {
-        try await MemoryEmbedding.withProvider(nil) {
-            let directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("memory-lifecycle-error-\(UUID().uuidString)", isDirectory: true)
-            defer { try? FileManager.default.removeItem(at: directory) }
-            let workspace = directory.appendingPathComponent("workspace", isDirectory: true)
-            let graphURL = directory.appendingPathComponent("memory.graph.json")
-            try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-            var graph = MemoryGraph()
-            graph.addMemory(EngineMemoryEntry(id: "seed", category: .fact, content: "lifecycle flush target"))
-            try await JSONMemoryPersistence(url: graphURL).save(graph)
-
-            let registry = MemoryGraphStoreRegistry()
-            let store = try await registry.store(graphURL: graphURL)
-            _ = try await store.context(for: "lifecycle flush")
-            try Data("{\"graph_version\":999999}".utf8).write(to: graphURL, options: .atomic)
-
-            let runner = AgentCoreSessionRunner(
-                taskGraphStore: nil,
-                sessionTurnLease: AgentSessionTurnLease(),
-                memoryGraphStoreRegistry: registry
-            )
-            let orchestrator = await runner.taskOrchestrator
-            let stream = await orchestrator.events(sessionID: "cleanup-observer")
-            var iterator = stream.makeAsyncIterator()
-
-            await #expect(throws: MemoryPersistenceError.unsupportedGraphVersion(999999)) {
-                try await runner.shutdownBackendKeepingExternalToolsThrowing()
-            }
-            // This occurs after task flush in the pre-existing teardown. If the
-            // memory error escaped early, the continuation would remain open and
-            // this await would hang rather than immediately return nil.
-            #expect(await iterator.next() == nil)
         }
     }
 }

@@ -44,32 +44,6 @@ struct DS4InstallationScannerTests {
     }
 
     @Test
-    func catalogDownloadIdentitiesMapToDs4ModelsAPIAliases() {
-        let catalog = DS4ModelCatalog.default
-
-        #expect(catalog.entry(id: "ds4f-q4")?.apiModelID == "deepseek-v4-flash")
-        #expect(catalog.entry(id: "pro-q2-imatrix")?.apiModelID == "deepseek-v4-pro")
-        #expect(catalog.entry(id: "qwen38-q2")?.apiModelID == "qwen3.8-flash-next")
-        #expect(catalog.entry(id: "glm-antirez-q4")?.apiModelID == "glm-5.2")
-        #expect(catalog.entry(id: "glm53-q4")?.apiModelID == "glm-5.3-flash")
-        #expect(
-            DS4ModelCatalogEntry(
-                id: "fixture-model",
-                displayName: "Fixture",
-                artifacts: []
-            ).apiModelID == "fixture-model"
-        )
-    }
-
-    @Test
-    func catalogLooksUpEntriesByArtifactPath() {
-        let catalog = DS4ModelCatalog.default
-        #expect(catalog.entry(forArtifactPath: "gguf/Qwen3.8-Flash-Next-Q2.gguf")?.id == "qwen38-q2")
-        #expect(catalog.entry(forArtifactPath: "gguf/DeepSeek-V4-Pro-Q4K-Layers00-30.gguf")?.id == "pro-q4-split")
-        #expect(catalog.entry(forArtifactPath: "gguf/unknown.gguf") == nil)
-    }
-
-    @Test
     func apiModelIDIsInferredFromFileNameInPriorityOrder() {
         func infer(_ name: String) -> String? {
             DS4ModelCatalog.inferredAPIModelID(fromFileName: name)

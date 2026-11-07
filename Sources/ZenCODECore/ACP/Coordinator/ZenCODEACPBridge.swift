@@ -116,11 +116,6 @@ public actor ZenCODEACPBridge {
     /// liveness synchronously (`liveSession`, `updateLiveSession`) and asks
     /// the host only what the host owns, the prompt reservation.
     public var sessions: [String: SessionState] = [:]
-    /// Test seam: the transport of every Telegram channel's control service;
-    /// the test support hands it to the host, which creates the channels.
-    /// `nil` in production, where each service uses a
-    /// `NIOTelegramHTTPTransport`.
-    var telegramTransportFactoryForTesting: (@Sendable () -> any TelegramHTTPTransport)?
     /// The channel hooks of every slot the bridge opens (see
     /// ``ACPSessionChannelHooks``): the slots and their controllers hold them
     /// weakly, the bridge owns them.

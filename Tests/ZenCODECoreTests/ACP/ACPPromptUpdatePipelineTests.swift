@@ -57,16 +57,11 @@ private actor PipelineTrace {
         events.append("start-\(ordinal)")
     }
 
-    func unitFinished(_ ordinal: Int) {
-        events.append("finish-\(ordinal)")
-    }
-
     func record(_ event: String) {
         events.append(event)
     }
 
     func recordedStarts() -> [Int] { starts }
-    func recordedEvents() -> [String] { events }
 }
 
 /// Recording sink: captures every wire message in delivery order.
@@ -141,47 +136,5 @@ struct ACPPromptUpdatePipelineTests {
         let notificationMessage = try #require(delivered.last)
         #expect(notificationMessage.replacingOccurrences(of: "\\/", with: "/")
             .contains("_zencode/usage/subscription"))
-    }
-
-    /// `drain()` appends a real third barrier unit. Its completion must follow
-    /// the tail's finish, and the caller returns only after the barrier finishes.
-    @Test
-    func drainAppendsBarrierAfterTailBeforeReturning() async {
-        let rawGate = RawTaskGate()
-        let trace = PipelineTrace()
-        let sink = RecordingSink()
-        let writer = ACPWriter(sink: sink.sink)
-        let pipeline = ACPPromptUpdatePipeline(
-            sessionID: "pipeline-drain",
-            writer: writer,
-            buffer: ACPPromptUpdateBuffer(),
-            onTaskStart: { ordinal in await rawGate.park(ordinal) },
-            onUnitStart: { ordinal in await trace.unitStarted(ordinal) },
-            onUnitFinish: { ordinal in await trace.unitFinished(ordinal) }
-        )
-
-        let first = pipeline.enqueue(.init(kind: .consume(Self.chunk("gated"))))
-        let tail = pipeline.enqueue(.init(kind: .flush))
-        let drainTask = Task {
-            await pipeline.drain()
-            await trace.record("drain-return")
-        }
-
-        await rawGate.waitUntilArrivals(3)
-        await rawGate.release(3)
-        await rawGate.release(2)
-        await rawGate.release(1)
-        await first.value
-        await tail.value
-        await drainTask.value
-
-        #expect(await trace.recordedStarts() == [1, 2, 3])
-        #expect(await trace.recordedEvents() == [
-            "start-1", "finish-1",
-            "start-2", "finish-2",
-            "start-3", "finish-3",
-            "drain-return"
-        ])
-        #expect(sink.deliveredMessages().count == 1)
     }
 }

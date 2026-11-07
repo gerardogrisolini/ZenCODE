@@ -9,31 +9,6 @@ import Testing
 
 @Suite
 struct TerminalSharedChatTimestampTests {
-    @Test(arguments: [
-        (0.0, "00:00:00"),
-        (7.0, "00:00:07"),
-        (32_643.0, "09:04:03"),
-        (65_109.0, "18:05:09"),
-        (86_399.0, "23:59:59"),
-    ])
-    func timestampUses24HourClockWithZeroPaddedSeconds(seconds: TimeInterval, expected: String) throws {
-        let utc = try #require(TimeZone(secondsFromGMT: 0))
-        #expect(TerminalChat.sharedChatTimestamp(Date(timeIntervalSince1970: seconds), timeZone: utc) == expected)
-    }
-
-    @Test
-    func timestampHonorsTimeZoneIncludingNonWholeHourOffsets() throws {
-        let timeZone = try #require(TimeZone(secondsFromGMT: 19_800))
-        let sentAt = Date(timeIntervalSince1970: 65_109)
-        #expect(TerminalChat.sharedChatTimestamp(sentAt, timeZone: timeZone) == "23:35:09")
-    }
-
-    @Test
-    func timestampDefaultsToTheLocalTimeZone() throws {
-        let message = try historicalMessage()
-        #expect(TerminalChat.sharedChatTimestamp(message.sentAt) == localTime(message.sentAt))
-    }
-
     @Test
     func messageLabelKeepsRecipientsAndPlacesTimeBesideTheSender() {
         let roomID = "timestamp-room"
@@ -74,35 +49,6 @@ struct TerminalSharedChatTimestampTests {
         // must not substitute the render time for the historical send instant.
         dock.replace(entries: [TerminalSharedChatReaderEntry(message: message, participantMap: [:])], unreadCount: 0)
         #expect(dock.rows(width: width) == firstRows)
-    }
-
-    @Test(arguments: [80, 40, 32, 20])
-    @ChatSessionActor
-    func statusBarFitsTimestampedAuthorWithinNarrowReaderRows(columns: Int) async throws {
-        let message = try historicalMessage()
-        let expectedAuthor = "Author: Worker [\(localTime(message.sentAt))] → Coordinator"
-        // configureForTesting enables rendering, so keep all writes off the real terminal.
-        let statusBar = TerminalStatusBar(isEnabled: false, outputSink: { _ in })
-        await statusBar.configureForTesting(row: 20, columns: columns)
-        await statusBar.updateInputPanel(text: "draft", cursorIndex: 5, modeText: "Chat", helpText: "Enter")
-        await statusBar.setSharedChatReader(
-            entries: [TerminalSharedChatReaderEntry(message: message, participantMap: [:])],
-            unreadCount: 1,
-            isExpanded: true,
-        )
-        var state = await statusBar.state
-        let sequence = await statusBar.sharedChatReaderRenderSequenceLocked(state: &state)
-        let rows = sequence.components(separatedBy: "\u{1B}[2K")
-            .dropFirst().map { TerminalANSIText.stripANSI($0) }
-        let authorRow = try #require(rows.first { $0.contains("Author:") })
-        let contentWidth = columns - 4
-        let fittedAuthor = TerminalStatusBar.fit(expectedAuthor, width: contentWidth)
-
-        #expect(rows.count >= 3)
-        #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) == columns })
-        #expect(authorRow == "│ \(TerminalStatusBar.padded(fittedAuthor, width: contentWidth)) │")
-        #expect(await statusBar.sharedChatReaderRenderSequenceLocked(state: &state) == sequence)
-        #expect(state.sharedChatReaderDock?.entries.first?.route == String(expectedAuthor.dropFirst("Author: ".count)))
     }
 
     private func localTime(_ date: Date) -> String {

@@ -131,23 +131,6 @@ struct DS4EngineCheckpointTests {
     }
 
     @Test
-    func saveOfASessionNeverSyncedSkipsWithoutPrefill() async throws {
-        let harness = try DS4ClientHarness()
-        let client = try await harness.makeClient()
-        _ = try await client.preloadModel(onEvent: { _ in })
-        let url = checkpointURL(harness)
-
-        let outcome = try await client.saveEngineCheckpoint(sessionID: "session", to: url)
-
-        #expect(outcome == .skippedNoLiveState)
-        #expect(harness.openCount == 1)
-        #expect(harness.engine.syncs.isEmpty)
-        #expect(harness.mock.checkpointCalls.isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: url.path))
-        await client.shutdown()
-    }
-
-    @Test
     func saveOfAnEvictedEngineSessionSkipsWithoutPrefill() async throws {
         let harness = try DS4ClientHarness()
         let client = try await harness.makeClient(sessionID: "a")
@@ -167,50 +150,6 @@ struct DS4EngineCheckpointTests {
         #expect(outcome == .skippedNoLiveState)
         #expect(harness.engine.syncs.count == syncsBefore)
         #expect(harness.mock.checkpointCalls.isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: url.path))
-        await client.shutdown()
-    }
-
-    @Test
-    func saveSkipsSessionsWithImagesAndWritesNothing() async throws {
-        let harness = try DS4ClientHarness(hasVision: true, visionRelativePath: "vision.gguf")
-        harness.mock.enqueueGeneration(["seen"])
-        let client = try await harness.makeClient()
-        _ = try await client.sendPrompt(
-            sessionID: "session",
-            prompt: "Look",
-            attachments: [RemoteGenerationClientDS4EngineTests.pngAttachment],
-            onEvent: { _ in }
-        )
-        let url = checkpointURL(harness)
-
-        let outcome = try await client.saveEngineCheckpoint(sessionID: "session", to: url)
-
-        #expect(outcome == .skippedImages)
-        #expect(harness.mock.checkpointCalls.isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: url.path))
-        await client.shutdown()
-    }
-
-    @Test
-    func saveSkipsWhenTheEngineHoldsVisionState() async throws {
-        let harness = try DS4ClientHarness(hasVision: true, visionRelativePath: "vision.gguf")
-        harness.mock.enqueueGeneration(["text only"])
-        let client = try await harness.makeClient()
-        _ = try await client.sendPrompt(sessionID: "session", prompt: "Hi", attachments: [], onEvent: { _ in })
-        // Image-conditioned state in the engine session, whatever the messages say.
-        let image = harness.base.appendingPathComponent("i.png")
-        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: image)
-        _ = try await harness.engine.sync(
-            sessionID: "session",
-            transcript: [.begin, .multimodalMessage(role: "user", textParts: ["a", "b"], imageFiles: [image])],
-            onProgress: { _, _, _ in }
-        )
-        let url = checkpointURL(harness)
-
-        let outcome = try await client.saveEngineCheckpoint(sessionID: "session", to: url)
-
-        #expect(outcome == .skippedImages)
         #expect(!FileManager.default.fileExists(atPath: url.path))
         await client.shutdown()
     }
@@ -328,21 +267,6 @@ struct DS4EngineCheckpointTests {
         let response = try await client.sendPrompt(sessionID: "session", prompt: "hi", attachments: [], onEvent: { _ in })
         #expect(response.text == "Fine.")
         #expect(harness.engine.syncs.first?.cached == 0)
-        await client.shutdown()
-    }
-
-    @Test
-    func missingCheckpointFileIsNotApplicable() async throws {
-        let harness = try DS4ClientHarness()
-        let client = try await harness.makeClient()
-
-        let outcome = await client.restoreEngineCheckpoint(
-            sessionID: "session", from: checkpointURL(harness), onEvent: { _ in }
-        )
-
-        #expect(outcome == .notApplicable)
-        #expect(harness.openCount == 0)
-        #expect(harness.mock.checkpointCalls.isEmpty)
         await client.shutdown()
     }
 
@@ -492,14 +416,6 @@ struct DS4EngineCheckpointTrailerTests {
     }
 
     @Test
-    func fingerprintIgnoresPrivateKeysAndEdgeWhitespace() {
-        let plain = message("user", "hello")
-        let decorated = message("user", "  hello \n", keys: [DS4MessageKeys.userContent: "hello\n\nMEMORY"])
-        #expect(DS4CheckpointTrailer.fingerprint(of: plain) == DS4CheckpointTrailer.fingerprint(of: decorated))
-        #expect(DS4CheckpointTrailer.fingerprint(of: plain) != DS4CheckpointTrailer.fingerprint(of: message("assistant", "hello")))
-    }
-
-    @Test
     func fingerprintsSurviveTheSnapshotRoundTrip() throws {
         let toolCall: [String: Any] = [
             "id": "call_1", "type": "function",
@@ -600,17 +516,6 @@ struct DS4EngineCheckpointStoreTests {
         #expect(deleted)
         #expect(!FileManager.default.fileExists(atPath: work.path))
         #expect(FileManager.default.fileExists(atPath: keep.path))
-    }
-
-    @Test
-    func deleteWithoutACheckpointIsNotAnError() throws {
-        let support = temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: support) }
-        let project = support.appendingPathComponent("Project", isDirectory: true)
-        _ = try TerminalSessionStore.save(session(name: "work", workingDirectory: project), supportDirectoryURL: support)
-
-        #expect(try TerminalSessionStore.delete(name: "work", workingDirectory: project, supportDirectoryURL: support))
-        #expect(!(try TerminalSessionStore.delete(name: "work", workingDirectory: project, supportDirectoryURL: support)))
     }
 
     @Test

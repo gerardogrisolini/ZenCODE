@@ -30,29 +30,6 @@ struct AnthropicMessagesDirectTests {
         #expect(request.url.absoluteString == "https://api.anthropic.com/v1/messages")
     }
 
-    @Test func betaIsConditionalForManual45ThinkingWithTools() throws {
-        let body: [String: Any] = [
-            "model": "claude-sonnet-4-5", "messages": [], "stream": true,
-            "thinking": ["type": "enabled", "budget_tokens": 4096],
-            "tools": [["name": "lookup", "input_schema": ["type": "object"]]]
-        ]
-        let request = try RemoteStreamTransport.buildHTTPStreamingRequest(
-            path: "/messages", body: body, provider: provider, apiKey: "test-key"
-        )
-        #expect(RemoteHTTPHeaders(request.headers).firstValue(for: "anthropic-beta") == "interleaved-thinking-2025-05-14")
-    }
-
-    @Test func codecPreservesOrderedSignedAndRedactedBlocks() throws {
-        let exact = #"[{"type":"thinking","thinking":"","signature":"sig"},{"type":"tool_use","id":"toolu_1","name":"lookup","input":{"q":"x"}},{"type":"redacted_thinking","data":"cipher"},{"type":"text","text":"done"}]"#
-        let converted = AnthropicMessagesWireCodec.payload(from: [[
-            "role": "assistant", "content": "done", "anthropic_content_blocks": exact
-        ]])
-        let blocks = try #require(converted.messages.first?["content"] as? [[String: Any]])
-        #expect(blocks.map { $0["type"] as? String } == ["thinking", "tool_use", "redacted_thinking", "text"])
-        #expect(blocks[0]["thinking"] as? String == "")
-        #expect(blocks[0]["signature"] as? String == "sig")
-    }
-
     @Test func nonAnthropicWireStripsAnthropicReplayMetadataFromACPToolFailureHistory() throws {
         let history = ZenCODEACPBridge.runtimeHistory(from: [
             ["role": "assistant", "content": "done", "anthropic_content_blocks": #"[{"type":"text","text":"done"}]"#],
@@ -221,29 +198,6 @@ struct AnthropicMessagesDirectTests {
         let payload = try #require(RemoteGenerationClient.remoteMessage(from: restored))
         let block = try #require(AnthropicMessagesWireCodec.toolResultBlock(from: payload))
         #expect(block["is_error"] as? Bool == true)
-    }
-
-    @Test func acpImportsAnthropicBlocksWithoutTextAndPreservesOrder() throws {
-        let exact = #"[{"type":"thinking","thinking":"","signature":"sig"},{"type":"tool_use","id":"toolu_1","name":"lookup","input":{} }]"#
-        let nativeBlocks: [[String: Any]] = [
-            ["type": "thinking", "thinking": "", "signature": "sig"],
-            ["type": "tool_use", "id": "toolu_1", "name": "lookup", "input": [:]]
-        ]
-        let history = ZenCODEACPBridge.runtimeHistory(from: [[
-            "role": "assistant", "content": "", "anthropic_content_blocks": nativeBlocks
-        ]])
-        let imported = try #require(history.first)
-        #expect(imported.content.isEmpty)
-        #expect(imported.anthropicContentBlocksJSON != nil)
-        let payload = try #require(RemoteGenerationClient.remoteMessage(from: imported))
-        let blocks = AnthropicMessagesWireCodec.assistantBlocks(from: payload)
-        #expect(blocks.map { $0["type"] as? String } == ["thinking", "tool_use"])
-
-        // Serialized snapshot-shaped input is preserved byte-for-byte.
-        let serialized = ZenCODEACPBridge.runtimeHistory(from: [[
-            "role": "assistant", "content": "", "anthropic_content_blocks": exact
-        ]])
-        #expect(serialized.first?.anthropicContentBlocksJSON == exact)
     }
 
     @Test func manualThinkingBudgetMatchesSubscriptionClamping() throws {

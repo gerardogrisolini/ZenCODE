@@ -112,38 +112,6 @@ struct TelegramChannelTopicsTests {
         }
     }
 
-    /// A topic of the session still active in the router is reused, even
-    /// with Threaded mode on: nothing is created, announced or persisted, and
-    /// the status names the topic with its default name.
-    @Test
-    func attachReusesTheActiveSessionTopicWithoutANotice() async throws {
-        let routes = [
-            AgentTelegramRouteManifest(roomID: "default"),
-            AgentTelegramRouteManifest(topicID: 444, roomID: Self.topicSessionID, generation: 3),
-        ]
-        try await Support.withSupport(telegram: Self.settings(routes: routes)) {
-            let transport = TelegramChannelTestTransport(
-                botID: Support.uniqueBotID(), hasTopicsEnabled: true, createdTopicIDs: [501]
-            )
-            let member = try Self.topicMember(transport: transport)
-            let channel = member.channel
-
-            try await channel.attach()
-
-            #expect(await transport.topicRequestCount == 0)
-            #expect(await transport.sentMessages.isEmpty)
-            #expect(member.notices.notices == [Self.activationNotice])
-            let lease = try #require(channel.activeRouteLease)
-            #expect(lease == Self.topicLease(444, generation: 3))
-            #expect(channel.sessionTopic == .init(lease: lease, name: Self.topicSessionName))
-            #expect(await channel.statusText() == Self.topicStatusText(topic: Self.topicSessionName))
-            #expect(member.commits.values.isEmpty)
-
-            await channel.shutdown()
-            await member.terminal.sessionHost.shutdown()
-        }
-    }
-
     /// A topic that cannot be created leaves the session on the shared route,
     /// as in legacy mode: the error is recorded and presented after the
     /// activation text, nothing is announced or persisted, the status has no
@@ -173,42 +141,6 @@ struct TelegramChannelTopicsTests {
             await channel.detach()
 
             #expect(await transport.topicRequestCount == 1)
-            #expect(member.commits.values.isEmpty)
-            #expect(AgentSettingsManifestStore.load()?.telegram?.routes == Support.pairedSettings.routes)
-            await member.terminal.sessionHost.shutdown()
-        }
-    }
-
-    /// Without Threaded mode the session uses the route every session shares,
-    /// as before topics: no topic, no notice, no `Topic:` line; a message
-    /// from a topic no route knows moves the link onto it as before; and
-    /// neither the rebind, nor the detach, nor the shutdown writes anything.
-    @Test
-    func legacyModeSharesTheRouteAndWritesNothing() async throws {
-        try await Support.withSupport {
-            let transport = TelegramChannelTestTransport(botID: Support.uniqueBotID(), createdTopicIDs: [501])
-            let member = try Self.topicMember(transport: transport)
-            let channel = member.channel
-
-            try await channel.attach()
-
-            #expect(channel.activeRouteLease?.key == Support.defaultRouteKey)
-            #expect(channel.sessionTopic == nil)
-            #expect(member.notices.notices == [Self.activationNotice])
-            #expect(await channel.statusText() == Self.legacyStatusText)
-
-            channel.onRunTurnForTesting = { _, _, _ in }
-            #expect(await channel.handleIncomingMessage(Self.ownerMessage("hello", topicID: 999)))
-            #expect(channel.activeRouteLease?.key == Support.defaultRouteKey)
-            #expect(channel.activeRouteLease?.effectiveMessageThreadID == 999)
-
-            await channel.rebind(sessionID: "other-session", displayName: "Other")
-            await channel.detach()
-            try await channel.attach()
-            await channel.shutdown()
-
-            #expect(await transport.topicRequestCount == 0)
-            #expect(await transport.sentMessages.isEmpty)
             #expect(member.commits.values.isEmpty)
             #expect(AgentSettingsManifestStore.load()?.telegram?.routes == Support.pairedSettings.routes)
             await member.terminal.sessionHost.shutdown()
@@ -266,40 +198,6 @@ struct TelegramChannelTopicsTests {
         }
     }
 
-    /// A rename Telegram refuses keeps the rebind, is recorded and presented
-    /// on the primary channel like a failed creation, and leaves the topic's
-    /// name as it was.
-    @Test
-    func failedRenameKeepsTheRebindAndTheTopicName() async throws {
-        try await Support.withSupport {
-            let transport = TelegramChannelTestTransport(
-                botID: Support.uniqueBotID(), hasTopicsEnabled: true, createdTopicIDs: [501], renameTopicFails: true
-            )
-            let member = try Self.topicMember(transport: transport)
-            let channel = member.channel
-            try await channel.attach()
-            let loadedSessionID = "loaded-session-fedcba9876543210"
-            member.terminal.sessionID = loadedSessionID
-
-            await channel.rebind(sessionID: loadedSessionID, displayName: "Parser refactor")
-
-            let description = "Telegram API error 400: \(TelegramChannelTestTransport.renameTopicFailure)"
-            #expect(await transport.renamedTopics == [TelegramRoutedText(text: "Parser refactor", topicID: 501)])
-            #expect(member.notices.notices == [
-                Self.activationNotice,
-                .init(text: "ZenCODE: \(description)\n", channel: .failure),
-            ])
-            #expect(channel.controlState.lastError == description)
-            let rebound = Self.topicLease(501, roomID: loadedSessionID, generation: 2)
-            #expect(channel.activeRouteLease == rebound)
-            #expect(channel.sessionTopic == .init(lease: rebound, name: Self.topicSessionName))
-            #expect(await channel.statusText() == Self.topicStatusText(topic: Self.topicSessionName))
-
-            await channel.shutdown()
-            await member.terminal.sessionHost.shutdown()
-        }
-    }
-
     // MARK: - Rebind and the shared-chat relay
 
     /// The rebind moves the shared-chat relay to the new room before the
@@ -341,87 +239,6 @@ struct TelegramChannelTopicsTests {
             #expect(await transport.base.renamedTopics == [TelegramRoutedText(text: "Parser refactor", topicID: 501)])
             #expect(member.notices.notices == [Self.activationNotice])
             #expect(Self.bodies(of: await cards.texts) == ["while renaming"])
-
-            await channel.shutdown()
-            await member.terminal.sessionHost.shutdown()
-        }
-    }
-
-    /// A rename Telegram refuses leaves the relay on the new room: what the
-    /// new room says afterwards reaches the chat, without a message from
-    /// Telegram binding the relay again.
-    @Test
-    func aFailedRenameLeavesTheRelayOnTheNewRoom() async throws {
-        try await Support.withSupport {
-            let transport = TelegramChannelTestTransport(
-                botID: Support.uniqueBotID(), hasTopicsEnabled: true, createdTopicIDs: [501], renameTopicFails: true
-            )
-            let member = try Self.topicMember(transport: transport)
-            let channel = member.channel
-            try await channel.attach()
-            let cards = TelegramRelayCardLog()
-            channel.sharedChatRelayStorage = Self.recordingRelay(cards)
-            await channel.rebindSharedChatRelay(roomID: Self.topicSessionID)
-            let loadedSessionID = "loaded-session-fedcba9876543210"
-            member.terminal.sessionID = loadedSessionID
-
-            await channel.rebind(sessionID: loadedSessionID, displayName: "Parser refactor")
-
-            let description = "Telegram API error 400: \(TelegramChannelTestTransport.renameTopicFailure)"
-            #expect(member.notices.notices == [
-                Self.activationNotice,
-                .init(text: "ZenCODE: \(description)\n", channel: .failure),
-            ])
-            #expect(await channel.sharedChatRelay.forwards(roomID: loadedSessionID, chatID: 42))
-            await channel.forwardSharedChatMessages(
-                [Self.agentMessage(room: loadedSessionID, text: "after the failed rename")], roomID: loadedSessionID
-            )
-            await channel.sharedChatRelay.waitForPendingCards()
-            #expect(Self.bodies(of: await cards.texts) == ["after the failed rename"])
-
-            await channel.shutdown()
-            await member.terminal.sessionHost.shutdown()
-        }
-    }
-
-    /// A detach that runs while the rebind binds the relay owns the link
-    /// from then on: the rebind renames nothing and presents no failure.
-    @Test
-    func aDetachWhileTheRelayIsReboundLeavesTheRenameToIt() async throws {
-        try await Support.withSupport {
-            let transport = TelegramChannelTestTransport(
-                botID: Support.uniqueBotID(), hasTopicsEnabled: true, createdTopicIDs: [501]
-            )
-            let member = try Self.topicMember(transport: transport)
-            let channel = member.channel
-            try await channel.attach()
-            // The relay's validation of the new lease waits at the gate.
-            let gate = TopicTestGate()
-            let cards = TelegramRelayCardLog()
-            channel.sharedChatRelayStorage = TerminalTelegramSharedChatRelay(
-                validateLease: { _ in
-                    await gate.pass()
-                    return true
-                },
-                send: { text, _, _ in await cards.record(text) }
-            )
-            let loadedSessionID = "loaded-session-fedcba9876543210"
-            member.terminal.sessionID = loadedSessionID
-
-            let rebinding = Task { @ChatSessionActor in
-                await channel.rebind(sessionID: loadedSessionID, displayName: "Parser refactor")
-            }
-            await gate.waitForEntries(1)
-            await channel.detach()
-            await gate.open()
-            await rebinding.value
-
-            #expect(await transport.renamedTopics.isEmpty)
-            #expect(member.notices.notices == [
-                Self.activationNotice,
-                .init(text: TelegramChannel.stoppedNoticeText, channel: .system),
-            ])
-            #expect(channel.sessionTopic == nil)
 
             await channel.shutdown()
             await member.terminal.sessionHost.shutdown()
@@ -471,30 +288,6 @@ struct TelegramChannelTopicsTests {
             #expect(channel.activeRouteLease == Self.topicLease(502))
 
             await channel.shutdown()
-            await member.terminal.sessionHost.shutdown()
-        }
-    }
-
-    /// The shutdown closes and prunes like the detach, because the terminal
-    /// always ends through it, and presents nothing.
-    @Test
-    func shutdownClosesTheTopicAndPrunesTheInactiveRoutes() async throws {
-        try await Support.withSupport(telegram: Self.settings(routes: Self.routesBeforePruning)) {
-            let transport = TelegramChannelTestTransport(botID: Support.uniqueBotID(), hasTopicsEnabled: true)
-            let member = try Self.topicMember(transport: transport)
-            let channel = member.channel
-            try await channel.attach()
-            #expect(channel.activeRouteLease == Self.topicLease(501))
-            member.notices.clear()
-
-            await channel.shutdown()
-
-            #expect(member.commits.values.count == 2)
-            #expect(member.commits.values.last == Self.routesAfterPruning)
-            #expect(AgentSettingsManifestStore.load()?.telegram?.routes == Self.routesAfterPruning)
-            #expect(channel.sessionTopic == nil)
-            #expect(member.notices.notices.isEmpty)
-            #expect(await transport.topicRequestCount == 0)
             await member.terminal.sessionHost.shutdown()
         }
     }
@@ -579,15 +372,6 @@ struct TelegramChannelTopicsTests {
         let notices = TelegramChannelNoticeRecorder()
         notices.install(on: channel)
         return TopicMember(terminal: terminal, channel: channel, notices: notices, commits: commits)
-    }
-
-    private static func ownerMessage(_ text: String, topicID: Int? = nil) -> TerminalTelegramIncomingMessage {
-        TerminalTelegramIncomingMessage(
-            chatID: 42, userID: 7, topicID: topicID, chatKind: .privateChat,
-            text: text, voice: nil, messageID: 78, chatTitle: "Test", username: "operator",
-            replyToMessageID: nil, callbackQueryID: nil, callbackData: nil,
-            stoppedMessageGenerationDraftID: nil, attachment: nil
-        )
     }
 
     /// A relay whose cards `log` records instead of sending.

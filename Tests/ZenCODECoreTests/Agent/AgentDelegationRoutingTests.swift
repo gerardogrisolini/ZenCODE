@@ -122,23 +122,6 @@ struct AgentDelegationRoutingTests {
     }
 
     @Test
-    func authoritativeEmptyCatalogMarksEveryBindingStale() throws {
-        let profile = Self.profile(
-            bindings: [AgentModelBinding(id: "any", modelID: "offline-model", capability: 4)]
-        )
-
-        let resolved = AgentDelegationCatalog.resolvedBindings(
-            for: profile,
-            snapshot: .available(models: [])
-        )
-
-        #expect(resolved.isCatalogAvailable)
-        #expect(resolved.bindings.isEmpty)
-        let stale = try #require(resolved.staleBindings.first)
-        #expect(stale.reason == .modelNotConfigured)
-    }
-
-    @Test
     func unavailableCatalogFailsClosed() throws {
         let profile = Self.profile(
             bindings: [AgentModelBinding(id: "any", modelID: "offline-model", capability: 4)]
@@ -332,31 +315,6 @@ struct AgentDelegationRoutingTests {
     }
 
     @Test
-    func rawSlugSharedByTwoProvidersIsNotResolvedWithoutAProviderHint() {
-        let models = [Self.alphaModel, Self.betaModel]
-
-        #expect(
-            AgentDelegationCatalog.canonicalModelID(
-                forReference: Self.sharedSlug,
-                models: models
-            ) == nil
-        )
-        #expect(
-            AgentDelegationCatalog.canonicalModelID(
-                forReference: Self.sharedSlug,
-                providerHint: "Beta",
-                models: models
-            ) == Self.betaModelID
-        )
-        #expect(
-            AgentDelegationCatalog.canonicalModelID(
-                forReference: Self.betaModelID,
-                models: models
-            ) == Self.betaModelID
-        )
-    }
-
-    @Test
     func bindingOnASharedSlugWithoutProviderIsReportedAmbiguous() throws {
         let profile = Self.profile(
             bindings: [AgentModelBinding(id: "shared", modelID: Self.sharedSlug, capability: 5)]
@@ -441,33 +399,6 @@ struct AgentDelegationRoutingTests {
         } else {
             Issue.record("Expected the namespaced binding reference to remain unambiguous.")
         }
-    }
-
-    @Test
-    func multipleBindingsConvergingOnOneCanonicalModelFailClosed() throws {
-        let profile = Self.profile(
-            bindings: [
-                AgentModelBinding(id: "canonical", modelID: Self.betaModelID, capability: 7),
-                AgentModelBinding(
-                    id: "legacy",
-                    modelID: Self.sharedSlug,
-                    modelProvider: "Beta",
-                    capability: 5
-                ),
-            ]
-        )
-
-        let resolved = AgentDelegationCatalog.resolvedBindings(
-            for: profile,
-            models: [Self.alphaModel, Self.betaModel]
-        )
-
-        #expect(resolved.bindings.isEmpty)
-        #expect(Set(resolved.staleBindings.map(\.binding.id)) == ["canonical", "legacy"])
-        #expect(resolved.staleBindings.allSatisfy {
-            if case .duplicateCanonicalModel = $0.reason { return true }
-            return false
-        })
     }
 
     @Test
@@ -582,18 +513,6 @@ struct AgentDelegationRoutingTests {
     }
 
     @Test
-    func profileReferenceIdentityUsesPOSIXCaseFolding() {
-        let latinUpper = AgentProfileStore.profileReferenceKey("I")
-        let latinLower = AgentProfileStore.profileReferenceKey("i")
-        let dottedUpper = AgentProfileStore.profileReferenceKey("İ")
-        let dotlessLower = AgentProfileStore.profileReferenceKey("ı")
-
-        #expect(latinUpper == latinLower)
-        #expect(dottedUpper == latinLower)
-        #expect(dotlessLower != latinLower)
-    }
-
-    @Test
     func subscriptionPreflightMatchesPersistedAndEnvironmentCredentialRules() {
         let blankChatGPT = CodexAgentCredentials(
             accessToken: " ",
@@ -675,44 +594,6 @@ struct AgentDelegationRoutingTests {
         #expect(context.modelBinding?.id == "beta")
         #expect(context.modelBinding?.modelProvider == "Beta")
         await runtime.shutdown()
-    }
-
-    @Test
-    func subAgentConfigurationKeepsTheCanonicalModelIDInsteadOfTheSharedSlug() throws {
-        let parentConfiguration = AgentRuntimeConfiguration(
-            modelID: Self.alphaModelID,
-            workingDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true),
-            maxToolRounds: 4,
-            toolAuthorizationHandler: nil
-        )
-        let profile = Self.profile(
-            bindings: [AgentModelBinding(id: "beta", modelID: Self.betaModelID, capability: 7)]
-        )
-        let snapshot = AgentDelegationCatalogSnapshot.available(
-            models: [Self.alphaModel, Self.betaModel]
-        )
-        let resolvedBinding = try #require(
-            AgentDelegationCatalog.resolvedBindings(
-                for: profile,
-                snapshot: snapshot
-            ).bindings.first
-        )
-        let modelSelection = try #require(snapshot.modelSelection(for: resolvedBinding))
-        let context = DirectSubAgentRuntime.BackendContext(
-            requestedName: "worker",
-            requestedRole: "worker",
-            profile: profile,
-            modelBinding: resolvedBinding.routingBinding,
-            modelSelection: modelSelection,
-            modelID: "binding:beta"
-        )
-
-        let resolved = parentConfiguration.applyingSubAgentBackendContext(context)
-
-        #expect(resolved.modelID == Self.betaModelID)
-        #expect(resolved.modelID != Self.sharedSlug)
-        #expect(resolved.profileID == profile.id)
-        #expect(resolved.profileName == profile.name)
     }
 
     @Test

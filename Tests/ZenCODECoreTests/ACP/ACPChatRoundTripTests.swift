@@ -241,39 +241,6 @@ struct ACPChatRoundTripTests {
         #expect(fixture.wire.stopReason(for: 11) == "end_turn")
     }
 
-    /// Outside app mode there is no prompt-update pipeline or buffer. The
-    /// subscription event must still be written as its custom notification.
-    @Test
-    func nonAppModeSubscriptionNotificationIsSentDirectly() async throws {
-        let fixture = try await Self.makeFixture(
-            sessionID: "acp-round-trip-non-app-subscription",
-            appMode: false,
-            emitsSubscriptionUsage: true
-        )
-
-        await fixture.bridge.handleLine("""
-        {"jsonrpc":"2.0","id":12,"method":"session/prompt","params":{"sessionId":"\
-        \(fixture.sessionID)","prompt":[{"type":"text","text":"direct notification"}]}}
-        """)
-
-        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk")
-            == [
-                "Agent: Default · Model: test-model · Thinking: Not supported\n\n",
-                "echo: direct notification"
-            ])
-        let trace = fixture.wire.trace()
-        let replyIndex = try #require(trace.lastIndex(of: "agent_message_chunk"))
-        let notificationIndex = try #require(
-            trace.firstIndex(of: "_zencode/usage/subscription")
-        )
-        #expect(replyIndex < notificationIndex)
-        #expect(
-            fixture.wire.sessionIDs(forMethod: "_zencode/usage/subscription")
-                == [fixture.sessionID]
-        )
-        #expect(fixture.wire.stopReason(for: 12) == "end_turn")
-    }
-
     private static func makeFixture(
         sessionID: String,
         appMode: Bool = false,

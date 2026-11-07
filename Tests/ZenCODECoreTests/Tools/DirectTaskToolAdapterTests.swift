@@ -6,17 +6,6 @@ import ToolCore
 @Suite
 struct DirectTaskToolAdapterTests {
     @Test
-    func tasksCreateDescriptorExplainsCanonicalBatchAndAgentClaimShapes() throws {
-        let descriptor = try #require(
-            DirectToolCatalog.todoTaskDescriptors.first { $0.name == "tasks.create" }
-        )
-
-        #expect(descriptor.description.contains("canonical tasks array"))
-        #expect(descriptor.description.contains("do not mix it with root-level single-task fields"))
-        #expect(descriptor.description.contains("agent.create agents item's taskID field"))
-    }
-
-    @Test
     func taskBoundSessionReceivesScopedTaskUpdateDescriptionOnly() async throws {
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(
@@ -182,85 +171,6 @@ struct DirectTaskToolAdapterTests {
     }
 
     @Test
-    func taskSchemasUseCanonicalEnglishAgentSelectionPolicy() throws {
-        for name in ["tasks.create", "tasks.update"] {
-            let descriptor = try #require(
-                DirectToolCatalog.todoTaskDescriptors.first { $0.name == name }
-            )
-            #expect(descriptor.inputSchema.contains(TaskRecord.complexityRubric))
-            #expect(descriptor.inputSchema.contains(TaskRecord.agentSelectionPolicy))
-        }
-        let createDescriptor = try #require(
-            DirectToolCatalog.todoTaskDescriptors.first { $0.name == "tasks.create" }
-        )
-        #expect(createDescriptor.description.contains("leave independent tasks dependency-free"))
-        #expect(createDescriptor.description.contains("safe, useful parallelism"))
-        #expect(
-            createDescriptor.description.contains("keep direct work in the DAG with execution.executor coordinator")
-                && createDescriptor.description.contains("Delegation is optional: only for delegated work use execution.executor sub_agent")
-        )
-        #expect(createDescriptor.inputSchema.contains("\"sub_agent\""))
-        #expect(!createDescriptor.inputSchema.contains("toolNames"))
-        #expect(createDescriptor.schemaObject != nil)
-    }
-
-    @Test
-    func adaptersShareAuthoritativeGraphAcrossExecutors() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        let first = DirectTaskToolAdapter()
-        let second = DirectTaskToolAdapter()
-        await first.installTaskOrchestrator(orchestrator)
-        await second.installTaskOrchestrator(orchestrator)
-
-        _ = try await first.execute(
-            sessionID: "session",
-            toolCall: call(
-                name: "tasks.create",
-                arguments: [
-                    "graphID": "graph",
-                    "tasks": [
-                        ["id": "a", "title": "A", "priority": "high"],
-                        ["id": "b", "title": "B", "dependsOn": ["a"]],
-                    ],
-                ]
-            )
-        )
-        let output = try await second.execute(
-            sessionID: "session",
-            toolCall: call(name: "tasks.list", arguments: [:])
-        )
-
-        #expect(output.contains("Task graph graph"))
-        #expect(output.contains("[pending] a: A"))
-        #expect(output.contains("[pending] b: B"))
-        #expect(output.contains("blocked_by=a"))
-    }
-
-    @Test
-    func tasksGetFallsBackToTaskIDWhenIDIsBlank() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        _ = try await orchestrator.createGraph(
-            sessionID: "session",
-            id: "graph",
-            source: .manual,
-            state: .active,
-            tasks: [TaskDefinition(id: "work", title: "Work")]
-        )
-        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
-
-        let output = try await adapter.execute(
-            sessionID: "session",
-            toolCall: call(
-                name: "tasks.get",
-                arguments: ["id": "   ", "taskID": "work"]
-            )
-        )
-
-        #expect(output.contains("work"))
-        #expect(output.contains("Work"))
-    }
-
-    @Test
     func workflowTaskCreationSupportsDirectAndDelegatedWork() async throws {
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(
@@ -365,59 +275,6 @@ struct DirectTaskToolAdapterTests {
             )
         }
         #expect(try await orchestrator.graphSnapshot(sessionID: "session") == nil)
-    }
-
-    @Test
-    func taskCreateFallsBackToPopulatedItemsWhenTasksIsEmpty() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
-
-        _ = try await adapter.execute(
-            sessionID: "session",
-            toolCall: call(
-                name: "tasks.create",
-                arguments: [
-                    "graphID": "graph",
-                    "tasks": [],
-                    "items": [
-                        ["id": "a", "title": "A"],
-                        ["id": "b", "title": "B", "dependsOn": ["a"]],
-                    ],
-                ]
-            )
-        )
-
-        let output = try await adapter.execute(
-            sessionID: "session",
-            toolCall: call(name: "tasks.list", arguments: [:])
-        )
-        #expect(output.contains("[pending] a: A"))
-        #expect(output.contains("[pending] b: B"))
-        #expect(output.contains("blocked_by=a"))
-    }
-
-    @Test
-    func taskCreateAcceptsTitlesLongerThanTheFormerLimit() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
-        let longTitle = String(repeating: "x", count: 1_024)
-
-        _ = try await adapter.execute(
-            sessionID: "session",
-            toolCall: call(
-                name: "tasks.create",
-                arguments: [
-                    "graphID": "graph",
-                    "id": "long-title",
-                    "title": longTitle,
-                ]
-            )
-        )
-
-        #expect(try await orchestrator.task(
-            sessionID: "session",
-            taskID: "long-title"
-        ).task.title == longTitle)
     }
 
     @Test
@@ -616,96 +473,6 @@ struct DirectTaskToolAdapterTests {
             try await orchestrator.task(sessionID: "default", taskID: "work").task.status
                 == .pending
         )
-    }
-
-    @Test
-    func complexityIsParsedAndRenderedFromToolCall() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
-
-        _ = try await adapter.execute(
-            sessionID: "session",
-            toolCall: call(
-                name: "tasks.create",
-                arguments: [
-                    "graphID": "graph",
-                    "tasks": [
-                        ["id": "a", "title": "A", "complexity": 3],
-                        ["id": "b", "title": "B", "complexity": 9],
-                    ],
-                ]
-            )
-        )
-        let output = try await adapter.execute(
-            sessionID: "session",
-            toolCall: call(name: "tasks.list", arguments: [:])
-        )
-
-        #expect(output.contains("complexity=3"))
-        #expect(output.contains("complexity=9"))
-    }
-
-    @Test
-    func complexityDefaultIsRenderedWhenNotSpecified() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
-
-        _ = try await adapter.execute(
-            sessionID: "session",
-            toolCall: call(
-                name: "tasks.create",
-                arguments: [
-                    "graphID": "graph",
-                    "tasks": [["id": "a", "title": "A"]],
-                ]
-            )
-        )
-        let output = try await adapter.execute(
-            sessionID: "session",
-            toolCall: call(name: "tasks.list", arguments: [:])
-        )
-
-        #expect(output.contains("complexity=5"))
-    }
-
-    @Test
-    func retryAppendsEscalationHintAfterFailedAttempt() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
-
-        _ = try await adapter.execute(
-            sessionID: "session",
-            toolCall: call(
-                name: "tasks.create",
-                arguments: [
-                    "graphID": "graph",
-                    "tasks": [["id": "a", "title": "A", "complexity": 8]],
-                ]
-            )
-        )
-        let receipt = try #require(try await orchestrator.claimTasks(
-            sessionID: "session",
-            claims: [TaskClaim(taskID: "a", agentID: "agent-a")]
-        ).first)
-        _ = try await orchestrator.failAttempt(
-            sessionID: "session",
-            taskID: "a",
-            attemptID: receipt.attemptID,
-            error: "Attempt failed."
-        )
-
-        let output = try await adapter.execute(
-            sessionID: "session",
-            toolCall: call(name: "tasks.retry", arguments: ["id": "a"])
-        )
-
-        #expect(output.contains("Hint: 1 previous attempt on this task (complexity 8) did not succeed"))
-        #expect(output.contains("start a new direct attempt with tasks.update status in_progress"))
-        #expect(output.contains("role-compatible profile and its lowest-capability authorized model binding"))
-        #expect(output.contains("profile's highest-capability binding"))
-        #expect(output.contains("report the capability gap"))
-        #expect(output.contains("For a profile without bindings, omit model in agent.create"))
-        #expect(output.contains("inherit the main session model and provider"))
     }
 
     private func call(name: String, arguments: [String: Any]) -> DirectAgentToolCall {

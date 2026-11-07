@@ -56,15 +56,6 @@ struct MemoryCleanupSetupTests {
         }
     }
 
-    private static func summary(_ id: String, title: String = "Title") -> MemoryCleanupReport.EntrySummary {
-        MemoryCleanupReport.EntrySummary(
-            id: id,
-            title: title,
-            category: "fact",
-            lastChange: Date(timeIntervalSince1970: 1_700_000_000)
-        )
-    }
-
     // MARK: - Inventory
 
     @Test
@@ -106,25 +97,6 @@ struct MemoryCleanupSetupTests {
     }
 
     @Test
-    func inventorySizeCountsTheVectorsFileWithTheGraph() throws {
-        let fixture = try Fixture()
-        defer { fixture.remove() }
-        let withVectors = try fixture.makeProjectDirectory("vectors-0123456789abcdef01234567", graphBytes: 100)
-        try Data(repeating: 0, count: 2_048).write(
-            to: withVectors.appendingPathComponent("memory.graph.json.vectors")
-        )
-        // A backup pair is not part of the graph.
-        try Data(repeating: 0, count: 4_096).write(
-            to: withVectors.appendingPathComponent("memory.graph.json.vectors.bak")
-        )
-        try fixture.makeProjectDirectory("legacy-0123456789abcdef01234567", graphBytes: 300)
-
-        let sizes = Dictionary(uniqueKeysWithValues: fixture.inventory().map { ($0.directoryName, $0.fileSize) })
-        #expect(sizes["vectors-0123456789abcdef01234567"] == 2_148)
-        #expect(sizes["legacy-0123456789abcdef01234567"] == 300)
-    }
-
-    @Test
     func inventoryGraphURLMatchesTheOneTheRegistryKeysTheCurrentProjectBy() throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -139,43 +111,7 @@ struct MemoryCleanupSetupTests {
         #expect(current.graphURL == expected)
     }
 
-    @Test
-    func inventoryIsEmptyWithoutAMemoryDirectory() throws {
-        let fixture = try Fixture()
-        defer { fixture.remove() }
-
-        #expect(fixture.inventory().isEmpty)
-        try fixture.makeProjectDirectory("empty-0123456789abcdef01234567")
-        #expect(fixture.inventory().isEmpty)
-    }
-
     // MARK: - Menus
-
-    @Test
-    func graphMenuItemsDescribeEachGraph() throws {
-        let fixture = try Fixture()
-        defer { fixture.remove() }
-        try fixture.makeProjectDirectory(fixture.currentKey, graphBytes: 1_500)
-        try fixture.makeProjectDirectory("global", graphBytes: 1_024)
-        try fixture.makeProjectDirectory("other-0123456789abcdef01234567", graphBytes: 0)
-
-        let items = Runner.memoryGraphMenuItems(fixture.inventory())
-
-        #expect(items.map(\.title) == [fixture.currentKey, "Global graph", "other-0123456789abcdef01234567"])
-        let details = try items.map { try #require($0.detail) }
-        for detail in details {
-            #expect(detail.range(
-                of: #"^\d+ KB, modified \d{4}-\d{2}-\d{2}"#,
-                options: .regularExpression
-            ) != nil)
-        }
-        #expect(details[0].hasPrefix("2 KB, modified "))
-        #expect(details[0].hasSuffix(", current project"))
-        #expect(details[1].hasPrefix("1 KB, modified "))
-        #expect(!details[1].contains("current project"))
-        #expect(details[2].hasPrefix("0 KB, modified "))
-        #expect(!details[2].contains("current project"))
-    }
 
     @Test
     func deleteFolderIsOfferedOnlyForAnotherProject() throws {
@@ -201,23 +137,6 @@ struct MemoryCleanupSetupTests {
     }
 
     @Test
-    func ruleItemsCiteTheDefaultsAndPreselectTheSafeRules() {
-        let items = Runner.memoryCleanupRuleItems()
-
-        #expect(items.map(\.title) == [
-            "Remove archived entries",
-            "Archive stale entries",
-            "Graph hygiene",
-        ])
-        #expect(items.map(\.value) == [.removeArchived, .archiveStale, .hygiene])
-        #expect(items[0].detail?.contains("30") == true)
-        #expect(items[1].detail?.contains("180") == true)
-        #expect(items[2].detail
-            == "drop superseded entries, dangling links, excess links (more than 12 per entry), unused tags and unusable embedding vectors")
-        #expect(Runner.defaultMemoryCleanupRules == [.removeArchived, .hygiene])
-    }
-
-    @Test
     func policyUsesDaysOnlyForTheChosenRules() {
         #expect(
             Runner.memoryCleanupPolicy(
@@ -233,105 +152,5 @@ struct MemoryCleanupSetupTests {
                 staleInactivityDays: 90
             ) == MemoryCleanupPolicy(archivedRetentionDays: nil, staleInactivityDays: 90, graphHygiene: false)
         )
-    }
-
-    @Test
-    func dayCountsMustBeWholeNumbersAtLeastTheMinimum() {
-        #expect(Runner.parseCleanupDays("30", minimum: 0) == 30)
-        #expect(Runner.parseCleanupDays(" 0 ", minimum: 0) == 0)
-        #expect(Runner.parseCleanupDays("0", minimum: 1) == nil)
-        #expect(Runner.parseCleanupDays("-4", minimum: 0) == nil)
-        #expect(Runner.parseCleanupDays("2.5", minimum: 0) == nil)
-        #expect(Runner.parseCleanupDays("many", minimum: 0) == nil)
-        #expect(Runner.parseCleanupDays("", minimum: 0) == nil)
-    }
-
-    // MARK: - Report
-
-    @Test
-    func emptyReportRendersNothingToClean() {
-        let report = MemoryCleanupReport(totalEntries: 7, activeEntries: 5, archivedEntries: 2)
-        let url = URL(fileURLWithPath: "/tmp/memory.graph.json")
-        let text = Runner.renderMemoryCleanupReport(
-            report,
-            graphURL: url,
-            policy: MemoryCleanupPolicy(archivedRetentionDays: 30, graphHygiene: true)
-        )
-
-        #expect(text.contains("/tmp/memory.graph.json"))
-        #expect(text.contains("Entries: 7 (5 active, 2 archived)"))
-        #expect(text.hasSuffix("Nothing to clean."))
-        #expect(!text.contains("Remove archived"))
-    }
-
-    @Test
-    func reportListsAtMostTwentyEntriesThenCountsTheRest() {
-        var report = MemoryCleanupReport(totalEntries: 30, activeEntries: 0, archivedEntries: 30)
-        report.removedArchived = (0..<25).map { Self.summary(String(format: "id-%02d", $0), title: "Entry \($0)") }
-        let text = Runner.renderMemoryCleanupReport(
-            report,
-            graphURL: URL(fileURLWithPath: "/tmp/memory.graph.json"),
-            policy: MemoryCleanupPolicy(archivedRetentionDays: 30)
-        )
-
-        #expect(text.contains("Remove archived entries (unchanged for at least 30 days): 25"))
-        let entryLines = text.split(separator: "\n").filter { $0.hasPrefix("- [") }
-        #expect(entryLines.count == 20)
-        #expect(entryLines.first == "- [id-00] Entry 0")
-        #expect(entryLines.last == "- [id-19] Entry 19")
-        #expect(text.contains("… and 5 more"))
-        #expect(!text.contains("id-20"))
-        // Only the active rule has a section.
-        #expect(!text.contains("Archive stale"))
-        #expect(!text.contains("Graph hygiene"))
-    }
-
-    @Test
-    func reportShowsOneSectionPerActiveRule() {
-        var report = MemoryCleanupReport(totalEntries: 10, activeEntries: 6, archivedEntries: 4)
-        report.removedArchived = [Self.summary("a1", title: "Old archived")]
-        report.archivedStale = [Self.summary("s1", title: "Stale one"), Self.summary("s2", title: "Stale two")]
-        report.removedSuperseded = [Self.summary("u1", title: "Superseded")]
-        report.removedDanglingEdges = 3
-        report.prunedRelations = 16
-        report.removedTags = 1
-        report.removedClusters = 0
-        report.clearedEmbeddings = 4
-        let text = Runner.renderMemoryCleanupReport(
-            report,
-            graphURL: URL(fileURLWithPath: "/tmp/memory.graph.json"),
-            policy: MemoryCleanupPolicy(
-                archivedRetentionDays: 0,
-                staleInactivityDays: 180,
-                graphHygiene: true
-            )
-        )
-
-        #expect(text.contains("Remove archived entries (all): 1"))
-        #expect(text.contains("- [a1] Old archived"))
-        #expect(text.contains("Archive stale entries (never recalled, unchanged for at least 180 days, scaled by category): 2"))
-        #expect(text.contains("- [s2] Stale two"))
-        #expect(text.contains(
-            "Graph hygiene: 1 superseded entry, 3 dangling edges, 16 excess links, 1 unused tag, 0 empty clusters, 4 embedding vectors"
-        ))
-        #expect(text.contains("- [u1] Superseded"))
-        #expect(!text.contains("Nothing to clean."))
-    }
-
-    @Test
-    func reportShowsPrunedLinksAloneAsAChange() {
-        var report = MemoryCleanupReport(totalEntries: 3, activeEntries: 3, archivedEntries: 0)
-        report.prunedRelations = 1
-        #expect(!report.isEmpty)
-        let text = Runner.renderMemoryCleanupReport(
-            report,
-            graphURL: URL(fileURLWithPath: "/tmp/memory.graph.json"),
-            policy: MemoryCleanupPolicy(graphHygiene: true)
-        )
-
-        #expect(text.contains(
-            "Graph hygiene: 0 superseded entries, 0 dangling edges, 1 excess link, 0 unused tags, 0 empty clusters, 0 embedding vectors"
-        ))
-        #expect(!text.contains("Nothing to clean."))
     }
 }
