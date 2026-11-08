@@ -487,13 +487,6 @@ extension DirectSubAgentRuntime {
         agent.latestOutput = trimmedOutput
         agent.latestOutputRevision &+= 1
         agent.completedExecutionRevision = agent.executionRevision
-        if let existing = agent.accumulatedOutput?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !existing.isEmpty,
-           !trimmedOutput.isEmpty {
-            agent.accumulatedOutput = existing + "\n\n" + trimmedOutput
-        } else if !trimmedOutput.isEmpty {
-            agent.accumulatedOutput = trimmedOutput
-        }
         agent.latestError = nil
         agent.modelID = response.modelID.nilIfBlank ?? agent.modelID
         // The turn is over: drop the visible activity together with the private

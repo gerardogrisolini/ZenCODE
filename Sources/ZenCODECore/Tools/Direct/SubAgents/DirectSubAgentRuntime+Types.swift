@@ -70,7 +70,6 @@ extension DirectSubAgentRuntime {
         public let executionRevision: UInt64
         public let completedExecutionRevision: UInt64
         public let latestOutputRevision: UInt64
-        public let accumulatedOutput: String?
         public let latestError: String?
         public let createdAt: Date
         public let updatedAt: Date
@@ -106,7 +105,6 @@ extension DirectSubAgentRuntime {
             executionRevision: UInt64 = 0,
             completedExecutionRevision: UInt64 = 0,
             latestOutputRevision: UInt64 = 0,
-            accumulatedOutput: String? = nil,
             latestError: String?,
             createdAt: Date,
             updatedAt: Date
@@ -141,7 +139,6 @@ extension DirectSubAgentRuntime {
             self.executionRevision = executionRevision
             self.completedExecutionRevision = completedExecutionRevision
             self.latestOutputRevision = latestOutputRevision
-            self.accumulatedOutput = accumulatedOutput
             self.latestError = latestError
             self.createdAt = createdAt
             self.updatedAt = updatedAt

@@ -149,7 +149,6 @@ public actor DirectSubAgentRuntime {
         public var executionRevision: UInt64 = 0
         public var completedExecutionRevision: UInt64 = 0
         public var latestOutputRevision: UInt64 = 0
-        public var accumulatedOutput: String?
         public var latestError: String?
         /// Stable configured model reference selected for this agent. Providers
         /// may later report a less-specific runtime model identifier, so the TUI
@@ -262,7 +261,6 @@ public actor DirectSubAgentRuntime {
         /// and a transcript read after the agent ended must not lose them.
         mutating func prepareForTerminalRetention() {
             latestOutput = DirectSubAgentRuntime.boundedTerminalOutput(latestOutput)
-            accumulatedOutput = DirectSubAgentRuntime.boundedTerminalOutput(accumulatedOutput)
             latestContentPreview = DirectSubAgentRuntime.boundedTerminalOutput(latestContentPreview)
             resetActivityState()
         }

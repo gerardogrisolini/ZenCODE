@@ -52,17 +52,15 @@ public enum ZenSubAgentLiveActivity: Equatable, Sendable {
     /// runs (a tool the transcript hides does not count, and neither does
     /// one that completed: the snapshot keeps its name until the next model
     /// state), the reasoning of the thinking phase, growing with every
-    /// paragraph (`currentThought`; the paragraph in progress,
-    /// `currentActivity`, for a snapshot without it), else the placeholder,
-    /// the message phase included; `.none` otherwise and without a
-    /// snapshot.
+    /// paragraph (`currentThought`), else the placeholder, the message phase
+    /// included; `.none` otherwise and without a snapshot.
     public init(_ snapshot: DirectSubAgentRuntime.AgentSnapshot?) {
         guard let snapshot, snapshot.pending, !ZenSubAgentActivity(snapshot).toolIsRunning else {
             self = .none
             return
         }
         if snapshot.currentActivityKind == .thinking,
-           let thought = ZenTranscriptText.nonBlank(snapshot.currentThought ?? snapshot.currentActivity) {
+           let thought = ZenTranscriptText.nonBlank(snapshot.currentThought) {
             self = .thought(thought)
         } else {
             self = .thinkingPlaceholder
@@ -145,6 +143,7 @@ public struct ZenSubAgentLiveActivityView: View {
             pending: true,
             currentActivity: "Reading the tab bar and the conversation list.",
             currentActivityKind: .thinking,
+            currentThought: "Checking the sub-agent tab first.\n\nReading the tab bar and the conversation list.",
             latestOutput: nil,
             latestError: nil,
             createdAt: now,

@@ -62,6 +62,7 @@ struct ZenTranscriptViewRenderTests {
             id: "a4", name: "planner", role: "Planner",
             status: .running, pending: true,
             currentActivity: "Reading", currentActivityKind: .thinking,
+            currentThought: "Reading",
             latestOutput: nil, latestError: nil, createdAt: .now, updatedAt: .now
         )
     }

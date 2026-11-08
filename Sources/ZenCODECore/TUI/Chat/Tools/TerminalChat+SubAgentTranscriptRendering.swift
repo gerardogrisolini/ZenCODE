@@ -107,8 +107,7 @@ extension TerminalChat {
     ///   draws for a reasoning block: the thinking title followed by the
     ///   whole reasoning of the phase in the thinking style
     ///   (``DirectSubAgentRuntime/AgentSnapshot/currentThought``, growing
-    ///   with every paragraph; the paragraph in progress, `currentActivity`,
-    ///   for a snapshot without it), at the full `width`;
+    ///   with every paragraph), at the full `width`;
     /// - in every other case (it reasons without reasoning to show yet, writes
     ///   a message without reasoning before it, also right after a completed
     ///   call, has no activity, or is queued) a single row with the thinking
@@ -131,7 +130,7 @@ extension TerminalChat {
         }
         let width = max(1, width)
         if snapshot.currentActivityKind == .thinking,
-           let thought = (snapshot.currentThought ?? snapshot.currentActivity)?.nilIfBlank {
+           let thought = snapshot.currentThought?.nilIfBlank {
             // The rows of the transcript fit `width` unless one glyph is wider
             // than the view itself (a view of one column); only such a row is cut.
             return subAgentTranscriptRows(

@@ -171,6 +171,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   is built with `appModeOverride: true`, so `resolvedRunMode(stdinIsTerminal:)`
   resolves as before. A `switch` over `AgentRunMode` that has a case for
   `.automatic` no longer compiles: drop it.
+- **Breaking:** `DirectSubAgentRuntime.AgentSnapshot.accumulatedOutput` and
+  the `accumulatedOutput:` parameter of its initializer are removed. Nothing
+  read it: the runtime joined the output of every turn of an agent into it
+  and copied it into every snapshot. `latestOutput` keeps the output of the
+  latest turn.
 
 ### Fixed
 
