@@ -619,7 +619,7 @@ public final class TelegramChannel: ChatInteractionHost {
             await presentNotice(
                 """
                 ZenCODE: Telegram is not receiving messages. \(text)
-                ZenCODE keeps retrying every minute. Check the bot token with /setup, or stop the other process polling this bot. /telegram shows the latest error.
+                ZenCODE keeps retrying every minute. Check the bot token with zen --setup, or stop the other process polling this bot. /telegram shows the latest error.
 
                 """,
                 channel: .failure

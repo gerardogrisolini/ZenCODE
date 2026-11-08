@@ -107,14 +107,14 @@ public struct AgentVoiceSettingsManifest: Codable, Equatable, Sendable {
 
     /// Telegram voice-message transcription.
     public let enabled: Bool
-    /// The `AVSpeechSynthesisVoice` identifier chosen in `/setup` > Voice mode
+    /// The `AVSpeechSynthesisVoice` identifier chosen in `zen --setup` > Voice mode
     /// on macOS to read answers aloud; nil selects the best installed voice.
     /// Independent of `enabled`, and inert on Linux.
     public let macOSVoiceIdentifier: String?
     /// Whole seconds of silence that end a spoken utterance in voice mode,
-    /// chosen in `/setup` > Voice mode; nil applies the built-in default.
+    /// chosen in `zen --setup` > Voice mode; nil applies the built-in default.
     public let utteranceSilenceSeconds: Int?
-    /// How an utterance is sent, chosen in `/setup` > Voice mode; nil means
+    /// How an utterance is sent, chosen in `zen --setup` > Voice mode; nil means
     /// `.pause`. `.keyword` applies only while `sendKeyword` is set.
     public let sendMode: SendMode?
     /// The spoken word that ends and sends an utterance in `.keyword` mode,

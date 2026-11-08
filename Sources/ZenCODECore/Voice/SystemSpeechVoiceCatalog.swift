@@ -3,7 +3,7 @@
 //  ZenCODE
 //
 //  The macOS system voices that read answers aloud in terminal voice mode,
-//  and the rules that pick one. `/setup` > Voice mode lists them and saves
+//  and the rules that pick one. `zen --setup` > Voice mode lists them and saves
 //  the operator's choice as `voice.macOSVoiceIdentifier`; the speaker applies
 //  the same rules when `/voice on` starts. Voices are plain values so the
 //  rules are testable without the voices installed on a machine. Siri voices

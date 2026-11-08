@@ -37,7 +37,7 @@ public struct AgentConfiguration: Sendable {
     Autonomous ZenCODE CLI and ACP agent.
 
     Usage:
-      zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
+      zen [--setup] [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
 
     Modes:
       --tui                  Human terminal chat (default).
@@ -45,7 +45,8 @@ public struct AgentConfiguration: Sendable {
       -f PATH                Run one headless prompt read from a file (absolute path). With -p, the file is added as context.
       --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt or -f).
       --acp                  ACP JSON-RPC over stdio for compatible clients.
-      --telegram             Run the session from the linked Telegram chat, without the TUI (Telegram must be set up and paired with /setup).
+      --telegram             Run the session from the linked Telegram chat, without the TUI (Telegram must be set up and paired with zen --setup).
+      --setup                Open the interactive setup and exit. Requires an interactive terminal; cannot be combined with other options.
 
     Agent runtime:
       --agent NAME           Agent profile from ~/.zencode/agents.json. Default is used when omitted.
@@ -57,7 +58,6 @@ public struct AgentConfiguration: Sendable {
       --max-output-tokens N   Maximum generated tokens per model call. Default: model default.
 
     Tool discovery:
-      In the TUI, use /setup to reconfigure ZenCODE and restore the current session without restarting the app.
       In the TUI, use /agents to switch agent profiles without restarting the TUI.
       In the TUI, use /tools to enable local, shell, search, git, memory, sub-agent, or optional feature tools.
       In the TUI, use the Builder agent to create and manage generated Swift feature packages with /feature.
@@ -123,8 +123,8 @@ public struct AgentConfiguration: Sendable {
     }
 
     /// Validates command-line syntax without requiring settings or agent files.
-    /// The executable uses this before first-run setup so an unknown option
-    /// cannot accidentally launch a mutating setup flow.
+    /// The executable uses this before the setup gate, so an unknown option is
+    /// reported as such even while ZenCODE is not configured.
     public static func validateArguments(_ rawArguments: [String]) throws {
         _ = try Self(
             arguments: rawArguments,
@@ -497,7 +497,8 @@ public struct AgentConfiguration: Sendable {
     /// resolved like the full parser does but without validating any other
     /// option: the last `--working-directory <value>` wins over the default.
     /// For flows that run before (or without) building a configuration, such as
-    /// `/setup`, which still has to know which project the session belongs to.
+    /// the memory maintenance of `zen --setup`, which still has to know which
+    /// project it works on.
     static func launchWorkingDirectoryURL(
         arguments: [String],
         environment: [String: String]

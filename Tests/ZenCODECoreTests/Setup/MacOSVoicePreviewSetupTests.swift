@@ -2,7 +2,7 @@
 //  MacOSVoicePreviewSetupTests.swift
 //  ZenCODECoreTests
 //
-//  The audio preview of `/setup` > Voice mode on macOS. A recording player
+//  The audio preview of `zen --setup` > Voice mode on macOS. A recording player
 //  replaces the synthesizer, so these tests play no audio.
 //
 

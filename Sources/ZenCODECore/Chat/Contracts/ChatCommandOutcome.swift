@@ -20,9 +20,9 @@ public enum ChatCommandAction: Sendable, Equatable {
     /// and review turn the commands start is the second kind, with the
     /// `purpose` it carries.
     case startTurn(prompt: String, purpose: ChatTurnPurpose, locksResponseLanguage: Bool)
-    /// The line names a command that only the channel can run (`/setup`,
-    /// `/telegram`, `/voice`, `/ds4`, `/feature`, `/cron`, `/exit`,
-    /// `/tools logs`); the shared commands did nothing with it.
+    /// The line names a command that only the channel can run (`/telegram`,
+    /// `/voice`, `/ds4`, `/feature`, `/cron`, `/exit`, `/tools logs`); the
+    /// shared commands did nothing with it.
     case channelCommand
 }
 

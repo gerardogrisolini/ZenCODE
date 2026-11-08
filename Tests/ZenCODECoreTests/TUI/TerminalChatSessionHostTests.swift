@@ -167,7 +167,7 @@ struct TerminalChatSessionHostTests {
                 === terminal.chatSessionPresenter)
             #expect(controller.host is ChatSlotInteractionHost)
             #expect(controller.channelHooks === terminal)
-            #expect(controller.commandRegistry.descriptor(forLine: "/setup")?.scope == .channel)
+            #expect(controller.commandRegistry.descriptor(forLine: "/exit")?.scope == .channel)
             #expect(controller.hostBinding?.slotID == slot)
             #expect(host.activeChannel(in: slot) == .primary)
             #expect(host.telegramChannel(in: slot) == nil)
@@ -203,22 +203,17 @@ struct TerminalChatSessionHostTests {
             #expect(host.sleepAssertionReason == "ZenCODE terminal session active")
             #expect(host.incarnation(in: terminal.terminalSlotID)?.controller === terminal.chatSession)
 
-            // After `/setup` the first session is the one the setup interrupted.
-            let resumed = TerminalChat(
+            // Every terminal starts a new session.
+            let another = TerminalChat(
                 configuration: try environment.configuration(),
                 stdinIsTerminal: false,
-                sessionRunner: environment.makeRunner(),
-                runtimeSetupResumeSnapshot: TerminalChatResumeSnapshot(
-                    sessionID: "terminal-before-setup", cacheKey: nil, history: [],
-                    transcriptHistory: [], activePlan: nil, checkpointTree: nil, savedSessionName: nil
-                )
+                sessionRunner: environment.makeRunner()
             )
-            #expect(resumed.sessionID == "terminal-before-setup")
-            resumed.applyRuntimeSetupResumeSnapshotIfNeeded()
-            #expect(resumed.sessionID == "terminal-before-setup")
-            #expect(resumed.sessionHost.incarnation(in: resumed.terminalSlotID)?.sessionID == "terminal-before-setup")
+            #expect(another.sessionID.hasPrefix("terminal-"))
+            #expect(another.sessionID != terminal.sessionID)
+            #expect(another.sessionHost.incarnation(in: another.terminalSlotID)?.sessionID == another.sessionID)
             await host.shutdown()
-            await resumed.sessionHost.shutdown()
+            await another.sessionHost.shutdown()
         }
     }
 

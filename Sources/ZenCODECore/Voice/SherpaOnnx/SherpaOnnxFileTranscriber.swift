@@ -7,7 +7,7 @@
 //  fails on a file that is not really Ogg Opus — into a temporary
 //  16 kHz mono WAV file; `sherpa-onnx-vad-with-offline-asr` then splits it on
 //  silences with the Silero voice activity detector and recognizes each
-//  segment with Parakeet TDT 0.6B v3 — the files installed by `/setup` >
+//  segment with Parakeet TDT 0.6B v3 — the files installed by `zen --setup` >
 //  Voice mode. Parakeet recognizes the spoken language by itself. Every
 //  program runs as an external process, and the temporary WAV lives in a
 //  private directory removed as soon as the transcription ends.

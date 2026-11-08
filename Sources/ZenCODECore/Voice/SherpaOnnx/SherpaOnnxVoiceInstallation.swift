@@ -207,7 +207,7 @@ enum SherpaOnnxVoiceInstallError: LocalizedError, Equatable {
         case .unsupportedArchitecture:
             return "No prebuilt sherpa-onnx programs exist for this processor architecture."
         case .notInstalled:
-            return "Voice mode files are not installed. Run /setup and choose Voice mode to download them."
+            return "Voice mode files are not installed. Run zen --setup and choose Voice mode to download them."
         case let .missingTool(tool):
             return "The \(tool) program is required to unpack the voice mode files. Install it with your package manager and try again."
         case let .httpStatus(status):
@@ -219,7 +219,7 @@ enum SherpaOnnxVoiceInstallError: LocalizedError, Equatable {
         case let .extractionFailed(fileName, reason):
             return "\(fileName) could not be unpacked: \(reason)"
         case let .unexpectedLayout(fileName):
-            return "\(fileName) does not contain the expected files. Reinstall it from /setup > Voice mode."
+            return "\(fileName) does not contain the expected files. Reinstall it from zen --setup > Voice mode."
         }
     }
 }

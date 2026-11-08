@@ -95,10 +95,10 @@ public actor ZenCODEACPBridge {
     public let permissionBroker: ACPPermissionBroker
     /// `true` when ZenCODE has no usable configuration yet. `initialize` and
     /// `authenticate` still answer so the client can offer the terminal setup
-    /// method; every handler that would build a session or a backend answers
-    /// with the ACP `auth_required` error instead (see `ensureConfigured()`).
-    /// The bridge never reloads the configuration: after the setup the client
-    /// reconnects to a fresh process.
+    /// method, which runs `zen --setup`; every handler that would build a
+    /// session or a backend answers with the ACP `auth_required` error instead
+    /// (see `ensureConfigured()`). The bridge never reloads the configuration:
+    /// after the setup the client reconnects to a fresh process.
     let setupRequired: Bool
     var clientFileSystem: ACPClientFileSystem?
     /// The container every ACP session runs in: one slot per session, whose
@@ -306,7 +306,7 @@ public actor ZenCODEACPBridge {
 
     static let setupRequiredMessage =
         "Authentication required: ZenCODE is not configured. "
-        + "Use the \"Set up ZenCODE\" terminal authentication method, or run `zen` in a terminal."
+        + "Use the \"Set up ZenCODE\" terminal authentication method, or run `zen --setup` in a terminal."
 
     /// Registers a lifecycle operation and returns its cancellation token.
     ///

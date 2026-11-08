@@ -185,10 +185,6 @@ public actor AgentCoreSessionRunner {
         authorizationRouter.toggleLocalExecAccessMode()
     }
 
-    func resetLocalExecAccessMode() {
-        authorizationRouter.resetLocalExecAccessMode()
-    }
-
     func createBackendSession(
         _ backend: AgentCoreBackend,
         configuration: AgentCoreSessionConfiguration

@@ -14,11 +14,6 @@ import Glibc
 import Dispatch
 import Foundation
 
-/// Runs the interactive setup owned by the executable composition root. The
-/// return value says whether a usable configuration remains available for
-/// rebuilding the chat.
-public typealias ZenCODEInteractiveSetupHandler = @Sendable () async throws -> Bool
-
 public enum ZenCODECommandLineRunner {
     /// Meta-commands that keep their normal textual behavior and exit code.
     /// When one of them is present, `--jsonl` is ignored: the meta-command
@@ -44,19 +39,16 @@ public enum ZenCODECommandLineRunner {
         return !hasMetaCommand
     }
     public static func main(
-        setupHandler: ZenCODEInteractiveSetupHandler? = nil,
         backendFactory: AgentRuntimeBackendFactory? = nil
     ) async {
         await main(
             arguments: CommandLine.arguments,
-            setupHandler: setupHandler,
             backendFactory: backendFactory
         )
     }
 
     public static func main(
         arguments rawArguments: [String],
-        setupHandler: ZenCODEInteractiveSetupHandler? = nil,
         backendFactory: AgentRuntimeBackendFactory? = nil
     ) async {
         var requestedJSONL = false
@@ -75,12 +67,13 @@ public enum ZenCODECommandLineRunner {
             }
             // While ZenCODE has no usable configuration, `--acp` must still
             // answer `initialize` so the client can offer the terminal setup
-            // method. That path never reads the persisted configuration: the
-            // client relaunches the agent after the setup, so no hot reload.
+            // method, which launches `zen --setup`. That path never reads the
+            // persisted configuration: the client relaunches the agent after
+            // the setup, so no hot reload.
             let unconfiguredACPConfiguration = try Self.unconfiguredACPConfiguration(
                 arguments: sanitizedArguments
             )
-            var configuration = try unconfiguredACPConfiguration
+            let configuration = try unconfiguredACPConfiguration
                 ?? AgentConfiguration(arguments: sanitizedArguments)
             if configuration.printHelp {
                 AgentOutput.standardOutput.writeString(AgentConfiguration.helpText)
@@ -143,61 +136,25 @@ public enum ZenCODECommandLineRunner {
                     },
                     backendFactory: backendFactory ?? ChatSessionRuntimeFactory.productionBackendFactory
                 )
-                var resumeSnapshot: TerminalChatResumeSnapshot?
-                // The container of the chat's sessions, one per chat
-                // lifecycle over the one runner: `/setup` rereads the
-                // configuration, which the container's environment is read
-                // from once. `nil` once it is shut down.
-                var sessionHost: ChatSessionHost?
+                // The container of the chat's session, over the one runner.
+                // The chat runs one lifecycle, then the host shuts down with
+                // the runner.
+                let host = TerminalChat.makeSessionHost(
+                    configuration: configuration,
+                    sessionRunner: sessionRunner
+                )
                 do {
-                    while true {
-                        let host = TerminalChat.makeSessionHost(
-                            configuration: configuration,
-                            sessionRunner: sessionRunner
-                        )
-                        sessionHost = host
-                        let outcome = try await AgentRuntimeLauncher.runTerminalChat(
-                            configuration: configuration,
-                            stdinIsTerminal: interactiveInputAvailable,
-                            sessionHost: host,
-                            permissionAuthorizer: permissionAuthorizer,
-                            runtimeSetupResumeSnapshot: resumeSnapshot
-                        )
-                        switch outcome {
-                        case .exited:
-                            await host.shutdown()
-                            sessionHost = nil
-                            return
-                        case let .setupRequested(snapshot):
-                            // The container ends with this chat; the runner
-                            // keeps its external tools for the next one.
-                            await host.shutdown(keepingExternalTools: true)
-                            sessionHost = nil
-                            guard let setupHandler else {
-                                throw ZenCODECommandLineRunnerError.setupUnavailable
-                            }
-                            guard try await setupHandler() else {
-                                await sessionRunner.shutdown()
-                                return
-                            }
-                            await permissionAuthorizer.reloadPersistedPermissions()
-                            await sessionRunner.resetLocalExecAccessMode()
-                            resumeSnapshot = snapshot
-                            configuration = try AgentConfiguration(
-                                arguments: sanitizedArguments
-                            )
-                        }
-                    }
+                    try await AgentRuntimeLauncher.runTerminalChat(
+                        configuration: configuration,
+                        stdinIsTerminal: interactiveInputAvailable,
+                        sessionHost: host,
+                        permissionAuthorizer: permissionAuthorizer
+                    )
                 } catch {
-                    // A container still open closes its fence with the runner;
-                    // one already ended leaves the runner to shut down.
-                    if let sessionHost {
-                        await sessionHost.shutdown()
-                    } else {
-                        await sessionRunner.shutdown()
-                    }
+                    await host.shutdown()
                     throw error
                 }
+                await host.shutdown()
             case .telegram:
                 // The session driven only by the linked Telegram chat, without
                 // the TUI. The runner logs on stderr with timestamps, its fatal
@@ -249,8 +206,8 @@ public enum ZenCODECommandLineRunner {
     ///
     /// Help and version requests are left to the ordinary path, which prints
     /// them without ever needing a configuration. The persisted configuration
-    /// is only consulted for the setup gate, with the same rule the executable
-    /// applies before the interactive setup (`ZenCODESetupRequirement`).
+    /// is only consulted for the setup gate, with the same rule as the
+    /// executable's gate (`ZenCODESetupRequirement`).
     private static func unconfiguredACPConfiguration(
         arguments: [String]
     ) throws -> AgentConfiguration? {
@@ -407,16 +364,5 @@ public enum ZenCODECommandLineRunner {
             || argument == "--skills"
             || argument == "--max-tool-rounds"
             || argument == "--max-output-tokens"
-    }
-}
-
-private enum ZenCODECommandLineRunnerError: LocalizedError {
-    case setupUnavailable
-
-    var errorDescription: String? {
-        switch self {
-        case .setupUnavailable:
-            return "Interactive setup is unavailable in this executable."
-        }
     }
 }

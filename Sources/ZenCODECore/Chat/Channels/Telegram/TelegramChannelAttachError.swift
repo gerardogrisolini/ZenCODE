@@ -30,9 +30,9 @@ public enum TelegramChannelAttachError: Error, Sendable, Equatable {
     public var failureText: String {
         switch self {
         case .notPaired:
-            "ZenCODE: Telegram is not paired. Run the /setup command in zen.\n"
+            "ZenCODE: Telegram is not paired. Run zen --setup.\n"
         case .invalidConfiguration:
-            "ZenCODE: Telegram configuration is invalid. Run /setup to pair Telegram again.\n"
+            "ZenCODE: Telegram configuration is invalid. Run zen --setup to pair Telegram again.\n"
         case let .controlFailed(description):
             "ZenCODE: \(description)\n"
         }

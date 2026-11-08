@@ -234,7 +234,7 @@ public enum ZenDoctor {
                     : "Not created yet at \(supportDirectory.path).",
                 remedy: supportExists
                     ? nil
-                    : "Run zen; setup opens automatically and creates ~/.zencode and its base files."
+                    : "Run zen --setup; it creates ~/.zencode and its base files."
             )
         )
 
@@ -311,7 +311,7 @@ public enum ZenDoctor {
                     title: "Providers and models",
                     status: .warning,
                     detail: "No readable settings.json, so no models are configured.",
-                    remedy: "Run zen; setup opens automatically so you can configure at least one model."
+                    remedy: "Run zen --setup to configure at least one model."
                 )
             )
             checks.append(
@@ -320,7 +320,7 @@ public enum ZenDoctor {
                     title: "Default model & thinking",
                     status: .warning,
                     detail: "No readable settings.json, so no default model or thinking level can be verified.",
-                    remedy: "Run zen; setup opens automatically so you can configure the default model and thinking level."
+                    remedy: "Run zen --setup to configure the default model and thinking level."
                 )
             )
         }
@@ -357,7 +357,7 @@ public enum ZenDoctor {
                 title: "Setup",
                 status: .warning,
                 detail: "Missing agents.json at \(agentsURL.path).",
-                remedy: "Run zen; setup opens automatically to create the missing configuration."
+                remedy: "Run zen --setup to create the missing configuration."
             )
         case .invalid:
             return ZenDoctorCheck(
@@ -365,7 +365,7 @@ public enum ZenDoctor {
                 title: "Setup",
                 status: .failure,
                 detail: "agents.json at \(agentsURL.path) could not be read.",
-                remedy: "Repair or recreate the file, then run zen; setup opens automatically when configuration is invalid."
+                remedy: "Repair or recreate the file, or run zen --setup to rewrite it."
             )
         case .value:
             break
@@ -378,7 +378,7 @@ public enum ZenDoctor {
                 title: "Setup",
                 status: .warning,
                 detail: "Missing settings.json at \(settingsURL.path).",
-                remedy: "Run zen; setup opens automatically to create the missing configuration."
+                remedy: "Run zen --setup to create the missing configuration."
             )
         case .invalid:
             return ZenDoctorCheck(
@@ -386,7 +386,7 @@ public enum ZenDoctor {
                 title: "Setup",
                 status: .failure,
                 detail: "settings.json at \(settingsURL.path) could not be read.",
-                remedy: "Repair or recreate the file, then run zen; setup opens automatically when configuration is invalid."
+                remedy: "Repair or recreate the file, or run zen --setup to rewrite it."
             )
         case .value:
             return ZenDoctorCheck(
@@ -419,7 +419,7 @@ public enum ZenDoctor {
                 title: "Providers and models",
                 status: .warning,
                 detail: "No models are configured.",
-                remedy: "Run zen; setup opens automatically so you can configure at least one model."
+                remedy: "Run zen --setup to configure at least one model."
             )
         }
 
@@ -453,7 +453,7 @@ public enum ZenDoctor {
                 title: "Providers and models",
                 status: .warning,
                 detail: "\(count) model(s) configured; \(providers.count) remote provider(s) have no stored API key: \(summary).",
-                remedy: "Run /setup to save an API key for each provider."
+                remedy: "Run zen --setup to save an API key for each provider."
             )
         }
 
@@ -472,7 +472,7 @@ public enum ZenDoctor {
                 title: "Default model & thinking",
                 status: .warning,
                 detail: "No default model is selected, so its thinking level cannot be verified.",
-                remedy: "Select a default model and thinking level with the /setup command in zen."
+                remedy: "Select a default model and thinking level with zen --setup."
             )
         }
         guard let model = manifest.models.first(where: { $0.matches(selected) }) else {
@@ -481,7 +481,7 @@ public enum ZenDoctor {
                 title: "Default model & thinking",
                 status: .warning,
                 detail: "Default model \(selected) is not among configured models, so its thinking level cannot be verified.",
-                remedy: "Reselect a configured model and thinking level with the /setup command in zen."
+                remedy: "Reselect a configured model and thinking level with zen --setup."
             )
         }
         let thinking = model.supportsThinking
@@ -506,7 +506,7 @@ public enum ZenDoctor {
                 title: "Agents",
                 status: .warning,
                 detail: "Missing agents.json at \(agentsURL.path).",
-                remedy: "Run zen; setup opens automatically and creates the default agent profiles."
+                remedy: "Run zen --setup; it creates the default agent profiles."
             )
         case .invalid:
             return ZenDoctorCheck(
@@ -514,7 +514,7 @@ public enum ZenDoctor {
                 title: "Agents",
                 status: .failure,
                 detail: "agents.json at \(agentsURL.path) could not be read.",
-                remedy: "Repair or recreate the file, then run zen; setup opens automatically when configuration is invalid."
+                remedy: "Repair or recreate the file, or run zen --setup to rewrite it."
             )
         case let .value(agents):
             return ZenDoctorCheck(
@@ -525,7 +525,7 @@ public enum ZenDoctor {
                     ? "No agent profiles are configured."
                     : "\(agents.count) agent profile(s): \(agents.map(\.displayName).joined(separator: ", ")).",
                 remedy: agents.isEmpty
-                    ? "Run zen; setup opens automatically and creates the default agent profiles."
+                    ? "Run zen --setup; it creates the default agent profiles."
                     : nil
             )
         }

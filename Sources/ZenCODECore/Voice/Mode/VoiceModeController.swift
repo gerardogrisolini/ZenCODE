@@ -123,7 +123,7 @@ extension VoiceModeController {
     }
 }
 
-/// The voice mode options chosen in `/setup` > Voice mode, resolved against
+/// The voice mode options chosen in `zen --setup` > Voice mode, resolved against
 /// the built-in defaults; shared by both platforms.
 struct VoiceModeOptions: Sendable, Equatable {
     static let defaultUtteranceSilence = VoiceDictationSegmenter.defaultSilence
@@ -276,7 +276,7 @@ enum VoiceModePlatform {
     static let unsupportedMessage = "ZenCODE: voice mode requires macOS or Linux.\n"
 
     /// Builds the controller for this platform. On Linux it requires the
-    /// files downloaded from `/setup` > Voice mode. `readingVoiceIdentifier`
+    /// files downloaded from `zen --setup` > Voice mode. `readingVoiceIdentifier`
     /// is the macOS reading voice chosen there; Linux reads with its installed
     /// Piper voice and ignores it. `options` are the voice mode options chosen
     /// there on either platform.

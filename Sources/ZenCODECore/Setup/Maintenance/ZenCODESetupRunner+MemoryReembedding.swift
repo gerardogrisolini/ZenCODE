@@ -48,7 +48,7 @@ extension ZenCODESetupRunner {
     }
 
     /// Where the operator resumes or retries a run.
-    static let memoryReembeddingMenuPath = "/setup › Data management › Rebuild memory embeddings"
+    static let memoryReembeddingMenuPath = "zen --setup › Data management › Rebuild memory embeddings"
 
     // MARK: - Trigger
 
@@ -223,7 +223,7 @@ extension ZenCODESetupRunner {
             )
         case .aborted:
             output.append(
-                "No further requests were sent and vectors saved so far are kept. Check /setup › Memory embeddings, then resume with \(memoryReembeddingMenuPath)."
+                "No further requests were sent and vectors saved so far are kept. Check zen --setup › Memory embeddings, then resume with \(memoryReembeddingMenuPath)."
             )
         }
         return output.joined(separator: "\n")
@@ -309,7 +309,7 @@ extension ZenCODESetupRunner {
     static func runMemoryReembeddingFromDataManagement() async {
         guard let provider = MemoryEmbedding.provider() else {
             AgentOutput.standardError.writeString(
-                "No embedding endpoint is configured: memory retrieval uses BM25 only, so there are no vectors to rebuild. Configure one in /setup › Memory embeddings and save it first.\n\n"
+                "No embedding endpoint is configured: memory retrieval uses BM25 only, so there are no vectors to rebuild. Configure one in zen --setup › Memory embeddings and save it first.\n\n"
             )
             return
         }

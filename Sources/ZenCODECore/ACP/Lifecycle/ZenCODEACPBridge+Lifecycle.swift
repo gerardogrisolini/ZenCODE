@@ -74,10 +74,10 @@ extension ZenCODEACPBridge {
     /// - `zencode-setup` (`type: terminal`): offered to clients that declare
     ///   `_meta.terminal-auth: true`, the ACP terminal-authentication
     ///   extension. The client launches the agent with the method's `args` in
-    ///   place of the default ones; the empty `args` here make it run plain
-    ///   `zen`, which opens the interactive setup (provider and sign-in) when
-    ///   ZenCODE is not configured yet, and exits once it completes. The client
-    ///   then reconnects and initializes the agent again.
+    ///   place of the default ones: `["--setup"]` makes it run
+    ///   `zen --setup`, which opens the interactive setup (provider and
+    ///   sign-in) and exits when the setup ends. The client then reconnects
+    ///   and initializes the agent again.
     ///
     /// The agent method, when present, always comes first. A client declaring
     /// neither capability receives no authentication method.
@@ -100,7 +100,7 @@ extension ZenCODEACPBridge {
                 "id": "zencode-setup",
                 "name": "Set up ZenCODE",
                 "type": "terminal",
-                "args": [String]()
+                "args": [ZenCODESetupCommand.option]
             ])
         }
 

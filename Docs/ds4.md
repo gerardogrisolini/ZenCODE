@@ -13,7 +13,7 @@ The architecture and persistence contract behind this guide is in
 | Part | What it is | Where |
 | --- | --- | --- |
 | Engine library | `libzencode-ds4.dylib` (macOS) or `libzencode-ds4.so` (Linux): a ZenCODE C shim (ABI v2) compiled against the `ds4.h` of your checkout and linked with the objects of the DS4 Makefile | `<support>/ds4/engines/<backend>-<hash16>/` |
-| Build | `Scripts/build-ds4-engine.sh`, run by `/setup` or by hand | Writes the library and `build.json` next to it |
+| Build | `Scripts/build-ds4-engine.sh`, run by `zen --setup` or by hand | Writes the library and `build.json` next to it |
 | Runtime | Loaded at runtime with `dlopen` (`RTLD_NOW` and `RTLD_LOCAL`); every engine call runs on one dedicated thread | One engine per `zen` process |
 | Provider | The DS4 provider, with a `ds4Runtime` on each of its models | `settings.json` |
 
@@ -117,7 +117,7 @@ files.
 
 ## Setup
 
-1. Open `/setup` and select **DS4 local runtime (in-process engine)**, or
+1. Run `zen --setup` and select **DS4 local runtime (in-process engine)**, or
    reconfigure the DS4 provider from **Providers and models**. Both use the same
    flow and never call `/models`, because setup never loads the engine. When DS4
    is already configured, the section first asks whether to reconfigure the

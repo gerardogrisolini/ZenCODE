@@ -32,6 +32,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - `TerminalSubAgentDetailAction.closeList` is the `q` of the sub-agent list, an
   action distinct from `Esc` so a `q` typed right after `Enter` (type-ahead)
   cannot close the detail it just opened.
+- `zen --setup` opens the interactive setup and exits. It is now the only way
+  to start the setup, for the first configuration and for every later change:
+  it always opens the setup menu, also when ZenCODE is already configured,
+  never enters a chat, and ends with exit status 0 when a valid configuration
+  exists at the end and 1 when it does not (for example Esc on the first menu
+  during a first setup) or on error. A reset of the configuration or the import
+  of a backup reopens the setup in the same run. It requires an interactive
+  terminal and cannot be combined with other options (`Options --setup and
+  <option> cannot be combined.`, exit status 1); `--help`, `--version`,
+  `--doctor`, and `--install-features` keep precedence over it. `zen --help`
+  lists it. See [Docs/zen.md](Docs/zen.md#first-setup).
 
 ### Changed
 
@@ -64,6 +75,55 @@ Release tags follow the strict `vX.Y.Z` contract described in
   and `FeatureMCPBridgeKit` are removed, with the tests that needed them, and
   the root test suite is roughly halved (about 6,000 to 3,000 tests) by
   dropping duplicate, wording-only and trivial tests.
+- Starting ZenCODE without a valid configuration (`settings.json` or
+  `agents.json` missing or invalid, or no model configured) no longer opens
+  the setup automatically. `zen` (the TUI), `zen --ui`, the headless modes
+  (`-p` and `-f`), `--jsonl`, and `--telegram` do not start: they print
+  ``ZenCODE is not configured. Run `zen --setup` to configure it, then start
+  zen again.`` on standard error (with `--jsonl`, as the framed `error` record
+  of category `configuration` on standard output) and exit with status 1. Run
+  `zen --setup` first. ACP is the only exception: it still answers
+  `initialize` when it is the effective mode (`--acp`, or
+  `ZENCODE_AGENT_MODE=acp` with no other mode-selecting option). `--telegram`
+  requires Telegram set up and paired with `zen --setup`. The hints of
+  `zen --doctor`, of the macOS app, and of the Telegram, voice, ZenCRON, and
+  provider-key messages that sent you to `/setup` or to run `zen` now name
+  `zen --setup`. See [Docs/zen.md](Docs/zen.md#startup-without-a-valid-configuration).
+- The ACP terminal authentication method `zencode-setup` (name **Set up
+  ZenCODE**, `type: terminal`) now has `args: ["--setup"]` instead of `[]`: the
+  client runs `zen --setup` in a terminal, the setup opens (also when ZenCODE is
+  already configured), and the process exits when it ends, with no chat and no
+  `/exit`; the client then reconnects and initializes the agent again. The
+  `auth_required` (-32000) message is now `Authentication required: ZenCODE is
+  not configured. Use the "Set up ZenCODE" terminal authentication method, or
+  run `zen --setup` in a terminal.` See [Docs/zen.md](Docs/zen.md#acp-mode).
+- `TerminalChat.run()` and `AgentRuntimeLauncher.runTerminalChat(...)` now
+  return `Void` instead of `TerminalChatRunOutcome` (removed below): a chat
+  ends only when the operator leaves it, since it can no longer ask for a
+  setup. A caller that matched the outcome no longer compiles; it can drop the
+  `switch`.
+
+### Removed
+
+- **Breaking:** the TUI command `/setup` is removed and answers as an unknown
+  command, and with it the reconfiguration in place that saved the session,
+  rebuilt the runtime, and restored the conversation. To reconfigure ZenCODE,
+  leave the chat and run `zen --setup`, then start `zen` again. References to
+  `/setup` in earlier entries of this file now mean `zen --setup`.
+- **Breaking (ZenCODECore API):** the API that carried a setup request or the
+  state of the in-process restart is removed with it:
+  `ZenCODEInteractiveSetupHandler`; the `setupHandler:` parameter of both
+  `ZenCODECommandLineRunner.main` overloads (`main(arguments:backendFactory:)`
+  and `main(backendFactory:)` remain); `TerminalChatResumeSnapshot` and
+  `TerminalChatRunOutcome`; the `runtimeSetupResumeSnapshot:` parameter of the
+  two public `TerminalChat` initializers and of
+  `AgentRuntimeLauncher.runTerminalChat(...)`; and
+  `ChatToolConsentAuthorizer.reloadPersistedPermissions()`, which only called
+  `removeAllCachedDecisions()` (it stays) to reconcile the consent cache after
+  a setup run. The internal
+  `LocalExecPermissionAuthorizer.reloadPersistedPermissions()` and
+  `AgentCoreSessionRunner.resetLocalExecAccessMode()` went with them, since
+  no setup runs inside a process that serves a chat any longer.
 
 ### Fixed
 

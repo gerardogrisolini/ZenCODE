@@ -121,5 +121,5 @@ public enum ZenAppLaunchFailure: Error, Sendable, Equatable {
 
     /// The text of ``notConfigured(_:)``, before the error description.
     public static let notConfiguredMessage =
-        "ZenCODE is not configured. Run `zen` in a terminal to complete the setup, then start the app again."
+        "ZenCODE is not configured. Run `zen --setup` in a terminal to complete the setup, then start the app again."
 }

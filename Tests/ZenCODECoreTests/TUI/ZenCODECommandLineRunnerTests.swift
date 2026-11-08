@@ -492,21 +492,29 @@ struct ZenCODECommandLineRunnerTests {
     }
 
     @Test
-    func zenExecutableRefusesTelegramModeWithoutConfigurationInsteadOfStartingTheSetup() throws {
+    func zenExecutableStopsEveryModeButACPAtTheSetupGate() throws {
         let supportURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("zencode-telegram-unconfigured-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("zencode-setup-gate-\(UUID().uuidString)", isDirectory: true)
         defer {
             try? FileManager.default.removeItem(at: supportURL)
         }
         let invocations: [(arguments: [String], runMode: String?)] = [
+            (arguments: [], runMode: nil),
+            (arguments: ["--tui"], runMode: nil),
+            (arguments: [], runMode: "tui"),
+            (arguments: ["-p", "hello"], runMode: nil),
+            (arguments: ["-f", "/tmp/zencode-setup-gate-prompt.md"], runMode: nil),
+            (arguments: [], runMode: "headless"),
             (arguments: ["--telegram"], runMode: nil),
-            (arguments: [], runMode: "telegram")
+            (arguments: [], runMode: "telegram"),
+            // An option that selects another mode wins over the ACP environment.
+            (arguments: ["--tui"], runMode: "acp"),
         ]
         for invocation in invocations {
             var environment = makeEnvironment(runMode: invocation.runMode)
             environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
 
-            // No terminal: a setup that wrongly started could not wait for input.
+            // No terminal input: the gate stops each mode before it could wait for any.
             let result = try runZen(
                 zenExecutableURL(),
                 arguments: invocation.arguments,
@@ -514,13 +522,80 @@ struct ZenCODECommandLineRunnerTests {
                 standardInput: FileHandle.nullDevice
             )
 
-            #expect(result.exitCode == 1)
-            #expect(result.stdout.isEmpty)
+            #expect(result.exitCode == 1, "\(invocation)")
+            #expect(result.stdout.isEmpty, "\(invocation)")
             #expect(
                 String(decoding: result.stderr, as: UTF8.self)
-                    .hasPrefix("ZenCODE: Missing ZenCODE settings file: ")
+                    == "ZenCODE is not configured. Run `zen --setup` to configure it, then start zen again.\n",
+                "\(invocation)"
             )
         }
+    }
+
+    @Test
+    func zenExecutableFramesTheSetupGateErrorWithJSONL() throws {
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-setup-gate-jsonl-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: supportURL)
+        }
+        var environment = makeEnvironment(runMode: nil)
+        environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
+
+        let result = try runZen(
+            zenExecutableURL(),
+            arguments: ["--jsonl", "-p", "hello"],
+            environment: environment,
+            standardInput: FileHandle.nullDevice
+        )
+
+        #expect(result.exitCode == 1)
+        #expect(result.stderr.isEmpty)
+        #expect(result.stdout.last == 0x0A)
+        #expect(result.stdout.filter { $0 == 0x0A }.count == 1)
+        let record = try JSONDecoder().decode(JSONValue.self, from: result.stdout)
+        #expect(record.objectValue?["type"]?.stringValue == "error")
+        #expect(record.objectValue?["category"]?.stringValue == "configuration")
+        #expect(record.objectValue?["message"]?.stringValue == ZenCODESetupRequirement.notConfiguredMessage)
+    }
+
+    /// Only the refusals: a valid `zen --setup` would open the setup on the
+    /// controlling terminal of the test run, if any.
+    @Test
+    func zenExecutableRefusesSetupWithAnyOtherOptionAsText() throws {
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-setup-conflict-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: supportURL)
+        }
+        var environment = makeEnvironment(runMode: nil)
+        environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
+
+        let invocations: [(arguments: [String], conflicting: String)] = [
+            (arguments: ["--setup", "--tui"], conflicting: "--tui"),
+            (arguments: ["--acp", "--setup"], conflicting: "--acp"),
+            (arguments: ["--setup", "-p", "hello"], conflicting: "-p"),
+            // Always textual, even with `--jsonl`.
+            (arguments: ["--jsonl", "--setup"], conflicting: "--jsonl"),
+            (arguments: ["--setup", "--model", "provider:model"], conflicting: "--model"),
+        ]
+        for invocation in invocations {
+            let result = try runZen(
+                zenExecutableURL(),
+                arguments: invocation.arguments,
+                environment: environment,
+                standardInput: FileHandle.nullDevice
+            )
+            #expect(result.exitCode == 1, "\(invocation.arguments)")
+            #expect(result.stdout.isEmpty, "\(invocation.arguments)")
+            #expect(
+                String(decoding: result.stderr, as: UTF8.self)
+                    == "ZenCODE: Options --setup and \(invocation.conflicting) cannot be combined.\n",
+                "\(invocation.arguments)"
+            )
+        }
+        // Refused before the setup and the migration: nothing was written.
+        #expect(!FileManager.default.fileExists(atPath: supportURL.path))
     }
 
     #if os(macOS)
@@ -541,6 +616,35 @@ struct ZenCODECommandLineRunnerTests {
         #expect(result.stdout.isEmpty)
         // Refused before the setup gate: nothing was written for setup or the app.
         #expect(!FileManager.default.fileExists(atPath: supportURL.path))
+    }
+
+    @Test
+    func zenExecutableDoesNotOpenTheAppWithoutConfiguration() throws {
+        let supportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-ui-unconfigured-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: supportURL)
+        }
+        var environment = makeEnvironment(runMode: nil)
+        environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
+
+        let result = try runZen(
+            zenExecutableURL(),
+            arguments: ["--ui", "--agent", "Developer"],
+            environment: environment,
+            standardInput: FileHandle.nullDevice
+        )
+
+        #expect(result.exitCode == 1)
+        #expect(result.stdout.isEmpty)
+        #expect(
+            String(decoding: result.stderr, as: UTF8.self)
+                == "ZenCODE is not configured. Run `zen --setup` to configure it, then start zen again.\n"
+        )
+        // Stopped at the gate: the app was neither built nor installed.
+        #expect(!FileManager.default.fileExists(
+            atPath: ZenAppInstallation.Layout(supportDirectory: supportURL).logFile.path
+        ))
     }
     #else
     @Test
@@ -602,6 +706,34 @@ struct ZenCODECommandLineRunnerTests {
             #expect(withJSONL.stdout == ordinary.stdout)
             #expect(withJSONL.stderr == ordinary.stderr)
         }
+    }
+
+    /// `ZenCODEStandaloneHelp` builds the executable's help with exact string
+    /// replacements over `AgentConfiguration.helpText`, which change nothing
+    /// when the text drifts: only the real output shows that they matched.
+    @Test
+    func zenExecutableHelpListsSetupAfterDoctorAndNoSlashSetup() throws {
+        var environment = ProcessInfo.processInfo.environment
+        environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = FileManager.default
+            .temporaryDirectory
+            .appendingPathComponent("zencode-help-test-\(UUID().uuidString)", isDirectory: true)
+            .path
+
+        let result = try runZen(zenExecutableURL(), arguments: ["--help"], environment: environment)
+
+        #expect(result.exitCode == 0)
+        #expect(result.stderr.isEmpty)
+        let help = String(decoding: result.stdout, as: UTF8.self)
+        #expect(help.contains("zen [--doctor] [--setup] [--install-features"))
+
+        let lines = help.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let doctorIndex = try #require(lines.firstIndex { $0.hasPrefix("  --doctor ") })
+        #expect(lines.indices.contains(doctorIndex + 1))
+        #expect(lines[doctorIndex + 1].hasPrefix("  --setup "))
+        #expect(lines.filter { $0.hasPrefix("  --setup ") }.count == 1)
+        let telegramLine = try #require(lines.first { $0.hasPrefix("  --telegram ") })
+        #expect(telegramLine.hasSuffix("paired with zen --setup)."))
+        #expect(!help.contains("/setup"))
     }
 
     @Test

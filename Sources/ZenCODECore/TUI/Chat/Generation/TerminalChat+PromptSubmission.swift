@@ -91,22 +91,13 @@ extension TerminalChat {
         return await channelCommandAction(prompt)
     }
 
-    /// The commands only the terminal runs (`/exit`, `/setup`, `/feature`,
+    /// The commands only the terminal runs (`/exit`, `/feature`,
     /// `/tools logs`, `/subagent`, `/telegram`, `/cron`, `/voice`, `/ds4`),
     /// once the shared dispatcher resolved them as visible channel commands.
     private func channelCommandAction(_ command: String) async -> TerminalSubmittedLineAction {
         switch command {
         case "/exit":
             return .exitChat
-        case "/setup":
-            guard stdinIsTerminal else {
-                await writeFailureMessage("ZenCODE: /setup requires an interactive terminal.\n")
-                return .continueChat
-            }
-            return .requestSetup
-        case let command where command.hasPrefix("/setup "):
-            await writeFailureMessage("ZenCODE: /setup does not accept arguments.\n")
-            return .continueChat
         case let command where command == "/tools" || command.hasPrefix("/tools "):
             await handleToolsCommand(command)
             return .continueChat

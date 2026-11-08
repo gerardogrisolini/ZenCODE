@@ -16,7 +16,7 @@ struct ZenLaunchFailureViewTests {
     @Test("only a failed start shows the hint to run zen")
     func theHintOfAFailedStart() {
         #expect(ZenLaunchFailureView.hint(for: .startFailed("The sessions cannot be read."))
-            == "Run `zen` in a terminal to set up or check ZenCODE, then start the app again.")
+            == "Run `zen --setup` in a terminal to set up ZenCODE, or `zen --doctor` to check it, then start the app again.")
         #expect(ZenLaunchFailureView.hint(for: .startFailed("")) == ZenLaunchFailureView.startFailedHint)
     }
 

@@ -273,13 +273,6 @@ public actor ChatToolConsentAuthorizer {
         decisionKeysBySessionID.removeAll()
     }
 
-    /// Drops process-local authorization state so a completed setup run is
-    /// reconciled from the current permissions manifest. This is especially
-    /// important after setup reset removes that manifest.
-    public func reloadPersistedPermissions() {
-        removeAllCachedDecisions()
-    }
-
     func cachedDecisionCount(sessionID: String) -> Int {
         decisionKeysBySessionID[sessionID]?.count ?? 0
     }

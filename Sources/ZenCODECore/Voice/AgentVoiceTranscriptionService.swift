@@ -43,7 +43,7 @@ public actor AgentVoiceTranscriptionService {
     /// Language of the macOS recognizer, e.g. `it`. Linux recognizes the
     /// spoken language by itself.
     private let languageCode: String
-    /// The sherpa-onnx files of `/setup` > Voice mode that transcribe on Linux.
+    /// The sherpa-onnx files of `zen --setup` > Voice mode that transcribe on Linux.
     private let voiceInstallation: SherpaOnnxVoiceInstallation
 
     /// Reads the voice settings and the response language from `manifest`,
@@ -256,7 +256,7 @@ public enum AgentVoiceTranscriptionError: LocalizedError, Sendable, Equatable {
     /// Telegram is paired but its voice-message transcription is off, e.g.
     /// on Linux settings saved before transcription existed there. Saving the
     /// Telegram section again turns it on without a new pairing.
-    public static let notEnabledMessage = "Voice-message transcription is off. Run /setup in zen and open the Telegram section again (you can keep the current pairing) to turn it on."
+    public static let notEnabledMessage = "Voice-message transcription is off. Run zen --setup and open the Telegram section again (you can keep the current pairing) to turn it on."
 
     public var errorDescription: String? {
         switch self {

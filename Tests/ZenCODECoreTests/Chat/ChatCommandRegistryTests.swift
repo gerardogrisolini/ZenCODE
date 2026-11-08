@@ -16,7 +16,7 @@ struct ChatCommandRegistryTests {
     // MARK: - Fixtures
 
     private static let channelCommands: Set<String> = [
-        "/setup", "/ds4", "/feature", "/subagent", "/cron", "/telegram", "/voice", "/exit",
+        "/ds4", "/feature", "/subagent", "/cron", "/telegram", "/voice", "/exit",
     ]
 
     private static let registry = TerminalChat.commandRegistry
@@ -29,6 +29,17 @@ struct ChatCommandRegistryTests {
         let channel = Self.registry.descriptors.filter { $0.scope == .channel }.map(\.command)
         #expect(Set(channel) == Self.channelCommands)
         #expect(channel.count == Self.channelCommands.count)
+    }
+
+    @Test
+    func setupIsNotACommand() {
+        // The setup opens only with `zen --setup`, never from a chat.
+        #expect(Self.registry.descriptor(forLine: "/setup") == nil)
+        #expect(Self.registry.descriptor(forLine: "/setup now") == nil)
+        #expect(!Self.registry.descriptors.contains { $0.command == "/setup" })
+        #expect(!TerminalChat.isKnownSlashCommand("/setup"))
+        #expect(!Self.registry.helpLines(in: []).contains { $0.contains("/setup") })
+        #expect(TerminalChat.unknownCommandMessage(for: "/setup") == "ZenCODE: unknown command '/setup'.\n")
     }
 
     @Test
@@ -61,7 +72,7 @@ struct ChatCommandRegistryTests {
         #expect(visible(.ds4Model).subtracting(always) == ["/ds4"])
         #expect(visible(.builderAgent).subtracting(always) == ["/feature"])
         #expect(visible(.telegramEnabled).subtracting(always) == ["/telegram"])
-        #expect(always.isSuperset(of: ["/setup", "/cron", "/voice", "/exit"]))
+        #expect(always.isSuperset(of: ["/cron", "/voice", "/exit"]))
     }
 
     // MARK: - Generation

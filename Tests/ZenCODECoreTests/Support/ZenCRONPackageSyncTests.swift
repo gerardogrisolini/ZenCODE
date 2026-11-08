@@ -7,7 +7,7 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
-/// `ZenCRONInstallation.syncPackage`: the stable working copy that `/setup`
+/// `ZenCRONInstallation.syncPackage`: the stable working copy that `zen --setup`
 /// builds. Everything happens in UUID named temporary directories.
 @Suite("ZenCRON package sync")
 struct ZenCRONPackageSyncTests {

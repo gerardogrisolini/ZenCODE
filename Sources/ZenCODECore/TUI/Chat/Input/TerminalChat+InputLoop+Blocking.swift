@@ -232,9 +232,6 @@ extension TerminalChat {
                 break
             case .exitChat:
                 shouldContinue = false
-            case .requestSetup:
-                requestedRuntimeSetup = true
-                shouldContinue = false
             case let .runPrompt(prompt):
                 guard await promptGate.acquire() else {
                     shouldContinue = false

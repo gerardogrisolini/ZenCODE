@@ -46,7 +46,7 @@ struct TelegramChannelLifecycleTests {
             } catch {
                 #expect(error == .invalidConfiguration)
                 #expect(error.failureText
-                    == "ZenCODE: Telegram configuration is invalid. Run /setup to pair Telegram again.\n")
+                    == "ZenCODE: Telegram configuration is invalid. Run zen --setup to pair Telegram again.\n")
             }
             #expect(recorder.notices.isEmpty)
             #expect(channel.activeRouteLease == nil)

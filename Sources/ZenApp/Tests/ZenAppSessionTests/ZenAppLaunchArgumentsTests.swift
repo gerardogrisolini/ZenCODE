@@ -108,7 +108,7 @@ struct ZenAppLaunchConfigurationTests {
             }
             #expect(description.hasPrefix("Unknown agent 'Nobody'."))
             #expect(failure.message == "ZenCODE: \(description)")
-            #expect(!failure.message.contains("Run `zen`"))
+            #expect(!failure.message.contains("Run `zen --setup`"))
         }
     }
 

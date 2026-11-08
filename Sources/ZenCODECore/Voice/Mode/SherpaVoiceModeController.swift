@@ -193,7 +193,7 @@ actor SherpaVoiceModeController: VoiceModeController {
     }
 
     /// Default silence that ends an utterance; matches the macOS dictation
-    /// segmenter. `/setup` > Voice mode can change it.
+    /// segmenter. `zen --setup` > Voice mode can change it.
     static let utteranceSilenceSeconds = "5"
     /// Long dictation stays one utterance instead of the 20 s default.
     static let maximumUtteranceSeconds = "60"

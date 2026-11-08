@@ -14,7 +14,7 @@ import ToolCore
 /// block's `MAILTO`.
 ///
 /// A line written by `/cron add` runs ZenCRON, the stable host built by
-/// `/setup`, by absolute path; ZenCRON starts `zen`, searched on the block's
+/// `zen --setup`, by absolute path; ZenCRON starts `zen`, searched on the block's
 /// `PATH=`. Lines written before ZenCRON existed run a bare `zen` and stay
 /// valid: `/cron list`, `remove` and `run` handle both kinds.
 extension TerminalChat {
@@ -211,7 +211,7 @@ extension TerminalChat {
     /// among that command's prompts.
     ///
     /// A run cancelled by chat teardown prints nothing: the terminal is being
-    /// torn down, possibly for `/setup`.
+    /// torn down.
     private func finishCronRun(
         number: Int,
         outputFormat: ZenCronJobCommand.OutputFormat,

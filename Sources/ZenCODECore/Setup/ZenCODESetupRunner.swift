@@ -8,7 +8,7 @@
 import Foundation
 
 public enum ZenCODESetupRunner {
-    /// Runs the interactive setup of `zen` (first run) and `/setup`.
+    /// Runs the interactive setup of `zen --setup`.
     ///
     /// Esc on any prompt returns to the menu that opened that step, with the
     /// step discarded and the changes staged by other sections kept. Esc on a
@@ -17,9 +17,10 @@ public enum ZenCODESetupRunner {
     /// Quick/Custom mode menu, or the prompt to rewrite an invalid
     /// settings.json) leaves setup, with `.cancelled`.
     ///
-    /// It never throws `ZenCODESetupError.cancelled`: the callers end the
-    /// process on an error, so a cancel that still reached this point used to
-    /// close ZenCODE from `/setup`.
+    /// It never throws `ZenCODESetupError.cancelled`: the caller ends the
+    /// process with an error status on a thrown error, so a cancel that still
+    /// reached this point would make `zen --setup` fail instead of ending as
+    /// `.cancelled`.
     public static func run() async throws -> SetupOutcome {
         do {
             return try await runInteractiveSetup()
@@ -287,7 +288,7 @@ public enum ZenCODESetupRunner {
             """
 
             Quick setup configures a remote provider and its models.
-            Advanced options like Telegram can be enabled later with /setup.
+            Advanced options like Telegram can be enabled later with zen --setup.
 
             """
         )

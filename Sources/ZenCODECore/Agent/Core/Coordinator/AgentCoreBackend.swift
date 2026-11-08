@@ -746,7 +746,7 @@ enum AgentCoreBackendError: LocalizedError {
         case .missingRemoteProvider:
             return "The selected remote provider is no longer configured in ZenCODE."
         case let .missingRemoteAPIKey(providerName):
-            return "No API key is stored for \(providerName). Run /setup to configure that provider."
+            return "No API key is stored for \(providerName). Run zen --setup to configure that provider."
         }
     }
 }

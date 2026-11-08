@@ -46,7 +46,7 @@ let targets: [Target] = [
     .target(
         name: "ZenPackageMetadata",
         dependencies: [],
-        // `/setup` reads the binding presets from the ZenCODE source checkout,
+        // `zen --setup` reads the binding presets from the ZenCODE source checkout,
         // not from the resource bundle.
         exclude: ["binding-presets.json"],
         resources: [.copy("feature-catalog.json")],

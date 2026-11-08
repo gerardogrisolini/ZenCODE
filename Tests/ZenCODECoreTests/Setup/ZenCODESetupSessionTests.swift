@@ -131,7 +131,7 @@ struct ZenCODESetupSessionTests {
     }
 
     /// Re-running Telegram setup, enabled or not, keeps the reading voice
-    /// chosen in `/setup` > Voice mode.
+    /// chosen in `zen --setup` > Voice mode.
     @Test
     func telegramSetupKeepsTheMacOSReadingVoice() {
         let enabledTelegram = AgentTelegramSettingsManifest(
@@ -282,7 +282,7 @@ struct ZenCODESetupSessionTests {
 
     // MARK: - Telegram Threaded mode status
     //
-    // `/setup` only reports the flag Telegram returns from `getMe`: the tests
+    // `zen --setup` only reports the flag Telegram returns from `getMe`: the tests
     // stub the Bot API transport, capture the lines through the `write` seam and
     // never touch the real support directory or the network.
 
@@ -373,7 +373,7 @@ struct ZenCODESetupSessionTests {
     }
 }
 
-/// Lines `/setup` writes, captured through the `write` seam.
+/// Lines `zen --setup` writes, captured through the `write` seam.
 private final class SetupOutputBuffer: Sendable {
     private let storage = Mutex("")
 
@@ -386,7 +386,7 @@ private final class SetupOutputBuffer: Sendable {
 
 private struct ThreadedModeFixtureError: Error {}
 
-/// Bot API fake for `/setup`: `getMe` answers as configured, `deleteWebhook`
+/// Bot API fake for `zen --setup`: `getMe` answers as configured, `deleteWebhook`
 /// and `sendMessage` succeed, and `getUpdates` delivers the `/start` deep link
 /// payload that setup printed into `output`, so a pairing completes at once.
 /// Any other method fails the test run. Every request path is recorded.

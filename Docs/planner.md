@@ -88,7 +88,7 @@ mentions retain their normal meanings. A new `/plan <goal>` closes the previous
 Planner and replaces the unfinished discussion, while `/plan clear` cancels it.
 The clarification control state and Planner ownership are runtime-only: neither is
 saved in sessions, checkpoints, or the plan library, and collection must restart
-after a new session, load/resume, setup restart, close, or shutdown. Visible
+after a new session, load/resume, close, or shutdown. Visible
 questions and replies may remain in ordinary chat history, but replay never
 reactivates the collection and a question block is never accepted by `/plan save`.
 While collection is active, `/plan save`, `/plan load`, `/plan approve`, and

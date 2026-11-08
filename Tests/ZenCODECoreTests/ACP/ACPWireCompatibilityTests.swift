@@ -251,10 +251,11 @@ extension ACPCompatibilityTests {
         #expect(method["id"] as? String == "zencode-setup")
         #expect(method["name"] as? String == "Set up ZenCODE")
         #expect(method["type"] as? String == "terminal")
-        // `args` replaces the client's default `--acp`: it must be a real empty
-        // array on the wire, not null, a missing key or an empty object.
-        let args = try #require(method["args"] as? [Any])
-        #expect(args.isEmpty)
+        // `args` replaces the client's default `--acp`: the client launches
+        // `zen --setup`, which opens the setup and exits when it ends.
+        let args = try #require(method["args"] as? [String])
+        #expect(args == ["--setup"])
+        #expect(args == [ZenCODESetupCommand.option])
         #expect(Set(method.keys) == ["id", "name", "type", "args"])
         #expect(!authMethods.contains { $0["type"] as? String == "agent" })
     }
@@ -276,7 +277,7 @@ extension ACPCompatibilityTests {
         #expect(authMethods.first?["type"] as? String == "agent")
         #expect(authMethods.last?["id"] as? String == "zencode-setup")
         #expect(authMethods.last?["type"] as? String == "terminal")
-        #expect((authMethods.last?["args"] as? [Any])?.isEmpty == true)
+        #expect(authMethods.last?["args"] as? [String] == ["--setup"])
     }
 
     @Test
@@ -399,6 +400,10 @@ extension ACPCompatibilityTests {
         let message = try #require(error["message"] as? String)
         #expect(message.contains("Authentication required"))
         #expect(message.contains("Set up ZenCODE"))
+        #expect(message == ZenCODEACPBridge.setupRequiredMessage)
+        #expect(ZenCODEACPBridge.setupRequiredMessage
+            == "Authentication required: ZenCODE is not configured. "
+            + "Use the \"Set up ZenCODE\" terminal authentication method, or run `zen --setup` in a terminal.")
         // Nothing may have been created behind the refused requests.
         #expect(await bridge.sessionConfigurationsForTesting().isEmpty)
     }

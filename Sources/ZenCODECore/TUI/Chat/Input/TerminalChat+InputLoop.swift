@@ -390,10 +390,6 @@ extension TerminalChat {
             case .exitChat:
                 generationTask?.cancel()
                 return false
-            case .requestSetup:
-                requestedRuntimeSetup = true
-                generationTask?.cancel()
-                return false
             case let .runPrompt(prompt):
                 if shouldSuspendPanel {
                     _ = await resumePanelInput()
@@ -860,8 +856,8 @@ extension TerminalChat {
             }
         }
 
-        // Every way out of the loop passes here (end of input, `/exit`,
-        // `/setup`, a dictated exit, the queue finishing): an open `/subagent`
+        // Every way out of the loop passes here (end of input, `/exit`, a
+        // dictated exit, the queue finishing): an open `/subagent`
         // detail gives the terminal back before the teardown below.
         await closeSubAgentDetail(reason: .sessionEnded)
 

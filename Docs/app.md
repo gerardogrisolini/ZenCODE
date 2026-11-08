@@ -11,14 +11,18 @@ standalone SwiftPM package `Sources/ZenApp`.
 
 - macOS 26 and the Swift 6.4 toolchain that the project requires (see the
   [project README](../README.md)).
-- ZenCODE configured by `zen`. The app reads the settings, the provider keys,
-  and the saved sessions from the support directory that `zen` writes
+- ZenCODE configured by `zen --setup`. The app reads the settings, the
+  provider keys, and the saved sessions from the support directory that `zen`
+  writes
   (`~/.zencode`, or the directory in `ZENCODE_SUPPORT_DIRECTORY`; see
-  [zen.md](zen.md)). It has no setup of its own: run `zen` once in a terminal
-  to configure ZenCODE (`zen --ui` runs the setup first when ZenCODE is not
-  configured). Without a configuration the window says that ZenCODE is not
-  configured and asks you to run `zen` in a terminal, then to start the app
-  again.
+  [zen.md](zen.md)). It has no setup of its own: run `zen --setup` once in a
+  terminal to configure ZenCODE. When ZenCODE is not configured, `zen --ui`
+  does not open the app and does not start the setup: it stops with
+  ``ZenCODE is not configured. Run `zen --setup` to configure it, then start zen
+  again.`` and exit status 1. If the app itself finds no configuration (for
+  example when it is started with `swift run`), the window says that ZenCODE
+  is not configured and asks you to run `zen --setup` in a terminal, then to
+  start the app again.
 - The app is not sandboxed. It has the access of the user who starts it, as
   `zen` does, so the workspace access of the Chat API is granted without
   asking.
@@ -44,7 +48,8 @@ the terminal returns at once, closing it does not close the app, and each
 `zen --ui` starts another instance. The output of the app goes to
 `~/.zencode/app/ZenCODE.log`; an app that exits within about 1.5 seconds of
 starting is reported in the terminal with the end of that log. When ZenCODE is
-not configured, `zen --ui` runs the setup in the terminal first.
+not configured, `zen --ui` stops with the not-configured message and exit
+status 1, without starting setup: run `zen --setup` first.
 
 `zen --ui` accepts only the options that the app reads, and forwards them to
 it: `--agent NAME`, `--model MODEL_ID`, `--skills LIST`, and
@@ -354,7 +359,7 @@ provider receives only the recognized text. The commands and their texts are
 the terminal's: `/voice on` starts voice mode, `/voice off` stops it,
 `/voice pause` stops listening and reading aloud, `/voice resume` starts both
 again, and `/voice` alone pauses or resumes. The send mode, the pause, the
-word, and the reading voice are the ones chosen in `zen` with `/setup` >
+word, and the reading voice are the ones chosen in `zen --setup` >
 **Voice mode**, read at each `/voice on`. The texts of voice mode, such as
 `Voice: listening (…)`, show as message rows in the window it follows.
 
@@ -542,8 +547,8 @@ the Chat tab first. The rest of `/sessions` (a named snapshot, `compact`,
 The window can hand its session to the linked Telegram chat, as `/telegram`
 does in the terminal. The chat side (what it runs and what it receives) is
 described in [zen.md](zen.md); this section is what the window does.
-`/telegram` is offered only when Telegram is set up and paired (from `zen` with
-`/setup`); the setting is read again whenever the window refreshes its status
+`/telegram` is offered only when Telegram is set up and paired (with
+`zen --setup`); the setting is read again whenever the window refreshes its status
 bar. Otherwise every `/telegram` line answers `ZenCODE: unknown command
 '/telegram'.`, as in the terminal.
 
@@ -690,7 +695,7 @@ The app runs the shared slash commands of the Chat API, with its own
 Some features of the terminal chat are not in the app. They stay in the
 terminal:
 
-- `/setup`, `/feature`, `/cron`, and `/ds4` are not offered, and answer as
+- `/feature`, `/cron`, and `/ds4` are not offered, and answer as
   unknown commands. `/tools logs` answers that it is not available in the
   app.
 - Telegram differs from the terminal in two points: `/telegram on` is refused

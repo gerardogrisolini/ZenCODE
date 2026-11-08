@@ -198,7 +198,7 @@ enum ZenCODETelegramRunnerError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .telegramNotSetUp:
-            "Telegram is not set up. Run zen and use /setup to configure and pair Telegram."
+            "Telegram is not set up. Run zen --setup to configure and pair Telegram."
         case .notDrivenByTelegram:
             "Telegram did not take over the session."
         }

@@ -149,12 +149,19 @@ struct ChatCommandDispatchTests {
             controller.commandRegistry = TerminalChat.commandRegistry
 
             for line in [
-                "/exit", "/setup", "/setup now", "/voice on", "/cron list",
+                "/exit", "/voice on", "/cron list",
                 "/tools logs", "  /tools LOGS  ",
             ] {
                 #expect(await controller.handleCommandLine(line, context: [])
                     == ChatCommandOutcome(action: .channelCommand))
             }
+            // The setup is no longer a command: it opens only with `zen --setup`.
+            for line in ["/setup", "/setup now"] {
+                #expect(await controller.handleCommandLine(line, context: [])
+                    == ChatCommandOutcome(notices: [.unknownCommand(line: line)]))
+            }
+            #expect(ChatSessionNoticeText.text(for: .unknownCommand(line: "/setup now"))
+                == "ZenCODE: unknown command '/setup'.\n")
             #expect(await harness.presenter.events.isEmpty)
             #expect(await harness.runtime.calls.isEmpty)
             #expect(await harness.host.interactions.isEmpty)

@@ -19,7 +19,7 @@ import Musl
 /// written by `/cron add`: on macOS the privacy permissions of a cron job go to
 /// the first program cron launches, so that program must not change from one
 /// ZenCODE update to the next. It is a standalone SwiftPM package
-/// (`Sources/ZenCRON` in the source checkout) built by `/setup` and installed,
+/// (`Sources/ZenCRON` in the source checkout) built by `zen --setup` and installed,
 /// without sudo, at `<support directory>/bin/ZenCRON`.
 ///
 /// Replacement policy (`decision`): on macOS an installed ZenCRON is kept as

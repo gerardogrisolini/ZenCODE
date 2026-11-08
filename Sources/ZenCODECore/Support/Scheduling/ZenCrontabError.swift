@@ -55,10 +55,10 @@ enum ZenCrontabError: LocalizedError, Equatable {
             return "No scheduled prompt #\(number). Use /cron list."
         case let .zenCRONNotInstalled(path):
             return "ZenCRON is not installed at \(path). "
-                + "Build it from /setup › Scheduled prompts (ZenCRON), then retry."
+                + "Build it from zen --setup › Scheduled prompts (ZenCRON), then retry."
         case let .zenCRONDoesNotStart(path, reason):
             return "ZenCRON at \(path) does not start (\(reason)). "
-                + "Rebuild it from /setup › Scheduled prompts (ZenCRON), then retry."
+                + "Rebuild it from zen --setup › Scheduled prompts (ZenCRON), then retry."
         case let .zenNotOnPath(path):
             return "ZenCRON runs `zen` with PATH=\(path), but no executable zen was found there. "
                 + "Install ZenCODE in /usr/local/bin (Scripts/install.sh) before scheduling prompts."

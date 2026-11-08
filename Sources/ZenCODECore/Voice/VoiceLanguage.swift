@@ -4,7 +4,7 @@
 //
 //  The language of terminal voice mode and of Telegram voice-message
 //  transcription. It is not a separate setting: it follows the response
-//  language chosen in `/setup`, else the system language, else English.
+//  language chosen in `zen --setup`, else the system language, else English.
 //
 
 import Foundation

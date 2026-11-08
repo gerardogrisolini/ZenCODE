@@ -2,7 +2,7 @@
 //  SetupEscapeBehaviourTests.swift
 //  ZenCODECoreTests
 //
-//  Esc in `zen` setup and `/setup` returns to the menu that opened the step,
+//  Esc in `zen --setup` returns to the menu that opened the step,
 //  discarding that step and keeping what other sections staged; only Esc on
 //  the first menu leaves setup. These tests drive the terminal-free seams of
 //  that rule: the shared helper, a main-menu section (and the sections that

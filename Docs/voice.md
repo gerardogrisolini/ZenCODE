@@ -10,7 +10,7 @@ ZenCODE has two voice features, both on macOS and Linux:
 
 Speech recognition and speech synthesis run on your machine: macOS uses the
 system speech frameworks, Linux runs the sherpa-onnx programs downloaded from
-`/setup` > **Voice mode**. The model provider never receives audio, only the
+`zen --setup` > **Voice mode**. The model provider never receives audio, only the
 recognized text, exactly as if you had typed it.
 
 The architecture and persistence contract behind this guide is in
@@ -21,9 +21,9 @@ The architecture and persistence contract behind this guide is in
 | | macOS | Linux |
 | --- | --- | --- |
 | Speech recognition | Apple speech recognition (SpeechAnalyzer), on the Mac | Parakeet TDT 0.6B v3 behind the Silero voice activity detector (sherpa-onnx), on the machine |
-| Spoken answers | A system voice: the one chosen in `/setup` > Voice mode, or the best installed one | The Piper voice downloaded in `/setup` > Voice mode |
+| Spoken answers | A system voice: the one chosen in `zen --setup` > Voice mode, or the best installed one | The Piper voice downloaded in `zen --setup` > Voice mode |
 | Talking over an answer | Yes: echo cancellation keeps the microphone open, and speaking interrupts the reading | No: the microphone is off while an answer or a comment is read; `Esc` stops the reading |
-| Download | The language's speech model, the first time it is needed; nothing for installed languages | About 580 MB from `/setup` > Voice mode |
+| Download | The language's speech model, the first time it is needed; nothing for installed languages | About 580 MB from `zen --setup` > Voice mode |
 | Language | The response language, else the system language, else English | Recognized automatically among 25 European languages; answers are read in the language of the installed voice |
 | Telegram voice messages | Apple speech recognition, on the Mac | The Voice mode files plus `opusdec` or `ffmpeg` |
 
@@ -59,7 +59,7 @@ where one voice mode follows the active window (see
 2. Speak. Recognized speech can appear in the prompt draft, the line you type
    in, while you talk (see [The prompt draft](#the-prompt-draft)). A pause of
    about 5 seconds (the pause chosen with the **Send mode** "After a pause" in
-   `/setup` > Voice mode, see [Options](#options)) ends the utterance, which is
+   `zen --setup` > Voice mode, see [Options](#options)) ends the utterance, which is
    sent as a prompt. With the Send mode "On a word", the pause does not send:
    you say your word (for example "vai" or "done") at the end instead, and can
    pause as long as you like before it. On Linux an utterance lasts at most 60
@@ -239,13 +239,12 @@ pending question and every queued announcement, with no catch-up later.
 
 Voice mode belongs to the current terminal session. It does not depend on the
 active agent and stays on across `/agents` and `/sessions` switches. It ends
-with `/voice off` or `/exit`, and also when `/setup` opens: run `/voice on`
-again after setup. It is never saved, so every new `zen` starts with voice mode
-off.
+with `/voice off` or `/exit`. It is never saved, so every new `zen` starts with
+voice mode off.
 
 ### Options
 
-The **Send mode** item of `/setup` > **Voice mode**, on macOS and Linux alike,
+The **Send mode** item of `zen --setup` > **Voice mode**, on macOS and Linux alike,
 tunes how voice mode listens. The pause opens a list of presets with the
 current value preselected and the default marked; **Back** or `Esc` keeps the
 current value, and after a choice the Voice mode menu comes back so the voice
@@ -308,7 +307,7 @@ when the settings are read and is removed the next time they are saved.
   interrupts nor answers itself. When the current output cannot run echo
   cancellation, for example an AirPlay device, voice mode starts without it and
   names the output: switch to a local output or use headphones.
-- **Reading voice.** `/setup` > **Voice mode** downloads nothing on macOS.
+- **Reading voice.** `zen --setup` > **Voice mode** downloads nothing on macOS.
   After the [Send mode](#options) item it lists the system voices installed for
   the voice mode language, with name and
   quality (standard, enhanced or premium), plus **Automatic**: the best
@@ -341,7 +340,7 @@ Requirements:
 Telegram voice messages need no audio device, so a headless machine such as a
 Raspberry Pi can transcribe them.
 
-Download the files from `/setup` > **Voice mode**:
+Download the files from `zen --setup` > **Voice mode**:
 
 1. The section shows where the files go and their status (`not installed`,
    `incomplete download`, or the installed voice), then, after the
@@ -376,7 +375,7 @@ read. It turns back on when the reading ends or `Esc` stops it.
 ## Language
 
 The voice language is not a separate setting. It follows the **Response
-language** chosen in `/setup`, else the system language, else English. A change
+language** chosen in `zen --setup`, else the system language, else English. A change
 applies the next time `/voice on` starts and to the next Telegram voice message.
 
 - **macOS** listens and reads in that language. Common codes map to a region
@@ -386,7 +385,7 @@ applies the next time `/voice on` starts and to the next Telegram voice message.
   language.
 - **Linux** recognizes the spoken language by itself among the 25 European
   languages of Parakeet. Answers are read in the language of the installed
-  voice. The response language only selects the voices that `/setup` > Voice
+  voice. The response language only selects the voices that `zen --setup` > Voice
   mode lists first, so pick a voice of the language your answers are written in.
 
 Earlier versions saved a fixed `voice.language` (`"it"`) when Telegram was set
@@ -395,7 +394,7 @@ removed the next time the settings are saved.
 
 ## Telegram voice messages
 
-When Telegram remote control is configured in `/setup`, voice-message
+When Telegram remote control is configured in `zen --setup`, voice-message
 transcription is on, on macOS and on Linux. The setup summary shows
 `Voice-message transcription: enabled`.
 
@@ -411,7 +410,7 @@ live cards must be typed. Voice mode does not need to be on.
   language and on the Mac, and asks for the Speech Recognition permission. The
   first voice note in a language without an installed model downloads it from
   Apple.
-- **Linux** uses the files of `/setup` > Voice mode, with any voice installed.
+- **Linux** uses the files of `zen --setup` > Voice mode, with any voice installed.
   It also needs one of these decoders in `/usr/bin`, `/bin` or `/usr/local/bin`:
   - `opusdec` (package `opus-tools`), preferred for Telegram voice notes, which
     are Ogg Opus;
@@ -427,7 +426,7 @@ live cards must be typed. Voice mode does not need to be on.
 
 Settings saved by an earlier version on Linux have transcription off. A voice
 note then gets the reply *Voice-message transcription is off*. To turn it on,
-open the Telegram section of `/setup` again; you can keep the current pairing.
+open the Telegram section of `zen --setup` again; you can keep the current pairing.
 
 ## Privacy and storage
 
@@ -461,15 +460,15 @@ open the Telegram section of `/setup` again; you can keep the current pairing.
 | `echo cancellation is unavailable with the current audio output (…)` | macOS: switch to a local output or use headphones, so the assistant does not hear itself. |
 | `The speech recognition model for … could not be downloaded` | macOS: check the network connection, then run `/voice on` again or resend the voice note. |
 | `speech recognition stopped repeatedly` | Run `/voice on` to retry. On Linux, check the audio device. |
-| `Voice mode files are not installed` | Linux: download them from `/setup` > Voice mode. |
-| `… does not contain the expected files` | Linux: choose the voice again in `/setup` > Voice mode, or remove the files and download them again. |
+| `Voice mode files are not installed` | Linux: download them from `zen --setup` > Voice mode. |
+| `… does not contain the expected files` | Linux: choose the voice again in `zen --setup` > Voice mode, or remove the files and download them again. |
 | `No prebuilt sherpa-onnx programs exist for this processor architecture` | Linux voice features need x86_64 or arm64. |
 | `The tar program is required…` / `The bzip2 program is required…` | Install the missing program with your package manager and choose the voice again. |
 | `speech recognition could not start: … Unable to open: default` | Linux: ALSA has no usable default device. List the devices with `arecord -l` and configure the default one, for example in `~/.asoundrc`. |
 | `the answer could not be read aloud: …` | Linux: the voice could not play; check the ALSA playback device, or reinstall the voice. |
-| Telegram: `Voice-message transcription is off` | Open the Telegram section of `/setup` again; you can keep the current pairing. |
+| Telegram: `Voice-message transcription is off` | Open the Telegram section of `zen --setup` again; you can keep the current pairing. |
 | Telegram: `Transcribing voice messages needs opusdec (package opus-tools) or ffmpeg` | Linux: install one, for example `sudo apt install opus-tools`. |
 | `/voice is available only in the interactive terminal` | Run `/voice` from the `zen` terminal UI, or from the macOS app (see [app.md](app.md#voice)). |
-| An utterance is never sent | Pause for about 5 seconds after speaking (or the pause chosen with the Send mode "After a pause" in `/setup` > Voice mode), and reduce background noise. With the Send mode "On a word", say your word at the end. |
-| An utterance is sent before you finish | Choose the Send mode "After a pause" with a longer pause in `/setup` > Voice mode, or "On a word" so that only your word sends. |
-| Answers are read in the wrong language | Set the Response language in `/setup`; on Linux, also choose a voice of that language in `/setup` > Voice mode. |
+| An utterance is never sent | Pause for about 5 seconds after speaking (or the pause chosen with the Send mode "After a pause" in `zen --setup` > Voice mode), and reduce background noise. With the Send mode "On a word", say your word at the end. |
+| An utterance is sent before you finish | Choose the Send mode "After a pause" with a longer pause in `zen --setup` > Voice mode, or "On a word" so that only your word sends. |
+| Answers are read in the wrong language | Set the Response language in `zen --setup`; on Linux, also choose a voice of that language in `zen --setup` > Voice mode. |

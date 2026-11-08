@@ -6,7 +6,7 @@
 //  that cron starts for the prompts scheduled with `/cron add`: on macOS the
 //  privacy permissions of a cron job go to the first program cron launches, so
 //  that program must not change at every ZenCODE update. Like the optional
-//  features, it is built from the ZenCODE source checkout by `/setup`, not by
+//  features, it is built from the ZenCODE source checkout by `zen --setup`, not by
 //  the installer, and installed without sudo at `<support directory>/bin`.
 //
 //  The section keeps nothing in the settings manifest; it only builds and

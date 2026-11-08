@@ -53,6 +53,9 @@ public enum ZenCODEHeadlessJSONLProtocol {
         public static let turnFailed = "The headless run failed."
         public static let teardownFailed = "The session could not be finalized cleanly."
         public static let unknownError = "An unexpected error interrupted the run."
+        /// The startup gate stopped the run: ZenCODE has no usable
+        /// configuration yet (``ZenCODESetupRequirement/NotConfiguredError``).
+        public static let notConfigured = ZenCODESetupRequirement.notConfiguredMessage
 
         /// The backend-facing equivalent of `invalidArguments`, preserving the
         /// legacy distinction between a syntactic and a semantic configuration
@@ -164,6 +167,12 @@ public enum ZenCODEHeadlessJSONLProtocol {
             return PublicError(
                 category: .configuration,
                 publicMessage: PublicErrorMessages.invalidPromptFile
+            )
+        }
+        if error is ZenCODESetupRequirement.NotConfiguredError {
+            return PublicError(
+                category: .configuration,
+                publicMessage: PublicErrorMessages.notConfigured
             )
         }
         if let error = error as? AgentConfigurationError {

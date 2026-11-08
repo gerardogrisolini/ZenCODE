@@ -911,7 +911,7 @@ struct TerminalCronCommandTests {
         terminal.cronJobRunner = FakeCronJobRunner(isReleased: true)
         // Never the machine's PATH search: `/cron add` must not depend on a `zen` being installed.
         terminal.cronZenLocator = { zen.locate(onPath: $0) }
-        // Never the installed ZenCRON, nor a real process: no test depends on `/setup`.
+        // Never the installed ZenCRON, nor a real process: no test depends on `zen --setup`.
         terminal.cronZenCRONLocator = { try zenCRON.locate() }
         terminal.selectedAgent = nil
         return (terminal, client)

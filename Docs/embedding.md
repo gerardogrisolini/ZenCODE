@@ -1087,7 +1087,7 @@ switch.
   never asked, and `ChatToolConsentAuthorizer` refuses the gated tools
   (`ChatToolConsentAuthorizer.gatedToolNames`: `local.exec` and the
   destructive direct tools) with a diagnostic.
-- **Channel commands.** `/setup`, `/voice`, `/ds4`, the optional features
+- **Channel commands.** `/voice`, `/ds4`, the optional features
   (`/feature`), ZenCRON, and `/cron` are commands of the terminal channel,
   outside the API; an app runs `/voice` lines through its own
   `VoiceModeSession` (see [Voice Mode](#voice-mode)). With the default

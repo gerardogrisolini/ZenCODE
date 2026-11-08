@@ -12,7 +12,7 @@ delegation lifecycle are in [agents.md](agents.md).
 
 | Concept | What it is | Where it is defined |
 | --- | --- | --- |
-| **Agent profile** | *Who* does the work: role, instructions, tools, skills | `~/.zencode/agents.json`, edited in `/setup` |
+| **Agent profile** | *Who* does the work: role, instructions, tools, skills | `~/.zencode/agents.json`, edited in `zen --setup` |
 | **Model binding** | *With which model*, at *which capability* and *thinking* level | Per profile, inside the same profile record |
 | **Workflow task** | *What* has to be done, with a complexity of 1–10 | Session task graph, created by `/plan`, `/goal`, or `tasks.create` |
 
@@ -22,7 +22,7 @@ bindings.
 
 ## Reading the Bindings Table
 
-The bindings table is shown in `/setup`, listing every configured profile with
+The bindings table is shown in `zen --setup`, listing every configured profile with
 its authorized bindings:
 
 ![The bindings table shown in setup, listing every profile with its authorized model bindings](Images/bindings.png)
@@ -207,7 +207,7 @@ stay with the coordinator itself, unlike `/plan` and `/review`.
 ## Configuring Bindings
 
 ```text
-/setup         # add, edit, or remove bindings per profile
+zen --setup     # add, edit, or remove bindings per profile
 ```
 
 Setup asks for, per binding:
@@ -250,7 +250,7 @@ or manifest write; its durable unlink is the commit point.
 Then inspect the result:
 
 ```text
-/setup          # add, edit, or remove bindings; the summary shows every profile's authorized bindings
+zen --setup     # outside the chat: add, edit, or remove bindings; the summary shows every profile's authorized bindings
 /agents         # switch profile (role, tools, instructions, default binding)
 /models         # override the model for the current session only
 ```
@@ -268,7 +268,7 @@ a resolved profile is still limited to that profile's authorized bindings.
 
 `binding-presets.json` keeps the bindings of each provider in one hand-edited
 file and applies them to every profile in a single step. It ships with the
-ZenCODE sources at `Sources/ZenPackageMetadata/binding-presets.json`; `/setup`
+ZenCODE sources at `Sources/ZenPackageMetadata/binding-presets.json`; `zen --setup`
 reads it from the same source checkout it builds ZenCRON and optional features
 from: the checkout `zen` was built from, otherwise the installer copy under
 `<support>/source`, otherwise the current directory. ZenCODE only reads it: it
@@ -316,7 +316,7 @@ Rules, applied to every profile when you apply the presets (see below):
   `settings.json` are dropped on save, exactly as for bindings edited by hand.
 
 Presets are never applied on their own. There is one place to apply them, and one
-to clear bindings, both in `/setup` > Agent model bindings:
+to clear bindings, both in `zen --setup` > Agent model bindings:
 
 - **Apply binding presets** (right after **Done**) first opens a menu to choose
   the providers to use. It lists only the configured providers that have a block

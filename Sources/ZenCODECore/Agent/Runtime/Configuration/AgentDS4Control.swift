@@ -184,9 +184,9 @@ public struct AgentDS4Status: Sendable, Equatable {
         case .built:
             return "built" + (path.map { " (\($0))" } ?? "")
         case .missing:
-            return "missing" + (path.map { " (expected at \($0); build it from /setup)" } ?? "")
+            return "missing" + (path.map { " (expected at \($0); build it with zen --setup)" } ?? "")
         case .stale:
-            return "stale" + (path.map { " (rebuild it at \($0); build it from /setup)" } ?? "")
+            return "stale" + (path.map { " (rebuild it at \($0); build it with zen --setup)" } ?? "")
         }
     }
 

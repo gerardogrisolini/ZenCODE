@@ -75,24 +75,24 @@ and a profile can have any name in any role.
 }
 ```
 
-**System and custom profiles.** The recommended profiles created by `/setup`
+**System and custom profiles.** The recommended profiles created by `zen --setup`
 are the system profiles: each one has its role as ID (`"id" : "developer"`,
 `"id" : "planner"`, and so on). A profile is a system profile exactly when its
 ID equals its role (case-insensitive); custom profiles have a different ID, and
-`/setup` gives them a UUID. Being a system profile matters only for
+`zen --setup` gives them a UUID. Being a system profile matters only for
 [Project Agents](#project-agents): a project without a saved selection sees the
 system profiles alone.
 
 **Strict format.** `role` must be present and spelled exactly as one of the
 nine values above. The role is never deduced from the ID or the name, and
 there is no automatic migration: an `agents.json` with a profile without
-`role`, or with any other value, is invalid. ZenCODE then requires setup and
-reports the profile, for example
+`role`, or with any other value, is invalid. ZenCODE then requires
+`zen --setup` and reports the profile, for example
 `profile 'Developer' is missing the required "role" field (one of: developer, builder, minimal, planner, reviewer, reporter, organizer, promoter, tester).`;
-`/setup` asks `agents.json exists but is invalid. Rewrite it?` and, when
+`zen --setup` asks `agents.json exists but is invalid. Rewrite it?` and, when
 confirmed, starts over and offers to create the recommended profiles.
 
-Set the role in `/setup` (the **Role** choice) or edit `agents.json`.
+Set the role in `zen --setup` (the **Role** choice) or edit `agents.json`.
 
 **Default developer.** The default agent is the `developer` profile of the
 project, chosen among the profiles associated with it (see
@@ -484,11 +484,12 @@ See the [zen.md](zen.md#task-orchestration) task orchestration section.
 ## Configuring Profiles
 
 ```text
-/setup                # create or edit profiles interactively
 /agents               # active agent and project profiles (menu)
 /models                # choose any configured model for the current session
 /tools                 # expose or hide tool groups per session
 ```
+
+Create or edit the profiles interactively with `zen --setup`, outside the chat.
 
 `/models` is intentionally independent from `/agents`: changing profile changes
 role, instructions, tools, and the default binding, but never filters the

@@ -16,10 +16,6 @@ struct AgentCoreAuthorizationRouter {
         return localExecAccessMode
     }
 
-    mutating func resetLocalExecAccessMode() {
-        localExecAccessMode = .standard
-    }
-
     mutating func register(
         promptID: UUID,
         sessionID: String,

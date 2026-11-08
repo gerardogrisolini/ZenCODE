@@ -470,10 +470,9 @@ public final class ChatSessionHost {
     /// late work finds a live incarnation, then shuts the runner down: all of
     /// it, or with `keepingExternalTools` only its model backend and
     /// sessions, keeping the connected external MCP servers alive
-    /// (``AgentCoreSessionRunner/shutdownBackendKeepingExternalTools()``),
-    /// for a channel that rebuilds its chat on the same runner, as the
-    /// terminal does after `/setup`. A second call is a no-op, whichever way
-    /// the first one went.
+    /// (``AgentCoreSessionRunner/shutdownBackendKeepingExternalTools()``), for
+    /// an embedder that goes on using the same runner afterwards. A second call
+    /// is a no-op, whichever way the first one went.
     public func shutdown(keepingExternalTools: Bool = false) async {
         guard !isShutDown else { return }
         isShutDown = true

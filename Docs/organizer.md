@@ -79,4 +79,4 @@ Ask the Developer to fix the failing login test in ~/Projects/app and tell me wh
 
 ## Updating an Existing Profile
 
-Existing `agents.json` manifests are not changed when ZenCODE updates the recommended instructions. Regenerate the recommended profiles in setup to give an existing `Organizer` the current instructions. A manifest whose profiles lack the required `role` field is invalid: `/setup` offers to rewrite it with the recommended profiles.
+Existing `agents.json` manifests are not changed when ZenCODE updates the recommended instructions. Regenerate the recommended profiles in setup to give an existing `Organizer` the current instructions. A manifest whose profiles lack the required `role` field is invalid: `zen --setup` offers to rewrite it with the recommended profiles.

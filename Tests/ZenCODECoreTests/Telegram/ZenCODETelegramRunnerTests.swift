@@ -100,7 +100,7 @@ private final class StartedSession {
 @Suite("zen --telegram runner", .serialized, .timeLimit(.minutes(2)))
 struct ZenCODETelegramRunnerTests {
     private static let notSetUpMessage =
-        "ZenCODE: Telegram is not set up. Run zen and use /setup to configure and pair Telegram."
+        "ZenCODE: Telegram is not set up. Run zen --setup to configure and pair Telegram."
     private static let hintMessage = String(ZenCODEDoctorRunner.troubleshootingHint.dropLast())
 
     private struct Environment: Sendable {

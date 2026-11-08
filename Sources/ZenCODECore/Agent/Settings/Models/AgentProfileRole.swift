@@ -47,7 +47,7 @@ public enum AgentProfileRole: String, Codable, Sendable, CaseIterable, Hashable 
         }
     }
 
-    /// Short description shown by `/setup` and `/agents`.
+    /// Short description shown by `zen --setup` and `/agents`.
     public var summary: String {
         switch self {
         case .developer: "General software development; the default agent"

@@ -82,9 +82,10 @@ struct SetupManifestBaseline: Sendable {
 /// whether to proceed.
 ///
 /// Previously `run()` returned `Void`, so a cancellation or a reset was
-/// indistinguishable from a completed configuration at the call site. The CLI
-/// uses this to start the interactive runner only when setup actually produced a
-/// usable configuration.
+/// indistinguishable from a completed configuration at the call site.
+/// `zen --setup` (`ZenCODESetupCommand`) uses this to open the setup again
+/// after a reset or an imported backup, and otherwise to end with an exit
+/// status that tells whether a usable configuration exists.
 public enum SetupOutcome: Sendable, Equatable {
     /// Setup completed and support files were configured.
     case configured
@@ -407,7 +408,7 @@ enum ZenCODESetupError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .nonInteractiveTerminal:
-            return "Remote provider setup requires an interactive terminal."
+            return "zen --setup requires an interactive terminal."
         case .cancelled:
             return "Setup cancelled."
         case let .emptyRequiredValue(label):

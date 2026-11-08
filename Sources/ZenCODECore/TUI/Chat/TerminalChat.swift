@@ -42,7 +42,6 @@ public final class TerminalChat {
         currentIncarnation.slotID
     }
     public let sessionRunner: AgentCoreSessionRunner
-    let runtimeSetupResumeSnapshot: TerminalChatResumeSnapshot?
     public let reader = StdioLineReader()
     public let interactiveReader = TerminalInteractiveLineReader()
     public let permissionAuthorizer: LocalExecPermissionAuthorizer
@@ -305,7 +304,7 @@ public final class TerminalChat {
     /// on what is installed on the machine.
     var cronZenLocator: @Sendable (String) -> String? = { ZenCronJobCommand.locateZen(onPath: $0) }
     /// Checks the ZenCRON host that the lines written by `/cron add` run: it
-    /// must be installed by `/setup` and answer `--zencron-version`. Throws a
+    /// must be installed by `zen --setup` and answer `--zencron-version`. Throws a
     /// `ZenCrontabError` otherwise. Tests install a stand-in so no command
     /// depends on what is installed on the machine nor starts a real process.
     var cronZenCRONLocator: @Sendable () async throws -> ZenCRONInstallation.InstalledExecutable = {
@@ -315,15 +314,13 @@ public final class TerminalChat {
     /// clears it, once the report is written. Chat teardown cancels the task
     /// (which terminates the child) without clearing it.
     var activeCronRun: (number: Int, task: Task<Void, Never>)?
-    var requestedRuntimeSetup = false
     public let statusBar: TerminalStatusBar
 
     public convenience init(
         configuration: AgentConfiguration,
         stdinIsTerminal: Bool,
         sessionRunner: AgentCoreSessionRunner? = nil,
-        permissionAuthorizer: LocalExecPermissionAuthorizer? = nil,
-        runtimeSetupResumeSnapshot: TerminalChatResumeSnapshot? = nil
+        permissionAuthorizer: LocalExecPermissionAuthorizer? = nil
     ) {
         self.init(
             configuration: configuration,
@@ -331,7 +328,6 @@ public final class TerminalChat {
             sessionRunner: sessionRunner,
             sessionHost: nil,
             permissionAuthorizer: permissionAuthorizer,
-            runtimeSetupResumeSnapshot: runtimeSetupResumeSnapshot,
             telegramTransportFactory: nil
         )
     }
@@ -345,8 +341,7 @@ public final class TerminalChat {
         configuration: AgentConfiguration,
         stdinIsTerminal: Bool,
         sessionHost: ChatSessionHost,
-        permissionAuthorizer: LocalExecPermissionAuthorizer? = nil,
-        runtimeSetupResumeSnapshot: TerminalChatResumeSnapshot? = nil
+        permissionAuthorizer: LocalExecPermissionAuthorizer? = nil
     ) {
         self.init(
             configuration: configuration,
@@ -354,7 +349,6 @@ public final class TerminalChat {
             sessionRunner: nil,
             sessionHost: sessionHost,
             permissionAuthorizer: permissionAuthorizer,
-            runtimeSetupResumeSnapshot: runtimeSetupResumeSnapshot,
             telegramTransportFactory: nil
         )
     }
@@ -368,13 +362,11 @@ public final class TerminalChat {
         sessionRunner: AgentCoreSessionRunner? = nil,
         sessionHost: ChatSessionHost? = nil,
         permissionAuthorizer: LocalExecPermissionAuthorizer? = nil,
-        runtimeSetupResumeSnapshot: TerminalChatResumeSnapshot? = nil,
         telegramTransportFactory: (@Sendable () -> any TelegramHTTPTransport)?,
         renderCoordinator: TerminalChatRenderCoordinator? = nil
     ) {
         self.configuration = configuration
         self.stdinIsTerminal = stdinIsTerminal
-        self.runtimeSetupResumeSnapshot = runtimeSetupResumeSnapshot
         self.renderCoordinator = renderCoordinator ?? TerminalChatRenderCoordinator(
             stdinIsTerminal: stdinIsTerminal
         )
@@ -416,8 +408,7 @@ public final class TerminalChat {
         interactionHost.chat = self
         // The terminal's slot, with its first session at once: the controller
         // starts from the launch agent and the launch's explicit model, and
-        // reads the tool catalog from the runner's feature runtime. After
-        // `/setup` the session is the one the setup interrupted. The slot's
+        // reads the tool catalog from the runner's feature runtime. The slot's
         // bindings (presenter, host, hooks, commands) outlive the session, and
         // so does its Telegram channel, created by the first `/telegram on`.
         // The terminal's presenter presents the endings of the turns it does
@@ -440,7 +431,7 @@ public final class TerminalChat {
         do {
             currentIncarnation = try host.openSlot(
                 descriptor,
-                sessionID: runtimeSetupResumeSnapshot?.sessionID ?? Self.newTerminalSessionID()
+                sessionID: Self.newTerminalSessionID()
             )
         } catch {
             preconditionFailure("The terminal cannot open its slot: \(error)")
@@ -453,7 +444,7 @@ public final class TerminalChat {
     /// The host of a terminal chat over `sessionRunner`, with the environment
     /// of `configuration` and the terminal's sleep-assertion reason: what
     /// `init` builds when it is given none, and what the command-line runner
-    /// builds for each chat it runs.
+    /// builds for its one chat.
     public nonisolated static func makeSessionHost(
         configuration: AgentConfiguration,
         sessionRunner: AgentCoreSessionRunner
@@ -517,7 +508,7 @@ public final class TerminalChat {
         ChatModelCatalog.modelReferences(for: rawModelID)
     }
 
-    public func run() async throws -> TerminalChatRunOutcome {
+    public func run() async throws {
         // The machine is kept awake by the host while the slot runs a session,
         // from `init` to the close below.
         let memoryDiagnosticSink =
@@ -543,15 +534,12 @@ public final class TerminalChat {
             initialInputLine = line
         }
 
-        applyRuntimeSetupResumeSnapshotIfNeeded()
         await applyInitialAgentSelectionIfNeeded()
         try await handleMissingInitialModelSelectionIfNeeded()
         try applyInitialSkillSelectionIfNeeded()
         await ensureWorkspaceAccessIfNeeded()
 
-        let taskGraphResume = runtimeSetupResumeSnapshot == nil
-            ? await chatSession.offerResumableTaskGraphs()
-            : .none
+        let taskGraphResume = await chatSession.offerResumableTaskGraphs()
 
         resetFileArtifactState()
         try await createCurrentSession()
@@ -561,15 +549,11 @@ public final class TerminalChat {
         if stdinIsTerminal {
             AgentOutput.clearTerminalScreenIfNeeded()
         }
-        // Capture startup and restored presentation before any resize can
-        // rebuild the viewport; semantic session history is not a screen replay.
+        // Capture the startup presentation (summary and session notices)
+        // before any resize can rebuild the viewport.
         let statusBarStarted = await statusBar.start()
         await printStartupSummary()
         await writeSessionNotices(taskGraphResume.notices)
-        if let runtimeSetupResumeSnapshot {
-            await renderSavedSessionHistory(runtimeSetupResumeSnapshot.transcriptHistory)
-            await writeSystemMessage("Session restored after setup.\n")
-        }
 
         await refreshStatusBarGitStatusSummary()
         do {
@@ -579,19 +563,12 @@ public final class TerminalChat {
                 try await runBlockingInputLoop(initialInputLine: initialInputLine)
             }
 
-            let outcome: TerminalChatRunOutcome
-            if requestedRuntimeSetup {
-                outcome = .setupRequested(await makeRuntimeSetupResumeSnapshot())
-            } else {
-                outcome = .exited
-            }
             await abandonPlanBrainstorming()
             // The slot's session ends: its controller is fenced and its runner
             // session closed, keeping its persisted task graph; the last
             // controller stays readable through `chatSession`.
             await sessionHost.closeSession(in: terminalSlotID, runtimeSession: .close)
             await stopTerminalServices()
-            return outcome
         } catch {
             await stopTerminalServices()
             throw error
@@ -599,8 +576,8 @@ public final class TerminalChat {
     }
 
     private func stopTerminalServices() async {
-        // Every way out of the chat (exit, /setup, end of input, a thrown
-        // error) passes here. The runner sends SIGTERM synchronously from its
+        // Every way out of the chat (exit, end of input, a thrown error)
+        // passes here. The runner sends SIGTERM synchronously from its
         // cancellation handler, so the child is signalled even if ZenCODE
         // exits right after; the cancelled task prints no report.
         activeCronRun?.task.cancel()

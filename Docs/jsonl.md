@@ -125,6 +125,16 @@ text fails with category `configuration` and the message
 `The prompt file is missing, unreadable, empty, or not UTF-8 text.`; the path is
 never included.
 
+When ZenCODE has no valid configuration (`settings.json` or `agents.json`
+missing or invalid, or no model configured), the run does not start and does not
+open setup. The `error` record, which is the only record, has category
+`configuration` and the message ``ZenCODE is not configured. Run `zen --setup`
+to configure it, then start zen again.``, and the process exits with status `1`:
+
+```json
+{"schema_version":1,"type":"error","run_id":"A3B0...","category":"configuration","message":"ZenCODE is not configured. Run `zen --setup` to configure it, then start zen again."}
+```
+
 Do not parse `message` to determine the error class; match on `category` and the
 process exit status. Raw provider errors, URLs, paths, credentials, and internal
 diagnostics are deliberately not serialized.

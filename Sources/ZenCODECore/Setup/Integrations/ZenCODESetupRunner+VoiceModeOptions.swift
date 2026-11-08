@@ -2,7 +2,7 @@
 //  ZenCODESetupRunner+VoiceModeOptions.swift
 //  ZenCODE
 //
-//  The voice mode options of `/setup` > Voice mode, shared by the macOS and
+//  The voice mode options of `zen --setup` > Voice mode, shared by the macOS and
 //  Linux sections: how an utterance is sent (after a pause, or on a spoken
 //  keyword). The send mode is a two-way menu: "After a pause" goes on to the
 //  preset pause that ends an utterance, "On a word" to the typed keyword, so

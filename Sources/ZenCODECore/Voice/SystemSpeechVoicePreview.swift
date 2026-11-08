@@ -2,7 +2,7 @@
 //  SystemSpeechVoicePreview.swift
 //  ZenCODE
 //
-//  The sample `/setup` > Voice mode plays on macOS so the operator can hear a
+//  The sample `zen --setup` > Voice mode plays on macOS so the operator can hear a
 //  system voice before choosing it. The sample goes straight to the system
 //  output with `AVSpeechSynthesizer.speak(_:)`: it never opens the
 //  microphone, keeps no audio and returns at once, so the setup menu stays

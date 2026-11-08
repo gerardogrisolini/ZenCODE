@@ -2,7 +2,7 @@
 //  MacOSVoiceModeSetupTests.swift
 //  ZenCODECoreTests
 //
-//  The reading-voice choice of `/setup` > Voice mode on macOS. The helpers
+//  The reading-voice choice of `zen --setup` > Voice mode on macOS. The helpers
 //  are platform neutral, so these run everywhere with fixture voices.
 //
 

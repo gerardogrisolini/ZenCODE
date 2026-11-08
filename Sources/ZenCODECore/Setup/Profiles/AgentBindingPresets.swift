@@ -107,7 +107,7 @@ struct AgentBindingPresets: Equatable, Sendable {
     /// Where the presets file sits inside a ZenCODE source checkout.
     static let sourceRelativePath = "Sources/ZenPackageMetadata/" + filename
 
-    /// `binding-presets.json` in the ZenCODE source checkout that `/setup` also
+    /// `binding-presets.json` in the ZenCODE source checkout that `zen --setup` also
     /// builds ZenCRON and optional features from
     /// (`SwiftFeatureRuntime.zenCODESourceCheckoutURL`: the checkout this binary
     /// was built from, the installer copy under the support directory, then the

@@ -23,19 +23,10 @@ extension TerminalInteractiveLineReader {
         }
     }
 
-    /// Oldest-first prompt input retained only for this execution of `zen`.
-    /// `/setup` transfers this value to the replacement reader in memory;
+    /// Oldest-first prompt input retained only for this execution of `zen`;
     /// conversation creation/loading never replaces it.
     var commandHistory: [String] {
         withPanelLock { $0.history }
-    }
-
-    func restoreCommandHistory(_ history: [String]) {
-        withPanelLock { state in
-            state.history = history
-            state.historyIndex = nil
-            state.draftBeforeHistory.removeAll()
-        }
     }
 
     func recordHistoryLocked(_ line: String, state: inout State) {

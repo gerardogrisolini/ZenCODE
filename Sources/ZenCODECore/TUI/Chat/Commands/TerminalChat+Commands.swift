@@ -181,14 +181,6 @@ extension TerminalChat {
     nonisolated static let commandRegistry = ChatCommandRegistry(
         shared: ChatCommandRegistry.sharedDescriptors,
         channel: [
-            (after: "/help", descriptors: [
-                ChatCommandDescriptor(
-                    command: "/setup",
-                    summary: "configure ZenCODE",
-                    help: "/setup saves the current session, opens setup, then restores the session with the new configuration.",
-                    scope: .channel
-                ),
-            ]),
             (after: "/think", descriptors: [
                 ChatCommandDescriptor(
                     command: "/ds4",
@@ -247,7 +239,7 @@ extension TerminalChat {
                 ChatCommandDescriptor(
                     command: "/voice",
                     summary: "voice mode on/off/pause/resume",
-                    help: "/voice on starts voice mode with any agent in the interactive terminal: utterances become prompts through local speech recognition and answers are read aloud (macOS uses the system speech frameworks; Linux uses the sherpa-onnx files downloaded from /setup > Voice mode and turns the microphone off while reading). Esc stops the reading. /voice off stops voice mode; /voice pause stops listening and reading aloud, /voice resume restarts both, and /voice alone toggles pause/resume. Voice mode lasts only for this TUI session.",
+                    help: "/voice on starts voice mode with any agent in the interactive terminal: utterances become prompts through local speech recognition and answers are read aloud (macOS uses the system speech frameworks; Linux uses the sherpa-onnx files downloaded from zen --setup > Voice mode and turns the microphone off while reading). Esc stops the reading. /voice off stops voice mode; /voice pause stops listening and reading aloud, /voice resume restarts both, and /voice alone toggles pause/resume. Voice mode lasts only for this TUI session.",
                     scope: .channel,
                     availableDuringGeneration: true
                 ),

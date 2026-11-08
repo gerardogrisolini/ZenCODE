@@ -94,7 +94,7 @@ public final class VoiceModeSession {
 
     /// The controller of this platform, configured from the settings: the
     /// voice mode language, the macOS reading voice, and the options of
-    /// `/setup` > Voice mode, read again for every controller, so a failed
+    /// `zen --setup` > Voice mode, read again for every controller, so a failed
     /// one is replaced with the current choices.
     nonisolated static func platformController(
         callbacks: VoiceModeCallbacks

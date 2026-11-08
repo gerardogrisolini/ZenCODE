@@ -44,7 +44,7 @@ struct SherpaVoiceModeControllerTests {
         )
         let invocation = SherpaVoiceModeController.invocation(for: paths)
         #expect(invocation.recognizerArguments.contains("--silero-vad-min-silence-duration=5"))
-        // The pause chosen in /setup > Voice mode replaces the default.
+        // The pause chosen in zen --setup > Voice mode replaces the default.
         let options = VoiceModeOptions(voice: AgentVoiceSettingsManifest(utteranceSilenceSeconds: 8))
         #expect(
             SherpaVoiceModeController.invocation(

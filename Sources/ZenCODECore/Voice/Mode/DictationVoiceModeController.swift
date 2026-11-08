@@ -376,7 +376,7 @@ final class VoiceSpeaker {
         }
     }
 
-    /// The voice saved in `/setup` > Voice mode when it is installed and reads
+    /// The voice saved in `zen --setup` > Voice mode when it is installed and reads
     /// the locale's language; otherwise the best installed non-novelty voice
     /// for the locale, preferring premium and enhanced voices.
     static func preferredVoice(
@@ -483,9 +483,9 @@ actor DictationVoiceModeController: VoiceModeController {
     private let callbacks: Callbacks
     nonisolated let languageCode: String
     private let locale: Locale
-    /// The reading voice chosen in `/setup` > Voice mode, if any.
+    /// The reading voice chosen in `zen --setup` > Voice mode, if any.
     private let readingVoiceIdentifier: String?
-    /// The options chosen in `/setup` > Voice mode.
+    /// The options chosen in `zen --setup` > Voice mode.
     private let options: VoiceModeOptions
     private let device = VoiceAudioDevice()
     private var recognizer: VoiceDictationRecognizer?

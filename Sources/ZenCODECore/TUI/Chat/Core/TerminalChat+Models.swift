@@ -10,55 +10,9 @@ import Foundation
 enum TerminalSubmittedLineAction {
     case continueChat
     case exitChat
-    case requestSetup
     case runPrompt(String)
     case runHiddenPrompt(String, purpose: ChatTurnPurpose)
     case prefillPrompt(String)
-}
-
-/// In-memory state carried across the coarse runtime restart requested by
-/// `/setup`. Configuration-derived state is intentionally absent: the relaunched
-/// chat must use the providers, model, agent, tools, and skills just written by
-/// setup rather than restoring their previous values. Prompt history travels
-/// here only; it is never part of a persisted conversation snapshot.
-public struct TerminalChatResumeSnapshot: Sendable {
-    public let sessionID: String
-    public let cacheKey: String?
-    public let history: [AgentRuntimeMessage]
-    public let transcriptHistory: [AgentRuntimeMessage]
-    public let activePlan: TerminalSessionPlan?
-    public let queuedPlans: [TerminalSessionPlan]
-    public let checkpointTree: SessionCheckpointTree?
-    public let savedSessionName: String?
-    /// Prompt submissions for this process, separate from saved conversation data.
-    public let commandHistory: [String]
-
-    public init(
-        sessionID: String,
-        cacheKey: String?,
-        history: [AgentRuntimeMessage],
-        transcriptHistory: [AgentRuntimeMessage],
-        activePlan: TerminalSessionPlan?,
-        queuedPlans: [TerminalSessionPlan] = [],
-        checkpointTree: SessionCheckpointTree?,
-        savedSessionName: String?,
-        commandHistory: [String] = []
-    ) {
-        self.sessionID = sessionID
-        self.cacheKey = cacheKey
-        self.history = history
-        self.transcriptHistory = transcriptHistory
-        self.activePlan = activePlan
-        self.queuedPlans = queuedPlans
-        self.checkpointTree = checkpointTree
-        self.savedSessionName = savedSessionName
-        self.commandHistory = commandHistory
-    }
-}
-
-public enum TerminalChatRunOutcome: Sendable {
-    case exited
-    case setupRequested(TerminalChatResumeSnapshot)
 }
 
 struct TerminalPromptAttempt: Sendable {

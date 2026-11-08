@@ -202,7 +202,7 @@ public enum AgentProviderKeyMigration {
                 warnings.append(
                     "settings migration dropped the duplicate provider '\(provider.displayTitle)' "
                         + "together with its models and API key: provider '\(identity.id)' is already configured. "
-                        + "Reconfigure the remaining provider in /setup if needed."
+                        + "Reconfigure the remaining provider with zen --setup if needed."
                 )
                 continue
             }

@@ -32,32 +32,28 @@ public enum AgentRuntimeLauncher {
     }
 
     /// Runs one terminal-chat lifecycle. The caller owns the supplied runner,
-    /// or the host whose runner it is, so it can preserve the task
-    /// orchestrator while rebuilding the chat after `/setup`. With
-    /// `sessionHost` the terminal opens its slot there and the caller shuts
-    /// the host down (``ChatSessionHost/shutdown(keepingExternalTools:)``);
-    /// `sessionRunner` is then ignored, as the host's runner is the
-    /// terminal's. Without a host the terminal builds one over
-    /// `sessionRunner`, or over a new runner.
+    /// or the host whose runner it is. With `sessionHost` the terminal opens
+    /// its slot there and the caller shuts the host down
+    /// (``ChatSessionHost/shutdown(keepingExternalTools:)``); `sessionRunner`
+    /// is then ignored, as the host's runner is the terminal's. Without a host
+    /// the terminal builds one over `sessionRunner`, or over a new runner.
     @ChatSessionActor
     public static func runTerminalChat(
         configuration: AgentConfiguration,
         stdinIsTerminal: Bool,
         sessionRunner: AgentCoreSessionRunner? = nil,
         sessionHost: ChatSessionHost? = nil,
-        permissionAuthorizer: LocalExecPermissionAuthorizer? = nil,
-        runtimeSetupResumeSnapshot: TerminalChatResumeSnapshot? = nil
-    ) async throws -> TerminalChatRunOutcome {
+        permissionAuthorizer: LocalExecPermissionAuthorizer? = nil
+    ) async throws {
         let terminal = TerminalChat(
             configuration: configuration,
             stdinIsTerminal: stdinIsTerminal,
             sessionRunner: sessionRunner,
             sessionHost: sessionHost,
             permissionAuthorizer: permissionAuthorizer,
-            runtimeSetupResumeSnapshot: runtimeSetupResumeSnapshot,
             telegramTransportFactory: nil
         )
-        return try await terminal.run()
+        try await terminal.run()
     }
 
     /// Runs the session of `zen --telegram` in this process: no TUI, the slot

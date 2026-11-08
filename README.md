@@ -35,19 +35,21 @@ See [Why ZenCODE](Docs/why-zen.md) for the full rationale.
 
 ## Providers
 
-ZenCODE supports several ways to run the model, all selected during automatic first-run setup or later with `/setup`:
+ZenCODE supports several ways to run the model, all selected with `zen --setup`:
 
 - **Cloud API providers** — bring an API key for any OpenAI-compatible endpoint, including OpenRouter, local servers, and any `/v1`-compatible provider.
 - **ChatGPT Subscription** — sign in with your existing ChatGPT subscription through the browser. No API key required.
 - **Claude Subscription** — sign in with your existing Claude (Anthropic) subscription through the browser. No API key required.
 - **DS4 local runtime** — run a DS4 model in-process from an existing DS4 checkout,
   with no server process. Select **DS4 local runtime (in-process engine)** in
-  `/setup` to choose the GGUF files and to build the small `libzencode-ds4`
+  `zen --setup` to choose the GGUF files and to build the small `libzencode-ds4`
   library against your checkout with the toolchain of the chosen backend. Setup
   does not download a checkout or models. See the [DS4 guide](Docs/ds4.md).
 
 ## Run
 
+- `zen --setup` opens the interactive setup and exits; it is the only way to
+  configure ZenCODE (see [First Setup](Docs/zen.md#first-setup)).
 - `zen` opens the standalone terminal coding agent.
 - `zen -p "Summarize the current changes"` runs one headless turn and prints only
   the final assistant text.
@@ -102,10 +104,11 @@ curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scri
 ```
 
 Drive the agent through configured cloud, subscription, or local providers.
-Running `zen` opens setup automatically when configuration is missing or
-invalid; use `/setup` later to reconfigure it without leaving the TUI. The
+Configure it with `zen --setup`, which also reconfigures it later; `zen` does
+not open setup by itself and, when the configuration is missing or invalid,
+stops with a message and exit status 1 (ACP excepted). The
 standalone agent, TUI, and ACP bridge work normally. Optional Swift feature
-packages are selected from the Features step of `/setup`, or installed later with
+packages are selected from the Features step of `zen --setup`, or installed later with
 `zen --install-features`; they are compiled on demand under
 `~/.zencode/features/<id>/`, not distributed as executables next to `zen`. The
 [web tools guide](Docs/web.md) covers the `web-tools` package (`web.search`,
@@ -124,7 +127,7 @@ stable toolchain with Swiftly, following the
 [official Linux installation instructions](https://www.swift.org/install/linux/).
 An existing older toolchain is rejected rather than silently replaced.
 
-`/setup` supports both subscription logins on Linux: ChatGPT uses the
+`zen --setup` supports both subscription logins on Linux: ChatGPT uses the
 device-code page and Claude asks for the authorization code shown by its hosted
 OAuth flow. ChatGPT generation remains WebSocket-based and, together with
 HTTP/SSE generation, uses the shared cross-platform SwiftNIO transport.
@@ -132,15 +135,14 @@ HTTP/SSE generation, uses the shared cross-platform SwiftNIO transport.
 ## Quick Start
 
 Choose a cloud API provider, a ChatGPT or Claude subscription, or a local
-provider (see [Providers](#providers)) in the setup that opens automatically on
-first launch:
+provider (see [Providers](#providers)) in the interactive setup:
 
 ```bash
-zen
+zen --setup
 ```
 
-Use `/setup` from the TUI whenever you want to reconfigure it without closing
-the app.
+Then start the agent with `zen`. To reconfigure ZenCODE later, leave the chat
+and run `zen --setup` again.
 
 ### Optional workspace guidance
 
@@ -170,7 +172,6 @@ swift build -c release --product zen
 
 ```text
 /help        Show available commands
-/setup       Reconfigure ZenCODE, then restore the current session
 /models      Select a model for the current session
 /think       Select the thinking level for the current model
 /agents      Select an agent profile
@@ -209,7 +210,7 @@ describes the complete handoff flow.
 after a short pause and every final answer is read aloud; `Esc` stops the
 reading, `/voice` pauses or resumes, `/voice off` stops. macOS needs nothing
 more than the microphone and speech recognition permissions; on Linux, first
-download the speech files (about 580 MB) from `/setup` > **Voice mode**. The
+download the speech files (about 580 MB) from `zen --setup` > **Voice mode**. The
 [voice guide](Docs/voice.md) covers languages, Telegram voice messages,
 privacy, and troubleshooting.
 
@@ -224,7 +225,7 @@ the numbered entries, `/cron run <n>` runs one now and reports in the terminal,
 and `/cron mailto` sets the recipient.
 Cron runs ZenCRON, a small program that starts `zen`, so that macOS asks for the
 privacy permissions of a job once and not after every update. Build ZenCRON once
-from `/setup` > **Scheduled prompts (ZenCRON)** before the first `/cron add`; it
+from `zen --setup` > **Scheduled prompts (ZenCRON)** before the first `/cron add`; it
 looks for `zen` in `/usr/local/bin`, where the installers put it. The
 [scheduled prompts guide](Docs/zen.md#scheduled-prompts-crontab) covers
 schedules, mail, and troubleshooting.
@@ -238,7 +239,7 @@ schedules, mail, and troubleshooting.
 - `Sources/ZenPackageMetadata`: internal bundled-feature distribution metadata and catalog parity support.
 - `Sources/ZenCODECore`: reusable agent runtime, interactive setup, TUI, tools, skills, ACP, config, memory, sessions, and feature management.
 - `Sources/zen`: the `zen` composition root and command-line dispatch.
-- `Sources/ZenCRON`: the standalone SwiftPM package of ZenCRON, the program that cron runs for scheduled prompts. It has no dependencies, is outside the root graph, and is built by `/setup`, not by the installers.
+- `Sources/ZenCRON`: the standalone SwiftPM package of ZenCRON, the program that cron runs for scheduled prompts. It has no dependencies, is outside the root graph, and is built by `zen --setup`, not by the installers.
 - `Sources/ZenApp`: the standalone SwiftPM package of ZenCODE for macOS, a native SwiftUI app that replicates the terminal chat. It is outside the root graph and is not built by the installers; see [Docs/app.md](Docs/app.md).
 - `Sources/Features`: self-contained optional SwiftPM feature packages. They own their implementations and package-local tests, are excluded from the root graph, and are installed on demand into `~/.zencode/features/<id>/` as local Builder-compatible features. The macOS-only Xcode integration lives entirely in `Sources/Features/XcodeTools`.
 - `Tests`: SwiftPM test targets.

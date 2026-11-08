@@ -481,14 +481,14 @@ enum SupportDirectoryArchive {
                     continue
                 }
                 // Downloaded voice-mode programs and models are large and
-                // re-downloadable from /setup; they never enter a backup.
+                // re-downloadable with zen --setup; they never enter a backup.
                 guard directoryURL != sourceURL
                     || child != SherpaOnnxVoiceInstallation.directoryName else {
                     continue
                 }
                 // The build output of the installed features
                 // (`features/<id>/.build`) is regenerable (rebuilt from
-                // /setup > Features or with feature.build) and its `release`
+                // zen --setup > Features or with feature.build) and its `release`
                 // symlink cannot be archived; it never enters a backup.
                 guard child != featureBuildDirectoryName
                     || !isFeaturePackageDirectory(directoryURL) else {

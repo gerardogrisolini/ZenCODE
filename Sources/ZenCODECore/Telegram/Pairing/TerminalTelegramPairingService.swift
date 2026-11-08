@@ -105,7 +105,7 @@ public enum TerminalTelegramPairingError: LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .expired:
-            "Telegram pairing expired. Run /setup again to generate a new pairing link."
+            "Telegram pairing expired. Run zen --setup again to generate a new pairing link."
         }
     }
 }

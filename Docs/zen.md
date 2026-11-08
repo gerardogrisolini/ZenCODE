@@ -13,9 +13,12 @@ zen --jsonl -p "Summarize"       # one headless turn; JSON Lines events on stdou
 zen -f /path/to/prompt.md        # one headless turn; prompt read from a file
 zen --acp                        # ACP over stdio for compatible clients
 zen --ui                         # the ZenCODE macOS app (macOS only)
+zen --setup                      # the interactive setup, then exit
 ```
 
 Standalone `zen` uses providers/models from `~/.zencode/settings.json`.
+Every mode except `--acp` needs a valid configuration, which `zen --setup`
+creates: see [First Setup](#first-setup).
 Headless JSONL mode is documented in the dedicated
 [protocol guide](jsonl.md). `zen --telegram` is described in
 [Telegram Mode](#telegram-mode).
@@ -31,8 +34,8 @@ deleted or modified text file exceeds that limit, the artifact shows the first
 whole diff lines that fit, with a truncation note; `/undo` still uses the full
 patch. Normal tool blocks remain compact without code or diffs.
 The history is scoped to the active
-session and is cleared by `/sessions new`, loading/restoring a session, and
-`/setup`; it is never written to saved snapshots, checkpoints, transcripts, or
+session and is cleared by `/sessions new` and by loading/restoring a session;
+it is never written to saved snapshots, checkpoints, transcripts, or
 ACP wire messages. `/changes`, `/changes diff`, `/undo`, the final `Summary`,
 and the ACP standard `locations`/`diff` updates keep their existing contracts.
 TUI and ACP use the same path normalization and evidence mapper; only their
@@ -112,23 +115,60 @@ tree and creates a new conversational branch.
 ## First Setup
 
 ```bash
-zen
+zen --setup
 ```
 
-When required configuration is missing or invalid (`settings.json` or
-`agents.json`), or when no model is configured, `zen` opens setup automatically before starting the chat. Use `/setup` later to
-reconfigure ZenCODE; the TUI saves the current session, rebuilds the runtime,
-and restores the conversation without closing the app.
+`zen --setup` is the only way to start the interactive setup, for the first
+configuration and for every later change. It always opens the setup menu, also
+when ZenCODE is already configured, never enters a chat, and exits when the
+setup ends:
+
+- exit status 0 when a valid configuration exists at the end;
+- exit status 1 when it does not (for example Esc on the first menu during a
+  first setup), or on error.
+
+A reset of the configuration, or the import of a backup, reopens the setup in
+the same run (see [Data Management](#data-management-backup-exportimport)).
+
+`--setup` requires an interactive terminal and cannot be combined with other
+options: `zen --setup --telegram` stops with `Options --setup and --telegram
+cannot be combined.` and exit status 1. `--help`, `--version`, `--doctor`, and
+`--install-features` keep precedence over it. Like the other modes, it first
+migrates the provider keys of `settings.json`. `zen --help` lists it as: Open
+the interactive setup and exit.
+
+### Startup Without a Valid Configuration
+
+Every mode except ACP needs a valid configuration. When the required
+configuration is missing or invalid (`settings.json` or `agents.json` missing or
+invalid, or no model configured), `zen` (the TUI), `zen --ui`, the headless
+modes (`-p` and `-f`), `--jsonl`, and `--telegram` do not start and do not open
+setup automatically. They print
+
+```text
+ZenCODE is not configured. Run `zen --setup` to configure it, then start zen again.
+```
+
+on standard error (with `--jsonl`, as the framed JSONL `error` record of
+category `configuration` on standard output; see the [protocol guide](jsonl.md))
+and exit with status 1. Run `zen --setup`, then start `zen` again.
+
+To reconfigure ZenCODE later, leave the chat (`/exit`) and run `zen --setup`.
+The TUI has no `/setup` command: it is an unknown command, and the in-place
+reconfiguration that restored the conversation no longer exists.
+
+ACP is the only exception, and only when the effective mode is ACP: `--acp`, or
+`ZENCODE_AGENT_MODE=acp` with no other mode-selecting option (`--tui`,
+`--telegram`, `-p`/`--prompt`, `-f`, or `--jsonl`). See [ACP Mode](#acp-mode).
 
 ### Esc in Setup
 
-Esc goes back one level, in the first setup of `zen` and in `/setup` alike.
-From `/setup` it never closes ZenCODE: leaving setup with Esc resumes the
-chat. In the first setup, which `zen` opens because nothing valid is
-configured yet, Esc on the first menu leaves setup and `zen` ends with exit
-status 0. A failed reset of the remote configuration, or an error after
-**Finish setup** (for example settings that cannot be written), still ends the
-process with an error, from `/setup` too.
+Esc goes back one level. Esc on the first menu leaves setup with nothing
+saved, and `zen --setup` ends: with exit status 0 when a valid configuration
+exists, and with exit status 1 when it does not (for example during a first
+setup). A failed reset of the configuration, or an error after **Finish setup**
+(for example settings that cannot be written), ends the process with an error
+(exit status 1).
 
 - Esc on a prompt returns to the menu that opened that step. The step in
   progress is discarded; what other sections staged is kept until **Finish
@@ -175,12 +215,13 @@ process with an error, from `/setup` too.
 [Data Management](#data-management-backup-exportimport).
 
 In ACP mode (`--acp` or `ZENCODE_AGENT_MODE=acp`), setup never starts inside
-the ACP stream. See [ACP Mode](#acp-mode) for the authentication methods and
-the behavior before ZenCODE is configured.
+the ACP stream. See [ACP Mode](#acp-mode) for the authentication method, which
+runs `zen --setup` in a terminal, and the behavior before ZenCODE is
+configured.
 
-Like ACP, `--telegram` (or `ZENCODE_AGENT_MODE=telegram`) never starts setup:
-Telegram must be configured and paired beforehand, from `zen` with `/setup`.
-See [Telegram Mode](#telegram-mode).
+`--telegram` (or `ZENCODE_AGENT_MODE=telegram`) requires Telegram to be set up
+and paired beforehand with `zen --setup` (**Telegram** section). See
+[Telegram Mode](#telegram-mode).
 
 Creates files under `~/.zencode/`:
 
@@ -195,9 +236,9 @@ Creates files under `~/.zencode/`:
 - `task-graphs/` — atomic project/session task checkpoints, including explicitly saved plans, grouped by project key.
 - `features/` — generated Builder packages and installed optional feature packages.
 - `source/` — persistent ZenCODE checkout retained by the platform installer for later optional-feature builds.
-- `bin/` — `ZenCRON`, the program that cron runs for scheduled prompts, built and installed from `/setup` > **Scheduled prompts (ZenCRON)**. See [ZenCRON](#zencron-the-host-that-cron-runs).
-- `zencron/` — the working copy of the ZenCRON package that `/setup` builds, kept so that later builds are incremental.
-- `voice/` — Linux only: the speech programs and models downloaded from `/setup` > **Voice mode** for voice mode and Telegram voice messages. They can be downloaded again at any time and are not part of backups. See [voice.md](voice.md).
+- `bin/` — `ZenCRON`, the program that cron runs for scheduled prompts, built and installed from `zen --setup` > **Scheduled prompts (ZenCRON)**. See [ZenCRON](#zencron-the-host-that-cron-runs).
+- `zencron/` — the working copy of the ZenCRON package that `zen --setup` builds, kept so that later builds are incremental.
+- `voice/` — Linux only: the speech programs and models downloaded from `zen --setup` > **Voice mode** for voice mode and Telegram voice messages. They can be downloaded again at any time and are not part of backups. See [voice.md](voice.md).
 
 ## Project Key
 
@@ -223,7 +264,7 @@ it stays tied to the resolved folder path, so it is asked again after a move.
 
 ## Data Management (Backup Export/Import)
 
-The **Data management** entry of `/setup` (also available from first-run
+The **Data management** entry of `zen --setup` (also available from a first
 setup, with no models configured yet) moves the whole `~/.zencode/`
 directory between machines in one step:
 
@@ -233,7 +274,7 @@ directory between machines in one step:
   Temporary coordination artifacts of the export itself are excluded, and
   the archive is never added to itself when saved inside `~/.zencode/`.
   The Linux `voice/` directory is excluded as well: its programs and models
-  are large and can be downloaded again from `/setup` > **Voice mode**.
+  are large and can be downloaded again from `zen --setup` > **Voice mode**.
   The build directories of the installed features (`features/<id>/.build`)
   are excluded too: they hold only regenerable build output and the
   `release` symbolic link that SwiftPM creates.
@@ -271,7 +312,7 @@ directory between machines in one step:
   Linux voice mode files are removed: download them again afterwards.
   The build directories of the installed features are not in the archive
   either, so rebuild the features after an import: the optional ones from
-  `/setup` > **Features** (Update installed), the Builder-generated ones
+  `zen --setup` > **Features** (Update installed), the Builder-generated ones
   with `feature.build`.
 - **Clean memory** lists the memory graphs under `~/.zencode/memory/` (the
   current project, the global graph, and the other projects, with size and
@@ -374,7 +415,7 @@ exact paths involved.
 ## Command Line Options
 
 ```text
-zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--ui] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N]
+zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] [--setup] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--ui] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N]
 ```
 
 - `-p, --prompt PROMPT`: run one non-interactive turn. Redirected stdin, when
@@ -392,13 +433,23 @@ zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] 
 - `--version`: print the ZenCODE version and exit.
 - `--doctor`: print a redacted, read-only diagnostic report and exit. It never
   starts setup, accesses a provider, creates configuration, or writes a log.
+- `--setup`: open the interactive setup and exit. It is the only way to start
+  setup: it always opens the setup menu (also when ZenCODE is already
+  configured), never enters a chat, and exits with status 0 when a valid
+  configuration exists at the end and 1 when it does not or on error. It
+  requires an interactive terminal and cannot be combined with other options
+  (`Options --setup and <option> cannot be combined.`, exit status 1);
+  `--help`, `--version`, `--doctor`, and `--install-features` keep precedence.
+  See [First Setup](#first-setup).
 - `--acp`: run ACP JSON-RPC over stdio.
 - `--tui`: open the terminal chat (the TUI). It is the default without mode
   options, so the option only makes the choice explicit.
 - `--telegram`: run the session without the TUI, driven only by the linked
   Telegram chat, for a machine that stays on. Telegram must be set up and paired
-  first, from `zen` with `/setup`; this mode never starts setup. See
-  [Telegram Mode](#telegram-mode).
+  first, with `zen --setup`; this mode never starts setup, and without a valid
+  configuration it stops with the not-configured message (see
+  [Startup Without a Valid Configuration](#startup-without-a-valid-configuration)).
+  See [Telegram Mode](#telegram-mode).
 - `--ui` (macOS only): open [ZenCODE for macOS](app.md), the SwiftUI app. On
   first use and after each ZenCODE update, `zen` builds the app (the package
   `Sources/ZenApp`) from the checkout it was built from, or from the installer
@@ -409,7 +460,9 @@ zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] 
   a new instance. Only `--agent`, `--model`, `--skills`, and
   `--working-directory` are accepted, and they are forwarded to the app; the
   options of the other modes are refused, and an unknown agent is reported in
-  the terminal. When ZenCODE is not configured, setup runs first. Every new
+  the terminal. When ZenCODE is not configured, `zen --ui` does not open the
+  app and does not start setup: it stops with the not-configured message and
+  exit status 1 (run `zen --setup` first). Every new
   window offers the task graphs that earlier sessions left incomplete (see
   [Recovering Incomplete Tasks at Startup](#recovering-incomplete-tasks-at-startup)).
   The output of the app goes to `~/.zencode/app/ZenCODE.log`; an app that exits
@@ -431,7 +484,9 @@ modes and cannot be combined across them, in any order. `zen` refuses the
 combination with `Options X and Y cannot be combined.` (for example `zen
 --telegram -p hello` answers `Options --telegram and -p/--prompt cannot be
 combined.`). Repeating the same mode option is allowed. `zen --ui`, which has
-its own parser, also refuses `--tui` and `--telegram`.
+its own parser, also refuses `--tui` and `--telegram`. `--setup` cannot be
+combined with any other option: `zen --setup --telegram` answers `Options
+--setup and --telegram cannot be combined.` and exits with status 1.
 
 Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, `ZENCODE_AGENT_MODEL`, `ZENCODE_AGENT_CWD`, `ZENCODE_AGENT_SKILLS`, `ZENCODE_AGENT_MAX_TOOL_ROUNDS`, and `ZENCODE_AGENT_MAX_OUTPUT_TOKENS`.
 
@@ -462,7 +517,7 @@ tools to a profile or `/tools` selection. After installation, its package can be
 selected and managed exactly like a local Builder feature. The Web feature
 (`web.search`, `web.fetch`) is described in [web.md](web.md).
 
-The **Features** step of `/setup` covers the same lifecycle. Its rows are
+The **Features** step of `zen --setup` covers the same lifecycle. Its rows are
 grouped as `Bundled`/`Generated` (check to enable, uncheck to disable),
 `Installable` (not installed yet), and, only when source changes are available,
 `Update installed`. That last group is hidden when every installed package
@@ -535,7 +590,7 @@ the kind of agent: it decides the default agent and which profiles `/plan`,
 `/review`, and `/feature` use, while the ID and the name carry no meaning. The
 recommended profiles are the system profiles and have their role as ID
 (`developer`, `planner`, …). An `agents.json` with a profile without `role` is
-invalid and `/setup` offers to rewrite it. See
+invalid and `zen --setup` offers to rewrite it. See
 [agents.md](agents.md#profile-roles).
 
 Switch profiles in the TUI without restarting:
@@ -588,7 +643,7 @@ configured model and a manual selection overrides that default for the active
 session. Changing only the project association keeps the conversation and
 refreshes the roster in the system prompt in place.
 
-Use `/setup` to inspect and configure the model bindings of every profile — see
+Use `zen --setup` to inspect and configure the model bindings of every profile — see
 [bindings.md](bindings.md) for how bindings, capability, and task complexity
 drive delegation, and [agents.md](agents.md) for profile and sub-agent concepts.
 
@@ -620,9 +675,8 @@ latency in SSH or tmux sessions can also prevent the timing pattern from matchin
 
 Commands start with `/`:
 
-**Setup and navigation:**
+**Help and navigation:**
 - `/help` — show command help.
-- `/setup` — save the current session, open setup, rebuild the runtime from the updated configuration, and restore the conversation.
 - `/models` — show every configured model and choose the model for the current session.
 - `/think` — open a menu to select the thinking level of the current model.
 - `/ds4 status|power <1-100>|steer <scale>|hints on|off` — inspect and tune the in-process DS4 engine; available only when the current model has a DS4 runtime. Values are not persisted. See [DS4 local runtime](ds4.md).
@@ -653,12 +707,12 @@ Commands start with `/`:
 - `/undo` — revert the most recent agent-tracked changes.
 
 **Voice:**
-- `/voice on` / `/voice off` — start or stop voice mode in the interactive terminal, with any agent: each utterance becomes a prompt after a pause of about 5 seconds, or when it ends with a word you choose, and every final answer is read aloud in full, while the model is asked for short sentences; `Esc` stops the reading. The send mode and the pause are chosen in `/setup` > **Voice mode**. On Linux, download the speech files from `/setup` > **Voice mode** first.
+- `/voice on` / `/voice off` — start or stop voice mode in the interactive terminal, with any agent: each utterance becomes a prompt after a pause of about 5 seconds, or when it ends with a word you choose, and every final answer is read aloud in full, while the model is asked for short sentences; `Esc` stops the reading. The send mode and the pause are chosen in `zen --setup` > **Voice mode**. On Linux, download the speech files from `zen --setup` > **Voice mode** first.
 - `/voice pause` / `/voice resume` — stop or restart both listening and reading aloud; a bare `/voice` toggles between them. Available while a prompt runs. See [voice.md](voice.md).
 
 **Scheduling:**
 - `/cron` / `/cron list` — show the `MAILTO` recipient and the scheduled prompts, each with its number, schedule, agent, working directory, output kind (`text` or `JSONL`), and prompt. See [Scheduled Prompts (crontab)](#scheduled-prompts-crontab).
-- `/cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>` — schedule a prompt for the working directory of the session. With `-agent <name>`, the job runs with that agent profile; without it, with the default developer of the project (normally `Developer`), whatever agent is selected in the session. With `-f <path>`, the prompt is read from that absolute file at every run, and the prompt may be omitted (see [Schedules](#schedules)). By default the mail holds the final answer text; with the `-json` option right after `add`, the job runs with `--jsonl` and the mail holds the JSONL records of the run (see [Results and mail](#results-and-mail)). The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. ZenCRON must be built first from `/setup` > **Scheduled prompts (ZenCRON)**, and `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block; otherwise the command is refused and nothing is written (see [ZenCRON](#zencron-the-host-that-cron-runs)).
+- `/cron add [-json] [-agent <name>] <schedule> [-f <path>] <prompt>` — schedule a prompt for the working directory of the session. With `-agent <name>`, the job runs with that agent profile; without it, with the default developer of the project (normally `Developer`), whatever agent is selected in the session. With `-f <path>`, the prompt is read from that absolute file at every run, and the prompt may be omitted (see [Schedules](#schedules)). By default the mail holds the final answer text; with the `-json` option right after `add`, the job runs with `--jsonl` and the mail holds the JSONL records of the run (see [Results and mail](#results-and-mail)). The schedule is five numeric cron fields — minute 0-59, hour 0-23, day-of-month 1-31, month 1-12, and day-of-week 0-7 (0 and 7 = Sunday), each `*`, `*/step`, or a list of `n`, `a-b`, and `a-b/step` — with no month or day names, or one of `@reboot`, `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`. The prompt must fit on one line. ZenCRON must be built first from `zen --setup` > **Scheduled prompts (ZenCRON)**, and `zen` must be installed in `/usr/local/bin` or another directory of the `PATH` of the ZenCODE crontab block; otherwise the command is refused and nothing is written (see [ZenCRON](#zencron-the-host-that-cron-runs)).
 - `/cron remove <n>` — remove scheduled prompt `<n>`; the entries after it are renumbered.
 - `/cron run <n>` — run scheduled prompt `<n>` now, the way cron runs it, in the background, and show the result in the terminal instead of mailing it.
 - `/cron mailto [address|none|default]` — without an argument, show the address that receives scheduled-prompt results; with one, set it. `none` sends no mail; `default` removes the override and uses the local mailbox of the crontab owner.
@@ -873,7 +927,7 @@ Groups, shared members and per-route ACLs are not supported. Persisted routing u
 inactive and require a new pairing.
 
 Voice notes sent to the paired chat are transcribed on the machine — on macOS
-with Apple speech recognition, on Linux with the `/setup` > **Voice mode** files
+with Apple speech recognition, on Linux with the `zen --setup` > **Voice mode** files
 plus `opusdec` or `ffmpeg` — and run as ordinary prompts. See
 [voice.md](voice.md#telegram-voice-messages).
 
@@ -956,7 +1010,7 @@ and the model has no tool to create or change scheduled prompts.
 
 ### Quick start
 
-Build ZenCRON once, before the first `/cron add`: run `/setup`, choose
+Build ZenCRON once, before the first `/cron add`: run `zen --setup`, choose
 **Scheduled prompts (ZenCRON)**, and choose **Build and install ZenCRON**. It
 needs a ZenCODE source checkout and a Swift toolchain, as the optional features
 do (see [ZenCRON](#zencron-the-host-that-cron-runs)). Then:
@@ -972,11 +1026,11 @@ do (see [ZenCRON](#zencron-the-host-that-cron-runs)). Then:
 /cron remove 1
 ```
 
-`/cron add` needs `crontab`, the ZenCRON that `/setup` built, and a `zen` that
+`/cron add` needs `crontab`, the ZenCRON that `zen --setup` built, and a `zen` that
 ZenCRON can find, normally the one that `Scripts/install.sh` and
 `Scripts/install-linux.sh` install in `/usr/local/bin` (see
 [The `zen` that cron runs](#the-zen-that-cron-runs)). Without ZenCRON it refuses
-and sends you to `/setup`. Results arrive by mail: through `sendmail`, or through
+and sends you to `zen --setup`. Results arrive by mail: through `sendmail`, or through
 Mail.app on macOS when `/cron mailto` holds an email address (see
 [Results and mail](#results-and-mail)). `zen --doctor` reports a missing
 `crontab` or `sendmail`.
@@ -1211,9 +1265,11 @@ What ZenCRON does:
 - `ZenCRON --zencron-version` prints `ZenCRON 1`. The number changes only when
   the behaviour of ZenCRON changes.
 
-#### Build ZenCRON from `/setup`
+<a id="build-zencron-from-setup"></a>
 
-The installers and the release archives do not contain ZenCRON. Open `/setup`
+#### Build ZenCRON from `zen --setup`
+
+The installers and the release archives do not contain ZenCRON. Run `zen --setup`
 and choose **Scheduled prompts (ZenCRON)**; no model has to be configured. The
 section shows one of these lines:
 
@@ -1245,7 +1301,7 @@ What happens to a ZenCRON that is already installed depends on the platform:
   replaced.
 - On Linux, an installed ZenCRON is always replaced. The Swift runtime it uses is
   linked dynamically to the toolchain, so after a change of the Swift toolchain
-  an earlier ZenCRON may no longer start: build it again from `/setup`.
+  an earlier ZenCRON may no longer start: build it again from `zen --setup`.
 
 The section ends with one of these messages. `<path>` is the path of the
 installed file and `<reason>` the cause that the system reports:
@@ -1451,7 +1507,7 @@ standard error follow, when there are any. Use it to check that ZenCRON finds
 environment.
 The report is shown only in the terminal; it is not forwarded to Telegram.
 
-Leaving the chat with `/exit`, `/setup`, or the end of input stops a run in
+Leaving the chat with `/exit` or the end of input stops a run in
 progress: ZenCODE sends it SIGTERM, then SIGKILL after 3 seconds, and prints no
 report.
 
@@ -1467,7 +1523,7 @@ report.
   Settings > Privacy & Security > Full Disk Access. Grant it to ZenCRON, not to
   `/usr/sbin/cron`. Entries written before ZenCRON still belong to `zen` (see
   [Entries written before ZenCRON](#entries-written-before-zencron)).
-- Linux replaces ZenCRON at every build from `/setup`. After a change of the
+- Linux replaces ZenCRON at every build from `zen --setup`. After a change of the
   Swift toolchain, build it again there.
 - WSL does not start the cron service by itself. Start it with
   `sudo service cron start`, or enable systemd in `/etc/wsl.conf`.
@@ -1489,8 +1545,8 @@ Access on macOS.
 | `crontab failed with exit status …` | `crontab` refused the operation; the rest of the message is its error. A common cause is a user who is not allowed to use cron (`cron.allow`, `cron.deny`). |
 | `The ZenCODE block in your crontab is malformed: …` | The block has no end marker, or there are two blocks. Fix it with `crontab -e`. |
 | ``ZenCRON runs `zen` with PATH=…, but no executable zen was found there. …`` | Install `zen` in `/usr/local/bin`, or add its directory to the block's `PATH=` line. Nothing was written. |
-| `ZenCRON is not installed at <path>. Build it from /setup › Scheduled prompts (ZenCRON), then retry.` | There is no ZenCRON at that path. Build it as described in [Build ZenCRON from `/setup`](#build-zencron-from-setup). The crontab was neither read nor written. |
-| `ZenCRON at <path> does not start (<reason>). Rebuild it from /setup › Scheduled prompts (ZenCRON), then retry.` | The file exists but did not answer `--zencron-version` with a single `ZenCRON <number>` line. `<reason>` is `it is not executable`; `it could not be launched: …`; `it did not answer --zencron-version within 10 seconds`; `it exited with status <n>`, followed by `: ` and its error output when it printed any; `it printed no version`; `it printed more than one line instead of a single version line`; or `it printed '…' instead of 'ZenCRON <number>'`. Rebuild it from `/setup`, for example after a change of the Swift toolchain on Linux. The crontab was neither read nor written. |
+| `ZenCRON is not installed at <path>. Build it from zen --setup › Scheduled prompts (ZenCRON), then retry.` | There is no ZenCRON at that path. Build it as described in [Build ZenCRON from `zen --setup`](#build-zencron-from-setup). The crontab was neither read nor written. |
+| `ZenCRON at <path> does not start (<reason>). Rebuild it from zen --setup › Scheduled prompts (ZenCRON), then retry.` | The file exists but did not answer `--zencron-version` with a single `ZenCRON <number>` line. `<reason>` is `it is not executable`; `it could not be launched: …`; `it did not answer --zencron-version within 10 seconds`; `it exited with status <n>`, followed by `: ` and its error output when it printed any; `it printed no version`; `it printed more than one line instead of a single version line`; or `it printed '…' instead of 'ZenCRON <number>'`. Rebuild it from `zen --setup`, for example after a change of the Swift toolchain on Linux. The crontab was neither read nor written. |
 | `ZenCRON: no executable zen in PATH=…` | Printed by ZenCRON when a scheduled prompt runs, with exit status 127: cron mails it, and `/cron run` shows it in the report. No `zen` was found in the block's `PATH=` line; install `zen` there or fix the line. |
 | `ZenCRON: cannot run <path>: …` | Printed by ZenCRON with exit status 127, like the previous one: it found `zen` at `<path>` but the system could not start it; the rest is the reason it reports. |
 | `Invalid cron schedule (<field>): …` | See [Schedules](#schedules). Nothing was written. |
@@ -1663,7 +1719,7 @@ A read-only agent can retrieve and verify journal context but cannot mutate it.
 - `memory.update` rewrites an entry in place: the id, creation date, and archive state are preserved, the original `Timestamp` is kept and `Updated` added when omitted.
 - `memory.archive` deactivates a stale entry by id so it stops influencing retrieval without being deleted.
 
-Before writing, search for an active entry about the same durable project fact. Update it when appropriate instead of appending a duplicate, and do not write when nothing materially changed. Embeddings are opt-in and off by default: without a provider, entries carry no vector and retrieval is pure BM25 keyword matching. The embedding configuration is an endpoint URL plus an optional model: configure it in `/setup` ("Memory embeddings": BM25 only / add / change / remove), where an OpenRouter choice is proposed immediately when OpenRouter is among the configured providers (canonical endpoint `https://openrouter.ai/api/v1/embeddings`, model `qwen/qwen3-embedding-4b`; a model already saved, such as the earlier default `qwen/qwen3-embedding-8b`, stays valid), or for compatibility export `ZENCODE_MEMORY_EMBEDDING_ENDPOINT` (endpoint only). Setup validates the URL locally and never connects to it. When a model is configured ZenCODE sends it in the request body; otherwise the endpoint identifies the embedding model itself and the request omits `model`, so an endpoint-only OpenAI-compatible `/v1/embeddings` server chooses. The OpenRouter preset reuses the configured provider's API key at runtime only when the referenced provider is a configured OpenRouter provider and the embedding endpoint is itself an OpenRouter endpoint — the key is never duplicated in the embedding settings, and manual endpoint edits reset to an endpoint-only configuration so an edited endpoint can never forward the key to another host; custom/legacy endpoint-only setups send no Authorization header. Entries record the model identity that embedded them, so changing the provider degrades retrieval to keyword matching instead of returning mismatched results. Mutations are serialized per workspace within one ZenCODE process, and each one commits only after the graph save succeeded: a failing save leaves the in-memory graph unchanged.
+Before writing, search for an active entry about the same durable project fact. Update it when appropriate instead of appending a duplicate, and do not write when nothing materially changed. Embeddings are opt-in and off by default: without a provider, entries carry no vector and retrieval is pure BM25 keyword matching. The embedding configuration is an endpoint URL plus an optional model: configure it in `zen --setup` ("Memory embeddings": BM25 only / add / change / remove), where an OpenRouter choice is proposed immediately when OpenRouter is among the configured providers (canonical endpoint `https://openrouter.ai/api/v1/embeddings`, model `qwen/qwen3-embedding-4b`; a model already saved, such as the earlier default `qwen/qwen3-embedding-8b`, stays valid), or for compatibility export `ZENCODE_MEMORY_EMBEDDING_ENDPOINT` (endpoint only). Setup validates the URL locally and never connects to it. When a model is configured ZenCODE sends it in the request body; otherwise the endpoint identifies the embedding model itself and the request omits `model`, so an endpoint-only OpenAI-compatible `/v1/embeddings` server chooses. The OpenRouter preset reuses the configured provider's API key at runtime only when the referenced provider is a configured OpenRouter provider and the embedding endpoint is itself an OpenRouter endpoint — the key is never duplicated in the embedding settings, and manual endpoint edits reset to an endpoint-only configuration so an edited endpoint can never forward the key to another host; custom/legacy endpoint-only setups send no Authorization header. Entries record the model identity that embedded them, so changing the provider degrades retrieval to keyword matching instead of returning mismatched results. Mutations are serialized per workspace within one ZenCODE process, and each one commits only after the graph save succeeded: a failing save leaves the in-memory graph unchanged.
 
 The vendored engine ships optional intelligence layers — a query analyzer (default `DirectMemoryQueryAnalyzer`, which uses the prompt as the query), a selector, an extractor (default `NoopMemoryExtractor`, which extracts nothing) and a context formatter — plus `context(for:)` (a ready-to-inject memory block) and `learn(from:)`; these remain unwired engine internals. Automatic recall is wired and on by default: before each turn ZenCODE retrieves relevant entries — BM25 plus graph expansion locally (or semantic similarity plus fusion when an endpoint is configured), never a second LLM call — and injects them as a labelled `<project-memory>` block into the outgoing copy of the last user message on every tool round. The embedding provider selected in setup is fixed and independent of the destination chat model/provider: operator and delegated turns using GLM, Claude, GPT, or another model query the same graph through that embedder and receive the selected memory as text, without per-model copies. Recall remains bounded by a deadline (`ZENCODE_MEMORY_RECALL_TIMEOUT_MS`, default 150 ms); with embeddings enabled, a maintenance-free local BM25 block is prepared alongside semantic retrieval, so a slow endpoint yields that lexical fallback instead of erasing memory context, while an unavailable graph or a fallback not ready by the deadline still degrades to no memory without delaying the turn. The block itself does add input tokens to the request, so it is capped by a character budget (`ZENCODE_MEMORY_RECALL_MAX_CHARACTERS`, default 4 000 characters ≈ about 1k tokens, clamped to [200, 32 000]); recalled content is escaped so it cannot close the container, and the payload is truncated on line boundaries with a notice when it does not fit. The block is a transient per-turn channel merged into the outgoing copy of the last user message only — exactly once per round, because it is never written back into the session — and it never enters conversation history, saved-session snapshots, or the session cache key, so saved sessions and prompt caching are unaffected. Delegated sub-agent turns receive the same recall. The main model reads and writes durable memory explicitly through the five `memory.*` tools above. `ZENCODE_MEMORY_AUTO_RECALL` (default on) switches recall off.
 
@@ -1697,15 +1753,14 @@ Startup](#recovering-incomplete-tasks-at-startup)).
   is a no-op confirmation, required by some clients (for example Xcode 27
   beta 3) before they open a session. It does not configure or authenticate
   any provider.
-- `zencode-setup` (`type: terminal`, name **Set up ZenCODE**, `args: []`) is
-  published when the client declares
+- `zencode-setup` (`type: terminal`, name **Set up ZenCODE**, `args:
+  ["--setup"]`) is published when the client declares
   `clientCapabilities._meta["terminal-auth"]` as `true`, as the ACP Registry
-  validator does. Its args replace `--acp`, so the client runs `zen` with no
-  arguments in a terminal. If configuration is missing, the interactive setup
-  (provider and sign-in) opens. When setup is finished, `zen` enters the chat,
-  which is left with `/exit`. If ZenCODE is already configured, the chat opens
-  directly. When the process exits, the client reconnects and initializes the
-  agent again.
+  validator does. Its args replace `--acp`, so the client runs `zen --setup` in
+  a terminal. The interactive setup (provider and sign-in) opens, also when
+  ZenCODE is already configured, and the process exits when the setup ends: no
+  chat opens and no `/exit` is needed. The client then reconnects and
+  initializes the agent again.
 
 If both capabilities are declared, both methods are published, with the
 `agent` method first. If neither is declared, `authMethods` is empty.
@@ -1713,7 +1768,7 @@ If both capabilities are declared, both methods are published, with the
 ### Before ZenCODE Is Configured
 
 When `zen --acp` or `ZENCODE_AGENT_MODE=acp` runs without the configuration
-required by first setup (`settings.json` or `agents.json` missing or invalid,
+required by the setup (`settings.json` or `agents.json` missing or invalid,
 or no model configured), the interactive setup does not start inside the ACP
 stream, and stdout still contains only JSON-RPC messages:
 
@@ -1723,7 +1778,7 @@ stream, and stdout still contains only JSON-RPC messages:
   `-32000`) and this message:
 
   ```text
-  Authentication required: ZenCODE is not configured. Use the "Set up ZenCODE" terminal authentication method, or run `zen` in a terminal.
+  Authentication required: ZenCODE is not configured. Use the "Set up ZenCODE" terminal authentication method, or run `zen --setup` in a terminal.
   ```
 
 The configuration is not reloaded while the agent runs. After setup, the client
@@ -1750,9 +1805,12 @@ task-graph card, and the sub-agent status (see
 available in a session started with zen --telegram.` The mode works on Linux and
 macOS, with any agent.
 
-Telegram must be configured and paired before you start it, from `zen` with
-`/setup` (over ssh too). The mode never starts setup, and it never reads
-standard input or the terminal: standard input is redirected from `/dev/null`.
+Telegram must be set up and paired before you start it, with `zen --setup`
+(over ssh too). The mode never starts setup, and without a valid configuration
+it stops with the not-configured message and exit status `1` (see [Startup
+Without a Valid Configuration](#startup-without-a-valid-configuration)). It
+never reads standard input or the terminal: standard input is redirected from
+`/dev/null`.
 
 The agent, model, skills, working directory, and limits come from `--agent`,
 `--model`, `--skills`, `--working-directory`, `--max-tool-rounds`, and
@@ -1770,7 +1828,7 @@ other modes.
 The mode starts in this order:
 
 1. It checks that Telegram is configured; otherwise it logs `ZenCODE: Telegram
-   is not set up. Run zen and use /setup to configure and pair Telegram.`
+   is not set up. Run zen --setup to configure and pair Telegram.`
 2. It resolves the agent and the model.
 3. It creates the session and preloads the model.
 4. It links Telegram.
@@ -1818,9 +1876,11 @@ timestamp. Standard output stays empty. Prompts and responses are never logged.
 A fatal error is logged as `ZenCODE: <error>`, followed by `Run 'zen --doctor'
 for a redacted diagnostic report; set ZENCODE_LOG=debug to emit redacted
 diagnostics to the system log.` The exception is a configuration that is
-missing altogether (`settings.json` or `agents.json` missing or invalid): the
-error is then printed in the ordinary format, without a timestamp, before the
-mode starts, and the process exits with status `1`.
+missing or invalid (`settings.json` or `agents.json` missing or invalid, or no
+model configured): ``ZenCODE is not configured. Run `zen --setup` to configure
+it, then start zen again.`` is then printed as is, without a timestamp or the
+`ZenCODE: ` prefix, before the mode starts, and the process exits with status
+`1`.
 
 ### Stopping
 
@@ -1883,8 +1943,8 @@ tries again. It does not restart it after an intentional stop (status `0`).
 
 ## Recommended Workflow
 
-1. `cd /path/to/project && zen` — start in the target project; first-run setup opens automatically when required.
-2. `/setup` — reconfigure providers, models, agents, or features later without leaving the TUI.
+1. `zen --setup` — configure providers, models, agents, or features the first time, and whenever you want to change them later (leave the chat first).
+2. `cd /path/to/project && zen` — start in the target project.
 3. `/tools` and `/skills` — select tools and skills.
 4. `/plan <goal>` or `/goal <goal>` — optional planning before editing. `/plan` delegates to a Planner sub-agent with an approval step; `/goal` works until completion or a genuine blocker, executing directly or delegating when useful with a persistent task graph.
 5. Implement with the active profile.
@@ -1895,8 +1955,8 @@ tries again. It does not restart it after an intentional stop (status `0`).
 
 ## Troubleshooting
 
-- **Setup starts automatically**: required configuration (`settings.json` or `agents.json`) is missing or invalid, or no model is configured; complete setup before the chat starts. Use `/setup` later to reconfigure.
-- **An ACP client reports "Authentication required: ZenCODE is not configured"**: start the client's **Set up ZenCODE** method, or run `zen` in a terminal, complete setup, and restart the agent in the client. See [ACP Mode](#acp-mode).
+- **``ZenCODE is not configured. Run `zen --setup` to configure it, then start zen again.``**: required configuration (`settings.json` or `agents.json`) is missing or invalid, or no model is configured. Run `zen --setup`, complete it, and start `zen` again; no mode except ACP opens setup by itself. Use `zen --setup` later to reconfigure.
+- **An ACP client reports "Authentication required: ZenCODE is not configured"**: start the client's **Set up ZenCODE** method, or run `zen --setup` in a terminal, complete setup, and restart the agent in the client. See [ACP Mode](#acp-mode).
 - **Model not found**: run `/models` or check `settings.json`.
 - **A profile is never chosen for delegation**: check its role compatibility, its tool grant, and that it has a model binding with a capability — see [bindings.md](bindings.md).
 - **No tools available**: use `/tools`, switch profile, or check ACP client tool exposure.

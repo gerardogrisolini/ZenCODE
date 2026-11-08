@@ -14,10 +14,6 @@ extension TerminalChat {
         ChatSessionController.maximumTranscriptBytes
     }
 
-    func replaceActiveSessionTranscript(with messages: [AgentRuntimeMessage]) {
-        chatSession.replaceTranscript(with: messages)
-    }
-
     func appendActiveSessionTranscript(_ message: AgentRuntimeMessage) {
         chatSession.appendTranscript(message)
     }

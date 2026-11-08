@@ -499,7 +499,7 @@ still never performs an extraction request.
 
 ## Memory cleanup
 
-Bulk cleanup of a graph runs only from `/setup` › Data management ›
+Bulk cleanup of a graph runs only from `zen --setup` › Data management ›
 **Clean memory**: there is no slash command, command-line flag, `memory.*` tool
 or automatic run, and nothing is saved in `settings.json` or read from the
 environment (the thresholds are asked for each time). The flow lists the graphs

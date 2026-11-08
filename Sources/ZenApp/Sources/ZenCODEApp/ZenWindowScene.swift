@@ -65,11 +65,11 @@ struct ZenLaunchFailureView: View {
 
     /// The hint under the message of ``ZenAppLaunchFailure/startFailed(_:)``.
     nonisolated static let startFailedHint =
-        "Run `zen` in a terminal to set up or check ZenCODE, then start the app again."
+        "Run `zen --setup` in a terminal to set up ZenCODE, or `zen --doctor` to check it, then start the app again."
 
     /// The hint under the message of `failure`, if any: only a failed start
     /// has one. The message of ``ZenAppLaunchFailure/notConfigured(_:)``
-    /// already asks to run `zen`, and a wrong argument is shown alone.
+    /// already asks to run `zen --setup`, and a wrong argument is shown alone.
     nonisolated static func hint(for failure: ZenAppLaunchFailure) -> String? {
         switch failure {
         case .startFailed:

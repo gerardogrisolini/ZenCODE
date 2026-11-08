@@ -53,13 +53,6 @@ public actor LocalExecPermissionAuthorizer {
         terminalHost.setConsentReader(reader)
     }
 
-    /// Drops process-local authorization state so a completed setup run is
-    /// reconciled from the current permissions manifest. This is especially
-    /// important after setup reset removes that manifest.
-    func reloadPersistedPermissions() async {
-        await consentAuthorizer.reloadPersistedPermissions()
-    }
-
     /// Returns `true` when this request needs no dialog: either the tool is not
     /// gated, or a previous decision already covers it.
     ///

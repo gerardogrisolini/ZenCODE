@@ -32,10 +32,10 @@ extension ZenCODESetupRunner {
 
     /// Voice-message transcription is a Telegram capability, on whenever
     /// Telegram is active: macOS transcribes with the system speech
-    /// frameworks, Linux with the sherpa-onnx files of `/setup` > Voice mode.
+    /// frameworks, Linux with the sherpa-onnx files of `zen --setup` > Voice mode.
     /// Keep it absent whenever Telegram is not active so disabling Telegram
     /// cannot leave voice enabled. The language follows the response language.
-    /// The reading voice and the options chosen in `/setup` > Voice mode
+    /// The reading voice and the options chosen in `zen --setup` > Voice mode
     /// belong to terminal voice mode, so they survive either way (and on
     /// Linux, where the reading voice is inert).
     static func voiceSettings(

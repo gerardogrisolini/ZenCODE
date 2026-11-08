@@ -331,7 +331,7 @@ struct AgentCoreSessionRunnerTests {
     }
 
     @Test
-    func sessionCloseAndRecreationPreserveTaskGraphForRuntimeSetup() async throws {
+    func taskGraphSurvivesSessionCloseAndBackendRecreation() async throws {
         let backend = CapturingAgentRuntimeBackend()
         let taskOrchestrator = SessionTaskOrchestrator()
         let runner = AgentCoreSessionRunner(
@@ -353,7 +353,7 @@ struct AgentCoreSessionRunnerTests {
         try await runner.createSession(configuration: configuration)
         _ = try await taskOrchestrator.createGraph(
             sessionID: sessionID,
-            id: "setup-preserved-graph",
+            id: "preserved-graph",
             source: .manual,
             state: .active,
             tasks: [TaskDefinition(id: "task-a", title: "A")]
@@ -371,15 +371,6 @@ struct AgentCoreSessionRunnerTests {
             try await runner.taskGraphSnapshot(sessionID: sessionID)?.tasks.map(\.id)
                 == ["task-a"]
         )
-    }
-
-    @Test
-    func runtimeSetupResetsFullAccessModeToStandard() async {
-        let runner = AgentCoreSessionRunner(taskGraphStore: nil)
-
-        #expect(await runner.toggleLocalExecAccessMode() == .fullAccess)
-        await runner.resetLocalExecAccessMode()
-        #expect(await runner.localExecAccessMode() == .standard)
     }
 
     @Test
