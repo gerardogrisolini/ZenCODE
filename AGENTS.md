@@ -10,7 +10,7 @@
 
 ## Architecture Map
 
-- `zen` is the only executable composition root and the only layer that selects and injects a remote model backend. `ZenCODECore` owns the shared runtime; terminal UI, Telegram, and ACP adapt that runtime without moving transport-specific types into neutral Agent or Remote domains.
+- Within the root package graph, `zen` is the only executable composition root and the only layer that selects and injects a remote model backend; the macOS app is its own composition root outside that graph. `ZenCODECore` owns the shared runtime; terminal UI, Telegram, and ACP adapt that runtime without moving transport-specific types into neutral Agent or Remote domains.
 - The reusable target flow is `ToolCore` → `FeatureKit` → `LocalToolsSupport`, with `FeatureMCPBridgeKit` depending only on `FeatureKit` and `ToolCore`. `ZenCODECore` consumes these support targets and `ZenPackageMetadata`; keep dependency-light contracts in the lowest viable layer and never introduce a dependency on `zen`.
 - `Sources/Features/<Feature>` contains standalone Swift packages, not root targets. Each optional feature owns its product, implementation, policy, tests, and thin executable; generic feature-process and MCP machinery belongs in `FeatureKit` or `FeatureMCPBridgeKit`, never feature-specific behavior.
 - `Sources/ZenCRON` is the standalone, dependency-free package of `ZenCRON`, the host that cron runs for scheduled prompts and that spawns `zen`; `/setup` builds it into `<support>/bin/ZenCRON`. It is neither a feature nor a composition root. Its binary must stay stable (macOS ties the permissions of cron jobs to it): raise its host version only when its behaviour changes, and keep its `PATH` search identical to `ZenCronJobCommand.locateZen(onPath:)`.
