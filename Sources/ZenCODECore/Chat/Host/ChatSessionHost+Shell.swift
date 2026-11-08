@@ -34,7 +34,7 @@ extension ChatSessionHost {
     /// A stream of the shell snapshots: the current one at once, then one
     /// after every change. Like a reducer's snapshots, a slow consumer skips
     /// to the newest. Each call returns a new stream; it ends when the
-    /// consumer stops iterating, on ``shutdown(keepingExternalTools:)``,
+    /// consumer stops iterating, on ``shutdown()``,
     /// after the last snapshot, or when the host is released, and at once
     /// after a shutdown. The first call starts observing the host: the saved
     /// sessions and the Telegram state are read, off the chat actor, and

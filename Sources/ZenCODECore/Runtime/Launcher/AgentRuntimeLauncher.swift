@@ -34,7 +34,7 @@ public enum AgentRuntimeLauncher {
     /// Runs one terminal-chat lifecycle. The caller owns the supplied runner,
     /// or the host whose runner it is. With `sessionHost` the terminal opens
     /// its slot there and the caller shuts the host down
-    /// (``ChatSessionHost/shutdown(keepingExternalTools:)``); `sessionRunner`
+    /// (``ChatSessionHost/shutdown()``); `sessionRunner`
     /// is then ignored, as the host's runner is the terminal's. Without a host
     /// the terminal builds one over `sessionRunner`, or over a new runner.
     @ChatSessionActor

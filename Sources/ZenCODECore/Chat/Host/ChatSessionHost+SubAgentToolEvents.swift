@@ -21,7 +21,7 @@ extension ChatSessionHost {
     /// may replace it (see
     /// ``AgentCoreSessionRunner/updateSubAgentToolEventHandler(_:)``), or
     /// the events reach no slot any more. Nothing happens after
-    /// ``shutdown(keepingExternalTools:)``.
+    /// ``shutdown()``.
     func installSubAgentToolEventRoutingIfNeeded() async {
         guard !isShutDown, !isRoutingSubAgentToolEvents else { return }
         isRoutingSubAgentToolEvents = true

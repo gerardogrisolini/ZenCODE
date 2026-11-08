@@ -112,7 +112,7 @@ public final class ChatSessionHost {
         self.sleepAssertionReason = sleepAssertionReason
     }
 
-    /// A host released without ``shutdown(keepingExternalTools:)`` ends the
+    /// A host released without ``shutdown()`` ends the
     /// streams of its shell snapshots, which would otherwise never end.
     deinit {
         for continuation in shellStreams.values {
@@ -467,13 +467,9 @@ public final class ChatSessionHost {
     }
 
     /// Ends every session and slot, before the first suspension, so that no
-    /// late work finds a live incarnation, then shuts the runner down: all of
-    /// it, or with `keepingExternalTools` only its model backend and
-    /// sessions, keeping the connected external MCP servers alive
-    /// (``AgentCoreSessionRunner/shutdownBackendKeepingExternalTools()``), for
-    /// an embedder that goes on using the same runner afterwards. A second call
-    /// is a no-op, whichever way the first one went.
-    public func shutdown(keepingExternalTools: Bool = false) async {
+    /// late work finds a live incarnation, shuts the Telegram channels down,
+    /// then shuts the runner down: all of it. A second call is a no-op.
+    public func shutdown() async {
         guard !isShutDown else { return }
         isShutDown = true
         let closingSlots = slots.values
@@ -487,11 +483,7 @@ public final class ChatSessionHost {
         for slot in closingSlots {
             await slot.telegramChannel?.shutdown()
         }
-        if keepingExternalTools {
-            await runner.shutdownBackendKeepingExternalTools()
-        } else {
-            await runner.shutdown()
-        }
+        await runner.shutdown()
     }
 
     // MARK: - Incarnations

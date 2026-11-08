@@ -128,6 +128,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `LocalExecPermissionAuthorizer.reloadPersistedPermissions()` and
   `AgentCoreSessionRunner.resetLocalExecAccessMode()` went with them, since
   no setup runs inside a process that serves a chat any longer.
+- **Breaking (ZenCODECore API):** the `keepingExternalTools:` parameter of the
+  public `ChatSessionHost.shutdown(keepingExternalTools:)` is removed:
+  `shutdown()` now always shuts the whole runner down, including the connected
+  external MCP servers. An embedder that needs to keep them can call
+  `AgentCoreSessionRunner.shutdownBackendKeepingExternalTools()` on its runner.
 
 ### Fixed
 

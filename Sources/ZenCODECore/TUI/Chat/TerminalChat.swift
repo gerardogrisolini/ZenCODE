@@ -334,7 +334,7 @@ public final class TerminalChat {
 
     /// A terminal chat in a slot of `sessionHost`, whose runner is the
     /// terminal's: the composition root that owns the host shuts it down
-    /// with the runner (``ChatSessionHost/shutdown(keepingExternalTools:)``).
+    /// with the runner (``ChatSessionHost/shutdown()``).
     /// The host's environment must be the one of `configuration`
     /// (``makeSessionHost(configuration:sessionRunner:)``).
     public convenience init(

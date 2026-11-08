@@ -189,10 +189,9 @@ itself to Telegram, takes itself back, or closes, and on
 `refreshShellSnapshot()`, never on a timer.
 `closeSession(in:runtimeSession:)`
 ends a slot's session and keeps the slot, `closeSlot(_:runtimeSession:)`
-forgets it, and `shutdown(keepingExternalTools:)` ends every slot before its
-first suspension and shuts the runner down, all of it or keeping the external
-MCP servers for an embedder that goes on using the same runner. The task graphs stay where
-they were: `SessionTaskOrchestrator` belongs to the runner, and the host owns
+forgets it, and `shutdown()` ends every slot before its
+first suspension and shuts the runner down, all of it. The task graphs stay
+where they were: `SessionTaskOrchestrator` belongs to the runner, and the host owns
 only the incarnations. The ACP bridge is an adapter over the host: one slot
 per ACP session, opened with `publishesState: false`, a binding of slot,
 epoch, and controller that never changes for the life of the session, the
