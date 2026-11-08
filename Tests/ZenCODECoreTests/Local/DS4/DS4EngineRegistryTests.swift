@@ -55,7 +55,7 @@ private func turn(_ engine: any DS4Engine, sessionID: String, prompt: String) as
     ) { _ in [] }
 }
 
-@Suite
+@Suite(.serialized)
 struct DS4EngineRegistryTests {
     // MARK: Single engine
 

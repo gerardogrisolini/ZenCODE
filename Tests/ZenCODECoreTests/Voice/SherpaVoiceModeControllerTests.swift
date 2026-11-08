@@ -11,7 +11,7 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
-@Suite("Sherpa-onnx voice controller")
+@Suite("Sherpa-onnx voice controller", .serialized)
 struct SherpaVoiceModeControllerTests {
     // MARK: - Pure helpers
 
