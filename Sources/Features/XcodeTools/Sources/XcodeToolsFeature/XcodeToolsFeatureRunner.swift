@@ -58,9 +58,7 @@ public enum XcodeToolsFeatureRunner {
         switch clientError {
         case .serverError, .invalidResponse, .unsupportedMessageID:
             return false
-        case .missingContentLength,
-             .invalidContentLength,
-             .malformedTransport,
+        case .malformedTransport,
              .connectionClosed,
              .unsupportedPlatform,
              .authorizationRequired,

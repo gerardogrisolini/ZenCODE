@@ -85,16 +85,6 @@ public nonisolated enum MCPTransportCodec {
         return .needMoreData
     }
 
-    /// Compatibility wrapper for existing callers. New transport code must use
-    /// `nextMessage(from:)` so malformed framing closes the connection instead of
-    /// being indistinguishable from an incomplete frame.
-    public static func nextMessageBody(from buffer: inout Data) -> Data? {
-        guard case let .message(body) = nextMessage(from: &buffer) else {
-            return nil
-        }
-        return body
-    }
-
     private static func looksLikeHeaderPrefix(_ buffer: Data) -> Bool {
         guard !buffer.isEmpty else {
             return false

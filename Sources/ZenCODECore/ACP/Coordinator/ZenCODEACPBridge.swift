@@ -665,13 +665,6 @@ public actor ZenCODEACPBridge {
         }
     }
 
-    public func objectParams(from message: [String: Any]) throws -> [String: Any] {
-        guard let params = message["params"] as? [String: Any] else {
-            return [:]
-        }
-        return params
-    }
-
     private func jsonObjectParams(from message: [String: JSONValue]) -> [String: JSONValue] {
         message["params"]?.objectValue ?? [:]
     }

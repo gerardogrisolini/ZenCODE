@@ -1700,6 +1700,19 @@ async and callers must await them. Observable CLI output remains compatible;
 the actor boundary prevents independent tasks from mutating formatter, cursor,
 overlay, or status-bar state concurrently.
 
+The public APIs of `ToolCore`, `FeatureMCPBridgeKit`, and `ZenCODECore` that had
+no callers were intentionally removed, as an announced source-level exception
+to Migration Rule 7 below. Several were compatibility wrappers, such as
+`JSONValue.encoded()` and `MCPTransportCodec.nextMessageBody(from:)`. The
+`### Removed` entries under `## [Unreleased]` in
+[CHANGELOG.md](../CHANGELOG.md) list each removed symbol and its replacement.
+The output of `zen`, the ACP wire, the `--list-tools` and `--invoke` JSON, and
+the persisted formats remain compatible. The feature scaffolds that the Builder
+generates use none of the removed symbols: they already use
+`FeatureProcessProtocol` and `FeatureListToolsResponse`. A feature generated in
+the past that used any of the removed symbols must migrate to the replacements
+listed there.
+
 ## Migration Rules
 
 1. Add characterisation tests before moving a path that participates in JSON,

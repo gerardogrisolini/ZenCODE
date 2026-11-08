@@ -92,28 +92,6 @@ extension ZenCODEACPBridge {
     /// the prompt update buffer. The prompt path enqueues a buffer flush ahead of
     /// the notification in the same serialized pipeline, so the bypass cannot
     /// reorder the notification ahead of content the turn already produced.
-    public static func subscriptionUsageData(
-        for status: DirectAgentSubscriptionUsageStatus
-    ) -> [String: Any]? {
-        guard status.hasValues else {
-            return nil
-        }
-        var data: [String: Any] = ["provider": status.provider]
-        if let dailyUsedPercent = status.dailyUsedPercent {
-            data["dailyUsedPercent"] = dailyUsedPercent
-        }
-        if let weeklyUsedPercent = status.weeklyUsedPercent {
-            data["weeklyUsedPercent"] = weeklyUsedPercent
-        }
-        if let dailyResetsInSeconds = status.dailyResetsInSeconds {
-            data["dailyResetsInSeconds"] = dailyResetsInSeconds
-        }
-        if let weeklyResetsInSeconds = status.weeklyResetsInSeconds {
-            data["weeklyResetsInSeconds"] = weeklyResetsInSeconds
-        }
-        return data
-    }
-
     public static func subscriptionUsageJSONData(
         for status: DirectAgentSubscriptionUsageStatus
     ) -> JSONValue? {

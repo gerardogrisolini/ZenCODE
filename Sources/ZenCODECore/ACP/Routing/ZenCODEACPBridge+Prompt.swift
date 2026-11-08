@@ -252,15 +252,15 @@ extension ZenCODEACPBridge {
         let normalizesChatGPTThoughts = AgentSettingsStore.defaultSelection(
             explicitModelID: promptConfiguration.modelID
         )?.remoteProvider?.isChatGPTSubscriptionProvider == true
-        let updatePipeline: ACPPromptUpdatePipeline? = ACPPromptUpdatePipeline(
-                sessionID: sessionID,
-                writer: writer,
-                buffer: ACPPromptUpdateBuffer(),
-                buffersUpdates: appMode,
-                normalizesChatGPTThoughts: normalizesChatGPTThoughts,
-                isValid: { await self.isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) },
-                canDeliver: { await self.canDeliverPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) }
-            )
+        let updatePipeline = ACPPromptUpdatePipeline(
+            sessionID: sessionID,
+            writer: writer,
+            buffer: ACPPromptUpdateBuffer(),
+            buffersUpdates: appMode,
+            normalizesChatGPTThoughts: normalizesChatGPTThoughts,
+            isValid: { await self.isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) },
+            canDeliver: { await self.canDeliverPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) }
+        )
         let sessionRunner = self.sessionRunner
         // ACP locations must be absolute. Relative tool arguments are resolved
         // by the tools against the session workspace, not against the agent
@@ -268,20 +268,13 @@ extension ZenCODEACPBridge {
         let workspaceURL = URL(fileURLWithPath: session.cwd)
 
         @Sendable func sendPromptUpdate(_ update: JSONValue) async {
-            if let updatePipeline {
-                // Awaiting the unit's own task preserves the producer's
-                // backpressure (the turn does not advance until the update has
-                // actually been written) while the chain fixes the wire order.
-                await updatePipeline.enqueue(.init(kind: .consume(update))).value
-            } else {
-                await writer.sendSessionUpdate(sessionID: sessionID, update: update)
-            }
+            // Awaiting the unit's own task preserves the producer's
+            // backpressure (the turn does not advance until the update has
+            // actually been written) while the chain fixes the wire order.
+            await updatePipeline.enqueue(.init(kind: .consume(update))).value
         }
 
         @Sendable func flushPromptUpdates() async {
-            guard let updatePipeline else {
-                return
-            }
             await updatePipeline.enqueue(.init(kind: .flush)).value
         }
 
@@ -300,7 +293,6 @@ extension ZenCODEACPBridge {
         let taskPresentation = session.taskPresentation
         let graphEvents = await sessionRunner.taskOrchestrator.events(sessionID: sessionID)
         let graphObserver = Task {
-            guard let updatePipeline else { return }
             await publishTaskPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID,
                                           presentation: taskPresentation, pipeline: updatePipeline)
             for await _ in graphEvents {
@@ -319,11 +311,9 @@ extension ZenCODEACPBridge {
             }
             graphObserver.cancel()
             await graphObserver.value
-            if let updatePipeline {
-                await publishTaskPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID,
-                                              presentation: taskPresentation, pipeline: updatePipeline)
-                await updatePipeline.drain()
-            }
+            await publishTaskPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID,
+                                          presentation: taskPresentation, pipeline: updatePipeline)
+            await updatePipeline.drain()
         }
         let clientFiles = clientTextFileSystem(sessionID: sessionID, epoch: epoch)
         let presenter = ACPPromptPresenter(

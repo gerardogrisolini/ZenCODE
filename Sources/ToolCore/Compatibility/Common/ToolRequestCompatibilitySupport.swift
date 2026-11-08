@@ -107,10 +107,6 @@ nonisolated func firstStringValue(_ keys: [String], in arguments: [String: JSONV
 }
 
 nonisolated func normalizedToolPathString(_ rawValue: String) -> String {
-    normalizedToolPathString(rawValue, workspaceRootPath: nil)
-}
-
-nonisolated func normalizedToolPathString(_ rawValue: String, workspaceRootPath: String?) -> String {
     let trimmedValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedValue.isEmpty else {
         return rawValue
@@ -147,96 +143,5 @@ nonisolated func normalizedToolPathString(_ rawValue: String, workspaceRootPath:
         return normalizedSeparators
     }
 
-    let normalizedRelativePath = components.joined(separator: "/")
-    if let rebasedPath = normalizedWorkspaceRelativeToolPath(
-        normalizedRelativePath,
-        workspaceRootPath: workspaceRootPath
-    ) {
-        return rebasedPath
-    }
-
-    return normalizedRelativePath
-}
-
-public nonisolated func rebasedWorkspaceRelativePaths(
-    in request: ToolRequest,
-    workspaceRootPath: String?
-) -> ToolRequest {
-    guard toolRequestUsesWorkspaceRelativePaths(request.name),
-          let workspaceRootPath = normalizedWorkspaceRootPath(workspaceRootPath) else {
-        return request
-    }
-
-    let rebasedArguments = request.arguments.reduce(into: [String: JSONValue]()) { partialResult, entry in
-        guard workspaceRelativePathArgumentKeys.contains(entry.key),
-              let stringValue = entry.value.stringValue else {
-            partialResult[entry.key] = entry.value
-            return
-        }
-
-        partialResult[entry.key] = .string(normalizedToolPathString(stringValue, workspaceRootPath: workspaceRootPath))
-    }
-
-    return ToolRequest(name: request.name, arguments: rebasedArguments)
-}
-
-public nonisolated func rebasedSkillRelativePaths(
-    in request: ToolRequest,
-    workspaceRootPath: String?,
-    skillRootPaths: [String]
-) -> ToolRequest {
-    guard toolRequestUsesSkillRelativePaths(request.name) else {
-        return request
-    }
-
-    let normalizedSkillRootURLs = skillRootPaths.compactMap { rawPath -> URL? in
-        let trimmedPath = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedPath.isEmpty else {
-            return nil
-        }
-
-        return URL(fileURLWithPath: trimmedPath).standardizedFileURL
-    }
-    guard !normalizedSkillRootURLs.isEmpty else {
-        return request
-    }
-
-    let workspaceRootURL = normalizedWorkspaceRootPath(workspaceRootPath).map {
-        URL(fileURLWithPath: $0).standardizedFileURL
-    }
-
-    let rebasedArguments = request.arguments.reduce(into: [String: JSONValue]()) { partialResult, entry in
-        guard workspaceRelativePathArgumentKeys.contains(entry.key),
-              let stringValue = entry.value.stringValue else {
-            partialResult[entry.key] = entry.value
-            return
-        }
-
-        let normalizedPath = normalizedToolPathString(stringValue, workspaceRootPath: workspaceRootPath)
-        guard !normalizedPath.hasPrefix("/") else {
-            partialResult[entry.key] = .string(normalizedPath)
-            return
-        }
-
-        if let workspaceRootURL {
-            let workspaceCandidateURL = workspaceRootURL
-                .appendingPathComponent(normalizedPath)
-                .standardizedFileURL
-            if FileManager.default.fileExists(atPath: workspaceCandidateURL.path) {
-                partialResult[entry.key] = .string(normalizedPath)
-                return
-            }
-        }
-
-        if let skillResolvedPath = resolvedSkillRelativeToolPath(
-            normalizedPath,
-            skillRootURLs: normalizedSkillRootURLs
-        ) {
-            partialResult[entry.key] = .string(skillResolvedPath)
-        } else {
-            partialResult[entry.key] = .string(normalizedPath)
-        }
-    }
-
-    return ToolRequest(name: request.name, arguments: rebasedArguments)
+    return components.joined(separator: "/")
 }

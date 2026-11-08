@@ -221,10 +221,6 @@ public nonisolated struct ToolPresentationValueDefinition: Codable, Hashable, Se
         ToolPresentationValueDefinition(source: .resultSummary, format: format, fallback: fallback)
     }
 
-    public static func toolName(format: ToolPresentationValueFormat = .text) -> ToolPresentationValueDefinition {
-        ToolPresentationValueDefinition(source: .toolName, format: format)
-    }
-
     public static func literal(
         _ value: String,
         format: ToolPresentationValueFormat = .text

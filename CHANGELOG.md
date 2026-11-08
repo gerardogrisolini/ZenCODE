@@ -201,6 +201,39 @@ Release tags follow the strict `vX.Y.Z` contract described in
   read it: the runtime joined the output of every turn of an agent into it
   and copied it into every snapshot. `latestOutput` keeps the output of the
   latest turn.
+- **Breaking (ToolCore API):** public symbols with no callers are removed:
+  `JSONValue.encodedData()` (use `try JSONEncoder().encode(value)`);
+  `JSONValue.encoded()`, which returned empty `Data` on failure (the same,
+  with `try?` where that fallback is wanted); `ToolDescriptor.fromJSON(_:)`
+  (use `JSONDecoder().decode(ToolDescriptor.self, from:)`, but note that the
+  decoder is strict: it requires `name`, `description` and `inputSchema` and
+  accepts only camelCase keys, while `fromJSON` fell back to the whole string
+  as the name and also accepted `input_schema` and `output_schema`); the free
+  functions `rebasedWorkspaceRelativePaths(in:workspaceRootPath:)` and
+  `rebasedSkillRelativePaths(in:workspaceRootPath:skillRootPaths:)`, and
+  `shouldDropLeadingMissingWorkspaceContainer(_:workspaceRootURL:)`, with no
+  replacement; and the factory
+  `ToolPresentationValueDefinition.toolName(format:)` (use
+  `ToolPresentationValueDefinition(source: .toolName, format:)`).
+- **Breaking (FeatureMCPBridgeKit API):** public symbols with no callers are
+  removed: `RemoteMCPFeatureRunner.emitJSON(_:)` (use
+  `FeatureProcessProtocol.emitJSON(_:)`); `ListToolsResponse` (use
+  `FeatureListToolsResponse` from FeatureKit, which also carries
+  `schemaVersion`); `ParsedFeatureCommand` (use
+  `FeatureProcessProtocol.parse(arguments:)`, whose `.invoke` case also
+  carries the working directory); `MCPTransportCodec.nextMessageBody(from:)`
+  (use `nextMessage(from:)`, which tells incomplete data from malformed
+  framing); and the cases `MCPClientError.missingContentLength` and
+  `.invalidContentLength`, which were never thrown: framing errors arrive as
+  `.malformedTransport`. A client with an exhaustive `switch` over
+  `MCPClientError` must drop the two cases.
+- **Breaking (ZenCODECore API):**
+  `ZenCODEACPBridge.subscriptionUsageData(for:)` is removed (use
+  `subscriptionUsageJSONData(for:)`), and so is
+  `ZenCODEACPBridge.objectParams(from:)`, with no replacement. These three
+  entries change source compatibility only: the output of `zen`, the ACP
+  wire, the `--list-tools` and `--invoke` JSON, and the persisted formats are
+  unchanged.
 
 ### Fixed
 

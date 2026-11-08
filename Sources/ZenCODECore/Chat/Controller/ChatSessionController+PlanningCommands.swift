@@ -583,12 +583,6 @@ extension ChatSessionController {
         )
     }
 
-    /// The first plan `/plan save` stores
-    /// (``reusablePlanCandidates(createdAt:)``).
-    func reusablePlanCandidate(createdAt: Date = Date()) -> TerminalSessionPlan? {
-        reusablePlanCandidates(createdAt: createdAt).first
-    }
-
     /// `/plan load`: makes the first saved plan that is not completed, i.e.
     /// the oldest save, the unapproved active plan with an empty queue, and
     /// adds it to the session context.
