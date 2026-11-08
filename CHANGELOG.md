@@ -82,6 +82,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `DirectSubAgentRuntime.updateResponseLanguageSectionProvider(_:)`, and the
   `responseLanguageSection:` parameter of `DirectSubAgentRuntime.systemPrompt`
   give delegated agents that section.
+- `FeatureKit` offers shared network primitives for features
+  (`Sources/FeatureKit/Network`): `FeatureIPAddress` (parsing and
+  classification of numeric IP addresses, with no policy of its own),
+  `FeatureSystemHostResolver`, `FeatureSingleResumeBox`, and
+  `FeatureBlockingOperation`. Web Tools and Browser use them instead of their
+  own copies, while the access policies stay in the features.
 
 ### Changed
 
@@ -225,6 +231,29 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - The ACP `tool_call_update` of a delegated tool call no longer rebuilds its
   title: it prefixes the agent's name to the title the completion payload
   already carries, with the same result on the wire.
+- With the ChatGPT and Claude subscription providers, Stop during a batch of
+  tool calls no longer starts the remaining tools of the batch. The calls that
+  did not run are closed with the result "Tool execution cancelled before
+  dispatch.", so the conversation resumes at the next prompt, as it already
+  did with the API providers. In the last permitted tool round, Stop ends the
+  turn as a cancellation instead of a too-many-rounds error. The tool loop is
+  now shared by all the remote clients (`RemoteToolBatchDispatcher`).
+- Waiting for the cross-process lock on the memory graph, for example while
+  another ZenCODE session is in the middle of a long transaction, no longer
+  occupies the threads of Swift's cooperative pool. It could previously block
+  all the other work of the process until the lock was released. Persistence
+  now runs on a dedicated serial queue per graph
+  (`MemoryPersistenceSerialExecutor`).
+- `web.fetch` and `web.search` no longer copy the whole body already
+  downloaded for every received chunk: large downloads used to have a
+  quadratic cost.
+- The Browser request guard now blocks the same non-public IPv6 ranges as Web
+  Tools: NAT64 `64:ff9b::/96` with an embedded restricted IPv4 address and
+  `64:ff9b:1::/48`, 6to4 `2002::/16` with an embedded restricted IPv4
+  address, discard `100::/64`, documentation `2001:db8::/32`, benchmarking
+  `2001:2::/48`, and ORCHID `2001:10::/28` and `2001:20::/28`. Previously a
+  URL or a host resolving to one of these addresses could reach a private
+  destination.
 
 ## [4.1.0] - 2026-11-07
 

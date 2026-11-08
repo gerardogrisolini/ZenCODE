@@ -1,6 +1,7 @@
 //  Bounded, policy-guarded HTTP loader shared by web.fetch (raw path) and web.search.
 
 import Dispatch
+import FeatureKit
 import Foundation
 import Synchronization
 
@@ -35,13 +36,13 @@ final class WebBoundedLoaderDelegate: WebRedirectGuard, URLSessionDataDelegate, 
         var data = Data()
         var response: HTTPURLResponse?
         var wasTruncated = false
-        let box = WebSingleResumeBox<WebBoundedResponse>()
+        let box = FeatureSingleResumeBox<WebBoundedResponse>()
     }
 
     private let accumulators = Mutex<[Int: Accumulator]>([:])
 
     /// Registers the limit and awaitable box for a task before it resumes.
-    func register(task: URLSessionTask, limit: Int) -> WebSingleResumeBox<WebBoundedResponse> {
+    func register(task: URLSessionTask, limit: Int) -> FeatureSingleResumeBox<WebBoundedResponse> {
         let accumulator = Accumulator(limit: limit)
         accumulators.withLock { $0[task.taskIdentifier] = accumulator }
         return accumulator.box
@@ -70,16 +71,17 @@ final class WebBoundedLoaderDelegate: WebRedirectGuard, URLSessionDataDelegate, 
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         let exceeded = accumulators.withLock { state -> Bool in
-            guard var accumulator = state[dataTask.taskIdentifier] else { return false }
-            let remaining = accumulator.limit - accumulator.data.count
+            let id = dataTask.taskIdentifier
+            // Mutate the stored accumulator in place: a local copy held while
+            // appending would make copy-on-write duplicate the whole buffer per chunk.
+            guard let remaining = state[id].map({ $0.limit - $0.data.count }) else { return false }
             if data.count > remaining {
-                accumulator.data.append(data.prefix(max(remaining, 0)))
-                accumulator.wasTruncated = true
+                state[id]?.data.append(data.prefix(max(remaining, 0)))
+                state[id]?.wasTruncated = true
             } else {
-                accumulator.data.append(data)
+                state[id]?.data.append(data)
             }
-            state[dataTask.taskIdentifier] = accumulator
-            return accumulator.wasTruncated
+            return state[id]?.wasTruncated ?? false
         }
         if exceeded {
             // Resolve with the truncated prefix and stop downloading; the

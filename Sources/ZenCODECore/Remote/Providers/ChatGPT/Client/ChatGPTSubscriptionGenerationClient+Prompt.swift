@@ -492,32 +492,29 @@ extension ChatGPTSubscriptionGenerationClient {
                     )
                 }
 
-                for toolCall in streamResult.toolCalls {
-                    await onEvent(.toolCallStarted(toolCall))
-                    guard let activeSession = currentSession(for: lease) else {
-                        throw ChatGPTSubscriptionGenerationError.missingSession
-                    }
-                    let result = await toolExecutor.execute(
-                        sessionID: activeSession.id,
-                        toolCall: toolCall,
-                        workingDirectory: URL(fileURLWithPath: activeSession.cwd),
-                        allowedToolNames: activeSession.allowedToolNames
-                    )
-                    // Persist an obtained result before the completion
-                    // callback, as `RemoteGenerationClient` does: a session
-                    // read triggered by the completion already sees it.
-                    guard mutateSession(for: lease, { session in
-                        session.messages.append(
-                            RemoteGenerationClient.toolResultMessage(
-                                toolCall: toolCall,
-                                result: result
+                try await RemoteToolBatchDispatcher.dispatch(
+                    streamResult.toolCalls,
+                    toolExecutor: toolExecutor,
+                    currentSession: {
+                        currentSession(for: lease).map { session in
+                            RemoteToolDispatchSession(
+                                sessionID: session.id,
+                                workingDirectory: URL(fileURLWithPath: session.cwd),
+                                allowedToolNames: session.allowedToolNames
                             )
-                        )
-                    }) else {
-                        throw ChatGPTSubscriptionGenerationError.missingSession
-                    }
-                    await onEvent(.toolCallCompleted(toolCall, result))
-                }
+                        }
+                    },
+                    // Results land after the committed assistant message, so
+                    // the continuation delta carries a function_call_output for
+                    // every call of the batch, including cancelled ones.
+                    appendToolResults: { messages in
+                        mutateSession(for: lease) { session in
+                            session.messages.append(contentsOf: messages)
+                        }
+                    },
+                    missingSessionError: ChatGPTSubscriptionGenerationError.missingSession,
+                    onEvent: onEvent
+                )
 
                 if round == configuration.maxToolRounds - 1 {
                     throw ChatGPTSubscriptionGenerationError.tooManyToolRounds(

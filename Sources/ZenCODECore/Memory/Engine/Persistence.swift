@@ -147,6 +147,17 @@ private enum MemoryJSONDateCoding {
 actor JSONMemoryPersistence: MemoryReadOnlyReloadPersistence {
     public let url: URL
 
+    /// The private serial queue every isolated method runs on. `flock(LOCK_EX)`
+    /// and the synchronous reads and writes below block their thread, possibly
+    /// for as long as another process holds the graph lock; on this executor
+    /// that thread is a dispatch thread instead of a cooperative-pool worker.
+    /// See `MemoryPersistenceSerialExecutor` for the trade-offs.
+    private let executor = MemoryPersistenceSerialExecutor(label: "zencode.memory.persistence")
+
+    nonisolated var unownedExecutor: UnownedSerialExecutor {
+        executor.asUnownedSerialExecutor()
+    }
+
     /// Highest `graph_version` this persistence accepts. Always the current
     /// version in production; a test lowers it to play an older build.
     private let supportedGraphVersion: UInt32

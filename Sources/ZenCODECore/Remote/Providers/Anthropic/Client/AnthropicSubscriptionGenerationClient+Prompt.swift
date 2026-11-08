@@ -187,37 +187,28 @@ extension AnthropicSubscriptionGenerationClient {
                     )
                 }
 
-                for toolCall in streamResult.toolCalls {
-                    await onEvent(.toolCallStarted(toolCall))
-                    guard let activeSession = currentSession(for: lease) else {
-                        throw RemoteGenerationClientError.missingSession
-                    }
-                    let result = await toolExecutor.execute(
-                        sessionID: activeSession.id,
-                        toolCall: toolCall,
-                        workingDirectory: activeSession.cwd,
-                        allowedToolNames: activeSession.allowedToolNames
-                    )
-                    // Persist an obtained result before the completion
-                    // callback, as `RemoteGenerationClient` does: a session
-                    // read triggered by the completion already sees it.
-                    guard mutateSession(for: lease, { session in
-                        session.messages.append(
-                            RemoteGenerationClient.toolResultMessage(
-                                toolCall: toolCall,
-                                result: result
+                try await RemoteToolBatchDispatcher.dispatch(
+                    streamResult.toolCalls,
+                    toolExecutor: toolExecutor,
+                    currentSession: {
+                        currentSession(for: lease).map { session in
+                            RemoteToolDispatchSession(
+                                sessionID: session.id,
+                                workingDirectory: session.cwd,
+                                allowedToolNames: session.allowedToolNames
                             )
-                        )
-                    }) else {
-                        throw RemoteGenerationClientError.missingSession
-                    }
-                    // Tool payloads are frequently the largest and most
-                    // escaped part of an Anthropic turn; do not carry their
-                    // predecessor's conversation inflation into the next
-                    // preflight.
-                    invalidateRequestOverhead(sessionID: lease.id)
-                    await onEvent(.toolCallCompleted(toolCall, result))
-                }
+                        }
+                    },
+                    appendToolResults: { messages in
+                        // `mutateSession` already invalidates the cached
+                        // request overhead, cancellation results included.
+                        mutateSession(for: lease) { session in
+                            session.messages.append(contentsOf: messages)
+                        }
+                    },
+                    missingSessionError: RemoteGenerationClientError.missingSession,
+                    onEvent: onEvent
+                )
 
                 if round == configuration.maxToolRounds - 1 {
                     throw RemoteGenerationClientError.tooManyToolRounds(configuration.maxToolRounds)

@@ -218,19 +218,19 @@ struct TerminalSubAgentDetailPanelTests {
         var panel = TerminalSubAgentDetailPanel()
         panel.replace(headerRows: [], bodyRows: numberedRows(84), frameRows: 21)
         #expect(panel.bodyCapacity(frameRows: 21) == 19)
-        #expect(plain(panel.frameLines(rows: 21, columns: 40)).last?.hasPrefix("╰─ rows 66–84/84 ─") == true)
+        #expect(plain(panel.frameLines(rows: 21, columns: 40)).last?.hasSuffix("─ rows 66–84/84 ─╯") == true)
 
         panel.apply(.top, frameRows: 21)
-        #expect(plain(panel.frameLines(rows: 21, columns: 40)).last?.hasPrefix("╰─ rows 1–19/84 ─") == true)
+        #expect(plain(panel.frameLines(rows: 21, columns: 40)).last?.hasSuffix("─ rows 1–19/84 ─╯") == true)
         for _ in 0..<11 {
             panel.apply(.scrollDown, frameRows: 21)
         }
         let bottom = plain(panel.frameLines(rows: 21, columns: 40)).last
-        #expect(bottom?.hasPrefix("╰─ rows 12–30/84 ─") == true)
-        #expect(bottom?.hasSuffix("─╯") == true)
+        #expect(bottom?.hasSuffix("─ rows 12–30/84 ─╯") == true)
+        #expect(bottom?.hasPrefix("╰──") == true)
 
         panel.replace(headerRows: ["title", "status"], bodyRows: numberedRows(10), frameRows: 11)
-        #expect(plain(panel.frameLines(rows: 11, columns: 40)).last?.hasPrefix("╰─ rows 5–10/10 ─") == true)
+        #expect(plain(panel.frameLines(rows: 11, columns: 40)).last?.hasSuffix("─ rows 5–10/10 ─╯") == true)
 
         panel.replace(headerRows: [], bodyRows: numberedRows(19), frameRows: 21)
         #expect(plain(panel.frameLines(rows: 21, columns: 40)).last == "╰" + String(repeating: "─", count: 38) + "╯")
@@ -308,7 +308,7 @@ struct TerminalSubAgentDetailPanelTests {
         var lines = panel.frameLines(rows: 7, columns: 30)
         #expect(bodyContents(lines).contains("▸ agent-15"))
         #expect(lines.contains { $0.contains(TerminalStyle.Accent.primary + "▸ agent-15") })
-        #expect(TerminalANSIText.stripANSI(lines[6]).hasPrefix("╰─ rows 14–18/20 ─"))
+        #expect(TerminalANSIText.stripANSI(lines[6]).hasSuffix("─ rows 14–18/20 ─╯"))
 
         for _ in 0..<4 {
             panel.apply(.focusNext, frameRows: 7)
