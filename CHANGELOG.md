@@ -21,6 +21,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   the call to its completion, while the name and the target stay until the
   next model state, so a live presentation can tell a running call from the
   one that just completed.
+- `DirectSubAgentRuntime.AgentSnapshot.currentThought` holds the reasoning of
+  the thinking phase in progress, every paragraph included, while
+  `currentActivity` keeps only the paragraph in progress for the overview. It
+  stays while the agent writes the message that follows its reasoning and is
+  cleared when a tool call starts or the turn changes; it is kept in memory
+  only.
 - `AgentRuntimeBackend.knownToolDescriptors(sessionID:)` (with a default
   implementation that returns `activeToolDescriptors(sessionID:)`),
   `SwiftFeatureRuntime.knownDescriptors(allowedToolNames:excludingFeatureIDs:)`
@@ -168,6 +174,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- The `/subagent` detail and the macOS sub-agent tab show the reasoning of a
+  sub-agent growing, every paragraph of the phase in progress, until the
+  transcript has it: they no longer show only the latest paragraph, replaced
+  by the next one and by `🤔 thinking…` in between.
 - Reading the transcript of a sub-agent (`/subagent`, the macOS sub-agent
   tabs) no longer starts the tool discovery of a feature (`--list-tools`, and
   the consent it can ask for), not even after the feature bundles were

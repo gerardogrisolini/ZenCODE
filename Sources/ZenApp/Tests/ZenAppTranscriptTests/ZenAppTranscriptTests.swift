@@ -447,6 +447,7 @@ struct ZenSubAgentsCardTests {
         modelID: String? = nil,
         activity: String? = nil,
         activityKind: DirectSubAgentRuntime.ActivityKind? = nil,
+        thought: String? = nil,
         toolName: String? = nil,
         toolIsRunning: Bool = false,
         metrics: DirectAgentGenerationMetrics? = nil,
@@ -465,6 +466,7 @@ struct ZenSubAgentsCardTests {
             modelID: modelID,
             currentActivity: activity,
             currentActivityKind: activityKind,
+            currentThought: thought,
             currentToolName: toolName,
             currentToolIsRunning: toolIsRunning,
             latestMetrics: metrics,
@@ -657,6 +659,14 @@ struct ZenSubAgentsCardTests {
         #expect(ZenSubAgentLiveActivity(snapshot(
             activity: "Checking\nthe palette.", activityKind: .thinking
         )) == .thought("Checking\nthe palette."))
+        // The whole reasoning of the phase, also once its paragraph in
+        // progress ended.
+        #expect(ZenSubAgentLiveActivity(snapshot(
+            activity: "Second.", activityKind: .thinking, thought: "First.\n\nSecond."
+        )) == .thought("First.\n\nSecond."))
+        #expect(ZenSubAgentLiveActivity(snapshot(
+            activityKind: .thinking, thought: "First.\n\nSecond."
+        )) == .thought("First.\n\nSecond."))
         // Reasoning without a paragraph yet.
         #expect(ZenSubAgentLiveActivity(snapshot(activityKind: .thinking)) == .thinkingPlaceholder)
         #expect(ZenSubAgentLiveActivity(snapshot(activity: " \n", activityKind: .thinking)) == .thinkingPlaceholder)

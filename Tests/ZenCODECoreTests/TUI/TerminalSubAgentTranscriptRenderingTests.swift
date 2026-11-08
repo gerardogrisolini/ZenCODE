@@ -49,6 +49,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
         pending: Bool = true,
         currentActivity: String? = nil,
         currentActivityKind: DirectSubAgentRuntime.ActivityKind? = nil,
+        currentThought: String? = nil,
         currentToolName: String? = nil,
         currentToolIsRunning: Bool = false,
         latestOutput: String? = nil,
@@ -66,6 +67,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
             configuredModelID: "openai:gpt-test",
             currentActivity: currentActivity,
             currentActivityKind: currentActivityKind,
+            currentThought: currentThought,
             currentToolName: currentToolName,
             currentToolIsRunning: currentToolIsRunning,
             latestMetrics: DirectAgentGenerationMetrics(
@@ -399,6 +401,35 @@ struct TerminalSubAgentTranscriptRenderingTests {
             } else {
                 #expect(rows.allSatisfy { !$0.contains("\u{1B}") })
             }
+        }
+    }
+
+    /// The live activity shows the whole reasoning of the phase
+    /// (`currentThought`), not only the paragraph in progress: the earlier
+    /// paragraphs stay, also once the paragraph in progress ended.
+    @Test(arguments: [false, true])
+    func liveActivityShowsTheWholeReasoningOfThePhase(standardErrorIsTerminal: Bool) {
+        let thought = "Weighing the options.\n\nReading the parser next."
+
+        for paragraph in ["Reading the parser next.", nil] {
+            let rows = liveActivity(
+                snapshot(
+                    currentActivity: paragraph,
+                    currentActivityKind: .thinking,
+                    currentThought: thought
+                ),
+                width: 80,
+                standardErrorIsTerminal: standardErrorIsTerminal
+            )
+
+            #expect(rows == TerminalChat.renderSubAgentTranscriptRows(
+                [.thought(thought)],
+                width: 80,
+                standardErrorIsTerminal: standardErrorIsTerminal
+            ))
+            let plainRows = rows.map(TerminalANSIText.stripANSI)
+            #expect(plainRows.contains { $0.contains("Weighing the options.") })
+            #expect(plainRows.contains { $0.contains("Reading the parser next.") })
         }
     }
 

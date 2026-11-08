@@ -233,6 +233,12 @@ extension DirectSubAgentRuntime {
                 appending: delta,
                 to: &agent.pendingThoughtParagraph
             )
+            // The live detail shows the whole reasoning of the phase growing,
+            // not only its latest paragraph.
+            agent.currentThought = Self.accumulatedThought(
+                appending: delta,
+                to: &agent.pendingThought
+            )
             agent.currentToolName = nil
             agent.currentToolTarget = nil
             agent.currentToolIsRunning = false
@@ -243,6 +249,9 @@ extension DirectSubAgentRuntime {
             // A visible answer starts a new model phase; never let a later
             // thought delta continue the paragraph that preceded it.
             agent.pendingThoughtParagraph = nil
+            // The reasoning stays visible while the message streams, as the
+            // paragraph does; a later thought delta starts a new phase.
+            agent.pendingThought = nil
             // Assistant content is also streamed as deltas. Buffer it without
             // touching snapshot-visible fields; it becomes visible only when a
             // tool boundary proves that the model's message is complete, or in
@@ -250,6 +259,10 @@ extension DirectSubAgentRuntime {
             agent.pendingContentBuffer = (agent.pendingContentBuffer ?? "") + delta
         case let .toolCallStarted(toolCall):
             agent.pendingThoughtParagraph = nil
+            // The backend recorded the message, its reasoning included, before
+            // the call started: the transcript shows it from now on.
+            agent.currentThought = nil
+            agent.pendingThought = nil
             agent.currentActivity = Self.takeCompletedContent(
                 from: &agent.pendingContentBuffer
             )
@@ -353,6 +366,38 @@ extension DirectSubAgentRuntime {
         }
         buffer = endsWithUnresolvedCR ? tail + "\r" : tail
         return tail.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+    }
+
+    /// Accumulates the reasoning stream of one thinking phase, every
+    /// paragraph included.
+    ///
+    /// As in ``latestThoughtParagraph(appending:to:)``, the result depends
+    /// only on the concatenation of every delta received so far, never on
+    /// where the transport split it: CRLF and lone CR become LF, and a
+    /// trailing CR is kept verbatim in `buffer`, because it may be the first
+    /// half of a CRLF whose LF arrives in the next delta. `buffer` holds the
+    /// normalized text, so each delta normalizes only itself. Returns the
+    /// text trimmed of leading and trailing whitespace, or nil while it is
+    /// blank.
+    static func accumulatedThought(
+        appending delta: String,
+        to buffer: inout String?
+    ) -> String? {
+        var accumulated = buffer ?? ""
+        var chunk = delta
+        if accumulated.hasSuffix("\r") {
+            accumulated.removeLast()
+            chunk = "\r" + chunk
+        }
+        let endsWithUnresolvedCR = chunk.hasSuffix("\r")
+        if endsWithUnresolvedCR {
+            chunk.removeLast()
+        }
+        accumulated += chunk
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        buffer = endsWithUnresolvedCR ? accumulated + "\r" : accumulated
+        return accumulated.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
     }
 
     private static func takeCompletedContent(

@@ -217,9 +217,10 @@ time (live while it works, else its duration), and its latest error. Under it
 is the agent's conversation, with the rows of the chat: the brief and the
 messages it received, as prompts, its reasoning, its text, and its tool calls
 with their results. While the agent works, the last row is its reasoning in
-progress, else `🤔 thinking…`, so it is never empty; only a running tool
-call, which has its own row, replaces it. The tab follows the bottom as the
-chat does.
+progress, the whole reasoning of the current phase growing paragraph after
+paragraph until the conversation has it, else `🤔 thinking…`, so it is never
+empty; only a running tool call, which has its own row, replaces it. The tab
+follows the bottom as the chat does.
 
 The selected tab updates live, at most twice a second, and at once when the
 agent starts, ends, or begins a new run. A tab that is not selected keeps the

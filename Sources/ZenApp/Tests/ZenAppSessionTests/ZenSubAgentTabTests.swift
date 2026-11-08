@@ -33,6 +33,7 @@ private func agent(
     _ id: String = "agent-1",
     status: DirectSubAgentRuntime.Status = .running,
     activity: String? = nil,
+    thought: String? = nil,
     toolName: String? = nil,
     toolIsRunning: Bool = false,
     second: TimeInterval = 0,
@@ -46,7 +47,8 @@ private func agent(
         status: status,
         pending: status.isPending,
         currentActivity: activity,
-        currentActivityKind: activity == nil ? nil : .thinking,
+        currentActivityKind: activity == nil && thought == nil ? nil : .thinking,
+        currentThought: thought,
         currentToolName: toolName,
         currentToolIsRunning: toolIsRunning,
         latestEventAt: referenceDate.addingTimeInterval(second),
@@ -479,6 +481,27 @@ struct ZenSubAgentTranscriptModelTests {
         await waitUntil("the newest update is applied") { model.snapshot?.currentActivity == "four" }
         #expect(model.updateCount == 2)
         await waitUntil("the model waits again") { gate.requests.count == 2 }
+        model.stop()
+    }
+
+    @Test("A snapshot whose reasoning grew is applied, with everything else unchanged")
+    func appliesTheGrowingReasoning() async {
+        let feed = ZenSubAgentFeed(transcript: transcript([brief]))
+        let gate = ZenSleepGate()
+        let model = model(feed, sleep: gate.sleep)
+        model.start()
+        await waitUntil("the model subscribes") { feed.isSubscribed }
+
+        feed.yield([agent(thought: "First.", second: 1)])
+        await waitUntil("the first update is applied") { model.snapshot?.currentThought == "First." }
+        await waitUntil("the model waits") { gate.requests.count == 1 }
+
+        // Only the reasoning differs: no paragraph in progress, same times.
+        feed.yield([agent(thought: "First.\n\nSecond.", second: 1)])
+        gate.releaseOne()
+        await waitUntil("the grown reasoning is applied") {
+            model.snapshot?.currentThought == "First.\n\nSecond."
+        }
         model.stop()
     }
 

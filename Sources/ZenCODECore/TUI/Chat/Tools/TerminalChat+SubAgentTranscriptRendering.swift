@@ -103,14 +103,16 @@ extension TerminalChat {
     ///   alone does not mean a running tool. A tool without a terminal
     ///   representation (``shouldSuppressToolRendering(for:)``, as
     ///   `agent.message`) does not count as a running tool either;
-    /// - while it reasons with a paragraph in progress, the rows the
-    ///   transcript draws for a reasoning block: the thinking title
-    ///   followed by the paragraph in the thinking style, at the full
-    ///   `width`;
-    /// - in every other case (it reasons without a paragraph yet, writes a
-    ///   message, also right after a completed call, has no activity, or is
-    ///   queued) a single row with the thinking title alone
-    ///   (``thinkingPlaceholder``).
+    /// - while it reasons with reasoning to show, the rows the transcript
+    ///   draws for a reasoning block: the thinking title followed by the
+    ///   whole reasoning of the phase in the thinking style
+    ///   (``DirectSubAgentRuntime/AgentSnapshot/currentThought``, growing
+    ///   with every paragraph; the paragraph in progress, `currentActivity`,
+    ///   for a snapshot without it), at the full `width`;
+    /// - in every other case (it reasons without reasoning to show yet, writes
+    ///   a message without reasoning before it, also right after a completed
+    ///   call, has no activity, or is queued) a single row with the thinking
+    ///   title alone (``thinkingPlaceholder``).
     ///
     /// No row exceeds `width` visible columns. With `standardErrorIsTerminal`
     /// every row is styled on its own, as in
@@ -129,12 +131,11 @@ extension TerminalChat {
         }
         let width = max(1, width)
         if snapshot.currentActivityKind == .thinking,
-           let paragraph = snapshot.currentActivity,
-           paragraph.nilIfBlank != nil {
+           let thought = (snapshot.currentThought ?? snapshot.currentActivity)?.nilIfBlank {
             // The rows of the transcript fit `width` unless one glyph is wider
             // than the view itself (a view of one column); only such a row is cut.
             return subAgentTranscriptRows(
-                for: .thought(paragraph),
+                for: .thought(thought),
                 width: width,
                 standardErrorIsTerminal: standardErrorIsTerminal
             ).map { row in

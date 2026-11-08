@@ -77,7 +77,8 @@ public actor DirectSubAgentRuntime {
     /// start with "🤔 " is never mistaken for reasoning.
     public enum ActivityKind: String, Sendable, Equatable {
         /// Streamed reasoning. `currentActivity` holds the paragraph in
-        /// progress, or nil while no non-blank paragraph exists yet.
+        /// progress, or nil while no non-blank paragraph exists yet; the
+        /// reasoning of the whole phase is in `currentThought`.
         case thinking
         /// A completed assistant message projected into the overview.
         case content
@@ -168,6 +169,16 @@ public actor DirectSubAgentRuntime {
         /// paragraphs are deliberately discarded: the overview owns one rewrite
         /// slot and presents only the latest paragraph.
         var pendingThoughtParagraph: String? = nil
+        /// The reasoning of the thinking phase in progress, every paragraph
+        /// included, for the live detail of the agent; see
+        /// ``AgentSnapshot/currentThought``.
+        public var currentThought: String? = nil
+        /// The reasoning of the thinking phase in progress as
+        /// ``DirectSubAgentRuntime/accumulatedThought(appending:to:)`` keeps
+        /// it: line endings normalized, and a trailing CR kept verbatim while
+        /// its LF may still arrive. `nil` once the phase ended (a message or a
+        /// tool call started), so the next reasoning starts a new phase.
+        var pendingThought: String? = nil
         var pendingContentBuffer: String? = nil
         public var currentToolName: String? = nil
         public var currentToolTarget: String? = nil
@@ -236,6 +247,8 @@ public actor DirectSubAgentRuntime {
             currentActivity = nil
             currentActivityKind = nil
             pendingThoughtParagraph = nil
+            currentThought = nil
+            pendingThought = nil
             pendingContentBuffer = nil
             currentToolName = nil
             currentToolTarget = nil

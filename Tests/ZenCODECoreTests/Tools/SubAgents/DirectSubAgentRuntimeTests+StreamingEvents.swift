@@ -104,6 +104,119 @@ extension DirectSubAgentRuntimeTests {
         #expect(reduce(["A", "\n\n"]).paragraph == nil)
     }
 
+    /// The live detail shows the whole reasoning of a phase: every paragraph
+    /// accumulates in `currentThought`, while `currentActivity` keeps only the
+    /// paragraph in progress for the overview. The reasoning stays while the
+    /// message that follows streams, reasoning after that message starts a new
+    /// phase, and a tool call clears it: the transcript has it from then on.
+    @Test
+    func thoughtDeltasAccumulateTheWholeReasoningOfThePhase() async throws {
+        let (runtime, backend) = try await streamingScenario(
+            name: "accumulating-worker",
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-accumulated-thinking-tests")
+        )
+        let agentID = try #require(await runtime.snapshots().first?.id)
+        await backend.waitUntilSentPromptCount(1)
+        #expect(try #require(await runtime.snapshots().first).currentThought == nil)
+
+        // CRLF and the blank-line boundary arrive in separate chunks.
+        await runtime.recordEvent(.thought("First paragraph"), agentID: agentID)
+        await runtime.recordEvent(.thought("\r"), agentID: agentID)
+        await runtime.recordEvent(.thought("\n\r\nSecond"), agentID: agentID)
+        await runtime.recordEvent(.thought(" paragraph\n\n"), agentID: agentID)
+        let ended = try #require(await runtime.snapshots().first)
+        // The paragraph just ended: the overview has none, the detail keeps both.
+        #expect(ended.currentActivity == nil)
+        #expect(ended.currentActivityKind == .thinking)
+        #expect(ended.currentThought == "First paragraph\n\nSecond paragraph")
+
+        await runtime.recordEvent(.thought("Third"), agentID: agentID)
+        let growing = try #require(await runtime.snapshots().first)
+        #expect(growing.currentActivity == "Third")
+        #expect(growing.currentThought == "First paragraph\n\nSecond paragraph\n\nThird")
+
+        await runtime.recordEvent(.content("The answer"), agentID: agentID)
+        let writing = try #require(await runtime.snapshots().first)
+        #expect(writing.currentActivityKind == .thinking)
+        #expect(writing.currentThought == growing.currentThought)
+
+        await runtime.recordEvent(.thought("Rethinking"), agentID: agentID)
+        let rethinking = try #require(await runtime.snapshots().first)
+        #expect(rethinking.currentThought == "Rethinking")
+
+        await runtime.recordEvent(
+            .toolCallStarted(presentedToolCall(
+                id: "read-call",
+                name: "local.readFile",
+                argumentsObject: ["path": "/tmp/Example.swift"],
+                argumentsJSON: #"{"path":"/tmp/Example.swift"}"#
+            )),
+            agentID: agentID
+        )
+        let running = try #require(await runtime.snapshots().first)
+        #expect(running.currentThought == nil)
+
+        await runtime.recordEvent(.thought("After the call"), agentID: agentID)
+        #expect(try #require(await runtime.snapshots().first).currentThought == "After the call")
+
+        await runtime.shutdown()
+    }
+
+    /// The accumulated reasoning is a function of the concatenated stream
+    /// only: every split of the same text, a CRLF split between two deltas
+    /// included, reaches the same text and the same buffer.
+    @Test
+    func accumulatedThoughtIsInvariantAcrossEveryChunkBoundary() {
+        func reduce(_ chunks: [String]) -> (thought: String?, buffer: String?) {
+            var buffer: String?
+            var thought: String?
+            for chunk in chunks {
+                thought = DirectSubAgentRuntime.accumulatedThought(
+                    appending: chunk,
+                    to: &buffer
+                )
+            }
+            return (thought, buffer)
+        }
+
+        for text in [
+            "A\n\n",
+            "A\n\nB",
+            "first\r\n\r\nsecond\r\nthird",
+            "alpha\r\rbeta",
+            "\r\n  leading and trailing \n\n",
+            "trailing\r"
+        ] {
+            let reference = reduce([text])
+            // Unicode scalars, so a split can fall between the CR and the LF.
+            let scalars = Array(text.unicodeScalars)
+            for splitIndex in 0...scalars.count {
+                let chunks = [
+                    String(String.UnicodeScalarView(scalars[..<splitIndex])),
+                    String(String.UnicodeScalarView(scalars[splitIndex...]))
+                ]
+                let split = reduce(chunks)
+                #expect(
+                    split.thought == reference.thought,
+                    "thought differs for \(text.debugDescription) at \(splitIndex)"
+                )
+                #expect(
+                    split.buffer == reference.buffer,
+                    "buffer differs for \(text.debugDescription) at \(splitIndex)"
+                )
+            }
+        }
+
+        #expect(reduce(["first\r\n\r\nsecond\r\nthird"]).thought == "first\n\nsecond\nthird")
+        #expect(reduce(["alpha\r\rbeta"]).thought == "alpha\n\nbeta")
+        #expect(reduce(["\r\n  leading and trailing \n\n"]).thought == "leading and trailing")
+        // A trailing CR waits for its LF: the text is complete, the CR kept.
+        #expect(reduce(["trailing\r"]).thought == "trailing")
+        #expect(reduce(["trailing\r"]).buffer == "trailing\r")
+        #expect(reduce(["trailing\r", "\nnext"]).thought == "trailing\nnext")
+        #expect(reduce([" \n", "\t"]).thought == nil)
+    }
+
     /// Reasoning is model-authored text printed straight into the terminal, so
     /// CSI, OSC and BEL payloads must not survive into a rendered row.
     @Test
