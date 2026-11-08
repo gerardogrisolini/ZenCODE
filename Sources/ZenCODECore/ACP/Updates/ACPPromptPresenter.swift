@@ -138,16 +138,11 @@ struct ACPPromptPresenter: ChatSessionPresenter {
         await finishThought()
     }
 
-    /// The turn's reconciled file changes, as a final text block. ACP has no
-    /// `/undo` or `/changes` command, so the command hint is omitted.
-    func presentFileChangeSummary(_ summary: TurnFileChangeSummary) async {
-        await send(
-            ZenCODEACPBridge.textChunkJSONUpdate(
-                kind: "agent_message_chunk",
-                text: TurnFileChangeSummaryPresentation.text(summary, includesCommandHint: false)
-            )
-        )
-    }
+    /// ACP shows no final file-change summary: file edits reach the client as
+    /// `diff` content of their tool calls, and ACP has no `/undo` or
+    /// `/changes` command. The turn still collects the summary
+    /// (``ChatTurnResult/fileChangeSummary``); nothing reaches the wire.
+    func presentFileChangeSummary(_ summary: TurnFileChangeSummary) async {}
 }
 
 /// Default presenter of an ACP session controller. ACP turns always supply

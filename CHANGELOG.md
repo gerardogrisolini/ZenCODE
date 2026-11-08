@@ -102,6 +102,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   ends only when the operator leaves it, since it can no longer ask for a
   setup. A caller that matched the outcome no longer compiles; it can drop the
   `switch`.
+- In ACP mode a turn no longer ends with the `🪬 Summary: N files +A -D` text
+  block listing the changed files: file edits stay visible as the `diff`
+  content of their tool calls. The terminal and Telegram still show the
+  summary.
 
 ### Removed
 
