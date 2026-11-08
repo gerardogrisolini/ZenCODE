@@ -116,6 +116,8 @@ public enum SystemPromptBuilder {
     /// Splits the standard standalone prompt into its stable system prefix and
     /// session-specific context. `memoryToolEnabled` is retained for source
     /// compatibility; memory availability belongs to dynamic context only.
+    /// `worktreeSection` (see ``worktreeSection(name:path:)``) follows the
+    /// working-directory section when the session works in a worktree.
     public static func standalonePromptSections(
         cwd: String,
         agentsSection: String?,
@@ -124,13 +126,15 @@ public enum SystemPromptBuilder {
         allowedToolNames: Set<String>? = nil,
         selectedSkillSection: String? = nil,
         responseLanguageSection: String? = nil,
-        delegatesByRole: Bool = false
+        delegatesByRole: Bool = false,
+        worktreeSection: String? = nil
     ) -> SystemPromptSections {
         SystemPromptSections(
             systemPrompt: joined([
                 standaloneBaseSection(),
                 staticSkillSection,
                 workingDirectorySection(path: cwd),
+                worktreeSection,
                 responseLanguageSection ?? standaloneLanguageSection,
                 turnClosingSection(instruction: standaloneTurnClosingInstruction)
             ]),
@@ -567,6 +571,17 @@ public enum SystemPromptBuilder {
         Use this directory as the default root for Shell, Git, local filesystem tools, and persistent project context.
         Do not invent a different local root unless the user explicitly asks for one.
         For relative local paths, make them relative to this directory and do not duplicate the repo root.
+        """
+    }
+
+    /// The section of a session whose working directory is the Git worktree
+    /// `name` (`zen --worktree NAME`), whose branch has the same name. It
+    /// follows ``workingDirectorySection(path:)`` in the stable system prefix.
+    /// `path` is the worktree directory, which that section already names.
+    public static func worktreeSection(name: String, path: String) -> String {
+        """
+        Git worktree:
+        - This working directory is the Git worktree "\(name)" on branch "\(name)" of the project repository. Commit on this branch; do not switch branches, do not run git worktree commands, and do not touch the main working tree.
         """
     }
 

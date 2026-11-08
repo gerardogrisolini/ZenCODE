@@ -16,7 +16,7 @@ struct ZenCODECommandLineRunnerTests {
         let bundleExecutable = "/Applications/ZenCODE.app/Contents/MacOS/ZenCODE"
         for option in [
             "--version", "--doctor", "--acp", "--tui", "--telegram", "-p", "-f", "--prompt", "--jsonl",
-            "--model", "--max-tool-rounds"
+            "--model", "--max-tool-rounds", "--worktree"
         ] {
             #expect(
                 ZenCODECommandLineRunner.shouldRunAsCommandLine(
@@ -222,29 +222,26 @@ struct ZenCODECommandLineRunnerTests {
     }
 
     @Test
-    func automaticRunModeResolvesToTheTUIAndToACPInTheApp() throws {
+    func withoutAModeOptionTheRunModeIsTheTUIAndTheACPBridgeInTheApp() throws {
         let workingDirectory = FileManager.default.temporaryDirectory
-        let defaultMode = try AgentConfiguration(
+        let hosted = try AgentConfiguration(
             hostedModelID: "remote-community/test",
             workingDirectory: workingDirectory
         )
-        #expect(defaultMode.runMode == .tui)
-        #expect(defaultMode.resolvedRunMode(stdinIsTerminal: true) == .tui)
+        #expect(hosted.runMode == .tui)
+        #expect(hosted.resolvedRunMode(stdinIsTerminal: true) == .tui)
 
-        let automatic = try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            runMode: .automatic,
-            workingDirectory: workingDirectory
-        )
-        #expect(automatic.resolvedRunMode(stdinIsTerminal: true) == .tui)
+        // `--help` keeps the parser from reading the persisted configuration.
+        let withoutModeOption = try AgentConfiguration(arguments: ["zen", "--help"])
+        #expect(withoutModeOption.runMode == .tui)
+        #expect(withoutModeOption.resolvedRunMode(stdinIsTerminal: true) == .tui)
 
-        let automaticInTheApp = try AgentConfiguration(
-            hostedModelID: "remote-community/test",
-            runMode: .automatic,
-            workingDirectory: workingDirectory,
-            appMode: true
+        let withoutModeOptionInTheApp = try AgentConfiguration(
+            arguments: ["zen", "--help"],
+            appModeOverride: true
         )
-        #expect(automaticInTheApp.resolvedRunMode(stdinIsTerminal: true) == .acp)
+        #expect(withoutModeOptionInTheApp.runMode == .acp)
+        #expect(withoutModeOptionInTheApp.resolvedRunMode(stdinIsTerminal: true) == .acp)
 
         let telegramInTheApp = try AgentConfiguration(
             hostedModelID: "remote-community/test",
@@ -290,6 +287,69 @@ struct ZenCODECommandLineRunnerTests {
             promptArgumentError(["--tui", "--telegram", "--tui"])
                 == "Options --telegram and --tui cannot be combined."
         )
+    }
+
+    @Test
+    func worktreeArgumentRecordsTheLastNameWithTheWorkingDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zencode-worktree-arguments-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let configuration = try AgentConfiguration.withoutPersistedConfiguration(arguments: [
+            "zen", "--worktree", "first", "--working-directory", directory.path, "--worktree", "feature-1"
+        ])
+        let worktree = try #require(configuration.worktree)
+        #expect(worktree.name == "feature-1")
+        #expect(worktree.directory == configuration.workingDirectory)
+        #expect(worktree.directory.path == directory.resolvingSymlinksInPath().path)
+
+        // The terminal chat accepts a worktree in either order.
+        for arguments in [["zen", "--tui", "--worktree", "x"], ["zen", "--worktree", "x", "--tui"]] {
+            let terminal = try AgentConfiguration.withoutPersistedConfiguration(arguments: arguments)
+            #expect(terminal.worktree?.name == "x")
+            #expect(terminal.runMode == .tui)
+        }
+        #expect(try AgentConfiguration.withoutPersistedConfiguration(arguments: ["zen"]).worktree == nil)
+        #expect(try AgentConfiguration(
+            hostedModelID: "remote-community/test",
+            workingDirectory: directory
+        ).worktree == nil)
+        #expect(AgentConfiguration.helpText.contains("[--working-directory PATH] [--worktree NAME]"))
+    }
+
+    @Test(arguments: ["a/b", "a\\b", "-x", "--tui", "a b", "tab\tname", "", ".", ".."])
+    func worktreeArgumentRejectsAnInvalidName(name: String) {
+        #expect(promptArgumentError(["--worktree", name]) == "Invalid value for --worktree: \(name)")
+    }
+
+    @Test
+    func worktreeArgumentRequiresAValue() {
+        #expect(promptArgumentError(["--worktree"]) == "Missing value for --worktree.")
+        #expect(promptArgumentError(["--tui", "--worktree"]) == "Missing value for --worktree.")
+    }
+
+    @Test
+    func worktreeArgumentConflictsWithEveryNonTerminalModeInAnyOrder() {
+        for flag in ["--acp", "--telegram"] {
+            let conflict = "Options --worktree and \(flag) cannot be combined."
+            #expect(promptArgumentError(["--worktree", "x", flag]) == conflict)
+            #expect(promptArgumentError([flag, "--worktree", "x"]) == conflict)
+        }
+
+        let promptConflict = "Options --worktree and -p/--prompt cannot be combined."
+        #expect(promptArgumentError(["--worktree", "x", "-p", "hello"]) == promptConflict)
+        #expect(promptArgumentError(["--prompt", "hello", "--worktree", "x"]) == promptConflict)
+
+        let fileConflict = "Options --worktree and -f cannot be combined."
+        #expect(promptArgumentError(["--worktree", "x", "-f", "/a"]) == fileConflict)
+        #expect(promptArgumentError(["-f", "/a", "--worktree", "x"]) == fileConflict)
+
+        let jsonlConflict = "Options --worktree and --jsonl cannot be combined."
+        #expect(promptArgumentError(["--worktree", "x", "--jsonl", "-p", "hello"]) == jsonlConflict)
+        #expect(promptArgumentError(["--jsonl", "--worktree", "x"]) == jsonlConflict)
+        // Like the mode flags, an earlier prompt is named before `--jsonl`.
+        #expect(promptArgumentError(["--jsonl", "-p", "hello", "--worktree", "x"]) == promptConflict)
     }
 
     @Test
@@ -459,35 +519,21 @@ struct ZenCODECommandLineRunnerTests {
         #expect(missingFileValue.publicMessage == "Invalid command-line arguments.")
     }
 
-    /// The run mode of the environment is validated before the other values,
-    /// so the error of an invalid `--max-tool-rounds` shows that it was accepted.
-    @Test(arguments: ["tui", "telegram", " TUI ", "Telegram", "acp", "headless", "auto", "automatic"])
-    func zenExecutableAcceptsTheRunModesOfTheEnvironment(mode: String) throws {
+    /// `ZENCODE_AGENT_MODE` is no longer read: whatever its value, it selects no
+    /// mode and is never an error, so the error of an invalid `--max-tool-rounds`
+    /// is the only one.
+    @Test(arguments: ["chat", "acp", "not-a-mode"])
+    func zenExecutableIgnoresTheRemovedAgentModeVariable(agentMode: String) throws {
         let result = try runZen(
             zenExecutableURL(),
             arguments: ["--max-tool-rounds", "abc"],
-            environment: makeEnvironment(runMode: mode)
+            environment: makeEnvironment(agentMode: agentMode)
         )
         #expect(result.exitCode == 1)
         #expect(result.stdout.isEmpty)
         #expect(
             String(decoding: result.stderr, as: UTF8.self)
                 == "ZenCODE: Invalid value for --max-tool-rounds: abc\n"
-        )
-    }
-
-    @Test(arguments: ["chat", "Chat", " chat "])
-    func zenExecutableRejectsTheRemovedChatRunModeOfTheEnvironment(mode: String) throws {
-        let result = try runZen(
-            zenExecutableURL(),
-            arguments: ["--max-tool-rounds", "abc"],
-            environment: makeEnvironment(runMode: mode)
-        )
-        #expect(result.exitCode == 1)
-        #expect(result.stdout.isEmpty)
-        #expect(
-            String(decoding: result.stderr, as: UTF8.self)
-                == "ZenCODE: Invalid value for --mode: \(mode)\n"
         )
     }
 
@@ -498,20 +544,20 @@ struct ZenCODECommandLineRunnerTests {
         defer {
             try? FileManager.default.removeItem(at: supportURL)
         }
-        let invocations: [(arguments: [String], runMode: String?)] = [
-            (arguments: [], runMode: nil),
-            (arguments: ["--tui"], runMode: nil),
-            (arguments: [], runMode: "tui"),
-            (arguments: ["-p", "hello"], runMode: nil),
-            (arguments: ["-f", "/tmp/zencode-setup-gate-prompt.md"], runMode: nil),
-            (arguments: [], runMode: "headless"),
-            (arguments: ["--telegram"], runMode: nil),
-            (arguments: [], runMode: "telegram"),
-            // An option that selects another mode wins over the ACP environment.
-            (arguments: ["--tui"], runMode: "acp"),
+        let invocations: [(arguments: [String], agentMode: String?)] = [
+            (arguments: [], agentMode: nil),
+            (arguments: ["--tui"], agentMode: nil),
+            (arguments: ["-p", "hello"], agentMode: nil),
+            (arguments: ["-f", "/tmp/zencode-setup-gate-prompt.md"], agentMode: nil),
+            (arguments: ["--telegram"], agentMode: nil),
+            // The removed variable selects no mode: ACP is only `--acp`, so the
+            // gate stops these launches like the terminal chat.
+            (arguments: [], agentMode: "acp"),
+            (arguments: ["--tui"], agentMode: "acp"),
+            (arguments: ["-p", "hello"], agentMode: "acp"),
         ]
         for invocation in invocations {
-            var environment = makeEnvironment(runMode: invocation.runMode)
+            var environment = makeEnvironment(agentMode: invocation.agentMode)
             environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
 
             // No terminal input: the gate stops each mode before it could wait for any.
@@ -539,7 +585,7 @@ struct ZenCODECommandLineRunnerTests {
         defer {
             try? FileManager.default.removeItem(at: supportURL)
         }
-        var environment = makeEnvironment(runMode: nil)
+        var environment = makeEnvironment(agentMode: nil)
         environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
 
         let result = try runZen(
@@ -568,7 +614,7 @@ struct ZenCODECommandLineRunnerTests {
         defer {
             try? FileManager.default.removeItem(at: supportURL)
         }
-        var environment = makeEnvironment(runMode: nil)
+        var environment = makeEnvironment(agentMode: nil)
         environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
 
         let invocations: [(arguments: [String], conflicting: String)] = [
@@ -625,7 +671,7 @@ struct ZenCODECommandLineRunnerTests {
         defer {
             try? FileManager.default.removeItem(at: supportURL)
         }
-        var environment = makeEnvironment(runMode: nil)
+        var environment = makeEnvironment(agentMode: nil)
         environment[AppStorageDirectory.supportDirectoryEnvironmentKey] = supportURL.path
 
         let result = try runZen(
@@ -1137,12 +1183,13 @@ struct ZenCODECommandLineRunnerTests {
         )
     }
 
-    /// The environment of this process with `ZENCODE_AGENT_MODE` set to `runMode`,
-    /// or removed when it is `nil`. The process itself is never modified: other
-    /// suites run in parallel and read the same variable.
-    private func makeEnvironment(runMode: String?) -> [String: String] {
+    /// The environment of this process with `ZENCODE_AGENT_MODE` set to
+    /// `agentMode`, or removed when it is `nil`. zen ignores that variable: it
+    /// is set to prove that. The process itself is never modified: other suites
+    /// run in parallel and read the same environment.
+    private func makeEnvironment(agentMode: String?) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
-        environment["ZENCODE_AGENT_MODE"] = runMode
+        environment["ZENCODE_AGENT_MODE"] = agentMode
         return environment
     }
 

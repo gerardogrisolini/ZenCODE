@@ -14,6 +14,7 @@ import Darwin
 import Foundation
 import Synchronization
 import Testing
+import ToolCore
 @testable import ZenCODECore
 
 @Suite("zen --ui", .serialized)
@@ -43,15 +44,27 @@ struct ZenAppLaunchTests {
             "--model", "openrouter:openrouter/auto",
             "--skills", "all",
             "--working-directory", "/tmp/project",
+            "--worktree", "feature",
             "--ui"
         ])
         #expect(kept == [
             "--agent", "Developer",
             "--model", "openrouter:openrouter/auto",
             "--skills", "all",
-            "--working-directory", "/tmp/project"
+            "--working-directory", "/tmp/project",
+            "--worktree", "feature"
         ])
         #expect(try ZenAppLaunchCommand.forwardedArguments(from: ["zen", "--ui"]).isEmpty)
+    }
+
+    @Test
+    func theWorktreeIsForwardedAndItsNameValidatedFirst() {
+        // Keep in sync with `ZenAppLaunchArguments.forwardedOptions` of the app.
+        #expect(ZenAppLaunchCommand.forwardedOptions == [
+            "--agent", "--model", "--skills", "--working-directory", "--worktree"
+        ])
+        #expect(Self.parsingError(["zen", "--ui", "--worktree"]) == "Missing value for --worktree.")
+        #expect(Self.parsingError(["zen", "--ui", "--worktree", "a/b"]) == "Invalid value for --worktree: a/b")
     }
 
     @Test(arguments: [
@@ -159,6 +172,26 @@ struct ZenAppLaunchTests {
         #expect(appArguments(["--model", "--working-directory"]) == [
             "--model", "--working-directory", "--working-directory", "/Users/me/project"
         ])
+        // Only the last `--working-directory` is kept, where it is: with
+        // `--worktree`, the worktree's, appended after the given one.
+        #expect(appArguments([
+            "--working-directory", "/tmp/repo",
+            "--worktree", "feature",
+            "--agent", "Developer",
+            "--working-directory", "/tmp/worktrees/feature/repo"
+        ]) == [
+            "--worktree", "feature",
+            "--agent", "Developer",
+            "--working-directory", "/tmp/worktrees/feature/repo"
+        ])
+        #expect(appArguments([
+            "--working-directory", "/tmp/a",
+            "--working-directory", "/tmp/b",
+            "--model", "--working-directory"
+        ]) == [
+            "--working-directory", "/tmp/b",
+            "--model", "--working-directory"
+        ])
     }
 
     // MARK: - Install
@@ -246,14 +279,13 @@ struct ZenAppLaunchTests {
     }
 
     @Test
-    func aRunningAppIsDetachedWithItsArgumentsAndWithoutTheAgentMode() async throws {
+    func aRunningAppIsDetachedWithItsArgumentsAndTheEnvironmentOfZen() async throws {
         let root = try Self.makeTemporaryDirectory()
         defer { Self.remove(root) }
         let script = root.appendingPathComponent("runs")
         try Self.writeFile(
             """
             #!/bin/sh
-            echo "mode=${ZENCODE_AGENT_MODE-unset}"
             echo "marker=${ZEN_APP_LAUNCH_TEST_MARKER-unset}"
             echo "args=$*"
             exec sleep 30
@@ -264,7 +296,6 @@ struct ZenAppLaunchTests {
         )
         let log = root.appendingPathComponent("app/ZenCODE.log")
         var environment = ProcessInfo.processInfo.environment
-        environment["ZENCODE_AGENT_MODE"] = "acp"
         environment["ZEN_APP_LAUNCH_TEST_MARKER"] = "kept"
 
         let pid = try await Launcher.launch(
@@ -285,7 +316,7 @@ struct ZenAppLaunchTests {
         // A session of its own: the terminal's hang-up and Ctrl+C never reach it.
         #expect(getsid(pid) == pid)
         let output = await Self.contents(of: log, onceTheyContain: "args=--agent Developer\n")
-        #expect(output == "mode=unset\nmarker=kept\nargs=--agent Developer\n")
+        #expect(output == "marker=kept\nargs=--agent Developer\n")
 
         #expect(kill(pid, SIGTERM) == 0)
         var status: Int32 = 0
@@ -373,6 +404,72 @@ struct ZenAppLaunchTests {
         #expect(state.launches.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: layout.currentDirectory.path))
         #expect(!state.output.contains("Started"))
+    }
+
+    @Test
+    func aWorktreeIsPreparedAndTheAppOpensItAsItsOnlyWorkingDirectory() async throws {
+        let root = try Self.makeTemporaryDirectory()
+        defer { Self.remove(root) }
+        let fixture = try Fixture(root: root)
+        let repository = try await Self.makeRepository(at: root.appendingPathComponent("repo", isDirectory: true))
+        var tools = fixture.tools()
+        let recorder = fixture.recorder
+        tools.configuration = { arguments in
+            recorder.update { $0.configurationArguments.append(arguments) }
+            return try AgentConfiguration.withoutPersistedConfiguration(arguments: arguments)
+        }
+        let forwarded = ["--working-directory", repository.path, "--worktree", "feature"]
+
+        try await AppStorageDirectory.withSupportDirectoryURL(fixture.support) {
+            #expect(await ZenAppLaunchCommand.run(forwardedArguments: forwarded, tools: tools) == 0)
+
+            let expected = AgentWorktreeManager.directory(name: "feature", repositoryRoot: repository)
+            let state = fixture.recorder.snapshot
+            #expect(state.error.isEmpty)
+            // The configuration reads the worktree as the last working directory.
+            let arguments = try #require(state.configurationArguments.first)
+            #expect(state.configurationArguments.count == 1)
+            #expect(Array(arguments.dropLast(2)) == ["zen"] + forwarded)
+            #expect(arguments.suffix(2).first == "--working-directory")
+            let worktreePath = try #require(arguments.last)
+            #expect(Self.sameFile(worktreePath, expected.path))
+            #expect(try await Self.git(["rev-parse", "--abbrev-ref", "HEAD"], in: expected) == "feature")
+
+            // The app gets the worktree, and no other working directory.
+            let launch = try #require(state.launches.first)
+            #expect(launch.arguments == ["--worktree", "feature", "--working-directory", worktreePath])
+            let workspace = try AgentConfiguration.withoutPersistedConfiguration(arguments: arguments).workingDirectory
+            #expect(Self.sameFile(workspace.path, expected.path))
+            #expect(state.output.hasSuffix("Started the ZenCODE app in \(workspace.path).\n"))
+        }
+    }
+
+    @Test
+    func aWorktreeThatCannotBePreparedIsReportedAndNothingStarts() async throws {
+        let root = try Self.makeTemporaryDirectory()
+        defer { Self.remove(root) }
+        let fixture = try Fixture(root: root)
+        let plain = root.appendingPathComponent("plain", isDirectory: true)
+        try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
+        let tools = fixture.tools()
+
+        let status = await AppStorageDirectory.withSupportDirectoryURL(fixture.support) {
+            await ZenAppLaunchCommand.run(
+                forwardedArguments: ["--working-directory", plain.path, "--worktree", "feature"],
+                tools: tools
+            )
+        }
+
+        #expect(status == 1)
+        let state = fixture.recorder.snapshot
+        #expect(state.error == "ZenCODE: \(AgentWorktreeError.notInRepository(path: plain.path).localizedDescription)\n")
+        #expect(state.configurationArguments.isEmpty)
+        #expect(state.swiftCalls.isEmpty)
+        #expect(state.launches.isEmpty)
+        #expect(state.output.isEmpty)
+        #expect(!FileManager.default.fileExists(
+            atPath: fixture.support.appendingPathComponent("worktrees").path
+        ))
     }
 
     @Test
@@ -507,6 +604,38 @@ struct ZenAppLaunchTests {
             .appendingPathComponent("zen-app-launch-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    /// A Git repository with one commit on `main`, its identity in its own
+    /// configuration.
+    private static func makeRepository(at repository: URL) async throws -> URL {
+        try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+        try await git(["init", "--quiet"], in: repository)
+        try await git(["symbolic-ref", "HEAD", "refs/heads/main"], in: repository)
+        try await git(["config", "user.name", "ZenCODE Tests"], in: repository)
+        try await git(["config", "user.email", "tests@example.com"], in: repository)
+        try await git(["config", "commit.gpgsign", "false"], in: repository)
+        try writeFile("initial\n", to: repository.appendingPathComponent("file.txt"))
+        try await git(["add", "file.txt"], in: repository)
+        try await git(["commit", "--quiet", "-m", "initial"], in: repository)
+        return repository
+    }
+
+    @discardableResult
+    private static func git(_ arguments: [String], in directory: URL) async throws -> String {
+        let result = try await AsyncProcessRunner.run(
+            executableURL: GitExecutableResolver.executableURL(),
+            arguments: ["-C", directory.path] + arguments,
+            environment: DeveloperToolEnvironment.processEnvironment(),
+            timeout: 60
+        )
+        try #require(result.exitCode == 0, "git \(arguments.joined(separator: " ")): \(result.stderr)")
+        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func sameFile(_ lhs: String, _ rhs: String) -> Bool {
+        URL(fileURLWithPath: lhs).standardizedFileURL.resolvingSymlinksInPath().path
+            == URL(fileURLWithPath: rhs).standardizedFileURL.resolvingSymlinksInPath().path
     }
 
     fileprivate static func remove(_ url: URL) {

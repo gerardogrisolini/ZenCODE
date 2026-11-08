@@ -106,13 +106,19 @@ public enum AgentSessionComposition {
 
     /// Produces the stable standalone instruction prefix independently from
     /// context that can change while the session is alive.
+    ///
+    /// - Parameter worktreeSection: The Git worktree section of a session
+    ///   whose `cwd` is a `--worktree` worktree
+    ///   (``SystemPromptBuilder/worktreeSection(name:path:)``), placed right
+    ///   after the working-directory section; `nil` otherwise.
     public static func standardPromptSections(
         cwd: String,
         allowedToolNames: Set<String>?,
         selectedAgent: AgentProfile?,
         locksModelToSession: Bool = false,
         responseLanguageSection: String? = nil,
-        launchFolderProjects: LaunchFolderProjects? = nil
+        launchFolderProjects: LaunchFolderProjects? = nil,
+        worktreeSection: String? = nil
     ) -> SystemPromptSections {
         let memoryToolEnabled = memoryToolEnabled(allowedToolNames)
         return AgentStandaloneSystemPrompt.promptSections(
@@ -126,7 +132,8 @@ public enum AgentSessionComposition {
             selectedAgentRole: selectedAgent?.role,
             launchFolderProjects: launchFolderProjects,
             selectedSkillSection: SystemPromptBuilder.staticSkillSection,
-            responseLanguageSection: responseLanguageSection
+            responseLanguageSection: responseLanguageSection,
+            worktreeSection: worktreeSection
         )
     }
 

@@ -70,14 +70,32 @@ extension TerminalChat {
 
         let commands = "Commands: \(visibleCommandNamesForCurrentAgent().joined(separator: ", "))"
 
+        lines.append(contentsOf: Self.startupWorkspaceLines(
+            workingDirectory: configuration.workingDirectory,
+            worktree: configuration.worktree
+        ))
         lines.append(contentsOf: [
-            "Working directory: \(configuration.workingDirectory.path)",
             "",
             commands
         ])
 
         let startupBox = Self.renderStartupBox(lines: lines)
         await renderCoordinator.writeStartupSummary(startupBox + "\n")
+    }
+
+    /// The workspace lines of the startup summary: the worktree of a
+    /// `--worktree` launch (whose branch has its name), then the working
+    /// directory.
+    nonisolated static func startupWorkspaceLines(
+        workingDirectory: URL,
+        worktree: AgentWorktree?
+    ) -> [String] {
+        var lines: [String] = []
+        if let worktree {
+            lines.append("Worktree: \(worktree.name) (branch \(worktree.name))")
+        }
+        lines.append("Working directory: \(workingDirectory.path)")
+        return lines
     }
 
     public func toolCompletionSummary(

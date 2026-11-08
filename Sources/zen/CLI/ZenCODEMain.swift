@@ -187,7 +187,7 @@ private enum ZenCODEStandaloneHelp {
 
         #if os(macOS)
         // `--ui` exists only on macOS: elsewhere the help stays as above.
-        let uiOption = "  --ui                   Open the ZenCODE macOS app (built on first use). Accepts --agent, --model, --skills, --working-directory."
+        let uiOption = "  --ui                   Open the ZenCODE macOS app (built on first use). Accepts --agent, --model, --skills, --working-directory, --worktree."
         return help
             .replacingOccurrences(of: usage, with: "\(usage) [--ui]")
             .replacingOccurrences(of: telegramOption, with: "\(telegramOption)\n\(uiOption)")

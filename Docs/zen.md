@@ -157,9 +157,7 @@ To reconfigure ZenCODE later, leave the chat (`/exit`) and run `zen --setup`.
 The TUI has no `/setup` command: it is an unknown command, and the in-place
 reconfiguration that restored the conversation no longer exists.
 
-ACP is the only exception, and only when the effective mode is ACP: `--acp`, or
-`ZENCODE_AGENT_MODE=acp` with no other mode-selecting option (`--tui`,
-`--telegram`, `-p`/`--prompt`, `-f`, or `--jsonl`). See [ACP Mode](#acp-mode).
+ACP is the only exception: `zen --acp`. See [ACP Mode](#acp-mode).
 
 ### Esc in Setup
 
@@ -214,12 +212,12 @@ setup). A failed reset of the configuration, or an error after **Finish setup**
 **Data management** follows the same rule; see
 [Data Management](#data-management-backup-exportimport).
 
-In ACP mode (`--acp` or `ZENCODE_AGENT_MODE=acp`), setup never starts inside
+In ACP mode (`--acp`), setup never starts inside
 the ACP stream. See [ACP Mode](#acp-mode) for the authentication method, which
 runs `zen --setup` in a terminal, and the behavior before ZenCODE is
 configured.
 
-`--telegram` (or `ZENCODE_AGENT_MODE=telegram`) requires Telegram to be set up
+`--telegram` requires Telegram to be set up
 and paired beforehand with `zen --setup` (**Telegram** section). See
 [Telegram Mode](#telegram-mode).
 
@@ -234,6 +232,7 @@ Creates files under `~/.zencode/`:
 - `projects/` — per-project agent associations (`agents.json`, see `/agents`), under the project key.
 - `sessions/` — saved session snapshots grouped by project key.
 - `task-graphs/` — atomic project/session task checkpoints, including explicitly saved plans, grouped by project key.
+- `worktrees/` — the Git worktrees of `zen --worktree NAME`, at `worktrees/<project key>/<NAME>/<repository folder name>`. See [Git Worktrees](#git-worktrees).
 - `features/` — generated Builder packages and installed optional feature packages.
 - `source/` — persistent ZenCODE checkout retained by the platform installer for later optional-feature builds.
 - `bin/` — `ZenCRON`, the program that cron runs for scheduled prompts, built and installed from `zen --setup` > **Scheduled prompts (ZenCRON)**. See [ZenCRON](#zencron-the-host-that-cron-runs).
@@ -258,6 +257,10 @@ case-sensitively — not from its full path:
 - **Two folders with the same name are the same project**: they share one
   memory graph, one set of associated profiles, one session list, and one plan
   library. Rename one of them to keep them apart.
+- **A `--worktree` worktree is the project of its repository**: its folder
+  keeps the repository's folder name, so it shares the memory, the profiles,
+  the sessions, and the plans of the main checkout (see
+  [Git Worktrees](#git-worktrees)).
 
 The macOS workspace tool consent ("Trust this folder?") is not keyed by project:
 it stays tied to the resolved folder path, so it is asked again after a move.
@@ -415,7 +418,7 @@ exact paths involved.
 ## Command Line Options
 
 ```text
-zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] [--setup] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--ui] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N]
+zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] [--setup] [--install-features [id,id,...]] [--no-features] [--zen-package-path DIR] [--acp] [--ui] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--worktree NAME] [--skills LIST] [--max-tool-rounds N] [--max-output-tokens N]
 ```
 
 - `-p, --prompt PROMPT`: run one non-interactive turn. Redirected stdin, when
@@ -457,12 +460,14 @@ zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] 
   Swift toolchain and can take a few minutes, and the first one needs network
   access to fetch the package dependencies. Then `zen` starts the app
   detached and exits, so the terminal returns at once; every invocation starts
-  a new instance. Only `--agent`, `--model`, `--skills`, and
-  `--working-directory` are accepted, and they are forwarded to the app; the
-  options of the other modes are refused, and an unknown agent is reported in
-  the terminal. When ZenCODE is not configured, `zen --ui` does not open the
-  app and does not start setup: it stops with the not-configured message and
-  exit status 1 (run `zen --setup` first). Every new
+  a new instance. Only `--agent`, `--model`, `--skills`,
+  `--working-directory`, and `--worktree` are accepted, and they are forwarded
+  to the app; the options of the other modes are refused, and an unknown agent
+  is reported in the terminal. With `--worktree`, `zen` first prepares the
+  worktree and the app opens on it (see `--worktree` below and
+  [Worktrees](app.md#worktrees)). When ZenCODE is not configured, `zen --ui`
+  does not open the app and does not start setup: it stops with the
+  not-configured message and exit status 1 (run `zen --setup` first). Every new
   window offers the task graphs that earlier sessions left incomplete (see
   [Recovering Incomplete Tasks at Startup](#recovering-incomplete-tasks-at-startup)).
   The output of the app goes to `~/.zencode/app/ZenCODE.log`; an app that exits
@@ -474,6 +479,14 @@ zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] 
 - `--agent NAME`: select an agent profile (default: the project's default developer, normally `Developer`; see [agents.md](agents.md#profile-roles)).
 - `--model MODEL_ID`: request a model override for the direct session; delegated sub-agents remain restricted to the selected profile's authorized bindings.
 - `--working-directory PATH`: working directory for local tools.
+- `--worktree NAME`: work in the Git worktree `NAME` of the repository that
+  contains the launch directory (`--working-directory`, else the current
+  directory), created on first use in
+  `<support>/worktrees/<project key>/<NAME>/<repository folder name>` with the
+  branch `NAME`. It is accepted by the terminal chat (also with `--tui`) and by
+  `--ui` (macOS), and refused with `--acp`, `--telegram`, `-p`/`--prompt`, `-f`,
+  and `--jsonl` (`Options --worktree and --acp cannot be combined.`). See
+  [Git Worktrees](#git-worktrees).
 - `--skills LIST`: initial skill selection by name/number, `all`, or `none`.
 - `--max-tool-rounds N`: maximum model/tool loop rounds per prompt.
 - `--max-output-tokens N`: maximum generated tokens per model call.
@@ -488,12 +501,58 @@ its own parser, also refuses `--tui` and `--telegram`. `--setup` cannot be
 combined with any other option: `zen --setup --telegram` answers `Options
 --setup and --telegram cannot be combined.` and exits with status 1.
 
-Environment variables mirror these: `ZENCODE_AGENT_MODE`, `ZENCODE_AGENT_NAME`, `ZENCODE_AGENT_MODEL`, `ZENCODE_AGENT_CWD`, `ZENCODE_AGENT_SKILLS`, `ZENCODE_AGENT_MAX_TOOL_ROUNDS`, and `ZENCODE_AGENT_MAX_OUTPUT_TOKENS`.
+The mode is chosen only with the options above. Environment variables mirror the other settings: `ZENCODE_AGENT_NAME`, `ZENCODE_AGENT_MODEL`, `ZENCODE_AGENT_CWD`, `ZENCODE_AGENT_SKILLS`, `ZENCODE_AGENT_MAX_TOOL_ROUNDS`, and `ZENCODE_AGENT_MAX_OUTPUT_TOKENS`.
 
-`ZENCODE_AGENT_MODE` accepts `tui`, `telegram`, `acp`, `headless`, and `auto`
-(or `automatic`), which resolves to `tui`; the value is trimmed and
-case-insensitive. The former value `chat` is no longer accepted and fails with
-`Invalid value for --mode: chat`: use `tui`.
+## Git Worktrees
+
+`zen --worktree NAME` works in the Git worktree `NAME` of the repository that
+contains the launch directory (`--working-directory`, else the current
+directory), so a change can be made, and later merged or discarded, without
+touching the main working tree. `NAME` cannot be empty, `.`, or `..`, cannot
+start with `-`, and cannot contain `/`, `\`, or whitespace; Git may still
+reject a name that is not a valid branch name. Outside a Git repository `zen`
+stops with `--worktree requires a Git repository: <path> is not inside one`.
+The option works in the terminal chat (also with `--tui`) and with `--ui` on
+macOS (see [Worktrees](app.md#worktrees) in the app guide); it is refused with
+`--acp`, `--telegram`, `-p`/`--prompt`, `-f`, and `--jsonl`.
+
+- **Location.** The worktree lives in
+  `<support>/worktrees/<project key>/<NAME>/<repository folder name>`, where
+  `<support>` is `~/.zencode` or `ZENCODE_SUPPORT_DIRECTORY`. The last
+  component is the repository's folder name, so the [project key](#project-key)
+  is the repository's: project memory, saved sessions, task graphs, and project
+  agents are shared with the main checkout.
+- **Branch.** The branch is also named `NAME`, with no prefix. An existing
+  branch `NAME` is checked out; otherwise it is created from the current
+  `HEAD`. Uncommitted changes of the main working tree are not carried over.
+- **Reuse.** A worktree that already exists at that location is reused, so
+  `zen --worktree NAME` resumes it. If the location holds something that is not
+  a worktree of this repository (for example another repository with the same
+  folder name), `zen` refuses it. Nothing locks a worktree: two sessions can
+  work in the same one.
+- **What you and the model see.** The terminal startup summary shows
+  `Worktree: <name> (branch <name>)` above `Working directory:`. The system
+  prompt of the sessions working in the worktree has a `Git worktree:` section:
+  commit on this branch, do not switch branches, do not run `git worktree`
+  commands, and do not touch the main working tree.
+
+When the terminal chat ends normally (for example with `/exit`), the menu
+`Worktree <name> (<path>)` offers:
+
+- `Merge into <main branch> and remove the worktree`: commits uncommitted
+  changes as `zen: worktree <name>`, merges the branch into the branch checked
+  out in the main working tree (`git merge --no-edit`), then removes the
+  worktree and deletes the branch. On a conflict the merge is aborted, the
+  worktree is kept, and `zen` prints `Merge manually: git -C <main> merge
+  <name>`. Any other Git failure is printed with Git's message.
+- `Keep the worktree` (the default, also on `Esc`): prints `Worktree <name>
+  kept at <dir>. Resume it with: zen --worktree <name>`.
+- `Remove the worktree without merging`: after a Yes/No confirmation (the
+  default is No), removes the worktree and deletes its branch; its changes are
+  lost.
+
+Without an interactive terminal the worktree is kept and the `kept at` line is
+printed. When the chat ends with an error, the worktree is left untouched.
 
 ## Optional Feature Packages
 
@@ -1767,7 +1826,7 @@ If both capabilities are declared, both methods are published, with the
 
 ### Before ZenCODE Is Configured
 
-When `zen --acp` or `ZENCODE_AGENT_MODE=acp` runs without the configuration
+When `zen --acp` runs without the configuration
 required by the setup (`settings.json` or `agents.json` missing or invalid,
 or no model configured), the interactive setup does not start inside the ACP
 stream, and stdout still contains only JSON-RPC messages:
@@ -1792,7 +1851,7 @@ is cancelled, ZenCODE stays unconfigured and those requests keep returning
 zen --telegram --agent <name> --working-directory ~/Projects
 ```
 
-`zen --telegram` (or `ZENCODE_AGENT_MODE=telegram`) runs ZenCODE without the
+`zen --telegram` runs ZenCODE without the
 TUI, for a machine that stays on: a Raspberry Pi, a home server, a Mac started
 over ssh. It opens a session and hands it at once to the linked Telegram chat,
 which drives it as it does after `/telegram on`: prompts, voice notes, `/plan`,

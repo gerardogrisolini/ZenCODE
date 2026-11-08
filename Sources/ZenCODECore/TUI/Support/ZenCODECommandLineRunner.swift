@@ -65,16 +65,26 @@ public enum ZenCODECommandLineRunner {
                 // wins over --jsonl (see `jsonlIsActive(arguments:)`).
                 Foundation.exit(ZenCODEDoctorRunner.run())
             }
+            // `--worktree NAME` creates (or reuses) the worktree before the
+            // configuration is read, and its directory becomes the last
+            // `--working-directory`. The syntax is checked first, so invalid
+            // arguments never create a worktree: `main(backendFactory:)` is
+            // reached without the executable's own validation.
+            try AgentConfiguration.validateArguments(sanitizedArguments)
+            let configurationArguments = try await AgentWorktreeManager.rewritingArguments(
+                sanitizedArguments,
+                environment: ProcessInfo.processInfo.environment
+            )
             // While ZenCODE has no usable configuration, `--acp` must still
             // answer `initialize` so the client can offer the terminal setup
             // method, which launches `zen --setup`. That path never reads the
             // persisted configuration: the client relaunches the agent after
             // the setup, so no hot reload.
             let unconfiguredACPConfiguration = try Self.unconfiguredACPConfiguration(
-                arguments: sanitizedArguments
+                arguments: configurationArguments
             )
             let configuration = try unconfiguredACPConfiguration
-                ?? AgentConfiguration(arguments: sanitizedArguments)
+                ?? AgentConfiguration(arguments: configurationArguments)
             if configuration.printHelp {
                 AgentOutput.standardOutput.writeString(AgentConfiguration.helpText)
                 return
@@ -188,16 +198,9 @@ public enum ZenCODECommandLineRunner {
         }
     }
 
-    /// Whether ACP was requested: `--acp` among the arguments, or
-    /// `ZENCODE_AGENT_MODE=acp` (trimmed, case-insensitive).
-    static func requestsACP(
-        arguments: [String],
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> Bool {
+    /// Whether ACP was requested: `--acp` among the arguments.
+    static func requestsACP(arguments: [String]) -> Bool {
         arguments.dropFirst().contains("--acp")
-            || environment["ZENCODE_AGENT_MODE"]?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased() == AgentRunMode.acp.rawValue
     }
 
     /// The configuration for an ACP launch that must not read any persisted
@@ -361,6 +364,7 @@ public enum ZenCODECommandLineRunner {
             || argument == "--prompt"
             || argument == "--jsonl"
             || argument == "--working-directory"
+            || argument == "--worktree"
             || argument == "--skills"
             || argument == "--max-tool-rounds"
             || argument == "--max-output-tokens"

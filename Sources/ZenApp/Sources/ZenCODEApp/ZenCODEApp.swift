@@ -3,7 +3,8 @@
 //  ZenApp
 //
 //  The entry point of the ZenCODE app: one window group whose value is the
-//  workspace folder of the window, and the menu bar commands.
+//  workspace folder of the window, the Worktree window of a `--worktree`
+//  launch, and the menu bar commands.
 //
 
 import AppKit
@@ -28,5 +29,16 @@ struct ZenCODEApp: App {
         .commands {
             ZenMenuCommands()
         }
+        // Asks how to close the worktree of a `--worktree` launch before the
+        // app quits; it opens only when asked. The app quits while it is
+        // open, so it is never restored at the next launch, and it adds no
+        // item to the Window menu.
+        Window("Worktree", id: ZenWorktreeClosureWindow.id) {
+            ZenWorktreeClosureWindow(launcher: appDelegate.launcher)
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+        .restorationBehavior(.disabled)
+        .commandsRemoved()
     }
 }

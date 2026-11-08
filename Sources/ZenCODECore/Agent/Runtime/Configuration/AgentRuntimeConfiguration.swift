@@ -671,6 +671,10 @@ public enum AgentStandaloneSystemPrompt {
     /// - Parameter listLaunchFolder: Lists the entries of `cwd` when
     ///   `launchFolderProjects` is `nil` and the role delegates by role. The
     ///   default reads the file system; tests inject it to observe the listing.
+    /// - Parameter worktreeSection: The Git worktree section of a session
+    ///   whose `cwd` is a `--worktree` worktree
+    ///   (``SystemPromptBuilder/worktreeSection(name:path:)``), placed right
+    ///   after the working-directory section; `nil` otherwise.
     public static func promptSections(
         cwd: String,
         memoryToolEnabled: Bool = false,
@@ -683,7 +687,8 @@ public enum AgentStandaloneSystemPrompt {
         launchFolderProjects: LaunchFolderProjects? = nil,
         listLaunchFolder: (String) throws -> [String] = LaunchFolderProjects.defaultListDirectory,
         selectedSkillSection: String? = nil,
-        responseLanguageSection: String? = nil
+        responseLanguageSection: String? = nil,
+        worktreeSection: String? = nil
     ) -> SystemPromptSections {
         let workingDirectory = URL(fileURLWithPath: cwd)
         let agentsNotice = AgentsContextService(
@@ -759,7 +764,8 @@ public enum AgentStandaloneSystemPrompt {
             allowedToolNames: allowedToolNames,
             selectedSkillSection: selectedSkillSection,
             responseLanguageSection: responseLanguageSection,
-            delegatesByRole: delegatesByRole
+            delegatesByRole: delegatesByRole,
+            worktreeSection: worktreeSection
         )
     }
 }

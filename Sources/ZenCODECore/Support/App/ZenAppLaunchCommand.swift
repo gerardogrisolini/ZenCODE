@@ -22,7 +22,9 @@ package enum ZenAppLaunchCommand {
     /// with `ZenAppLaunchArguments.forwardedOptions` of the app package
     /// (`Sources/ZenApp/Sources/ZenAppSession/ZenAppLaunchArguments.swift`),
     /// which reads them from the app's command line.
-    static let forwardedOptions: Set<String> = ["--agent", "--model", "--skills", "--working-directory"]
+    static let forwardedOptions: Set<String> = [
+        "--agent", "--model", "--skills", "--working-directory", "--worktree"
+    ]
 
     /// Options of the other modes, refused with `--ui`.
     static let conflictingOptions: Set<String> = [
@@ -36,8 +38,9 @@ package enum ZenAppLaunchCommand {
     }
 
     /// The arguments forwarded to the app: every `--agent`, `--model`,
-    /// `--skills` and `--working-directory` with its value, in order, without
-    /// the executable and without `--ui` (which may be repeated).
+    /// `--skills`, `--working-directory` and `--worktree` with its value, in
+    /// order, without the executable and without `--ui` (which may be
+    /// repeated).
     ///
     /// - Throws: `AgentConfigurationError.missingValue` for a forwarded option
     ///   without a value, `.conflictingOptions("--ui", option)` for an option of
@@ -76,15 +79,23 @@ package enum ZenAppLaunchCommand {
 
     /// `run(forwardedArguments:)` over `tools`:
     ///
-    /// 1. reads the configuration as the app will (the persisted settings), so
+    /// 1. prepares the worktree of `--worktree NAME`, if any
+    ///    (`AgentWorktreeManager.rewritingArguments`): its directory becomes
+    ///    the last `--working-directory`, so it is the workspace;
+    /// 2. reads the configuration as the app will (the persisted settings), so
     ///    an unknown agent is reported here and the workspace is known;
-    /// 2. builds and installs the app when needed (`preparedExecutable`);
-    /// 3. starts it with `appArguments`: the forwarded options and the
+    /// 3. builds and installs the app when needed (`preparedExecutable`);
+    /// 4. starts it with `appArguments`: the forwarded options and the
     ///    workspace;
-    /// 4. prints `Started the ZenCODE app in <workspace>.`
+    /// 5. prints `Started the ZenCODE app in <workspace>.`
     static func run(forwardedArguments: [String], tools: Tools) async -> Int32 {
         do {
-            let configuration = try tools.configuration(["zen"] + forwardedArguments)
+            let arguments = try await AgentWorktreeManager.rewritingArguments(
+                ["zen"] + forwardedArguments,
+                environment: ProcessInfo.processInfo.environment
+            )
+            let forwardedArguments = Array(arguments.dropFirst())
+            let configuration = try tools.configuration(arguments)
             let layout = ZenAppInstallation.Layout(supportDirectory: tools.supportDirectory())
             let executable = try await preparedExecutable(tools: tools, layout: layout)
             _ = try await tools.launch(
@@ -109,12 +120,20 @@ package enum ZenAppLaunchCommand {
     /// have no `--working-directory`. The app then opens the workspace that
     /// `zen` resolved and prints: without the option, its configuration would
     /// compare the current directory with the app's own folder, not `zen`'s.
+    ///
+    /// Only the last `--working-directory` is kept, where it is: it is the one
+    /// that wins, and with `--worktree` it is the worktree's, appended after
+    /// the one given on the command line.
     static func appArguments(forwardedArguments: [String], workspace: URL) -> [String] {
-        let options = stride(from: 0, to: forwardedArguments.count, by: 2).map { forwardedArguments[$0] }
-        guard !options.contains("--working-directory") else {
-            return forwardedArguments
+        let pairs = stride(from: 0, to: forwardedArguments.count, by: 2).map {
+            Array(forwardedArguments[$0..<min($0 + 2, forwardedArguments.count)])
         }
-        return forwardedArguments + ["--working-directory", workspace.path]
+        guard let lastWorkingDirectory = pairs.lastIndex(where: { $0.first == "--working-directory" }) else {
+            return forwardedArguments + ["--working-directory", workspace.path]
+        }
+        return pairs.indices
+            .filter { $0 == lastWorkingDirectory || pairs[$0].first != "--working-directory" }
+            .flatMap { pairs[$0] }
     }
 
     /// The installed executable, built and installed first when the installed

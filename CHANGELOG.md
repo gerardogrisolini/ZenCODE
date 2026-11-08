@@ -43,6 +43,26 @@ Release tags follow the strict `vX.Y.Z` contract described in
   <option> cannot be combined.`, exit status 1); `--help`, `--version`,
   `--doctor`, and `--install-features` keep precedence over it. `zen --help`
   lists it. See [Docs/zen.md](Docs/zen.md#first-setup).
+- `zen --worktree NAME` works in the Git worktree `NAME` of the repository that
+  contains the launch directory, in the terminal chat and with `zen --ui`; it
+  is refused with `--acp`, `--telegram`, `-p`/`--prompt`, `-f`, and `--jsonl`.
+  The worktree lives in
+  `<support>/worktrees/<project key>/<NAME>/<repository folder name>` on the
+  branch `NAME` (checked out if it exists, otherwise created from `HEAD`), and
+  keeps the repository's project key, so the project memory, saved sessions,
+  task graphs, and project agents are shared with the main checkout. The
+  terminal startup summary shows it (`Worktree: <name> (branch <name>)`) and
+  the system prompt of the sessions working in it gets a `Git worktree:`
+  section. When the terminal chat ends, a menu offers to merge the branch into
+  the main branch and remove the worktree, to keep it (the default), or to
+  remove it without merging; the app asks the same in a `Worktree` window when
+  its last window closes or on a quit. The new public API is `AgentWorktree`,
+  `AgentWorktreeManager`, `AgentWorktreeError`, `AgentConfiguration.worktree`,
+  `ChatSessionEnvironment.worktree`,
+  `SystemPromptBuilder.worktreeSection(name:path:)` (with the
+  `worktreeSection:` parameter of the prompt-section builders), and
+  `ZenWorktreeClosure` with `ZenAppRuntime.worktreeClosure` in the app package.
+  See [Docs/zen.md](Docs/zen.md#git-worktrees).
 
 ### Changed
 
@@ -83,8 +103,7 @@ Release tags follow the strict `vX.Y.Z` contract described in
   zen again.`` on standard error (with `--jsonl`, as the framed `error` record
   of category `configuration` on standard output) and exit with status 1. Run
   `zen --setup` first. ACP is the only exception: it still answers
-  `initialize` when it is the effective mode (`--acp`, or
-  `ZENCODE_AGENT_MODE=acp` with no other mode-selecting option). `--telegram`
+  `initialize` when it is the effective mode (`--acp`). `--telegram`
   requires Telegram set up and paired with `zen --setup`. The hints of
   `zen --doctor`, of the macOS app, and of the Telegram, voice, ZenCRON, and
   provider-key messages that sent you to `/setup` or to run `zen` now name
@@ -133,6 +152,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `shutdown()` now always shuts the whole runner down, including the connected
   external MCP servers. An embedder that needs to keep them can call
   `AgentCoreSessionRunner.shutdownBackendKeepingExternalTools()` on its runner.
+- **Breaking:** the `ZENCODE_AGENT_MODE` environment variable is removed. It is
+  no longer read, and a leftover value is ignored, without a warning or an
+  error (the `Invalid value for --mode` error goes with it): it no longer
+  selects a mode, not even ACP. The mode is chosen only with the command-line
+  options `--tui` (the default), `--telegram`, `--acp`, `-p`/`--prompt`, `-f`,
+  or `--jsonl`, so an ACP client configured with the variable alone must now
+  pass `--acp`. The other `ZENCODE_AGENT_*` variables are unchanged.
+- **Breaking (ZenCODECore API):** `AgentRunMode.automatic` is removed, with the
+  environment variable that could select it. Without a mode option,
+  `AgentConfiguration.runMode` is now `.tui`, or `.acp` when the configuration
+  is built with `appModeOverride: true`, so `resolvedRunMode(stdinIsTerminal:)`
+  resolves as before. A `switch` over `AgentRunMode` that has a case for
+  `.automatic` no longer compiles: drop it.
 
 ### Fixed
 
