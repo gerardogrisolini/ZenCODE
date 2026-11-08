@@ -204,7 +204,8 @@ extension AgentCoreSessionConfiguration {
             maxOutputTokens: maxOutputTokens,
             appMode: appMode,
             thinkingSelection: snapshot.thinkingSelection,
-            preserveThinking: snapshot.preserveThinking
+            preserveThinking: snapshot.preserveThinking,
+            responseLanguageSection: responseLanguageSection
         )
     }
 }

@@ -247,6 +247,7 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
     public var appMode: Bool
     public var thinkingSelection: AgentThinkingSelection?
     public var preserveThinking: Bool
+    public var responseLanguageSection: String?
 
     public init(
         sessionID: String,
@@ -265,7 +266,8 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
         maxOutputTokens: Int? = nil,
         appMode: Bool = false,
         thinkingSelection: AgentThinkingSelection? = nil,
-        preserveThinking: Bool = false
+        preserveThinking: Bool = false,
+        responseLanguageSection: String? = nil
     ) {
         self.sessionID = sessionID
         self.modelID = modelID
@@ -284,6 +286,7 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
         self.appMode = appMode
         self.thinkingSelection = thinkingSelection
         self.preserveThinking = preserveThinking
+        self.responseLanguageSection = responseLanguageSection
     }
 
     /// Builds the session identity. Trimming, clamping, and allowlist
@@ -307,7 +310,8 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
             maxOutputTokens: maxOutputTokens,
             appMode: appMode,
             thinkingSelection: thinkingSelection,
-            preserveThinking: preserveThinking
+            preserveThinking: preserveThinking,
+            responseLanguageSection: responseLanguageSection
         )
     }
 }

@@ -44,6 +44,10 @@ public actor AgentCoreBackend {
     private var sharedChatMessageAvailableHandler: (@Sendable (String) -> Void)?
     private var subAgentToolEventHandler: DirectSubAgentToolEventHandler?
     private var toolProvidersBySessionID: [String: [AgentToolProvider]] = [:]
+    /// The coordinator's response-language section per root session, read by
+    /// delegated agents when they are created. It is kept beside the seeds
+    /// (which snapshots and compaction rebuild) and never sent per turn.
+    private var responseLanguageSectionsBySessionID: [String: String] = [:]
     private let backendFactory: AgentRuntimeBackendFactory?
     /// Owner of the in-process DS4 engine. A non-DS4 root backend that replaces
     /// a DS4 one closes it when no DS4 session is live. Injectable for tests.
@@ -105,7 +109,8 @@ public actor AgentCoreBackend {
         cacheKey: String? = nil,
         allowedToolNames: Set<String>? = nil,
         thinkingSelection: AgentThinkingSelection? = nil,
-        preserveThinking: Bool = false
+        preserveThinking: Bool = false,
+        responseLanguageSection: String? = nil
     ) async {
         let allowedToolNames = normalizedAllowedToolNames(allowedToolNames)
         let separatedContext = AgentRuntimeDynamicContext.separating(from: history)
@@ -120,6 +125,7 @@ public actor AgentCoreBackend {
             preserveThinking: preserveThinking
         )
         sessions[id] = seed
+        responseLanguageSectionsBySessionID[id] = responseLanguageSection?.nilIfBlank
         if let backend = activeBackend {
             await backend.createSession(
                 id: id,
@@ -202,11 +208,13 @@ public actor AgentCoreBackend {
         dynamicContext: String?,
         allowedToolNames: Set<String>?,
         thinkingSelection: AgentThinkingSelection?,
-        preserveThinking: Bool
+        preserveThinking: Bool,
+        responseLanguageSection: String? = nil
     ) async {
         guard var seed = sessions[id] else {
             return
         }
+        responseLanguageSectionsBySessionID[id] = responseLanguageSection?.nilIfBlank
         let allowedToolNames = normalizedAllowedToolNames(allowedToolNames)
         seed.systemPrompt = systemPrompt
         let dynamicContextChanged = seed.dynamicContext != dynamicContext?.nilIfBlank
@@ -295,6 +303,7 @@ public actor AgentCoreBackend {
         await closeMemoryProposal(parentID: id)
         sessions.removeValue(forKey: id)
         toolProvidersBySessionID.removeValue(forKey: id)
+        responseLanguageSectionsBySessionID.removeValue(forKey: id)
         if let backend = activeBackend {
             await backend.closeSession(id: id)
         }
@@ -307,6 +316,7 @@ public actor AgentCoreBackend {
         sessions.removeAll()
         memoryProposalSessions.removeAll()
         toolProvidersBySessionID.removeAll()
+        responseLanguageSectionsBySessionID.removeAll()
         let backend = activeBackend
         activeBackend = nil
         if let backend {
@@ -577,6 +587,10 @@ public actor AgentCoreBackend {
         try verifyBackendGeneration(generation)
         await applySubAgentToolEventHandler(to: backend)
         try verifyBackendGeneration(generation)
+        await backend.updateSubAgentResponseLanguageSectionProvider(
+            subAgentResponseLanguageSectionProvider()
+        )
+        try verifyBackendGeneration(generation)
         await applyToolProviders(to: backend)
         try verifyBackendGeneration(generation)
         for (sessionID, seed) in sessions {
@@ -637,6 +651,20 @@ public actor AgentCoreBackend {
                 subAgentToolEventHandler
             )
         }
+    }
+
+    /// The live source of the response-language section installed once on
+    /// every backend incarnation: delegated agents read the root session's
+    /// current section when they are created, so no per-turn update and no
+    /// language-change check is needed.
+    private func subAgentResponseLanguageSectionProvider() -> DirectSubAgentResponseLanguageSectionProvider {
+        { [weak self] rootSessionID in
+            await self?.responseLanguageSection(forSessionID: rootSessionID)
+        }
+    }
+
+    func responseLanguageSection(forSessionID sessionID: String) -> String? {
+        responseLanguageSectionsBySessionID[sessionID]
     }
 
     private func applyToolProviders(

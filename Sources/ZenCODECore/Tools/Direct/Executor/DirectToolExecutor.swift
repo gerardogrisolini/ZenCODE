@@ -261,6 +261,12 @@ public actor DirectToolExecutor {
         await subAgentRuntime.updateSubAgentToolEventHandler(handler)
     }
 
+    public func updateSubAgentResponseLanguageSectionProvider(
+        _ provider: DirectSubAgentResponseLanguageSectionProvider?
+    ) async {
+        await subAgentRuntime.updateResponseLanguageSectionProvider(provider)
+    }
+
     public func updateToolProviders(
         _ providers: [AgentToolProvider],
         sessionID: String? = nil

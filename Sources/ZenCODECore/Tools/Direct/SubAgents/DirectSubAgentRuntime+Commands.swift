@@ -166,6 +166,9 @@ extension DirectSubAgentRuntime {
             parentAllowedToolNames: parentAllowedToolNames,
             rootSessionID: rootSessionID
         )
+        // One read per batch: every agent of the batch answers in the
+        // coordinator's language; without a source the generic rule applies.
+        let responseLanguageSection = await responseLanguageSectionProvider?(rootSessionID)
         let tasklessAgentIDs = prepared
             .filter { $0.payload.taskID == nil }
             .map(\.id)
@@ -252,6 +255,14 @@ extension DirectSubAgentRuntime {
                     )
                 }
                 await synchronizeSubAgentToolEventHandler(with: backend)
+                if payload.taskID == nil {
+                    // A taskless child may delegate in turn: its runtime
+                    // resolves the same root room and reads the same source.
+                    // A task-bound child cannot create nested sub-agents.
+                    await backend.updateSubAgentResponseLanguageSectionProvider(
+                        responseLanguageSectionProvider
+                    )
+                }
                 createdBackends.append((id, backend))
                 if let taskOrchestrator {
                     await backend.installTaskOrchestrator(taskOrchestrator)
@@ -353,7 +364,8 @@ extension DirectSubAgentRuntime {
                         selectedProfile: item.profile,
                         workingDirectory: payload.workingDirectory == nil
                             ? nil
-                            : item.workingDirectory
+                            : item.workingDirectory,
+                        responseLanguageSection: responseLanguageSection
                     ),
                     history: [],
                     cacheKey: nil,

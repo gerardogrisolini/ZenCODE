@@ -69,9 +69,28 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `worktreeSection:` parameter of the prompt-section builders), and
   `ZenWorktreeClosure` with `ZenAppRuntime.worktreeClosure` in the app package.
   See [Docs/zen.md](Docs/zen.md#git-worktrees).
+- `AgentCoreSessionConfiguration.responseLanguageSection` (with the
+  `responseLanguageSection:` parameter of its initializers, of
+  `AgentCoreSessionConfigurationBuilder`, and of
+  `AgentCoreBackend.createSession`/`updateSessionOptions`) carries the
+  channel's locked response-language section; it is outside the session
+  identity, so it never recreates the backend or the session.
+  `AgentRuntimeBackend.updateSubAgentResponseLanguageSectionProvider(_:)` (with
+  a default implementation that ignores it), the
+  `DirectSubAgentResponseLanguageSectionProvider` type,
+  `DirectToolExecutor.updateSubAgentResponseLanguageSectionProvider(_:)`,
+  `DirectSubAgentRuntime.updateResponseLanguageSectionProvider(_:)`, and the
+  `responseLanguageSection:` parameter of `DirectSubAgentRuntime.systemPrompt`
+  give delegated agents that section.
 
 ### Changed
 
+- The response-language rule of the system prompt, locked or generic, also
+  asks to write in the session language the text the model writes for other
+  agents: the `agent.create` prompts, the task descriptions and acceptance
+  criteria, and the `agent.message` messages. The system prompt prefix
+  changes once, so the first turn after the update does not reuse the
+  provider's prompt cache; a saved session keeps the prompt it was saved with.
 - `agent.create` no longer caps a single request at 8 sub-agents: the
   `maxItems: 8` of its schema, the "1–8" of its description, the
   `DirectSubAgentRuntime.maximumAgentsPerCreate` constant and the
@@ -179,6 +198,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Delegated sub-agents answer in the coordinator's locked response language
+  (the one of the settings, else the system's) instead of falling back to the
+  language of their English brief: `agent.create` reads the root session's
+  section once per batch and puts it in their system prompt, nested taskless
+  agents included. Without a locked language (before the first prompt,
+  headless runs, ACP) they keep the generic rule, as the coordinator does.
 - The `/subagent` detail and the macOS sub-agent tab show the reasoning of a
   sub-agent growing, every paragraph of the phase in progress, until the
   transcript has it: they no longer show only the latest paragraph, replaced

@@ -76,7 +76,8 @@ extension ChatSessionController {
             maxOutputTokens: environment.maxOutputTokens,
             appMode: environment.appMode,
             thinkingSelection: currentAgentThinkingSelection(),
-            preserveThinking: false
+            preserveThinking: false,
+            responseLanguageSection: responseLanguageSection
         )
         .makeConfiguration()
     }

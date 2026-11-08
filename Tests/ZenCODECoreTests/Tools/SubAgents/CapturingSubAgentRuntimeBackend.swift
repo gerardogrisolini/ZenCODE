@@ -29,6 +29,7 @@ actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
     private var installedTaskOrchestrator = false
     private var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
     private var subAgentToolEventHandler: DirectSubAgentToolEventHandler?
+    private var responseLanguageSectionProvider: DirectSubAgentResponseLanguageSectionProvider?
     private(set) var toolProviderUpdates: [(providers: [AgentToolProvider], sessionID: String?)] = []
 
     private struct SentPromptCountWaiter {
@@ -69,6 +70,12 @@ actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
         _ handler: DirectSubAgentToolEventHandler?
     ) async {
         subAgentToolEventHandler = handler
+    }
+
+    func updateSubAgentResponseLanguageSectionProvider(
+        _ provider: DirectSubAgentResponseLanguageSectionProvider?
+    ) async {
+        responseLanguageSectionProvider = provider
     }
 
     func executeBorrowedSubAgentTool(_ toolCall: AgentBorrowedToolCall) async throws -> String {
@@ -199,6 +206,10 @@ actor CapturingSubAgentRuntimeBackend: AgentRuntimeBackend {
 
     func hasSubAgentToolEventHandler() -> Bool {
         subAgentToolEventHandler != nil
+    }
+
+    func hasResponseLanguageSectionProvider() -> Bool {
+        responseLanguageSectionProvider != nil
     }
 
     func createdThinkingSelection() -> AgentThinkingSelection? {

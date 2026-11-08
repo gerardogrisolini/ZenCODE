@@ -32,6 +32,13 @@ public struct AgentCoreSessionConfiguration: Sendable {
     public let appMode: Bool
     public let thinkingSelection: AgentThinkingSelection?
     public let preserveThinking: Bool
+    /// The channel's response-language section of `systemPrompt`, `nil` while
+    /// none is locked. Delegated agents receive it in their own prompt so they
+    /// answer in the coordinator's language. It is deliberately outside the
+    /// identity and runtime comparisons: it never recreates the backend or the
+    /// session, and it reaches the backend only with the session's own
+    /// creation and option updates.
+    public let responseLanguageSection: String?
 
     public init(
         sessionID: String,
@@ -52,7 +59,8 @@ public struct AgentCoreSessionConfiguration: Sendable {
         maxOutputTokens: Int? = nil,
         appMode: Bool = false,
         thinkingSelection: AgentThinkingSelection? = nil,
-        preserveThinking: Bool = false
+        preserveThinking: Bool = false,
+        responseLanguageSection: String? = nil
     ) {
         self.sessionID = sessionID.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             ?? "agent-core-\(UUID().uuidString.lowercased())"
@@ -80,6 +88,7 @@ public struct AgentCoreSessionConfiguration: Sendable {
         self.appMode = appMode
         self.thinkingSelection = thinkingSelection
         self.preserveThinking = preserveThinking
+        self.responseLanguageSection = responseLanguageSection?.nilIfBlank
     }
 
     public init(
@@ -101,7 +110,8 @@ public struct AgentCoreSessionConfiguration: Sendable {
         maxOutputTokens: Int? = nil,
         appMode: Bool = false,
         thinkingSelection: AgentThinkingSelection? = nil,
-        preserveThinking: Bool = false
+        preserveThinking: Bool = false,
+        responseLanguageSection: String? = nil
     ) {
         self.init(
             sessionID: sessionID,
@@ -122,7 +132,8 @@ public struct AgentCoreSessionConfiguration: Sendable {
             maxOutputTokens: maxOutputTokens,
             appMode: appMode,
             thinkingSelection: thinkingSelection,
-            preserveThinking: preserveThinking
+            preserveThinking: preserveThinking,
+            responseLanguageSection: responseLanguageSection
         )
     }
 
@@ -219,7 +230,8 @@ public struct AgentCoreSessionConfiguration: Sendable {
             maxOutputTokens: maxOutputTokens,
             appMode: appMode,
             thinkingSelection: thinkingSelection,
-            preserveThinking: preserveThinking
+            preserveThinking: preserveThinking,
+            responseLanguageSection: responseLanguageSection
         )
     }
 }

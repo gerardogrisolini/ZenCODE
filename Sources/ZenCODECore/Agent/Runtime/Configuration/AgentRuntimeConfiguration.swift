@@ -830,6 +830,13 @@ public protocol AgentRuntimeBackend: Actor {
         _ handler: DirectSubAgentToolEventHandler?
     ) async
 
+    /// Installs the source of the coordinator's response-language section,
+    /// keyed by root session, that delegated agents receive in their system
+    /// prompt. Backends without delegation may ignore it.
+    func updateSubAgentResponseLanguageSectionProvider(
+        _ provider: DirectSubAgentResponseLanguageSectionProvider?
+    ) async
+
     func updateToolProviders(
         _ providers: [AgentToolProvider],
         sessionID: String?
@@ -997,6 +1004,10 @@ extension AgentRuntimeBackend {
 
     public func updateSubAgentToolEventHandler(
         _ handler: DirectSubAgentToolEventHandler?
+    ) async {}
+
+    public func updateSubAgentResponseLanguageSectionProvider(
+        _ provider: DirectSubAgentResponseLanguageSectionProvider?
     ) async {}
 
     public func updateToolProviders(

@@ -8,6 +8,11 @@ public typealias DirectSubAgentContextualBackendFactory = @Sendable (
 public typealias DirectSubAgentProfileResolver = @Sendable (
     DirectSubAgentRuntime.RequestedAgentPayload
 ) -> AgentProfile?
+/// Returns the coordinator's response-language section for a root session,
+/// `nil` while none is locked.
+public typealias DirectSubAgentResponseLanguageSectionProvider = @Sendable (
+    _ rootSessionID: String
+) async -> String?
 
 /// The error reported when a backend that supports sub-agents was initialized
 /// without a contextual backend factory.
@@ -300,6 +305,9 @@ public actor DirectSubAgentRuntime {
     /// never enters task/session persistence, and forwards only tool lifecycles.
     var subAgentToolEventHandler: DirectSubAgentToolEventHandler?
     var subAgentToolEventHandlerRevision: UInt64 = 0
+    /// Source of the coordinator's response-language section, read once per
+    /// `agent.create` batch. Transient: it never enters persistence.
+    var responseLanguageSectionProvider: DirectSubAgentResponseLanguageSectionProvider?
     private var agentStorage: [String: AgentRecord] = [:]
     private var snapshotObservers: [UUID: (String, AsyncStream<[AgentSnapshot]>.Continuation)] = [:]
 
@@ -475,6 +483,14 @@ public actor DirectSubAgentRuntime {
 
     public func installTaskOrchestrator(_ orchestrator: SessionTaskOrchestrator) {
         taskOrchestrator = orchestrator
+    }
+
+    /// Installs the source of the response-language section for future
+    /// delegated agents; agents already created keep their prompt.
+    public func updateResponseLanguageSectionProvider(
+        _ provider: DirectSubAgentResponseLanguageSectionProvider?
+    ) {
+        responseLanguageSectionProvider = provider
     }
 
     /// Stores the parent session's prompt-skill provider so that newly
