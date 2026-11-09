@@ -92,11 +92,10 @@ struct ZenConsentContent: Equatable {
     /// The question under the title: about the command, or about the tool
     /// without one.
     let question: String
-    /// The executable token of the command, `nil` without a command.
-    let executable: String?
-    /// The rest of the command after the executable, with its leading
-    /// whitespace.
-    let arguments: String
+    /// The command on one line, its runs marking every executable the
+    /// consent covers (the first word for a tool other than `local.exec`);
+    /// `nil` without a command.
+    let command: ChatConsentCommandLine?
     /// Muted lines: the request title (without a command), the working
     /// directory (`⊙ ~/path`), and the scope of "Always".
     let metadata: [String]
@@ -118,23 +117,14 @@ struct ZenConsentContent: Equatable {
     init(request: AgentToolAuthorizationRequest, homeDirectory: String = NSHomeDirectory()) {
         title = "Tool consent: \(Self.singleLined(Self.sanitized(request.toolName)))"
 
-        let command = Self.singleLined(Self.sanitized(request.command))
-        if command.isEmpty {
-            executable = nil
-            arguments = ""
-        } else if let boundary = command.firstIndex(where: \.isWhitespace) {
-            executable = String(command[..<boundary])
-            arguments = String(command[boundary...])
-        } else {
-            executable = command
-            arguments = ""
-        }
-        question = executable == nil
+        let command = ChatConsentCommandLine(request: request)
+        self.command = command.runs.isEmpty ? nil : command
+        question = self.command == nil
             ? "Allow the agent to use this tool?"
             : "Allow the agent to run this command?"
 
         var metadata: [String] = []
-        if command.isEmpty {
+        if self.command == nil {
             let requestTitle = Self.singleLined(Self.sanitized(request.title))
             if !requestTitle.isEmpty {
                 metadata.append(requestTitle)
@@ -183,7 +173,8 @@ struct ZenConsentContent: Equatable {
 /// card.
 ///
 /// A header with the tool and the question, then the command (`❯` marker,
-/// bold executable, plain arguments) in a code box, whole and selectable and
+/// every executable the consent covers in bold, the rest plain) in a code
+/// box, whole and selectable and
 /// scrolling past ``ZenConsentContent/maximumVisibleCommandLines`` lines, or
 /// the request title; under it the working directory and the scope of
 /// "Always", and the Allow once / Always allow / Deny buttons. Allow once is
@@ -223,8 +214,8 @@ public struct ZenConsentSheet: View {
             header(content)
 
             VStack(alignment: .leading, spacing: 8) {
-                if let executable = content.executable {
-                    commandBox(executable: executable, arguments: content.arguments)
+                if let command = content.command {
+                    commandBox(command)
                 }
                 ForEach(Array(content.metadata.enumerated()), id: \.offset) { _, line in
                     Text(line)
@@ -294,7 +285,7 @@ public struct ZenConsentSheet: View {
     /// for a command, a shield for another tool.
     private func header(_ content: ZenConsentContent) -> some View {
         HStack(alignment: .center, spacing: 12) {
-            Image(systemName: content.executable == nil ? "lock.shield" : "terminal")
+            Image(systemName: content.command == nil ? "lock.shield" : "terminal")
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(palette.permissionTitle)
                 .frame(width: 44, height: 44)
@@ -312,17 +303,21 @@ public struct ZenConsentSheet: View {
     }
 
     /// The command in a box of the code colors, framed in the permission
-    /// border color.
-    private func commandBox(executable: String, arguments: String) -> some View {
+    /// border color: the executables in the choice color and bold, the rest
+    /// in the code color.
+    private func commandBox(_ command: ChatConsentCommandLine) -> some View {
         var line = AttributedString(ZenConsentContent.marker)
         line.foregroundColor = palette.permissionMarker
-        var executablePart = AttributedString(executable)
-        executablePart.foregroundColor = palette.permissionChoice
-        executablePart.inlinePresentationIntent = .stronglyEmphasized
-        line.append(executablePart)
-        var argumentsPart = AttributedString(arguments)
-        argumentsPart.foregroundColor = palette.codeForeground
-        line.append(argumentsPart)
+        for run in command.runs {
+            var part = AttributedString(run.text)
+            if run.isExecutable {
+                part.foregroundColor = palette.permissionChoice
+                part.inlinePresentationIntent = .stronglyEmphasized
+            } else {
+                part.foregroundColor = palette.codeForeground
+            }
+            line.append(part)
+        }
         return ZenConsentCommandText(line: line)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)

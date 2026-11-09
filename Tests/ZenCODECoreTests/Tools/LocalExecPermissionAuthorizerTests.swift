@@ -306,6 +306,43 @@ struct LocalExecPermissionAuthorizerTests {
         #expect(prompt.contains("[C]"))
     }
 
+    @Test
+    func terminalCommandLineEmphasizesEveryCoveredExecutable() {
+        let request = AgentToolAuthorizationRequest(
+            sessionID: "session",
+            toolCallID: "call",
+            toolName: "local.exec",
+            title: "Search",
+            kind: "shell",
+            command: "cd /x && grep -rn foo Setup | head -30; grep -rn bar Setup | head",
+            workingDirectory: "/tmp/project"
+        )
+        let command = ChatConsentCommandLine(request: request)
+        let emphasized = TerminalStyle.Permission.emphasizedChoice
+        let reset = TerminalStyle.reset
+
+        let colored = LocalExecPermissionAuthorizer.commandLine(command, colored: true)
+        #expect(colored.hasPrefix(TerminalStyle.Permission.marker + "❯ " + reset))
+        #expect(colored.components(separatedBy: emphasized + "grep" + reset).count == 3)
+        #expect(colored.components(separatedBy: emphasized + "head" + reset).count == 3)
+        #expect(!colored.contains(emphasized + "cd"))
+        #expect(colored.contains(reset + "cd /x && " + emphasized))
+        #expect(TerminalANSIText.stripANSI(colored) == "❯ " + command.text)
+
+        // Without color the line is the plain marker and command, as before.
+        let plain = LocalExecPermissionAuthorizer.commandLine(command, colored: false)
+        #expect(plain == "❯ cd /x && grep -rn foo Setup | head -30; grep -rn bar Setup | head")
+        let prompt = LocalExecPermissionAuthorizer.terminalPrompt(for: request, terminalColumns: 160)
+        #expect(TerminalANSIText.stripANSI(prompt).contains(plain))
+
+        // The card's reflow restores the emphasis on continuation rows and
+        // keeps every row within the width.
+        let rows = TerminalANSIText.wrapPreservingWhitespace(colored, width: 12)
+        #expect(rows.count > 1)
+        #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) <= 12 })
+        #expect(rows.map(TerminalANSIText.stripANSI).joined() == "❯ " + command.text)
+    }
+
     @Test(arguments: [6, 12, 20, 40, 80, 100, 160], [
         "pwd",
         "printf " + String(repeating: "long-unbroken-argument", count: 12),

@@ -254,23 +254,29 @@ extension LocalExecCommandParser {
     /// looking for a `-c`-containing option followed by a string argument.
     /// Returns `nil` when the command is not a shell `-c` invocation.
     static func shellDashCPayload(for segment: String) -> String? {
-        let words = shellWords(in: segment)
+        locatedShellDashCPayload(for: segment)?.text
+    }
+
+    /// ``shellDashCPayload(for:)`` with, for each payload character, its index
+    /// in `segment`.
+    static func locatedShellDashCPayload(for segment: String) -> LocatedText? {
+        let words = locatedShellWords(in: segment)
 
         // Unwrap leading prefixes to find the real command.
         var start = 0
         let skipAssignments = true
         while start < words.count {
-            let word = words[start]
+            let word = words[start].word
             if skipAssignments && isEnvironmentAssignment(word.value) {
                 start += 1; continue
             }
             if !word.wasQuoted && isUnwrappableWrapper(word.value) {
                 start += 1
                 while start < words.count {
-                    if words[start].value.hasPrefix("-") && words[start].value != "-" {
+                    if words[start].word.value.hasPrefix("-") && words[start].word.value != "-" {
                         start += 1; continue
                     }
-                    if isEnvironmentAssignment(words[start].value) {
+                    if isEnvironmentAssignment(words[start].word.value) {
                         start += 1; continue
                     }
                     break
@@ -291,17 +297,17 @@ extension LocalExecCommandParser {
         }
 
         guard start < words.count else { return nil }
-        let name = cleanedExecutableName(from: words[start].value)
+        let name = cleanedExecutableName(from: words[start].word.value)
         let basename = (name as NSString).lastPathComponent
         guard ["sh", "bash", "zsh", "dash", "ksh"].contains(basename) else { return nil }
 
         // Look for a -c option in the remaining words.
         var i = start + 1
         while i < words.count {
-            let word = words[i]
+            let word = words[i].word
             if word.value.hasPrefix("-") && word.value != "-" && word.value.contains("c") {
                 if i + 1 < words.count {
-                    return words[i + 1].value
+                    return words[i + 1].locatedValue
                 }
                 return nil
             }
@@ -322,8 +328,14 @@ extension LocalExecCommandParser {
     /// Arithmetic expansions are traversed too: while `$((...))` is not by
     /// itself a command substitution, shells permit `$(...)` within it.
     static func commandSubstitutionContents(in segment: String) -> [String] {
+        locatedCommandSubstitutionContents(in: segment).map(\.text)
+    }
+
+    /// ``commandSubstitutionContents(in:)`` with, for each content character,
+    /// its index in `segment`. Backtick contents skip the escaping backslashes.
+    static func locatedCommandSubstitutionContents(in segment: String) -> [LocatedText] {
         let chars = Array(segment)
-        var contents: [String] = []
+        var contents: [LocatedText] = []
         var i = 0
         var inSingle = false
         var inDouble = false
@@ -342,8 +354,13 @@ extension LocalExecCommandParser {
                     let arithmeticEnd = skipBalancedParenContent(chars, from: i + 2)
                     let contentEnd = max(i + 3, arithmeticEnd - 1)
                     if i + 3 <= contentEnd, contentEnd <= chars.count {
-                        let arithmeticBody = String(chars[(i + 3)..<contentEnd])
-                        contents.append(contentsOf: commandSubstitutionContents(in: arithmeticBody))
+                        let arithmeticBody = LocatedText(
+                            text: String(chars[(i + 3)..<contentEnd]),
+                            origins: ((i + 3)..<contentEnd).map(Optional.some)
+                        )
+                        contents.append(contentsOf: locatedCommandSubstitutionContents(
+                            in: arithmeticBody.text
+                        ).map { $0.mapped(through: arithmeticBody.origins) })
                     }
                     // `skipBalancedParenContent` consumes the inner closing
                     // parenthesis; consume the outer arithmetic delimiter too.
@@ -354,35 +371,35 @@ extension LocalExecCommandParser {
                 // Extract $(...) content with nesting.
                 var depth = 1
                 var j = i + 2
-                var content = ""
+                var content = LocatedTextBuilder()
                 var s = SubstitutionScanner()
                 while j < chars.count, depth > 0 {
                     let sc = chars[j]
-                    if s.escaping { s.escaping = false; content.append(sc); j += 1; continue }
+                    if s.escaping { s.escaping = false; content.append(sc, origin: j); j += 1; continue }
                     if s.inSingle {
                         if sc == "'" { s.inSingle = false }
-                        content.append(sc); j += 1; continue
+                        content.append(sc, origin: j); j += 1; continue
                     }
                     if s.inDouble {
                         if sc == "\\" { s.escaping = true }
                         else if sc == "\"" { s.inDouble = false }
-                        content.append(sc); j += 1; continue
+                        content.append(sc, origin: j); j += 1; continue
                     }
                     switch sc {
-                    case "\\": s.escaping = true; content.append(sc)
-                    case "'": s.inSingle = true; content.append(sc)
-                    case "\"": s.inDouble = true; content.append(sc)
-                    case "(": depth += 1; content.append(sc)
+                    case "\\": s.escaping = true; content.append(sc, origin: j)
+                    case "'": s.inSingle = true; content.append(sc, origin: j)
+                    case "\"": s.inDouble = true; content.append(sc, origin: j)
+                    case "(": depth += 1; content.append(sc, origin: j)
                     case ")":
                         depth -= 1
-                        if depth > 0 { content.append(sc) }
+                        if depth > 0 { content.append(sc, origin: j) }
                     default:
-                        content.append(sc)
+                        content.append(sc, origin: j)
                     }
                     j += 1
                 }
-                if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    contents.append(content)
+                if !content.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    contents.append(content.located)
                 }
                 i = j
                 continue
@@ -393,35 +410,35 @@ extension LocalExecCommandParser {
                 // Extract process substitution content with nesting.
                 var depth = 1
                 var j = i + 2
-                var content = ""
+                var content = LocatedTextBuilder()
                 var s = SubstitutionScanner()
                 while j < chars.count, depth > 0 {
                     let sc = chars[j]
-                    if s.escaping { s.escaping = false; content.append(sc); j += 1; continue }
+                    if s.escaping { s.escaping = false; content.append(sc, origin: j); j += 1; continue }
                     if s.inSingle {
                         if sc == "'" { s.inSingle = false }
-                        content.append(sc); j += 1; continue
+                        content.append(sc, origin: j); j += 1; continue
                     }
                     if s.inDouble {
                         if sc == "\\" { s.escaping = true }
                         else if sc == "\"" { s.inDouble = false }
-                        content.append(sc); j += 1; continue
+                        content.append(sc, origin: j); j += 1; continue
                     }
                     switch sc {
-                    case "\\": s.escaping = true; content.append(sc)
-                    case "'": s.inSingle = true; content.append(sc)
-                    case "\"": s.inDouble = true; content.append(sc)
-                    case "(": depth += 1; content.append(sc)
+                    case "\\": s.escaping = true; content.append(sc, origin: j)
+                    case "'": s.inSingle = true; content.append(sc, origin: j)
+                    case "\"": s.inDouble = true; content.append(sc, origin: j)
+                    case "(": depth += 1; content.append(sc, origin: j)
                     case ")":
                         depth -= 1
-                        if depth > 0 { content.append(sc) }
+                        if depth > 0 { content.append(sc, origin: j) }
                     default:
-                        content.append(sc)
+                        content.append(sc, origin: j)
                     }
                     j += 1
                 }
-                if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    contents.append(content)
+                if !content.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    contents.append(content.located)
                 }
                 i = j
                 continue
@@ -430,18 +447,18 @@ extension LocalExecCommandParser {
             if c == "`" {
                 // Extract backtick content.
                 var j = i + 1
-                var content = ""
+                var content = LocatedTextBuilder()
                 var btEscaping = false
                 while j < chars.count {
                     let bc = chars[j]
-                    if btEscaping { btEscaping = false; content.append(bc); j += 1; continue }
+                    if btEscaping { btEscaping = false; content.append(bc, origin: j); j += 1; continue }
                     if bc == "\\" { btEscaping = true }
                     else if bc == "`" { break }
-                    else { content.append(bc) }
+                    else { content.append(bc, origin: j) }
                     j += 1
                 }
-                if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    contents.append(content)
+                if !content.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    contents.append(content.located)
                 }
                 i = j + 1
                 continue

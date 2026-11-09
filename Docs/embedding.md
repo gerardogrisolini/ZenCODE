@@ -212,6 +212,13 @@ final class AppInteractionHost: ChatInteractionHost {
 }
 ```
 
+To show the command of a consent request, `ChatConsentCommandLine(request:)`
+gives it on one line, sanitized as on the terminal card, split into runs whose
+`isExecutable` marks every occurrence of every executable the consent covers
+(for `local.exec` the identities the consent remembers, for another tool its
+first word), so the host can emphasize them as the terminal and the macOS app
+do.
+
 ### Channel hooks
 
 `ChatSessionChannelHooks` are the app's own steps between the steps of an
@@ -1115,8 +1122,8 @@ it comprises:
   `ChatInteractionHost` with `ChatChannelCapabilities`,
   `ChatSessionChannelHooks` with `ChatIncarnationChange`,
   `ChatSessionRecreationReason`, and `ChatSelectionCommand`,
-  `ChatToolConsentAuthorizer`, `ChatSessionRuntime`, and
-  `ChatSessionManagementRuntime`; the turn (`ChatTurnRequest`,
+  `ChatToolConsentAuthorizer`, `ChatConsentCommandLine`, `ChatSessionRuntime`,
+  and `ChatSessionManagementRuntime`; the turn (`ChatTurnRequest`,
   `ChatTurnResult`, `ChatTurnFailure`, and `ChatTurnPurpose`); the notices
   (`ChatSessionNotice` with its payloads, and `ChatSessionNoticeText`); the
   outcomes (`ChatCommandOutcome`, `ChatSelectionOutcome`,

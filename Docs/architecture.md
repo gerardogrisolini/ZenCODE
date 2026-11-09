@@ -453,8 +453,10 @@ initializers are `nonisolated`; the session host (`Chat/Host`):
 `ChatSessionPresenter`, `ChatSessionObserver`, `ChatSessionRuntime`,
 `ChatSessionManagementRuntime`, `ChatSessionChannelHooks` (with
 `ChatIncarnationChange`, `ChatSessionRecreationReason`, and
-`ChatSelectionCommand`), `ChatInteractionHost`, `ChatChannelCapabilities`, and
-`ChatToolConsentAuthorizer`; the observable state (`Chat/State`):
+`ChatSelectionCommand`), `ChatInteractionHost`, `ChatChannelCapabilities`,
+`ChatToolConsentAuthorizer`, and `ChatConsentCommandLine` (the one-line command
+of a consent request, with runs that mark the executables the consent covers);
+the observable state (`Chat/State`):
 `ChatSessionStateReducer`, `ChatSessionSnapshot` (with `ChatTurnState`,
 `ChatFileChangesState`, and `ChatSessionSummary`), `ChatTurnEntry` (with
 `ChatTurnOrigin` and `ChatTurnPhase`), `ChatPendingRequestHost`, and

@@ -174,10 +174,10 @@ extension LocalExecPermissionAuthorizer {
         let directory = Self.abbreviatedHomePath(
             Self.singleLined(Self.sanitizedForTerminal(request.workingDirectory))
         )
-        let command = Self.singleLined(Self.sanitizedForTerminal(request.command))
+        let command = ChatConsentCommandLine(request: request)
         let hint = Self.compactAlwaysHint(forToolName: request.toolName)
 
-        let commandLine = Self.commandLine(command: command, colored: useColor)
+        let commandLine = Self.commandLine(command, colored: useColor)
         let directoryPlain = "⊙ \(directory)"
 
         // The top border already identifies this as an authorization request;
@@ -251,22 +251,16 @@ extension LocalExecPermissionAuthorizer {
         return path
     }
 
-    /// Splits the command into its executable token (bold cyan, so the operator
-    /// can spot what would actually run) and the remaining arguments. Falls back
-    /// to the whole string when the command is a single token.
-    private static func commandLine(command: String, colored: Bool) -> String {
-        let marker = "❯ "
-        guard !command.isEmpty else {
-            return marker
-        }
-        guard let boundary = command.firstIndex(where: { $0.isWhitespace }) else {
-            return marker + Self.wrap(command, code: Self.ansiCyanBold, colored: colored)
-        }
-        let executable = String(command[..<boundary])
-        let rest = String(command[boundary...])
-        return Self.wrap(marker, code: Self.ansiMarker, colored: colored)
-            + Self.wrap(executable, code: Self.ansiCyanBold, colored: colored)
-            + rest
+    /// The `❯ ` marker followed by the command, with every executable the
+    /// consent covers in bold cyan (``ChatConsentCommandLine``), so the
+    /// operator can spot what would actually run, and the rest plain.
+    static func commandLine(_ command: ChatConsentCommandLine, colored: Bool) -> String {
+        Self.wrap("❯ ", code: Self.ansiMarker, colored: colored)
+            + command.runs.map { run in
+                run.isExecutable
+                    ? Self.wrap(run.text, code: Self.ansiCyanBold, colored: colored)
+                    : run.text
+            }.joined()
     }
 
     /// Builds the dimmed-blue-bordered card at the same full row width as the prompt
@@ -396,18 +390,23 @@ extension LocalExecPermissionAuthorizer {
     /// title cannot clear, overwrite, or spoof the consent prompt. Newlines and
     /// tabs are preserved; other control bytes collapse to a space.
     static func sanitizedForTerminal(_ text: String) -> String {
-        String(text.map { character -> Character in
-            guard let scalar = character.unicodeScalars.first else {
-                return " "
-            }
-            if character == "\n" || character == "\t" {
-                return character
-            }
-            let value = scalar.value
-            if value < 0x20 || (value > 0x7E && value < 0xA0) {
-                return " "
-            }
+        String(text.map(Self.sanitizedTerminalCharacter))
+    }
+
+    /// The per-character rule of ``sanitizedForTerminal(_:)``: newlines and
+    /// tabs are kept, a character whose first scalar is a C0 control or in
+    /// 0x7F–0x9F becomes a space, any other character is kept.
+    static func sanitizedTerminalCharacter(_ character: Character) -> Character {
+        guard let scalar = character.unicodeScalars.first else {
+            return " "
+        }
+        if character == "\n" || character == "\t" {
             return character
-        })
+        }
+        let value = scalar.value
+        if value < 0x20 || (value > 0x7E && value < 0xA0) {
+            return " "
+        }
+        return character
     }
 }

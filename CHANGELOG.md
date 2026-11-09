@@ -88,6 +88,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `FeatureSystemHostResolver`, `FeatureSingleResumeBox`, and
   `FeatureBlockingOperation`. Web Tools and Browser use them instead of their
   own copies, while the access policies stay in the features.
+- `ChatConsentCommandLine` gives the command of a tool-consent request on one
+  line, sanitized as on the terminal card, split into runs that mark every
+  occurrence of every executable the consent covers: for `local.exec` the
+  identities of the authorization (not built-ins such as `cd`, decorative
+  `echo`/`printf`, wrappers, assignments, arguments, or heredoc bodies; for
+  `bash -c '…'` the commands of the payload), for another tool its first word.
+  It is presentation only. See
+  [Docs/embedding.md](Docs/embedding.md#host).
 
 ### Changed
 
@@ -160,6 +168,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   block listing the changed files: file edits stay visible as the `diff`
   content of their tool calls. The terminal and Telegram still show the
   summary.
+- The terminal consent card and the consent sheet of the macOS app emphasize
+  every executable the consent covers, each occurrence, instead of only the
+  first word of the command: in `cd /x && grep a f | head; grep b f` the two
+  `grep` and the `head` are bold, `cd` is not. Other tools keep their first
+  word emphasized; the text of the command does not change.
 
 ### Removed
 

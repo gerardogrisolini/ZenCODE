@@ -17,6 +17,9 @@ extension LocalExecCommandParser {
         /// `$(...)` and backticks in these bodies, so their command
         /// substitutions must still be authorized.
         var unquotedBodies: [String]
+        /// Character ranges of `unquotedBodies` in the scanned command, in the
+        /// same order.
+        var unquotedBodyRanges: [Range<Int>]
     }
 
     /// Returns a boolean mask marking character indices that belong to heredoc
@@ -29,12 +32,22 @@ extension LocalExecCommandParser {
     /// Returns the bodies of unquoted heredocs, whose command substitutions the
     /// shell still expands.
     static func unquotedHeredocBodies(in command: String) -> [String] {
-        scanHeredocs(in: Array(command)).unquotedBodies
+        locatedUnquotedHeredocBodies(in: command).map(\.text)
+    }
+
+    /// ``unquotedHeredocBodies(in:)`` with, for each body character, its index
+    /// in `command`.
+    static func locatedUnquotedHeredocBodies(in command: String) -> [LocatedText] {
+        let scan = scanHeredocs(in: Array(command))
+        return zip(scan.unquotedBodies, scan.unquotedBodyRanges).map { body, range in
+            LocatedText(text: body, origins: range.map(Optional.some))
+        }
     }
 
     static func scanHeredocs(in characters: [Character]) -> HeredocScan {
         var mask = Array(repeating: false, count: characters.count)
         var unquotedBodies: [String] = []
+        var unquotedBodyRanges: [Range<Int>] = []
         var i = 0
         var inSingle = false
         var inDouble = false
@@ -148,6 +161,7 @@ extension LocalExecCommandParser {
                                     unquotedBodies.append(
                                         String(characters[bodyStart..<lineEnd])
                                     )
+                                    unquotedBodyRanges.append(bodyStart..<lineEnd)
                                 }
                             }
                             found = true
@@ -166,6 +180,7 @@ extension LocalExecCommandParser {
                                 unquotedBodies.append(
                                     String(characters[bodyStart..<characters.count])
                                 )
+                                unquotedBodyRanges.append(bodyStart..<characters.count)
                             }
                         }
                         i = characters.count
@@ -178,7 +193,11 @@ extension LocalExecCommandParser {
             }
         }
 
-        return HeredocScan(mask: mask, unquotedBodies: unquotedBodies)
+        return HeredocScan(
+            mask: mask,
+            unquotedBodies: unquotedBodies,
+            unquotedBodyRanges: unquotedBodyRanges
+        )
     }
 
     // MARK: - Authorization candidate extraction

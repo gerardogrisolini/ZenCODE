@@ -7,9 +7,17 @@ import Foundation
 
 extension LocalExecCommandParser {
     static func executableIdentity(for segment: String) -> Identity {
+        executableIdentityMatch(for: segment).identity
+    }
+
+    /// ``executableIdentity(for:)`` with the positions in `segment` of the
+    /// characters that name the reported executable: the cleaned word, or the
+    /// opening `((`/`[[` of a compound command with trailing syntax. `.skip`
+    /// and `.unresolved` have no positions.
+    static func executableIdentityMatch(for segment: String) -> (identity: Identity, positions: [Int]) {
         let trimmedSegment = segment.trimmingCharacters(in: .whitespacesAndNewlines)
         if Self.isStandaloneGroupingDelimiter(trimmedSegment) {
-            return .skip
+            return (.skip, [])
         }
         let compoundSegment = strippingLeadingCompoundExpressionKeywords(from: trimmedSegment)
         if compoundSegment.hasPrefix("(("),
@@ -17,19 +25,23 @@ extension LocalExecCommandParser {
             // Arithmetic evaluation is a shell construct, not an executable.
             // Nested command substitutions are extracted separately. Anything
             // after the balanced expression is retained conservatively.
-            return trailingText.isEmpty ? .skip : .executable("((")
+            return trailingText.isEmpty
+                ? (.skip, [])
+                : (.executable("(("), compoundCommandOpeningPositions(of: compoundSegment, in: segment))
         }
         if startsExtendedTest(compoundSegment),
            let trailingText = extendedTestTrailingText(in: compoundSegment) {
             // Operators such as `>`, `<`, `&&`, and `||` inside `[[ ... ]]`
             // belong to the conditional expression. Only syntax following the
             // balanced closing token can turn the builtin into a side effect.
-            return trailingText.isEmpty ? .skip : .executable("[[")
+            return trailingText.isEmpty
+                ? (.skip, [])
+                : (.executable("[["), compoundCommandOpeningPositions(of: compoundSegment, in: segment))
         }
 
-        let words = shellWords(in: segment)
+        let words = locatedShellWords(in: segment)
         guard !words.isEmpty else {
-            return .unresolved(segment.trimmingCharacters(in: .whitespacesAndNewlines))
+            return (.unresolved(segment.trimmingCharacters(in: .whitespacesAndNewlines)), [])
         }
 
         var index = 0
@@ -42,7 +54,8 @@ extension LocalExecCommandParser {
         var sawAnyKeyword = false
 
         while index < words.count {
-            let word = words[index]
+            let located = words[index]
+            let word = located.word
 
             if skipNextAsRedirectTarget {
                 skipNextAsRedirectTarget = false
@@ -82,7 +95,7 @@ extension LocalExecCommandParser {
                 index += 1
                 // After a wrapper, also skip leading options (`-i`, `--`, `-p`).
                 while index < words.count {
-                    let nextWord = words[index]
+                    let nextWord = words[index].word
                     if nextWord.value == "--" {
                         index += 1
                         break
@@ -90,7 +103,7 @@ extension LocalExecCommandParser {
                     if nextWord.value.hasPrefix("-") && nextWord.value != "-" {
                         let info = wrapperOptionInfo(wrapper: wrapperName, option: nextWord.value)
                         if info == .introspection {
-                            return .skip
+                            return (.skip, [])
                         }
                         index += 1
                         if info == .consumesOperand {
@@ -117,7 +130,7 @@ extension LocalExecCommandParser {
                 // segment, so skip the whole header segment to avoid surfacing
                 // the loop variable as a false executable.
                 if Self.headerKeywords.contains(word.value) {
-                    return .skip
+                    return (.skip, [])
                 }
                 // `case` shares its segment with the first branch body
                 // (`case x in x) rm ...`). Consume `case`, the subject, `in`,
@@ -128,10 +141,10 @@ extension LocalExecCommandParser {
                     // Skip the subject token.
                     if index < words.count { index += 1 }
                     // Skip an optional `in`.
-                    if index < words.count, words[index].value == "in" { index += 1 }
+                    if index < words.count, words[index].word.value == "in" { index += 1 }
                     // Skip pattern tokens until one contains the terminating `)`.
                     while index < words.count {
-                        let patternWord = words[index]
+                        let patternWord = words[index].word
                         index += 1
                         if patternWord.value.contains(")") { break }
                     }
@@ -160,27 +173,27 @@ extension LocalExecCommandParser {
                     // `: > victim`, `true < input`). Commands inside
                     // substitutions are extracted independently below.
                     if segmentHasRedirection(segment) {
-                        return .executable(cleaned)
+                        return (.executable(cleaned), cleanedExecutableNamePositions(of: located))
                     }
-                    return .skip
+                    return (.skip, [])
                 }
             }
-            return .executable(cleaned)
+            return (.executable(cleaned), cleanedExecutableNamePositions(of: located))
         }
 
         // All tokens were consumed without finding a command (e.g. pure
         // redirections, only environment assignments, or only control-flow
         // keywords). Assignments and keyword-only segments are harmless.
         if sawAnyAssignment || sawAnyKeyword {
-            return .skip
+            return (.skip, [])
         }
         // Pure redirections or unknown constructs: fall back conservatively.
-        let firstRaw = words.first?.value ?? segment.trimmingCharacters(in: .whitespacesAndNewlines)
+        let firstRaw = words.first?.word.value ?? segment.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleaned = cleanedExecutableName(from: firstRaw)
         if cleaned.isEmpty {
-            return .unresolved(segment.trimmingCharacters(in: .whitespacesAndNewlines))
+            return (.unresolved(segment.trimmingCharacters(in: .whitespacesAndNewlines)), [])
         }
-        return .executable(cleaned)
+        return (.executable(cleaned), words.first.map(cleanedExecutableNamePositions(of:)) ?? [])
     }
 
     static let compoundExpressionPrefixKeywords: Set<String> = [
@@ -403,19 +416,36 @@ extension LocalExecCommandParser {
 
     /// Tokenizes a segment into shell words, respecting quotes and escapes.
     static func shellWords(in segment: String) -> [ShellWord] {
+        locatedShellWords(in: segment).map(\.word)
+    }
+
+    /// ``shellWords(in:)`` with, for each value character, its index in
+    /// `segment`. An escape keeps its backslash, located at the backslash.
+    static func locatedShellWords(in segment: String) -> [LocatedShellWord] {
         let characters = Array(segment)
-        var words: [ShellWord] = []
+        var words: [LocatedShellWord] = []
         var current = ""
+        var currentOrigins: [Int] = []
         var quote = Quote.none
         var isEscaping = false
         var hadQuoteChar = false
         var index = 0
 
+        /// Copies the segment character at `index` into the current word.
+        func keep(_ index: Int) {
+            current.append(characters[index])
+            currentOrigins.append(index)
+        }
+
         func flushWord() {
             if !current.isEmpty {
-                words.append(ShellWord(value: current, wasQuoted: hadQuoteChar))
+                words.append(LocatedShellWord(
+                    word: ShellWord(value: current, wasQuoted: hadQuoteChar),
+                    origins: currentOrigins
+                ))
             }
             current = ""
+            currentOrigins = []
             hadQuoteChar = false
         }
 
@@ -427,24 +457,24 @@ extension LocalExecCommandParser {
                 if character == "'" {
                     quote = .none
                 } else {
-                    current.append(character)
+                    keep(index)
                 }
             case .double:
                 if isEscaping {
-                    current.append("\\")
-                    current.append(character)
+                    keep(index - 1)
+                    keep(index)
                     isEscaping = false
                 } else if character == "\\" {
                     isEscaping = true
                 } else if character == "\"" {
                     quote = .none
                 } else {
-                    current.append(character)
+                    keep(index)
                 }
             case .none:
                 if isEscaping {
-                    current.append("\\")
-                    current.append(character)
+                    keep(index - 1)
+                    keep(index)
                     isEscaping = false
                 } else if character.isWhitespace {
                     flushWord()
@@ -455,7 +485,7 @@ extension LocalExecCommandParser {
                     quote = .double
                     hadQuoteChar = true
                 } else {
-                    current.append(character)
+                    keep(index)
                 }
             }
 
@@ -481,6 +511,41 @@ extension LocalExecCommandParser {
         }
 
         return name
+    }
+
+    /// The positions in the tokenized segment of the characters
+    /// ``cleanedExecutableName(from:)`` keeps of `word`.
+    static func cleanedExecutableNamePositions(of word: LocatedShellWord) -> [Int] {
+        let value = word.locatedValue
+        var characters = Array(value.text)[...]
+        var origins = value.origins[...]
+        while let first = characters.first, first == "(" || first == "{" {
+            characters.removeFirst()
+            origins.removeFirst()
+        }
+        while let last = characters.last, last == ")" || last == "}" {
+            characters.removeLast()
+            origins.removeLast()
+        }
+        return origins.compactMap { $0 }
+    }
+
+    /// The positions in `segment` of the two opening characters (`((` or
+    /// `[[`) of `compoundSegment`, a suffix of the trimmed segment.
+    static func compoundCommandOpeningPositions(
+        of compoundSegment: String,
+        in segment: String
+    ) -> [Int] {
+        let trimmed = LocatedText(root: segment).trimmingWhitespacesAndNewlines()
+        let trimmedCharacters = Array(trimmed.text)
+        let compoundCharacters = Array(compoundSegment)
+        let offset = trimmedCharacters.count - compoundCharacters.count
+        guard offset >= 0,
+              compoundCharacters.count >= 2,
+              trimmedCharacters[offset...].elementsEqual(compoundCharacters) else {
+            return []
+        }
+        return trimmed.origins[offset..<(offset + 2)].compactMap { $0 }
     }
 
     // MARK: - Classifiers

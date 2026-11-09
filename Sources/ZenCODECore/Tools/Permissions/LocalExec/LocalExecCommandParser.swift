@@ -57,10 +57,18 @@ enum LocalExecCommandParser {
     /// Quote tracking operates at all nesting levels so that quoted delimiters
     /// (e.g. `'('` inside `$()`) do not corrupt depth tracking.
     static func commandSegments(in command: String) -> [String] {
+        locatedCommandSegments(in: command).map(\.text)
+    }
+
+    /// ``commandSegments(in:)`` with, for each segment character, its index in
+    /// `command` (`nil` for the synthetic `case _ in ` header of a later case
+    /// branch pattern).
+    static func locatedCommandSegments(in command: String) -> [LocatedText] {
         let characters = Array(command)
         let heredocSkipMask = Self.heredocBodySkipMask(in: characters)
-        var segments: [String] = []
+        var segments: [LocatedText] = []
         var current = ""
+        var currentOrigins: [Int?] = []
         var quote = Quote.none
         var isEscaping = false
         var inBacktick = false
@@ -78,6 +86,12 @@ enum LocalExecCommandParser {
         // A `}` inside a nested `$()` must not close an outer parameter expansion.
         var parameterExpansionSubstitutionDepths: [Int] = []
         var index = 0
+
+        /// Copies the command character at `index` into the current segment.
+        func keep(_ index: Int) {
+            current.append(characters[index])
+            currentOrigins.append(index)
+        }
 
         func currentCasePatternState() -> CasePatternState? {
             casePatternContexts.last?.state
@@ -107,18 +121,20 @@ enum LocalExecCommandParser {
         }
 
         func appendCurrentSegment() {
-            let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
+            let trimmed = LocatedText(text: current, origins: currentOrigins)
+                .trimmingWhitespacesAndNewlines()
+            if !trimmed.text.isEmpty {
                 segments.append(trimmed)
-                if Self.segmentContainsCaseTerminator(trimmed) {
+                if Self.segmentContainsCaseTerminator(trimmed.text) {
                     if !casePatternContexts.isEmpty {
                         casePatternContexts.removeLast()
                     }
                 } else {
-                    ensureCasePatternContext(for: trimmed)
+                    ensureCasePatternContext(for: trimmed.text)
                 }
             }
             current = ""
+            currentOrigins = []
         }
 
         while index < characters.count {
@@ -131,12 +147,12 @@ enum LocalExecCommandParser {
 
             switch quote {
             case .single:
-                current.append(character)
+                keep(index)
                 if character == "'" {
                     quote = .none
                 }
             case .double:
-                current.append(character)
+                keep(index)
                 if isEscaping {
                     isEscaping = false
                 } else if character == "\\" {
@@ -146,10 +162,10 @@ enum LocalExecCommandParser {
                 }
             case .none:
                 if isEscaping {
-                    current.append(character)
+                    keep(index)
                     isEscaping = false
                 } else if inBacktick {
-                    current.append(character)
+                    keep(index)
                     if character == "`" {
                         inBacktick = false
                     } else if character == "\\" {
@@ -167,16 +183,16 @@ enum LocalExecCommandParser {
                     }
                     switch character {
                     case "\\":
-                        current.append(character)
+                        keep(index)
                         isEscaping = true
                     case "'":
-                        current.append(character)
+                        keep(index)
                         quote = .single
                     case "\"":
-                        current.append(character)
+                        keep(index)
                         quote = .double
                     case "`":
-                        current.append(character)
+                        keep(index)
                         inBacktick = true
                     case "[":
                         ensureCasePatternContext(for: current)
@@ -198,7 +214,7 @@ enum LocalExecCommandParser {
                             } else if casePatternContexts[contextIndex].patternBracketDepth == 1 {
                                 casePatternContexts[contextIndex].patternBracketHasMember = true
                             }
-                            current.append(character)
+                            keep(index)
                         } else if substitutionDepth == 0,
                            arithmeticCommandDepth == 0,
                            doubleBracketDepth == 0,
@@ -208,14 +224,15 @@ enum LocalExecCommandParser {
                            Self.isCompoundCommandBoundary(
                                index + 2 < characters.count ? characters[index + 2] : nil
                            ) {
-                            current.append("[[")
+                            keep(index)
+                            keep(index + 1)
                             doubleBracketDepth = 1
                             index += 1
                         } else {
-                            current.append(character)
+                            keep(index)
                         }
                     case "]":
-                        current.append(character)
+                        keep(index)
                         if let contextIndex = casePatternContexts.indices.last,
                            casePatternContexts[contextIndex].state == .awaitingPatternEnd,
                            substitutionDepth == 0,
@@ -235,59 +252,62 @@ enum LocalExecCommandParser {
                            doubleBracketDepth > 0,
                            index + 1 < characters.count,
                            characters[index + 1] == "]" {
-                            current.append("]")
+                            keep(index + 1)
                             doubleBracketDepth -= 1
                             index += 1
                         }
                     case "$":
                         // `$( ... )` opens an opaque substitution context.
                         if index + 1 < characters.count, characters[index + 1] == "(" {
-                            current.append("$(")
+                            keep(index)
+                            keep(index + 1)
                             substitutionDepth += 1
                             index += 1
                         } else if index + 1 < characters.count,
                                   characters[index + 1] == "{" {
-                            current.append("${")
+                            keep(index)
+                            keep(index + 1)
                             parameterExpansionSubstitutionDepths.append(substitutionDepth)
                             index += 1
                         } else {
-                            current.append(character)
+                            keep(index)
                         }
                     case "}":
-                        current.append(character)
+                        keep(index)
                         if parameterExpansionSubstitutionDepths.last == substitutionDepth {
                             parameterExpansionSubstitutionDepths.removeLast()
                         }
                     case "<", ">":
                         // Process substitution: `<(...)` or `>(...)`.
                         if index + 1 < characters.count, characters[index + 1] == "(" {
-                            current.append(String(character))
-                            current.append("(")
+                            keep(index)
+                            keep(index + 1)
                             substitutionDepth += 1
                             index += 1
                         } else {
                             // Plain redirection operator: never a separator.
-                            current.append(character)
+                            keep(index)
                         }
                     case "(":
                         // Nested `(` inside a substitution increments depth.
                         // Outside a substitution, plain grouping parentheses
                         // do not open an opaque context.
                         if substitutionDepth > 0 {
-                            current.append(character)
+                            keep(index)
                             substitutionDepth += 1
                         } else if arithmeticCommandDepth > 0 {
-                            current.append(character)
+                            keep(index)
                             arithmeticCommandDepth += 1
                         } else if doubleBracketDepth == 0,
                                   index + 1 < characters.count,
                                   characters[index + 1] == "(",
                                   Self.isCompoundCommandBoundary(current.last) {
-                            current.append("((")
+                            keep(index)
+                            keep(index + 1)
                             arithmeticCommandDepth = 2
                             index += 1
                         } else {
-                            current.append(character)
+                            keep(index)
                         }
                     case ")":
                         let currentContainsCaseHeader = Self
@@ -302,7 +322,7 @@ enum LocalExecCommandParser {
                             && (casePatternContexts.last?.patternBracketDepth ?? 0) == 0
                             && (currentCasePatternState() == .awaitingPatternEnd
                                 || currentContainsCaseHeader)
-                        current.append(character)
+                        keep(index)
                         if substitutionDepth > 0 {
                             substitutionDepth -= 1
                             if substitutionDepth < 0 { substitutionDepth = 0 }
@@ -320,7 +340,10 @@ enum LocalExecCommandParser {
                                 // substitutions. Wrap them in a synthetic case
                                 // header so identity parsing skips the pattern
                                 // while nested extraction still sees its input.
-                                current = "case _ in \(current)"
+                                let header = "case _ in "
+                                current = header + current
+                                currentOrigins = Array(repeating: nil, count: header.count)
+                                    + currentOrigins
                                 appendCurrentSegment()
                             }
                             setCurrentCasePatternState(.inBranchBody)
@@ -331,7 +354,7 @@ enum LocalExecCommandParser {
                             || doubleBracketDepth > 0
                             || arithmeticCommandDepth > 0 {
                             // Inside an opaque shell expression: never split.
-                            current.append(character)
+                            keep(index)
                         } else {
                             switch character {
                             case "|":
@@ -339,7 +362,7 @@ enum LocalExecCommandParser {
                                     // POSIX clobber redirection (`>|`) is one
                                     // operator, not a pipeline. Whitespace keeps
                                     // `> |` intentionally distinct.
-                                    current.append(character)
+                                    keep(index)
                                 } else if Self.segmentContainsCaseTerminator(current) {
                                     appendCurrentSegment()
                                 } else {
@@ -347,7 +370,7 @@ enum LocalExecCommandParser {
                                     if currentCasePatternState() == .awaitingPatternEnd {
                                         // `case ... in foo|bar)` uses `|` as a
                                         // pattern alternative, not a pipeline.
-                                        current.append(character)
+                                        keep(index)
                                     } else {
                                         appendCurrentSegment()
                                         if index + 1 < characters.count {
@@ -364,10 +387,10 @@ enum LocalExecCommandParser {
                                     index += 1
                                 } else if index + 1 < characters.count, characters[index + 1] == ">" {
                                     // `&>` / `&>>` redirection operator, not a separator.
-                                    current.append(character)
+                                    keep(index)
                                 } else if current.last == ">" || current.last == "<" {
                                     // `>&` / `<&` fd redirection (e.g. `2>&1`).
-                                    current.append(character)
+                                    keep(index)
                                 } else {
                                     // Background `&` separator.
                                     appendCurrentSegment()
@@ -395,7 +418,7 @@ enum LocalExecCommandParser {
                                 } else {
                                     ensureCasePatternContext(for: current)
                                     if currentCasePatternState() == .awaitingPatternEnd {
-                                        current.append(character)
+                                        keep(index)
                                     } else {
                                         appendCurrentSegment()
                                     }
@@ -404,7 +427,7 @@ enum LocalExecCommandParser {
                                 // Shell comment: only at a word boundary
                                 // (preceded by whitespace or segment start).
                                 if let last = current.last, !last.isWhitespace {
-                                    current.append(character)
+                                    keep(index)
                                 } else {
                                     while index < characters.count, characters[index] != "\n" {
                                         index += 1
@@ -416,7 +439,7 @@ enum LocalExecCommandParser {
                                     }
                                 }
                             default:
-                                current.append(character)
+                                keep(index)
                             }
                         }
                     }

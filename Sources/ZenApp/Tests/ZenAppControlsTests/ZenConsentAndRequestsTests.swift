@@ -58,7 +58,12 @@ struct ZenConsentSheetTests {
         #expect(ZenConsentChoice.deny.moved(by: -2) == .allowOnce)
     }
 
-    @Test("the command splits into executable and arguments")
+    /// The runs of a consent command, as text and emphasis.
+    private func runs(_ content: ZenConsentContent) -> [String] {
+        (content.command?.runs ?? []).map { $0.isExecutable ? "*\($0.text)*" : $0.text }
+    }
+
+    @Test("the command marks every executable the consent covers")
     func commandLine() {
         let content = ZenConsentContent(
             request: request(command: "git push --force-with-lease\n  origin main"),
@@ -66,14 +71,38 @@ struct ZenConsentSheetTests {
         )
         #expect(content.title == "Tool consent: local.exec")
         #expect(content.question == "Allow the agent to run this command?")
-        #expect(content.executable == "git")
-        #expect(content.arguments == " push --force-with-lease origin main")
+        #expect(content.command?.text == "git push --force-with-lease origin main")
+        // The newline separates two commands: `origin` is one the consent
+        // covers too.
+        #expect(runs(content) == ["*git*", " push --force-with-lease ", "*origin*", " main"])
         #expect(content.metadata == ["⊙ ~/Projects/ZenCODE", "always · remembered across sessions"])
         #expect(ZenConsentContent.marker == "❯ ")
 
         let single = ZenConsentContent(request: request(command: "ls"), homeDirectory: "/Users/me")
-        #expect(single.executable == "ls")
-        #expect(single.arguments == "")
+        #expect(runs(single) == ["*ls*"])
+
+        // Every occurrence, never a built-in, decorative echo, or a heredoc
+        // body.
+        let pipeline = ZenConsentContent(
+            request: request(command: "cd /x && grep -rn a T | head -3; echo ==; grep b T | head"),
+            homeDirectory: "/Users/me"
+        )
+        #expect(runs(pipeline) == [
+            "cd /x && ", "*grep*", " -rn a T | ", "*head*", " -3; echo ==; ",
+            "*grep*", " b T | ", "*head*",
+        ])
+        let heredoc = ZenConsentContent(
+            request: request(command: "python3 - <<'EOF'\nrm -rf x\nEOF"),
+            homeDirectory: "/Users/me"
+        )
+        #expect(runs(heredoc) == ["*python3*", " - <<'EOF' rm -rf x EOF"])
+
+        // Another tool marks its first word.
+        let other = ZenConsentContent(
+            request: request(toolName: "git.push", command: "cd origin main"),
+            homeDirectory: "/Users/me"
+        )
+        #expect(runs(other) == ["*cd*", " origin main"])
     }
 
     @Test("without a command the title is a metadata line")
@@ -82,9 +111,17 @@ struct ZenConsentSheetTests {
             request: request(toolName: "local.delete", title: "Delete Sources/Old", command: "", workingDirectory: ""),
             homeDirectory: "/Users/me"
         )
-        #expect(content.executable == nil)
+        #expect(content.command == nil)
         #expect(content.question == "Allow the agent to use this tool?")
         #expect(content.metadata == ["Delete Sources/Old", "always · this session only"])
+
+        // Only control characters and whitespace: no command either.
+        let blank = ZenConsentContent(
+            request: request(command: " \n\u{1B}\t", workingDirectory: ""),
+            homeDirectory: "/Users/me"
+        )
+        #expect(blank.command == nil)
+        #expect(blank.question == "Allow the agent to use this tool?")
     }
 
     @Test("the command shrinks to its text, at least one line and at most eight, and scrolls the rest")
@@ -106,8 +143,11 @@ struct ZenConsentSheetTests {
             request: request(command: "rm\u{1B}[2J -rf\r/", workingDirectory: "/tmp/\u{07}x"),
             homeDirectory: "/Users/me"
         )
-        #expect(content.executable == "rm")
-        #expect(content.arguments == " [2J -rf /")
+        #expect(content.command?.text == "rm [2J -rf /")
+        // The control character splits the name the consent covers
+        // (`rm\e[2J`), and the parser takes `\r` as a separator, so `/` is
+        // a command of its own.
+        #expect(runs(content) == ["*rm*", " ", "*[2J*", " -rf ", "*/*"])
         #expect(content.metadata.first == "⊙ /tmp/ x")
         #expect(ZenConsentContent.sanitized("a\tb\nc\u{7F}d\u{85}e") == "a\tb\nc d e")
     }
