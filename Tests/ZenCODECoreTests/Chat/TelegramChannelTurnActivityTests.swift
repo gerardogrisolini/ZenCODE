@@ -74,7 +74,7 @@ struct TelegramChannelTurnActivityTests {
             await reporter.flush()
 
             #expect(!failedExit.isFailure)
-            #expect(TerminalChat.toolResultIsFailure(for: exec, result: failedExit))
+            #expect(ToolRenderingPolicy.toolResultIsFailure(for: exec, result: failedExit))
             let readRow = Fixtures.rowTitle(read)
             let execRow = Fixtures.rowTitle(exec)
             #expect(await log.effects == [

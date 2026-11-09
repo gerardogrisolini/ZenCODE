@@ -194,7 +194,7 @@ extension TerminalStatusBar {
         let palette = TerminalStyle.SharedChat.palette(for: TerminalMarkdownPalette.detected.appearance)
         let boxWidth = statusBoxWidthLocked(state: &state)
         let topTitle = Self.fit(headerText, width: max(1, boxWidth - 5))
-        let topRule = String(repeating: "─", count: max(0, boxWidth - TerminalChat.displayWidth(topTitle) - 5))
+        let topRule = String(repeating: "─", count: max(0, boxWidth - TerminalTextMetrics.displayWidth(topTitle) - 5))
         let header = "\(palette.border)╭─ \(palette.title)\(topTitle)\(palette.border) \(topRule)╮\(TerminalStyle.reset)"
         guard dock.isExpanded else {
             return "\u{1B}7\u{1B}[\(top);\(start)H\u{1B}[2K\(header)\u{1B}8"
@@ -202,7 +202,7 @@ extension TerminalStatusBar {
         // Use the dedicated muted shared-chat palette rather than the orange
         // input chrome.
         let footerText = Self.fit("↑/↓ scroll · ←/→ message · Home/End first/last", width: max(1, boxWidth - 5))
-        let footerRule = String(repeating: "─", count: max(0, boxWidth - TerminalChat.displayWidth(footerText) - 5))
+        let footerRule = String(repeating: "─", count: max(0, boxWidth - TerminalTextMetrics.displayWidth(footerText) - 5))
         let footer = "\(palette.border)╰─ \(palette.body)\(footerText)\(palette.border) \(footerRule)╯\(TerminalStyle.reset)"
         var sequence = "\u{1B}7"
         let lines = viewport > 0

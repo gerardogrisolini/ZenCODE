@@ -189,6 +189,16 @@ extension TelegramChannel {
     /// without a request ID on a route several sessions share. A prompt,
     /// and a menu command completed through its ForceReply, are admitted to
     /// the channel's queue (``admitPrompt(_:lease:mode:kind:)``).
+    ///
+    /// The precedence is the order of the phases below, each run after the
+    /// one before it, with the session's state as it was read once the route
+    /// was admitted (`isSessionGenerating`, `refusesAsBusy`): the callbacks
+    /// (``handleCallback(_:queryID:message:lease:fence:isSessionGenerating:)``),
+    /// a permission reply while the session generates, the questions of the
+    /// controller (``handlePendingReaders(_:lease:isSessionGenerating:)``),
+    /// the remote commands that run while it generates, the busy gate, the
+    /// attachments and voice notes, and finally the text line
+    /// (``handleTextLine(_:lease:)``), the only phase that admits a prompt.
     @discardableResult
     func handleIncomingMessage(_ message: TerminalTelegramIncomingMessage) async -> Bool {
         // Stop-generation updates are consumed by `startDriving()`; never
@@ -203,188 +213,309 @@ extension TelegramChannel {
         }
         // Remember the authorized operator for outbound artifact consent.
         linkedUserID = message.userID
-        // In topic mode the link stays on the session's topic: a message from
-        // another route (General, or a topic no route knows) is answered where
-        // it came from without moving the relay or the next turn off the topic.
-        if sessionTopic.map({ $0.lease.key.topicID == routeLease.key.topicID }) ?? true {
-            let hadRouteLease = activeRouteLease != nil
-            activeRouteLease = routeLease
-            // The relay follows the session's room whatever route admitted the
-            // message: the shared route (`default`) serves every room, and a
-            // relay bound to its own room would drop every batch of the session.
-            await activateSharedChatRelay(roomID: sessionID, lease: routeLease)
-            await activeRouteLeaseDidChange(hadLease: hadRouteLease)
-        }
+        await followIngressRoute(routeLease)
         guard let ingressFence = wireFence(for: routeLease) else { return false }
         let isSessionGenerating = isSessionGenerating
         let refusesAsBusy = refusesMessagesAsBusy
 
         if let callbackQueryID = message.callbackQueryID,
            let callbackData = message.callbackData {
-            await controlService.answerCallbackQuery(
-                callbackQueryID, chatID: message.chatID, fence: ingressFence
-            )
-            if await handleArtifactConsentCallback(
-                callbackData, message: message, lease: routeLease
-            ) {
-                return false
-            }
-            // A controller menu may wait while a turn runs: its taps pass the
-            // busy gate.
-            if callbackData.hasPrefix(Self.choiceMenuCallbackPrefix) {
-                await handleChoiceMenuCallback(
-                    callbackData, chatID: message.chatID,
-                    messageID: message.messageID, lease: routeLease
-                )
-                return false
-            }
-            guard !isSessionGenerating
-                || callbackData.hasPrefix(Self.mentionPickerCallbackPrefix) else {
-                await sendBusyMessage(lease: routeLease)
-                return false
-            }
-            if Self.isSelectionMenuCallback(callbackData) {
-                await handleSelectionMenuCallback(
-                    callbackData, chatID: message.chatID,
-                    messageID: message.messageID, lease: routeLease
-                )
-                return false
-            }
-            await handleMentionPickerCallback(
-                callbackData, chatID: message.chatID, lease: routeLease
+            await handleCallback(
+                callbackData, queryID: callbackQueryID, message: message,
+                lease: routeLease, fence: ingressFence,
+                isSessionGenerating: isSessionGenerating
             )
             return false
         }
+        if await handlePermissionReplyWhileGenerating(
+            message, lease: routeLease, isSessionGenerating: isSessionGenerating
+        ) == .handled {
+            return false
+        }
+        if await handlePendingReaders(
+            message, lease: routeLease, isSessionGenerating: isSessionGenerating
+        ) == .handled {
+            return false
+        }
+        if await handleRemoteCommandWhileGenerating(
+            message, lease: routeLease, isSessionGenerating: isSessionGenerating
+        ) == .handled {
+            return false
+        }
+        if await handleBusyGate(message, lease: routeLease, refusesAsBusy: refusesAsBusy) == .handled {
+            return false
+        }
+        if await handleMedia(message, lease: routeLease) == .handled {
+            return false
+        }
+        return await handleTextLine(message, lease: routeLease)
+    }
 
-        // Owner resolution, lease capture and the wire fence stay above the
-        // gate; the gate rejects before attachment downloads, voice
-        // transcription, or command parsing. Permission replies remain live
-        // because an active turn may be blocked waiting for exactly this
-        // operator decision, and so do the live shared-chat text lines,
-        // because the agents they address exist while the turn runs.
-        if isSessionGenerating,
-           let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !text.isEmpty,
-           TerminalTelegramPermissionBroker.permissionCommand(from: text) != nil,
-           await handlePermissionReplyIfNeeded(text, lease: routeLease) {
-            return false
+    /// What a phase of ``handleIncomingMessage(_:)`` did with the message.
+    private enum IngressStep {
+        /// The phase answered the message: nothing follows, and no prompt
+        /// was admitted.
+        case handled
+        /// The phase let the message go on to the next one.
+        case next
+    }
+
+    /// Where a callback goes once it is not an artifact consent tap
+    /// (``callbackRoute(for:isSessionGenerating:)``).
+    private enum CallbackRoute {
+        /// A tap of a controller menu, which passes the busy gate.
+        case choiceMenu
+        /// Any other tap but the mention picker's while the session
+        /// generates: the chat is told the session is busy.
+        case busy
+        /// A tap of a selection menu (`/models` `/think` `/agents`
+        /// `/sessions`).
+        case selectionMenu
+        /// Every other tap: the mention picker's, which ignores data it does
+        /// not know.
+        case mentionPicker
+    }
+
+    /// Makes `lease`, the route that admitted a message, the link's route
+    /// and the shared-chat relay's. In topic mode the link stays on the
+    /// session's topic: a message from another route (General, or a topic no
+    /// route knows) is answered where it came from without moving the relay
+    /// or the next turn off the topic.
+    private func followIngressRoute(_ lease: TerminalTelegramRouteLease) async {
+        guard sessionTopic.map({ $0.lease.key.topicID == lease.key.topicID }) ?? true else { return }
+        let hadRouteLease = activeRouteLease != nil
+        activeRouteLease = lease
+        // The relay follows the session's room whatever route admitted the
+        // message: the shared route (`default`) serves every room, and a
+        // relay bound to its own room would drop every batch of the session.
+        await activateSharedChatRelay(roomID: sessionID, lease: lease)
+        await activeRouteLeaseDidChange(hadLease: hadRouteLease)
+    }
+
+    // MARK: - Ingress phases
+
+    /// Answers the callback query `queryID` and handles its `data`: an
+    /// artifact consent tap first, then the route
+    /// ``callbackRoute(for:isSessionGenerating:)`` gives it.
+    private func handleCallback(
+        _ data: String,
+        queryID: String,
+        message: TerminalTelegramIncomingMessage,
+        lease: TerminalTelegramRouteLease,
+        fence: TerminalTelegramWireFence,
+        isSessionGenerating: Bool
+    ) async {
+        await controlService.answerCallbackQuery(queryID, chatID: message.chatID, fence: fence)
+        if await handleArtifactConsentCallback(data, message: message, lease: lease) {
+            return
         }
-        // A controller menu waiting for a tap takes precedence over every
-        // other message, a permission reply excepted: nothing else runs
-        // until it is answered.
+        switch Self.callbackRoute(for: data, isSessionGenerating: isSessionGenerating) {
+        case .choiceMenu:
+            await handleChoiceMenuCallback(
+                data, chatID: message.chatID, messageID: message.messageID, lease: lease
+            )
+        case .busy:
+            await sendBusyMessage(lease: lease)
+        case .selectionMenu:
+            await handleSelectionMenuCallback(
+                data, chatID: message.chatID, messageID: message.messageID, lease: lease
+            )
+        case .mentionPicker:
+            await handleMentionPickerCallback(data, chatID: message.chatID, lease: lease)
+        }
+    }
+
+    /// Where a tap with `data` goes once it is not an artifact consent tap:
+    /// a controller menu may wait while a turn runs, so its taps pass the
+    /// busy gate, and so do the mention picker's; while the session
+    /// generates every other tap is told the session is busy.
+    private nonisolated static func callbackRoute(
+        for data: String,
+        isSessionGenerating: Bool
+    ) -> CallbackRoute {
+        if data.hasPrefix(choiceMenuCallbackPrefix) {
+            return .choiceMenu
+        }
+        guard !isSessionGenerating || data.hasPrefix(mentionPickerCallbackPrefix) else {
+            return .busy
+        }
+        return isSelectionMenuCallback(data) ? .selectionMenu : .mentionPicker
+    }
+
+    /// A permission reply while the session generates. Owner resolution,
+    /// lease capture and the wire fence stay above the gate; the gate
+    /// rejects before attachment downloads, voice transcription, or command
+    /// parsing. Permission replies remain live because an active turn may be
+    /// blocked waiting for exactly this operator decision.
+    private func handlePermissionReplyWhileGenerating(
+        _ message: TerminalTelegramIncomingMessage,
+        lease: TerminalTelegramRouteLease,
+        isSessionGenerating: Bool
+    ) async -> IngressStep {
+        guard isSessionGenerating,
+              let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty,
+              TerminalTelegramPermissionBroker.permissionCommand(from: text) != nil,
+              await handlePermissionReplyIfNeeded(text, lease: lease) else {
+            return .next
+        }
+        return .handled
+    }
+
+    /// The questions of the controller waiting for the next message, before
+    /// the busy gate: the session waits for exactly this answer. A menu
+    /// waiting for a tap takes precedence over every other message, a
+    /// permission reply excepted: nothing else runs until it is answered.
+    /// Then a question for an attachment takes a document or image, and a
+    /// question for a line takes a text message.
+    private func handlePendingReaders(
+        _ message: TerminalTelegramIncomingMessage,
+        lease: TerminalTelegramRouteLease,
+        isSessionGenerating: Bool
+    ) async -> IngressStep {
         if pendingChoiceReader != nil {
             let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !text.isEmpty || message.attachment != nil || message.voice != nil else {
-                return false
+                return .handled
             }
             if !isSessionGenerating, message.attachment == nil, message.voice == nil,
                TerminalTelegramPermissionBroker.permissionCommand(from: text) != nil,
-               await handlePermissionReplyIfNeeded(text, lease: routeLease) {
-                return false
+               await handlePermissionReplyIfNeeded(text, lease: lease) {
+                return .handled
             }
-            await sendSystemMessageIfLinked(Self.choicePendingText, lease: routeLease)
-            return false
+            await sendSystemMessageIfLinked(Self.choicePendingText, lease: lease)
+            return .handled
         }
-        // A question of the controller takes the next message before the
-        // busy gate: the session waits for exactly this answer.
         if let attachment = message.attachment, pendingAttachmentReader != nil {
-            await handleInboundAttachment(attachment, message: message, lease: routeLease)
-            return false
+            await handleInboundAttachment(attachment, message: message, lease: lease)
+            return .handled
         }
         if pendingLineReader != nil, message.attachment == nil, message.voice == nil,
            let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
            !text.isEmpty,
-           deliverPendingLine(text, lease: routeLease) {
-            return false
+           deliverPendingLine(text, lease: lease) {
+            return .handled
         }
-        if isSessionGenerating,
-           let busyText = message.text.map(Self.commandWithoutBotMention),
-           let invocation = TerminalTelegramRemoteCommand.invocation(text: busyText),
-           invocation.argument.isEmpty {
-            let isSlash = CoordinatorCommandParser.isSlashCommand(busyText)
-            switch invocation.command {
-            case .status:
-                await sendSystemMessageIfLinked(remoteStatusText(), lease: routeLease)
-                return false
-            case .chat:
-                await handleMentionPickerRequest(chatID: message.chatID, lease: routeLease)
-                return false
-            case .help where isSlash:
-                await sendSystemMessageIfLinked(remoteHelpText(), lease: routeLease)
-                return false
-            case .changes where isSlash:
-                await sendSystemMessageIfLinked(remoteChangesText(), lease: routeLease)
-                return false
-            default:
-                break
-            }
+        return .next
+    }
+
+    /// The remote commands that run while the session generates
+    /// (``remoteCommandWhileGenerating(in:)``).
+    private func handleRemoteCommandWhileGenerating(
+        _ message: TerminalTelegramIncomingMessage,
+        lease: TerminalTelegramRouteLease,
+        isSessionGenerating: Bool
+    ) async -> IngressStep {
+        guard isSessionGenerating,
+              let command = Self.remoteCommandWhileGenerating(in: message.text) else {
+            return .next
         }
-        // Text only: a voice note quoting a card would need the transcription
-        // the gate refuses, and an attachment never addresses a participant.
+        await runRemoteCommand(command, lease: lease, chatID: message.chatID)
+        return .handled
+    }
+
+    /// The remote command a message with `text` runs while the session
+    /// generates: `/status` and `/chat`, the slash forms of `/help` and
+    /// `/changes`, each without an argument; `nil` for anything else.
+    private nonisolated static func remoteCommandWhileGenerating(
+        in text: String?
+    ) -> TerminalTelegramRemoteCommand? {
+        guard let commandText = text.map(commandWithoutBotMention),
+              let invocation = TerminalTelegramRemoteCommand.invocation(text: commandText),
+              invocation.argument.isEmpty else {
+            return nil
+        }
+        let isSlash = CoordinatorCommandParser.isSlashCommand(commandText)
+        switch invocation.command {
+        case .status, .chat:
+            return invocation.command
+        case .help where isSlash:
+            return invocation.command
+        case .changes where isSlash:
+            return invocation.command
+        default:
+            return nil
+        }
+    }
+
+    /// The busy gate. The live shared-chat text lines pass it, because the
+    /// agents they address exist while the turn runs; text only: a voice
+    /// note quoting a card would need the transcription the gate refuses,
+    /// and an attachment never addresses a participant. Everything else is
+    /// told the session is busy.
+    private func handleBusyGate(
+        _ message: TerminalTelegramIncomingMessage,
+        lease: TerminalTelegramRouteLease,
+        refusesAsBusy: Bool
+    ) async -> IngressStep {
         if refusesAsBusy, message.attachment == nil, message.voice == nil,
            let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
            !text.isEmpty,
-           await handleLiveSharedChatLineWhileBusy(text, message: message, lease: routeLease) {
-            return false
+           await handleLiveSharedChatLineWhileBusy(text, message: message, lease: lease) {
+            return .handled
         }
         guard !refusesAsBusy else {
-            await sendBusyMessage(lease: routeLease)
-            return false
+            await sendBusyMessage(lease: lease)
+            return .handled
         }
+        return .next
+    }
 
+    /// An attachment, then a voice note.
+    private func handleMedia(
+        _ message: TerminalTelegramIncomingMessage,
+        lease: TerminalTelegramRouteLease
+    ) async -> IngressStep {
         if let attachment = message.attachment {
-            await handleInboundAttachment(attachment, message: message, lease: routeLease)
-            return false
+            await handleInboundAttachment(attachment, message: message, lease: lease)
+            return .handled
         }
-
-        if let voice = message.voice {
-            // A voice note that quotes an answerable card is ambiguous: the
-            // reply target cannot be carried through transcription, so direct
-            // replies are text-only. Quoting a card that routes nowhere is not
-            // a direct reply and keeps the ordinary voice-prompt path.
-            if await directReplyTarget(for: message) != nil {
-                await sendSystemMessageIfLinked(
-                    "ZenCODE message: replies to a live message must be text. Send your answer as text, or record a voice note without replying to run it as an ordinary prompt.",
-                    lease: routeLease
-                )
-                return false
-            }
-            await handleVoiceMessage(voice, lease: routeLease)
-            return false
+        guard let voice = message.voice else { return .next }
+        // A voice note that quotes an answerable card is ambiguous: the
+        // reply target cannot be carried through transcription, so direct
+        // replies are text-only. Quoting a card that routes nowhere is not
+        // a direct reply and keeps the ordinary voice-prompt path.
+        if await directReplyTarget(for: message) != nil {
+            await sendSystemMessageIfLinked(
+                "ZenCODE message: replies to a live message must be text. Send your answer as text, or record a voice note without replying to run it as an ordinary prompt.",
+                lease: lease
+            )
+            return .handled
         }
+        await handleVoiceMessage(voice, lease: lease)
+        return .handled
+    }
 
+    /// A text line: a permission reply, the remote commands answered before
+    /// the queue (``remoteCommandBeforeTheQueue(in:)``), a bare coordinator
+    /// command asking for its argument, the reply that completes one, a
+    /// reply to a live card, and otherwise a prompt admitted to the queue.
+    /// Returns whether a prompt was admitted.
+    private func handleTextLine(
+        _ message: TerminalTelegramIncomingMessage,
+        lease: TerminalTelegramRouteLease
+    ) async -> Bool {
         let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !text.isEmpty else { return false }
 
-        if await handlePermissionReplyIfNeeded(text, lease: routeLease) {
+        if await handlePermissionReplyIfNeeded(text, lease: lease) {
             return false
         }
 
         let commandText = Self.commandWithoutBotMention(text)
-        let invocation = TerminalTelegramRemoteCommand.invocation(text: commandText)
-        // `/start` and `/chat` are answered before the prompt queue: they must
-        // work even when the queue is full and must never be consumed as the
-        // argument of a pending ForceReply command request. `/chat <text>`
-        // falls through to the queued path, which rejects the argument.
-        switch (invocation?.command, invocation?.argument.isEmpty) {
-        case (.start?, _):
-            await sendSystemMessageIfLinked(alreadyLinkedText, lease: routeLease)
+        if let command = Self.remoteCommandBeforeTheQueue(in: commandText) {
+            await runRemoteCommand(command, lease: lease, chatID: message.chatID)
             return false
-        case (.chat?, true?):
-            await handleMentionPickerRequest(chatID: message.chatID, lease: routeLease)
-            return false
-        default:
-            break
         }
 
         if let coordinatorCommand = CoordinatorCommandParser.parse(commandText),
            coordinatorCommand.requiresArgument {
-            await requestCommandArgument(commandText, chatID: message.chatID, lease: routeLease)
+            await requestCommandArgument(commandText, chatID: message.chatID, lease: lease)
             return false
         }
 
-        if let completedCommand = consumeCommandArgumentReply(from: message, lease: routeLease) {
-            return await admitPrompt(completedCommand, lease: routeLease, kind: "command")
+        if let completedCommand = consumeCommandArgumentReply(from: message, lease: lease) {
+            return await admitPrompt(completedCommand, lease: lease, kind: "command")
         }
 
         // A reply to a forwarded live-message card answers its sender
@@ -392,12 +523,31 @@ extension TelegramChannel {
         // precedence, so quoting a card never changes what an explicitly
         // addressed line means.
         if await replyRoutingHasPrecedence(over: text) == false,
-           await handleSharedChatReplyIfNeeded(text, message: message, lease: routeLease) {
+           await handleSharedChatReplyIfNeeded(text, message: message, lease: lease) {
             return false
         }
 
-        guard (try? await router.validate(routeLease)) != nil else { return false }
-        return await admitPrompt(text, lease: routeLease, kind: "prompt")
+        guard (try? await router.validate(lease)) != nil else { return false }
+        return await admitPrompt(text, lease: lease, kind: "prompt")
+    }
+
+    /// The remote command the ingress answers before the prompt queue, for
+    /// the line `commandText` (without its `@botname`): `/start`, and `/chat`
+    /// without an argument. They must work even when the queue is full and
+    /// must never be consumed as the argument of a pending ForceReply
+    /// command request. `/chat <text>` goes on to the queued path, which
+    /// rejects the argument.
+    private nonisolated static func remoteCommandBeforeTheQueue(
+        in commandText: String
+    ) -> TerminalTelegramRemoteCommand? {
+        switch TerminalTelegramRemoteCommand.invocation(text: commandText) {
+        case (.start, _)?:
+            return .start
+        case let (.chat, argument)? where argument.isEmpty:
+            return .chat
+        default:
+            return nil
+        }
     }
 
     /// The owner route of `message` for this session, or `nil`.
@@ -495,42 +645,9 @@ extension TelegramChannel {
            let action = await pendingReplyLineAction(prompt, lease: lease) {
             return action
         }
-        switch remoteCommand {
-        case .start:
-            await sendSystemMessageIfLinked(alreadyLinkedText, lease: lease)
+        if let remoteCommand {
+            await runRemoteCommand(remoteCommand, lease: lease, chatID: lease.key.chatID)
             return .handled
-        case .help:
-            await sendSystemMessageIfLinked(remoteHelpText(), lease: lease)
-            return .handled
-        case .status:
-            await sendSystemMessageIfLinked(remoteStatusText(), lease: lease)
-            return .handled
-        case .chat:
-            await handleMentionPickerRequest(chatID: lease.key.chatID, lease: lease)
-            return .handled
-        case .sessions:
-            await handleSessionsMenuRequest(lease: lease)
-            return .handled
-        case .models:
-            await handleModelsMenuRequest(lease: lease)
-            return .handled
-        case .think:
-            await handleThinkMenuRequest(lease: lease)
-            return .handled
-        case .agents:
-            await handleAgentsMenuRequest(lease: lease)
-            return .handled
-        case .changes:
-            await sendSystemMessageIfLinked(remoteChangesText(), lease: lease)
-            return .handled
-        case .undo:
-            await sendSystemMessageIfLinked(undoText, lease: lease)
-            return .handled
-        case .diff:
-            await handleDiffRequest(lease: lease)
-            return .handled
-        case .none:
-            break
         }
 
         switch SharedChatMentionParser.parse(
@@ -567,6 +684,46 @@ extension TelegramChannel {
             return .handled
         }
         return .runPrompt(prompt)
+    }
+
+    /// Answers the remote `command` in the chat on `lease`: `/start`,
+    /// `/help`, `/status`, `/changes` and `/undo` with their text, `/chat`
+    /// with the mention picker sent to `chatID`, `/sessions`, `/models`,
+    /// `/think` and `/agents` with their selection menu, and `/diff` with the
+    /// session's diff. The one dispatcher of the remote commands: the
+    /// ingress while the session generates
+    /// (``remoteCommandWhileGenerating(in:)``), the ingress before the queue
+    /// (``remoteCommandBeforeTheQueue(in:)``), and ``lineAction(for:lease:)``
+    /// each decide which commands they run.
+    private func runRemoteCommand(
+        _ command: TerminalTelegramRemoteCommand,
+        lease: TerminalTelegramRouteLease,
+        chatID: Int64
+    ) async {
+        switch command {
+        case .start:
+            await sendSystemMessageIfLinked(alreadyLinkedText, lease: lease)
+        case .help:
+            await sendSystemMessageIfLinked(remoteHelpText(), lease: lease)
+        case .status:
+            await sendSystemMessageIfLinked(remoteStatusText(), lease: lease)
+        case .chat:
+            await handleMentionPickerRequest(chatID: chatID, lease: lease)
+        case .sessions:
+            await handleSessionsMenuRequest(lease: lease)
+        case .models:
+            await handleModelsMenuRequest(lease: lease)
+        case .think:
+            await handleThinkMenuRequest(lease: lease)
+        case .agents:
+            await handleAgentsMenuRequest(lease: lease)
+        case .changes:
+            await sendSystemMessageIfLinked(remoteChangesText(), lease: lease)
+        case .undo:
+            await sendSystemMessageIfLinked(undoText, lease: lease)
+        case .diff:
+            await handleDiffRequest(lease: lease)
+        }
     }
 
     /// Runs `/plan`, `/goal` or `/review` through the controller. The line

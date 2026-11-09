@@ -750,13 +750,7 @@ public actor DirectToolExecutor {
             return false
         }
 
-        if allowedToolNames.contains(toolName) {
-            return true
-        }
-
-        if allowedToolNames.contains(where: { allowedToolName in
-            allowedToolName.hasSuffix(".") && toolName.hasPrefix(allowedToolName)
-        }) {
+        if ToolAllowlist.matches(toolName, in: allowedToolNames) {
             return true
         }
 

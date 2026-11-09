@@ -26,7 +26,7 @@ extension TerminalChat {
         guard case .completed = event.lifecycle else {
             return false
         }
-        return isFileMutationTool(event.toolCall.name)
+        return ToolMutationClassifier.isFileMutationTool(event.toolCall.name)
     }
 
     /// Refreshes the statusbar git summary when a delegated sub-agent reaches a

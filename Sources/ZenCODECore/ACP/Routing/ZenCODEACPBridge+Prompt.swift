@@ -8,6 +8,51 @@
 import Foundation
 import ToolCore
 
+/// The identity of one `session/prompt` turn: the request it answers, the
+/// session incarnation it runs on, and the prompt reservation it holds
+/// there.
+private struct ACPPromptTurn: Sendable {
+    let requestID: JSONValue?
+    let sessionID: String
+    let epoch: UInt64
+    let promptID: UUID
+}
+
+/// The request of a prompt turn, parsed.
+private struct ACPPreparedPrompt {
+    let attachments: [AgentRuntimeAttachment]
+    /// The prompt text without the agent mention it may start with.
+    let routedPromptText: String
+    /// The text the turn presents as the user's message.
+    let visiblePromptText: String
+    let coordinatorCommand: CoordinatorCommand?
+    let hasAgentMention: Bool
+}
+
+/// What a prompt turn does once routed.
+private enum ACPPromptTurnRoute {
+    /// The turn ends, answering `stopReason`.
+    case finished(stopReason: String)
+    /// The turn generates `prompt` for `purpose` on the live `session`.
+    case generate(prompt: String, purpose: ACPCommandPromptPurpose, session: ZenCODEACPBridge.SessionState)
+}
+
+/// How a prompt turn whose task ran ends.
+private enum ACPPromptTurnOutcome {
+    /// The turn answers `stopReason`.
+    case stopped(stopReason: String)
+    /// The turn fails: the error is the request's answer.
+    case failed(Error)
+}
+
+/// The presentation of a running prompt turn: its update pipeline and the
+/// observer of its task graph.
+private struct ACPPromptTurnPresentation {
+    let pipeline: ACPPromptUpdatePipeline
+    let taskPresentation: ACPTaskPresentation
+    let graphObserver: Task<Void, Never>
+}
+
 extension ZenCODEACPBridge {
     public func prompt(id: JSONValue?, params: [String: Any]) async throws {
         // Check the fence *before* looking the session up. `shutdown()` empties
@@ -116,15 +161,60 @@ extension ZenCODEACPBridge {
         await writer.sendResultIfRequest(id: id, result: JSONValue.acpValue(from: ["stopReason": reason]))
     }
 
+    /// Runs one `session/prompt` turn that holds its reservation, in phases:
+    /// prepare (the request's blocks, attachments, and agent mention), route
+    /// (the echo of the prompt and the command it carries), execute (the
+    /// turn's task on the model and its presentation), and settle.
+    ///
+    /// Every exit that answers a stop reason goes through `finish`: the
+    /// reply first, then the reservation. A failed turn releases the
+    /// reservation before its error becomes the reply; a turn that is
+    /// cancelled before its task runs throws, and `prompt` releases the
+    /// reservation before the request answers `cancelled`.
     private func runPrompt(
         id: JSONValue?,
         params: [String: Any],
         sessionID: String,
-        session initialSession: SessionState,
+        session: SessionState,
         promptID: UUID,
         epoch: UInt64,
         releaseReservation: () async -> Void
     ) async throws {
+        let turn = ACPPromptTurn(requestID: id, sessionID: sessionID, epoch: epoch, promptID: promptID)
+        func finish(stopReason: String) async {
+            await sendStopReason(id: turn.requestID, stopReason)
+            await releaseReservation()
+        }
+
+        let prepared = try await preparePromptTurn(turn, params: params, session: session)
+        switch try await routePromptTurn(turn, prepared) {
+        case let .finished(stopReason):
+            await finish(stopReason: stopReason)
+        case let .generate(prompt, purpose, routedSession):
+            let outcome = try await executePromptTurn(
+                turn,
+                prompt: prompt,
+                purpose: purpose,
+                attachments: prepared.attachments,
+                session: routedSession
+            )
+            switch outcome {
+            case let .stopped(stopReason):
+                await finish(stopReason: stopReason)
+            case let .failed(error):
+                await releaseReservation()
+                throw error
+            }
+        }
+    }
+
+    /// Parses the turn's request: its content blocks and attachments, the
+    /// agent mention it may start with, and the command it carries.
+    private func preparePromptTurn(
+        _ turn: ACPPromptTurn,
+        params: [String: Any],
+        session initialSession: SessionState
+    ) async throws -> ACPPreparedPrompt {
         var session = initialSession
         let promptBlocks = promptBlocks(from: params)
         let rawPromptText = PromptContentFormatter.renderPromptText(from: promptBlocks)
@@ -141,27 +231,24 @@ extension ZenCODEACPBridge {
             throw ACPError.invalidParams("session/prompt requires prompt text or attachments.")
         }
 
-        var promptConfiguration: AgentCoreSessionConfiguration
         if let agentMentionResolution {
-            promptConfiguration = await acpSessionConfiguration(
+            let promptConfiguration = await acpSessionConfiguration(
                 applying: agentMentionResolution.agent,
                 to: session.configuration
             )
             // Keep the same incarnation and reservation: routing to another
             // agent updates the configuration, it does not restart the session.
-            let isLive = updateLiveSession(id: sessionID, epoch: epoch) { live in
+            let isLive = updateLiveSession(id: turn.sessionID, epoch: turn.epoch) { live in
                 live = sessionState(
                     configuration: promptConfiguration,
                     selectedAgent: agentMentionResolution.agent,
                     inheriting: live
                 )
             }
-            guard isLive, let mentionedSession = liveSession(id: sessionID, epoch: epoch) else {
+            guard isLive, let mentionedSession = liveSession(id: turn.sessionID, epoch: turn.epoch) else {
                 throw CancellationError()
             }
             session = mentionedSession
-        } else {
-            promptConfiguration = session.configuration
         }
 
         let coordinatorCommand = CoordinatorCommandParser.parse(routedPromptText)
@@ -178,155 +265,112 @@ extension ZenCODEACPBridge {
         let visiblePromptText = visibleSource.isEmpty
             ? "Analyze the attached media."
             : visibleSource
-        await sendUserMessageChunk(sessionID: sessionID, text: visiblePromptText)
-        await sendSessionInfoUpdate(sessionID: sessionID, title: promptTitle(from: visiblePromptText))
+        return ACPPreparedPrompt(
+            attachments: attachments,
+            routedPromptText: routedPromptText,
+            visiblePromptText: visiblePromptText,
+            coordinatorCommand: coordinatorCommand,
+            hasAgentMention: agentMentionResolution != nil
+        )
+    }
+
+    /// Presents the prompt as the client sent it, then chooses what the turn
+    /// does with it: a command answered at once, or a generation.
+    private func routePromptTurn(
+        _ turn: ACPPromptTurn,
+        _ prepared: ACPPreparedPrompt
+    ) async throws -> ACPPromptTurnRoute {
+        await sendUserMessageChunk(sessionID: turn.sessionID, text: prepared.visiblePromptText)
+        await sendSessionInfoUpdate(sessionID: turn.sessionID, title: promptTitle(from: prepared.visiblePromptText))
 
         let commandRoute: ACPCommandTurnRoute
         do {
             commandRoute = try await routeACPCommandTurn(
-                command: coordinatorCommand,
-                routedPromptText: routedPromptText,
-                hasAgentMention: agentMentionResolution != nil,
-                sessionID: sessionID,
-                epoch: epoch,
-                promptID: promptID
+                command: prepared.coordinatorCommand,
+                routedPromptText: prepared.routedPromptText,
+                hasAgentMention: prepared.hasAgentMention,
+                sessionID: turn.sessionID,
+                epoch: turn.epoch,
+                promptID: turn.promptID
             )
         } catch is CancellationError {
-            await sendStopReason(id: id, "cancelled")
-            await releaseReservation()
-            return
+            return .finished(stopReason: "cancelled")
         }
-        guard await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
-            await sendStopReason(id: id, "cancelled")
-            await releaseReservation()
-            return
+        guard await reservedPromptSession(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID) != nil else {
+            return .finished(stopReason: "cancelled")
         }
-        let modelPromptText: String
-        let commandPurpose: ACPCommandPromptPurpose
         switch commandRoute {
         case let .immediate(message):
             await writer.sendSessionUpdate(
-                sessionID: sessionID,
+                sessionID: turn.sessionID,
                 update: Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: message)
             )
-            await sendStopReason(id: id, "end_turn")
-            await releaseReservation()
-            return
+            return .finished(stopReason: "end_turn")
         case let .generate(prompt, purpose, prelude):
-            modelPromptText = prompt
-            commandPurpose = purpose
-            _ = await updateReservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) { live in
+            _ = await updateReservedPromptSession(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID) { live in
                 if case .workflow = purpose {
-                    live.activeWorkflowPromptID = promptID
+                    live.activeWorkflowPromptID = turn.promptID
                 } else {
                     live.activeWorkflowPromptID = nil
                 }
             }
             if let prelude {
                 await writer.sendSessionUpdate(
-                    sessionID: sessionID,
+                    sessionID: turn.sessionID,
                     update: Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: prelude)
                 )
             }
+            guard let liveCommandSession = await reservedPromptSession(
+                sessionID: turn.sessionID,
+                epoch: turn.epoch,
+                promptID: turn.promptID
+            ) else {
+                throw CancellationError()
+            }
+            return .generate(prompt: prompt, purpose: purpose, session: liveCommandSession)
         }
+    }
 
-        guard let liveCommandSession = await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
-            throw CancellationError()
-        }
-        session = liveCommandSession
+    /// Runs the turn's task on the model, with the turn's update pipeline
+    /// and task-graph presentation around it, and settles the turn once the
+    /// task ends.
+    private func executePromptTurn(
+        _ turn: ACPPromptTurn,
+        prompt modelPromptText: String,
+        purpose commandPurpose: ACPCommandPromptPurpose,
+        attachments: [AgentRuntimeAttachment],
+        session: SessionState
+    ) async throws -> ACPPromptTurnOutcome {
         let controller = session.controller
         let chatPurpose = Self.chatTurnPurpose(for: commandPurpose, session: session)
-        promptConfiguration = session.configuration.addingAllowedToolNames(
+        let promptConfiguration = session.configuration.addingAllowedToolNames(
             controller.additionalToolNames(for: chatPurpose)
         )
-
-        let writer = self.writer
-        let appMode = configuration.appMode
-        // Single serialized exit point for app-mode buffering and ChatGPT-only
-        // thinking presentation. Non-app mode still writes every fragment directly.
-        // Overlapping
-        // `@Sendable` callbacks must not interleave buffer drains with writer
-        // calls, or a later notification could overtake content an earlier
-        // callback had already claimed; the pipeline chains every unit so the
-        // wire order equals the enqueue order.
-        let normalizesChatGPTThoughts = AgentSettingsStore.defaultSelection(
-            explicitModelID: promptConfiguration.modelID
-        )?.remoteProvider?.isChatGPTSubscriptionProvider == true
-        let updatePipeline = ACPPromptUpdatePipeline(
-            sessionID: sessionID,
-            writer: writer,
-            buffer: ACPPromptUpdateBuffer(),
-            buffersUpdates: appMode,
-            normalizesChatGPTThoughts: normalizesChatGPTThoughts,
-            isValid: { await self.isCurrentPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) },
-            canDeliver: { await self.canDeliverPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID) }
-        )
-        let sessionRunner = self.sessionRunner
+        let updatePipeline = makePromptUpdatePipeline(turn, modelID: promptConfiguration.modelID)
         // ACP locations must be absolute. Relative tool arguments are resolved
         // by the tools against the session workspace, not against the agent
         // process directory chosen by the launching client.
         let workspaceURL = URL(fileURLWithPath: session.cwd)
 
-        @Sendable func sendPromptUpdate(_ update: JSONValue) async {
-            // Awaiting the unit's own task preserves the producer's
-            // backpressure (the turn does not advance until the update has
-            // actually been written) while the chain fixes the wire order.
-            await updatePipeline.enqueue(.init(kind: .consume(update))).value
-        }
-
-        @Sendable func flushPromptUpdates() async {
-            await updatePipeline.enqueue(.init(kind: .flush)).value
-        }
-
         // The session may have been closed, replaced, or shut down while the
         // prompt was being prepared; never start generation for a dead session.
-        guard await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
+        guard await reservedPromptSession(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID) != nil else {
             throw CancellationError()
         }
 
-        updateLiveSession(id: sessionID, epoch: epoch) { live in
-            live.promptUpdatePipeline = updatePipeline
-            live.delegatedToolNotifications.removeAll()
-        }
-        // Persistent taskless agents may run during a text-only follow-up.
-        await ensureTasklessObserver(sessionID: sessionID, epoch: epoch, promptID: promptID)
-        let taskPresentation = session.taskPresentation
-        let graphEvents = await sessionRunner.taskOrchestrator.events(sessionID: sessionID)
-        let graphObserver = Task {
-            await publishTaskPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID,
-                                          presentation: taskPresentation, pipeline: updatePipeline)
-            for await _ in graphEvents {
-                guard !Task.isCancelled else { return }
-                await publishTaskPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID,
-                                              presentation: taskPresentation, pipeline: updatePipeline)
-            }
-        }
-        func finishTaskPresentation() async {
-            if liveSession(id: sessionID, epoch: epoch)?.promptUpdatePipeline === updatePipeline {
-                let tasklessObserver = sessions[sessionID]?.tasklessObserver
-                sessions[sessionID]?.tasklessObserver = nil
-                sessions[sessionID]?.promptUpdatePipeline = nil
-                tasklessObserver?.cancel()
-                await tasklessObserver?.value
-            }
-            graphObserver.cancel()
-            await graphObserver.value
-            await publishTaskPresentation(sessionID: sessionID, epoch: epoch, promptID: promptID,
-                                          presentation: taskPresentation, pipeline: updatePipeline)
-            await updatePipeline.drain()
-        }
-        let clientFiles = clientTextFileSystem(sessionID: sessionID, epoch: epoch)
+        let presentation = await startPromptTurnPresentation(turn, session: session, pipeline: updatePipeline)
+        let clientFiles = clientTextFileSystem(sessionID: turn.sessionID, epoch: turn.epoch)
         let presenter = ACPPromptPresenter(
-            sessionID: sessionID,
+            sessionID: turn.sessionID,
             workspaceURL: workspaceURL,
             writer: writer,
             updatePipeline: updatePipeline,
             ensureTasklessObserver: { [weak self] in
-                await self?.ensureTasklessObserver(sessionID: sessionID, epoch: epoch, promptID: promptID)
+                await self?.ensureTasklessObserver(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID)
             },
             claimDelegatedToolNotification: { [weak self] notificationID in
                 await self?.claimDelegatedToolNotification(
-                    notificationID, sessionID: sessionID, epoch: epoch, promptID: promptID
+                    notificationID, sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID
                 ) ?? false
             }
         )
@@ -337,29 +381,35 @@ extension ZenCODEACPBridge {
                     selectedAgent: session.selectedAgent
                 )
                 try Task.checkCancellation()
-                guard let currentSession = await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) else {
+                guard let currentSession = await reservedPromptSession(
+                    sessionID: turn.sessionID,
+                    epoch: turn.epoch,
+                    promptID: turn.promptID
+                ) else {
                     throw CancellationError()
                 }
                 let commands = availableCommandsUpdate(for: currentSession)
                 if currentSession.presentedCommands != commands {
-                    sessions[sessionID]?.presentedCommands = commands
-                    await sendPromptUpdate(commands)
+                    sessions[turn.sessionID]?.presentedCommands = commands
+                    await Self.sendPromptUpdate(commands, through: updatePipeline)
                 }
                 if !currentSession.hasPresentedInitialConfiguration {
                     // Claim before suspending. This flag belongs to this live ACP
                     // incarnation, not to the backend conversation or its snapshot.
-                    sessions[sessionID]?.hasPresentedInitialConfiguration = true
-                    await sendPromptUpdate(
+                    sessions[turn.sessionID]?.hasPresentedInitialConfiguration = true
+                    await Self.sendPromptUpdate(
                         Self.textChunkJSONUpdate(
                             kind: "agent_message_chunk",
                             text: initialConfigurationSummary(for: currentSession)
-                        ))
+                        ),
+                        through: updatePipeline
+                    )
                     // In app mode, do not leave the summary buffered until the
                     // first model event: it must already be visible before generation.
-                    await flushPromptUpdates()
+                    await Self.flushPromptUpdates(through: updatePipeline)
                 }
                 try Task.checkCancellation()
-                guard await reservedPromptSession(sessionID: sessionID, epoch: epoch, promptID: promptID) != nil else {
+                guard await reservedPromptSession(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID) != nil else {
                     throw CancellationError()
                 }
                 let result = try await controller.runTurn(
@@ -380,74 +430,175 @@ extension ZenCODEACPBridge {
                 )
             }
         }
+        try await registerPromptTurnTask(activePromptTask, turn, session: session, presentation: presentation)
 
-        // Register the task under the reservation: the bridge's own entry
-        // first, so a `session/cancel` that lands from now on finds the task
-        // and cancels it, then the host's reservation is checked. A cancel that
-        // landed between the reservation and this point already dropped the
-        // reservation, so the check fails and the task is cancelled here:
-        // otherwise the cancel would be silently lost because it had no task
-        // to cancel yet.
-        var didRegisterPromptTask = false
-        updateLiveSession(id: sessionID, epoch: epoch) { session in
-            session.activePromptTask = activePromptTask
-            session.activePromptTaskID = promptID
-            didRegisterPromptTask = true
-        }
-        guard didRegisterPromptTask, await host.holdsPrompt(session.promptReservation(promptID)) else {
-            activePromptTask.cancel()
-            updateLiveSession(id: sessionID, epoch: epoch) { session in
-                if session.activePromptTaskID == promptID {
-                    session.activePromptTask = nil
-                    session.activePromptTaskID = nil
-                }
-            }
-            await finishTaskPresentation()
-            throw CancellationError()
-        }
-
-        /// Ends the turn: its task presentation, its buffered updates, and
-        /// the session snapshot.
-        func settleTurn() async {
-            await finishTaskPresentation()
-            await flushPromptUpdates()
-            await refreshSessionStateIfAvailable(
-                sessionID: sessionID,
-                preservingAllowedToolNames: session.allowedToolNames,
-                expectedEpoch: epoch,
-                expectedPromptID: promptID
-            )
-        }
+        let outcome: ACPPromptTurnOutcome
         do {
             let completion = try await activePromptTask.value
             if case .planning = commandPurpose {
-                await sendPromptUpdate(
-                    Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: completion.text)
+                await Self.sendPromptUpdate(
+                    Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: completion.text),
+                    through: updatePipeline
                 )
             }
-            await settleTurn()
-            await sendStopReason(id: id, completion.stopReason)
-            await releaseReservation()
+            outcome = .stopped(stopReason: completion.stopReason)
         } catch {
             // The controller already cleaned up a turn it ran. A turn that
             // stopped before reaching it can only have been cancelled; keep
             // the Planner discussion bound to this live incarnation.
             if !(error is ChatTurnFailure),
                case let .planning(collectionID) = commandPurpose {
-                await clearACPPlanBrainstorming(sessionID: sessionID, epoch: epoch, expectedCollectionID: collectionID)
+                await clearACPPlanBrainstorming(sessionID: turn.sessionID, epoch: turn.epoch, expectedCollectionID: collectionID)
             }
             let underlying = (error as? ChatTurnFailure)?.underlying ?? error
-            if underlying is CancellationError {
-                await settleTurn()
-                await sendStopReason(id: id, "cancelled")
-                await releaseReservation()
-            } else {
-                let promptError = Self.acpPromptError(for: underlying)
-                await settleTurn()
-                await releaseReservation()
-                throw promptError
+            outcome = underlying is CancellationError
+                ? .stopped(stopReason: "cancelled")
+                : .failed(Self.acpPromptError(for: underlying))
+        }
+        // Settled once the outcome is known, after the planning text or the
+        // brainstorming cleanup it may owe: the order the turn always had.
+        await settlePromptTurn(turn, presentation, preservingAllowedToolNames: session.allowedToolNames)
+        return outcome
+    }
+
+    /// The update pipeline of one turn: the single serialized exit for
+    /// app-mode buffering and ChatGPT-only thinking presentation. Non-app
+    /// mode still writes every fragment directly. Overlapping `@Sendable`
+    /// callbacks must not interleave buffer drains with writer calls, or a
+    /// later notification could overtake content an earlier callback had
+    /// already claimed; the pipeline chains every unit so the wire order
+    /// equals the enqueue order.
+    private func makePromptUpdatePipeline(
+        _ turn: ACPPromptTurn,
+        modelID: String?
+    ) -> ACPPromptUpdatePipeline {
+        let normalizesChatGPTThoughts = AgentSettingsStore.defaultSelection(
+            explicitModelID: modelID
+        )?.remoteProvider?.isChatGPTSubscriptionProvider == true
+        return ACPPromptUpdatePipeline(
+            sessionID: turn.sessionID,
+            writer: writer,
+            buffer: ACPPromptUpdateBuffer(),
+            buffersUpdates: configuration.appMode,
+            normalizesChatGPTThoughts: normalizesChatGPTThoughts,
+            isValid: { await self.isCurrentPresentation(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID) },
+            canDeliver: { await self.canDeliverPresentation(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID) }
+        )
+    }
+
+    /// Writes `update` through the turn's `pipeline`. Awaiting the unit's
+    /// own task preserves the producer's backpressure (the turn does not
+    /// advance until the update has actually been written) while the chain
+    /// fixes the wire order.
+    private static func sendPromptUpdate(_ update: JSONValue, through pipeline: ACPPromptUpdatePipeline) async {
+        await pipeline.enqueue(.init(kind: .consume(update))).value
+    }
+
+    /// Writes what the turn's `pipeline` buffered.
+    private static func flushPromptUpdates(through pipeline: ACPPromptUpdatePipeline) async {
+        await pipeline.enqueue(.init(kind: .flush)).value
+    }
+
+    /// Gives the live incarnation the turn's update `pipeline` and starts
+    /// presenting through it the taskless agents and the task graph.
+    private func startPromptTurnPresentation(
+        _ turn: ACPPromptTurn,
+        session: SessionState,
+        pipeline: ACPPromptUpdatePipeline
+    ) async -> ACPPromptTurnPresentation {
+        updateLiveSession(id: turn.sessionID, epoch: turn.epoch) { live in
+            live.promptUpdatePipeline = pipeline
+            live.delegatedToolNotifications.removeAll()
+        }
+        // Persistent taskless agents may run during a text-only follow-up.
+        await ensureTasklessObserver(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID)
+        let taskPresentation = session.taskPresentation
+        let graphEvents = await sessionRunner.taskOrchestrator.events(sessionID: turn.sessionID)
+        let graphObserver = Task {
+            await publishTaskPresentation(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID,
+                                          presentation: taskPresentation, pipeline: pipeline)
+            for await _ in graphEvents {
+                guard !Task.isCancelled else { return }
+                await publishTaskPresentation(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID,
+                                              presentation: taskPresentation, pipeline: pipeline)
             }
         }
+        return ACPPromptTurnPresentation(
+            pipeline: pipeline,
+            taskPresentation: taskPresentation,
+            graphObserver: graphObserver
+        )
+    }
+
+    /// Ends the turn's presentation: the live incarnation gives the turn's
+    /// pipeline and taskless observer back (only while they are still the
+    /// turn's), the task-graph observer stops, the last task graph is
+    /// published, and the pipeline drains.
+    private func finishPromptTurnPresentation(
+        _ turn: ACPPromptTurn,
+        _ presentation: ACPPromptTurnPresentation
+    ) async {
+        if liveSession(id: turn.sessionID, epoch: turn.epoch)?.promptUpdatePipeline === presentation.pipeline {
+            let tasklessObserver = sessions[turn.sessionID]?.tasklessObserver
+            sessions[turn.sessionID]?.tasklessObserver = nil
+            sessions[turn.sessionID]?.promptUpdatePipeline = nil
+            tasklessObserver?.cancel()
+            await tasklessObserver?.value
+        }
+        presentation.graphObserver.cancel()
+        await presentation.graphObserver.value
+        await publishTaskPresentation(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID,
+                                      presentation: presentation.taskPresentation, pipeline: presentation.pipeline)
+        await presentation.pipeline.drain()
+    }
+
+    /// Registers the turn's task under the reservation: the bridge's own
+    /// entry first, so a `session/cancel` that lands from now on finds the
+    /// task and cancels it, then the host's reservation is checked. A cancel
+    /// that landed between the reservation and this point already dropped
+    /// the reservation, so the check fails and the task is cancelled here
+    /// (otherwise the cancel would be silently lost because it had no task
+    /// to cancel yet), the turn's presentation ends, and the turn throws.
+    private func registerPromptTurnTask(
+        _ activePromptTask: Task<PromptCompletion, Error>,
+        _ turn: ACPPromptTurn,
+        session: SessionState,
+        presentation: ACPPromptTurnPresentation
+    ) async throws {
+        var didRegisterPromptTask = false
+        updateLiveSession(id: turn.sessionID, epoch: turn.epoch) { session in
+            session.activePromptTask = activePromptTask
+            session.activePromptTaskID = turn.promptID
+            didRegisterPromptTask = true
+        }
+        guard didRegisterPromptTask, await host.holdsPrompt(session.promptReservation(turn.promptID)) else {
+            activePromptTask.cancel()
+            updateLiveSession(id: turn.sessionID, epoch: turn.epoch) { session in
+                if session.activePromptTaskID == turn.promptID {
+                    session.activePromptTask = nil
+                    session.activePromptTaskID = nil
+                }
+            }
+            await finishPromptTurnPresentation(turn, presentation)
+            throw CancellationError()
+        }
+    }
+
+    /// Settles the turn: its task presentation, its buffered updates, and
+    /// the session snapshot.
+    private func settlePromptTurn(
+        _ turn: ACPPromptTurn,
+        _ presentation: ACPPromptTurnPresentation,
+        preservingAllowedToolNames allowedToolNames: Set<String>?
+    ) async {
+        await finishPromptTurnPresentation(turn, presentation)
+        await Self.flushPromptUpdates(through: presentation.pipeline)
+        await refreshSessionStateIfAvailable(
+            sessionID: turn.sessionID,
+            preservingAllowedToolNames: allowedToolNames,
+            expectedEpoch: turn.epoch,
+            expectedPromptID: turn.promptID
+        )
     }
 
     /// The shared chat purpose of an ACP command turn.

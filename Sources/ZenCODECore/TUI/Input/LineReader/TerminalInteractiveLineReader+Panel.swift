@@ -10,292 +10,6 @@ import os
 #endif
 
 extension TerminalInteractiveLineReader {
-    @discardableResult
-    public func startPanelInput(
-        statusBar: TerminalStatusBar,
-        commandSuggestions: [TerminalCommandSuggestion] = [],
-        onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void
-    ) async -> Bool {
-        await startPanelInput(
-            statusBar: statusBar,
-            commandSuggestions: commandSuggestions,
-            preservingState: false,
-            onEvent: onEvent
-        )
-    }
-
-    func resumePanelInput(
-        statusBar: TerminalStatusBar,
-        commandSuggestions: [TerminalCommandSuggestion] = [],
-        onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void
-    ) async -> Bool {
-        await startPanelInput(
-            statusBar: statusBar,
-            commandSuggestions: commandSuggestions,
-            preservingState: true,
-            onEvent: onEvent
-        )
-    }
-
-    private func startPanelInput(
-        statusBar: TerminalStatusBar,
-        commandSuggestions: [TerminalCommandSuggestion],
-        preservingState: Bool,
-        onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void
-    ) async -> Bool {
-        // A start may only proceed from a settled panel. If a stop is still
-        // unwinding, its `restoreRawMode()` has not run yet, so acquiring raw
-        // mode here would be silently undone by the predecessor's teardown.
-        let admission = await admitPanelStart(
-            statusBar: statusBar,
-            commandSuggestions: commandSuggestions,
-            preservingState: preservingState
-        )
-        guard admission == .admitted else {
-            return true
-        }
-
-        guard rawInput.beginRawMode() else {
-            if let failureDescription = rawInput.lastRawModeFailureDescription() {
-                AgentOutput.standardError.writeString(
-                    "[ZenCODE] Interactive prompt raw input failed: \(failureDescription)\n"
-                )
-            }
-            abandonPanelStart()
-            return false
-        }
-
-        let task = Task(name: "ZenCODE.TUI.panel-input") { [weak self] in
-            guard let self else {
-                return
-            }
-            await self.runPanelInputLoop(statusBar: statusBar, onEvent: onEvent)
-        }
-
-        finishPanelStart(task: task)
-        await renderPanel()
-        return true
-    }
-
-    /// Waits out any in-flight panel transition, then tries to claim the panel
-    /// for a new start.
-    ///
-    /// Waiting is what makes the hand-over safe: `state.panelTask == nil` says only
-    /// that a stop has *begun*, not that the terminal is free. The stop still
-    /// has to await its loop task and restore raw mode, and a start admitted in
-    /// between would observe `beginRawMode() == true` merely because the
-    /// terminal is still raw from the session being torn down.
-    func admitPanelStart(
-        statusBar: TerminalStatusBar,
-        commandSuggestions: [TerminalCommandSuggestion],
-        preservingState: Bool
-    ) async -> PanelStartAdmission {
-        while true {
-            let admission = preparePanelForStart(
-                statusBar: statusBar,
-                commandSuggestions: commandSuggestions,
-                preservingState: preservingState
-            )
-            guard admission == .transitionInFlight else {
-                return admission
-            }
-            await awaitPanelTransition()
-        }
-    }
-
-    /// Synchronous half of the start admission, taken under the panel lock.
-    func preparePanelForStart(
-        statusBar: TerminalStatusBar,
-        commandSuggestions: [TerminalCommandSuggestion],
-        preservingState: Bool
-    ) -> PanelStartAdmission {
-        let (admission, dictationEnded) = withPanelLock { state -> (PanelStartAdmission, (@Sendable () -> Void)?) in
-            switch state.panelLifecycle {
-            case .running, .starting:
-                // Another reader already owns (or is acquiring) the terminal.
-                return (.alreadyActive, nil)
-            case .stopping:
-                return (.transitionInFlight, nil)
-            case .idle:
-                break
-            }
-
-            state.panelLifecycle = .starting
-            state.panelStatusBar = statusBar
-            state.panelCommandSuggestions = commandSuggestions
-            if preservingState {
-                state.editor.resetPressAndHold()
-                state.panelCommandSuggestionIndex = commandSuggestions.isEmpty
-                    ? 0
-                    : min(state.panelCommandSuggestionIndex, commandSuggestions.count - 1)
-                return (.admitted, nil)
-            }
-            state.editor = TerminalPromptEditor()
-            state.panelOverlayOverride = nil
-            return (.admitted, endVoiceDictationLocked(state: &state))
-        }
-        dictationEnded?()
-        return admission
-    }
-
-    /// Publishes the running panel and releases anyone waiting on the start.
-    func finishPanelStart(task: Task<Void, Never>) {
-        resumePanelTransitionWaiters { state in
-            state.panelTask = task
-            state.panelLifecycle = .running
-        }
-    }
-
-    /// Rolls a failed start back to `idle` so a later start (or a stop) is not
-    /// blocked behind a transition that will never complete.
-    func abandonPanelStart() {
-        resumePanelTransitionWaiters { state in
-            state.panelTask = nil
-            state.panelLifecycle = .idle
-            state.panelStatusBar = nil
-        }
-    }
-
-    public func stopPanelInput(clearPanel: Bool = true) async {
-        let stopState = await claimPanelForStop()
-
-        stopState.task?.cancel()
-        await stopState.task?.value
-        let revision = invalidatePanelRendersForStop()
-        if clearPanel {
-            await stopState.statusBar?.clearInputPanel(revision: revision)
-        }
-        // The panel loop and its renderer are separate tasks. A preserving stop
-        // cannot use a clear revision to fence the status bar, so wait until the
-        // already-dequeued frame has finished before handing the terminal to a
-        // consent prompt. Pending frames were discarded above for both modes.
-        await awaitPanelRenderDrain()
-        // Only now is the terminal provably free: the loop has left its blocking
-        // read and the renderer can no longer write, so raw mode can be handed
-        // back. The panel stays marked `stopping` until `finishPanelStop`, so no
-        // successor can acquire the TTY before this restore has run.
-        rawInput.restoreRawMode()
-        finishPanelStop(clearPanel: clearPanel)
-    }
-
-    /// Detaches the stopped session from its status bar, discards its queued
-    /// projection, and releases explicit refreshes whose revisions can no longer
-    /// be applied. The immutable frame already owned by the renderer is joined by
-    /// ``awaitPanelRenderDrain()`` before stop returns.
-    private func invalidatePanelRendersForStop() -> UInt64 {
-        let result = withPanelLock { state -> (revision: UInt64, waiters: [CheckedContinuation<Void, Never>]) in
-            state.panelRenderRevision &+= 1
-            let revision = state.panelRenderRevision
-            state.pendingPanelRender = nil
-            state.panelStatusBar = nil
-            state.completedPanelRenderRevision = revision
-            let waiters = state.panelRenderWaiters.map(\.continuation)
-            state.panelRenderWaiters.removeAll()
-            return (revision, waiters)
-        }
-        result.waiters.forEach { $0.resume() }
-        return result.revision
-    }
-
-    /// Waits out any in-flight transition, then marks the panel `stopping` and
-    /// takes the state this teardown owns.
-    ///
-    /// A stop must not race a start either: during `starting` the successor has
-    /// not published its task yet, so a stop would await `nil`, restore raw mode
-    /// under the new reader, and leave it reading a cooked terminal.
-    func claimPanelForStop() async -> (task: Task<Void, Never>?, statusBar: TerminalStatusBar?) {
-        while true {
-            if let claim = takePanelTaskForStop() {
-                return claim
-            }
-            await awaitPanelTransition()
-        }
-    }
-
-    /// Synchronous half of the stop claim. Returns `nil` while another
-    /// transition still owns the panel.
-    func takePanelTaskForStop() -> (task: Task<Void, Never>?, statusBar: TerminalStatusBar?)? {
-        withPanelLock { state -> (task: Task<Void, Never>?, statusBar: TerminalStatusBar?)? in
-            switch state.panelLifecycle {
-            case .starting, .stopping:
-                return nil
-            case .idle, .running:
-                break
-            }
-
-            let panelState = (task: state.panelTask, statusBar: state.panelStatusBar)
-            state.panelLifecycle = .stopping
-            state.panelTask = nil
-            state.editor.resetPressAndHold()
-            // Unblock the in-flight terminal read before awaiting the task, so
-            // the stop does not wait out the remainder of the read window.
-            state.panelReadToken?.cancel()
-            state.panelReadToken = nil
-            return panelState
-        }
-    }
-
-    func finishPanelStop(clearPanel: Bool) {
-        let dictationEnded = resumePanelTransitionWaiters { state -> (@Sendable () -> Void)? in
-            state.panelStatusBar = nil
-            var dictationEnded: (@Sendable () -> Void)?
-            if clearPanel {
-                state.panelBuffer.removeAll()
-                state.panelCursorIndex = 0
-                state.panelOverlayOverride = nil
-                state.panelCommandSuggestions.removeAll()
-                state.panelCommandSuggestionIndex = 0
-                state.historyIndex = nil
-                state.draftBeforeHistory.removeAll()
-                dictationEnded = endVoiceDictationLocked(state: &state)
-            }
-            state.panelTask = nil
-            state.panelLifecycle = .idle
-            return dictationEnded
-        }
-        dictationEnded?()
-    }
-
-    /// Suspends until the in-flight transition publishes a settled state.
-    ///
-    /// Registration happens under the same lock that settles the panel, so a
-    /// transition completing between the check and the suspension cannot strand
-    /// the waiter.
-    private func awaitPanelTransition() async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            let isSettled = withPanelLock { state -> Bool in
-                switch state.panelLifecycle {
-                case .idle, .running:
-                    return true
-                case .starting, .stopping:
-                    state.panelTransitionWaiters.append(continuation)
-                    return false
-                }
-            }
-            if isSettled {
-                continuation.resume()
-            }
-        }
-    }
-
-    /// Applies a settling mutation and releases the parked callers.
-    ///
-    /// The waiters are resumed outside the panel lock: resuming re-enters the
-    /// caller, which immediately reaches for the same lock.
-    @discardableResult
-    private func resumePanelTransitionWaiters<T: Sendable>(
-        _ settle: @Sendable (inout State) -> T
-    ) -> T {
-        let (result, waiters) = withPanelLock { state -> (T, [CheckedContinuation<Void, Never>]) in
-            let result = settle(&state)
-            let waiters = state.panelTransitionWaiters
-            state.panelTransitionWaiters.removeAll()
-            return (result, waiters)
-        }
-        waiters.forEach { $0.resume() }
-        return result
-    }
-
     public func setPanelProcessing(_ isProcessing: Bool) async {
         withPanelLock { state in
             state.panelIsProcessing = isProcessing
@@ -478,15 +192,12 @@ extension TerminalInteractiveLineReader {
     ) async {
         let token = TerminalBlockingReadToken()
         withPanelLock { state in
-            state.panelReadToken?.cancel()
-            state.panelReadToken = token
+            state.panelLifecycle.replaceReadToken(with: token)?.cancel()
         }
         defer {
             token.cancel()
             withPanelLock { state in
-                if state.panelReadToken === token {
-                    state.panelReadToken = nil
-                }
+                state.panelLifecycle.clearReadToken(token)
             }
         }
 
@@ -586,51 +297,39 @@ extension TerminalInteractiveLineReader {
         return nil
     }
 
-    /// Applies one key through the shared editor reducer and dispatches the
-    /// resulting effect.
+    /// Routes one key to the layer that owns it and dispatches the result.
     ///
-    /// The reducer runs entirely under the panel lock because it is pure and
-    /// cannot suspend. Event delivery happens after the lock is released, and
-    /// redraws are only enqueued there so slow terminal output never delays the
-    /// next panel read.
+    /// The routing is decided by ``panelKeyRoute(for:subAgentDetailMode:isSharedChatReaderOpen:)``
+    /// before any effect runs. A key left to the draft goes through the shared
+    /// editor reducer, which runs entirely under the panel lock because it is
+    /// pure and cannot suspend. Event delivery happens after the lock is
+    /// released, and redraws are only enqueued there so slow terminal output
+    /// never delays the next panel read.
     func handlePanelKey(
         _ key: Key,
         timestampMilliseconds: UInt64? = nil,
         consumedPickerRepeat: Character? = nil,
         onEvent: @escaping @Sendable (TerminalPromptInputEvent) async -> Void
     ) async {
-        // The `/subagent` detail comes first; end-of-input keeps its usual
-        // meaning in every mode. The agent list is modal: it owns every other
-        // key and swallows those it does not bind, so they can never edit the
-        // draft behind it. An agent's detail takes only its navigation keys,
-        // like the shared-chat reader below, and leaves every other key to
-        // the draft, which the operator keeps typing and sending. In both
-        // `Esc` closes the detail instead of stopping the generation.
+        // The detail mode and the shared-chat reader are read in two critical
+        // sections, the reader's only once the detail leaves the key to it.
         let subAgentDetailMode = withPanelLock { $0.panelSubAgentDetailMode }
-        if subAgentDetailMode != .closed, key != .endOfInput {
-            if let action = Self.subAgentDetailAction(for: key, mode: subAgentDetailMode) {
-                await onEvent(.subAgentDetail(action))
-                return
-            }
-            if subAgentDetailMode == .list {
-                return
-            }
-        }
-        let readerAction = withPanelLock { state -> TerminalSharedChatReaderAction? in
-            guard state.panelSharedChatReaderIsOpen else { return nil }
-            switch key {
-            case .up: return .scrollUp
-            case .down: return .scrollDown
-            case .left: return .previousMessage
-            case .right: return .nextMessage
-            case .home, .bufferStart: return .firstMessage
-            case .end, .bufferEnd: return .lastMessage
-            default: return nil
-            }
-        }
-        if let readerAction {
-            await onEvent(.sharedChatReaderNavigation(readerAction))
+        let route = Self.panelKeyRoute(
+            for: key,
+            subAgentDetailMode: subAgentDetailMode,
+            isSharedChatReaderOpen: { withPanelLock { $0.panelSharedChatReaderIsOpen } }
+        )
+        switch route {
+        case let .subAgentDetail(action):
+            await onEvent(.subAgentDetail(action))
             return
+        case .swallowedBySubAgentList:
+            return
+        case let .sharedChatReader(action):
+            await onEvent(.sharedChatReaderNavigation(action))
+            return
+        case .editor:
+            break
         }
         let (effect, dictationEnded) = withPanelLock { state -> (TerminalPromptEditorEffect, (@Sendable () -> Void)?) in
             let bufferBefore = state.editor.buffer
@@ -747,6 +446,65 @@ extension TerminalInteractiveLineReader {
         case (_, .cancel): .close
         case (.list, .enter), (.list, .newline): .confirm
         case (.list, .character("q")), (.list, .character("Q")): .closeList
+        default: nil
+        }
+    }
+
+    /// The layer of the panel that owns one key, decided before any effect.
+    enum PanelKeyRoute: Sendable, Equatable {
+        /// The `/subagent` detail binds the key.
+        case subAgentDetail(TerminalSubAgentDetailAction)
+        /// The modal agent list swallows a key it does not bind.
+        case swallowedBySubAgentList
+        /// The shared-chat reader binds the key.
+        case sharedChatReader(TerminalSharedChatReaderAction)
+        /// The key belongs to the draft editor.
+        case editor
+    }
+
+    /// Precedence of the panel's key consumers.
+    ///
+    /// The `/subagent` detail comes first; end-of-input keeps its usual
+    /// meaning in every mode. The agent list is modal: it owns every other
+    /// key and swallows those it does not bind, so they can never edit the
+    /// draft behind it. An agent's detail takes only its navigation keys,
+    /// like the shared-chat reader after it, and leaves every other key to
+    /// the draft, which the operator keeps typing and sending. In both
+    /// `Esc` closes the detail instead of stopping the generation.
+    ///
+    /// `isSharedChatReaderOpen` is asked only when the detail leaves the key
+    /// to the next layer, so the caller reads the reader's state exactly
+    /// when the routing needs it, after the detail mode.
+    static func panelKeyRoute(
+        for key: Key,
+        subAgentDetailMode: SubAgentDetailMode,
+        isSharedChatReaderOpen: () -> Bool
+    ) -> PanelKeyRoute {
+        if subAgentDetailMode != .closed, key != .endOfInput {
+            if let action = subAgentDetailAction(for: key, mode: subAgentDetailMode) {
+                return .subAgentDetail(action)
+            }
+            if subAgentDetailMode == .list {
+                return .swallowedBySubAgentList
+            }
+        }
+        guard isSharedChatReaderOpen(),
+              let action = sharedChatReaderAction(for: key) else {
+            return .editor
+        }
+        return .sharedChatReader(action)
+    }
+
+    /// Navigation action of a key for the open shared-chat reader, or `nil`
+    /// for a key it leaves to the draft.
+    static func sharedChatReaderAction(for key: Key) -> TerminalSharedChatReaderAction? {
+        switch key {
+        case .up: .scrollUp
+        case .down: .scrollDown
+        case .left: .previousMessage
+        case .right: .nextMessage
+        case .home, .bufferStart: .firstMessage
+        case .end, .bufferEnd: .lastMessage
         default: nil
         }
     }

@@ -195,10 +195,10 @@ actor TerminalChatRenderCoordinator {
                 ?? columnWidthProvider
         } else {
             self.columnWidthProvider = {
-                TerminalChat.terminalColumnCount()
+                TerminalTextMetrics.terminalColumnCount()
             }
             self.freshColumnWidthProvider = freshColumnWidthProvider ?? {
-                TerminalChat.terminalColumnCount(forceRefresh: true)
+                TerminalTextMetrics.terminalColumnCount(forceRefresh: true)
             }
         }
         self.assistantStreamingState = StreamingContentState(

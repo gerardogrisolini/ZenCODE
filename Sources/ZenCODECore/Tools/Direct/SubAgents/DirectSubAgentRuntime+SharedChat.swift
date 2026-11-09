@@ -83,10 +83,8 @@ extension DirectSubAgentRuntime {
         )
         sharedChatMessageAvailableHandler?(roomID)
         if let effectiveSenderID,
-           delivery.recipients.contains(where: { $0.kind == .operator }),
-           var sender = agents[effectiveSenderID] {
-            sender.currentTurnSentOperatorMessage = true
-            agents[effectiveSenderID] = sender
+           delivery.recipients.contains(where: { $0.kind == .operator }) {
+            mutateAgent(effectiveSenderID) { $0.currentTurnSentOperatorMessage = true }
         }
         // A display name is not an identity: any agent may be named
         // "operator" or "coordinator". Model-facing delivery output therefore
@@ -373,7 +371,7 @@ extension DirectSubAgentRuntime {
     ///   stay in the bounded mailbox and are drained when the queue has capacity
     ///   again (re-armed from ``nextWork(for:)`` when the agent goes idle).
     func drainSharedChatMailbox(for agentID: String) async {
-        guard var agent = agents[agentID], agent.status != .closed else {
+        guard let agent = agents[agentID], agent.status != .closed else {
             return
         }
         // A running turn owns its mailbox through DirectToolExecutor. Leaving
@@ -387,13 +385,9 @@ extension DirectSubAgentRuntime {
         guard !agent.isDrainingSharedChatMailbox else {
             return
         }
-        agent.isDrainingSharedChatMailbox = true
-        agents[agentID] = agent
+        mutateAgent(agentID) { $0.isDrainingSharedChatMailbox = true }
         defer {
-            if var current = agents[agentID] {
-                current.isDrainingSharedChatMailbox = false
-                agents[agentID] = current
-            }
+            mutateAgent(agentID) { $0.isDrainingSharedChatMailbox = false }
         }
         while true {
             // Re-check liveness on every iteration: the agent may have been
@@ -425,10 +419,10 @@ extension DirectSubAgentRuntime {
                     repliesToOperator: deliverable.contains { $0.sender.kind == .operator }
                 )
             } catch {
-                guard var current = agents[agentID] else { return }
-                current.latestError = "Unable to deliver shared-chat message: \(error.localizedDescription)"
-                current.updatedAt = .now
-                agents[agentID] = current
+                mutateAgent(agentID) { current in
+                    current.latestError = "Unable to deliver shared-chat message: \(error.localizedDescription)"
+                    current.updatedAt = .now
+                }
                 return
             }
         }

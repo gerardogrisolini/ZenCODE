@@ -121,7 +121,7 @@ extension TerminalChatRenderCoordinatorTests {
             )
         )
         #expect(renderedLines.allSatisfy {
-            TerminalChat.displayWidth($0) <= terminalColumns - 1
+            TerminalTextMetrics.displayWidth($0) <= terminalColumns - 1
         })
         #expect(started.activeToolRenderedRowCount == 2)
     }

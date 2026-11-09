@@ -259,6 +259,20 @@ public actor DirectSubAgentRuntime {
             currentToolIsRunning = false
         }
 
+        /// Hands the work-loop ownership token back from inside the loop; see
+        /// ``DirectSubAgentRuntime/releaseWorkLoopOwnership(agentID:)``.
+        mutating func releaseWorkLoop() {
+            runTask = nil
+        }
+
+        /// Takes the work-loop ownership token from a loop that is cancelled
+        /// with the agent, and returns that loop so the caller can cancel it
+        /// once the record is written.
+        mutating func revokeWorkLoop() -> Task<Void, Never>? {
+            defer { runTask = nil }
+            return runTask
+        }
+
         /// Drops heavyweight report prefixes before this inactive record enters
         /// the bounded terminal-history cache. The latest tail is retained because
         /// it contains the final answer and validation summary callers need most.
@@ -337,6 +351,25 @@ public actor DirectSubAgentRuntime {
             }
         }
     }
+    /// Applies `body` to the record of `id` and writes it back: one registry
+    /// read and one registry write, so one snapshot broadcast. Returns nil
+    /// without writing when no such agent exists or `predicate` rejects its
+    /// record. Synchronous, so no suspension can separate the read from the
+    /// write and lose a concurrent update.
+    @discardableResult
+    func mutateAgent<T>(
+        _ id: String,
+        where predicate: (AgentRecord) -> Bool = { _ in true },
+        _ body: (inout AgentRecord) -> T
+    ) -> T? {
+        guard var agent = agents[id], predicate(agent) else {
+            return nil
+        }
+        let result = body(&agent)
+        agents[id] = agent
+        return result
+    }
+
     var latestOverviewBatchID: UUID?
     /// One graph-completion observer per root session. Started when the first
     /// task-bound agent enters standby; cancelled in `shutdown`/

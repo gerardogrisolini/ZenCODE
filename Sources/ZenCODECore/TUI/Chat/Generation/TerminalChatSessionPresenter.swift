@@ -100,7 +100,7 @@ final class TerminalChatSessionPresenter: ChatSlotChannelPresenter {
         result: DirectAgentToolResult
     ) async {
         guard let chat else { return }
-        if TerminalChat.isFileMutationTool(toolCall.name) {
+        if ToolMutationClassifier.isFileMutationTool(toolCall.name) {
             await chat.refreshStatusBarGitStatusSummaryForFileMutation()
         }
         if await chat.shouldPublishDeferredTaskGraphOverview() {

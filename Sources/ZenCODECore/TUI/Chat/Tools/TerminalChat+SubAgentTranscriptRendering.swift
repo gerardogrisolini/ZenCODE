@@ -33,7 +33,7 @@ extension TerminalChat {
     ///   time from `toolDurations` (``ChatSubAgentTranscript/toolDurations``,
     ///   by call id) as the main chat does; a running call, or one without a
     ///   duration, shows none. Tools without a terminal representation
-    ///   (``shouldSuppressToolRendering(for:)``) have no row.
+    ///   (``ToolRenderingPolicy/shouldSuppressToolRendering(for:)``) have no row.
     ///
     /// File artifacts, notices, workflow notices, and turn phases are not
     /// part of the conversation and have no row. One blank row separates two
@@ -77,8 +77,8 @@ extension TerminalChat {
         width: Int
     ) -> [String] {
         subAgentRowsTruncated(
-            subAgentOverviewRows(
-                subAgentEntryLines(
+            TerminalSubAgentOverviewLayout.overviewRows(
+                TerminalSubAgentOverviewLayout.entryLines(
                     snapshot,
                     modelTitleResolver: modelTitleResolver,
                     toolPresentation: nil,
@@ -101,7 +101,7 @@ extension TerminalChat {
     ///   transcript already has the row of that call. The runtime keeps the
     ///   name of a completed call until the next model state, so the name
     ///   alone does not mean a running tool. A tool without a terminal
-    ///   representation (``shouldSuppressToolRendering(for:)``, as
+    ///   representation (``ToolRenderingPolicy/shouldSuppressToolRendering(for:)``, as
     ///   `agent.message`) does not count as a running tool either;
     /// - while it reasons with reasoning to show, the rows the transcript
     ///   draws for a reasoning block: the thinking title followed by the
@@ -125,7 +125,7 @@ extension TerminalChat {
         guard snapshot.pending else { return [] }
         if snapshot.currentToolIsRunning,
            let toolName = snapshot.currentToolName?.nilIfBlank,
-           !shouldSuppressToolRendering(for: toolName) {
+           !ToolRenderingPolicy.shouldSuppressToolRendering(for: toolName) {
             return []
         }
         let width = max(1, width)
@@ -192,7 +192,7 @@ extension TerminalChat {
             case let .assistantText(text):
                 entries.append(.assistantText(text))
             case let .toolCallStarted(call):
-                guard !shouldSuppressToolRendering(for: call.name) else { continue }
+                guard !ToolRenderingPolicy.shouldSuppressToolRendering(for: call.name) else { continue }
                 if call.id.isEmpty {
                     openCallsWithoutID.append(entries.count)
                 } else {
@@ -200,7 +200,7 @@ extension TerminalChat {
                 }
                 entries.append(.toolCall(call, result: nil, elapsed: nil))
             case let .toolCallCompleted(call, result):
-                guard !shouldSuppressToolRendering(for: call.name) else { continue }
+                guard !ToolRenderingPolicy.shouldSuppressToolRendering(for: call.name) else { continue }
                 let startIndex: Int?
                 if call.id.isEmpty {
                     startIndex = openCallsWithoutID.isEmpty ? nil : openCallsWithoutID.removeFirst()
@@ -303,7 +303,7 @@ extension TerminalChat {
     }
 
     /// The canonical compact rows of a tool call, as the full sub-agent
-    /// overview renders them (``renderSubAgentToolLines(_:density:standardErrorIsTerminal:)``),
+    /// overview renders them (``TerminalSubAgentOverviewLayout``),
     /// with the completion detail of the result as the main chat makes it:
     /// the elapsed time the tool executor measured, as the transcript's
     /// durations keep it (`elapsed`, `nil` when it has none), then the exit
@@ -332,7 +332,7 @@ extension TerminalChat {
                 ? "\(renderCompactToolLine(row.plainText, isTitle: index == 0))\(reset)"
                 : row.plainText
         }
-        let codeLanguage = codeLanguageHint(for: call)
+        let codeLanguage = ToolLanguageHint.hint(for: call)
         let detailRows = rows.detailRows.map { row in
             standardErrorIsTerminal
                 ? renderDetailedToolRow(

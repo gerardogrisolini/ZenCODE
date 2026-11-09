@@ -605,10 +605,7 @@ public enum SystemPromptBuilder {
         _ name: String,
         isAllowedBy allowedToolNames: Set<String>
     ) -> Bool {
-        allowedToolNames.contains(name)
-            || allowedToolNames.contains {
-                $0.hasSuffix(".") && name.hasPrefix($0)
-            }
+        ToolAllowlist.matches(name, in: allowedToolNames)
     }
 
     private static func standaloneBaseSection() -> String {

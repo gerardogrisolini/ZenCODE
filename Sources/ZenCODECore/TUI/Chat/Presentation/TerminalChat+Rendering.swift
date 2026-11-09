@@ -164,7 +164,7 @@ extension TerminalChat {
     }
 
     public nonisolated static func renderStartupBox(lines: [String]) -> String {
-        let columns = terminalColumnCount()
+        let columns = TerminalTextMetrics.terminalColumnCount()
         let horizontalInset = terminalBoxHorizontalInset(columns: columns)
         let contentWidth = max(20, columns - horizontalInset * 2)
                 let linePrefix = String(repeating: " ", count: horizontalInset)
@@ -235,12 +235,10 @@ extension TerminalChat {
         return trimmedValue.isEmpty ? nil : trimmedValue
     }
 
+    /// Width of the terminal on the standard error (see
+    /// ``TerminalTextMetrics/terminalColumnCount(forceRefresh:)``).
     public nonisolated static func terminalColumnCount(forceRefresh: Bool = false) -> Int {
-        TerminalWidth.current(
-            descriptors: [AgentOutput.standardError.fileDescriptor],
-            fallback: 100,
-            forceRefresh: forceRefresh
-        )
+        TerminalTextMetrics.terminalColumnCount(forceRefresh: forceRefresh)
     }
 
     public nonisolated static func terminalBoxHorizontalInset(columns _: Int? = nil) -> Int {

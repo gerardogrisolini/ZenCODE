@@ -52,11 +52,6 @@ extension DirectMCPToolRuntime {
         _ toolName: String,
         isAllowedBy allowedToolNames: Set<String>
     ) -> Bool {
-        if allowedToolNames.contains(toolName) {
-            return true
-        }
-        return allowedToolNames.contains { allowedToolName in
-            allowedToolName.hasSuffix(".") && toolName.hasPrefix(allowedToolName)
-        }
+        ToolAllowlist.matches(toolName, in: allowedToolNames)
     }
 }

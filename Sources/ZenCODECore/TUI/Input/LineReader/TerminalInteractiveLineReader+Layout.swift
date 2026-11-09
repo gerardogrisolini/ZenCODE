@@ -186,7 +186,7 @@ extension TerminalInteractiveLineReader {
     static func lineCount(
         for buffer: [Character],
         prompt: String = "",
-        terminalColumns: Int = TerminalChat.terminalColumnCount(forceRefresh: true)
+        terminalColumns: Int = TerminalTextMetrics.terminalColumnCount(forceRefresh: true)
     ) -> Int {
         renderLayout(
             prompt: prompt,
@@ -202,7 +202,7 @@ extension TerminalInteractiveLineReader {
         cursorIndex: Int,
         previousLineCount: Int = 1,
         previousCursorRow: Int = 0,
-        terminalColumns: Int = TerminalChat.terminalColumnCount(forceRefresh: true)
+        terminalColumns: Int = TerminalTextMetrics.terminalColumnCount(forceRefresh: true)
     ) -> String {
         let layout = renderLayout(
             prompt: prompt,
@@ -250,7 +250,7 @@ extension TerminalInteractiveLineReader {
         cursorIndex: Int,
         previousLineCount: Int = 1,
         previousCursorRow: Int = 0,
-        terminalColumns: Int = TerminalChat.terminalColumnCount(forceRefresh: true)
+        terminalColumns: Int = TerminalTextMetrics.terminalColumnCount(forceRefresh: true)
     ) {
         AgentOutput.standardError.writeString(
             Self.redrawSequence(

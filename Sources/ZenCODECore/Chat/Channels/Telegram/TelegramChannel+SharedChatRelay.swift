@@ -591,21 +591,12 @@ extension TelegramChannel {
     /// transport metadata, so this short-lived association keeps the
     /// Telegram route of the answer. Bounded like the retained transcript.
     func recordSharedChatMessageLease(_ messageID: UUID, lease: TerminalTelegramRouteLease) {
-        if sharedChatMessageLeases[messageID] == nil {
-            sharedChatMessageLeaseOrder.append(messageID)
-        }
-        sharedChatMessageLeases[messageID] = lease
-        let maximumLeases = AgentSharedChat.maximumRetainedMessagesPerRoom
-        while sharedChatMessageLeaseOrder.count > maximumLeases {
-            let oldestMessageID = sharedChatMessageLeaseOrder.removeFirst()
-            sharedChatMessageLeases.removeValue(forKey: oldestMessageID)
-        }
+        sharedChatMessageLeases.record(messageID, lease: lease)
     }
 
     /// Forgets the route of a message that was never published.
     func discardSharedChatMessageLease(_ messageID: UUID) {
-        sharedChatMessageLeases.removeValue(forKey: messageID)
-        sharedChatMessageLeaseOrder.removeAll { $0 == messageID }
+        sharedChatMessageLeases.discard(messageID)
     }
 
     /// The Telegram route of a shared-chat trigger: the route of the first
@@ -613,22 +604,12 @@ extension TelegramChannel {
     /// association is consumed, so a replay cannot route an unrelated later
     /// coordinator response.
     func takeSharedChatLease(for messages: [AgentSharedChat.Message]) -> TerminalTelegramRouteLease? {
-        let lease = sharedChatLease(for: messages)
-        for message in messages {
-            sharedChatMessageLeases.removeValue(forKey: message.id)
-            sharedChatMessageLeaseOrder.removeAll { $0 == message.id }
-        }
-        return lease
+        sharedChatMessageLeases.take(for: messages)
     }
 
     /// The route of the first of `messages` the channel recorded one for,
     /// without forgetting it (``takeSharedChatLease(for:)`` does).
     func sharedChatLease(for messages: [AgentSharedChat.Message]) -> TerminalTelegramRouteLease? {
-        for message in messages {
-            if let lease = sharedChatMessageLeases[message.id] {
-                return lease
-            }
-        }
-        return nil
+        sharedChatMessageLeases.lease(for: messages)
     }
 }

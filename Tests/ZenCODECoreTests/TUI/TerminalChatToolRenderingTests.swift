@@ -82,7 +82,7 @@ extension TerminalChatRenderingTests {
         let old = String(repeating: "oldPayload", count: 12)
         let new = String(repeating: "newPayload", count: 12)
         let rows = TerminalChat.safelyWrappedDetailedToolRows(
-            TerminalChat.numberedDiffSnippetRows(
+            ToolSnippetRenderer.numberedDiffSnippetRows(
                 old: old,
                 new: new,
                 contentWidth: 80
@@ -101,7 +101,7 @@ extension TerminalChatRenderingTests {
         #expect(oldRendered.contains(old))
         #expect(newRendered.contains(new))
         #expect(!rows.map(\.plainText).joined().contains("…"))
-        #expect(rows.allSatisfy { TerminalChat.displayWidth($0.plainText) <= 79 })
+        #expect(rows.allSatisfy { TerminalTextMetrics.displayWidth($0.plainText) <= 79 })
     }
 
     @Test
@@ -133,7 +133,7 @@ extension TerminalChatRenderingTests {
         #expect(codeLines.map(\.content).joined() == content)
         #expect(codeLines.dropFirst().allSatisfy { $0.lineNumber.trimmingCharacters(in: .whitespaces).isEmpty })
         #expect(!rows.map(\.plainText).joined().contains("…"))
-        #expect(rows.allSatisfy { TerminalChat.displayWidth($0.plainText) <= 79 })
+        #expect(rows.allSatisfy { TerminalTextMetrics.displayWidth($0.plainText) <= 79 })
     }
 
     @Test(arguments: ["local.writeFile", "local.append", "local.editFile", "local.replace", "local.multiEdit"], [40, 52, 80])
@@ -179,7 +179,7 @@ extension TerminalChatRenderingTests {
             default:
                 Issue.record("Expected a structured source row")
             }
-            #expect(TerminalChat.displayWidth(row.plainText) <= columns - 1)
+            #expect(TerminalTextMetrics.displayWidth(row.plainText) <= columns - 1)
             #expect(TerminalANSIText.stripANSI(
                 TerminalChat.renderDetailedToolRow(row, codeLanguage: "swift")
             ) == row.plainText)
@@ -233,15 +233,15 @@ extension TerminalChatRenderingTests {
                 for row in presentation.detailRows {
                     let rendered = TerminalChat.renderDetailedToolRow(
                         row,
-                        codeLanguage: TerminalChat.codeLanguageHint(for: toolCall),
+                        codeLanguage: ToolLanguageHint.hint(for: toolCall),
                         contentWidth: presentation.detailContentWidth
                     )
                     let padding = String(
                         repeating: " ",
-                        count: max(0, width - TerminalChat.displayWidth(row.plainText))
+                        count: max(0, width - TerminalTextMetrics.displayWidth(row.plainText))
                     )
                     #expect(TerminalANSIText.stripANSI(rendered) == row.plainText + padding)
-                    #expect(TerminalChat.displayWidth(rendered) == width)
+                    #expect(TerminalTextMetrics.displayWidth(rendered) == width)
                     #expect(rendered.hasSuffix(
                         TerminalChat.codeAreaBackgroundColor + padding + TerminalStyle.reset + "\u{1B}[K"
                     ))
@@ -279,7 +279,7 @@ extension TerminalChatRenderingTests {
         // One trailing cell remains deliberately unused for safe in-place
         // rewrites, so the content budget is five columns rather than six.
         #expect(rendered == "ab ✅")
-        #expect(TerminalChat.displayWidth(rendered) == 5)
+        #expect(TerminalTextMetrics.displayWidth(rendered) == 5)
 
         let statusOnly = TerminalChat.compactToolStatusLine(
             target: "abcdef",
@@ -288,7 +288,7 @@ extension TerminalChatRenderingTests {
             columnWidth: 3
         )
         #expect(statusOnly == "✅")
-        #expect(TerminalChat.displayWidth(statusOnly) == 2)
+        #expect(TerminalTextMetrics.displayWidth(statusOnly) == 2)
     }
 
     @Test
@@ -309,7 +309,7 @@ extension TerminalChatRenderingTests {
         )
 
         #expect(rows == ["    a", "   😀"])
-        #expect(rows.allSatisfy { TerminalChat.displayWidth($0) <= 5 })
+        #expect(rows.allSatisfy { TerminalTextMetrics.displayWidth($0) <= 5 })
     }
 
     @Test
@@ -317,7 +317,7 @@ extension TerminalChatRenderingTests {
         let old = (0..<150).map { "let old\($0) = \($0)" }.joined(separator: "\n")
         let new = (0..<150).map { "let new\($0) = \($0)" }.joined(separator: "\n")
 
-        let rows = TerminalChat.numberedDiffSnippetRows(
+        let rows = ToolSnippetRenderer.numberedDiffSnippetRows(
             old: old,
             new: new,
             contentWidth: 120
@@ -346,11 +346,11 @@ extension TerminalChatRenderingTests {
         let markdown = tool(path: "Docs/readme.md")
         let unknown = tool(path: "Data/readme.custom")
 
-        #expect(TerminalChat.codeLanguageHint(for: swift) == "swift")
-        #expect(TerminalChat.codeLanguageHint(for: c) == "c")
-        #expect(TerminalChat.codeLanguageHint(for: text) == nil)
-        #expect(TerminalChat.codeLanguageHint(for: markdown) == nil)
-        #expect(TerminalChat.codeLanguageHint(for: unknown) == nil)
+        #expect(ToolLanguageHint.hint(for: swift) == "swift")
+        #expect(ToolLanguageHint.hint(for: c) == "c")
+        #expect(ToolLanguageHint.hint(for: text) == nil)
+        #expect(ToolLanguageHint.hint(for: markdown) == nil)
+        #expect(ToolLanguageHint.hint(for: unknown) == nil)
 
         // The public form takes the path itself; the extension is case-insensitive.
         #expect(TerminalChat.codeLanguageHint(forPath: "/tmp/project/Sources/App.swift") == "swift")

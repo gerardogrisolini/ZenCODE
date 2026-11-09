@@ -92,66 +92,9 @@ public final class TerminalInteractiveLineReader: Sendable {
     static let escapeSequenceMaximumLength = 24
     static let maximumPanelCommandSuggestionLines = 6
 
-    /// Ownership of the terminal by the input panel.
-    ///
-    /// Only one code path may hold the TTY at a time, and the transient states
-    /// matter as much as the settled ones: a stop is not done when it clears
-    /// `panelTask`, it is done when it has awaited the loop task *and* restored
-    /// raw mode. A start admitted before that would call `beginRawMode()`, get
-    /// `true` because the terminal is still raw from the previous session, and
-    /// then have its termios state torn down by the predecessor's
-    /// `restoreRawMode()`. Modelling `starting`/`stopping` explicitly lets the
-    /// racing side wait for quiescence instead of stepping into that window.
-    enum PanelLifecycleState: Sendable {
-        /// No panel owns the terminal and no transition is in flight.
-        case idle
-        /// A start has been admitted and is acquiring raw mode.
-        case starting
-        /// The panel loop owns the terminal; `panelTask` is its task.
-        case running
-        /// A stop is unwinding the loop and restoring raw mode.
-        case stopping
-    }
-
-    /// Outcome of trying to claim the panel for a new start.
-    enum PanelStartAdmission: Equatable, Sendable {
-        /// The caller owns the `starting` transition and must publish or
-        /// abandon it.
-        case admitted
-        /// A panel is already running or being started; the caller must not
-        /// touch the terminal.
-        case alreadyActive
-        /// A stop is still unwinding; the caller has to wait for quiescence
-        /// before it can be admitted.
-        case transitionInFlight
-    }
-
-    /// A complete, immutable prompt projection waiting to reach the status bar.
-    ///
-    /// The input reducer publishes these under ``state``'s mutex, while one
-    /// asynchronous render task consumes them outside the mutex. Keeping the whole
-    /// projection together prevents a slow terminal repaint from observing a
-    /// hybrid of two edits.
-    struct PanelRenderSnapshot: Sendable {
-        let statusBar: TerminalStatusBar?
-        let text: String
-        let cursorIndex: Int
-        let modeText: String
-        let helpText: String
-        let compactHelpText: String?
-        let prioritizesModeText: Bool
-        let suggestionLines: [String]
-        let suggestionSelectedIndex: Int?
-        let revision: UInt64
-    }
-
-    /// Completion boundary for one explicit refresh. A newer coalesced frame
-    /// also satisfies an older waiter because it contains a later projection of
-    /// the same reader state.
-    struct PanelRenderWaiter: Sendable {
-        let revision: UInt64
-        let continuation: CheckedContinuation<Void, Never>
-    }
+    /// A caller parked on a panel transition, a render revision or a render
+    /// drain. Resumed only after the panel lock is released.
+    typealias PanelWaiter = CheckedContinuation<Void, Never>
 
     /// All mutable reader state is owned by this mutex. Keeping the input
     /// history together with the panel state is important: raw line reads and
@@ -159,10 +102,9 @@ public final class TerminalInteractiveLineReader: Sendable {
     /// update from the other.
     struct State {
         var history: [String] = []
-        var panelTask: Task<Void, Never>?
-        var panelLifecycle: PanelLifecycleState = .idle
-        /// Callers parked until the in-flight start or stop reaches a settled state.
-        var panelTransitionWaiters: [CheckedContinuation<Void, Never>] = []
+        /// Who owns the terminal through the panel: the start/stop transitions,
+        /// the loop task, its read token and the callers parked on a transition.
+        var panelLifecycle = PanelLifecycle<PanelWaiter>()
         var panelStatusBar: TerminalStatusBar?
         /// All draft semantics live in the pure reducer; the mutex only owns
         /// the value, never the behaviour.
@@ -193,24 +135,9 @@ public final class TerminalInteractiveLineReader: Sendable {
         /// Single-flight guard so a burst of keystrokes cannot start one roster
         /// query per key.
         var isRefreshingMentionSuggestions = false
-        /// Cancellation token of the panel loop's in-flight blocking read. Stopping
-        /// the panel cancels it so the loop unwinds at once instead of waiting out
-        /// the current read timeout while the caller awaits the task.
-        var panelReadToken: TerminalBlockingReadToken?
-        var panelRenderRevision: UInt64 = 0
-        /// At most one task sends prompt snapshots to the status-bar actor.
-        /// Producers replace `pendingPanelRender` while that task awaits a slow
-        /// redraw, keeping input acquisition independent of repaint latency.
-        var isPanelRenderInFlight = false
-        var pendingPanelRender: PanelRenderSnapshot?
-        /// Highest revision applied by the renderer, or invalidated by a stop.
-        var completedPanelRenderRevision: UInt64 = 0
-        /// Explicit refresh callers wait only for their own revision (or a newer
-        /// coalesced one), never for the continuously changing queue to go idle.
-        var panelRenderWaiters: [PanelRenderWaiter] = []
-        /// Lifecycle teardown still needs the renderer itself to stop before the
-        /// terminal is handed to another interactive reader.
-        var panelRenderDrainWaiters: [CheckedContinuation<Void, Never>] = []
+        /// The single-renderer pipeline that carries prompt snapshots to the
+        /// status bar: queued frame, revisions and render waiters.
+        var panelRender = PanelRenderPipeline<PanelWaiter>()
         /// The voice dictation previewed at the end of the draft.
         var voiceDictation = TerminalPromptDictation()
         /// Told the id of a dictation an edit ended, so voice forgets what
@@ -242,6 +169,17 @@ public final class TerminalInteractiveLineReader: Sendable {
         var panelCommandSuggestionIndex: Int {
             get { editor.suggestionIndex }
             set { editor.suggestionIndex = newValue }
+        }
+
+        // Read-only projections kept so lifecycle tests keep observing the
+        // panel by its former field names. Every transition goes through
+        // `panelLifecycle`.
+        var panelTransitionWaiters: [PanelWaiter] {
+            panelLifecycle.transitionWaiters
+        }
+
+        var panelReadToken: TerminalBlockingReadToken? {
+            panelLifecycle.readToken
         }
     }
 
@@ -395,7 +333,7 @@ public final class TerminalInteractiveLineReader: Sendable {
         // the panel cannot, and sharing the reducer here is what keeps a single
         // definition of motion, word edits and history for both paths.
         var editor = TerminalPromptEditor()
-        let initialTerminalColumns = TerminalChat.terminalColumnCount(forceRefresh: true)
+        let initialTerminalColumns = TerminalTextMetrics.terminalColumnCount(forceRefresh: true)
         let initialLayout = Self.renderLayout(
             prompt: prompt,
             buffer: editor.buffer,
@@ -416,7 +354,7 @@ public final class TerminalInteractiveLineReader: Sendable {
             // after navigating within a multi-line draft, the cursor is often
             // not on its final row and clearing must start at the first row.
             func redrawBuffer() {
-                let terminalColumns = TerminalChat.terminalColumnCount(forceRefresh: true)
+                let terminalColumns = TerminalTextMetrics.terminalColumnCount(forceRefresh: true)
                 AgentOutput.standardError.writeString(
                     Self.redrawSequence(
                         prompt: prompt,

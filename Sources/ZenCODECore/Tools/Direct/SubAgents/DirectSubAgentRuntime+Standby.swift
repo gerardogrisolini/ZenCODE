@@ -136,18 +136,20 @@ extension DirectSubAgentRuntime {
         )
         // Re-read after the capacity await: the record may have been closed
         // while the oldest residents were released.
-        guard var agent = agents[agentID],
-              agent.taskID != nil,
-              agent.status != .closed else {
+        guard mutateAgent(
+            agentID,
+            where: { $0.taskID != nil && $0.status != .closed },
+            { agent -> Void in
+                agent.status = agent.pendingPrompts.isEmpty ? .standby : .queued
+                agent.standbyGraphID = graphID
+                agent.standbySince = .now
+                agent.updatedAt = .now
+                // `latestError` is deliberately preserved: standby is not a success
+                // signal and must not mask an error reported by the completed attempt.
+            }
+        ) != nil else {
             return
         }
-        agent.status = agent.pendingPrompts.isEmpty ? .standby : .queued
-        agent.standbyGraphID = graphID
-        agent.standbySince = .now
-        agent.updatedAt = .now
-        // `latestError` is deliberately preserved: standby is not a success
-        // signal and must not mask an error reported by the completed attempt.
-        agents[agentID] = agent
         ensureStandbyReaper()
     }
 
@@ -265,14 +267,18 @@ extension DirectSubAgentRuntime {
             }
             .sorted { $0.id < $1.id }
         for record in toRelease {
-            guard var current = agents[record.id],
-                  isStandbyResident(current) else {
+            guard let current = mutateAgent(
+                record.id,
+                where: { isStandbyResident($0) },
+                { current in
+                    current.pendingRelease = true
+                    current.pendingReleaseReason = reason
+                    current.updatedAt = .now
+                    return current
+                }
+            ) else {
                 continue
             }
-            current.pendingRelease = true
-            current.pendingReleaseReason = reason
-            current.updatedAt = .now
-            agents[record.id] = current
             guard current.status != .running else {
                 // A response is in flight; close it at turn end.
                 continue
@@ -333,23 +339,26 @@ extension DirectSubAgentRuntime {
         reason: String,
         cancellingWorkLoop: Bool = true
     ) async {
-        guard var agent = agents[id],
-              isStandbyResident(agent) else {
+        guard let closing = mutateAgent(
+            id,
+            where: { isStandbyResident($0) },
+            { agent in
+                let runTask = cancellingWorkLoop ? agent.revokeWorkLoop() : nil
+                agent.pendingPrompts.removeAll()
+                agent.pendingOperatorReplyFlags.removeAll()
+                agent.pendingRelease = false
+                agent.pendingReleaseReason = nil
+                agent.status = .closed
+                agent.latestError = reason
+                agent.prepareForTerminalRetention()
+                agent.updatedAt = .now
+                return (agent: agent, runTask: runTask)
+            }
+        ) else {
             return
         }
-        let runTask = cancellingWorkLoop ? agent.runTask : nil
-        if cancellingWorkLoop {
-            agent.runTask = nil
-        }
-        agent.pendingPrompts.removeAll()
-        agent.pendingOperatorReplyFlags.removeAll()
-        agent.pendingRelease = false
-        agent.pendingReleaseReason = nil
-        agent.status = .closed
-        agent.latestError = reason
-        agent.prepareForTerminalRetention()
-        agent.updatedAt = .now
-        agents[id] = agent
+        let agent = closing.agent
+        let runTask = closing.runTask
 
         runTask?.cancel()
         if let taskOrchestrator {
@@ -526,12 +535,14 @@ extension DirectSubAgentRuntime {
     /// in flight while the graph completed, or that spent the last turn of the
     /// budget, is closed instead of returning to `.standby`.
     func recordStandbyTurnCompletion(agentID: String) async {
-        guard var agent = agents[agentID] else { return }
-        agent.standbyTurns += 1
-        agent.standbySince = .now
-        agent.status = agent.pendingPrompts.isEmpty ? .standby : .queued
-        agent.updatedAt = .now
-        agents[agentID] = agent
+        guard mutateAgent(agentID, { agent -> Void in
+            agent.standbyTurns += 1
+            agent.standbySince = .now
+            agent.status = agent.pendingPrompts.isEmpty ? .standby : .queued
+            agent.updatedAt = .now
+        }) != nil else {
+            return
+        }
         await releaseStandbyAgentIfNoLongerEligible(
             agentID: agentID,
             cancellingWorkLoop: false

@@ -15,7 +15,83 @@ import Glibc
 #endif
 
 extension SwiftFeatureRuntime {
+    /// Promotion runs as a fixed sequence of phases. Staging and transaction
+    /// directories are removed, and the publication lock is released, when
+    /// this function returns: the lock stays held from publication through
+    /// the Git status read and the report.
     func promoteFeature(arguments: [String: Any]) async throws -> SwiftFeaturePromotionReport {
+        let source = try resolvePromotionSource(arguments: arguments)
+        let target = try await resolvePromotionCheckout(source: source, arguments: arguments)
+        try validatePromotionSource(source)
+
+        let stagingURL = target.featuresRoot.deletingLastPathComponent()
+            .appendingPathComponent(".zencode-feature-promotion-\(UUID().uuidString)", isDirectory: true)
+        let transactionURL = target.rootURL
+            .appendingPathComponent(".zencode-feature-promotion-transaction-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? fileManager.removeItem(at: stagingURL)
+            try? fileManager.removeItem(at: transactionURL)
+        }
+        let staged = try stagePromotionPackage(
+            source: source,
+            target: target,
+            stagingURL: stagingURL,
+            arguments: arguments
+        )
+        let preflight = try await preflightStagedPackage(staged, source: source, arguments: arguments)
+        try finalizeStagedPackage(staged, source: source, target: target)
+
+        let promotionLockDescriptor = try acquirePromotionPublicationLock(gitCommonDirectoryURL: target.git.commonDirectory)
+        defer { releasePromotionPublicationLock(promotionLockDescriptor) }
+
+        let catalogUpdates = try await publishPromotion(staged, target: target, transactionURL: transactionURL)
+        return await promotionReport(
+            source: source,
+            target: target,
+            catalogUpdates: catalogUpdates,
+            preflight: preflight
+        )
+    }
+
+    // MARK: - Promotion phases
+
+    /// The registered generated feature being promoted.
+    private struct PromotionSource {
+        let id: String
+        let url: URL
+        let manifestURL: URL
+        let resolvedData: Data?
+        let manifest: SwiftFeatureManifest
+    }
+
+    /// The Git checkout and the destination the feature is published to.
+    private struct PromotionTarget {
+        let checkoutURL: URL
+        let git: PromotionGitCheckout
+        let branch: String
+        let rootURL: URL
+        let featuresRoot: URL
+        let destinationURL: URL
+        let overwrite: Bool
+        let destinationExists: Bool
+    }
+
+    /// The package copied into staging, before preflight.
+    private struct PromotionStagedPackage {
+        let stagingURL: URL
+        let packageURL: URL
+        let stagedManifestURL: URL
+        let metadata: PromotionCatalogMetadata
+    }
+
+    /// Staged validation and the optional build and `--list-tools` results.
+    private struct PromotionPreflight {
+        let validation: SwiftFeatureValidationReport
+        let buildReport: SwiftFeatureBuildReport?
+        let listedTools: [String]
+    }
+
+    private func resolvePromotionSource(arguments: [String: Any]) throws -> PromotionSource {
         guard explicitFeatures == nil else {
             throw DirectToolError.permissionDenied(
                 "Feature promotion is unavailable for an explicitly constructed runtime."
@@ -66,7 +142,19 @@ extension SwiftFeatureRuntime {
             )
         }
         try Self.assertPromotionManifestPathsAreConfined(sourceManifest, featureDirectoryURL: sourceURL)
+        return PromotionSource(
+            id: id,
+            url: sourceURL,
+            manifestURL: sourceManifestURL,
+            resolvedData: sourceResolvedData,
+            manifest: sourceManifest
+        )
+    }
 
+    private func resolvePromotionCheckout(
+        source: PromotionSource,
+        arguments: [String: Any]
+    ) async throws -> PromotionTarget {
         let checkoutArgument = arguments.string(
             "checkoutPath", "checkout_path", "repositoryPath", "repository_path",
             "repository", "zenPackagePath", "zen_package_path", "dependencyPath",
@@ -101,7 +189,7 @@ extension SwiftFeatureRuntime {
             .appendingPathComponent("Features", isDirectory: true)
             .standardizedFileURL
         let destinationURL = try promotionDestinationURL(
-            id: id,
+            id: source.id,
             rootURL: rootURL,
             featuresRoot: featuresRoot,
             arguments: arguments
@@ -113,28 +201,39 @@ extension SwiftFeatureRuntime {
                 "Feature destination already exists at \(destinationURL.path). Pass overwrite=true to replace it."
             )
         }
-        guard sourceURL.standardizedFileURL.path != destinationURL.path else {
+        guard source.url.standardizedFileURL.path != destinationURL.path else {
             throw DirectToolError.permissionDenied("Promotion source and destination are the same directory.")
         }
+        return PromotionTarget(
+            checkoutURL: checkoutURL,
+            git: git,
+            branch: branch,
+            rootURL: rootURL,
+            featuresRoot: featuresRoot,
+            destinationURL: destinationURL,
+            overwrite: overwrite,
+            destinationExists: destinationExists
+        )
+    }
 
-        let sourceValidation = try validateFeature(arguments: ["manifestPath": sourceManifestURL.path])
+    private func validatePromotionSource(_ source: PromotionSource) throws {
+        let sourceValidation = try validateFeature(arguments: ["manifestPath": source.manifestURL.path])
         let blockingSourceErrors = Self.blockingValidationErrors(sourceValidation)
         guard blockingSourceErrors.isEmpty else {
             throw DirectToolError.permissionDenied(
                 "Feature validation failed before promotion:\n" + blockingSourceErrors.joined(separator: "\n")
             )
         }
+    }
 
-        let stagingURL = featuresRoot.deletingLastPathComponent()
-            .appendingPathComponent(".zencode-feature-promotion-\(UUID().uuidString)", isDirectory: true)
-        let transactionURL = rootURL
-            .appendingPathComponent(".zencode-feature-promotion-transaction-\(UUID().uuidString)", isDirectory: true)
-        defer {
-            try? fileManager.removeItem(at: stagingURL)
-            try? fileManager.removeItem(at: transactionURL)
-        }
+    private func stagePromotionPackage(
+        source: PromotionSource,
+        target: PromotionTarget,
+        stagingURL: URL,
+        arguments: [String: Any]
+    ) throws -> PromotionStagedPackage {
         try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
-        try copyPromotionDirectoryContents(from: sourceURL, to: stagingURL)
+        try copyPromotionDirectoryContents(from: source.url, to: stagingURL)
         try removePromotionArtifacts(from: stagingURL, removeBuilderManifest: true)
 
         let packageURL = stagingURL.appendingPathComponent("Package.swift")
@@ -147,31 +246,31 @@ extension SwiftFeatureRuntime {
         // path, then rewrite to the relocatable final path after preflight.
         let rewritten = try Self.promotionPackageManifestRewritingZenPackagePath(
             packageContents,
-            zenPackagePath: rootURL.path,
+            zenPackagePath: target.rootURL.path,
             packageURL: packageURL
         )
         let normalizedPackage = try Self.normalizedPromotionPackageManifest(rewritten, packageURL: packageURL)
         try normalizedPackage.write(to: packageURL, atomically: true, encoding: .utf8)
 
         let productName = PromotionCatalogMetadata.productName(
-            manifest: sourceManifest,
+            manifest: source.manifest,
             packageContents: normalizedPackage,
-            fallback: id
+            fallback: source.id
         )
         guard Self.packageManifestDeclaresProduct(normalizedPackage, productName: productName) else {
             throw DirectToolError.permissionDenied(
                 "Package.swift does not declare the manifest product '\(productName)'."
             )
         }
-        let sourceRelativePath = Self.relativePath(from: rootURL, to: destinationURL)
+        let sourceRelativePath = Self.relativePath(from: target.rootURL, to: target.destinationURL)
         guard let linux = Self.platformLinuxArgument(arguments) else {
             throw DirectToolError.invalidInput(
                 "Feature promotion requires an explicit Linux decision (linux=true or linux=false)."
             )
         }
         let metadata = try PromotionCatalogMetadata(
-            id: id,
-            manifest: sourceManifest,
+            id: source.id,
+            manifest: source.manifest,
             packageContents: normalizedPackage,
             sourceRelativePath: sourceRelativePath,
             isInstalledOnLinux: linux,
@@ -181,7 +280,7 @@ extension SwiftFeatureRuntime {
             SwiftFeatureRegistry.distributionManifestFilename
         )
         let distributionData = try Self.promotionDistributionManifestData(
-            sourceManifest: sourceManifest,
+            sourceManifest: source.manifest,
             productName: productName,
             sourceRelativePath: sourceRelativePath,
             isInstalledOnLinux: linux,
@@ -192,7 +291,20 @@ extension SwiftFeatureRuntime {
 
         let stagedManifestURL = stagingURL.appendingPathComponent(SwiftFeatureRegistry.manifestFilename)
         try distributionData.write(to: stagedManifestURL, options: [.atomic])
-        var validation = try validateFeature(arguments: ["manifestPath": stagedManifestURL.path])
+        return PromotionStagedPackage(
+            stagingURL: stagingURL,
+            packageURL: packageURL,
+            stagedManifestURL: stagedManifestURL,
+            metadata: metadata
+        )
+    }
+
+    private func preflightStagedPackage(
+        _ staged: PromotionStagedPackage,
+        source: PromotionSource,
+        arguments: [String: Any]
+    ) async throws -> PromotionPreflight {
+        var validation = try validateFeature(arguments: ["manifestPath": staged.stagedManifestURL.path])
         let blockingStagedErrors = Self.blockingValidationErrors(validation)
         guard blockingStagedErrors.isEmpty else {
             throw DirectToolError.permissionDenied(
@@ -204,7 +316,7 @@ extension SwiftFeatureRuntime {
         var buildReport: SwiftFeatureBuildReport?
         var listedTools: [String] = []
         if shouldBuild {
-            var buildArguments: [String: Any] = ["manifestPath": stagedManifestURL.path]
+            var buildArguments: [String: Any] = ["manifestPath": staged.stagedManifestURL.path]
             if let timeout = arguments.int("timeoutSeconds", "timeout") {
                 buildArguments["timeoutSeconds"] = timeout
             }
@@ -215,43 +327,64 @@ extension SwiftFeatureRuntime {
                 )
             }
             let executable = SwiftFeatureRegistry.resolvedExecutableURL(
-                sourceManifest.executable,
-                relativeTo: stagingURL
+                source.manifest.executable,
+                relativeTo: staged.stagingURL
             )
             listedTools = try await promotionListTools(
                 executableURL: executable,
-                workingDirectory: stagingURL
+                workingDirectory: staged.stagingURL
             )
-            validation = try validateFeature(arguments: ["manifestPath": stagedManifestURL.path])
+            validation = try validateFeature(arguments: ["manifestPath": staged.stagedManifestURL.path])
         }
-        try removePromotionArtifacts(from: stagingURL, removeBuilderManifest: true)
-        let stagedResolvedURL = stagingURL.appendingPathComponent("Package.resolved")
-        if !fileManager.fileExists(atPath: stagedResolvedURL.path), let sourceResolvedData {
+        return PromotionPreflight(validation: validation, buildReport: buildReport, listedTools: listedTools)
+    }
+
+    /// Drops build artefacts, restores the source `Package.resolved` when the
+    /// staged one is missing, and rewrites the ZenCODE dependency to the
+    /// relocatable path it has once published.
+    private func finalizeStagedPackage(
+        _ staged: PromotionStagedPackage,
+        source: PromotionSource,
+        target: PromotionTarget
+    ) throws {
+        try removePromotionArtifacts(from: staged.stagingURL, removeBuilderManifest: true)
+        let stagedResolvedURL = staged.stagingURL.appendingPathComponent("Package.resolved")
+        if !fileManager.fileExists(atPath: stagedResolvedURL.path), let sourceResolvedData = source.resolvedData {
             try sourceResolvedData.write(to: stagedResolvedURL, options: .atomic)
         }
 
-        let finalPackageContents = try String(contentsOf: packageURL, encoding: .utf8)
-        let finalRelativeRoot = Self.relativePath(from: destinationURL, to: rootURL)
+        let finalPackageContents = try String(contentsOf: staged.packageURL, encoding: .utf8)
+        let finalRelativeRoot = Self.relativePath(from: target.destinationURL, to: target.rootURL)
         let finalPackage = try Self.promotionPackageManifestRewritingZenPackagePath(
             finalPackageContents,
             zenPackagePath: finalRelativeRoot,
-            packageURL: packageURL
+            packageURL: staged.packageURL
         )
-        try finalPackage.write(to: packageURL, atomically: true, encoding: .utf8)
+        try finalPackage.write(to: staged.packageURL, atomically: true, encoding: .utf8)
+    }
 
-        let promotionLockDescriptor = try acquirePromotionPublicationLock(gitCommonDirectoryURL: git.commonDirectory)
-        defer { releasePromotionPublicationLock(promotionLockDescriptor) }
-
+    /// Publishes the staged package and the catalogs; the caller holds the
+    /// publication lock. A failure while moving the package or writing the
+    /// catalogs rolls the destination and every catalog back, and is thrown
+    /// as `persistenceFailed` wrapping the original error (or the rollback
+    /// error, when the rollback itself is incomplete). Earlier failures
+    /// (catalog preparation, the Git safety check, the backups) are thrown
+    /// unchanged, before anything is published.
+    private func publishPromotion(
+        _ staged: PromotionStagedPackage,
+        target: PromotionTarget,
+        transactionURL: URL
+    ) async throws -> [PromotionCatalogUpdate] {
         let catalogUpdates = try preparePromotionCatalogUpdates(
-            metadata: metadata,
-            rootURL: rootURL,
-            overwrite: overwrite
+            metadata: staged.metadata,
+            rootURL: target.rootURL,
+            overwrite: target.overwrite
         )
         try await assertPromotionControlledPathsAreSafe(
-            gitRoot: rootURL,
-            paths: [destinationURL] + catalogUpdates.map(\.url),
-            destinationExisted: destinationExists,
-            overwrite: overwrite
+            gitRoot: target.rootURL,
+            paths: [target.destinationURL] + catalogUpdates.map(\.url),
+            destinationExisted: target.destinationExists,
+            overwrite: target.overwrite
         )
 
         try fileManager.createDirectory(at: transactionURL, withIntermediateDirectories: true)
@@ -263,11 +396,14 @@ extension SwiftFeatureRuntime {
         }
         var published = false
         do {
-            if destinationExists {
-                try fileManager.moveItem(at: destinationURL, to: destinationBackupURL)
+            if target.destinationExists {
+                try fileManager.moveItem(at: target.destinationURL, to: destinationBackupURL)
             }
-            try fileManager.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fileManager.moveItem(at: stagingURL, to: destinationURL)
+            try fileManager.createDirectory(
+                at: target.destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try fileManager.moveItem(at: staged.stagingURL, to: target.destinationURL)
             published = true
             for update in catalogUpdates {
                 try fileManager.createDirectory(at: update.url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -278,8 +414,8 @@ extension SwiftFeatureRuntime {
             do {
                 try Self.rollbackPromotionPublication(
                     fileManager: fileManager,
-                    destinationURL: destinationURL,
-                    destinationExisted: destinationExists,
+                    destinationURL: target.destinationURL,
+                    destinationExisted: target.destinationExists,
                     destinationBackupURL: destinationBackupURL,
                     published: published,
                     catalogBackups: catalogBackups
@@ -293,34 +429,42 @@ extension SwiftFeatureRuntime {
                 "Feature promotion failed; package and catalogs were rolled back: \(publicationError.localizedDescription)"
             )
         }
+        return catalogUpdates
+    }
 
+    private func promotionReport(
+        source: PromotionSource,
+        target: PromotionTarget,
+        catalogUpdates: [PromotionCatalogUpdate],
+        preflight: PromotionPreflight
+    ) async -> SwiftFeaturePromotionReport {
         let changedPaths = await promotionGitChangedPaths(
-            rootURL: rootURL,
-            paths: [destinationURL] + catalogUpdates.map(\.url)
+            rootURL: target.rootURL,
+            paths: [target.destinationURL] + catalogUpdates.map(\.url)
         )
         var warnings: [String] = []
-        if sourceManifest.generated?.promotionReady != true {
+        if source.manifest.generated?.promotionReady != true {
             warnings.append("This package predates promotion-ready scaffolds; its origin was preserved in feature-distribution.json.")
         }
-        if branch == "main" {
+        if target.branch == "main" {
             warnings.append("Promotion was prepared on main; review the changes and create a feature branch before committing.")
         }
         return SwiftFeaturePromotionReport(
-            id: id,
-            sourcePath: sourceURL.path,
-            checkoutPath: checkoutURL.path,
-            gitRoot: rootURL.path,
-            gitBranch: branch,
-            destinationPath: destinationURL.path,
-            manifestPath: destinationURL.appendingPathComponent(SwiftFeatureRegistry.distributionManifestFilename).path,
-            packagePath: destinationURL.appendingPathComponent("Package.swift").path,
+            id: source.id,
+            sourcePath: source.url.path,
+            checkoutPath: target.checkoutURL.path,
+            gitRoot: target.rootURL.path,
+            gitBranch: target.branch,
+            destinationPath: target.destinationURL.path,
+            manifestPath: target.destinationURL.appendingPathComponent(SwiftFeatureRegistry.distributionManifestFilename).path,
+            packagePath: target.destinationURL.appendingPathComponent("Package.swift").path,
             catalogPaths: catalogUpdates.map(\.url.path),
             changedPaths: changedPaths,
-            overwritten: destinationExists,
-            built: buildReport?.ok == true,
-            listedTools: listedTools,
-            validation: validation,
-            build: buildReport,
+            overwritten: target.destinationExists,
+            built: preflight.buildReport?.ok == true,
+            listedTools: preflight.listedTools,
+            validation: preflight.validation,
+            build: preflight.buildReport,
             warnings: warnings
         )
     }
