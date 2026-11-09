@@ -130,10 +130,12 @@ extension DirectSubAgentRuntime {
                         && $0.rootSessionID == rootSessionID
                 }
                 for record in supersededResidents {
-                    agents[record.id]?.supersededByAttemptID = receipt.attemptID
-                    agents[record.id]?.pendingRelease = true
-                    agents[record.id]?.pendingReleaseReason = Self.standbySupersededReason
-                    agents[record.id]?.updatedAt = .now
+                    mutateAgent(record.id) { agent in
+                        agent.supersededByAttemptID = receipt.attemptID
+                        agent.pendingRelease = true
+                        agent.pendingReleaseReason = Self.standbySupersededReason
+                        agent.updatedAt = .now
+                    }
                     guard record.status == .standby else { continue }
                     await closeStandbyAgent(
                         id: record.id,
@@ -249,7 +251,7 @@ extension DirectSubAgentRuntime {
                     )
                 }
 
-                agents[id] = Self.makeAgentRecord(
+                let record = Self.makeAgentRecord(
                     for: item,
                     sessionID: sessionID,
                     rootSessionID: rootSessionID,
@@ -259,12 +261,13 @@ extension DirectSubAgentRuntime {
                     backend: backend,
                     modelID: backendContext.modelID
                 )
+                mutateAgents { $0[id] = record }
                 // From this point every following operation can throw. Record
                 // the id first so the batch rollback also removes this record,
                 // its backend/session scope and its reservation if shared-chat
                 // registration rejects it at the participant limit.
                 createdIDs.append(id)
-                try await registerSharedChatAgent(agents[id]!)
+                try await registerSharedChatAgent(record)
 
                 if let prompt = payload.prompt {
                     try queuePrompt(prompt, for: id)
@@ -278,7 +281,7 @@ extension DirectSubAgentRuntime {
                         roomID: agent.rootSessionID
                     )
                 }
-                agents.removeValue(forKey: id)
+                mutateAgents { $0.removeValue(forKey: id) }
             }
             for (id, backend) in createdBackends {
                 if let sessionID = prepared.first(where: { $0.id == id }).map({ "\($0.id)_session" }),

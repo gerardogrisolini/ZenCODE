@@ -30,29 +30,12 @@ extension ZenCODEAgentProfileSetupRunner {
 
     /// Interactive bulk setup for assigning one or more explicitly authorized
     /// model bindings to each agent. Capability and thinking belong to each
-    /// binding, not to the profile as a whole.
-    @available(*, deprecated, message: "Pass the setup session's currentManifest")
-    public static func configureAgentModels() throws {
-        try configureAgentModels(
-            currentManifest: AgentSettingsManifestStore.loadRequired()
-        )
-    }
-
-    public static func configureAgentModels(
-        currentManifest: AgentSettingsManifest
-    ) throws {
-        _ = try configureAgentModels(
-            currentManifest: currentManifest,
-            currentAgents: nil,
-            persist: true
-        )
-    }
-
+    /// binding, not to the profile as a whole. The result is staged: setup
+    /// writes `agents.json` only when it finishes.
     @discardableResult
     static func configureAgentModels(
         currentManifest: AgentSettingsManifest,
-        currentAgents: [AgentProfile]?,
-        persist: Bool
+        currentAgents: [AgentProfile]?
     ) throws -> [AgentProfile]? {
         guard TerminalRawInput.supportsInteractiveInput() else {
             throw ZenCODEAgentProfileSetupError.nonInteractiveTerminal
@@ -122,13 +105,8 @@ extension ZenCODEAgentProfileSetupRunner {
                 return nil
             case 0?:
                 let normalized = AgentProfileStore.normalizedAgentsForSave(agents)
-                if persist {
-                    try AgentProfileStore.save(normalized)
-                }
                 AgentOutput.standardError.writeString(
-                    persist
-                        ? "\nUpdated: agents.json (\(normalized.count) agents)\n\n"
-                        : "\nStaged: agents.json (\(normalized.count) agents)\n\n"
+                    "\nStaged: agents.json (\(normalized.count) agents)\n\n"
                 )
                 return normalized
             case Self.applyBindingPresetsChoice?:

@@ -36,7 +36,7 @@ extension AgentConfigurationTests {
                 available: false
             )
         ]
-        let toolSelectionItems = TerminalChat.toolSelectionItems(
+        let toolSelectionItems = ChatSessionController.toolSelectionItems(
             featureStatuses: unavailableOptionalFeatureStatuses
         )
         let developerProfile = try #require(profiles["Developer"])
@@ -364,7 +364,7 @@ extension AgentConfigurationTests {
 
     @Test
     func featureBuilderIsIntrinsicToBuilderAgentAndNotSelectable() throws {
-        let items = TerminalChat.toolSelectionItems(
+        let items = ChatSessionController.toolSelectionItems(
             featureStatuses: [
                 featureStatus(
                     id: "web-tools",
@@ -380,7 +380,7 @@ extension AgentConfigurationTests {
         )
 
         do {
-            _ = try TerminalChat.parseToolSelection("feature-builder", items: items)
+            _ = try TerminalToolSelectionCatalog.parseSelection("feature-builder", items: items)
             Issue.record("Expected feature-builder to be unavailable in /tools.")
         } catch TerminalToolSelectionError.unknownToken(let token) {
             #expect(token == "feature-builder")

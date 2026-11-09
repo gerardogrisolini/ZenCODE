@@ -24,12 +24,6 @@ public actor LocalExecPermissionAuthorizer {
         case deny
     }
 
-    /// Detailed result used when another consent surface (for example Telegram)
-    /// is presented at the same time. The public Boolean API intentionally keeps
-    /// its existing fail-closed contract, while the coordinator must distinguish
-    /// an explicit rejection from a terminal that is unavailable or cancelled.
-    typealias AuthorizationOutcome = ChatToolConsentAuthorizer.AuthorizationOutcome
-
     /// Tool names this authorizer gates: shell commands plus the destructive
     /// direct tools. Everything else is pre-approved by tool selection.
     public static let gatedToolNames: Set<String> = ChatToolConsentAuthorizer.gatedToolNames
@@ -53,15 +47,6 @@ public actor LocalExecPermissionAuthorizer {
         terminalHost.setConsentReader(reader)
     }
 
-    /// Returns `true` when this request needs no dialog: either the tool is not
-    /// gated, or a previous decision already covers it.
-    ///
-    /// A channel that presents the session elsewhere (Telegram) uses this to
-    /// avoid announcing a consent step that will never be presented.
-    public func isAlreadyAuthorized(_ request: AgentToolAuthorizationRequest) async -> Bool {
-        await consentAuthorizer.isAlreadyAuthorized(request)
-    }
-
     public func authorize(_ request: AgentToolAuthorizationRequest) async -> Bool {
         await consentAuthorizer.authorize(request)
     }
@@ -79,30 +64,13 @@ public actor LocalExecPermissionAuthorizer {
         await consentAuthorizer.nonInteractiveOutcome(for: request).isApproved
     }
 
-    func authorizationOutcome(
-        for request: AgentToolAuthorizationRequest
-    ) async -> AuthorizationOutcome {
-        await consentAuthorizer.authorizationOutcome(for: request)
-    }
-
-    static func commandPermissionIdentities(for command: String) -> [String] {
-        LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
-    }
-
-    static func commandPermissionIdentity(for command: String) -> String? {
-        // Use the shared parser's structured candidates: the identity is the
-        // first authorizable executable. Harmless built-ins/keywords, comments,
-        // and decorative echo/printf are filtered so that e.g. `pwd && rm -rf tmp`
-        // yields `rm` rather than the inert `pwd`.
-        commandPermissionIdentities(for: command).first
-    }
-
+    /// The executable identities of `command` that a local-exec permission
+    /// covers, in persisted form: every authorizable executable, in order.
+    /// The shared parser's structured candidates filter harmless built-ins and
+    /// keywords, comments, and decorative echo/printf, so that e.g.
+    /// `pwd && rm -rf tmp` yields `rm` rather than the inert `pwd`.
     static func persistedCommandPermissionIdentities(for command: String) -> [String] {
-        commandPermissionIdentities(for: command)
-    }
-
-    static func persistedCommandPermissionIdentity(for command: String) -> String? {
-        persistedCommandPermissionIdentities(for: command).first
+        LocalExecCommandParser.authorizationCandidates(in: command).map(\.identity)
     }
 
     static func isCommandPersistentlyAllowed(

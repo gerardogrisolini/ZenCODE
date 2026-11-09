@@ -86,7 +86,7 @@ struct ToolPresentationDefinitionTests {
     }
 
     @Test
-    func presentationDoesNotChangePromptDescriptionsOrCanonicalOrdering() {
+    func presentationDoesNotChangeCanonicalOrdering() {
         let sentinel = "PRESENTATION_ONLY_SENTINEL"
         let presented = ToolDescriptor(
             name: "alpha",
@@ -104,9 +104,6 @@ struct ToolPresentationDefinitionTests {
             inputSchema: "{}"
         )
 
-        #expect(!presented.promptDescription().contains(sentinel))
-        #expect(!presented.compactPromptDescription().contains(sentinel))
-        #expect(!presented.toolCallDescription().contains(sentinel))
         #expect(ToolDescriptor.canonicalized([unpresented, presented]).map(\.name) == ["alpha", "beta"])
     }
 }

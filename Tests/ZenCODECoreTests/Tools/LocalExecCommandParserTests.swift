@@ -187,6 +187,24 @@ struct LocalExecCommandParserTests {
         ("swift build 2>&1", ["swift"]),
         ("grep foo | sort | grep bar", ["grep", "sort"]),
         ("bash -lc 'echo separator; git status'", ["git"]),
+        // Shell `-c`: only a short option group carries `c`; long options such
+        // as `--norc` or `--restricted` are skipped, never taken for `-c`.
+        ("bash --norc -c 'rm -rf x'", ["rm"]),
+        ("sh --restricted -c 'rm x'", ["rm"]),
+        ("bash -lc 'git status'", ["git"]),
+        ("bash -ec 'rm x'", ["rm"]),
+        ("bash -xc 'rm x'", ["rm"]),
+        ("bash -cl 'rm x'", ["rm"]),
+        // A long option before a script is not `-c`: the shell itself runs.
+        ("bash --norc script.sh", ["bash"]),
+        // Option arguments (`--rcfile FILE`) are not modeled: the argument
+        // ends the `-c` search and the segment conservatively falls back to
+        // the shell, which requires its own authorization (like `-o OPTION`).
+        ("bash --rcfile f -c 'rm x'", ["bash"]),
+        // Wrapper operands (`env -u NAME`) are not modeled by the `-c` search
+        // either: the same conservative fallback to the shell, until it is
+        // aligned with `wrapperOptionInfo(wrapper:option:)`.
+        ("env -u X bash -c 'rm x'", ["bash"]),
         (#"echo "$(git rev-parse HEAD)""#, ["git"]),
         (
             """
@@ -277,6 +295,10 @@ struct LocalExecCommandParserTests {
         ("env -u NAME swift build", "swift", "swift build"),
         ("swift build 2>&1", "swift", "swift build 2>&1"),
         ("bash -lc 'echo separator; git status'", "git", "git status"),
+        ("bash --norc -c 'rm -rf x'", "rm", "rm -rf x"),
+        // The conservative shell fallback still shows the inner command.
+        ("bash --rcfile f -c 'rm x'", "bash", "bash --rcfile f -c rm x"),
+        ("env -u X bash -c 'rm x'", "bash", "bash -c rm x"),
         (#"echo "$(git rev-parse HEAD)""#, "git", "git rev-parse HEAD"),
         (
             """
@@ -298,6 +320,30 @@ struct LocalExecCommandParserTests {
     ) {
         let candidates = LocalExecCommandParser.authorizationCandidates(in: command)
         #expect(candidates.first { $0.identity == identity }?.invocation == invocation)
+    }
+
+    // MARK: - Shell -c payload
+
+    static let shellDashCPayloadCases: [(String, String?)] = [
+        ("bash -c 'rm -rf x'", "rm -rf x"),
+        // Short option groups carrying `c`.
+        ("bash -lc 'git status'", "git status"),
+        ("bash -ec 'rm x'", "rm x"),
+        ("bash -cl 'rm x'", "rm x"),
+        // Long options are skipped and never taken for `-c`.
+        ("bash --norc -c 'rm -rf x'", "rm -rf x"),
+        ("sh --restricted -c 'rm x'", "rm x"),
+        ("bash --posix --norc -lc 'git status'", "git status"),
+        ("bash --norc script.sh", nil),
+        ("bash --norc", nil),
+        // Option arguments and wrapper operands end the search (conservative).
+        ("bash --rcfile f -c 'rm x'", nil),
+        ("env -u X bash -c 'rm x'", nil),
+    ]
+
+    @Test(arguments: LocalExecCommandParserTests.shellDashCPayloadCases)
+    func shellDashCPayloadRecognizesOnlyShortCOptions(command: String, payload: String?) {
+        #expect(LocalExecCommandParser.shellDashCPayload(for: command) == payload)
     }
 
     /// Nested and process substitutions, heredoc bodies, and loop/case

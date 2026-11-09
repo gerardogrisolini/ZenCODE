@@ -262,11 +262,6 @@ public final class ZenWindowSession: Identifiable {
         runtime?.shell.savedSessions[workspace.standardizedFileURL] ?? []
     }
 
-    /// The prompts submitted in this window, oldest first.
-    public var promptHistory: [String] {
-        history.entries
-    }
-
     /// The tabs of the window: ``ZenWindowTab/chat``, then the open sub-agent
     /// tabs, in the order they were opened.
     public var tabs: [ZenWindowTab] {

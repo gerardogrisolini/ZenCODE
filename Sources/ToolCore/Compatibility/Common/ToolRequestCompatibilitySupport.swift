@@ -65,19 +65,6 @@ public nonisolated func assignBool(
     normalized[destinationKey] = .bool(value)
 }
 
-public nonisolated func assignJSON(
-    _ sourceKeys: [String],
-    from arguments: [String: JSONValue],
-    to destinationKey: String,
-    in normalized: inout [String: JSONValue]
-) {
-    guard let value = firstJSONValue(sourceKeys, in: arguments) else {
-        return
-    }
-
-    normalized[destinationKey] = value
-}
-
 nonisolated func firstStringValue(_ keys: [String], in arguments: [String: JSONValue]) -> String? {
     for key in keys {
         guard let value = arguments[key] else {

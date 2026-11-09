@@ -212,29 +212,81 @@ extension SwiftFeatureRuntime {
             return false
         }
 
-        return try normalizedOptionalFeaturePackageFiles(at: sourceDirectoryURL)
-            != normalizedOptionalFeaturePackageFiles(at: installedDirectoryURL)
+        return try optionalFeaturePackagesDiffer(
+            normalizedOptionalFeaturePackageEntries(at: sourceDirectoryURL),
+            normalizedOptionalFeaturePackageEntries(at: installedDirectoryURL)
+        )
     }
 
-    private func normalizedOptionalFeaturePackageFiles(
+    /// One comparable file of an optional feature package. `Package.swift` is
+    /// carried already normalized; every other file is read only when the
+    /// cheaper path and size checks could not tell the packages apart.
+    private struct OptionalFeaturePackageEntry {
+        let url: URL
+        let size: Int?
+        let normalizedContents: Data?
+
+        func contents() throws -> Data {
+            if let normalizedContents {
+                return normalizedContents
+            }
+            return try Data(contentsOf: url, options: [.mappedIfSafe])
+        }
+    }
+
+    /// Compares two normalized packages with early exit: the set of relative
+    /// paths first, then file sizes, then file contents one pair at a time.
+    private func optionalFeaturePackagesDiffer(
+        _ source: [String: OptionalFeaturePackageEntry],
+        _ installed: [String: OptionalFeaturePackageEntry]
+    ) throws -> Bool {
+        guard source.count == installed.count,
+              source.keys.allSatisfy({ installed[$0] != nil }) else {
+            return true
+        }
+        for (relativePath, sourceEntry) in source {
+            if let sourceSize = sourceEntry.size,
+               let installedSize = installed[relativePath]?.size,
+               sourceSize != installedSize {
+                return true
+            }
+        }
+        for relativePath in source.keys.sorted() {
+            guard let sourceEntry = source[relativePath],
+                  let installedEntry = installed[relativePath] else {
+                return true
+            }
+            if try sourceEntry.contents() != installedEntry.contents() {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func normalizedOptionalFeaturePackageEntries(
         at packageDirectoryURL: URL
-    ) throws -> [String: Data] {
-        var files: [String: Data] = [:]
-        try collectNormalizedOptionalFeaturePackageFiles(at: packageDirectoryURL, relativePath: "", into: &files)
-        return files
+    ) throws -> [String: OptionalFeaturePackageEntry] {
+        var entries: [String: OptionalFeaturePackageEntry] = [:]
+        try collectNormalizedOptionalFeaturePackageEntries(
+            at: packageDirectoryURL,
+            relativePath: "",
+            into: &entries
+        )
+        return entries
     }
 
-    private func collectNormalizedOptionalFeaturePackageFiles(
+    private func collectNormalizedOptionalFeaturePackageEntries(
         at directoryURL: URL,
         relativePath: String,
-        into files: inout [String: Data]
+        into files: inout [String: OptionalFeaturePackageEntry]
     ) throws {
         let entries = try fileManager.contentsOfDirectory(
             at: directoryURL,
             includingPropertiesForKeys: [
                 .isDirectoryKey,
                 .isRegularFileKey,
-                .isSymbolicLinkKey
+                .isSymbolicLinkKey,
+                .fileSizeKey
             ],
             options: [.skipsHiddenFiles]
         )
@@ -255,7 +307,8 @@ extension SwiftFeatureRuntime {
             let values = try entryURL.resourceValues(forKeys: [
                 .isDirectoryKey,
                 .isRegularFileKey,
-                .isSymbolicLinkKey
+                .isSymbolicLinkKey,
+                .fileSizeKey
             ])
             guard values.isSymbolicLink != true else {
                 throw DirectToolError.permissionDenied(
@@ -263,7 +316,7 @@ extension SwiftFeatureRuntime {
                 )
             }
             if values.isDirectory == true {
-                try collectNormalizedOptionalFeaturePackageFiles(
+                try collectNormalizedOptionalFeaturePackageEntries(
                     at: entryURL,
                     relativePath: entryRelativePath,
                     into: &files
@@ -271,14 +324,22 @@ extension SwiftFeatureRuntime {
             } else if values.isRegularFile == true {
                 if entryRelativePath == "Package.swift" {
                     let contents = try String(contentsOf: entryURL, encoding: .utf8)
-                    let normalized = try Self.packageManifestRewritingZenPackagePath(
+                    let normalized = Data(try Self.packageManifestRewritingZenPackagePath(
                         contents,
                         zenPackagePath: "/__zencode_package_root__",
                         packageURL: entryURL
+                    ).utf8)
+                    files[entryRelativePath] = OptionalFeaturePackageEntry(
+                        url: entryURL,
+                        size: normalized.count,
+                        normalizedContents: normalized
                     )
-                    files[entryRelativePath] = Data(normalized.utf8)
                 } else {
-                    files[entryRelativePath] = try Data(contentsOf: entryURL)
+                    files[entryRelativePath] = OptionalFeaturePackageEntry(
+                        url: entryURL,
+                        size: values.fileSize,
+                        normalizedContents: nil
+                    )
                 }
             } else {
                 throw DirectToolError.permissionDenied(

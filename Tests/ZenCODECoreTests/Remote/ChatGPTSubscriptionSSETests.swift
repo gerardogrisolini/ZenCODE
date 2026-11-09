@@ -106,10 +106,11 @@ extension RemoteSessionSnapshotTests {
         let maxTokens = 30_000
         let maxOutputTokens = 1_000
         let policyMaxTokens = try #require(
-            ChatGPTSubscriptionGenerationClient.compactionPolicyMaxTokens(
-                for: maxTokens,
-                maxOutputTokens: maxOutputTokens
-            )
+            SubscriptionCompactionSupport.compactionBudget(
+                contextWindowTokens: maxTokens,
+                maxOutputTokens: maxOutputTokens,
+                reserveTokenCount: ChatGPTSubscriptionGenerationClient.compactionReserveTokenCount
+            ).promptTokenBudget
         )
         let triggerTokens = AgentConversationCompactionPolicy.triggerTokenCount(
             for: policyMaxTokens

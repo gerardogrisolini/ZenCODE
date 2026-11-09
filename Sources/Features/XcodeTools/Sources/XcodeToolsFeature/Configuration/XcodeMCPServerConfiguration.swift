@@ -65,20 +65,6 @@ public nonisolated enum XcodeMCPServerConfiguration {
         return false
     }
 
-    public static func isBridgeConfiguration(_ configuration: MCPServerConfiguration) -> Bool {
-        guard !configuration.usesHTTPTransport else {
-            return false
-        }
-
-        let executableName = URL(fileURLWithPath: configuration.executablePath)
-            .lastPathComponent
-            .lowercased()
-        if executableName == "xcrun" {
-            return configuration.arguments.first?.lowercased() == "mcpbridge"
-        }
-        return executableName == "mcpbridge"
-    }
-
     static func authorizationError() -> MCPClientError {
         .authorizationRequired(service: "Xcode", message: authorizationMessage)
     }

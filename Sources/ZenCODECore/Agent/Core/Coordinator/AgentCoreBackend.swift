@@ -82,24 +82,6 @@ public actor AgentCoreBackend {
         self.ds4EngineRegistry = ds4EngineRegistry
     }
 
-    public static func makeRemoteBackend(
-        configuration: AgentRuntimeConfiguration,
-        mcpRuntime: DirectMCPToolRuntime,
-        fallbackProvider: AgentRemoteProvider? = nil,
-        fallbackAPIKey: String? = nil,
-        chatGPTConnectionScopeID: String? = nil,
-        swiftFeatureRuntime: SwiftFeatureRuntime? = nil
-    ) throws -> any AgentRuntimeBackend {
-        try AgentRemoteBackendFactory.makeRemoteBackend(
-            configuration: configuration,
-            mcpRuntime: mcpRuntime,
-            fallbackProvider: fallbackProvider,
-            fallbackAPIKey: fallbackAPIKey,
-            chatGPTConnectionScopeID: chatGPTConnectionScopeID,
-            swiftFeatureRuntime: swiftFeatureRuntime
-        )
-    }
-
     public func createSession(
         id: String,
         cwd: String,
@@ -539,7 +521,7 @@ public actor AgentCoreBackend {
         let selection = AgentSettingsStore.defaultSelection(
             explicitModelID: configuration.modelID
         )
-        let backend = try Self.makeRemoteBackend(
+        let backend = try AgentRemoteBackendFactory.makeRemoteBackend(
             configuration: configuration,
             mcpRuntime: mcpRuntime,
             swiftFeatureRuntime: swiftFeatureRuntime

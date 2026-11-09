@@ -94,21 +94,36 @@ enum JiraIssueParser {
         return tokens.contains { normalized.contains($0.lowercased()) }
     }
 
+    private static let listBulletPrefixRegex = try? NSRegularExpression(pattern: #"^\s*[-*•]\s*"#)
+    private static let listNumberPrefixRegex = try? NSRegularExpression(pattern: #"^\s*\d+[.)]\s*"#)
+
     private static func splitListItems(_ text: String) -> [String] {
         text.components(separatedBy: .newlines)
             .flatMap { line -> [String] in
                 let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                let cleaned = trimmed
-                    .replacingOccurrences(of: #"^\s*[-*•]\s*"#, with: "", options: .regularExpression)
-                    .replacingOccurrences(of: #"^\s*\d+[.)]\s*"#, with: "", options: .regularExpression)
+                let withoutBullet = removingMatches(of: listBulletPrefixRegex, in: trimmed)
+                let cleaned = removingMatches(of: listNumberPrefixRegex, in: withoutBullet)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 return cleaned.isEmpty ? [] : [cleaned]
             }
     }
 
+    private static func removingMatches(of regex: NSRegularExpression?, in text: String) -> String {
+        regex?.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: NSRange(text.startIndex..<text.endIndex, in: text),
+            withTemplate: ""
+        ) ?? text
+    }
+
+    private static let urlRegex = try? NSRegularExpression(
+        pattern: #"https?://[^\s<>)"]+"#,
+        options: [.caseInsensitive]
+    )
+
     private static func URLs(in text: String) -> [String] {
-        let pattern = #"https?://[^\s<>)"]+"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return [] }
+        guard let regex = urlRegex else { return [] }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         return regex.matches(in: text, options: [], range: range).compactMap { match in
             guard let range = Range(match.range, in: text) else { return nil }
@@ -124,9 +139,13 @@ enum JiraIssueParser {
 }
 
 enum JiraIssueKeyExtractor {
+    private static let issueKeyRegex = try? NSRegularExpression(
+        pattern: #"\b([A-Z][A-Z0-9]+-\d+)\b"#,
+        options: [.caseInsensitive]
+    )
+
     static func issueKey(in value: String) -> String? {
-        let pattern = #"\b([A-Z][A-Z0-9]+-\d+)\b"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
+        guard let regex = issueKeyRegex else { return nil }
         let range = NSRange(value.startIndex..<value.endIndex, in: value)
         guard let match = regex.firstMatch(in: value, options: [], range: range),
               match.numberOfRanges > 1,

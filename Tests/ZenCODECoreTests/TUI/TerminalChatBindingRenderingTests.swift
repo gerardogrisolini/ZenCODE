@@ -39,10 +39,7 @@ struct TerminalChatBindingRenderingTests {
             (" \n", nil),
         ]
         for item in cases {
-            #expect(TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix(item.input) == item.expected)
             #expect(ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix(item.input) == item.expected)
-            #expect(TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix(item.input)
-                == ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix(item.input))
         }
     }
 
@@ -76,10 +73,7 @@ struct TerminalChatBindingRenderingTests {
             (":", "Provider", ":"),
         ]
         for item in cases {
-            #expect(TerminalChat.strippedModelNameForBinding(item.input, modelProvider: item.provider) == item.expected)
             #expect(ModelNamePresentation.strippedModelNameForBinding(item.input, modelProvider: item.provider) == item.expected)
-            #expect(TerminalChat.strippedModelNameForBinding(item.input, modelProvider: item.provider)
-                == ModelNamePresentation.strippedModelNameForBinding(item.input, modelProvider: item.provider))
         }
     }
 

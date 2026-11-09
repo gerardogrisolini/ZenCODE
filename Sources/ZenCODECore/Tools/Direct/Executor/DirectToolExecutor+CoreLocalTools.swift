@@ -15,9 +15,7 @@ extension DirectToolExecutor {
     /// (`local.*` except `local.exec`), Search (`search.*`), and Text
     /// (`text.*`).
     public static func isCoreLocalFileOrTextToolName(_ toolName: String) -> Bool {
-        coreLocalFileAndTextTools.contains {
-            $0.descriptor.name == toolName
-        }
+        coreLocalFileAndTextToolsByName[toolName] != nil
     }
 
     /// Runs a core local Files, Search, or Text tool in-process. Returns `nil`
@@ -26,9 +24,7 @@ extension DirectToolExecutor {
         toolCall: DirectAgentToolCall,
         workingDirectory: URL
     ) async throws -> String? {
-        guard let tool = Self.coreLocalFileAndTextTools.first(where: {
-            $0.descriptor.name == toolCall.name
-        }) else {
+        guard let tool = Self.coreLocalFileAndTextToolsByName[toolCall.name] else {
             return nil
         }
 
@@ -62,11 +58,12 @@ extension DirectToolExecutor {
         )
     }
 
-    private static var coreLocalFileAndTextTools: [AnyFeatureTool] {
-        LocalFeatureTools.fileTools()
-            + LocalFeatureTools.searchTools()
-            + LocalFeatureTools.textTools()
-    }
+    /// `DirectToolCatalog.coreLocalFileAndTextTools` by name, built once. On
+    /// a duplicate name the first tool wins, as a linear search would.
+    private static let coreLocalFileAndTextToolsByName: [String: AnyFeatureTool] = Dictionary(
+        DirectToolCatalog.coreLocalFileAndTextTools.map { ($0.descriptor.name, $0) },
+        uniquingKeysWith: { first, _ in first }
+    )
 
     private static func renderCoreLocalOutput(_ data: Data) throws -> String {
         if let string = try? JSONDecoder().decode(String.self, from: data) {

@@ -79,17 +79,6 @@ extension DirectToolExecutor {
         )
     }
 
-    static func localExecAuthorizationCommands(in command: String) -> [String] {
-        LocalExecCommandParser.authorizationCandidates(in: command).map(\.invocation)
-    }
-
-    /// Returns the clean executable identity (for display titles) of the first
-    /// authorizable candidate in `command`, falling back to the trimmed command.
-    static func localExecAuthorizationDisplayIdentity(in command: String) -> String {
-        LocalExecCommandParser.authorizationCandidates(in: command).first?.identity
-            ?? command.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     private static func localExecAuthorizationTitle(
         for candidates: [LocalExecCommandParser.AuthorizationCandidate]
     ) -> String {

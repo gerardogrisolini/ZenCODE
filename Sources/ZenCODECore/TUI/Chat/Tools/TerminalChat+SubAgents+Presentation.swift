@@ -84,10 +84,4 @@ extension TerminalChat {
         }
         return sanitized
     }
-
-    nonisolated static func subAgentOverviewSignature(
-        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
-    ) -> String {
-        ChatSubAgentOverview.signature(for: snapshots)
-    }
 }

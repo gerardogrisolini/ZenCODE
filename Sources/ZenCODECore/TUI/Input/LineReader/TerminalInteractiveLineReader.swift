@@ -354,25 +354,17 @@ public final class TerminalInteractiveLineReader: Sendable {
             // after navigating within a multi-line draft, the cursor is often
             // not on its final row and clearing must start at the first row.
             func redrawBuffer() {
-                let terminalColumns = TerminalTextMetrics.terminalColumnCount(forceRefresh: true)
-                AgentOutput.standardError.writeString(
-                    Self.redrawSequence(
-                        prompt: prompt,
-                        buffer: editor.buffer,
-                        cursorIndex: editor.cursorIndex,
-                        previousLineCount: renderedLineCount,
-                        previousCursorRow: renderedCursorRow,
-                        terminalColumns: terminalColumns
-                    )
-                )
-                let layout = Self.renderLayout(
+                let redraw = Self.redrawSequence(
                     prompt: prompt,
                     buffer: editor.buffer,
                     cursorIndex: editor.cursorIndex,
-                    terminalColumns: terminalColumns
+                    previousLineCount: renderedLineCount,
+                    previousCursorRow: renderedCursorRow,
+                    terminalColumns: TerminalTextMetrics.terminalColumnCount(forceRefresh: true)
                 )
-                renderedLineCount = layout.lineCount
-                renderedCursorRow = layout.cursorRow
+                AgentOutput.standardError.writeString(redraw.sequence)
+                renderedLineCount = redraw.layout.lineCount
+                renderedCursorRow = redraw.layout.cursorRow
             }
 
             while true {

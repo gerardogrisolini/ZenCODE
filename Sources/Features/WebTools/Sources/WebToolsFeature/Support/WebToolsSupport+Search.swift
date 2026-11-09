@@ -32,37 +32,54 @@ extension WebToolsSupport {
     /// Parses the DuckDuckGo HTML endpoint (`html.duckduckgo.com/html/`):
     /// `<a class="result__a">` titles with `result__snippet` summaries.
     static func parseDuckDuckGoHTMLResults(_ html: String, limit: Int, domains: [String]) -> [WebSearchResult] {
-        parseSearchResults(html, limit: limit, domains: domains, anchorClass: "result__a", snippetClass: "result__snippet")
+        parseSearchResults(html, limit: limit, domains: domains, regexes: htmlSearchRegexes)
     }
 
     /// Parses the DuckDuckGo Lite endpoint (`lite.duckduckgo.com/lite/`):
     /// `<a class='result-link'>` titles (attribute order and quote style
     /// vary) followed by a `<td class='result-snippet'>` summary.
     static func parseDuckDuckGoLiteResults(_ html: String, limit: Int, domains: [String]) -> [WebSearchResult] {
-        parseSearchResults(html, limit: limit, domains: domains, anchorClass: "result-link", snippetClass: "result-snippet")
+        parseSearchResults(html, limit: limit, domains: domains, regexes: liteSearchRegexes)
+    }
+
+    /// Anchor and snippet patterns of one engine endpoint. Compiled once per
+    /// endpoint: the patterns depend only on the two class names, and parsing
+    /// runs for every results page.
+    private typealias SearchResultRegexes = (anchor: NSRegularExpression?, snippet: NSRegularExpression?)
+
+    private static let htmlSearchRegexes = searchResultRegexes(
+        anchorClass: "result__a",
+        snippetClass: "result__snippet"
+    )
+    private static let liteSearchRegexes = searchResultRegexes(
+        anchorClass: "result-link",
+        snippetClass: "result-snippet"
+    )
+
+    private static func searchResultRegexes(anchorClass: String, snippetClass: String) -> SearchResultRegexes {
+        let anchorPattern = #"<a\b\#(classLookahead(anchorClass))([^>]*)>(.*?)</a>"#
+        let snippetPattern = #"<(a|div|td|span)\b\#(classLookahead(snippetClass))[^>]*>(.*?)</\1>"#
+        return (
+            anchor: try? NSRegularExpression(
+                pattern: anchorPattern,
+                options: [.caseInsensitive, .dotMatchesLineSeparators]
+            ),
+            snippet: try? NSRegularExpression(
+                pattern: snippetPattern,
+                options: [.caseInsensitive, .dotMatchesLineSeparators]
+            )
+        )
     }
 
     private static func parseSearchResults(
         _ html: String,
         limit: Int,
         domains: [String],
-        anchorClass: String,
-        snippetClass: String
+        regexes: SearchResultRegexes
     ) -> [WebSearchResult] {
         guard limit > 0 else { return [] }
-        let anchorPattern = #"<a\b\#(classLookahead(anchorClass))([^>]*)>(.*?)</a>"#
-        let snippetPattern = #"<(a|div|td|span)\b\#(classLookahead(snippetClass))[^>]*>(.*?)</\1>"#
-
-        guard let anchorRegex = try? NSRegularExpression(
-            pattern: anchorPattern,
-            options: [.caseInsensitive, .dotMatchesLineSeparators]
-        ) else {
-            return []
-        }
-        let snippetRegex = try? NSRegularExpression(
-            pattern: snippetPattern,
-            options: [.caseInsensitive, .dotMatchesLineSeparators]
-        )
+        guard let anchorRegex = regexes.anchor else { return [] }
+        let snippetRegex = regexes.snippet
 
         let nsRange = NSRange(html.startIndex..<html.endIndex, in: html)
         let matches = anchorRegex.matches(in: html, options: [], range: nsRange)
@@ -110,6 +127,15 @@ extension WebToolsSupport {
         return #"(?=[^>]*?\sclass\s*=\s*(?:"[^"]*\#(boundary)[^"]*"|'[^']*\#(boundary)[^']*'))"#
     }
 
+    private static let nextFormRegex = try? NSRegularExpression(
+        pattern: #"<form\b(?:[^>"']|"[^"]*"|'[^']*')*>(.*?)</form\s*>"#,
+        options: [.caseInsensitive, .dotMatchesLineSeparators]
+    )
+    private static let nextFormInputRegex = try? NSRegularExpression(
+        pattern: #"<input\b((?:[^>"']|"[^"]*"|'[^']*')*)>"#,
+        options: [.caseInsensitive]
+    )
+
     /// Finds the hidden-field set of the "Next" pagination form, in document
     /// order, for both the HTML endpoint (`<input ... value="Next" />`) and the
     /// Lite endpoint (`<input type="submit" class='navbutton' value="Next Page &gt;">`).
@@ -122,14 +148,8 @@ extension WebToolsSupport {
     /// the engine signals the end of the results.
     static func parseDuckDuckGoNextForm(_ html: String) -> [(name: String, value: String)]? {
         guard html.range(of: "<form", options: .caseInsensitive) != nil,
-              let formRegex = try? NSRegularExpression(
-                  pattern: #"<form\b(?:[^>"']|"[^"]*"|'[^']*')*>(.*?)</form\s*>"#,
-                  options: [.caseInsensitive, .dotMatchesLineSeparators]
-              ),
-              let inputRegex = try? NSRegularExpression(
-                  pattern: #"<input\b((?:[^>"']|"[^"]*"|'[^']*')*)>"#,
-                  options: [.caseInsensitive]
-              ) else {
+              let formRegex = nextFormRegex,
+              let inputRegex = nextFormInputRegex else {
             return nil
         }
 

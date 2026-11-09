@@ -28,7 +28,10 @@ struct CoreSearchToolsMigrationTests {
     func searchToolsAreCoreReadOnlyToolsExecutedInProcess() {
         let names: (([DirectToolDescriptor]) -> Set<String>) = { Set($0.map(\.name)) }
 
-        #expect(names(DirectToolCatalog.localSearchDescriptors) == Self.searchToolNames)
+        #expect(
+            names(DirectToolCatalog.coreLocalFileAndTextDescriptors.filter { $0.name.hasPrefix("search.") })
+                == Self.searchToolNames
+        )
         #expect(Self.searchToolNames.isSubset(of: names(DirectToolCatalog.baseDescriptors)))
         #expect(Self.searchToolNames.isSubset(of: names(DirectToolCatalog.selectableDescriptors)))
         #expect(Self.searchToolNames.isSubset(of: names(DirectToolCatalog.coreDescriptors)))
@@ -240,7 +243,7 @@ struct CoreSearchToolsMigrationTests {
             // Discovery and every listing skip the retired copy.
             #expect(SwiftFeatureRegistry.discoverFeatureRecords().map(\.id) == ["control-fixture"])
             #expect(SwiftFeatureRegistry.featureRecord(id: Self.retiredFeatureID) == nil)
-            #expect(SwiftFeatureRegistry.discoverFeatureBundles().map(\.id) == ["control-fixture"])
+            #expect(SwiftFeatureRegistry.discoverFeatureRecords().filter(\.enabled).map(\.id) == ["control-fixture"])
             let statuses = SwiftFeatureRuntime.defaultFeatureStatuses()
             #expect(statuses.contains { $0.id == "control-fixture" })
             #expect(!statuses.contains { $0.id == Self.retiredFeatureID })

@@ -520,35 +520,21 @@ enum TerminalANSIText {
         return scalars.index(after: afterEscape)
     }
 
-    /// Counts trailing visible newlines while skipping ANSI escape sequences,
-    /// without materializing the stripped string. Mirrors the visibility rules
-    /// of `stripANSI` but only accumulates counters, which keeps the streaming
-    /// hot path allocation-free.
-    ///
-    /// - Returns: `hasVisible` indicates whether any visible (non-ANSI)
-    ///   character exists; `trailingNewlines` is the number of `\n` at the end
-    ///   of the visible text.
-    static func trailingVisibleNewlineInfo(
-        _ text: String
-    ) -> (hasVisible: Bool, trailingNewlines: Int) {
-        let scalars = Array(text.unicodeScalars)
-        var index = 0
-        var hasVisible = false
-        var trailingNewlines = 0
-        while index < scalars.count {
-            if scalars[index] == "\u{1B}" {
-                index = endOfEscapeSequence(in: scalars, from: index)
-                continue
+    /// Whether `text` holds any visible (non-ANSI) scalar. Mirrors the
+    /// visibility rules of `stripANSI`, but walks the string's own Unicode
+    /// scalar view without materializing an array or the stripped string, and
+    /// stops at the first visible scalar, which keeps the streaming hot path
+    /// allocation-free.
+    static func containsVisibleText(_ text: String) -> Bool {
+        let scalars = text.unicodeScalars
+        var index = scalars.startIndex
+        while index < scalars.endIndex {
+            guard scalars[index] == "\u{1B}" else {
+                return true
             }
-            hasVisible = true
-            if scalars[index] == "\n" {
-                trailingNewlines += 1
-            } else {
-                trailingNewlines = 0
-            }
-            index += 1
+            index = endOfEscapeSequence(in: text, from: index)
         }
-        return (hasVisible, trailingNewlines)
+        return false
     }
 
     /// Strips all ANSI escape sequences (CSI and OSC) from `text`, returning

@@ -38,11 +38,12 @@ extension TelegramChannel {
     /// Whether a message from the chat is answered with ``busyMessageText``
     /// instead of being handled (the busy gate of
     /// ``handleIncomingMessage(_:)``): while the session generates a turn,
-    /// and while the primary channel presents the ending of its turn here as
-    /// ``refusesMessagesWhilePrimaryTurnEndingPresents`` says.
+    /// except while the primary channel presents here the ending of a turn it
+    /// ran (``isPresentingPrimaryTurnEnding``), when a prompt queues and runs
+    /// once the session is released (``sessionReservationDidEnd()``), after the
+    /// turn's outcome and summary.
     var refusesMessagesAsBusy: Bool {
-        guard isSessionGenerating else { return false }
-        return refusesMessagesWhilePrimaryTurnEndingPresents || !isPresentingPrimaryTurnEnding
+        isSessionGenerating && !isPresentingPrimaryTurnEnding
     }
 
     /// The answer to a permission reply without a request ID on the route

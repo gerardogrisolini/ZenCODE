@@ -55,15 +55,6 @@ extension TerminalChat {
         )
     }
 
-    /// `/artifacts`, run by the shared controller (see
-    /// ``ChatSessionController/runArtifactsCommand(line:)``); the artifacts
-    /// are drawn by ``writeSessionNotice(_:)`` with `writeFileArtifacts`.
-    public func handleArtifactsCommand() async {
-        await writeSessionNotices(
-            await chatSession.runArtifactsCommand(line: "/artifacts").notices
-        )
-    }
-
     func writeFileArtifacts(
         _ turns: [SessionFileArtifactHistory.Turn],
         includeHistoryHeadings: Bool,
@@ -340,20 +331,6 @@ extension TerminalChat {
         text.replacingOccurrences(of: "`", with: "\\`")
     }
 
-    /// `/changes`, run by the shared controller (see
-    /// ``ChatSessionController/runChangesCommand(line:)``); the summary is
-    /// drawn by ``writeSessionNotice(_:)`` with ``writeFileChangeSummary(_:includeDiff:)``.
-    public func handleChangesCommand(_ command: String) async {
-        await writeSessionNotices(await chatSession.runChangesCommand(line: command).notices)
-    }
-
-    /// `/undo`, run by the shared controller (see
-    /// ``ChatSessionController/runUndoCommand(line:)``) on its working
-    /// directory.
-    public func handleUndoFileChangesCommand() async {
-        await writeSessionNotices(await chatSession.runUndoCommand(line: "/undo").notices)
-    }
-
     public func writeFileChangeSummary(
         _ summary: TurnFileChangeSummary,
         includeDiff: Bool
@@ -380,12 +357,6 @@ extension TerminalChat {
         _ summary: TurnFileChangeSummary
     ) -> String {
         TurnFileChangeSummaryPresentation.text(summary, includesCommandHint: true)
-    }
-
-    public nonisolated static func renderFileChangeEntry(
-        _ entry: TurnFileChangeSummary.Entry
-    ) -> String {
-        TurnFileChangeSummaryPresentation.entry(entry)
     }
 
     public func writeFileChangeDiffs(_ summary: TurnFileChangeSummary) async {

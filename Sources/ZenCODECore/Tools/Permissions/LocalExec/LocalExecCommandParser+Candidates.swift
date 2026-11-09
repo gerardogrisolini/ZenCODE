@@ -6,6 +6,7 @@
 import Foundation
 
 extension LocalExecCommandParser {
+    /// Maximum recursion depth for nested shell `-c` payloads and command
     /// substitutions. Prevents pathological deep nesting.
     static let maxCandidateDepth = 8
 
@@ -251,8 +252,17 @@ extension LocalExecCommandParser {
 
     /// Extracts the static payload from a shell `-c` invocation
     /// (e.g. `bash -lc 'git status'`) by unwrapping leading prefixes and
-    /// looking for a `-c`-containing option followed by a string argument.
+    /// looking for a short option group containing `c` (`-c`, `-lc`, `-ec`,
+    /// `-cl`) followed by a string argument. Long options (`--norc`,
+    /// `--rcfile`, `--restricted`, ...) are never `-c`: they are skipped as
+    /// options without an argument.
     /// Returns `nil` when the command is not a shell `-c` invocation.
+    ///
+    /// Option arguments are not modeled: the argument of `--rcfile FILE`,
+    /// `--init-file FILE`, `-o OPTION`, or `-O OPTION`, like a wrapper operand
+    /// (`env -u NAME`), reads as a non-option word and ends the search. The
+    /// segment then falls back to the shell as a normal candidate, which is
+    /// conservative: running it requires the shell's own authorization.
     static func shellDashCPayload(for segment: String) -> String? {
         locatedShellDashCPayload(for: segment)?.text
     }
@@ -264,10 +274,9 @@ extension LocalExecCommandParser {
 
         // Unwrap leading prefixes to find the real command.
         var start = 0
-        let skipAssignments = true
         while start < words.count {
             let word = words[start].word
-            if skipAssignments && isEnvironmentAssignment(word.value) {
+            if isEnvironmentAssignment(word.value) {
                 start += 1; continue
             }
             if !word.wasQuoted && isUnwrappableWrapper(word.value) {
@@ -304,14 +313,16 @@ extension LocalExecCommandParser {
         // Look for a -c option in the remaining words.
         var i = start + 1
         while i < words.count {
-            let word = words[i].word
-            if word.value.hasPrefix("-") && word.value != "-" && word.value.contains("c") {
+            let value = words[i].word.value
+            let isOption = value.hasPrefix("-") && value != "-"
+            // Only a short option group can carry `c`; `--norc` is not `-c`.
+            if isOption && !value.hasPrefix("--") && value.contains("c") {
                 if i + 1 < words.count {
                     return words[i + 1].locatedValue
                 }
                 return nil
             }
-            if word.value.hasPrefix("-") && word.value != "-" {
+            if isOption {
                 i += 1; continue
             }
             // Non-option argument before -c: not a -c invocation.

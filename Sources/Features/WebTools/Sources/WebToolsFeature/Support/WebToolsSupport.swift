@@ -197,14 +197,18 @@ enum WebToolsSupport {
         }
     }
 
+    private static let metaCharsetRegex = try? NSRegularExpression(
+        pattern: #"<meta[^>]*charset\s*=\s*["']?\s*([A-Za-z0-9._:-]+)"#,
+        options: [.caseInsensitive]
+    )
+
     /// Looks for `<meta charset="…">` or `<meta http-equiv="Content-Type"
     /// content="…; charset=…">` in the first 2 KiB, where the HTML standard
     /// requires the declaration to appear.
     static func sniffedHTMLEncoding(in data: Data) -> String.Encoding? {
         let head = String(decoding: data.prefix(2_048), as: UTF8.self)
         guard head.range(of: "<meta", options: .caseInsensitive) != nil else { return nil }
-        let pattern = #"<meta[^>]*charset\s*=\s*["']?\s*([A-Za-z0-9._:-]+)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+        guard let regex = metaCharsetRegex,
               let match = regex.firstMatch(in: head, options: [], range: NSRange(head.startIndex..<head.endIndex, in: head)),
               let nameRange = Range(match.range(at: 1), in: head)
         else {

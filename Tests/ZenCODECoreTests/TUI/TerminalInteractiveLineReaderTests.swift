@@ -95,7 +95,7 @@ struct TerminalInteractiveLineReaderTests {
             buffer: Array("github"),
             cursorIndex: 6,
             terminalColumns: 80
-        )
+        ).sequence
 
         #expect(sequence == "\r\u{1B}[2KFeature id: github")
         #expect(!sequence.hasPrefix("\n"))
@@ -129,7 +129,7 @@ struct TerminalInteractiveLineReaderTests {
                 buffer: buffer,
                 cursorIndex: 3,
                 terminalColumns: 20
-            ) == "\r\u{1B}[2K> one\r\ntwo\u{1B}[1A\r\u{1B}[5C"
+            ).sequence == "\r\u{1B}[2K> one\r\ntwo\u{1B}[1A\r\u{1B}[5C"
         )
         #expect(
             TerminalInteractiveLineReader.redrawSequence(
@@ -137,7 +137,7 @@ struct TerminalInteractiveLineReaderTests {
                 buffer: buffer,
                 cursorIndex: 4,
                 terminalColumns: 20
-            ) == "\r\u{1B}[2K> one\r\ntwo\r"
+            ).sequence == "\r\u{1B}[2K> one\r\ntwo\r"
         )
     }
 
@@ -169,7 +169,7 @@ struct TerminalInteractiveLineReaderTests {
                 buffer: buffer,
                 cursorIndex: 3,
                 terminalColumns: 5
-            ) == "\r\u{1B}[2K>abc\r\ndef\u{1B}[1A\r\u{1B}[4C"
+            ).sequence == "\r\u{1B}[2K>abc\r\ndef\u{1B}[1A\r\u{1B}[4C"
         )
         #expect(
             TerminalInteractiveLineReader.redrawSequence(
@@ -177,23 +177,27 @@ struct TerminalInteractiveLineReaderTests {
                 buffer: buffer,
                 cursorIndex: 4,
                 terminalColumns: 5
-            ) == "\r\u{1B}[2K>abc\r\ndef\r\u{1B}[1C"
+            ).sequence == "\r\u{1B}[2K>abc\r\ndef\r\u{1B}[1C"
         )
     }
 
     @Test
     func redrawClearsPreviousFootprintWhenDraftShrinks() {
         #expect(
-            TerminalInteractiveLineReader.lineCount(
-                for: Array("abcde"),
+            TerminalInteractiveLineReader.renderLayout(
+                prompt: "",
+                buffer: Array("abcde"),
+                cursorIndex: 5,
                 terminalColumns: 5
-            ) == 2
+            ).lineCount == 2
         )
         #expect(
-            TerminalInteractiveLineReader.lineCount(
-                for: Array("abc"),
+            TerminalInteractiveLineReader.renderLayout(
+                prompt: "",
+                buffer: Array("abc"),
+                cursorIndex: 3,
                 terminalColumns: 5
-            ) == 1
+            ).lineCount == 1
         )
         #expect(
             TerminalInteractiveLineReader.redrawSequence(
@@ -203,7 +207,7 @@ struct TerminalInteractiveLineReaderTests {
                 previousLineCount: 3,
                 previousCursorRow: 2,
                 terminalColumns: 5
-            ) == "\r\u{1B}[2A\u{1B}[0Jx"
+            ).sequence == "\r\u{1B}[2A\u{1B}[0Jx"
         )
     }
 

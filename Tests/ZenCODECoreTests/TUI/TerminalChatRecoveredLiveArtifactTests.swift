@@ -56,7 +56,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
             #expect(history.first?.artifacts.count == 1)
             #expect(history.first?.artifacts.first?.explanation == nil)
             #expect(history.first?.artifacts.first?.patch?.contains("+let value = 2") == true)
-            await terminal.handleArtifactsCommand()
+            _ = await terminal.submittedLineAction("/artifacts")
             let replay = TerminalANSIText.stripANSI(
                 await renderer.capturedWriteEvents().dropFirst(events.count).map(\.text).joined()
             )

@@ -502,13 +502,6 @@ public enum SystemPromptBuilder {
     /// present skill instruction without matching the whole section.
     public static let staticSkillSectionMarker = "Prompt skills may change during this session."
 
-    /// Returns the selection-independent skill instruction. The `skills`
-    /// argument is retained for source compatibility but no longer affects the
-    /// section, which keeps the system prompt stable across selection changes.
-    public static func selectedSkillSection(skills: [PromptSkill]) -> String? {
-        staticSkillSection
-    }
-
     /// Normalizes a persisted prompt so its skill section is the stable,
     /// selection-independent instruction. Replaces both the current lazy-skill
     /// catalog and the legacy eager-skill section (and is idempotent), so

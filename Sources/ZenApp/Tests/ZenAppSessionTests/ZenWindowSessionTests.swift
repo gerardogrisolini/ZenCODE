@@ -58,7 +58,7 @@ struct ZenWindowSessionTests {
             #expect(window.status.agentName != nil)
             #expect(window.sessionTitle == "Hello")
             #expect(!window.isBusy)
-            #expect(window.promptHistory == ["/help", "Hello"])
+            #expect(window.history.entries == ["/help", "Hello"])
 
             // While a turn runs: a prompt waits, a command is refused and keeps the draft.
             await backend.hold()

@@ -63,15 +63,17 @@ extension SwiftFeatureRuntimeTests {
             encoding: .utf8
         )
 
-        let bundles = SwiftFeatureRegistry.discoverFeatureBundles(
+        let records = SwiftFeatureRegistry.discoverFeatureRecords(
             searchRoots: [rootURL]
-        )
+        ).filter(\.enabled)
 
-        #expect(bundles.count == 1)
-        #expect(bundles.first?.id == "example")
-        #expect(bundles.first?.supportsPersistentSession == true)
-        #expect(bundles.first?.tools.first?.name == "feature.example.echo")
-        #expect(bundles.first?.tools.first?.requiredInputArgumentNames() == ["text"])
+        #expect(records.count == 1)
+        #expect(records.first?.id == "example")
+        #expect(records.first?.supportsPersistentSession == true)
+        #expect(records.first?.tools.first?.name == "feature.example.echo")
+        let inputSchema = try #require(records.first?.tools.first?.inputSchema)
+        let schema = try JSONDecoder().decode(JSONValue.self, from: Data(inputSchema.utf8))
+        #expect(schema.objectValue?["required"]?.arrayValue?.compactMap(\.stringValue) == ["text"])
     }
 
     @Test
@@ -133,14 +135,14 @@ extension SwiftFeatureRuntimeTests {
             encoding: .utf8
         )
 
-        let bundles = SwiftFeatureRegistry.discoverFeatureBundles(
+        let records = SwiftFeatureRegistry.discoverFeatureRecords(
             searchRoots: [rootURL]
-        )
-        #expect(bundles.first?.id == "custom-feature")
-        #expect(bundles.first?.toolNamePrefixes == ["custom."])
-        #expect(bundles.first?.toolNameAliases == ["CustomDynamic"])
-        #expect(bundles.first?.discoversToolsAtRuntime == true)
-        #expect(bundles.first?.invocationTimeoutSeconds == 240)
+        ).filter(\.enabled)
+        #expect(records.first?.id == "custom-feature")
+        #expect(records.first?.toolNamePrefixes == ["custom."])
+        #expect(records.first?.toolNameAliases == ["CustomDynamic"])
+        #expect(records.first?.discoversToolsAtRuntime == true)
+        #expect(records.first?.invocationTimeoutSeconds == 240)
 
         let runtime = SwiftFeatureRuntime(featureSearchRoots: [rootURL])
         let statuses = await runtime.featureStatuses()
@@ -162,10 +164,87 @@ extension SwiftFeatureRuntimeTests {
         try SwiftFeatureRegistry.setFeatureManifestEnabled(
             manifestURL: featureURL.appendingPathComponent(SwiftFeatureRegistry.manifestFilename), enabled: false
         )
-        #expect(SwiftFeatureRegistry.discoverFeatureBundles(searchRoots: [rootURL]).isEmpty)
+        #expect(SwiftFeatureRegistry.discoverFeatureRecords(searchRoots: [rootURL]).filter(\.enabled).isEmpty)
         let disabled = try #require(SwiftFeatureRuntime.defaultFeatureStatuses(searchRoots: [rootURL], includeTools: false)
             .first { $0.id == "custom-feature" })
         #expect(!disabled.enabled && disabled.available && disabled.tools.isEmpty && disabled.toolCount == 0)
+    }
+}
+
+extension SwiftFeatureRuntimeTests {
+    private static func writeMinimalFeatureManifest(id: String, in directoryURL: URL) throws -> URL {
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        let manifestURL = directoryURL.appendingPathComponent(SwiftFeatureRegistry.manifestFilename)
+        try #"{"id": "\#(id)", "executable": "feature", "tools": []}"#.write(
+            to: manifestURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        return manifestURL.standardizedFileURL
+    }
+
+    private static func makeRegistryRoot(_ label: String) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-feature-\(label)-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    @Test
+    func featureRecordByIDFallsBackToScanWhenCanonicalManifestIsMissing() throws {
+        let rootURL = Self.makeRegistryRoot("lookup-nested")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let nestedManifestURL = try Self.writeMinimalFeatureManifest(
+            id: "nested",
+            in: rootURL.appendingPathComponent("group/nested", isDirectory: true)
+        )
+
+        let record = try #require(SwiftFeatureRegistry.featureRecord(id: "nested", searchRoots: [rootURL]))
+        #expect(record.manifestURL?.path == nestedManifestURL.path)
+        #expect(SwiftFeatureRegistry.featureRecord(id: "group", searchRoots: [rootURL]) == nil)
+    }
+
+    @Test
+    func featureRecordByIDMatchesManifestIDRatherThanFolderName() throws {
+        let rootURL = Self.makeRegistryRoot("lookup-renamed")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        // `folder-a` holds the manifest of `feature-b`; `feature-b/` holds the
+        // manifest of `feature-c`, so its canonical candidate must be rejected.
+        let renamedManifestURL = try Self.writeMinimalFeatureManifest(
+            id: "feature-b",
+            in: rootURL.appendingPathComponent("folder-a", isDirectory: true)
+        )
+        let mismatchedManifestURL = try Self.writeMinimalFeatureManifest(
+            id: "feature-c",
+            in: rootURL.appendingPathComponent("feature-b", isDirectory: true)
+        )
+
+        let record = try #require(SwiftFeatureRegistry.featureRecord(id: "feature-b", searchRoots: [rootURL]))
+        #expect(record.manifestURL?.path == renamedManifestURL.path)
+        let other = try #require(SwiftFeatureRegistry.featureRecord(id: "feature-c", searchRoots: [rootURL]))
+        #expect(other.manifestURL?.path == mismatchedManifestURL.path)
+        #expect(SwiftFeatureRegistry.featureRecord(id: "folder-a", searchRoots: [rootURL]) == nil)
+    }
+
+    @Test
+    func featureRecordByIDPrefersCanonicalManifestAndSkipsHiddenFolders() throws {
+        let rootURL = Self.makeRegistryRoot("lookup-canonical")
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let canonicalManifestURL = try Self.writeMinimalFeatureManifest(
+            id: "dup",
+            in: rootURL.appendingPathComponent("dup", isDirectory: true)
+        )
+        _ = try Self.writeMinimalFeatureManifest(
+            id: "dup",
+            in: rootURL.appendingPathComponent("aaa-copy", isDirectory: true)
+        )
+        _ = try Self.writeMinimalFeatureManifest(
+            id: ".hidden",
+            in: rootURL.appendingPathComponent(".hidden", isDirectory: true)
+        )
+
+        let record = try #require(SwiftFeatureRegistry.featureRecord(id: "dup", searchRoots: [rootURL]))
+        #expect(record.manifestURL?.path == canonicalManifestURL.path)
+        #expect(SwiftFeatureRegistry.featureRecord(id: ".hidden", searchRoots: [rootURL]) == nil)
+        #expect(SwiftFeatureRegistry.discoverFeatureRecords(searchRoots: [rootURL]).map(\.id) == ["dup", "dup"])
     }
 }
 

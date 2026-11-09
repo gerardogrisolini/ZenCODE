@@ -12,6 +12,21 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- `local.exec` authorization no longer mistakes long shell options that
+  contain a `c` (such as `--norc`, `--rcfile`, or `--restricted`) for `-c`:
+  `bash --norc -c 'rm -rf x'` now asks to authorize `rm`, instead of taking
+  `-c` as the command to authorize. Only short option groups such as `-c`,
+  `-lc`, or `-ec` start a `-c` payload; when a long option takes an argument
+  (`--rcfile FILE`), the command conservatively asks to authorize the shell.
+- Tool-name alias resolution no longer depends on the process locale: ASCII
+  names are matched without regular expressions or Unicode folding, and other
+  names use locale-independent folding, so an upper-case alias such as
+  `TASKS.LIST` resolves under every locale (it did not under a Turkish one).
+- `feature.promote` no longer duplicates the rest of
+  `SwiftBundledFeatureCatalog.swift` after the inserted entry: the new
+  definition is inserted in front of the insertion marker instead of
+  replacing the marker with the entry followed by the whole tail of the file,
+  which produced a runtime catalog that did not compile.
 - A delegated sub-agent closed while its turn was starting no longer comes
   back as an idle agent, with its backend already shut down, when the task
   graph rejects the start of its attempt. More generally, when the task graph
@@ -22,6 +37,128 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - In ACP, a `session/close` or a shutdown that lands while `session/new` is
   still creating the session no longer leaves that session in the runner: it
   is closed there too, as `session/load` and `session/resume` already did.
+
+### Changed
+
+- Anthropic Messages (API key) streaming appends text, thinking, and
+  signature deltas to per-block buffers instead of rebuilding the accumulated
+  string on every delta, which copied the whole response so far each time.
+- The core local Files, Search, and Text tools and their descriptors are built
+  once per process instead of on every tool call, and each distinct tool input
+  schema is decoded once (bounded cache) instead of on every request payload.
+- Sub-agent registry updates write in place and publish one snapshot update
+  per change; superseding a standby resident and pruning terminal records each
+  publish a single update.
+- Memory retrieval tokenizes the journal once per recall and ranks all the
+  queries of that recall over the same corpus (`MemoryIndex` gains a batch
+  `search(queries:…)` requirement with a default implementation that searches
+  query by query; scores and order are unchanged), and the learning privacy
+  filter and the voice send grammars compile their patterns once.
+- `AgentSettingsStore` reads the settings manifest once per model selection
+  instead of re-reading it to resolve the provider API key.
+- Turn file-change summaries run a single `git diff --no-index --numstat
+  --binary` per changed file instead of two, writing the temporary inputs once.
+- `SwiftFeatureRegistry.featureRecord(id:)` reads the canonical
+  `<root>/<id>/feature.json` directly and falls back to the full scan; when
+  several packages declare the same id, the canonical one now wins instead of
+  the first the filesystem enumerated. Optional-feature update detection
+  compares relative paths, then sizes, then contents with early exit instead
+  of loading both package trees into memory, and the bundled feature catalog
+  definitions are built once.
+- The terminal render coordinator no longer allocates a scalar array on every
+  write to check for visible content and skips the check for standard error;
+  the interactive line reader computes the prompt layout once per keystroke
+  instead of twice; `PresentationSanitizer` builds its forbidden-scalar set
+  once.
+- Jira: the issue parser compiles its regular expressions once instead of for
+  every line, URL scan, and issue key lookup. Web: `web.search` compiles the
+  DuckDuckGo result and pagination-form patterns once per endpoint, and
+  `web.fetch` compiles the charset-sniffing pattern once. The output is
+  unchanged.
+
+### Removed
+
+- **ZenCODECore API:** unused `public` symbols without callers in ZenCODE, its
+  macOS app, or its feature packages are removed:
+  - `TerminalChat` forwarders and command adapters that `ChatSessionController`
+    superseded: tool and skill selection (`applyToolSelection(_: String)`,
+    `shouldDiscoverExternalTools`, `parseToolSelection`, `toolSelectionItems`,
+    `intrinsicAllowedToolNamesForSelectedAgent`, `toolSelectionKeys`,
+    `handleSkillsCommand`, `installSkill(fromGitHubURL:)`,
+    `installSkill(fromLocalURL:)`, `applySkillSelection`,
+    `printSkillSelectionStatus`, `skillCheckboxItems`, `availableSkills`,
+    `selectedPromptSkills`, `githubSkillInstallURL`, `localSkillInstallURL`,
+    `isSkillInstallRequest`, `isSkillUninstallRequest`, `skillInstallValue`,
+    `parseSkillSelection`, `skill(matching:in:)`, `selectionKey`), command
+    handlers (`handleOpenCommand`, `handleAttachCommand`,
+    `deletePendingAttachments`, `writePendingAttachments`,
+    `handleChangesCommand`, `handleArtifactsCommand`,
+    `handleUndoFileChangesCommand`; slash commands are routed through
+    `ChatSessionController.handleCommandLine`), and rendering helpers
+    (`renderSelectedSkills`, `renderToolSelectionUsage`,
+    `renderSkillSelectionUsage`, `renderAttachmentUsage`,
+    `renderAttachmentDeleteUsage`, `renderAttachmentLine`,
+    `renderFileChangeEntry`, `fitInline`, `padded`, `inlineText`,
+    `memoryToolEnabled`, `terminalBoxHorizontalInset`,
+    `subAgentModelNameStrippingRemoteAPIPrefix`,
+    `strippedModelNameForBinding`).
+  - `ProjectContextFileService`, `ProjectContextFileKind`,
+    `ProjectContextDocument`, `AgentsContextService.fingerprint(workspaceRootURL:)`
+    and `AgentsContextDocument.digest`; `AgentJSONSupport.object(from:)` and
+    `jsonCompatible`; `AgentSettingsStore.generationParameterOverrides(forModelID:)`,
+    `apiKey(providerID:)` and `modelSelection(forLLMID:)`;
+    `AgentCoreBackend.makeRemoteBackend` (use
+    `AgentRemoteBackendFactory.makeRemoteBackend`);
+    `ToolExecutionError.noToolExecutorAvailable` and
+    `.executionContextUnavailable`; `ModelThinkingSupport.fromMetadataFiles(in:)`
+    and `fromSparseRemoteModelIdentifier`; `ThinkingSelection.openRouterReasoningJSON`,
+    `openRouterReasoningPayload` and `openRouterReasoningSelection(from:)`
+    (`AgentThinkingSelection.openRouterReasoningPayload` is the supported entry
+    point); `SessionCheckpointTree.children(of:)`, `hasChildren`, `rootEntry`,
+    `branch(from:kind:)`, `attachBranchSummary` and
+    `SessionCheckpointEntry.participatesInContext` (the persisted
+    `branchSummary` and `modelChange` entry kinds are unchanged);
+    `AgentThinkingPayloadStyle.thinkingObject`.
+  - `DirectToolExecutor.executeThrowing` (it duplicated `execute`),
+    `DirectToolCatalog.localSearchDescriptors` and `filesystemDescriptors`,
+    `LocalExecPermissionAuthorizer.isAlreadyAuthorized` and the other unused
+    local-exec authorization helpers (a single
+    `persistedCommandPermissionIdentities` remains; the persisted format is
+    unchanged); `ZenCODEACPBridge.memoryToolEnabled(_:)` and
+    `resolvedSystemPrompt(...)` (use `AgentSessionComposition`);
+    `TerminalTelegramPairingService.consumePairingGrant(payload:)` (use
+    `consumePairingGrant(payload:chatType:)`) and
+    `TerminalTelegramPairingGrantStore.liveGrantCount`; the deprecated
+    `ZenCODEAgentProfileSetupRunner.configureAgentModels()` and its
+    `configureAgentModels(currentManifest:)` overload; the single-argument
+    `PromptSkillToolProvider.renderedGuidance(for:)`,
+    `PromptSkillSessionProvider.currentSkills()`,
+    `SystemPromptBuilder.selectedSkillSection(skills:)`;
+    `SwiftFeatureRegistry.discoverFeatureBundles` (use `discoverFeatureRecords`
+    and filter by `enabled`).
+- **ToolCore API:** `ToolSecretRedactor` (no callers), `assignJSON`, and
+  `ToolDescriptor.promptDescription()`, `compactPromptDescription()`,
+  `toolCallDescription()`, `requiredInputArgumentNames()`.
+- Internal code that nothing reached any more: the Telegram channel flag
+  `refusesMessagesWhilePrimaryTurnEndingPresents` (never assigned, so messages
+  arriving while the primary channel presents a turn ending always queue),
+  the never-thrown `ChatGPTSubscriptionGenerationError.cancelled`, the unused
+  `onEvent` parameter of `remoteToolCatalog`, the test-only
+  `compactedMessagesForEstimatedContextIfNeeded` and
+  `compactionPolicyMaxTokens` compaction helpers, and the dead
+  `MemorySearch.lexicalBM25(graph:…)` and
+  `reciprocalRankFusion(semantic:lexical:)` overloads.
+- Unreachable code of the macOS app: the transcript artifact views
+  (`ZenFileArtifactsView`, `ZenFileArtifactRow`, `ZenFileArtifactsHistoryView`)
+  that the artifacts sidebar replaced, the `ZenAppTranscriptModule` namespace
+  marker, and `ZenWindowSession.promptHistory`, which only tests read. The
+  artifact-history notice is now drawn as plain text, like any other notice.
+- Xcode: the `xcode-tools` package no longer exposes its integration helpers as
+  `public`, and the unused ones are removed (MCP server candidate detection,
+  workspace-root matching, allowed-tool-name canonicalization, and the
+  duplicated tool alias list). Tool names and `--list-tools` are unchanged.
+  Web: `web.fetch` no longer resolves the page's `<link rel=canonical>`, which
+  it never put in its output.
 
 ## [5.0.0] - 2026-11-09
 

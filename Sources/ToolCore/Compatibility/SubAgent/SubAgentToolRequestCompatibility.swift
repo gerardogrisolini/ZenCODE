@@ -70,17 +70,44 @@ public nonisolated enum SubAgentToolRequestCompatibility {
         case close
     }
 
+    /// Splits `rawName` into lowercase ASCII alphanumeric tokens, dropping a
+    /// leading `tool` token and any trailing all-digit tokens.
+    ///
+    /// Every character other than an ASCII letter or digit separates tokens.
+    /// An ASCII name, the usual case, only needs ASCII lowercasing. Any other
+    /// name is first folded case- and diacritic-insensitively with a fixed,
+    /// locale-independent rule, so `tódo.réad` still reads as `todo.read` and
+    /// the result never depends on the locale of the process.
     private static func normalizedNameTokens(from rawName: String) -> [String] {
-        let foldedName = rawName.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-        let separatedName = foldedName.replacingOccurrences(of: #"[^a-z0-9]+"#, with: " ", options: .regularExpression)
-        var tokens = separatedName.split(whereSeparator: \.isWhitespace).map(String.init)
+        let isASCII = rawName.utf8.allSatisfy { $0 < 0x80 }
+        let name = isASCII
+            ? rawName
+            : rawName.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+
+        var tokens: [String] = []
+        var token: [UInt8] = []
+        for byte in name.utf8 {
+            switch byte {
+            case UInt8(ascii: "a")...UInt8(ascii: "z"), UInt8(ascii: "0")...UInt8(ascii: "9"):
+                token.append(byte)
+            case UInt8(ascii: "A")...UInt8(ascii: "Z"):
+                token.append(byte | 0x20)
+            default:
+                guard !token.isEmpty else { continue }
+                tokens.append(String(decoding: token, as: UTF8.self))
+                token.removeAll(keepingCapacity: true)
+            }
+        }
+        if !token.isEmpty {
+            tokens.append(String(decoding: token, as: UTF8.self))
+        }
 
         if tokens.first == "tool" {
             tokens.removeFirst()
         }
 
         while let lastToken = tokens.last,
-              lastToken.allSatisfy(\.isNumber) {
+              lastToken.utf8.allSatisfy({ UInt8(ascii: "0")...UInt8(ascii: "9") ~= $0 }) {
             tokens.removeLast()
         }
 

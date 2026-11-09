@@ -12,9 +12,9 @@ import ZenCODECore
 
 /// The outcome of a session operation or a shared command.
 ///
-/// A file-change summary is drawn as ``ZenFileChangeSummaryView`` and the
-/// artifact history as a list of ``ZenFileArtifactsView`` groups. Every other
-/// notice, a kind newer than the app included, shows
+/// A file-change summary is drawn as ``ZenFileChangeSummaryView``. Every other
+/// notice, the artifact history included (the app opens the artifacts sidebar
+/// instead) and a kind newer than the app, shows
 /// `ChatSessionNoticeText.text(for:)` on its channel: system notices in
 /// `systemMessage`, failures in `failureMessage`, Markdown notices through
 /// the environment's ``ZenMarkdownRenderer``, and a channel newer than the
@@ -33,8 +33,6 @@ public struct ZenNoticeView: View {
         switch notice {
         case let .fileChangeSummary(summary, includesDiff):
             ZenFileChangeSummaryView(summary: summary, includesDiff: includesDiff)
-        case let .fileArtifacts(turns):
-            ZenFileArtifactsHistoryView(turns: turns)
         default:
             let text = ZenTranscriptText.trimmingTrailingNewlines(ChatSessionNoticeText.text(for: notice))
             switch notice.channel {

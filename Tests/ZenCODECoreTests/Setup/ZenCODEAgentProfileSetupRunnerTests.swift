@@ -12,6 +12,14 @@ import Testing
 @Suite
 struct ZenCODEAgentProfileSetupRunnerTests {
     @Test
+    func truncatedInlineCollapsesWhitespaceRunsBeforeTruncating() {
+        let text = "  Review\n\n code \t\t and\r\nreport  "
+        #expect(ZenCODEAgentProfileSetupRunner.truncatedInline(text, limit: 96) == "Review code and report")
+        #expect(ZenCODEAgentProfileSetupRunner.truncatedInline(text, limit: 9) == "Review...")
+        #expect(ZenCODEAgentProfileSetupRunner.truncatedInline(" \n\t ", limit: 4).isEmpty)
+    }
+
+    @Test
     func directDeepSeekSetupUsesDocumentedCapabilitiesWithoutRenamingIDs() {
         for modelID in ["deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"] {
             let manifest = ZenCODESetupRunner.remoteModelManifest(

@@ -3,7 +3,7 @@
 //  ZenCODE
 //
 //  Rendering and layout of the prompt: the explicit-wrap layout of the prompt
-//  and buffer, the line count it implies, and the sequence that redraws them.
+//  and buffer and the sequence that redraws them.
 //
 
 import Foundation
@@ -183,19 +183,9 @@ extension TerminalInteractiveLineReader {
         }
     }
 
-    static func lineCount(
-        for buffer: [Character],
-        prompt: String = "",
-        terminalColumns: Int = TerminalTextMetrics.terminalColumnCount(forceRefresh: true)
-    ) -> Int {
-        renderLayout(
-            prompt: prompt,
-            buffer: buffer,
-            cursorIndex: buffer.count,
-            terminalColumns: terminalColumns
-        ).lineCount
-    }
-
+    /// The sequence that replaces the previous render of the prompt and
+    /// buffer, and the layout it draws, whose `lineCount` and `cursorRow` the
+    /// caller passes back as the previous footprint of the next redraw.
     static func redrawSequence(
         prompt: String,
         buffer: [Character],
@@ -203,7 +193,7 @@ extension TerminalInteractiveLineReader {
         previousLineCount: Int = 1,
         previousCursorRow: Int = 0,
         terminalColumns: Int = TerminalTextMetrics.terminalColumnCount(forceRefresh: true)
-    ) -> String {
+    ) -> (sequence: String, layout: RenderLayout) {
         let layout = renderLayout(
             prompt: prompt,
             buffer: buffer,
@@ -230,7 +220,7 @@ extension TerminalInteractiveLineReader {
         sequence += layout.text
         let boundedCursorIndex = min(max(cursorIndex, 0), buffer.count)
         guard boundedCursorIndex < buffer.count else {
-            return sequence
+            return (sequence, layout)
         }
 
         let rowsToMoveUp = layout.lineCount - 1 - layout.cursorRow
@@ -241,26 +231,6 @@ extension TerminalInteractiveLineReader {
         if layout.cursorColumn > 0 {
             sequence += "\u{1B}[\(layout.cursorColumn)C"
         }
-        return sequence
-    }
-
-    func redraw(
-        prompt: String,
-        buffer: [Character],
-        cursorIndex: Int,
-        previousLineCount: Int = 1,
-        previousCursorRow: Int = 0,
-        terminalColumns: Int = TerminalTextMetrics.terminalColumnCount(forceRefresh: true)
-    ) {
-        AgentOutput.standardError.writeString(
-            Self.redrawSequence(
-                prompt: prompt,
-                buffer: buffer,
-                cursorIndex: cursorIndex,
-                previousLineCount: previousLineCount,
-                previousCursorRow: previousCursorRow,
-                terminalColumns: terminalColumns
-            )
-        )
+        return (sequence, layout)
     }
 }

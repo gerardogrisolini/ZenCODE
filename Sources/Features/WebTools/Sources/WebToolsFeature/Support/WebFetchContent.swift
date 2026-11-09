@@ -251,7 +251,7 @@ enum WebFetchContent {
         var document = base
         let pageURL = URL(string: base.url)
         if options.format == .html {
-            let metadata = WebMarkdownConverter.metadata(html: html, baseURL: pageURL)
+            let metadata = WebMarkdownConverter.metadata(html: html)
             document.title = preferredTitle?.nilIfBlank ?? metadata.title
             document.scope = WebFetchDocument.scopeLabel(.fullPage)
             document.description = metadata.description

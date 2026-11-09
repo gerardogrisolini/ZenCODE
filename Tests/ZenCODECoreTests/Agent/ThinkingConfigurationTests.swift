@@ -6,7 +6,6 @@
 import Foundation
 @testable import ZenCODECore
 import Testing
-import ToolCore
 
 struct ThinkingConfigurationTests {
     @Test
@@ -22,12 +21,6 @@ struct ThinkingConfigurationTests {
 
     @Test
     func ultraThinkingSelectionRemainsDistinctOnTheWire() {
-        let selection = ThinkingSelection.openRouterReasoningSelection(
-            from: .object(["effort": .string("ultra")])
-        )
-
-        #expect(selection == .ultra)
-        #expect(selection?.openRouterReasoningPayload["effort"] as? String == "ultra")
         #expect(AgentThinkingSelection.ultra.openRouterReasoningPayload["effort"] as? String == "ultra")
     }
 }

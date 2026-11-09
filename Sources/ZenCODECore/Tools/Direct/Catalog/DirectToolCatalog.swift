@@ -8,6 +8,7 @@
 import FeatureKit
 import Foundation
 import LocalToolsSupport
+import Synchronization
 import ToolCore
 
 public struct DirectToolDescriptor: Sendable {
@@ -93,15 +94,17 @@ public enum DirectToolCatalog {
         baseDescriptors
     }
 
-    /// Core local tools executed in-process: Files (`local.*` except
-    /// `local.exec`), Search (`search.*`), and Text (`text.*`).
-    public static var coreLocalFileAndTextDescriptors: [DirectToolDescriptor] {
-        (
-            LocalFeatureTools.fileTools()
-                + LocalFeatureTools.searchTools()
-                + LocalFeatureTools.textTools()
-        ).map(\.descriptor.toolDescriptor).map(DirectToolDescriptor.init)
-    }
+    /// The core local tools executed in-process: Files (`local.*` except
+    /// `local.exec`), Search (`search.*`), and Text (`text.*`). Built once:
+    /// the tools are stateless, so one instance serves every call.
+    static let coreLocalFileAndTextTools: [AnyFeatureTool] =
+        LocalFeatureTools.fileTools()
+            + LocalFeatureTools.searchTools()
+            + LocalFeatureTools.textTools()
+
+    /// Descriptors of `coreLocalFileAndTextTools`, in the same order.
+    public static let coreLocalFileAndTextDescriptors: [DirectToolDescriptor] =
+        coreLocalFileAndTextTools.map(\.descriptor.toolDescriptor).map(DirectToolDescriptor.init)
 
     /// The non-mutating subset of `coreLocalFileAndTextDescriptors`; every
     /// Search tool only reads.
@@ -118,17 +121,6 @@ public enum DirectToolCatalog {
             .map(\.descriptor.toolDescriptor)
             .map(DirectToolDescriptor.init)
     }
-
-    /// The core Search tools (`search.glob`, `search.grep`, `search.locate`).
-    public static var localSearchDescriptors: [DirectToolDescriptor] {
-        filesystemDescriptors.filter { $0.name.hasPrefix("search.") }
-    }
-
-    public static let filesystemDescriptors: [DirectToolDescriptor] = (
-        LocalFeatureTools.fileTools()
-            + LocalFeatureTools.searchTools()
-            + LocalFeatureTools.textTools()
-    ).map(\.descriptor.toolDescriptor).map(DirectToolDescriptor.init)
 
     public static let memoryDescriptors: [DirectToolDescriptor] =
         MemoryTool.toolDescriptors.map(DirectToolDescriptor.init)
@@ -198,10 +190,32 @@ extension DirectToolDescriptor {
     }
 
     public var schemaObject: Any? {
-        guard let data = inputSchema.data(using: .utf8) else {
+        Self.decodedInputSchema(inputSchema)?.jsonObject
+    }
+
+    /// Decoded input schemas keyed by their JSON text. Every request payload
+    /// serializes the schema of every offered tool; this way each distinct
+    /// schema is decoded once per process. The cache is bounded: it is emptied
+    /// before it would exceed `decodedInputSchemaLimit` entries. A schema that
+    /// fails to decode is not cached.
+    private static let decodedInputSchemas = Mutex<[String: JSONValue]>([:])
+    private static let decodedInputSchemaLimit = 512
+
+    private static func decodedInputSchema(_ inputSchema: String) -> JSONValue? {
+        if let cached = decodedInputSchemas.withLock({ $0[inputSchema] }) {
+            return cached
+        }
+        guard let data = inputSchema.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(JSONValue.self, from: data) else {
             return nil
         }
-        return try? JSONDecoder().decode(JSONValue.self, from: data).jsonObject
+        decodedInputSchemas.withLock { cache in
+            if cache[inputSchema] == nil, cache.count >= decodedInputSchemaLimit {
+                cache.removeAll(keepingCapacity: true)
+            }
+            cache[inputSchema] = decoded
+        }
+        return decoded
     }
 }
 

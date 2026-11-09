@@ -16,7 +16,6 @@ public struct AgentsContextDocument: Hashable, Sendable {
     public let scope: Scope
     public let fileURL: URL
     public let content: String
-    public let digest: String
 }
 
 public final class AgentsContextService {
@@ -77,14 +76,6 @@ public final class AgentsContextService {
 
         If global and project context conflict, prefer the more specific project instruction only when it is clearly about this project and does not contradict the user's current request or direct tool evidence.
         """
-    }
-
-    public func fingerprint(
-        workspaceRootURL: URL?
-    ) -> String? {
-        let fingerprints = agentsDocuments(workspaceRootURL: workspaceRootURL)
-            .map { "\($0.scope.rawValue):\($0.digest)" }
-        return fingerprints.isEmpty ? nil : fingerprints.joined(separator: "|")
     }
 
     public func agentsDocuments(
@@ -184,8 +175,7 @@ public final class AgentsContextService {
         return AgentsContextDocument(
             scope: scope,
             fileURL: standardizedFileURL,
-            content: normalizedContent,
-            digest: Self.digest(normalizedContent)
+            content: normalizedContent
         )
     }
 
@@ -291,9 +281,5 @@ public final class AgentsContextService {
         }
 
         return AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager)
-    }
-
-    private static func digest(_ value: String) -> String {
-        String(fnv1aHash(value), radix: 16)
     }
 }

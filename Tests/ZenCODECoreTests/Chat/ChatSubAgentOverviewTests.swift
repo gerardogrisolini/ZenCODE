@@ -34,7 +34,6 @@ struct ChatSubAgentOverviewTests {
         #expect(overview.snapshots.map(\.id) == ["standby", "worker"])
         #expect(overview.currentBatchID == currentBatch.uuidString)
         #expect(overview.signature == ChatSubAgentOverview.signature(for: snapshots))
-        #expect(overview.signature == TerminalChat.subAgentOverviewSignature(snapshots))
 
         let empty = ChatSubAgentOverview(snapshots: [])
         #expect(empty.snapshots.isEmpty)

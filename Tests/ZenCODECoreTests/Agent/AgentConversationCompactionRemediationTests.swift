@@ -143,7 +143,7 @@ struct AgentConversationCompactionRemediationTests {
         // no inflation is invented on top of the static reservation.
         #expect(overhead.conversationInflationFactor == 1.0)
 
-        let result = SubscriptionCompactionSupport.compactedMessagesForEstimatedContextIfNeeded(
+        let outcome = SubscriptionCompactionSupport.preflightCompaction(
             wireMessages,
             estimate: estimate,
             maxTokens: contextWindowTokens,
@@ -151,7 +151,10 @@ struct AgentConversationCompactionRemediationTests {
             reserveTokenCount: 0
         )
 
-        let compacted = try! #require(result)
+        guard case let .compacted(compacted) = outcome else {
+            Issue.record("Expected a preflight compaction, got \(outcome).")
+            return
+        }
         #expect(compacted.wasCompacted)
         // End-to-end invariant: messages + overhead + reserved output all fit.
         #expect(
@@ -180,8 +183,8 @@ struct AgentConversationCompactionRemediationTests {
 
         var attempts = 0
         while attempts < 32 {
-            guard let result = SubscriptionCompactionSupport
-                .compactedMessagesForEstimatedContextIfNeeded(
+            guard case let .compacted(result) = SubscriptionCompactionSupport
+                .preflightCompaction(
                     wireMessages,
                     estimate: estimatedContext(for: wireMessages),
                     maxTokens: contextWindowTokens,

@@ -94,19 +94,21 @@ public enum ChatSessionNotice: Sendable, Equatable {
     /// The tools currently active (`printToolSelectionStatus`, and the report
     /// of `applyToolSelection`).
     case activeTools(ChatActiveToolsSummary)
-    /// The `/tools` usage line (`renderToolSelectionUsage`).
+    /// The `/tools` usage line (`applyToolSelectionCommand(rawSelection:)`).
     case toolSelectionUsage
 
     // MARK: - Skills
 
-    /// `Selected skills: <titles>`, or `none` (`printSkillSelectionStatus`).
+    /// `Selected skills: <titles>`, or `none` (`chooseSkills()`, and the report
+    /// of `selectSkills(ids:)`).
     case selectedSkills([PromptSkill])
-    /// The `/skills` usage line (`renderSkillSelectionUsage`).
+    /// The `/skills` usage line (`applySkillSelectionCommand(rawSelection:)`,
+    /// `installSkill(source:)`).
     case skillSelectionUsage
     /// `/skills install` got neither a GitHub URL nor a local path
-    /// (`handleSkillsCommand`). Failure channel.
+    /// (`installSkill(source:)`). Failure channel.
     case skillInstallSourceRequired
-    /// No skill is installed to select or uninstall (`handleSkillsCommand`,
+    /// No skill is installed to select or uninstall (`chooseSkills()`,
     /// `uninstallSkillsInteractively`).
     case noPromptSkillsInstalled
     /// The uninstall menu was confirmed with nothing ticked
@@ -115,7 +117,7 @@ public enum ChatSessionNotice: Sendable, Equatable {
     /// The listed skills were uninstalled (`uninstallSkillsInteractively`).
     case skillsUninstalled([PromptSkill])
     /// A skill install began; `source` is the GitHub URL or the local path
-    /// (`installSkill(fromGitHubURL:)`, `installSkill(fromLocalURL:)`).
+    /// (`installSkill(from:)`).
     case skillInstallStarted(source: String)
     /// The skill was installed and selected (`finishInstalledSkill`).
     case skillInstalled(PromptSkill)
@@ -361,7 +363,7 @@ public enum ChatSessionNotice: Sendable, Equatable {
 
     // MARK: - /changes, /undo, and /artifacts
 
-    /// No file change is tracked (`handleChangesCommand`).
+    /// No file change is tracked (`runChangesCommand(line:)`).
     case noTrackedFileChanges
     /// `/changes`: the reconciled file changes of the last turn that changed
     /// files (`writeFileChangeSummary`). `includesDiff` is `/changes diff`.
@@ -371,16 +373,16 @@ public enum ChatSessionNotice: Sendable, Equatable {
     /// documentation).
     case fileChangeSummary(TurnFileChangeSummary, includesDiff: Bool)
     /// `/undo` restored the files of the last summary
-    /// (`handleUndoFileChangesCommand`).
+    /// (`runUndoCommand(line:)`).
     case fileChangesReverted
     /// `/undo` could not apply: nothing to undo, or a file changed since
-    /// (`handleUndoFileChangesCommand`, the `TurnFileChangeUndoError` branch).
+    /// (`runUndoCommand(line:)`, the `TurnFileChangeUndoError` branch).
     /// `description` is the error's own sentence.
     case fileChangesNotUndone(description: String)
-    /// `/undo` failed on something else (`handleUndoFileChangesCommand`).
+    /// `/undo` failed on something else (`runUndoCommand(line:)`).
     /// Failure channel.
     case fileChangesUndoFailed(description: String)
-    /// The session recorded no file artifact (`handleArtifactsCommand`).
+    /// The session recorded no file artifact (`runArtifactsCommand(line:)`).
     case noFileArtifacts
     /// `/artifacts`: the artifacts of every turn of the session
     /// (`writeFileArtifacts`, with the history headings). Markdown channel.
@@ -396,29 +398,29 @@ public enum ChatSessionNotice: Sendable, Equatable {
     /// `/open <argument>` names a file that does not exist
     /// (`openDirectArgument`). Failure channel.
     case openTargetNotFound(argument: String)
-    /// The conversation mentions no file or URL (`handleOpenCommand`).
+    /// The conversation mentions no file or URL (`runOpenCommand(line:)`).
     case noOpenCandidates
-    /// The selection menu of `/open` was cancelled (`handleOpenCommand`).
+    /// The selection menu of `/open` was cancelled (`runOpenCommand(line:)`).
     case nothingOpened
     /// The host was asked to open the target (`openTarget`).
     case opening(ChatOpenTarget)
 
     // MARK: - /attach
 
-    /// The `/attach` usage block (`handleAttachCommand`).
+    /// The `/attach` usage block (`runAttachCommand(line:)`).
     case attachmentUsage
     /// The `/attach delete` usage line (`deletePendingAttachments`).
     case attachmentDeleteUsage
-    /// The attachment picker was cancelled (`handleAttachCommand`).
+    /// The attachment picker was cancelled (`runAttachCommand(line:)`).
     case attachmentSelectionCancelled
-    /// Attachments were staged for the next prompt (`handleAttachCommand`).
+    /// Attachments were staged for the next prompt (`runAttachCommand(line:)`).
     /// `addedCount` is what this command added, `pendingCount` what waits now.
     case attachmentsAdded(addedCount: Int, pendingCount: Int)
-    /// No attachment is staged (`writePendingAttachments`,
+    /// No attachment is staged (`runAttachCommand(line:)`,
     /// `deletePendingAttachments`).
     case noPendingAttachments
     /// The attachments staged for the next prompt, numbered
-    /// (`writePendingAttachments`). Empty reads as ``noPendingAttachments``.
+    /// (`runAttachCommand(line:)`). Empty reads as ``noPendingAttachments``.
     case pendingAttachments([AgentRuntimeAttachment])
     /// `/attach delete all` (`deletePendingAttachments`).
     case pendingAttachmentsRemoved
@@ -594,7 +596,7 @@ public enum ChatInteractiveOperation: Sendable, Equatable {
     /// `/tools`: the active tools, then the usage line (`handleToolsCommand`).
     case toolSelection(ChatActiveToolsSummary)
     /// `/skills`: the selected skills, then the usage line
-    /// (`handleSkillsCommand`).
+    /// (`chooseSkills()`).
     case skillSelection(selected: [PromptSkill])
     /// `/skills uninstall`: `ZenCODE: /skills uninstall requires an interactive
     /// terminal.` on the failure channel (`uninstallSkillsInteractively`).
@@ -607,11 +609,11 @@ public enum ChatInteractiveOperation: Sendable, Equatable {
     case savedSessionDeletion([ChatSavedSessionSummary], activeName: String?)
     /// `/open` without an argument: the files and URLs of the conversation,
     /// then `Selecting an item to open requires an interactive terminal.`
-    /// (`handleOpenCommand`).
+    /// (`runOpenCommand(line:)`).
     case openSelection(candidates: [ChatOpenCandidate])
     /// `/attach` without a path: `ZenCODE: /attach without a path requires an
     /// interactive terminal.`, then the usage block, all on the system channel
-    /// (`handleAttachCommand`).
+    /// (`runAttachCommand(line:)`).
     case attachmentSelection
 
     public var channel: ChatSessionNoticeChannel {

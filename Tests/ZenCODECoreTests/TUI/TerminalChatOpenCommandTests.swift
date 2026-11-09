@@ -13,9 +13,10 @@ import Testing
 struct TerminalChatOpenCommandTests {
     @Test
     func extractsHTTPURLsFromMessageText() {
-        let candidates = TerminalChat.extractOpenCandidates(
+        let candidates = ChatSessionController.extractOpenCandidates(
             from: "See https://example.com/docs and (http://foo.test/page).",
-            workingDirectory: URL(fileURLWithPath: "/tmp")
+            workingDirectory: URL(fileURLWithPath: "/tmp"),
+            userHomeDirectoryURL: UserHomeDirectory.current()
         )
 
         #expect(candidates.map(\.target) == [
@@ -27,9 +28,10 @@ struct TerminalChatOpenCommandTests {
 
     @Test
     func ignoresUnknownOrTimeLikeSchemes() {
-        let candidates = TerminalChat.extractOpenCandidates(
+        let candidates = ChatSessionController.extractOpenCandidates(
             from: "meeting at 12:30 and gopher://old.test/x",
-            workingDirectory: URL(fileURLWithPath: "/tmp")
+            workingDirectory: URL(fileURLWithPath: "/tmp"),
+            userHomeDirectoryURL: UserHomeDirectory.current()
         )
 
         #expect(candidates.isEmpty)
@@ -48,9 +50,10 @@ struct TerminalChatOpenCommandTests {
         let fileURL = directory.appendingPathComponent("notes.md")
         try "hi".write(to: fileURL, atomically: true, encoding: .utf8)
 
-        let candidates = TerminalChat.extractOpenCandidates(
+        let candidates = ChatSessionController.extractOpenCandidates(
             from: "Check ./notes.md and ./missing.md",
-            workingDirectory: directory
+            workingDirectory: directory,
+            userHomeDirectoryURL: UserHomeDirectory.current()
         )
 
                 #expect(candidates.count == 1)
@@ -77,7 +80,7 @@ struct TerminalChatOpenCommandTests {
             originalFilename: "diagram.png"
         )
 
-        let candidate = TerminalChat.attachmentCandidate(from: attachment)
+        let candidate = ChatSessionController.attachmentCandidate(from: attachment)
         #expect(candidate?.kind == .file)
         #expect(candidate?.display == "diagram.png")
         #expect(candidate?.target == fileURL.standardizedFileURL.path)

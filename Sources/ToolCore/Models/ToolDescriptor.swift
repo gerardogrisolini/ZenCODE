@@ -53,58 +53,6 @@ public nonisolated struct ToolDescriptor: Codable, Identifiable, Hashable, Senda
         try container.encodeIfPresent(presentation, forKey: .presentation)
     }
 
-    public func promptDescription() -> String {
-        let titleLine = title.map { "\n  title: \($0)" } ?? ""
-        let requiredLine = requiredInputArgumentNames().isEmpty
-            ? ""
-            : "\n  required_arguments: \(requiredInputArgumentNames().joined(separator: ", "))"
-        return """
-        - name: \(name)\(titleLine)\(requiredLine)
-          description: \(description)
-                    input_schema: \(inputSchema.replacingOccurrences(of: "\n", with: "\n    "))
-        """
-    }
-
-    public func compactPromptDescription() -> String {
-        let requiredArguments = requiredInputArgumentNames()
-        guard !requiredArguments.isEmpty else {
-            return "- \(name): \(description)"
-        }
-
-        return "- \(name)(requires: \(requiredArguments.joined(separator: ", "))): \(description)"
-    }
-
-    public func toolCallDescription() -> String {
-        let requiredArguments = requiredInputArgumentNames()
-        guard !requiredArguments.isEmpty else {
-            return description
-        }
-
-        return """
-        \(description)
-        Required arguments: \(requiredArguments.joined(separator: ", ")).
-        Do not call this tool with empty arguments; provide non-empty values for every required argument.
-        """
-    }
-
-    public func requiredInputArgumentNames() -> [String] {
-        guard let schema = inputSchemaJSONValue(),
-              case let .object(object) = schema,
-              case let .array(requiredValues)? = object["required"] else {
-            return []
-        }
-
-        return requiredValues.compactMap(\.stringValue)
-    }
-
-    private func inputSchemaJSONValue() -> JSONValue? {
-        guard let data = inputSchema.data(using: .utf8) else {
-            return nil
-        }
-
-        return try? JSONDecoder().decode(JSONValue.self, from: data)
-    }
-
     public func prefixed(with prefix: String) -> ToolDescriptor {
         ToolDescriptor(
             name: "\(prefix)\(name)",

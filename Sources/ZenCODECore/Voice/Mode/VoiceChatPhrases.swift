@@ -167,30 +167,37 @@ enum VoiceChatPhrases {
         return text.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
     }
 
-    /// One language's "send a message to …" phrase, as regular-expression
-    /// fragments matched against the folded utterance.
+    /// One language's "send a message to …" phrase, as regular expressions
+    /// matched against the folded utterance, compiled once with the grammar.
     private struct SendGrammar {
         /// Optional verb, optional article and the noun; English and German
         /// also put their fixed preposition here.
-        let prefix: String
-        let coordinator: String
-        let all: String
+        let prefix: NSRegularExpression
+        let coordinator: NSRegularExpression
+        let all: NSRegularExpression
         /// The preposition before a spoken name, when the language has one.
-        let named: String?
+        let named: NSRegularExpression?
+
+        init(prefix: String, coordinator: String, all: String, named: String?) {
+            self.prefix = try! NSRegularExpression(pattern: "^\\s*(?:\(prefix))\\s+")
+            self.coordinator = try! NSRegularExpression(pattern: "^(?:\(coordinator))(?![\\p{L}\\p{N}])")
+            self.all = try! NSRegularExpression(pattern: "^(?:\(all))(?![\\p{L}\\p{N}])")
+            self.named = named.map { try! NSRegularExpression(pattern: "^(?:\($0))\\s+") }
+        }
 
         func match(_ utterance: FoldedText) -> (target: SendTarget, text: String?)? {
-            guard let (rest, _) = utterance.suffix(after: "^\\s*(?:\(prefix))\\s+") else {
+            guard let (rest, _) = utterance.suffix(after: prefix) else {
                 return nil
             }
-            if let (text, _) = rest.suffix(after: "^(?:\(coordinator))(?![\\p{L}\\p{N}])") {
+            if let (text, _) = rest.suffix(after: coordinator) {
                 return (.coordinator, messageText(text.original))
             }
-            if let (text, _) = rest.suffix(after: "^(?:\(all))(?![\\p{L}\\p{N}])") {
+            if let (text, _) = rest.suffix(after: all) {
                 return (.all, messageText(text.original))
             }
             let remainder: FoldedText
             if let named {
-                guard let (afterPreposition, _) = rest.suffix(after: "^(?:\(named))\\s+") else {
+                guard let (afterPreposition, _) = rest.suffix(after: named) else {
                     return nil
                 }
                 remainder = afterPreposition
@@ -278,13 +285,20 @@ enum VoiceChatPhrases {
         }
 
         /// The text after a match of `pattern` anchored at the start, with the
-        /// match length in folded scalars; `nil` without a match.
+        /// match length in folded scalars; `nil` without a match or when
+        /// `pattern` does not compile.
         func suffix(after pattern: String) -> (rest: FoldedText, length: Int)? {
-            guard let expression = try? NSRegularExpression(pattern: pattern),
-                  let match = expression.firstMatch(
-                      in: folded,
-                      range: NSRange(folded.startIndex..., in: folded)
-                  ),
+            guard let expression = try? NSRegularExpression(pattern: pattern) else {
+                return nil
+            }
+            return suffix(after: expression)
+        }
+
+        /// The text after a match of `expression` anchored at the start, with
+        /// the match length in folded scalars; `nil` without a match.
+        func suffix(after expression: NSRegularExpression) -> (rest: FoldedText, length: Int)? {
+            let fullRange = NSRange(folded.startIndex..., in: folded)
+            guard let match = expression.firstMatch(in: folded, range: fullRange),
                   let range = Range(match.range, in: folded) else {
                 return nil
             }

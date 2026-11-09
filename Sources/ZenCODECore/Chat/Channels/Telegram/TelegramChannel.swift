@@ -401,19 +401,12 @@ public final class TelegramChannel: ChatInteractionHost {
     /// `true` while the primary channel presents in the chat the ending of a
     /// turn it ran, with the session still reserved for that turn: from
     /// ``primaryTurnEndingWillPresent()`` to ``sessionReservationDidEnd()``
-    /// (see `TerminalChat+Telegram.swift`). What a message from the chat gets
-    /// meanwhile is ``refusesMessagesWhilePrimaryTurnEndingPresents``.
+    /// (see `TerminalChat+Telegram.swift`). A message from the chat that
+    /// arrives meanwhile passes the busy gate (``refusesMessagesAsBusy``), so a
+    /// prompt queues and runs once the session is released
+    /// (``sessionReservationDidEnd()``), after the turn's outcome and summary;
+    /// the callback of a button is answered busy either way.
     var isPresentingPrimaryTurnEnding = false
-    /// The one policy for a message from the chat that arrives while the
-    /// primary channel presents here the ending of a turn it ran, with the
-    /// session still reserved for that turn
-    /// (``isPresentingPrimaryTurnEnding``). `false`, the default, lets it
-    /// through the busy gate, so a prompt queues and runs once the session is
-    /// released (``sessionReservationDidEnd()``), after the turn's outcome and
-    /// summary; `true` answers it with ``busyMessageText``, as during the rest
-    /// of the turn. The callback of a button is answered busy either way. Read
-    /// by ``refusesMessagesAsBusy``; a test sets it.
-    var refusesMessagesWhilePrimaryTurnEndingPresents = false
 
     // MARK: - Lifecycle bookkeeping
 

@@ -152,23 +152,6 @@ enum SubscriptionCompactionSupport {
         )
     }
 
-    /// Tokens the conversation may occupy once output and overhead are
-    /// reserved. Retained under its historical name because the provider
-    /// clients use it as the `maxTokens` fed to the shared policy.
-    static func compactionPolicyMaxTokens(
-        for maxTokens: Int?,
-        maxOutputTokens: Int?,
-        reserveTokenCount: Int,
-        overheadTokens: Int = 0
-    ) -> Int? {
-        compactionBudget(
-            contextWindowTokens: maxTokens,
-            maxOutputTokens: maxOutputTokens,
-            reserveTokenCount: reserveTokenCount,
-            overheadTokens: overheadTokens
-        ).promptTokenBudget
-    }
-
     /// Runs the shared compaction policy against remote-format messages,
     /// applying the provider's reserved-output and overhead budget.
     static func compactedMessagesIfNeeded(
@@ -237,25 +220,6 @@ enum SubscriptionCompactionSupport {
             overheadTokens: Int
         )
         case compacted(AgentConversationCompactionResult)
-    }
-
-    static func compactedMessagesForEstimatedContextIfNeeded(
-        _ messages: [[String: Any]],
-        estimate: RequestEstimate,
-        maxTokens: Int?,
-        maxOutputTokens: Int?,
-        reserveTokenCount: Int
-    ) -> AgentConversationCompactionResult? {
-        guard case let .compacted(result) = preflightCompaction(
-            messages,
-            estimate: estimate,
-            maxTokens: maxTokens,
-            maxOutputTokens: maxOutputTokens,
-            reserveTokenCount: reserveTokenCount
-        ) else {
-            return nil
-        }
-        return result
     }
 
     static func preflightCompaction(

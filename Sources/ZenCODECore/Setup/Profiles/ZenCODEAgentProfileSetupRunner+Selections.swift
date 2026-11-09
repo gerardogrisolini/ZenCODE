@@ -19,7 +19,7 @@ extension ZenCODEAgentProfileSetupRunner {
         guard !items.isEmpty else {
             return defaultTools
         }
-        let selectedKeys = TerminalChat.toolSelectionKeys(
+        let selectedKeys = ChatSessionController.toolSelectionKeys(
             from: defaultTools,
             items: items
         )

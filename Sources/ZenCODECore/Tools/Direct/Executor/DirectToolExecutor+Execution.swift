@@ -24,52 +24,6 @@ struct DirectToolExecutionOutput: Sendable {
 }
 
 extension DirectToolExecutor {
-    public func executeThrowing(
-        sessionID: String?,
-        toolCall: DirectAgentToolCall,
-        workingDirectory: URL,
-        allowedToolNames: Set<String>?
-    ) async throws -> String {
-        let clock = ContinuousClock()
-        let started = clock.now
-        do {
-            let output = try await executeThrowingResult(
-                sessionID: sessionID,
-                toolCall: toolCall,
-                workingDirectory: workingDirectory,
-                allowedToolNames: allowedToolNames
-            ).output
-            ToolExecutionLog.record(
-                context: toolExecutionContext,
-                sessionID: sessionID,
-                toolCall: toolCall,
-                workingDirectory: workingDirectory,
-                result: DirectAgentToolResult(
-                    output: output,
-                    summary: output,
-                    status: .completed
-                ),
-                duration: started.duration(to: clock.now)
-            )
-            return output
-        } catch {
-            ToolExecutionLog.record(
-                context: toolExecutionContext,
-                sessionID: sessionID,
-                toolCall: toolCall,
-                workingDirectory: workingDirectory,
-                result: DirectAgentToolResult(
-                    output: "Tool error: \(error.localizedDescription)",
-                    summary: error.localizedDescription,
-                    status: Self.toolResultStatus(for: error)
-                ),
-                duration: started.duration(to: clock.now),
-                error: error
-            )
-            throw error
-        }
-    }
-
     func executeThrowingResult(
         sessionID: String?,
         toolCall: DirectAgentToolCall,
@@ -323,11 +277,14 @@ extension DirectToolExecutor {
         return .notHandled
     }
 
+    /// A child executor borrows only its parent's agent-runtime surface. Todo
+    /// storage and task orchestration stay local to the child executor, which
+    /// has the shared `SessionTaskOrchestrator` installed separately.
     private func dispatchBorrowedSubAgent(
         toolCall: DirectAgentToolCall
     ) async throws -> DirectToolDispatchOutcome {
         guard let borrowedSubAgentToolExecutor,
-              Self.isBorrowedSubAgentToolName(toolCall.name) else {
+              DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) else {
             return .notHandled
         }
         return .handled(DirectToolExecutionOutput(

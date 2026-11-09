@@ -99,19 +99,6 @@ public enum SwiftFeatureRegistry {
             .standardizedFileURL
     }
 
-    public static func discoverFeatureBundles(
-        searchRoots: [URL]? = nil,
-        fileManager: FileManager = .default
-    ) -> [SwiftFeatureBundle] {
-        discoverFeatureRecords(searchRoots: searchRoots, fileManager: fileManager)
-            .compactMap { record in
-                guard record.enabled else {
-                    return nil
-                }
-                return SwiftFeatureBundle(record: record, source: .generated, isCore: false)
-            }
-    }
-
     /// Every feature package installed under `searchRoots`, sorted by id.
     ///
     /// A package whose id belongs to a retired optional feature (see
@@ -197,15 +184,73 @@ public enum SwiftFeatureRegistry {
         )
     }
 
+    /// The installed feature package whose manifest declares `id`.
+    ///
+    /// The canonical `<root>/<id>/feature.json` written by `feature.install` and
+    /// optional-feature installation is read directly, root by root, and is
+    /// accepted only when it passes the same filters as the recursive scan.
+    /// `feature.scaffold` may place a package elsewhere under the root (or under
+    /// a folder name that differs from its manifest id), so a missing or
+    /// rejected canonical manifest falls back to the full scan.
     public static func featureRecord(
         id: String,
         searchRoots: [URL]? = nil,
         fileManager: FileManager = .default
     ) -> SwiftFeatureRecord? {
-        discoverFeatureRecords(
+        let roots = searchRoots ?? [appFeatureRootURL(fileManager: fileManager)]
+        for root in roots {
+            if let record = canonicalFeatureRecord(
+                id: id,
+                under: root.standardizedFileURL,
+                fileManager: fileManager
+            ) {
+                return record
+            }
+        }
+        return discoverFeatureRecords(
             searchRoots: searchRoots,
             fileManager: fileManager
         ).first { $0.id == id }
+    }
+
+    /// Reads `<root>/<id>/feature.json` and returns its record only when the
+    /// recursive scan in `discoverFeatureRecords(under:fileManager:)` would
+    /// also have accepted it: `id` is a single, non-hidden path component, the
+    /// package folder is a real (non-symlinked), non-hidden directory that is
+    /// not a bundle package, the manifest itself is not hidden, its declared id
+    /// equals `id`, and the id is not retired.
+    private static func canonicalFeatureRecord(
+        id: String,
+        under rootURL: URL,
+        fileManager: FileManager
+    ) -> SwiftFeatureRecord? {
+        guard !id.isEmpty,
+              !id.hasPrefix("."),
+              !id.contains("/"),
+              !SwiftBundledFeatureCatalog.isRetiredFeatureID(id) else {
+            return nil
+        }
+        let directoryURL = rootURL.appendingPathComponent(id, isDirectory: true)
+        guard let directoryValues = try? directoryURL.resourceValues(
+            forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isHiddenKey, .isPackageKey]
+        ),
+            directoryValues.isDirectory == true,
+            directoryValues.isSymbolicLink != true,
+            directoryValues.isHidden != true,
+            directoryValues.isPackage != true else {
+            return nil
+        }
+        let manifestURL = directoryURL.appendingPathComponent(manifestFilename)
+        guard let manifestValues = try? manifestURL.resourceValues(forKeys: [.isHiddenKey]),
+              manifestValues.isHidden != true,
+              let record = featureRecord(
+                  manifestURL: manifestURL.standardizedFileURL,
+                  fileManager: fileManager
+              ),
+              record.id == id else {
+            return nil
+        }
+        return record
     }
 
     public static func setFeatureManifestEnabled(

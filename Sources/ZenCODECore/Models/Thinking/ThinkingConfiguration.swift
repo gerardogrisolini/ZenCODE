@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import ToolCore
 
 public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identifiable, Sendable {
     case off
@@ -70,77 +69,6 @@ public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identi
             "Ultra thinking"
         }
     }
-
-    /// Sendable JSON representation used by concurrent request construction.
-    public var openRouterReasoningJSON: [String: JSONValue] {
-        switch self {
-        case .off:
-            [
-                "effort": .string("none"),
-                "exclude": .bool(false)
-            ]
-        case .enabled:
-            [
-                "enabled": .bool(true),
-                "exclude": .bool(false)
-            ]
-        case .minimal, .low, .medium, .high, .xhigh, .max, .ultra:
-            [
-                "effort": .string(rawValue),
-                "exclude": .bool(false)
-            ]
-        }
-    }
-
-    /// Compatibility materialization for legacy request builders that still
-    /// require Foundation JSON objects. New concurrent paths should use
-    /// `openRouterReasoningJSON` instead.
-    public var openRouterReasoningPayload: [String: Any] {
-        openRouterReasoningJSON.mapValues(\.jsonObject)
-    }
-
-    public static func openRouterReasoningSelection(from value: JSONValue?) -> ThinkingSelection? {
-        guard let value else {
-            return nil
-        }
-
-        guard case let .object(object) = value else {
-            return nil
-        }
-
-        if let effort = object["effort"]?.stringValue?.lowercased() {
-            switch effort {
-            case "none":
-                return .off
-            case "minimal":
-                return .minimal
-            case "low":
-                return .low
-            case "medium":
-                return .medium
-            case "high":
-                return .high
-            case "xhigh":
-                return .xhigh
-            case "max":
-                return .max
-            case "ultra":
-                return .ultra
-            default:
-                break
-            }
-        }
-
-        if let enabled = object["enabled"]?.boolValue {
-            return enabled ? .enabled : .off
-        }
-
-        if object["max_tokens"]?.numberValue != nil {
-            return .enabled
-        }
-
-        return nil
-    }
 }
 
 public nonisolated struct ModelThinkingSupport: Codable, Hashable, Sendable {
@@ -203,30 +131,4 @@ public nonisolated struct ModelThinkingSupport: Codable, Hashable, Sendable {
         detector.scan(metadata)
         return detector.support
     }
-
-    public static func fromMetadataFiles(
-        in directories: [URL]
-    ) -> ModelThinkingSupport? {
-        var detector = MetadataDetector()
-        for directory in directories {
-            for filename in ["config.json", "tokenizer_config.json", "chat_template.jinja"] {
-                let fileURL = directory.appending(path: filename)
-                guard FileManager.default.fileExists(atPath: fileURL.path),
-                      let data = try? Data(contentsOf: fileURL) else {
-                    continue
-                }
-
-                if filename.hasSuffix(".json"),
-                   let object = try? JSONDecoder().decode(JSONValue.self, from: data).objectValue {
-                    let metadata = object.mapValues(\.jsonObject)
-                    detector.scan(metadata)
-                } else if let text = String(data: data, encoding: .utf8) {
-                    detector.scan(text)
-                }
-            }
-        }
-
-        return detector.support
-    }
-
 }

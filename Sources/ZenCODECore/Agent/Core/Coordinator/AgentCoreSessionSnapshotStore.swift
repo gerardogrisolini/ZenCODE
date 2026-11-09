@@ -23,10 +23,6 @@ public struct AgentCoreSessionSnapshotStore {
         return generation
     }
 
-    mutating func update(_ configuration: AgentCoreSessionConfiguration) {
-        configurations[configuration.sessionID] = configuration
-    }
-
     mutating func cache(
         _ snapshot: AgentRuntimeSessionSnapshot,
         baseConfiguration: AgentCoreSessionConfiguration,
@@ -63,9 +59,5 @@ public struct AgentCoreSessionSnapshotStore {
         generations.removeAll()
         configurations.removeAll()
         snapshots.removeAll()
-    }
-
-    var sessionIDs: Set<String> {
-        Set(configurations.keys).union(snapshots.keys)
     }
 }

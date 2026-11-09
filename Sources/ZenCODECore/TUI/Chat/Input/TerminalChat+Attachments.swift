@@ -21,32 +21,9 @@ struct TerminalAttachmentPickerEntry: Hashable, Sendable {
 }
 
 extension TerminalChat {
-    /// `/attach`, run by the shared controller (see
-    /// ``ChatSessionController/runAttachCommand(line:)``). The controller
-    /// reports its failures as notices, so this adapter does not throw.
-    public func handleAttachCommand(_ command: String) async throws {
-        await writeSessionNotices(await chatSession.runAttachCommand(line: command).notices)
-    }
-
-    /// `/attach delete`: see ``ChatSessionController/deletePendingAttachments(argument:)``,
-    /// whose ``ChatAttachmentCommandError`` this rethrows.
-    public func deletePendingAttachments(argument: String) async throws {
-        await writeSessionNotices(try chatSession.deletePendingAttachments(argument: argument))
-    }
-
-    /// `/attach list`: the attachments staged for the next prompt.
-    public func writePendingAttachments() async {
-        await writeSessionNotice(.pendingAttachments(pendingAttachments))
-    }
-
     /// See ``ChatSessionController/consumePendingAttachments()``.
     public func consumePendingAttachmentsForPrompt() -> [AgentRuntimeAttachment] {
         chatSession.consumePendingAttachments()
-    }
-
-    /// See ``ChatSessionNoticeText/attachmentUsage``.
-    public nonisolated static func renderAttachmentUsage() -> String {
-        ChatSessionNoticeText.attachmentUsage
     }
 
     nonisolated static func attachmentPickerEntries(
@@ -123,19 +100,6 @@ extension TerminalChat {
 
     nonisolated static func attachmentPickerCanReadDirectory(at directory: URL) -> Bool {
         FileManager.default.isReadableFile(atPath: directory.path)
-    }
-
-    /// See ``ChatSessionNoticeText/attachmentDeleteUsage``.
-    public nonisolated static func renderAttachmentDeleteUsage() -> String {
-        ChatSessionNoticeText.attachmentDeleteUsage
-    }
-
-    /// See ``ChatSessionNoticeText/attachmentLine(number:attachment:)``.
-    public nonisolated static func renderAttachmentLine(
-        number: Int,
-        attachment: AgentRuntimeAttachment
-    ) -> String {
-        ChatSessionNoticeText.attachmentLine(number: number, attachment: attachment)
     }
 
     /// See ``ChatSessionController/splitAttachmentCommandArguments(_:)``,

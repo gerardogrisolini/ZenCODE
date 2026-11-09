@@ -12,7 +12,7 @@ import Testing
 extension AgentConfigurationTests {
     @Test
     func toolSelectionKeysKeepCoreAndFeaturePackagesDistinct() throws {
-        let items = TerminalChat.toolSelectionItems(
+        let items = ChatSessionController.toolSelectionItems(
             featureStatuses: [
                 featureStatus(
                     id: "git-tools",
@@ -22,7 +22,7 @@ extension AgentConfigurationTests {
             ]
         )
 
-        let selectedKeys = try TerminalChat.parseToolSelection(
+        let selectedKeys = try TerminalToolSelectionCatalog.parseSelection(
             "shell files text search git",
             items: items
         )
@@ -157,7 +157,7 @@ extension AgentConfigurationTests {
             await runner.snapshotSession(id: terminal.sessionID)
         )
 
-        await terminal.applySkillSelection([skill.id])
+        _ = await terminal.chatSession.applySkillSelectionCommand(ids: [skill.id])
         let snapshot = try #require(
             await runner.snapshotSession(id: terminal.sessionID)
         )
@@ -202,8 +202,8 @@ extension AgentConfigurationTests {
             stdinIsTerminal: false,
             sessionRunner: runner
         )
-        let items = TerminalChat.toolSelectionItems(featureStatuses: [])
-        terminal.selectedToolKeys = try TerminalChat.parseToolSelection(
+        let items = ChatSessionController.toolSelectionItems(featureStatuses: [])
+        terminal.selectedToolKeys = try TerminalToolSelectionCatalog.parseSelection(
             "shell",
             items: items
         )

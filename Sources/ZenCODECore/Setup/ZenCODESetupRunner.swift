@@ -398,8 +398,7 @@ public enum ZenCODESetupRunner {
             let currentManifest = try requireExistingManifest(manifest)
             let agentProfiles = try ZenCODEAgentProfileSetupRunner.configureAgentModels(
                 currentManifest: currentManifest,
-                currentAgents: currentAgentProfiles,
-                persist: false
+                currentAgents: currentAgentProfiles
             )
             return SetupSectionConfigurationResult(
                 manifest: currentManifest,

@@ -754,11 +754,6 @@ public actor DirectToolExecutor {
             return true
         }
 
-        if let canonicalSubAgentToolName = DirectSubAgentRuntime.canonicalSubAgentToolName(for: toolName),
-           allowedToolNames.contains(canonicalSubAgentToolName) {
-            return true
-        }
-
         if let canonicalCoordinationToolName = SubAgentToolRequestCompatibility.canonicalToolName(for: toolName),
            allowedToolNames.contains(canonicalCoordinationToolName) {
             return true
@@ -806,13 +801,6 @@ public actor DirectToolExecutor {
     public static func isSubAgentCoordinationToolName(_ toolName: String) -> Bool {
         DirectSubAgentRuntime.isSubAgentToolName(toolName)
             || DirectTodoTaskRuntime.isTodoOrTaskToolName(toolName)
-    }
-
-    /// A child executor borrows only its parent's agent-runtime surface. Todo
-    /// storage and task orchestration stay local to the child executor, which
-    /// has the shared `SessionTaskOrchestrator` installed separately.
-    static func isBorrowedSubAgentToolName(_ toolName: String) -> Bool {
-        DirectSubAgentRuntime.isSubAgentToolName(toolName)
     }
 }
 

@@ -46,7 +46,7 @@ struct DirectToolExecutorLocalIOTests {
 
     @Test(arguments: DirectToolExecutorLocalIOTests.authorizationCommandCases)
     func localExecAuthorizationCommandsSplitShellPipelines(command: String, commands: [String]) {
-        #expect(DirectToolExecutor.localExecAuthorizationCommands(in: command) == commands)
+        #expect(LocalExecCommandParser.authorizationCandidates(in: command).map(\.invocation) == commands)
     }
 
     /// The authorization is one decision for the exact tool call: pipelines,

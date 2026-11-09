@@ -122,14 +122,6 @@ struct SubscriptionPreflightBudgetTests {
         #expect(reservedOutputTokens == 4_000)
         #expect(reservedOutputTokens + overheadTokens >= contextWindowTokens)
         #expect(
-            AnthropicSubscriptionGenerationClient.compactedMessagesForEstimatedContextIfNeeded(
-                messages,
-                estimate: estimate,
-                maxTokens: 30_000,
-                maxOutputTokens: 4_000
-            ) == nil
-        )
-        #expect(
             AnthropicSubscriptionGenerationClient.unsatisfiableBudgetDiagnostic(
                 contextWindowTokens: contextWindowTokens,
                 maxOutputTokens: reservedOutputTokens,

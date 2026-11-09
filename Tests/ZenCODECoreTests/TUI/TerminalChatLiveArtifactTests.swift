@@ -130,7 +130,7 @@ struct TerminalChatLiveArtifactTests {
         _ = await context.history.finishTurn(
             context.id, summary: summary, matchingLivePaths: [], workingDirectory: directory
         )
-        await terminal.handleArtifactsCommand()
+        _ = await terminal.submittedLineAction("/artifacts")
         let history = await renderer.capturedWriteEvents().dropFirst(liveEvents.count).map(\.text).joined()
         let liveBodyStart = try #require(live.range(of: "modified")).lowerBound
         let historyBodyStart = try #require(history.range(of: "modified")).lowerBound
@@ -182,7 +182,7 @@ struct TerminalChatLiveArtifactTests {
         let before = await terminal.fileArtifactHistory.snapshot()
         for command in ["/changes diff", "/changes --diff", "/changes diff"] {
             let count = await renderer.capturedWriteEvents().count
-            await terminal.handleChangesCommand(command)
+            _ = await terminal.submittedLineAction(command)
             let output = await renderer.capturedWriteEvents().dropFirst(count).map(\.text).joined()
             #expect(output.contains("Latest.swift"))
             #expect(!output.contains("Earlier.swift"))
@@ -190,7 +190,7 @@ struct TerminalChatLiveArtifactTests {
             #expect(terminal.lastFileChangeSummary == summaries[1])
         }
         let count = await renderer.capturedWriteEvents().count
-        await terminal.handleArtifactsCommand()
+        _ = await terminal.submittedLineAction("/artifacts")
         let history = await renderer.capturedWriteEvents().dropFirst(count).map(\.text).joined()
         #expect(history.contains("Earlier.swift"))
         #expect(history.contains("Latest.swift"))
@@ -227,7 +227,7 @@ struct TerminalChatLiveArtifactTests {
                   isBinary: false, existedBefore: false, beforeDataBase64: nil,
                   patch: String(repeating: "+", count: OperationFileChangeRecorder.maximumTextBytes + 1)),
         ])
-        await terminal.handleChangesCommand("/changes diff")
+        _ = await terminal.submittedLineAction("/changes diff")
         let events = await renderer.capturedWriteEvents()
         let output = events.map(\.text).joined()
         #expect(output.contains("**modified `Binary.bin`** (binary)"))

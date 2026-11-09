@@ -348,19 +348,10 @@ extension TerminalStatusBar {
         )
     }
 
-    func statusBoxHorizontalInsetLocked(state: inout State) -> Int {
-        0
-    }
-
-    func statusBoxStartColumnLocked(state: inout State) -> Int {
-        statusBoxHorizontalInsetLocked(state: &state) + 1
-    }
-
     func statusBoxWidthLocked(state: inout State) -> Int {
-        let horizontalInset = statusBoxHorizontalInsetLocked(state: &state)
         // Footer surfaces are painted with autowrap disabled by the primary
         // screen compositor, so their right border can own the final column.
-        return max(20, state.columns - horizontalInset * 2)
+        return max(20, state.columns)
     }
 
     func statusBoxContentWidthLocked(state: inout State) -> Int {

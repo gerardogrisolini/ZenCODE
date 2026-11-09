@@ -513,7 +513,6 @@ extension RemoteSessionSnapshotTests {
     @Test
     func chatGPTStreamFailureCancellationPredicates() {
         #expect(ChatGPTSubscriptionResponsesClient.isCancellationError(CancellationError()))
-        #expect(ChatGPTSubscriptionResponsesClient.isCancellationError(ChatGPTSubscriptionGenerationError.cancelled))
         #expect(ChatGPTSubscriptionResponsesClient.isCancellationError(URLError(.cancelled)))
         #expect(!ChatGPTSubscriptionResponsesClient.isCancellationError(RemoteTransportError.closed))
         #expect(!ChatGPTSubscriptionGenerationClient.isRetryableStreamInterruption(CancellationError()))
@@ -544,10 +543,11 @@ private extension ChatGPTSubscriptionGenerationClient {
     /// larger, so overflowing here implies overflowing there.
     func chatGPTStreamFailureWireEstimate(_ id: String) -> (estimate: Int, budget: Int)? {
         guard let messages = sessions[id]?.messages,
-              let budget = Self.compactionPolicyMaxTokens(
-                  for: resolvedContextWindowTokenLimit(),
-                  maxOutputTokens: configuration.maxOutputTokens
-              ) else {
+              let budget = SubscriptionCompactionSupport.compactionBudget(
+                  contextWindowTokens: resolvedContextWindowTokenLimit(),
+                  maxOutputTokens: configuration.maxOutputTokens,
+                  reserveTokenCount: Self.compactionReserveTokenCount
+              ).promptTokenBudget else {
             return nil
         }
         let payload = ChatGPTSubscriptionRequestBuilder.chatGPTResponsesInputPayload(from: messages)

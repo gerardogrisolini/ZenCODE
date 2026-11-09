@@ -222,7 +222,10 @@ a nil `workspaceRootURL` fails with `scopeUnavailable` for reads and mutations
 alike. `scope` is accepted on the wrappers for source compatibility and only
 `.project` is backed by a per-workspace graph. Retrieval
 is BM25-first: `ZenMemory.recall` always runs lexical retrieval through the
-pluggable `MemoryIndex` protocol (default `BM25MemoryIndex`) and uses those hits
+pluggable `MemoryIndex` protocol (default `BM25MemoryIndex`; the engine ranks
+all the queries of one retrieval through the batch `search(queries:…)`
+requirement, whose default implementation searches query by query, so the BM25
+index tokenizes the corpus once per retrieval) and uses those hits
 as seeds, then a breadth-first relation cascade with depth decay and a
 per-retrieval confidence boost of the selected entries. Lexical tokens come
 from `MemoryTokenizer`, applied identically to stored text and queries at

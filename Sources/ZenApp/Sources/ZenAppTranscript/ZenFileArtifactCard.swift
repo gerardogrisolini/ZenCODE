@@ -16,7 +16,7 @@ import ZenAppTheme
 /// disclosure chevron, the status icon, the file name with its folder dimmed
 /// after it, and the line counts (or `binary`); the agent that produced the
 /// artifact follows when it was a sub-agent. The card starts collapsed: the
-/// header reveals the explanation and the diff, as the transcript row does.
+/// header reveals the explanation and the diff.
 public struct ZenFileArtifactCard: View {
     private let artifact: FileChangeArtifact
     private let agentID: String?
@@ -69,7 +69,7 @@ public struct ZenFileArtifactCard: View {
     }
 
     /// The indent of the lines under the header: past the disclosure
-    /// chevron, as in the transcript row.
+    /// chevron.
     private static let detailIndent: CGFloat = 18
 
     /// The header row: the disclosure (or its placeholder), the status icon,

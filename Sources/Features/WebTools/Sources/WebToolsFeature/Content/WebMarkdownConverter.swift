@@ -42,8 +42,6 @@ struct WebMarkdownConversion: Sendable {
     let scope: Scope
     /// `<meta name=description>` or `og:description`, collapsed.
     let description: String?
-    /// `<link rel=canonical href>` resolved against the document base URL.
-    let canonicalURL: String?
 }
 
 struct WebMarkdownOptions: Sendable {
@@ -107,22 +105,19 @@ enum WebMarkdownConverter {
             }
         }
 
-        let metadata = survey.metadata(baseURL: baseURL)
+        let metadata = survey.metadata()
         return WebMarkdownConversion(
             title: metadata.title,
             content: renderer.finish(),
             links: renderer.links,
             scope: scope,
-            description: metadata.description,
-            canonicalURL: metadata.canonicalURL
+            description: metadata.description
         )
     }
 
-    /// Title, description and canonical URL only, without rendering; used
-    /// when the HTML itself is returned.
-    static func metadata(html: String, baseURL: URL? = nil) -> WebHTMLMetadata {
-        let document = WebHTMLParser.parse(html)
-        let survey = WebDocumentSurvey(document: document)
-        return survey.metadata(baseURL: survey.documentBaseURL(fallback: baseURL))
+    /// Title and description only, without rendering; used when the HTML
+    /// itself is returned.
+    static func metadata(html: String) -> WebHTMLMetadata {
+        WebDocumentSurvey(document: WebHTMLParser.parse(html)).metadata()
     }
 }

@@ -330,6 +330,83 @@ struct SwiftFeatureOptionalInstallationTests {
         #expect(resolved.path == rootURL.standardizedFileURL.path)
     }
 
+    // MARK: - Update detection
+
+    @Test
+    func updateDetectionComparesNormalizedPackagePathsSizesAndContents() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("optional-update-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        let featureRootURL = rootURL.appendingPathComponent("features", isDirectory: true)
+        let zenRootURL = rootURL.appendingPathComponent("checkout", isDirectory: true)
+        let definition = try #require(SwiftFeatureRuntime.bundledFeatureDefinition(id: "git-tools"))
+        let sourceURL = zenRootURL.appendingPathComponent(
+            try #require(definition.sourceRelativePath),
+            isDirectory: true
+        )
+        try Self.writeFeaturePackage(at: sourceURL, productName: "git-tools-feature")
+
+        let runtime = SwiftFeatureRuntime(featureSearchRoots: [featureRootURL])
+        _ = try await runtime.materializeFeaturePackage(
+            definition: definition,
+            sourceDirectoryURL: sourceURL,
+            zenPackageRootURL: zenRootURL,
+            displayName: "Git",
+            enabled: false,
+            overwrite: true
+        )
+        let installedURL = featureRootURL.appendingPathComponent("git-tools", isDirectory: true)
+        // Build products and package resolution state are not source changes.
+        try FileManager.default.createDirectory(
+            at: installedURL.appendingPathComponent(".build/release", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try "binary".write(
+            to: installedURL.appendingPathComponent(".build/release/git-tools-feature"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "{}".write(
+            to: installedURL.appendingPathComponent("Package.resolved"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let feature = try #require(
+            SwiftFeatureRuntime.optionalFeatures(searchRoots: [featureRootURL]).first { $0.id == "git-tools" }
+        )
+        #expect(feature.installed && feature.supportedOnCurrentPlatform)
+        func updateAvailable() async throws -> Bool {
+            try await runtime.isOptionalFeatureUpdateAvailable(feature, zenPackageRootURL: zenRootURL)
+        }
+        func write(_ text: String, to url: URL) throws {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+
+        // Package.swift differs only by the rewritten ZenCODE path.
+        #expect(try await updateAvailable() == false)
+
+        let mainURL = sourceURL.appendingPathComponent("Sources/git-tools-feature/main.swift")
+        try write("print(\"no\")\n", to: mainURL)
+        #expect(try await updateAvailable(), "Same size, different content")
+        try write("print(\"okay\")\n", to: mainURL)
+        #expect(try await updateAvailable(), "Different size")
+        try write("print(\"ok\")\n", to: mainURL)
+        #expect(try await updateAvailable() == false)
+
+        let extraSourceURL = sourceURL.appendingPathComponent("Sources/git-tools-feature/Extra.swift")
+        try write("", to: extraSourceURL)
+        #expect(try await updateAvailable(), "File only in the source package")
+        try FileManager.default.removeItem(at: extraSourceURL)
+        let extraInstalledURL = installedURL.appendingPathComponent("NOTES.md")
+        try write("", to: extraInstalledURL)
+        #expect(try await updateAvailable(), "File only in the installed package")
+        try FileManager.default.removeItem(at: extraInstalledURL)
+        #expect(try await updateAvailable() == false)
+    }
+
     // MARK: - Helpers
 
     private static func writeFeaturePackage(

@@ -11,23 +11,23 @@ struct TerminalToolSelectionHardeningTests {
         if ["0", "-1", "2", "all,1", "none 1", "???"].contains(input) {
             let token = String(input.split { $0.isWhitespace || $0 == "," }[0])
             let toolError = #expect(throws: TerminalToolSelectionError.self) {
-                _ = try TerminalChat.parseToolSelection(input, items: [item])
+                _ = try TerminalToolSelectionCatalog.parseSelection(input, items: [item])
             }
             #expect(toolError?.localizedDescription == "Unknown tool or package '\(token)'.")
             let skillError = #expect(throws: TerminalSkillSelectionError.self) {
-                _ = try TerminalChat.parseSkillSelection(input, availableSkills: [skill])
+                _ = try ChatSessionController.parseSkillSelection(input, availableSkills: [skill])
             }
             #expect(skillError?.localizedDescription == "Unknown skill '\(token)'.")
         } else {
             let expected: Set<String> = ["", " ,\t\n", "none", "OFF", "clear", "disabled"].contains(input) ? [] : ["cafe"]
-            #expect(try TerminalChat.parseToolSelection(input, items: [item]) == expected)
-            #expect(try TerminalChat.parseSkillSelection(input, availableSkills: [skill]) == expected)
+            #expect(try TerminalToolSelectionCatalog.parseSelection(input, items: [item]) == expected)
+            #expect(try ChatSessionController.parseSkillSelection(input, availableSkills: [skill]) == expected)
         }
     }
 
     @Test(arguments: [(" Café__工具! ", "cafe-工具"), ("e\u{301}", "e"), ("👩🏽‍💻", "")])
     func unicodeLookupKeys(_ input: String, _ expected: String) {
-        #expect(TerminalChat.selectionKey(input) == expected)
+        #expect(ChatSessionController.selectionKey(input) == expected)
     }
 
     @Test
@@ -45,7 +45,7 @@ struct TerminalToolSelectionHardeningTests {
         let skills = ["alpha", "alpine"].map { name in
             PromptSkill(canonicalName: name, title: name, summary: "", promptBody: "", sourceHash: name)
         }
-        #expect(try TerminalChat.parseSkillSelection("al", availableSkills: skills) == ["alpha"])
+        #expect(try ChatSessionController.parseSkillSelection("al", availableSkills: skills) == ["alpha"])
 
         do {
             _ = try TerminalToolSelectionCatalog.parseSelection("feature:al", items: items)

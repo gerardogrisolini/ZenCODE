@@ -1,4 +1,6 @@
+import FeatureKit
 import Foundation
+import LocalToolsSupport
 import Testing
 import ToolCore
 @testable import ZenCODECore
@@ -52,7 +54,13 @@ struct DirectToolCatalogSchemaTests {
         #expect(readNames.isDisjoint(with: mutatingNames))
         #expect(coreNames == readNames.union(mutatingNames))
         #expect(coreNames.isDisjoint(with: unclassifiedNames))
-        #expect(Set(DirectToolCatalog.localSearchDescriptors.map(\.name)).isSubset(of: readNames))
+        #expect(
+            Set(
+                DirectToolCatalog.coreLocalFileAndTextDescriptors
+                    .map(\.name)
+                    .filter { $0.hasPrefix("search.") }
+            ).isSubset(of: readNames)
+        )
     }
 
     @Test
@@ -97,5 +105,56 @@ struct DirectToolCatalogSchemaTests {
         let replyTimeout = try #require(properties["replyTimeoutSeconds"] as? [String: Any])
         #expect(replyTimeout["type"] as? String == "number")
         #expect(schema["required"] as? [String] == ["message"])
+    }
+
+    @Test
+    func coreLocalToolsAndDescriptorsFollowTheRegistryOrder() {
+        let registryNames = (
+            LocalFeatureTools.fileTools()
+                + LocalFeatureTools.searchTools()
+                + LocalFeatureTools.textTools()
+        ).map(\.descriptor.name)
+
+        #expect(DirectToolCatalog.coreLocalFileAndTextTools.map(\.descriptor.name) == registryNames)
+        #expect(DirectToolCatalog.coreLocalFileAndTextDescriptors.map(\.name) == registryNames)
+        for name in registryNames {
+            #expect(DirectToolExecutor.isCoreLocalFileOrTextToolName(name))
+        }
+        #expect(!DirectToolExecutor.isCoreLocalFileOrTextToolName("local.exec"))
+        #expect(!DirectToolExecutor.isCoreLocalFileOrTextToolName("search."))
+    }
+
+    @Test
+    func schemaObjectIsStableAcrossCallsAndRejectsMalformedSchemas() throws {
+        let descriptor = DirectToolDescriptor(
+            name: "fixture.schema",
+            description: "Fixture",
+            inputSchema: #"{"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}"#
+        )
+        let first = try #require(descriptor.schemaObject as? [String: Any])
+        let second = try #require(descriptor.schemaObject as? [String: Any])
+        #expect(NSDictionary(dictionary: first).isEqual(to: second))
+        #expect(first["required"] as? [String] == ["path"])
+
+        let malformed = DirectToolDescriptor(
+            name: "fixture.malformed",
+            description: "Fixture",
+            inputSchema: "{"
+        )
+        #expect(malformed.schemaObject == nil)
+        #expect(malformed.schemaObject == nil)
+    }
+
+    @Test
+    func schemaObjectStaysCorrectPastTheDecodedSchemaCacheLimit() throws {
+        for index in 0..<600 {
+            let descriptor = DirectToolDescriptor(
+                name: "fixture.schema.\(index)",
+                description: "Fixture",
+                inputSchema: #"{"type":"object","title":"schema-\#(index)"}"#
+            )
+            let schema = try #require(descriptor.schemaObject as? [String: Any])
+            #expect(schema["title"] as? String == "schema-\(index)")
+        }
     }
 }

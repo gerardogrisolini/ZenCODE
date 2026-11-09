@@ -667,7 +667,7 @@ struct ZenVoiceWindowTests {
             #expect(window.draft.isEmpty)
             #expect(window.voiceDictationUpdate?.change == .taken)
             // The prompt history records what was typed, not what voice sent.
-            #expect(window.promptHistory == ["/voice on"])
+            #expect(window.history.entries == ["/voice on"])
             #expect(await window.waitUntilIdle())
 
             // Pause removes the preview and keeps the typed text.

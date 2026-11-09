@@ -113,7 +113,7 @@ struct TerminalSemanticToolRenderingTests {
 
         for (name, arguments, _, path, duration) in cases {
             let descriptor = try #require(
-                DirectToolCatalog.filesystemDescriptors.first { $0.name == name }
+                DirectToolCatalog.coreLocalFileAndTextDescriptors.first { $0.name == name }
             )
             let call = DirectAgentToolCall(
                 id: name,

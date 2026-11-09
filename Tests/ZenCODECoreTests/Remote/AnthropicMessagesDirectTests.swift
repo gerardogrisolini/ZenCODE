@@ -171,6 +171,54 @@ struct AnthropicMessagesDirectTests {
         #expect(result.anthropicContentBlocksJSON?.contains("\"thinking\":\"\"") == true)
     }
 
+    @Test func streamedThinkingSignatureTextAndCitationsAreFoldedIntoTheirBlocks() async throws {
+        var accumulator = AnthropicMessagesStreamAccumulator()
+        let sink: @Sendable (DirectAgentEvent) async -> Void = { _ in }
+        let firstCitation: [String: Any] = ["type": "char_location", "cited_text": "first"]
+        let secondCitation: [String: Any] = ["type": "char_location", "cited_text": "second"]
+        let events: [[String: Any]] = [
+            ["type": "content_block_start", "index": 0,
+             "content_block": ["type": "thinking", "thinking": "", "extra": "kept"]],
+            ["type": "content_block_delta", "index": 0, "delta": ["type": "thinking_delta", "thinking": "Let me "]],
+            ["type": "content_block_delta", "index": 0, "delta": ["type": "thinking_delta", "thinking": "reason."]],
+            ["type": "content_block_delta", "index": 0, "delta": ["type": "signature_delta", "signature": "sig-"]],
+            ["type": "content_block_delta", "index": 0, "delta": ["type": "signature_delta", "signature": "123"]],
+            ["type": "content_block_start", "index": 1, "content_block": ["type": "text", "text": "Ans"]],
+            ["type": "content_block_delta", "index": 1, "delta": ["type": "text_delta", "text": "wer"]],
+            ["type": "content_block_delta", "index": 1, "delta": ["type": "citations_delta", "citation": firstCitation]],
+            ["type": "content_block_delta", "index": 1, "delta": ["type": "text_delta", "text": " here."]],
+            ["type": "content_block_delta", "index": 1, "delta": ["type": "citations_delta", "citation": secondCitation]],
+            // A delta without a preceding content_block_start still yields a block.
+            ["type": "content_block_delta", "index": 2, "delta": ["type": "text_delta", "text": "Tail"]],
+            ["type": "content_block_start", "index": 3,
+             "content_block": ["type": "redacted_thinking", "data": "opaque"]],
+            ["type": "message_stop"]
+        ]
+        for event in events {
+            try await accumulator.ingest(event, onEvent: sink)
+        }
+
+        let result = try accumulator.result(requestStartedAt: Date())
+        #expect(result.text == "Answer here.Tail")
+        #expect(result.reasoningText == "Let me reason.")
+        let thinkingBlock: [String: Any] = [
+            "type": "thinking", "thinking": "Let me reason.", "signature": "sig-123", "extra": "kept"
+        ]
+        let redactedBlock: [String: Any] = ["type": "redacted_thinking", "data": "opaque"]
+        let expectedBlocks: [[String: Any]] = [
+            thinkingBlock,
+            ["type": "text", "text": "Answer here.", "citations": [firstCitation, secondCitation]],
+            ["type": "text", "text": "Tail"],
+            redactedBlock
+        ]
+        let blocksJSON = try #require(result.anthropicContentBlocksJSON)
+        let thinkingJSON = try #require(result.assistantThinkingBlocksJSON)
+        #expect(try JSONDecoder().decode(JSONValue.self, from: Data(blocksJSON.utf8))
+            == JSONValue(jsonObject: expectedBlocks))
+        #expect(try JSONDecoder().decode(JSONValue.self, from: Data(thinkingJSON.utf8))
+            == JSONValue(jsonObject: [thinkingBlock, redactedBlock]))
+    }
+
     @Test func optionalCodableFieldIsBackwardCompatible() throws {
         let old = #"{"role":"assistant","content":"hello","attachments":[],"toolCalls":[]}"#.data(using: .utf8)!
         let decoded = try JSONDecoder().decode(AgentRuntimeMessage.self, from: old)

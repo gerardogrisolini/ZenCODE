@@ -709,33 +709,29 @@ extension WebContentConversionTests {
         }
 
         @Test
-        func titleDescriptionAndCanonicalComeFromHead() throws {
+        func titleAndDescriptionComeFromHead() throws {
             let result = try ContentFixture.convert(
                 "<html><head><title>\n  Hello &amp;   World \n</title><meta name='Description' content='  Page   summary '>"
-                    + "<meta property='og:description' content='OG text'><link rel='alternate canonical' href='/canonical/path'>"
+                    + "<meta property='og:description' content='OG text'>"
                     + "</head><body><h1>Heading</h1><svg><title>Icon</title></svg></body></html>"
             )
             #expect(result.title == "Hello & World")
             #expect(result.description == "Page summary")
-            #expect(result.canonicalURL == "https://example.com/canonical/path")
 
             let fallback = try ContentFixture.convert(
                 "<head><meta property='og:description' content='From  OG'></head><body><h1> First <b>heading</b> </h1><h1>Second</h1></body>"
             )
             #expect(fallback.title == "First heading")
             #expect(fallback.description == "From OG")
-            #expect(fallback.canonicalURL == nil)
 
             let empty = try ContentFixture.convert("<p>No metadata</p>")
             #expect(empty.title == "")
             #expect(empty.description == nil)
-            #expect(empty.canonicalURL == nil)
 
             let metadata = WebMarkdownConverter.metadata(
-                html: "<title>T</title><meta name=description content='D'><link rel=canonical href='/c'>",
-                baseURL: ContentFixture.pageURL
+                html: "<title>T</title><meta name=description content='D'>"
             )
-            #expect(metadata == WebHTMLMetadata(title: "T", description: "D", canonicalURL: "https://example.com/c"))
+            #expect(metadata == WebHTMLMetadata(title: "T", description: "D"))
         }
 
         @Test

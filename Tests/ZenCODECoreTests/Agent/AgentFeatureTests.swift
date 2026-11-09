@@ -119,7 +119,7 @@ extension AgentConfigurationTests {
 
     @Test
     func toolSelectionCatalogHidesDisabledFeaturePackages() {
-        let items = TerminalChat.toolSelectionItems(
+        let items = ChatSessionController.toolSelectionItems(
             featureStatuses: [
                 featureStatus(
                     id: "enabled-clock",
@@ -143,7 +143,7 @@ extension AgentConfigurationTests {
 
     @Test
     func activeToolRenderingCountsResolvedRuntimeDescriptors() throws {
-        let items = TerminalChat.toolSelectionItems(
+        let items = ChatSessionController.toolSelectionItems(
             featureStatuses: [
                 featureStatus(
                     id: "git-tools",
@@ -168,7 +168,7 @@ extension AgentConfigurationTests {
                 )
             ]
         )
-        let selectedKeys = try TerminalChat.parseToolSelection(
+        let selectedKeys = try TerminalToolSelectionCatalog.parseSelection(
             "git swift web",
             items: items
         )

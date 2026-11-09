@@ -153,25 +153,4 @@ extension TerminalChat {
         }
         return ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix(modelID) ?? modelID
     }
-
-    /// Returns the significant model name when `modelID` is a remote API
-    /// `<providerKey>:<modelName>` identifier (split on the first colon),
-    /// otherwise `nil`.
-    public nonisolated static func subAgentModelNameStrippingRemoteAPIPrefix(
-        _ modelID: String
-    ) -> String? {
-        ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix(modelID)
-    }
-
-    /// Returns the bare model name from a binding identifier when the provider
-    /// is already shown separately. Reuses the remote API provider-key
-    /// stripping and, when a provider is shown, also strips the other
-    /// provider-scoped identifiers such as `chatgpt:gpt-5.6-terra` on their
-    /// first colon (unrecognised prefixes fall back to the last colon).
-    public nonisolated static func strippedModelNameForBinding(
-        _ modelID: String,
-        modelProvider: String?
-    ) -> String {
-        ModelNamePresentation.strippedModelNameForBinding(modelID, modelProvider: modelProvider)
-    }
 }

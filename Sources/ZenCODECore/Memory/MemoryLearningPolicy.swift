@@ -54,15 +54,18 @@ final class MemoryLearningPermit: Sendable {
 /// Reject rather than redact evidence: redaction could remove a causal qualifier.
 /// This heuristic is deliberately fail-closed but cannot identify every secret.
 enum MemoryLearningPrivacy {
+    /// Compiled once: `accepts` runs for every piece of evidence.
+    private static let rejectedPatterns: [NSRegularExpression] = [
+        "(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|authorization|client[_-]?secret|private[_-]?key|secret|token)[\\\"']?\\s*[:=]",
+        "(?i)bearer\\s+\\S+", "-----BEGIN .*PRIVATE KEY-----",
+        "\\b(sk-|gh[pousr]_|github_pat_|AKIA|xox[baprs]-)[A-Za-z0-9_-]{8,}",
+        "\\beyJ[A-Za-z0-9_-]{12,}\\.[A-Za-z0-9_-]{12,}\\.[A-Za-z0-9_-]{8,}", "https?://[^\\s/]+:[^\\s/]+@"
+    ].map { try! NSRegularExpression(pattern: $0) }
+
     static func accepts(_ text: String, limit: Int) -> Bool {
         guard !text.isEmpty, text.count <= limit else { return false }
-        let patterns = [
-            "(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|authorization|client[_-]?secret|private[_-]?key|secret|token)[\\\"']?\\s*[:=]",
-            "(?i)bearer\\s+\\S+", "-----BEGIN .*PRIVATE KEY-----",
-            "\\b(sk-|gh[pousr]_|github_pat_|AKIA|xox[baprs]-)[A-Za-z0-9_-]{8,}",
-            "\\beyJ[A-Za-z0-9_-]{12,}\\.[A-Za-z0-9_-]{12,}\\.[A-Za-z0-9_-]{8,}", "https?://[^\\s/]+:[^\\s/]+@"
-        ]
-        return !patterns.contains { text.range(of: $0, options: .regularExpression) != nil }
+        let range = NSRange(text.startIndex..., in: text)
+        return !rejectedPatterns.contains { $0.firstMatch(in: text, range: range) != nil }
     }
 }
 

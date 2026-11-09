@@ -260,11 +260,8 @@ extension TerminalChatRenderCoordinator {
     }
 
     private func recordChannelContent(after text: String, for channel: OutputChannel) {
-        let info = TerminalANSIText.trailingVisibleNewlineInfo(text)
-        guard info.hasVisible else {
-            return
-        }
-        guard channel == .standardOutput else {
+        guard channel == .standardOutput,
+              TerminalANSIText.containsVisibleText(text) else {
             return
         }
         withChannelState(for: channel) { state in

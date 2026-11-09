@@ -135,24 +135,6 @@ enum MemorySearch {
         }
     }
 
-    public static func lexicalBM25(
-        graph: MemoryGraph,
-        query: String,
-        scope: EngineMemoryScope = .all,
-        limit: Int = 10,
-        k1: Float = 1.2,
-        b: Float = 0.75
-    ) -> [ScoredMemoryID] {
-        lexicalBM25(
-            memories: Array(graph.memories.values),
-            query: query,
-            scope: scope,
-            limit: limit,
-            k1: k1,
-            b: b
-        )
-    }
-
     /// BM25 over `memories`. Inactive entries are skipped unless
     /// `requireActive` is `false`, which lets a lookup that was explicitly
     /// asked for archived entries rank them with the same scoring.
@@ -168,61 +150,43 @@ enum MemorySearch {
         guard limit > 0 else { return [] }
         let queryTokens = tokens(query)
         guard !queryTokens.isEmpty else { return [] }
-
-        let documents: [(EngineMemoryEntry, [String])] = memories
-            .filter { (!requireActive || $0.active) && scopeAllows($0.scope, requested: scope) }
-            .map { ($0, tokens($0.searchableText)) }
-
-        guard !documents.isEmpty else { return [] }
-        let averageLength = Float(documents.reduce(0) { $0 + $1.1.count }) / Float(documents.count)
-        guard averageLength > 0 else { return [] }
-
-        let querySet = Set(queryTokens)
-        var documentFrequency: [String: Int] = [:]
-        for (_, documentTokens) in documents {
-            for token in Set(documentTokens) where querySet.contains(token) {
-                documentFrequency[token, default: 0] += 1
-            }
-        }
-
-        return documents.compactMap { entry, documentTokens -> ScoredMemoryID? in
-            guard !documentTokens.isEmpty else { return nil }
-            var frequencies: [String: Int] = [:]
-            for token in documentTokens { frequencies[token, default: 0] += 1 }
-
-            var score: Float = 0
-            for token in queryTokens {
-                guard let tfValue = frequencies[token], tfValue > 0 else { continue }
-                let n = Float(documents.count)
-                let df = Float(documentFrequency[token] ?? 0)
-                let idf = logf(1 + (n - df + 0.5) / (df + 0.5))
-                let tf = Float(tfValue)
-                let dl = Float(documentTokens.count)
-                let denominator = tf + k1 * (1 - b + b * dl / averageLength)
-                score += idf * (tf * (k1 + 1)) / denominator
-            }
-
-            return score > 0 ? ScoredMemoryID(id: entry.id, score: score) : nil
-        }
-        .sorted {
-            if $0.score == $1.score { return $0.id < $1.id }
-            return $0.score > $1.score
-        }
-        .prefix(limit)
-        .map { $0 }
+        return MemoryLexicalCorpus(memories: memories, scope: scope, requireActive: requireActive)
+            .bm25(queryTokens: queryTokens, limit: limit, k1: k1, b: b)
     }
 
-    public static func reciprocalRankFusion(
-        semantic: [ScoredMemoryID],
-        lexical: [ScoredMemoryID],
-        rankConstant: Float = 60,
-        limit: Int = 10
-    ) -> [ScoredMemoryID] {
-        reciprocalRankFusion(
-            rankedLists: [semantic, lexical],
-            rankConstant: rankConstant,
-            limit: limit
-        )
+    /// BM25 of every query in `queries` over the same `memories`: one ranking
+    /// per query, in order, each identical to
+    /// ``lexicalBM25(memories:query:scope:limit:k1:b:requireActive:)`` for
+    /// that query. The memories are tokenized once — and only when some query
+    /// has tokens — and the corpus is shared by all the queries.
+    static func lexicalBM25(
+        memories: [EngineMemoryEntry],
+        queries: [String],
+        scope: EngineMemoryScope = .all,
+        limit: Int = 10,
+        k1: Float = 1.2,
+        b: Float = 0.75,
+        requireActive: Bool = true
+    ) -> [[ScoredMemoryID]] {
+        guard limit > 0 else { return queries.map { _ in [] } }
+        var corpus: MemoryLexicalCorpus?
+        var rankings: [[ScoredMemoryID]] = []
+        rankings.reserveCapacity(queries.count)
+        for query in queries {
+            let queryTokens = tokens(query)
+            guard !queryTokens.isEmpty else {
+                rankings.append([])
+                continue
+            }
+            let shared = corpus ?? MemoryLexicalCorpus(
+                memories: memories,
+                scope: scope,
+                requireActive: requireActive
+            )
+            corpus = shared
+            rankings.append(shared.bm25(queryTokens: queryTokens, limit: limit, k1: k1, b: b))
+        }
+        return rankings
     }
 
     public static func reciprocalRankFusion(
@@ -292,9 +256,13 @@ enum MemorySearch {
             guard memory.active, scopeAllows(memory.scope, requested: scope) else { return nil }
             let memoryTags = Set(memory.tags.map { $0.lowercased() })
             let tagMatches = wantedTags.intersection(memoryTags).count
-            let documentTokens = Set(tokens(memory.content))
-            let entityMatches = entityTokens.reduce(into: 0) { count, token in
-                if documentTokens.contains(token) { count += 1 }
+            // Without entity tokens nothing can match: skip tokenizing the content.
+            var entityMatches = 0
+            if !entityTokens.isEmpty {
+                let documentTokens = Set(tokens(memory.content))
+                entityMatches = entityTokens.reduce(into: 0) { count, token in
+                    if documentTokens.contains(token) { count += 1 }
+                }
             }
             let score = Float(tagMatches) * 2 + Float(entityMatches)
             return score > 0 ? ScoredMemoryID(id: memory.id, score: score) : nil
@@ -317,5 +285,79 @@ enum MemorySearch {
         case .project: memoryScope == .project || memoryScope == .all
         case .global: memoryScope == .global || memoryScope == .all
         }
+    }
+}
+
+/// The BM25 documents of a memory set, tokenized once so that several queries
+/// over the same set — the queries of one retrieval — share a single
+/// tokenization and stemming pass. A document is an eligible entry (active
+/// unless `requireActive` is `false`, and allowed by `scope`) with the term
+/// frequencies and the token count of its `searchableText`.
+///
+/// Transient by design: it lives for one ranking call and nothing derived from
+/// ``MemoryTokenizer`` is persisted.
+struct MemoryLexicalCorpus: Sendable {
+    struct Document: Sendable {
+        let id: String
+        let termFrequencies: [String: Int]
+        let length: Int
+    }
+
+    let documents: [Document]
+    /// Mean token count of `documents`; `0` when there are none.
+    let averageLength: Float
+
+    init(
+        memories: [EngineMemoryEntry],
+        scope: EngineMemoryScope = .all,
+        requireActive: Bool = true
+    ) {
+        documents = memories
+            .filter { (!requireActive || $0.active) && MemorySearch.scopeAllows($0.scope, requested: scope) }
+            .map { entry in
+                let tokens = MemorySearch.tokens(entry.searchableText)
+                var frequencies: [String: Int] = [:]
+                for token in tokens { frequencies[token, default: 0] += 1 }
+                return Document(id: entry.id, termFrequencies: frequencies, length: tokens.count)
+            }
+        averageLength = documents.isEmpty
+            ? 0
+            : Float(documents.reduce(0) { $0 + $1.length }) / Float(documents.count)
+    }
+
+    /// BM25 of the already tokenized query over the documents, best first,
+    /// ties broken by id.
+    func bm25(queryTokens: [String], limit: Int, k1: Float, b: Float) -> [ScoredMemoryID] {
+        guard limit > 0, !queryTokens.isEmpty, !documents.isEmpty, averageLength > 0 else { return [] }
+
+        let querySet = Set(queryTokens)
+        var documentFrequency: [String: Int] = [:]
+        for document in documents {
+            for token in querySet where document.termFrequencies[token] != nil {
+                documentFrequency[token, default: 0] += 1
+            }
+        }
+
+        let n = Float(documents.count)
+        return documents.compactMap { document -> ScoredMemoryID? in
+            guard document.length > 0 else { return nil }
+            var score: Float = 0
+            for token in queryTokens {
+                guard let tfValue = document.termFrequencies[token], tfValue > 0 else { continue }
+                let df = Float(documentFrequency[token] ?? 0)
+                let idf = logf(1 + (n - df + 0.5) / (df + 0.5))
+                let tf = Float(tfValue)
+                let dl = Float(document.length)
+                let denominator = tf + k1 * (1 - b + b * dl / averageLength)
+                score += idf * (tf * (k1 + 1)) / denominator
+            }
+            return score > 0 ? ScoredMemoryID(id: document.id, score: score) : nil
+        }
+        .sorted {
+            if $0.score == $1.score { return $0.id < $1.id }
+            return $0.score > $1.score
+        }
+        .prefix(limit)
+        .map { $0 }
     }
 }

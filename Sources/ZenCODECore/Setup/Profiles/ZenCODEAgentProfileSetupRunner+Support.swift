@@ -140,10 +140,17 @@ extension ZenCODEAgentProfileSetupRunner {
         skills.map(\.id).filter { !$0.isEmpty }.joined(separator: ", ")
     }
 
+    /// Compiled once: `truncatedInline` runs for every menu row detail.
+    private static let whitespaceRunExpression = try! NSRegularExpression(pattern: #"\s+"#)
+
     static func truncatedInline(_ value: String, limit: Int) -> String {
-        let inline = value
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        let newlineFree = value.replacingOccurrences(of: "\n", with: " ")
+        let inline = whitespaceRunExpression
+            .stringByReplacingMatches(
+                in: newlineFree,
+                range: NSRange(newlineFree.startIndex..., in: newlineFree),
+                withTemplate: " "
+            )
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard inline.count > limit else {
             return inline

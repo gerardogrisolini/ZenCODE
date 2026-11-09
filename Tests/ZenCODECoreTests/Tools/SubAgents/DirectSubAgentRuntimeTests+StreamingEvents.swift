@@ -24,14 +24,14 @@ extension DirectSubAgentRuntimeTests {
 
         await runtime.recordEvent(.thought("Considering the "), agentID: agentID)
         let firstSnapshot = try #require(await runtime.snapshots().first)
-        let firstSignature = TerminalChat.subAgentOverviewSignature([firstSnapshot])
+        let firstSignature = ChatSubAgentOverview.signature(for: [firstSnapshot])
         #expect(firstSnapshot.currentActivity == "Considering the")
         #expect(firstSnapshot.currentActivityKind == .thinking)
 
         await runtime.recordEvent(.thought("available evidence"), agentID: agentID)
         let updatedSnapshot = try #require(await runtime.snapshots().first)
         #expect(updatedSnapshot.currentActivity == "Considering the available evidence")
-        #expect(TerminalChat.subAgentOverviewSignature([updatedSnapshot]) != firstSignature)
+        #expect(ChatSubAgentOverview.signature(for: [updatedSnapshot]) != firstSignature)
 
         // CRLF and the blank-line boundary deliberately arrive in separate
         // chunks. The next paragraph replaces, rather than appends to, the

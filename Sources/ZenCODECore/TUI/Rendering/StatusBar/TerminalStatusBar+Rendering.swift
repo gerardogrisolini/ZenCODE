@@ -176,7 +176,6 @@ extension TerminalStatusBar {
         dock.clamp(viewportRows: viewport, width: width)
         state.sharedChatReaderDock = dock
         let top = max(1, state.row - reservedBottomRowsLocked(state: &state) + 1)
-        let start = statusBoxStartColumnLocked(state: &state)
         let rows = dock.rows(width: width)
         let visible = Array(rows.enumerated().dropFirst(dock.scrollOffset).prefix(viewport))
         let headerText: String
@@ -197,7 +196,7 @@ extension TerminalStatusBar {
         let topRule = String(repeating: "─", count: max(0, boxWidth - TerminalTextMetrics.displayWidth(topTitle) - 5))
         let header = "\(palette.border)╭─ \(palette.title)\(topTitle)\(palette.border) \(topRule)╮\(TerminalStyle.reset)"
         guard dock.isExpanded else {
-            return "\u{1B}7\u{1B}[\(top);\(start)H\u{1B}[2K\(header)\u{1B}8"
+            return "\u{1B}7\u{1B}[\(top);1H\u{1B}[2K\(header)\u{1B}8"
         }
         // Use the dedicated muted shared-chat palette rather than the orange
         // input chrome.
@@ -212,7 +211,7 @@ extension TerminalStatusBar {
             } + [footer]
             : [header]
         for (offset, line) in lines.enumerated() {
-            sequence += "\u{1B}[\(top + offset);\(start)H\u{1B}[2K" + line
+            sequence += "\u{1B}[\(top + offset);1H\u{1B}[2K" + line
         }
         sequence += "\u{1B}8"
         return sequence
@@ -225,7 +224,6 @@ extension TerminalStatusBar {
 
         let reservedRows = reservedBottomRowsLocked(state: &state)
         let topRow = max(1, state.row - reservedRows + 1) + sharedChatReaderReservedRowsLocked(state: &state)
-        let startColumn = statusBoxStartColumnLocked(state: &state)
         let boxWidth = statusBoxWidthLocked(state: &state)
         let orange = TerminalStyle.Chrome.promptBorder
         let dim = TerminalStyle.Chrome.suggestion
@@ -256,7 +254,7 @@ extension TerminalStatusBar {
 
         let inputSequence = inputRows.enumerated().map { offset, inputRow in
             [
-                "\u{1B}[\(topRow + offset + 1);\(startColumn)H",
+                "\u{1B}[\(topRow + offset + 1);1H",
                 "\u{1B}[2K",
                 orange,
                 "│",
@@ -271,7 +269,7 @@ extension TerminalStatusBar {
         }.joined()
         let suggestionSequence = suggestionRows.enumerated().map { offset, suggestionRow in
             [
-                "\u{1B}[\(topRow + inputRows.count + offset + 1);\(startColumn)H",
+                "\u{1B}[\(topRow + inputRows.count + offset + 1);1H",
                 "\u{1B}[2K",
                 orange,
                 "│",
@@ -289,7 +287,7 @@ extension TerminalStatusBar {
         let modeRow = topRow + inputRows.count + suggestionRows.count + 1
         let parts = [
             "\u{1B}7",
-            "\u{1B}[\(topRow);\(startColumn)H",
+            "\u{1B}[\(topRow);1H",
             "\u{1B}[2K",
             orange,
             "╭",
@@ -298,7 +296,7 @@ extension TerminalStatusBar {
             reset,
             inputSequence,
             suggestionSequence,
-            "\u{1B}[\(modeRow);\(startColumn)H",
+            "\u{1B}[\(modeRow);1H",
             "\u{1B}[2K",
             orange,
             "│",
@@ -311,7 +309,7 @@ extension TerminalStatusBar {
             orange,
             "│",
             reset,
-            "\u{1B}[\(modeRow + 1);\(startColumn)H",
+            "\u{1B}[\(modeRow + 1);1H",
             "\u{1B}[2K",
             orange,
             "├",
@@ -351,7 +349,6 @@ extension TerminalStatusBar {
     }
 
     func statusRenderSequenceLocked(state: inout State) -> String {
-        let startColumn = statusBoxStartColumnLocked(state: &state)
         let boxWidth = statusBoxWidthLocked(state: &state)
         let contentWidth = statusBoxContentWidthLocked(state: &state)
         let orange = TerminalStyle.Chrome.promptBorder
@@ -370,7 +367,7 @@ extension TerminalStatusBar {
         let isAttachedToInputPanel = state.inputPanelState != nil
         var sequence = "\u{1B}7"
         if !isAttachedToInputPanel {
-            sequence += "\u{1B}[\(max(1, state.row - 2));\(startColumn)H"
+            sequence += "\u{1B}[\(max(1, state.row - 2));1H"
             + "\u{1B}[2K"
             + orange
             + "╭"
@@ -378,7 +375,7 @@ extension TerminalStatusBar {
             + "╮"
             + reset
         }
-        sequence += "\u{1B}[\(max(1, state.row - 1));\(startColumn)H"
+        sequence += "\u{1B}[\(max(1, state.row - 1));1H"
         + "\u{1B}[2K"
         + orange
         + "│"
@@ -391,7 +388,7 @@ extension TerminalStatusBar {
         + orange
         + "│"
         + reset
-        + "\u{1B}[\(state.row);\(startColumn)H"
+        + "\u{1B}[\(state.row);1H"
         + "\u{1B}[2K"
         + orange
         + "╰"

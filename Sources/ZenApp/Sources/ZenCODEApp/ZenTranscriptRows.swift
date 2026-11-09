@@ -148,10 +148,10 @@ struct ZenTranscriptItemView: View {
             ZenThoughtView(text: text, isStreaming: isStreaming)
         case let .toolCall(call, result):
             ZenToolCallView(call: call, result: result, duration: toolDuration)
-        case let .fileArtifacts(turn, agentID, _):
+        case .fileArtifacts:
             // Not a row of the conversation (see `ZenConversationRow`): the
             // artifacts show in the sidebar.
-            ZenFileArtifactsView(turn: turn, agentID: agentID)
+            EmptyView()
         case let .notice(notice):
             ZenNoticeView(notice: notice)
         case let .workflowNotice(notice):

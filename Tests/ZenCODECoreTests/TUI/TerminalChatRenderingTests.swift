@@ -406,11 +406,11 @@ struct TerminalChatRenderingTests {
     func truncatedByCountHandlesBudgetsNoLargerThanItsEllipsis() {
         // The count-based family must never pass a negative length to `prefix`.
         // It omits the marker when its three graphemes cannot fit in the budget.
-        #expect(TerminalChat.truncatedByCount("abcdef", limit: 3) == "...")
-        #expect(TerminalChat.truncatedByCount("abcdef", limit: 2) == "ab")
-        #expect(TerminalChat.truncatedByCount("abcdef", limit: 1) == "a")
-        #expect(TerminalChat.truncatedByCount("abcdef", limit: 0).isEmpty)
-        #expect(TerminalChat.truncatedByCount("abcdef", limit: -1).isEmpty)
+        #expect(InlineTextTruncation.truncatedByCount("abcdef", limit: 3) == "...")
+        #expect(InlineTextTruncation.truncatedByCount("abcdef", limit: 2) == "ab")
+        #expect(InlineTextTruncation.truncatedByCount("abcdef", limit: 1) == "a")
+        #expect(InlineTextTruncation.truncatedByCount("abcdef", limit: 0).isEmpty)
+        #expect(InlineTextTruncation.truncatedByCount("abcdef", limit: -1).isEmpty)
     }
 
     @Test
@@ -1607,8 +1607,8 @@ struct TerminalChatRenderingTests {
             )
         }
 
-        let none = TerminalChat.subAgentOverviewSignature([snapshot(metrics: nil)])
-        let first = TerminalChat.subAgentOverviewSignature([
+        let none = ChatSubAgentOverview.signature(for: [snapshot(metrics: nil)])
+        let first = ChatSubAgentOverview.signature(for: [
             snapshot(
                 metrics: DirectAgentGenerationMetrics(
                     promptTokenCount: 1_200,
@@ -1617,7 +1617,7 @@ struct TerminalChatRenderingTests {
                 )
             )
         ])
-        let second = TerminalChat.subAgentOverviewSignature([
+        let second = ChatSubAgentOverview.signature(for: [
             snapshot(
                 metrics: DirectAgentGenerationMetrics(
                     promptTokenCount: 1_200,
@@ -1627,7 +1627,7 @@ struct TerminalChatRenderingTests {
             )
         ])
         // Rates are not rendered, so they must not force a republish.
-        let sameCounts = TerminalChat.subAgentOverviewSignature([
+        let sameCounts = ChatSubAgentOverview.signature(for: [
             snapshot(
                 metrics: DirectAgentGenerationMetrics(
                     promptTokenCount: 1_200,
@@ -1728,15 +1728,15 @@ struct TerminalChatRenderingTests {
 
     @Test
     func subAgentModelNameStrippingRemoteAPIPrefixHandlesEdgeCases() {
-        #expect(TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix("zai:glm-5.2") == "glm-5.2")
-        #expect(TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix("gpt-5") == nil)
+        #expect(ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix("zai:glm-5.2") == "glm-5.2")
+        #expect(ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix("gpt-5") == nil)
         // An unknown provider key must not be stripped.
         #expect(
-            TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix("remoteapi:openrouter:anthropic/claude")
+            ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix("remoteapi:openrouter:anthropic/claude")
                 == nil
         )
         // Missing model name segment.
-        #expect(TerminalChat.subAgentModelNameStrippingRemoteAPIPrefix("openrouter:") == nil)
+        #expect(ModelNamePresentation.subAgentModelNameStrippingRemoteAPIPrefix("openrouter:") == nil)
     }
 
     @Test
@@ -1955,9 +1955,9 @@ struct TerminalChatRenderingTests {
 
     @Test
     func inlineTextCollapsesNewlinesAndCarriageReturns() {
-        #expect(TerminalChat.inlineText("a\nb\r\nc\rd  ") == "a b c d")
-        #expect(TerminalChat.inlineText("  hello world  ") == "hello world")
-        #expect(TerminalChat.inlineText("line1\r\nline2") == "line1 line2")
+        #expect(InlineTextTruncation.inlineText("a\nb\r\nc\rd  ") == "a b c d")
+        #expect(InlineTextTruncation.inlineText("  hello world  ") == "hello world")
+        #expect(InlineTextTruncation.inlineText("line1\r\nline2") == "line1 line2")
     }
 
     private func makeTerminalForToolInterleavingTest(

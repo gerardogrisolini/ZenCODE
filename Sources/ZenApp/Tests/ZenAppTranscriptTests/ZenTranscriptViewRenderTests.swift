@@ -150,7 +150,6 @@ struct ZenTranscriptViewRenderTests {
                 call: Self.execCall,
                 result: DirectAgentToolResult(output: "exit_code: 0", summary: "exit_code: 0")
             )),
-            AnyView(ZenFileArtifactsView(turn: Self.artifactTurn, agentID: "agent_1")),
             AnyView(ZenFileArtifactCard(artifact: Self.artifactTurn.artifacts[0], agentID: nil)),
             AnyView(ZenFileArtifactCard(artifact: Self.artifactTurn.artifacts[0], agentID: "agent_1")),
             AnyView(ZenFileArtifactCard(
@@ -163,7 +162,6 @@ struct ZenTranscriptViewRenderTests {
             AnyView(ZenNoticeView(notice: .sessionSaved(name: "s", messageCount: 2))),
             AnyView(ZenNoticeView(notice: .operationFailed(description: "boom"))),
             AnyView(ZenNoticeView(notice: .fileChangeSummary(Self.summary, includesDiff: true))),
-            AnyView(ZenNoticeView(notice: .fileArtifacts([Self.artifactTurn]))),
             AnyView(ZenWorkflowNoticeView(notice: .blocked(graphID: "g", message: "stuck"))),
             AnyView(ZenFileChangeSummaryView(summary: Self.summary, includesDiff: false)),
             AnyView(ZenLocalMessageView(text: "Saved.\n", isFailure: false)),

@@ -4,7 +4,6 @@ struct WebHTMLMetadata: Sendable, Equatable {
     /// `<title>` collapsed, else the first `<h1>`, else "".
     let title: String
     let description: String?
-    let canonicalURL: String?
 }
 
 // MARK: - Document survey
@@ -15,7 +14,6 @@ struct WebDocumentSurvey {
     var firstHeading: WebHTMLNode?
     var description: String?
     var ogDescription: String?
-    var canonicalHref: String?
     var baseHref: String?
     var body: WebHTMLNode?
     var mains: [WebHTMLNode] = []
@@ -43,14 +41,6 @@ struct WebDocumentSurvey {
                 }
             case "meta":
                 collectMeta(node)
-            case "link":
-                if canonicalHref == nil,
-                   let rel = node.attributes["rel"],
-                   WebMarkdownRenderer.tokens(rel).contains("canonical"),
-                   let href = node.attributes["href"],
-                   !href.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    canonicalHref = href
-                }
             case "base":
                 if baseHref == nil,
                    let href = node.attributes["href"],
@@ -92,15 +82,12 @@ struct WebDocumentSurvey {
         }
     }
 
-    func metadata(baseURL: URL?) -> WebHTMLMetadata {
+    func metadata() -> WebHTMLMetadata {
         var title = self.title ?? ""
         if title.isEmpty, let heading = firstHeading {
             title = WebMarkdownRenderer.visibleText(of: heading)
         }
-        let canonicalURL = canonicalHref.flatMap { href in
-            WebMarkdownRenderer.resolve(href, against: baseURL)?.absoluteString
-        }
-        return WebHTMLMetadata(title: title, description: description ?? ogDescription, canonicalURL: canonicalURL)
+        return WebHTMLMetadata(title: title, description: description ?? ogDescription)
     }
 
     func documentBaseURL(fallback: URL?) -> URL? {

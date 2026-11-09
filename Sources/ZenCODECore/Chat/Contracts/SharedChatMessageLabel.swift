@@ -16,9 +16,8 @@ import Foundation
 /// delivery, mentions and the participant map stay keyed on the stable
 /// participant identifiers, and a display name is looked up only to be shown.
 ///
-/// The terminal chat keeps its historical names (`TerminalChat`'s
-/// `sharedChatTimestamp(_:timeZone:)` and
-/// `sharedChatIncomingCardRoute(for:participantMap:)`) as forwarders to this
+/// The terminal chat keeps its historical name (`TerminalChat`'s
+/// `sharedChatIncomingCardRoute(for:participantMap:)`) as a forwarder to this
 /// type, so the terminal output stays byte-identical.
 public enum SharedChatMessageLabel {
     /// Formats the original send instant as a 24-hour `HH:mm:ss` clock in

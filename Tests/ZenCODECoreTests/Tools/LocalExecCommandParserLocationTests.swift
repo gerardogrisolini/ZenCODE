@@ -56,6 +56,11 @@ struct LocalExecCommandParserLocationTests {
         ("sed -n 1,12p a; sed -n 8,13p b", ["sed", "sed"]),
         // A shell `-c` payload: its commands, not the shell.
         ("bash -c 'rm -rf x'", ["rm"]),
+        // A long option before `-c` is skipped, not taken for `-c`.
+        ("bash --norc -c 'rm -rf x'", ["rm"]),
+        ("sh --restricted -lc 'git status; rm x'", ["git", "rm"]),
+        // An option argument ends the `-c` search: the shell is located.
+        ("bash --rcfile f -c 'rm x'", ["bash"]),
         // A command substitution: the outer and the nested executable.
         (#"cat "$(git rev-parse HEAD)""#, ["cat", "git"]),
         // Assignments, wrappers, and wrapper options are not executables.
@@ -205,6 +210,21 @@ struct LocalExecCommandParserLocationTests {
                 == ["$(rm x)\nEOF"]
         )
         #expect(Parser.shellDashCPayload(for: "env -i bash -lc 'git status' x") == "git status")
+    }
+
+    @Test
+    func aShellDashCPayloadAfterALongOptionPointsAtItsCharacters() {
+        let command = "bash --norc -c 'rm -rf x'"
+        let payload = Parser.locatedShellDashCPayload(for: command)
+        let payloadOrigins: [Int?] = (16...23).map { $0 }
+        #expect(payload?.text == "rm -rf x")
+        #expect(payload?.origins == payloadOrigins)
+        #expect(Parser.executablePositions(in: command) == [16, 17])
+
+        // Through the segment origins, after a preceding command.
+        let chained = "cd /x && sh --restricted -c 'rm x'"
+        #expect(highlights(in: chained) == ["rm"])
+        #expect(Parser.executablePositions(in: chained) == [29, 30])
     }
 
     @Test(arguments: LocalExecCommandParserLocationTests.corpus)

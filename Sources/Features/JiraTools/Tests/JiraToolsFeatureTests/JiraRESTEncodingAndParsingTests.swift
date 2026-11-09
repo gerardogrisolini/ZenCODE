@@ -151,6 +151,37 @@ struct JiraIssueParserTests {
     }
 
     @Test
+    func issueDetailSplitsListItemsAndCollectsURLsFromFieldText() throws {
+        let payload = JSONValue.object([
+            "key": .string("PROJ-2"),
+            "fields": .object([
+                "summary": .string("Spec"),
+                "customfield_1": .string(
+                    "- Login works\n* Logout works\n\u{2022} Reset works\n1. First\n2) Second\n\n  - nested bullet  \nplain line"
+                ),
+                "customfield_2": .string("See https://figma.com/file/abc, and (https://example.com/other)."),
+                "customfield_3": .string("Docs: https://docs.example.org/page; also https://example.atlassian.net/browse/X-1.")
+            ]),
+            "names": .object([
+                "customfield_1": .string("Acceptance Criteria"),
+                "customfield_2": .string("Figma design"),
+                "customfield_3": .string("Notes")
+            ])
+        ])
+
+        let detail = try #require(JiraIssueParser.issueDetail(from: payload, siteURL: Self.siteURL))
+
+        #expect(detail.acceptanceCriteria == [
+            "Login works", "Logout works", "Reset works", "First", "Second", "nested bullet", "plain line"
+        ])
+        #expect(detail.designURLs == ["https://figma.com/file/abc"])
+        // The site's own links are not references; trailing punctuation is trimmed.
+        #expect(detail.referenceURLs == [
+            "https://figma.com/file/abc", "https://example.com/other", "https://docs.example.org/page"
+        ])
+    }
+
+    @Test
     func issueDetailRequiresKeyAndFields() {
         #expect(JiraIssueParser.issueDetail(from: .object(["key": .string("X-1")]), siteURL: Self.siteURL) == nil)
         #expect(JiraIssueParser.issueDetail(from: .object(["fields": .object([:])]), siteURL: Self.siteURL) == nil)

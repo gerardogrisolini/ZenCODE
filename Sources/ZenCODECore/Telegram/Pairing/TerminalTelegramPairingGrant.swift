@@ -96,12 +96,6 @@ public actor TerminalTelegramPairingGrantStore {    private var grants: [Termina
         return !grant.isExpired(now: now)
     }
 
-    /// Number of live (unexpired) grants; exposed for tests.
-    public var liveGrantCount: Int {
-        evictExpired()
-        return grants.count
-    }
-
     private func evictExpired(now: Date = Date()) {
         grants.removeAll { $0.isExpired(now: now) }
     }

@@ -1,4 +1,3 @@
-import FeatureMCPBridgeKit
 import FeatureKit
 import Foundation
 import ToolCore
@@ -8,31 +7,6 @@ import Testing
 @Suite
 struct XcodeToolIntegrationTests {
     @Test
-    func recognizesACPServerCandidatesFromNameBridgeCommandAndEnvironment() {
-        let xcrunBridge = MCPServerConfiguration(
-            executablePath: "/usr/bin/xcrun",
-            arguments: ["--toolchain", "default", "mcpbridge"],
-            environment: [:]
-        )
-        let environmentBridge = MCPServerConfiguration(
-            executablePath: "/usr/bin/custom-mcp",
-            arguments: [],
-            environment: ["MCP_XCODE_SESSION_ID": "session-1"]
-        )
-        let namedHTTP = MCPServerConfiguration(
-            executablePath: "",
-            arguments: [],
-            environment: [:],
-            endpointURL: URL(string: "https://mcp.example.test/mcp")
-        )
-
-        #expect(XcodeToolIntegration.isServerCandidate(name: "tools", configuration: xcrunBridge))
-        #expect(XcodeToolIntegration.isServerCandidate(name: "tools", configuration: environmentBridge))
-        #expect(XcodeToolIntegration.isServerCandidate(name: "Xcode MCP", configuration: namedHTTP))
-        #expect(!XcodeToolIntegration.isBridgeConfiguration(xcrunBridge))
-    }
-
-    @Test
     func canonicalizesPublicAliasesWithoutSendingPrefixToMCP() throws {
         let request = try #require(XcodeToolIntegration.normalizedRequest(
             ToolRequest(
@@ -41,13 +15,16 @@ struct XcodeToolIntegrationTests {
             )
         ))
 
-        #expect(XcodeToolIntegration.canonicalToolName(for: "XcodeRead") == "XcodeRead")
-        #expect(XcodeToolIntegration.canonicalToolName(for: "xcode.read") == "XcodeRead")
-        #expect(XcodeToolIntegration.canonicalToolName(for: "xcode.XcodeRead") == "XcodeRead")
+        for alias in ["XcodeRead", "xcode.read", "xcode.XcodeRead"] {
+            #expect(
+                XcodeToolIntegration.normalizedRequest(ToolRequest(name: alias, arguments: [:]))?.name
+                    == "XcodeRead"
+            )
+        }
         #expect(request.name == "XcodeRead")
         #expect(request.arguments["filePath"]?.stringValue == "Sources/App.swift")
-        #expect(XcodeToolIntegration.publicToolName(for: "xcode.XcodeRead") == "xcode.XcodeRead")
-        #expect(XcodeToolIntegration.canonicalAllowedToolName("xcode") == "xcode.")
+        #expect(XcodeToolIntegration.rawToolName(fromPublicName: "xcode.XcodeRead") == "XcodeRead")
+        #expect(XcodeToolIntegration.rawToolName(fromPublicName: "XcodeRead") == "XcodeRead")
         #expect(XcodeToolIntegration.presentationKind(for: "xcode.XcodeUpdate") == "edit")
         let preferredDescription = XcodeToolIntegration.publicDescription("Reads a file")
         #expect(preferredDescription.hasPrefix(XcodeToolIntegration.priorityDescriptionPrefix))
@@ -82,52 +59,17 @@ struct XcodeToolIntegrationTests {
     }
 
     @Test
-    func matchesWorkspaceRootsThroughProjectContainers() {
+    func normalizesWorkspaceRootsThroughProjectContainers() {
         let context = XcodeWorkspaceContext(
             workspacePath: "/tmp/Workspace/App.xcodeproj",
             defaultTabIdentifier: "tab-1"
         )
 
-        #expect(XcodeToolIntegration.matchedWorkspaceContext(
-            in: [context],
-            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/Workspace")
-        ) == context)
-        #expect(XcodeToolIntegration.workspaceMatches(
-            workspaceRootPath: context.normalizedWorkspaceRootPath,
-            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/Workspace/Sources")
-        ))
+        #expect(context.normalizedWorkspaceRootPath == "/tmp/Workspace")
         #expect(XcodeWorkspaceContext.normalizedProjectRootPath(
             explicitPath: nil,
             workspacePath: "/tmp/Workspace/App.xcworkspace/"
         ) == "/tmp/Workspace")
-        #expect(!XcodeToolIntegration.workspaceMatches(
-            workspaceRootPath: "/tmp/Other",
-            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/Workspace")
-        ))
-    }
-
-    @Test
-    func preferredWorkspaceSelectsTheMatchingContextAmongSeveral() {
-        let first = XcodeWorkspaceContext(workspacePath: "/tmp/A/A.xcodeproj", defaultTabIdentifier: "a")
-        let second = XcodeWorkspaceContext(workspacePath: "/tmp/B/B.xcworkspace", defaultTabIdentifier: "b")
-        let nested = XcodeWorkspaceContext(workspacePath: "/tmp/B/Modules/M.xcodeproj", defaultTabIdentifier: "m")
-
-        #expect(XcodeToolIntegration.matchedWorkspaceContext(
-            in: [first, second, nested],
-            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/B")
-        ) == second)
-        #expect(XcodeToolIntegration.matchedWorkspaceContext(
-            in: [first, second, nested],
-            preferredWorkspaceRootURL: URL(fileURLWithPath: "/tmp/C")
-        ) == nil)
-        #expect(XcodeToolIntegration.matchedWorkspaceContext(
-            in: [first, second],
-            preferredWorkspaceRootURL: nil
-        ) == first)
-        #expect(XcodeToolIntegration.matchedWorkspaceContext(
-            in: [],
-            preferredWorkspaceRootURL: nil
-        ) == XcodeWorkspaceContext(workspacePath: nil, defaultTabIdentifier: nil))
     }
 
     @Test

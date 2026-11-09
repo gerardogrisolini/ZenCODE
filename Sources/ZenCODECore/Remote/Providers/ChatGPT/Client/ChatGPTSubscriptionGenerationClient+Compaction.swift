@@ -155,21 +155,6 @@ extension ChatGPTSubscriptionGenerationClient {
         )
     }
 
-    static func compactedMessagesForEstimatedContextIfNeeded(
-        _ messages: [[String: Any]],
-        estimate: SubscriptionCompactionSupport.RequestEstimate,
-        maxTokens: Int?,
-        maxOutputTokens: Int? = nil
-    ) -> AgentConversationCompactionResult? {
-        SubscriptionCompactionSupport.compactedMessagesForEstimatedContextIfNeeded(
-            messages,
-            estimate: estimate,
-            maxTokens: maxTokens,
-            maxOutputTokens: maxOutputTokens,
-            reserveTokenCount: compactionReserveTokenCount
-        )
-    }
-
     static func compactedMessagesForContextLimitRetry(
         _ messages: [[String: Any]],
         maxTokens: Int?,
@@ -206,17 +191,6 @@ extension ChatGPTSubscriptionGenerationClient {
                 input: [],
                 toolPayloads: toolPayloads
             )
-        )
-    }
-
-    static func compactionPolicyMaxTokens(
-        for maxTokens: Int?,
-        maxOutputTokens: Int? = nil
-    ) -> Int? {
-        SubscriptionCompactionSupport.compactionPolicyMaxTokens(
-            for: maxTokens,
-            maxOutputTokens: maxOutputTokens,
-            reserveTokenCount: compactionReserveTokenCount
         )
     }
 

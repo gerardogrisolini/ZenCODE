@@ -15,8 +15,7 @@ extension RemoteGenerationClient {
         let catalog = await remoteToolCatalog(
             allowedToolNames: allowedToolNames,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL,
-            sessionID: sessionID,
-            onEvent: onEvent
+            sessionID: sessionID
         )
         let wireMessages = catalog.wireMessages(from: messages)
         let body = try Self.anthropicMessagesRequestBody(

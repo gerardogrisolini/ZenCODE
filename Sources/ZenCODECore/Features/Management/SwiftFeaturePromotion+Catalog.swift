@@ -293,6 +293,9 @@ extension SwiftFeatureRuntime {
                         supportsPersistentSession: \(metadata.supportsPersistentSession),\(timeout)
                     )
             """
-        return contents.replacingCharacters(in: range, with: entry + String(contents[range.lowerBound...]))
+        // Insert the entry in front of the marker: replacing the marker with
+        // `entry + contents[range.lowerBound...]` duplicated the rest of the
+        // file after the insertion point.
+        return contents.replacingCharacters(in: range, with: entry + marker)
     }
 }

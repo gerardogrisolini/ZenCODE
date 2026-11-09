@@ -33,29 +33,6 @@ struct XcodeFeatureCharacterizationTests {
     }
 
     @Test
-    func recognizesDirectAndXcrunMCPBridgeConfigurations() {
-        let direct = MCPServerConfiguration(
-            executablePath: "/Applications/Xcode.app/Contents/Developer/usr/bin/mcpbridge",
-            arguments: [],
-            environment: [:]
-        )
-        let xcrun = MCPServerConfiguration(
-            executablePath: "/usr/bin/xcrun",
-            arguments: ["mcpbridge"],
-            environment: [:]
-        )
-        let unrelated = MCPServerConfiguration(
-            executablePath: "/usr/bin/xcrun",
-            arguments: ["simctl", "mcpbridge"],
-            environment: [:]
-        )
-
-        #expect(XcodeMCPServerConfiguration.isBridgeConfiguration(direct))
-        #expect(XcodeMCPServerConfiguration.isBridgeConfiguration(xcrun))
-        #expect(!XcodeMCPServerConfiguration.isBridgeConfiguration(unrelated))
-    }
-
-    @Test
     func persistentSessionKeepsConnectionAfterRequestError() {
         #expect(!XcodeToolsFeatureRunner.shouldDiscardPersistentExecutor(
             after: MCPClientError.serverError(code: -32602, message: "Invalid arguments")

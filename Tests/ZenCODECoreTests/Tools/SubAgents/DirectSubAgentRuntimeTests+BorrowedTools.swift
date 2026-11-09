@@ -79,7 +79,7 @@ extension DirectSubAgentRuntimeTests {
             subAgentContextualBackendFactory: unavailableFactory
         )
         await rootExecutor.installTaskOrchestrator(orchestrator)
-        _ = try await rootExecutor.executeThrowing(
+        _ = try await rootExecutor.executeThrowingResult(
             sessionID: "root",
             toolCall: directToolCall(
                 name: "tasks.create",
@@ -90,7 +90,7 @@ extension DirectSubAgentRuntimeTests {
             ),
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
             allowedToolNames: ["tasks.create"]
-        )
+        ).output
 
         let backend = CapturingSubAgentRuntimeBackend()
         let parentRuntime = makeDirectSubAgentRuntime(backend: backend)
@@ -125,19 +125,19 @@ extension DirectSubAgentRuntimeTests {
         ]
         let workingDirectory = URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests")
 
-        let taskList = try await childExecutor.executeThrowing(
+        let taskList = try await childExecutor.executeThrowingResult(
             sessionID: childSessionID,
             toolCall: directToolCall(name: "tasks.list", arguments: [:]),
             workingDirectory: workingDirectory,
             allowedToolNames: allowedToolNames
-        )
-        let taskDetails = try await childExecutor.executeThrowing(
+        ).output
+        let taskDetails = try await childExecutor.executeThrowingResult(
             sessionID: childSessionID,
             toolCall: directToolCall(name: "tasks.get", arguments: ["id": "report"]),
             workingDirectory: workingDirectory,
             allowedToolNames: allowedToolNames
-        )
-        let taskUpdate = try await childExecutor.executeThrowing(
+        ).output
+        let taskUpdate = try await childExecutor.executeThrowingResult(
             sessionID: childSessionID,
             toolCall: directToolCall(
                 name: "tasks.update",
@@ -145,8 +145,8 @@ extension DirectSubAgentRuntimeTests {
             ),
             workingDirectory: workingDirectory,
             allowedToolNames: allowedToolNames
-        )
-        let todoWrite = try await childExecutor.executeThrowing(
+        ).output
+        let todoWrite = try await childExecutor.executeThrowingResult(
             sessionID: childSessionID,
             toolCall: directToolCall(
                 name: "todo.write",
@@ -156,27 +156,27 @@ extension DirectSubAgentRuntimeTests {
             ),
             workingDirectory: workingDirectory,
             allowedToolNames: allowedToolNames
-        )
-        let todoRead = try await childExecutor.executeThrowing(
+        ).output
+        let todoRead = try await childExecutor.executeThrowingResult(
             sessionID: childSessionID,
             toolCall: directToolCall(name: "todo.read", arguments: [:]),
             workingDirectory: workingDirectory,
             allowedToolNames: allowedToolNames
-        )
+        ).output
 
-        let agentList = try await childExecutor.executeThrowing(
+        let agentList = try await childExecutor.executeThrowingResult(
             sessionID: childSessionID,
             toolCall: directToolCall(name: "agent.list", arguments: [:]),
             workingDirectory: workingDirectory,
             allowedToolNames: allowedToolNames
-        )
-        let agentDetails = try await childExecutor.executeThrowing(
+        ).output
+        let agentDetails = try await childExecutor.executeThrowingResult(
             sessionID: childSessionID,
             toolCall: directToolCall(name: "agent.get", arguments: ["id": child.id]),
             workingDirectory: workingDirectory,
             allowedToolNames: allowedToolNames
-        )
-        _ = try await childExecutor.executeThrowing(
+        ).output
+        _ = try await childExecutor.executeThrowingResult(
             sessionID: childSessionID,
             toolCall: directToolCall(
                 name: "agent.message",
@@ -184,7 +184,7 @@ extension DirectSubAgentRuntimeTests {
             ),
             workingDirectory: workingDirectory,
             allowedToolNames: allowedToolNames
-        )
+        ).output
 
         #expect(taskList.contains("report"))
         #expect(taskDetails.contains("Report findings"))

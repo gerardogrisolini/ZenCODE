@@ -27,34 +27,6 @@ struct SessionCheckpointTreeTests {
         #expect(tree.activeMessages[2].content == "How are you?")
     }
 
-    // MARK: - Branching
-
-    @Test
-    func branchCreatesChildAtAncestor() {
-        let messages = [
-            AgentRuntimeMessage(role: .user, content: "Hello"),
-            AgentRuntimeMessage(role: .assistant, content: "Hi!"),
-            AgentRuntimeMessage(role: .user, content: "Branch A"),
-        ]
-        var tree = SessionCheckpointTree.fromLinearHistory(messages, sessionID: "test")
-
-        // Find the entry for the first user message to branch from
-        let rootEntry = tree.rootEntry!
-        let branchEntry = tree.branch(
-            from: rootEntry.id,
-            kind: .message(AgentRuntimeMessage(role: .user, content: "Branch B"))
-        )
-
-        #expect(branchEntry.parentID == rootEntry.id)
-        #expect(tree.activeLeafID == branchEntry.id)
-
-        // Active messages should be root + Branch B (2 messages)
-        let active = tree.activeMessages
-        #expect(active.count == 2)
-        #expect(active[0].content == "Hello")
-        #expect(active[1].content == "Branch B")
-    }
-
     // MARK: - Selective restore (checkpointEntryID)
 
     @Test
@@ -101,10 +73,10 @@ struct SessionCheckpointTreeTests {
         #expect(active[1].content == "Alternate path")
 
         // The old "Second" entry should still exist as a separate branch
-        #expect(tree.children(of: rootID).count == 2)
+        #expect(tree.entries.filter { $0.parentID == rootID }.count == 2)
     }
 
-    // MARK: - Branch summary
+    // MARK: - Branch summary and model change
 
     @Test
     func branchSummaryProducesAssistantMessage() {
@@ -112,18 +84,29 @@ struct SessionCheckpointTreeTests {
             [AgentRuntimeMessage(role: .user, content: "Root")],
             sessionID: "test"
         )
-        let rootID = tree.activeLeafID
 
-        _ = tree.attachBranchSummary(
-            at: rootID,
+        tree.append(.branchSummary(
             summary: "We tried approach A but it didn't work.",
             fromEntryID: "old-leaf"
-        )
+        ))
 
         let active = tree.activeMessages
         #expect(active.count == 2)
         #expect(active[1].role == .assistant)
         #expect(active[1].content == "We tried approach A but it didn't work.")
+    }
+
+    @Test
+    func modelChangeEntriesAreSkippedFromMessages() {
+        var tree = SessionCheckpointTree.fromLinearHistory(
+            [AgentRuntimeMessage(role: .user, content: "Root")],
+            sessionID: "test"
+        )
+
+        tree.append(.modelChange(modelID: "other-model"))
+
+        #expect(tree.activePath.count == 2)
+        #expect(tree.activeMessages.map(\.content) == ["Root"])
     }
 
     // MARK: - History merge

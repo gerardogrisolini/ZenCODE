@@ -52,16 +52,6 @@ public struct SessionCheckpointEntry: Codable, Equatable, Sendable, Identifiable
         guard case let .message(msg) = kind else { return nil }
         return msg
     }
-
-    /// Whether this entry participates in LLM context building.
-    public var participatesInContext: Bool {
-        switch kind {
-        case .message, .branchSummary:
-            return true
-        case .modelChange:
-            return false
-        }
-    }
 }
 
 // MARK: - SessionCheckpointTree
@@ -110,21 +100,6 @@ public struct SessionCheckpointTree: Codable, Equatable, Sendable {
     /// Returns the entry with the given id, or `nil`.
     public func entry(id: String) -> SessionCheckpointEntry? {
         entries.first { $0.id == id }
-    }
-
-    /// All entries whose `parentID` equals `entryID`, in insertion order.
-    public func children(of entryID: String) -> [SessionCheckpointEntry] {
-        entries.filter { $0.parentID == entryID }
-    }
-
-    /// Returns `true` when the entry has at least one child.
-    public func hasChildren(_ entryID: String) -> Bool {
-        entries.contains { $0.parentID == entryID }
-    }
-
-    /// The root entry (the first entry with `parentID == nil`).
-    public var rootEntry: SessionCheckpointEntry? {
-        entries.first { $0.parentID == nil }
     }
 
     // MARK: - Path walking
@@ -184,48 +159,6 @@ public struct SessionCheckpointTree: Codable, Equatable, Sendable {
         entries.append(entry)
         activeLeafID = entry.id
         return entry
-    }
-
-    /// Creates a new branch starting from `ancestorID`.
-    /// The active leaf is moved to the new entry.
-    @discardableResult
-    public mutating func branch(
-        from ancestorID: String,
-        kind: SessionCheckpointEntry.Kind
-    ) -> SessionCheckpointEntry {
-        guard entry(id: ancestorID) != nil else {
-            // If the ancestor doesn't exist, fall back to the root.
-            return append(kind)
-        }
-        let entry = SessionCheckpointEntry(
-            id: Self.generateEntryID(),
-            parentID: ancestorID,
-            timestamp: Date(),
-            kind: kind
-        )
-        entries.append(entry)
-        activeLeafID = entry.id
-        return entry
-    }
-
-    /// Attaches a branch summary at `ancestorID` and then moves the active leaf
-    /// to that ancestor so a new branch can continue from there.
-    @discardableResult
-    public mutating func attachBranchSummary(
-        at ancestorID: String,
-        summary: String,
-        fromEntryID: String
-    ) -> SessionCheckpointEntry {
-        let summaryEntry = SessionCheckpointEntry(
-            id: Self.generateEntryID(),
-            parentID: ancestorID,
-            timestamp: Date(),
-            kind: .branchSummary(summary: summary, fromEntryID: fromEntryID)
-        )
-        entries.append(summaryEntry)
-        // The summary entry itself becomes the branching point.
-        activeLeafID = summaryEntry.id
-        return summaryEntry
     }
 
     /// Sets the active leaf to an existing entry, enabling navigation.

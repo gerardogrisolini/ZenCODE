@@ -378,8 +378,7 @@ enum TerminalSubAgentOverviewLayout {
         guard hiddenCount > 0 else {
             return header + kept
         }
-        let columns = TerminalTextMetrics.terminalColumnCount()
-        let notice = String(repeating: " ", count: TerminalChat.terminalBoxHorizontalInset(columns: columns) + 3)
+        let notice = String(repeating: " ", count: 3)
             + dimText("… \(hiddenCount) more")
         return header + kept + [notice]
     }
@@ -854,9 +853,7 @@ enum TerminalSubAgentOverviewLayout {
         columns: Int,
         includesTitle: Bool
     ) -> [String] {
-        let horizontalInset = TerminalChat.terminalBoxHorizontalInset(columns: columns)
-        let contentWidth = overviewContentWidth(columns: columns, horizontalInset: horizontalInset)
-        let linePrefix = String(repeating: " ", count: horizontalInset)
+        let contentWidth = overviewContentWidth(columns: columns)
         let orange = TerminalStyle.Accent.primary
         let dim = TerminalStyle.Text.muted
         let reset = TerminalStyle.reset
@@ -864,7 +861,7 @@ enum TerminalSubAgentOverviewLayout {
             ? "👥 \(orange)Sub-Agents:\(reset)"
             : "👥 Sub-Agents:"
 
-        var output = includesTitle ? ["\(linePrefix)\(title)"] : []
+        var output = includesTitle ? [title] : []
         for line in lines {
             let indentation = max(0, line.indentation)
             let indentationText = String(repeating: " ", count: indentation)
@@ -879,7 +876,7 @@ enum TerminalSubAgentOverviewLayout {
                     ellipsis: "",
                     ellipsisWidth: 0
                 )
-                output.append("\(linePrefix)\(prefix)\(clipped)")
+                output.append("\(prefix)\(clipped)")
                 continue
             }
             // Keep the semantic tool marker (including its two-column gap)
@@ -916,7 +913,7 @@ enum TerminalSubAgentOverviewLayout {
                 )
             }
             for wrappedLine in wrapped {
-                output.append("\(linePrefix)\(prefix)\(wrappedLine)")
+                output.append("\(prefix)\(wrappedLine)")
             }
         }
         return output
@@ -925,16 +922,14 @@ enum TerminalSubAgentOverviewLayout {
     static func overviewWrapWidth(
         indentation: Int
     ) -> Int {
-        let columns = TerminalTextMetrics.terminalColumnCount()
         let contentWidth = overviewContentWidth(
-            columns: columns,
-            horizontalInset: TerminalChat.terminalBoxHorizontalInset(columns: columns)
+            columns: TerminalTextMetrics.terminalColumnCount()
         )
         return max(1, contentWidth - max(0, indentation))
     }
 
-    private static func overviewContentWidth(columns: Int, horizontalInset: Int) -> Int {
-        max(40, columns - horizontalInset - reservedColumns)
+    private static func overviewContentWidth(columns: Int) -> Int {
+        max(40, columns - reservedColumns)
     }
 
     /// Columns left unused on every row so the section keeps its in-place

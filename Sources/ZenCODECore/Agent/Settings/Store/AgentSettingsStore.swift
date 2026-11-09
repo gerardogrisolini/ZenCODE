@@ -41,22 +41,30 @@ public enum AgentSettingsStore {
     }
 
     public static func defaultSelection(explicitModelID: String?) -> AgentModelSelection? {
-        if let explicitModelID = explicitModelID?.nilIfBlank {
-            return modelSelection(forLLMID: explicitModelID)
-        }
-
         guard let manifest = AgentSettingsManifestStore.load() else {
             return nil
         }
 
+        if let explicitModelID = explicitModelID?.nilIfBlank {
+            return modelSelection(forLLMID: explicitModelID, manifest: manifest)
+        }
+
         if let selectedModelID = manifest.selectedModelID?.nilIfBlank,
            let model = manifest.models.first(where: { $0.matches(selectedModelID) }) {
-            return selection(for: model, thinkingSelection: manifest.selectedThinkingSelection)
+            return selection(
+                for: model,
+                manifest: manifest,
+                thinkingSelection: manifest.selectedThinkingSelection
+            )
         }
 
         if manifest.models.count == 1,
            let model = manifest.models.first {
-            return selection(for: model, thinkingSelection: manifest.selectedThinkingSelection)
+            return selection(
+                for: model,
+                manifest: manifest,
+                thinkingSelection: manifest.selectedThinkingSelection
+            )
         }
 
         return nil
@@ -129,52 +137,21 @@ public enum AgentSettingsStore {
         return preferredSelection
     }
 
-    public static func generationParameterOverrides(
-        forModelID modelID: String?
-    ) -> AgentGenerationParameterOverrides? {
-        if let modelID = modelID?.nilIfBlank {
-            return modelSelection(forLLMID: modelID)?
-                .generationParameterOverrides?
-                .normalized()
-                .nilIfEmpty
-        }
-
-        return defaultSelection(explicitModelID: nil)?
-            .generationParameterOverrides?
-            .normalized()
-            .nilIfEmpty
-    }
-
-    /// The API key stored for a provider, looked up by its stable provider key.
-    public static func apiKey(providerID: String) -> String? {
-        guard let manifest = AgentSettingsManifestStore.load() else {
-            return nil
-        }
-        return manifest.apiKey(providerID: providerID)
-    }
-
-    public static func modelSelection(forLLMID llmID: String) -> AgentModelSelection? {
-        let normalizedLLMID = llmID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedLLMID.isEmpty else {
+    private static func modelSelection(
+        forLLMID llmID: String,
+        manifest: AgentSettingsManifest
+    ) -> AgentModelSelection? {
+        guard let normalizedLLMID = llmID.nilIfBlank,
+              let model = manifest.models.first(where: { $0.matches(normalizedLLMID) }) else {
             return nil
         }
 
-        if let model = manifestModel(matching: normalizedLLMID) {
-            return selection(for: model)
-        }
-
-        return nil
-    }
-
-    private static func manifestModel(matching llmID: String) -> AgentSettingsModelManifest? {
-        guard let manifest = AgentSettingsManifestStore.load() else {
-            return nil
-        }
-        return manifest.models.first { $0.matches(llmID) }
+        return selection(for: model, manifest: manifest)
     }
 
     private static func selection(
         for model: AgentSettingsModelManifest,
+        manifest: AgentSettingsManifest,
         thinkingSelection: AgentThinkingSelection? = nil
     ) -> AgentModelSelection? {
         let resolvedThinkingSelection = model.thinkingSelection(for: thinkingSelection)
@@ -189,7 +166,7 @@ public enum AgentSettingsStore {
                 providerKind: .remoteAPI,
                 modelID: modelID,
                 remoteProvider: resolvedProvider,
-                apiKey: apiKey(providerID: provider.id),
+                apiKey: manifest.apiKey(providerID: provider.id),
                 configuredContextWindowLimit: model.configuredContextWindowLimit,
                 generationParameterOverrides: model.generationParameterOverrides,
                 thinkingOptions: model.thinkingOptions,

@@ -23,6 +23,12 @@ public actor TurnFileChangeTracker {
         let isBinary: Bool
     }
 
+    /// Line counts and rewritten patch of one file, from a single Git diff.
+    struct FileDiff {
+        let stats: DiffStats?
+        let patch: String?
+    }
+
     let fileManager = FileManager.default
     let baseDirectoryURL: URL
     let baseDirectoryName: String
@@ -195,17 +201,18 @@ public actor TurnFileChangeTracker {
             status = .modified
         }
 
-        let diffStats = await resolvedDiffStats(
-            before: snapshot.beforeData,
-            after: afterData,
-            status: status
-        )
-        let patch = await gitPatch(
+        let diff = await fileDiff(
             before: snapshot.beforeData,
             after: afterData,
             displayPath: snapshot.displayPath,
             existedBefore: snapshot.existedInitially,
             existsNow: existsNow
+        )
+        let diffStats = resolvedDiffStats(
+            primaryStats: diff.stats,
+            before: snapshot.beforeData,
+            after: afterData,
+            status: status
         )
 
         return TurnFileChangeSummary.Entry(
@@ -216,16 +223,16 @@ public actor TurnFileChangeTracker {
             isBinary: diffStats?.isBinary ?? false,
             existedBefore: snapshot.existedInitially,
             beforeDataBase64: snapshot.beforeData?.base64EncodedString(),
-            patch: patch
+            patch: diff.patch
         )
     }
 
     func resolvedDiffStats(
+        primaryStats: DiffStats?,
         before: Data?,
         after: Data?,
         status: TurnFileChangeSummary.Entry.Status
-    ) async -> DiffStats? {
-        let primaryStats = await diffStats(before: before, after: after)
+    ) -> DiffStats? {
         if let primaryStats,
            primaryStats.isBinary || primaryStats.additions > 0 || primaryStats.deletions > 0 {
             return primaryStats
@@ -403,23 +410,15 @@ public actor TurnFileChangeTracker {
         ) && parentIsDirectory.boolValue
     }
 
-    func diffStats(before: Data?, after: Data?) async -> DiffStats? {
-        #if canImport(Darwin) || canImport(Glibc)
-        await platformDiffStats(before: before, after: after)
-        #else
-        fallbackDiffStats(before: before, after: after, status: .modified)
-        #endif
-    }
-
-    func gitPatch(
+    func fileDiff(
         before: Data?,
         after: Data?,
         displayPath: String,
         existedBefore: Bool,
         existsNow: Bool
-    ) async -> String? {
+    ) async -> FileDiff {
         #if canImport(Darwin) || canImport(Glibc)
-        await platformGitPatch(
+        await platformDiff(
             before: before,
             after: after,
             displayPath: displayPath,
@@ -427,7 +426,10 @@ public actor TurnFileChangeTracker {
             existsNow: existsNow
         )
         #else
-        nil
+        FileDiff(
+            stats: fallbackDiffStats(before: before, after: after, status: .modified),
+            patch: nil
+        )
         #endif
     }
 

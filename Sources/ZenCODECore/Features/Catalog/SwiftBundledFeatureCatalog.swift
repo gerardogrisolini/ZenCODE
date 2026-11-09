@@ -43,7 +43,18 @@ enum SwiftBundledFeatureCatalog {
         retiredFeatureCoreGroupKeys[id] != nil
     }
 
+    /// Runtime definitions of the optional feature packages. The list is static
+    /// metadata, so it is built once and shared by every caller.
     static func definitions() -> [SwiftFeatureRuntime.BundledFeatureDefinition] {
+        cachedDefinitions
+    }
+
+    private static let cachedDefinitions: [SwiftFeatureRuntime.BundledFeatureDefinition] = makeDefinitions()
+
+    // `feature.promote` inserts new entries before the closing
+    // "        ]\n    }\n\n    private static func metadata" of this function,
+    // so it must stay the last function before `metadata(for:)`.
+    private static func makeDefinitions() -> [SwiftFeatureRuntime.BundledFeatureDefinition] {
         let web = metadata(for: "web-tools")
         let browser = metadata(for: "browser-tools")
         let git = metadata(for: "git-tools")

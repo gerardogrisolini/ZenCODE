@@ -165,13 +165,8 @@ public actor TerminalTelegramPairingService {
         return (payload, link)
     }
 
-    /// Consumes a grant payload atomically. Returns `true` exactly once per
-    /// issued, unexpired grant.
-    public func consumePairingGrant(payload: String) async -> Bool {
-        await grantStore.consume(payload: payload)
-    }
-
-    /// Chat-aware consume used by ingress: rejected group presentations never
+    /// Consumes a grant payload atomically, for ingress: returns `true` exactly
+    /// once per issued, unexpired grant. Rejected group presentations never
     /// spend a grant that may still be completed from the intended private chat.
     public func consumePairingGrant(payload: String, chatType: String) async -> Bool {
         guard Self.allowsPairing(chatType: chatType) else { return false }

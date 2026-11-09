@@ -5,6 +5,13 @@
 //  Building blocks shared by the transcript views: styled text runs, the
 //  streaming indicator, status glyphs, and bounded code and output blocks.
 //
+//  The `ZenAppTranscript` module holds the leaf views of the conversation
+//  transcript: prompts, assistant text, thinking, tool calls, notices, file
+//  changes, file artifacts, task-graph and sub-agent cards, and the welcome
+//  view. Every view reads its colors from `ZenPalette` (the terminal UI's
+//  palette) and renders Markdown through the injectable `ZenMarkdownRenderer`
+//  environment value.
+//
 
 import Foundation
 import SwiftUI

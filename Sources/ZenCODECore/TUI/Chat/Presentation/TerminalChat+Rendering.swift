@@ -64,7 +64,7 @@ extension TerminalChat {
             lines.insert("Agent: \(selectedAgent.displayName)", at: 1)
         }
 
-        let activeSkills = Self.renderActiveSkills(selectedPromptSkills())
+        let activeSkills = Self.renderActiveSkills(chatSession.selectedPromptSkills())
             .trimmingCharacters(in: .whitespacesAndNewlines)
         lines.append(activeSkills)
 
@@ -137,10 +137,6 @@ extension TerminalChat {
         )
     }
 
-    public nonisolated static func renderSelectedSkills(_ skills: [PromptSkill]) -> String {
-        ChatSessionNoticeText.text(for: .selectedSkills(skills))
-    }
-
     public nonisolated static func renderActiveSkills(_ skills: [PromptSkill]) -> String {
         renderSkills(skills, label: "Active")
     }
@@ -155,19 +151,8 @@ extension TerminalChat {
         return "\(label) skills: \(skills.map(\.title).joined(separator: ", "))\n"
     }
 
-    public nonisolated static func renderToolSelectionUsage() -> String {
-        ChatSessionNoticeText.text(for: .toolSelectionUsage)
-    }
-
-    public nonisolated static func renderSkillSelectionUsage() -> String {
-        ChatSessionNoticeText.text(for: .skillSelectionUsage)
-    }
-
     public nonisolated static func renderStartupBox(lines: [String]) -> String {
-        let columns = TerminalTextMetrics.terminalColumnCount()
-        let horizontalInset = terminalBoxHorizontalInset(columns: columns)
-        let contentWidth = max(20, columns - horizontalInset * 2)
-                let linePrefix = String(repeating: " ", count: horizontalInset)
+        let contentWidth = max(20, TerminalTextMetrics.terminalColumnCount())
         let logoStyle = TerminalStyle.Chrome.startupLogo
         let reset = TerminalStyle.reset
 
@@ -181,7 +166,7 @@ extension TerminalChat {
                         wrappedLine,
                         isContinuation: index > 0
                     )
-                    output.append("\(linePrefix)\(colored)\(reset)")
+                    output.append("\(colored)\(reset)")
                 }
             }
         }
@@ -241,32 +226,14 @@ extension TerminalChat {
         TerminalTextMetrics.terminalColumnCount(forceRefresh: forceRefresh)
     }
 
-    public nonisolated static func terminalBoxHorizontalInset(columns _: Int? = nil) -> Int {
-        return 0
-    }
-
-    /// Reflows `text` to a budget of `width` grapheme clusters per row and joins
-    /// the wrapped rows with newlines.
-    ///
-    /// - Note: **Count-based family.** Like ``wrapInline(_:width:)`` and
-    ///   ``truncatedInline(_:limit:)``, this measures extended grapheme clusters
-    ///   (`String.count`), not visible terminal columns. It intentionally differs
-    ///   from the width-aware `fitDisplayWidth` / ``TerminalANSIText`` family:
-    ///   emoji and CJK glyphs count as one here even when they occupy two cells.
-    ///   Routing these startup, overview, or Telegram helpers through the
-    ///   width-aware core would change their wrap points.
-    public nonisolated static func fitInline(_ text: String, width: Int) -> String {
-        wrapInline(text, width: width).joined(separator: "\n")
-    }
-
     /// Word-wraps `text` to at most `width` grapheme clusters per line, breaking
     /// on whitespace when possible.
     ///
     /// - Note: **Count-based family.** `width` is a `String.count` budget, so a
     ///   double-width emoji or CJK glyph is one unit here even when it occupies
-    ///   two terminal columns. This matches ``fitInline(_:width:)`` and
-    ///   ``truncatedInline(_:limit:)`` and intentionally differs from the
-    ///   width-aware `fitDisplayWidth` / ``TerminalANSIText`` family.
+    ///   two terminal columns. This matches ``truncatedInline(_:limit:)`` and
+    ///   intentionally differs from the width-aware `fitDisplayWidth` /
+    ///   ``TerminalANSIText`` family.
     public nonisolated static func wrapInline(_ text: String, width: Int) -> [String] {
         let singleLine = text
             .replacingOccurrences(of: "\n", with: " ")
@@ -298,34 +265,9 @@ extension TerminalChat {
         return lines
     }
 
-    public nonisolated static func padded(_ text: String, width: Int) -> String {
-        guard text.count < width else {
-            return text
-        }
-        return text + String(repeating: " ", count: width - text.count)
-    }
-
-    public nonisolated static func memoryToolEnabled(_ allowedToolNames: Set<String>) -> Bool {
-        AgentSessionComposition.memoryToolEnabled(allowedToolNames)
-    }
-
     /// Collapses `text` to a single line and truncates it to at most `limit`
     /// grapheme clusters. See ``InlineTextTruncation/truncatedInline(_:limit:)``.
     public nonisolated static func truncatedInline(_ text: String, limit: Int) -> String {
         InlineTextTruncation.truncatedInline(text, limit: limit)
-    }
-
-    /// See ``InlineTextTruncation/truncatedByCount(_:limit:ellipsis:)``.
-    nonisolated static func truncatedByCount(
-        _ text: String,
-        limit: Int,
-        ellipsis: String = "..."
-    ) -> String {
-        InlineTextTruncation.truncatedByCount(text, limit: limit, ellipsis: ellipsis)
-    }
-
-    /// See ``InlineTextTruncation/inlineText(_:)``.
-    public nonisolated static func inlineText(_ text: String) -> String {
-        InlineTextTruncation.inlineText(text)
     }
 }

@@ -239,6 +239,11 @@ struct SwiftFeaturePromotionTests {
             encoding: .utf8
         )
         #expect(runtimeCatalog.contains("discoversToolsAtRuntime: false"))
+        // The entry is inserted once, in front of the marker: the tail of the
+        // file after the insertion point must not be duplicated.
+        let insertionMarker = "        ]\n    }\n\n    private static func metadata"
+        #expect(runtimeCatalog.components(separatedBy: insertionMarker).count == 2)
+        #expect(runtimeCatalog.components(separatedBy: "id: \"promotion-fixture\"").count == 2)
         #expect(report.built)
         #expect(report.listedTools == ["promotion.echo"])
 

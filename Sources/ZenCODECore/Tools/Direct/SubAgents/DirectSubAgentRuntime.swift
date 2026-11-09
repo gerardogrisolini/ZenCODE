@@ -342,32 +342,48 @@ public actor DirectSubAgentRuntime {
     /// Lifecycle-transition failures that happen during global shutdown, when
     /// no individual agent record remains available to carry the error.
     public private(set) var lastLifecycleErrors: [String] = []
+    /// The agent registry. Read-only: every write goes through
+    /// `mutateAgents` or `mutateAgent`, which publish one snapshot broadcast
+    /// per write.
     var agents: [String: AgentRecord] {
-        get { agentStorage }
-        set {
-            agentStorage = newValue
-            for (_, observer) in snapshotObservers {
-                observer.1.yield(newValue.values.filter { $0.rootSessionID == observer.0 }.map { snapshot(from: $0) })
-            }
-        }
+        agentStorage
     }
-    /// Applies `body` to the record of `id` and writes it back: one registry
-    /// read and one registry write, so one snapshot broadcast. Returns nil
-    /// without writing when no such agent exists or `predicate` rejects its
-    /// record. Synchronous, so no suspension can separate the read from the
-    /// write and lose a concurrent update.
+    /// Applies `body` to the registry in place and publishes one snapshot
+    /// broadcast. `body` must not read the registry through `self`: it holds
+    /// exclusive access to it. Synchronous, so no suspension can separate a
+    /// read inside `body` from its write.
+    @discardableResult
+    func mutateAgents<T>(_ body: (inout [String: AgentRecord]) -> T) -> T {
+        let result = body(&agentStorage)
+        publishAgentSnapshots()
+        return result
+    }
+    /// Applies `body` to the record of `id` and writes it back into the
+    /// registry, then publishes one snapshot broadcast. Returns nil without
+    /// writing or publishing when no such agent exists or `predicate` rejects
+    /// its record. `body` mutates a copy, so it may still read the registry,
+    /// which holds the unchanged record until the write-back. Synchronous, so
+    /// no suspension can separate the read from the write and lose a
+    /// concurrent update.
     @discardableResult
     func mutateAgent<T>(
         _ id: String,
         where predicate: (AgentRecord) -> Bool = { _ in true },
         _ body: (inout AgentRecord) -> T
     ) -> T? {
-        guard var agent = agents[id], predicate(agent) else {
+        guard var agent = agentStorage[id], predicate(agent) else {
             return nil
         }
         let result = body(&agent)
-        agents[id] = agent
+        agentStorage[id] = agent
+        publishAgentSnapshots()
         return result
+    }
+
+    private func publishAgentSnapshots() {
+        for (_, observer) in snapshotObservers {
+            observer.1.yield(agentStorage.values.filter { $0.rootSessionID == observer.0 }.map { snapshot(from: $0) })
+        }
     }
 
     var latestOverviewBatchID: UUID?
@@ -565,7 +581,7 @@ public actor DirectSubAgentRuntime {
         graphObserverTasks.removeAll()
 
         let records = Array(agents.values)
-        agents.removeAll()
+        mutateAgents { $0.removeAll() }
 
         if let taskOrchestrator {
             for record in records {

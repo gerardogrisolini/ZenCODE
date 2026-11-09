@@ -328,10 +328,6 @@ extension ChatGPTSubscriptionResponsesClient {
         if error is CancellationError {
             return true
         }
-        if let error = error as? ChatGPTSubscriptionGenerationError,
-           case .cancelled = error {
-            return true
-        }
         return RemoteNetworkErrorClassifier.isCancellationError(error)
     }
 

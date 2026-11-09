@@ -478,6 +478,9 @@ enum LocalExecCommandParser {
     }
 
     static func segmentContainsCaseHeader(_ segment: String) -> Bool {
+        // An unquoted word keeps every character, so it is a substring of
+        // the segment: without `case` in the text there is no `case` word.
+        guard segment.contains("case") else { return false }
         let words = shellWords(in: segment)
         guard let caseIndex = words.firstIndex(where: {
             !$0.wasQuoted && $0.value == "case"
@@ -494,6 +497,8 @@ enum LocalExecCommandParser {
     }
 
     static func segmentContainsCaseTerminator(_ segment: String) -> Bool {
+        // Same prefilter as `segmentContainsCaseHeader(_:)`.
+        guard segment.contains("esac") else { return false }
         let words = shellWords(in: segment)
         guard let esacIndex = words.firstIndex(where: {
             !$0.wasQuoted && $0.value == "esac"
@@ -508,11 +513,4 @@ enum LocalExecCommandParser {
     static let caseTerminatorPrefixKeywords: Set<String> = [
         "if", "then", "else", "elif", "while", "until", "do", "!", "{", "}"
     ]
-
-    // MARK: - Executable identity
-
-    /// Extracts the authorization identity for a single command segment by
-    /// stripping environment assignments, redirections, grouping delimiters,
-    /// control-flow keywords, wrapper commands, and quote characters, then
-    /// classifying the first remaining token.
 }

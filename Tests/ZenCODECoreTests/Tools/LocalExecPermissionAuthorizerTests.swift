@@ -14,35 +14,35 @@ struct LocalExecPermissionAuthorizerTests {
     @Test
     func commandPermissionIdentityExtractsExecutable() {
         // Plain executables.
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "swift test --filter ZenCODECoreTests") == "swift")
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "git status --short --branch") == "git")
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "python3 --version") == "python3")
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "xcodebuild -list") == "xcodebuild")
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "swift test --filter ZenCODECoreTests").first == "swift")
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "git status --short --branch").first == "git")
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "python3 --version").first == "python3")
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "xcodebuild -list").first == "xcodebuild")
         // Redirections are skipped, leaving the real executable.
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "ls -la > out.txt") == "ls")
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "2>&1 swift build") == "swift")
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: ">out.txt echo hi") == "echo")
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "ls -la > out.txt").first == "ls")
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "2>&1 swift build").first == "swift")
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: ">out.txt echo hi").first == "echo")
         // Harmless built-ins are skipped so the real command surfaces.
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "pwd && rm -rf tmp") == "rm")
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "true && rm -rf tmp") == "rm")
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "pwd && rm -rf tmp").first == "rm")
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "true && rm -rf tmp").first == "rm")
         // Environment assignments and wrappers are unwrapped.
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "FOO=bar swift build") == "swift")
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "env CI=1 swift test") == "swift")
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "FOO=bar swift build").first == "swift")
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "env CI=1 swift test").first == "swift")
         // Grouping delimiters are stripped.
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "(cd /tmp && make)") == "make")
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "(cd /tmp && make)").first == "make")
         // Leading/trailing whitespace and redirections are handled.
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "\n  echo ok > out.txt  \n") == "echo")
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "\n  echo ok > out.txt  \n").first == "echo")
     }
 
     @Test
     func commandPermissionIdentitiesRetainEveryExecutableInOneRequest() {
         #expect(
-            LocalExecPermissionAuthorizer.commandPermissionIdentities(
+            LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(
                 for: "swift build 2>&1 | tail -n 20 || true"
             ) == ["swift", "tail"]
         )
         #expect(
-            LocalExecPermissionAuthorizer.commandPermissionIdentities(
+            LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(
                 for: "cat \"$(rm -rf /tmp/x)\""
             ) == ["cat", "rm"]
         )
@@ -138,11 +138,12 @@ struct LocalExecPermissionAuthorizerTests {
     @Test
     func allSkipCommandYieldsNilIdentity() {
         // M5: a command consisting entirely of harmless built-ins yields no
-        // identity, consistent with `localExecAuthorizationCommands` returning [].
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "true") == nil)
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "false") == nil)
-        #expect(LocalExecPermissionAuthorizer.commandPermissionIdentity(for: "cd /tmp") == nil)
-        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentity(for: "true") == nil)
+        // identity, consistent with the parser returning no authorization
+        // candidates for it.
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "true").isEmpty)
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "false").isEmpty)
+        #expect(LocalExecPermissionAuthorizer.persistedCommandPermissionIdentities(for: "cd /tmp").isEmpty)
+        #expect(LocalExecCommandParser.authorizationCandidates(in: "true").isEmpty)
     }
 
     @Test

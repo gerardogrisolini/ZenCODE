@@ -10,72 +10,26 @@ import ToolCore
 
 #if canImport(Darwin) || canImport(Glibc)
 extension TurnFileChangeTracker {
-    func platformDiffStats(before: Data?, after: Data?) async -> DiffStats? {
-        let beforeData = before ?? Data()
-        let afterData = after ?? Data()
-
-        if beforeData == afterData {
-            return nil
-        }
-
-        let temporaryDirectory = fileManager.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let beforeURL = temporaryDirectory.appendingPathComponent("before")
-        let afterURL = temporaryDirectory.appendingPathComponent("after")
-
-        do {
-            try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
-            try beforeData.write(to: beforeURL)
-            try afterData.write(to: afterURL)
-            defer {
-                try? fileManager.removeItem(at: temporaryDirectory)
-            }
-
-            let result = try await runGitDiff(
-                arguments: ["diff", "--no-index", "--numstat", "--", beforeURL.path, afterURL.path]
-            )
-
-            guard !result.timedOut,
-                  result.exitCode == 0 || result.exitCode == 1,
-                  let firstLine = result.stdout.split(whereSeparator: \.isNewline).first else {
-                return nil
-            }
-
-            let fields = firstLine.split(separator: "\t", omittingEmptySubsequences: false)
-            guard fields.count >= 2 else {
-                return nil
-            }
-
-            let additionsField = String(fields[0])
-            let deletionsField = String(fields[1])
-
-            if additionsField == "-" || deletionsField == "-" {
-                return DiffStats(additions: 0, deletions: 0, isBinary: true)
-            }
-
-            return DiffStats(
-                additions: Int(additionsField) ?? 0,
-                deletions: Int(deletionsField) ?? 0,
-                isBinary: false
-            )
-        } catch {
-            try? fileManager.removeItem(at: temporaryDirectory)
-            return nil
-        }
-    }
-
-    func platformGitPatch(
+    /// Diffs one before/after pair with a single
+    /// `git diff --no-index --numstat --binary`, which prints the numstat line,
+    /// a blank separator line, and then the binary-safe patch.
+    ///
+    /// A missing side is `/dev/null`: `git diff --no-index` rejects a
+    /// nonexistent path with exit 1 and empty output, indistinguishable from
+    /// "differences found", which left added/deleted files patchless. For the
+    /// numstat, `/dev/null` counts exactly like an empty file.
+    func platformDiff(
         before: Data?,
         after: Data?,
         displayPath: String,
         existedBefore: Bool,
         existsNow: Bool
-    ) async -> String? {
+    ) async -> FileDiff {
         let beforeData = before ?? Data()
         let afterData = after ?? Data()
 
         if beforeData == afterData {
-            return nil
+            return FileDiff(stats: nil, patch: nil)
         }
 
         let temporaryDirectory = fileManager.temporaryDirectory
@@ -95,13 +49,11 @@ extension TurnFileChangeTracker {
                 try? fileManager.removeItem(at: temporaryDirectory)
             }
 
-            // A missing side must be /dev/null: `git diff --no-index` rejects a
-            // nonexistent path with exit 1 and empty output, indistinguishable
-            // from "differences found", which left added/deleted files patchless.
-            let result = try await runGitDiff(
+            let result = try await runGit(
                 arguments: [
                     "diff",
                     "--no-index",
+                    "--numstat",
                     "--binary",
                     "--",
                     existedBefore ? beforeURL.path : "/dev/null",
@@ -111,23 +63,65 @@ extension TurnFileChangeTracker {
 
             guard !result.timedOut,
                   result.exitCode == 0 || result.exitCode == 1 else {
-                return nil
+                return FileDiff(stats: nil, patch: nil)
             }
 
-            return rewrittenPatch(
-                result.stdout,
-                displayPath: displayPath,
-                beforePath: existedBefore ? "a/\(displayPath)" : "/dev/null",
-                afterPath: existsNow ? "b/\(displayPath)" : "/dev/null"
+            let output = Self.splitNumstatAndPatch(result.stdout)
+            return FileDiff(
+                stats: Self.diffStats(fromNumstat: output.numstat),
+                patch: rewrittenPatch(
+                    output.patch,
+                    displayPath: displayPath,
+                    beforePath: existedBefore ? "a/\(displayPath)" : "/dev/null",
+                    afterPath: existsNow ? "b/\(displayPath)" : "/dev/null"
+                )
             )
         } catch {
             try? fileManager.removeItem(at: temporaryDirectory)
-            return nil
+            return FileDiff(stats: nil, patch: nil)
         }
     }
 
-    private func runGitDiff(arguments: [String]) async throws -> AsyncProcessResult {
-        try await runGit(arguments: arguments)
+    /// Splits `--numstat --binary` output for one file pair. The numstat is a
+    /// single line (git quotes paths with control characters); the patch
+    /// follows the blank separator line that git emits between the two.
+    static func splitNumstatAndPatch(_ output: String) -> (numstat: String, patch: String) {
+        let bytes = output.utf8
+        guard let newline = bytes.firstIndex(of: UInt8(ascii: "\n")) else {
+            return (output, "")
+        }
+        var patchStart = bytes.index(after: newline)
+        if patchStart < bytes.endIndex, bytes[patchStart] == UInt8(ascii: "\n") {
+            patchStart = bytes.index(after: patchStart)
+        }
+        return (
+            String(decoding: bytes[..<newline], as: UTF8.self),
+            String(decoding: bytes[patchStart...], as: UTF8.self)
+        )
+    }
+
+    static func diffStats(fromNumstat numstat: String) -> DiffStats? {
+        guard let firstLine = numstat.split(whereSeparator: \.isNewline).first else {
+            return nil
+        }
+
+        let fields = firstLine.split(separator: "\t", omittingEmptySubsequences: false)
+        guard fields.count >= 2 else {
+            return nil
+        }
+
+        let additionsField = String(fields[0])
+        let deletionsField = String(fields[1])
+
+        if additionsField == "-" || deletionsField == "-" {
+            return DiffStats(additions: 0, deletions: 0, isBinary: true)
+        }
+
+        return DiffStats(
+            additions: Int(additionsField) ?? 0,
+            deletions: Int(deletionsField) ?? 0,
+            isBinary: false
+        )
     }
 
     func runGit(arguments: [String]) async throws -> AsyncProcessResult {

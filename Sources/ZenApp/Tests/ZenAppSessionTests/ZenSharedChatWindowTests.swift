@@ -122,7 +122,7 @@ struct ZenSharedChatWindowTests {
             #expect(!window.sharedChat.isPresented)
             // No turn ran for any of it.
             #expect(await backend.prompts == ["Hello"])
-            #expect(window.promptHistory == ["Hello", "\(handle)thanks"])
+            #expect(window.history.entries == ["Hello", "\(handle)thanks"])
         }
     }
 
@@ -147,7 +147,7 @@ struct ZenSharedChatWindowTests {
             })
             #expect(window.sharedChat.messages.map(\.text) == ["Need a decision"])
             #expect(window.sharedChat.unreadCount == 1)
-            #expect(window.promptHistory == ["Hello"])
+            #expect(window.history.entries == ["Hello"])
             #expect(window.queuedLines.isEmpty)
         }
     }
@@ -508,7 +508,7 @@ struct ZenSharedChatWindowTests {
                 text: "ZenCODE message: add a message after the live mention.",
                 isFailure: true
             ))
-            #expect(window.promptHistory.last == "@coordinator")
+            #expect(window.history.entries.last == "@coordinator")
 
             // The agent left: nothing is sent.
             await chat.unregisterParticipant(id: Self.agentID, roomID: room)

@@ -171,16 +171,6 @@ extension TerminalChat {
         }
     }
 
-    /// Formats the original send instant in the local time zone, independently
-    /// of the user's 12/24-hour clock preference (see
-    /// ``SharedChatMessageLabel/timestamp(_:timeZone:)``).
-    nonisolated static func sharedChatTimestamp(
-        _ sentAt: Date,
-        timeZone: TimeZone = .current
-    ) -> String {
-        SharedChatMessageLabel.timestamp(sentAt, timeZone: timeZone)
-    }
-
     /// Builds the reader's author label from the sender, original send time and
     /// resolved recipients. Participant identities and delivery stay unchanged
     /// (see ``SharedChatMessageLabel/route(for:participantMap:timeZone:)``).

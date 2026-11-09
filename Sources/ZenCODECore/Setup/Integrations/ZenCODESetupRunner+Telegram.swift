@@ -162,10 +162,9 @@ extension ZenCODESetupRunner {
         let pairingDeadline = Date().addingTimeInterval(
             TerminalTelegramPairingGrant.timeToLive
         )
-        let payload = await pairingService.issuePairingGrant()
-        let deepLink = bot.username.map {
-            TerminalTelegramPairingGrantLink.deepLink(botUsername: $0, payload: payload)
-        }
+        let (payload, deepLink) = await pairingService.issuePairingDeepLink(
+            botUsername: bot.username
+        )
 
         var instructions = """
         Telegram pairing:

@@ -88,12 +88,6 @@ public enum PromptSkillToolProvider {
         return json
     }
 
-    public static func renderedGuidance(for skill: PromptSkill) -> String {
-        // Kept for callers that need a full local rendering outside the model
-        // tool channel. Tool calls use the paginated overload below.
-        renderedSkillHeader(for: skill) + "\n" + skill.promptBody
-    }
-
     public static func renderedGuidance(
         for skill: PromptSkill,
         offset: Int,
@@ -378,10 +372,6 @@ public actor PromptSkillSessionProvider: Sendable {
 
     public func update(_ skills: [PromptSkill]) {
         self.skills = PromptSkillToolProvider.sortedForListing(skills)
-    }
-
-    public func currentSkills() -> [PromptSkill] {
-        skills
     }
 
     /// Wraps this mutable, session-scoped provider as an `AgentToolProvider`

@@ -14,10 +14,8 @@ func presentedToolCall(
     descriptorTitle: String? = nil,
     presentation: ToolPresentationDefinition? = nil
 ) -> DirectAgentToolCall {
-    let descriptor = (
-        DirectToolCatalog.baseDescriptors
-            + DirectToolCatalog.localSearchDescriptors
-    ).first { $0.name == name }
+    // `baseDescriptors` already includes the core Search tools.
+    let descriptor = DirectToolCatalog.baseDescriptors.first { $0.name == name }
     let ownedPresentation: ToolPresentationDefinition?
     if let presentation {
         ownedPresentation = presentation

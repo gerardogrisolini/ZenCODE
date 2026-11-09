@@ -131,14 +131,16 @@ extension MemoryEngine {
         var rankings: [[ScoredMemoryID]] = []
         rankings.reserveCapacity(queries.count + configuration.maxSemanticQueries + 1)
 
-        for query in queries {
-            let lexical = try await lexicalIndex.search(
-                query: query,
-                memories: activeMemories,
-                scope: scope,
-                limit: lexicalLimit * overfetch
-            )
-            if !lexical.isEmpty { rankings.append(weighted(lexical, keeping: lexicalLimit)) }
+        // One batch call: the default BM25 index tokenizes the memories once
+        // and shares them across every query of this retrieval.
+        let lexicalRankings = try await lexicalIndex.search(
+            queries: queries,
+            memories: activeMemories,
+            scope: scope,
+            limit: lexicalLimit * overfetch
+        )
+        for lexical in lexicalRankings where !lexical.isEmpty {
+            rankings.append(weighted(lexical, keeping: lexicalLimit))
         }
 
         let metadata = MemorySearch.metadataRanking(

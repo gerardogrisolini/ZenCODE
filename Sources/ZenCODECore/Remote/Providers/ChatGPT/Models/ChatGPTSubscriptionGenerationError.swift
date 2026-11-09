@@ -9,7 +9,6 @@ import Foundation
 
 enum ChatGPTSubscriptionGenerationError: LocalizedError {
     case missingSession
-    case cancelled
     case invalidResponse
     case http(status: Int, output: String)
     case responseFailed(String)
@@ -20,8 +19,6 @@ enum ChatGPTSubscriptionGenerationError: LocalizedError {
         switch self {
         case .missingSession:
             return "The ChatGPT Subscription agent session is missing."
-        case .cancelled:
-            return "The ChatGPT Subscription request was cancelled."
         case .invalidResponse:
             return "ChatGPT Subscription returned an invalid response."
         case let .http(status, output):

@@ -44,8 +44,11 @@ extension DirectSubAgentRuntime {
                 return lhs.id > rhs.id
             }
         guard terminal.count > Self.maximumRetainedTerminalAgents else { return }
-        for record in terminal.dropFirst(Self.maximumRetainedTerminalAgents) {
-            agents.removeValue(forKey: record.id)
+        let evictedIDs = terminal.dropFirst(Self.maximumRetainedTerminalAgents).map(\.id)
+        mutateAgents { registry in
+            for id in evictedIDs {
+                registry.removeValue(forKey: id)
+            }
         }
     }
 
@@ -189,7 +192,7 @@ extension DirectSubAgentRuntime {
     /// keeps showing every sub-agent that is actually working.
     func adoptOverviewWave(_ waveID: UUID, for agentIDs: [String]) {
         for id in agentIDs {
-            agents[id]?.overviewBatchID = waveID
+            mutateAgent(id) { $0.overviewBatchID = waveID }
         }
         latestOverviewBatchID = waveID
     }

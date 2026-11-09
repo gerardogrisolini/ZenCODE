@@ -141,13 +141,6 @@ extension ZenCODEACPBridge {
         return nil
     }
 
-    public static func memoryToolEnabled(_ allowedToolNames: Set<String>?) -> Bool {
-        guard let allowedToolNames else {
-            return true
-        }
-        return allowedToolNames.contains { $0.hasPrefix("memory.") }
-    }
-
     public static func thinkingSelection(from value: Any?) -> AgentThinkingSelection? {
         guard let rawValue = (value as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -427,21 +420,6 @@ extension ZenCODEACPBridge {
             )
         )
         return allowedToolNames
-    }
-
-    public func resolvedSystemPrompt(
-        providedSystemPrompt: String?,
-        cwd: String,
-        allowedToolNames: Set<String>?,
-        selectedAgent: AgentProfile? = nil
-    ) -> String {
-        resolvedPromptSections(
-            providedSystemPrompt: providedSystemPrompt,
-            cwd: cwd,
-            allowedToolNames: allowedToolNames,
-            selectedAgent: selectedAgent
-        )
-        .combinedPrompt
     }
 
     public func resolvedPromptSections(

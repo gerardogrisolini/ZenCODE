@@ -111,17 +111,6 @@ extension RemoteGenerationClient {
                 // aliases (in particular xhigh is not DeepSeek's max).
                 break
             }
-        case let .thinkingObject(supportsDisable, keepAll):
-            guard thinkingSelection.isEnabled || supportsDisable else {
-                return
-            }
-            var thinking: [String: Any] = [
-                "type": thinkingSelection.isEnabled ? "enabled" : "disabled"
-            ]
-            if thinkingSelection.isEnabled, keepAll {
-                thinking["keep"] = "all"
-            }
-            body["thinking"] = thinking
         }
     }
 
@@ -265,8 +254,7 @@ extension RemoteGenerationClient {
     func remoteToolCatalog(
         allowedToolNames: Set<String>?,
         preferredWorkspaceRootURL: URL?,
-        sessionID: String,
-        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
+        sessionID: String
     ) async -> RemoteToolWireCatalog {
         let descriptors = await toolExecutor.descriptors(
             allowedToolNames: allowedToolNames,
@@ -289,8 +277,7 @@ extension RemoteGenerationClient {
         let toolCatalog = await remoteToolCatalog(
             allowedToolNames: allowedToolNames,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL,
-            sessionID: sessionID,
-            onEvent: onEvent
+            sessionID: sessionID
         )
         let sanitizedMessages = Self.chatCompletionsWireHistoryMessages(
             from: messages,
@@ -356,8 +343,7 @@ extension RemoteGenerationClient {
         let toolCatalog = await remoteToolCatalog(
             allowedToolNames: allowedToolNames,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL,
-            sessionID: sessionID,
-            onEvent: onEvent
+            sessionID: sessionID
         )
         let normalizedInput = try Self.validatedResponsesInputPayload(
             from: toolCatalog.wireMessages(from: messages)

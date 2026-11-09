@@ -9,14 +9,6 @@ import Foundation
 import ToolCore
 
 extension ModelThinkingSupport {
-    public static func fromSparseRemoteModelIdentifier(
-        _ modelID: String
-    ) -> ModelThinkingSupport? {
-        var detector = MetadataDetector()
-        detector.scan(["id": modelID])
-        return detector.support
-    }
-
     public static func effortLevels(
         from selections: [ThinkingSelection]
     ) -> [ThinkingSelection] {
