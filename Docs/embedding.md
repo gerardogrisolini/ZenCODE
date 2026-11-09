@@ -18,7 +18,7 @@ contract of [release.md](release.md).
 
 ```swift
 // Package.swift of the app
-.package(url: "https://github.com/gerardogrisolini/ZenCODE.git", from: "4.0.1"),
+.package(url: "https://github.com/gerardogrisolini/ZenCODE.git", from: "5.0.0"),
 // in the target
 .product(name: "ZenCODECore", package: "ZenCODE"),
 ```
@@ -1109,7 +1109,7 @@ switch.
 ## Compatibility
 
 The public API of `Sources/ZenCODECore/Chat` follows semantic versioning (see
-[Compatibility Contract](architecture.md#compatibility-contract)). From 4.0.0
+[Compatibility Contract](architecture.md#compatibility-contract)). From 5.0.0
 it comprises:
 
 - the session host: `ChatSessionHost` (with `RuntimeSessionDisposition`),
@@ -1160,8 +1160,6 @@ The rules:
   over them with a `default` case (`ChatCommandAction`, `ChatSessionNotice`,
   `ChatIncarnationChange`, `ChatSessionHostError`, and the others);
 - the `@ChatSessionActor` isolation is part of the contract;
-- `TerminalChatActor` is deprecated: use `ChatSessionActor`. It is removed in
-  the next major release;
 - `LocalExecPermissionAuthorizer` and `ACPPermissionBroker` are not
   deprecated: they are the terminal's and ACP's adapters over
   `ChatToolConsentAuthorizer`, which an app uses directly;

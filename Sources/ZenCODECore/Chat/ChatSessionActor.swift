@@ -33,11 +33,3 @@ public actor ChatSessionActor {
 
     private init() {}
 }
-
-/// Former name of ``ChatSessionActor``, kept only for source compatibility.
-///
-/// It names the same global actor, so `@TerminalChatActor` and
-/// `@ChatSessionActor` are the same isolation. It is removed in the next major
-/// release; write `@ChatSessionActor` instead.
-@available(*, deprecated, renamed: "ChatSessionActor")
-public typealias TerminalChatActor = ChatSessionActor

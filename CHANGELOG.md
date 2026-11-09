@@ -10,6 +10,24 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-11-09
+
+> **Breaking release:** compared with v4.1.0, v5.0.0 makes `zen --setup` the
+> only way to configure ZenCODE: the TUI command `/setup` is removed, a start
+> without a valid configuration exits with status 1 instead of opening the
+> setup (ACP still answers `initialize`), and the ACP `zencode-setup`
+> authentication method runs `zen --setup`. The `ZENCODE_AGENT_MODE`
+> environment variable is no longer read, so an ACP client configured with it
+> alone must pass `--acp`. For code that integrates the libraries directly, it
+> removes the setup handler and the in-process restart state of `ZenCODECore`,
+> the `keepingExternalTools:` parameter of `ChatSessionHost.shutdown`,
+> `AgentRunMode.automatic`,
+> `DirectSubAgentRuntime.AgentSnapshot.accumulatedOutput`, the
+> `TerminalChatActor` alias deprecated since v4.0.0, and public symbols with
+> no callers in `ToolCore`, `FeatureMCPBridgeKit`, and `ZenCODEACPBridge`;
+> some entries under **Changed** also change public signatures. See the
+> **Breaking** entries below.
+
 ### Added
 
 - `ToolCallPresentation.elapsedTimeText(_:)` formats the elapsed time of a
@@ -251,6 +269,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   entries change source compatibility only: the output of `zen`, the ACP
   wire, the `--list-tools` and `--invoke` JSON, and the persisted formats are
   unchanged.
+- **Breaking (ZenCODECore API):** `TerminalChatActor`, the alias of
+  `ChatSessionActor` deprecated since 4.0.0, is removed as announced. Code
+  that still writes `@TerminalChatActor` no longer compiles: write
+  `@ChatSessionActor`, which is the same isolation. This changes source
+  compatibility only.
 
 ### Fixed
 
@@ -4656,7 +4679,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v4.1.0...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v5.0.0...HEAD
+[5.0.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v4.1.0...v5.0.0
 [4.1.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v4.0.2...v4.1.0
 [4.0.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v4.0.1...v4.0.2
 [4.0.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v4.0.0...v4.0.1
