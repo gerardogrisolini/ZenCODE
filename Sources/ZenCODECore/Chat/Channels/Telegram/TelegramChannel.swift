@@ -129,34 +129,13 @@ public final class TelegramChannel: ChatInteractionHost {
     /// Stops a Telegram-originated turn as soon as its route generation is
     /// revoked, rebound, or closed.
     var routeValidationTask: Task<Void, Never>?
-    /// `true` when the root response block currently streaming already
-    /// produced visible text.
-    var rootResponseBlockHasContent = false
-    /// `true` when the root response block currently streaming must not be
-    /// sent: part of it was produced before the channel presented the turn,
-    /// so publishing the rest would send a suffix of a response the chat
-    /// never saw begin. Cleared at the next boundary, where a new block
-    /// starts.
-    var rootResponseBlockIsSuppressed = false
-    /// `true` when at least one intermediate root response was already sent
-    /// during the current turn, so the accumulated turn text must not be
-    /// sent again as the final response.
-    var didPublishIntermediateRootResponse = false
+    /// The root response block and the reasoning block of the turn the
+    /// channel follows (see `TelegramChannel+Turn.swift`).
+    var turnBlocks = TurnBlocks()
     /// Change signature of the task-graph overview already sent during the
     /// current turn, so republished identical content does not repeat in
     /// the chat. Reset when a new turn begins.
     var publishedTaskGraphOverviewSignature: String?
-    /// The reasoning of the block streaming now, aggregated until the event
-    /// that closes it (assistant content, a tool call, an automatic `/goal`
-    /// continuation, the end of the turn) and then sent as one thinking
-    /// message (see `TelegramChannel+Turn.swift`). Bounded just above the
-    /// message limit, so the cut is still seen.
-    var pendingThought = ""
-    /// `true` while the reasoning streaming now must not be sent: the turn
-    /// moved onto the channel while its assistant text streamed, so a
-    /// reasoning block may have begun before the move. Cleared by the next
-    /// event that closes a reasoning block.
-    var thoughtBlockIsSuppressed = false
     /// The task running the turn the channel started through the host, while
     /// one runs (see `TelegramChannel+Turn.swift`).
     var activeTurnTask: Task<Void, Never>?
@@ -173,6 +152,103 @@ public final class TelegramChannel: ChatInteractionHost {
     /// the route it arrived on, run in order once the turn in progress ends.
     var promptQueue = ChatPromptQueue<TerminalTelegramRouteLease>()
 
+    /// The root response block and the reasoning block streaming now in the
+    /// turn the channel follows, and whether an intermediate root response
+    /// was sent during the turn: what the channel decides at their
+    /// boundaries. A turn boundary resets both blocks.
+    struct TurnBlocks {
+        /// The most characters a reasoning block keeps: just above the
+        /// message limit, so the cut is still seen.
+        static let maximumThoughtLength = TerminalTelegramTurnProgressReporter.maximumMessageLength + 1
+
+        /// `true` when the root response block currently streaming already
+        /// produced visible text.
+        private(set) var rootResponseHasContent = false
+        /// `true` when the root response block currently streaming must not
+        /// be sent: part of it was produced before the channel presented
+        /// the turn, so publishing the rest would send a suffix of a
+        /// response the chat never saw begin. Cleared at the next boundary,
+        /// where a new block starts.
+        private(set) var rootResponseIsSuppressed = false
+        /// `true` when at least one intermediate root response was already
+        /// sent during the current turn, so the accumulated turn text must
+        /// not be sent again as the final response.
+        var didPublishIntermediateRootResponse = false
+        /// The reasoning of the block streaming now, aggregated until the
+        /// event that closes it (assistant content, a tool call, an
+        /// automatic `/goal` continuation, the end of the turn) and then
+        /// sent as one thinking message. Bounded by
+        /// ``maximumThoughtLength``.
+        private(set) var pendingThought = ""
+        /// `true` while the reasoning streaming now must not be sent: the
+        /// turn moved onto the channel while its assistant text streamed, so
+        /// a reasoning block may have begun before the move. Cleared by the
+        /// next event that closes a reasoning block.
+        private(set) var thoughtIsSuppressed = false
+
+        /// A turn moved onto the channel while its assistant text streamed:
+        /// the rest of the root response block, and the reasoning streaming
+        /// meanwhile, are suppressed until their next boundary.
+        mutating func adoptStreamingBlocks() {
+            rootResponseHasContent = true
+            rootResponseIsSuppressed = true
+            thoughtIsSuppressed = true
+        }
+
+        /// Records that the root response block produced visible text, and
+        /// returns whether the text may be sent: `false` while the block is
+        /// suppressed.
+        mutating func recordRootResponseContent() -> Bool {
+            rootResponseHasContent = true
+            return !rootResponseIsSuppressed
+        }
+
+        /// Ends the root response block at a boundary, where a new block
+        /// starts, and returns whether the block that ends was suppressed.
+        mutating func endRootResponseBlock() -> Bool {
+            let wasSuppressed = rootResponseIsSuppressed
+            rootResponseHasContent = false
+            rootResponseIsSuppressed = false
+            return wasSuppressed
+        }
+
+        /// Suppresses the root response block, when one is streaming.
+        mutating func suppressRootResponseIfStreaming() {
+            guard rootResponseHasContent else { return }
+            rootResponseIsSuppressed = true
+        }
+
+        /// Forgets the root-response state at a turn boundary.
+        mutating func resetRootResponse() {
+            rootResponseHasContent = false
+            rootResponseIsSuppressed = false
+            didPublishIntermediateRootResponse = false
+        }
+
+        /// Aggregates `delta` into the reasoning block, unless the block is
+        /// suppressed, up to ``maximumThoughtLength``.
+        mutating func appendThought(_ delta: String) {
+            guard !delta.isEmpty, !thoughtIsSuppressed else { return }
+            let remainingCount = Self.maximumThoughtLength - pendingThought.count
+            guard remainingCount > 0 else { return }
+            pendingThought.append(contentsOf: delta.prefix(remainingCount))
+        }
+
+        /// Returns the reasoning block and forgets it, as
+        /// ``resetThought()`` does.
+        mutating func takeThought() -> String {
+            let thought = pendingThought
+            resetThought()
+            return thought
+        }
+
+        /// Forgets the reasoning block at a turn boundary.
+        mutating func resetThought() {
+            pendingThought = ""
+            thoughtIsSuppressed = false
+        }
+    }
+
     // MARK: - Remote commands
 
     /// Pending ForceReply receipts for coordinator commands that need an
@@ -181,12 +257,10 @@ public final class TelegramChannel: ChatInteractionHost {
 
     // MARK: - Shared chat
 
-    /// Telegram route of a live shared-chat message, keyed by the transient
-    /// bus message identity, so the coordinator turn it triggers answers on
-    /// the same route. Bounded like the retained shared-chat transcript.
-    var sharedChatMessageLeases: [UUID: TerminalTelegramRouteLease] = [:]
-    /// FIFO order of ``sharedChatMessageLeases``.
-    var sharedChatMessageLeaseOrder: [UUID] = []
+    /// Telegram route of each live shared-chat message sent from the chat,
+    /// so the coordinator turn it triggers answers on the same route (see
+    /// `TelegramChannel+SharedChatRelay.swift`).
+    var sharedChatMessageLeases = SharedChatMessageLeases()
     /// The relay that forwards operator-directed shared-chat messages to the
     /// linked chat, created on first use and kept for the channel's
     /// lifetime, so its ledger survives a detach and a later attach.
@@ -200,6 +274,58 @@ public final class TelegramChannel: ChatInteractionHost {
     var sharedChatObservation: AgentSharedChatCoordinator.Observation?
     /// The room ``sharedChatObservationTask`` observes.
     var observedSharedChatRoomID: String?
+
+    /// The Telegram route of each live shared-chat message sent from the
+    /// chat, keyed by the transient bus message identity. Bounded like the
+    /// retained shared-chat transcript: past
+    /// ``AgentSharedChat/maximumRetainedMessagesPerRoom`` messages, the
+    /// first one recorded is forgotten first.
+    struct SharedChatMessageLeases {
+        private var leases: [UUID: TerminalTelegramRouteLease] = [:]
+        /// FIFO order of `leases`, by first recording.
+        private var order: [UUID] = []
+
+        /// Associates `lease` with the message `messageID`. A message
+        /// recorded again keeps its place in the order.
+        mutating func record(_ messageID: UUID, lease: TerminalTelegramRouteLease) {
+            if leases[messageID] == nil {
+                order.append(messageID)
+            }
+            leases[messageID] = lease
+            let maximumLeases = AgentSharedChat.maximumRetainedMessagesPerRoom
+            while order.count > maximumLeases {
+                let oldestMessageID = order.removeFirst()
+                leases.removeValue(forKey: oldestMessageID)
+            }
+        }
+
+        /// Forgets the route of the message `messageID`.
+        mutating func discard(_ messageID: UUID) {
+            leases.removeValue(forKey: messageID)
+            order.removeAll { $0 == messageID }
+        }
+
+        /// The route of the first of `messages` with one, without
+        /// forgetting it.
+        func lease(for messages: [AgentSharedChat.Message]) -> TerminalTelegramRouteLease? {
+            for message in messages {
+                if let lease = leases[message.id] {
+                    return lease
+                }
+            }
+            return nil
+        }
+
+        /// The route of the first of `messages` with one; the route of every
+        /// message of `messages` is forgotten.
+        mutating func take(for messages: [AgentSharedChat.Message]) -> TerminalTelegramRouteLease? {
+            let lease = lease(for: messages)
+            for message in messages {
+                discard(message.id)
+            }
+            return lease
+        }
+    }
 
     // MARK: - Task graph (ACP and `zen --telegram` slots)
 

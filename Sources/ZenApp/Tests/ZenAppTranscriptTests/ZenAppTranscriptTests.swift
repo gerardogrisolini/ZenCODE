@@ -447,6 +447,7 @@ struct ZenSubAgentsCardTests {
         modelID: String? = nil,
         activity: String? = nil,
         activityKind: DirectSubAgentRuntime.ActivityKind? = nil,
+        thought: String? = nil,
         toolName: String? = nil,
         toolIsRunning: Bool = false,
         metrics: DirectAgentGenerationMetrics? = nil,
@@ -465,6 +466,7 @@ struct ZenSubAgentsCardTests {
             modelID: modelID,
             currentActivity: activity,
             currentActivityKind: activityKind,
+            currentThought: thought,
             currentToolName: toolName,
             currentToolIsRunning: toolIsRunning,
             latestMetrics: metrics,
@@ -655,11 +657,22 @@ struct ZenSubAgentsCardTests {
     @Test("the live activity of a tab: never empty while pending, except while a tool runs")
     func liveActivity() {
         #expect(ZenSubAgentLiveActivity(snapshot(
-            activity: "Checking\nthe palette.", activityKind: .thinking
+            activityKind: .thinking, thought: "Checking\nthe palette."
         )) == .thought("Checking\nthe palette."))
+        // The whole reasoning of the phase, also once its paragraph in
+        // progress ended.
+        #expect(ZenSubAgentLiveActivity(snapshot(
+            activity: "Second.", activityKind: .thinking, thought: "First.\n\nSecond."
+        )) == .thought("First.\n\nSecond."))
+        #expect(ZenSubAgentLiveActivity(snapshot(
+            activityKind: .thinking, thought: "First.\n\nSecond."
+        )) == .thought("First.\n\nSecond."))
         // Reasoning without a paragraph yet.
         #expect(ZenSubAgentLiveActivity(snapshot(activityKind: .thinking)) == .thinkingPlaceholder)
-        #expect(ZenSubAgentLiveActivity(snapshot(activity: " \n", activityKind: .thinking)) == .thinkingPlaceholder)
+        #expect(ZenSubAgentLiveActivity(snapshot(activityKind: .thinking, thought: " \n")) == .thinkingPlaceholder)
+        // The paragraph in progress alone (`currentActivity`) is not the
+        // reasoning: without `currentThought` the placeholder shows.
+        #expect(ZenSubAgentLiveActivity(snapshot(activity: "Only the paragraph.", activityKind: .thinking)) == .thinkingPlaceholder)
         // The message phase shows the placeholder too, with its text or not.
         #expect(ZenSubAgentLiveActivity(snapshot(activity: "Writing.", activityKind: .content)) == .thinkingPlaceholder)
         #expect(ZenSubAgentLiveActivity(snapshot(activityKind: .content)) == .thinkingPlaceholder)
@@ -677,17 +690,17 @@ struct ZenSubAgentsCardTests {
         )) == .thinkingPlaceholder)
         // Reasoning after a completed tool shows the paragraph.
         #expect(ZenSubAgentLiveActivity(snapshot(
-            activity: "Reading the output.", activityKind: .thinking, toolName: "local.exec", toolIsRunning: false
+            activityKind: .thinking, thought: "Reading the output.", toolName: "local.exec", toolIsRunning: false
         )) == .thought("Reading the output."))
         // A running tool has its row in the transcript: nothing, while
         // reasoning too.
         #expect(ZenSubAgentLiveActivity(snapshot(toolName: "local.exec", toolIsRunning: true)) == .none)
         #expect(ZenSubAgentLiveActivity(snapshot(
-            activity: "Reading the output.", activityKind: .thinking, toolName: "local.exec", toolIsRunning: true
+            activityKind: .thinking, thought: "Reading the output.", toolName: "local.exec", toolIsRunning: true
         )) == .none)
         // Not pending, or no snapshot: nothing.
         #expect(ZenSubAgentLiveActivity(snapshot(
-            status: .idle, activity: "Old thought", activityKind: .thinking, output: "Done."
+            status: .idle, activityKind: .thinking, thought: "Old thought", output: "Done."
         )) == .none)
         #expect(ZenSubAgentLiveActivity(snapshot(
             status: .idle, toolName: "local.exec", toolIsRunning: false, output: "Done."

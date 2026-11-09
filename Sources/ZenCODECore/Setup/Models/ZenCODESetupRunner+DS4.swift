@@ -312,20 +312,18 @@ extension ZenCODESetupRunner {
         promptTuning: ((DS4SetupModelCandidate, AgentDS4RuntimeTuning) throws -> AgentDS4RuntimeTuning)? = nil,
         engine: DS4SetupEngineOptions = DS4SetupEngineOptions()
     ) async throws -> SetupProviderInput? {
+        let prompts = DS4SetupPrompts(
+            folder: promptFolder,
+            files: selectFiles,
+            backend: selectBackend,
+            auxiliaryFile: selectAuxiliaryFile,
+            tuning: promptTuning,
+            apiModelID: selectAPIModelID
+        )
         let previousRootDirectory = (existingProvider?.ds4Runtime
             ?? existingModels.compactMap(\.ds4Runtime).first
         )?.rootDirectory
-        let folder: String?
-        if let promptFolder {
-            folder = try promptFolder(previousRootDirectory)
-        } else {
-            folder = try promptString(
-                "DS4 folder",
-                defaultValue: previousRootDirectory,
-                allowEmpty: false,
-                help: "Enter your DS4 checkout (it holds ds4.h and the GGUF models). Setup scans it for GGUF files and can build ZenCODE's in-process engine library against it; it never downloads DS4 or changes the checkout."
-            )
-        }
+        let folder = try prompts.folder(previousRootDirectory)
         guard let folder, !folder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
@@ -351,13 +349,7 @@ extension ZenCODESetupRunner {
         let preselected = Set(
             existingModels.compactMap { $0.ds4Runtime?.modelRelativePath }
         ).intersection(candidates.map(\.relativePath))
-        let selectedPaths: Set<String>?
-        if let selectFiles {
-            selectedPaths = try selectFiles(candidates, preselected)
-        } else {
-            selectedPaths = promptDS4ModelFiles(candidates: candidates, preselected: preselected)
-        }
-        guard let selectedPaths else { return nil }
+        guard let selectedPaths = try prompts.files(candidates, preselected) else { return nil }
         let selected = candidates.filter { selectedPaths.contains($0.relativePath) }
         guard !selected.isEmpty else {
             AgentOutput.standardError.writeString("No DS4 model selected. Nothing was changed.\n")
@@ -375,37 +367,20 @@ extension ZenCODESetupRunner {
             authPolicy: .noAuthentication
         )
 
-        var usedIDs = reservedModelIDs
-        // Preserved ids win over generated ones, whatever the selection order.
-        for candidate in selected {
-            if let previous = existingModels.first(where: {
-                $0.ds4Runtime?.modelRelativePath == candidate.relativePath
-            }) {
-                usedIDs.insert(previous.id)
-            }
-        }
+        var usedIDs = ds4PreservedModelIDs(
+            for: selected,
+            existingModels: existingModels,
+            reservedModelIDs: reservedModelIDs
+        )
 
         var models: [AgentSettingsModelManifest] = []
         var firstRuntime: AgentDS4RuntimeManifest?
         for candidate in selected {
-            let previousModel = existingModels.first {
-                $0.ds4Runtime?.modelRelativePath == candidate.relativePath
-            }
+            let previousModel = ds4PreviousModel(for: candidate, in: existingModels)
             // Launch parameters belong to this model only.
             let previousRuntime = previousModel?.ds4Runtime
             let defaultBackend = previousRuntime?.backend ?? defaultDS4Backend
-            let backend: AgentDS4RuntimeBackend
-            if let selectBackend {
-                backend = try selectBackend(candidate, defaultBackend)
-            } else {
-                backend = try promptMenuChoice(
-                    title: "DS4 backend for \(candidate.title)",
-                    items: AgentDS4RuntimeBackend.allCases.map {
-                        TerminalCheckboxMenuItem(value: $0, title: $0.rawValue, detail: nil)
-                    },
-                    selected: defaultBackend
-                )
-            }
+            let backend = try prompts.backend(candidate, defaultBackend)
 
             let tuningDefaults = ds4TuningDefaults(from: previousRuntime)
 
@@ -416,56 +391,34 @@ extension ZenCODESetupRunner {
                 model: candidate,
                 pairable: pairable,
                 saved: previousRuntime?.visionRelativePath,
-                select: selectAuxiliaryFile
+                select: prompts.auxiliaryFile
             )
             let mtpRelativePath = try selectDS4AuxiliaryFile(
                 kind: .mtp,
                 model: candidate,
                 pairable: pairable,
                 saved: previousRuntime?.mtpRelativePath,
-                select: selectAuxiliaryFile
+                select: prompts.auxiliaryFile
             )
 
-            let tuning = if let promptTuning {
-                try promptTuning(candidate, tuningDefaults)
-            } else {
-                try promptDS4RuntimeTuning(
-                    modelTitle: candidate.title,
-                    defaults: tuningDefaults,
+            let tuning = try prompts.tuning(
+                candidate,
+                tuningDefaults,
+                DS4SetupTuningContext(
                     backend: backend,
                     rootDirectory: installation.rootDirectory,
                     hasMTPModel: mtpRelativePath != nil
                 )
-            }
+            )
 
-            let runtime = try AgentDS4RuntimeManifest(
+            let runtime = try ds4RuntimeManifest(
                 rootDirectory: installation.rootDirectory,
-                modelRelativePath: candidate.relativePath,
+                candidate: candidate,
+                previousRuntime: previousRuntime,
                 backend: backend,
-                contextWindow: tuning.contextWindow,
-                ssdStreaming: tuning.ssdStreaming,
-                ssdStreamingCacheExperts: previousRuntime?.ssdStreamingCacheExperts,
-                ssdStreamingCacheBytes: previousRuntime?.ssdStreamingCacheBytes,
-                ssdStreamingPreloadExperts: previousRuntime?.ssdStreamingPreloadExperts,
-                ssdStreamingCold: previousRuntime?.ssdStreamingCold ?? false,
-                mtp: tuning.mtp,
-                power: tuning.power,
                 visionRelativePath: visionRelativePath,
                 mtpRelativePath: mtpRelativePath,
-                steeringRelativePath: tuning.steeringRelativePath,
-                dspark: tuning.dspark,
-                mtpDraftTokens: tuning.mtpDraftTokens,
-                mtpMargin: tuning.mtpMargin,
-                quality: tuning.quality,
-                threads: tuning.threads,
-                prefillChunk: tuning.prefillChunk,
-                warmWeights: tuning.warmWeights,
-                steeringFFN: tuning.steeringFFN,
-                steeringAttn: tuning.steeringAttn,
-                cudaArch: tuning.cudaArch,
-                rocmArch: tuning.rocmArch,
-                engineSessions: tuning.engineSessions,
-                extraEngineArguments: tuning.extraEngineArguments
+                tuning: tuning
             )
             let modelURL = try AgentDS4PathGuard.resolveModelURL(
                 rootDirectory: installation.rootDirectory,
@@ -476,12 +429,10 @@ extension ZenCODESetupRunner {
             let apiModelID = try ds4APIModelID(
                 for: candidate,
                 previousModel: previousModel,
-                selectAPIModelID: selectAPIModelID
+                select: prompts.apiModelID
             )
-            let thinking = ds4ThinkingConfiguration(
-                forAPIModelID: apiModelID,
-                previousModel: previousModel
-            )
+            // The id is taken here, once the model is certain to be kept, so a
+            // skipped GGUF never uses one up.
             let modelID: String
             if let previousModel {
                 modelID = previousModel.id
@@ -489,30 +440,14 @@ extension ZenCODESetupRunner {
                 let base = "ds4:" + (candidate.catalogID ?? candidate.fileStem.lowercased())
                 modelID = uniqueDS4ModelID(base, used: &usedIDs)
             }
-            let provider = AgentSettingsProviderManifest(
-                id: providerID,
-                name: providerBase.name,
-                baseURL: providerBase.baseURL,
-                chatEndpoint: providerBase.chatEndpoint,
-                providerProfileID: providerBase.providerProfileID,
-                protocolProfileID: providerBase.protocolProfileID,
-                authPolicy: .noAuthentication,
-                ds4Runtime: runtime
-            )
             models.append(
-                AgentSettingsModelManifest(
-                    id: modelID,
-                    kind: .remoteAPI,
-                    title: previousModel?.title ?? candidate.title,
-                    llmID: previousModel?.llmID,
-                    modelID: apiModelID,
-                    providerID: providerID,
-                    provider: provider.remoteProvider(modelID: apiModelID),
-                    configuredContextWindowLimit: runtime.contextWindow,
-                    generationParameterOverrides: previousModel?.generationParameterOverrides,
-                    thinkingOptions: thinking.options,
-                    defaultThinkingSelection: thinking.defaultSelection,
-                    ds4Runtime: runtime
+                ds4ModelManifest(
+                    candidate: candidate,
+                    previousModel: previousModel,
+                    runtime: runtime,
+                    providerBase: providerBase,
+                    modelID: modelID,
+                    apiModelID: apiModelID
                 )
             )
             firstRuntime = firstRuntime ?? runtime
@@ -618,24 +553,10 @@ extension ZenCODESetupRunner {
         return [.off, .low, .medium, .high, .max]
     }
 
-    /// Thinking levels and default of a DS4 model. The saved levels of the model
-    /// for the same GGUF are kept as they are; a model without any (never
-    /// configured, or configured before setup assigned them) gets the levels of
-    /// its family with the default ``ds4DefaultThinkingSelection``.
-    private static func ds4ThinkingConfiguration(
-        forAPIModelID apiModelID: String,
-        previousModel: AgentSettingsModelManifest?
-    ) -> (options: [AgentThinkingSelection], defaultSelection: AgentThinkingSelection?) {
-        if let saved = previousModel?.thinkingOptions, !saved.isEmpty {
-            return (saved, previousModel?.defaultThinkingSelection)
-        }
-        return (ds4ThinkingOptions(forAPIModelID: apiModelID), ds4DefaultThinkingSelection)
-    }
-
     private static func ds4APIModelID(
         for candidate: DS4SetupModelCandidate,
         previousModel: AgentSettingsModelManifest?,
-        selectAPIModelID: ((DS4SetupModelCandidate) throws -> String)?
+        select: (DS4SetupModelCandidate) throws -> String
     ) throws -> String {
         if let id = candidate.catalogAPIModelID {
             return id
@@ -647,45 +568,7 @@ extension ZenCODESetupRunner {
            DS4ModelCatalog.servedAPIModelIDs.contains(previous) {
             return previous
         }
-        if let selectAPIModelID {
-            return try selectAPIModelID(candidate)
-        }
-        return try promptMenuChoice(
-            title: "DS4 API model id for \(candidate.fileName)",
-            items: DS4ModelCatalog.servedAPIModelIDs.map {
-                TerminalCheckboxMenuItem(value: $0, title: $0, detail: nil)
-            },
-            selected: DS4ModelCatalog.servedAPIModelIDs[0]
-        )
-    }
-
-    private static func uniqueDS4ModelID(_ base: String, used: inout Set<String>) -> String {
-        var candidate = base
-        var suffix = 2
-        while used.contains(candidate) {
-            candidate = "\(base)-\(suffix)"
-            suffix += 1
-        }
-        used.insert(candidate)
-        return candidate
-    }
-
-    private static func promptDS4ModelFiles(
-        candidates: [DS4SetupModelCandidate],
-        preselected: Set<String>
-    ) -> Set<String>? {
-        let items = candidates.map { candidate in
-            TerminalCheckboxMenuItem(
-                value: candidate.relativePath,
-                title: candidate.title,
-                detail: candidate.relativePath
-            )
-        }
-        return TerminalCheckboxMenu.select(
-            title: "Select DS4 models",
-            items: items,
-            selected: preselected
-        )
+        return try select(candidate)
     }
 
     static func existingDS4Runtime(
@@ -842,7 +725,7 @@ extension ZenCODESetupRunner {
         model: DS4SetupModelCandidate,
         pairable: [DS4SetupModelCandidate],
         saved: String?,
-        select: DS4SetupAuxiliaryFileSelector?
+        select: DS4SetupAuxiliaryFileSelector
     ) throws -> String? {
         guard !pairable.isEmpty else {
             return nil
@@ -851,17 +734,6 @@ extension ZenCODESetupRunner {
         let current = saved.flatMap { path in
             pairable.contains { $0.relativePath == path } ? path : nil
         }
-        if let select {
-            return try select(model, kind, pairable, current)
-        }
-        let none = TerminalCheckboxMenuItem<String?>(value: nil, title: "None", detail: nil)
-        let files = pairable.map {
-            TerminalCheckboxMenuItem<String?>(value: $0.relativePath, title: $0.title, detail: $0.relativePath)
-        }
-        return try promptMenuChoice(
-            title: "Optional \(kind.title) for \(model.title)",
-            items: [none] + files,
-            selected: current
-        )
+        return try select(model, kind, pairable, current)
     }
 }

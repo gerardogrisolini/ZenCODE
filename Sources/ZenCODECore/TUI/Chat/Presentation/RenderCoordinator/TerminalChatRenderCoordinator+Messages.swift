@@ -56,7 +56,7 @@ extension TerminalChatRenderCoordinator {
     /// input inset applied by `writeChat` and reserves the last physical column
     /// to avoid right-margin autowrap.
     private func thematicTurnRule() -> String {
-        let contentInsetWidth = TerminalChat.displayWidth(lineInset)
+        let contentInsetWidth = TerminalTextMetrics.displayWidth(lineInset)
         let ruleWidth = max(1, columnWidthProvider() - contentInsetWidth - 1)
         let rule = String(repeating: "─", count: ruleWidth)
         guard standardErrorIsTerminal else {

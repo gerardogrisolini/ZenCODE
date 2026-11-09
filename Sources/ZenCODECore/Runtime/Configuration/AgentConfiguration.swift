@@ -16,7 +16,6 @@ import Foundation
 import ToolCore
 
 public enum AgentRunMode: String, Sendable {
-    case automatic
     case acp
     case tui
     case telegram
@@ -30,6 +29,23 @@ public enum AgentResolvedRunMode: Sendable {
     case headless
 }
 
+/// The Git worktree requested with `--worktree NAME`.
+///
+/// The configuration only records the request: the worktree is created (or
+/// reused) by `AgentWorktreeManager` before the arguments are parsed, and its
+/// directory reaches the parser as the last `--working-directory`.
+public struct AgentWorktree: Sendable, Equatable {
+    /// The worktree name, which is also the name of its branch.
+    public let name: String
+    /// The working directory of the worktree.
+    public let directory: URL
+
+    public init(name: String, directory: URL) {
+        self.name = name
+        self.directory = directory
+    }
+}
+
 public struct AgentConfiguration: Sendable {
     public static let helpText = """
     ZenCODE
@@ -37,7 +53,7 @@ public struct AgentConfiguration: Sendable {
     Autonomous ZenCODE CLI and ACP agent.
 
     Usage:
-      zen [--setup] [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--skills LIST]
+      zen [--setup] [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--worktree NAME] [--skills LIST]
 
     Modes:
       --tui                  Human terminal chat (default).
@@ -53,6 +69,7 @@ public struct AgentConfiguration: Sendable {
       --model MODEL_ID        Configured model id <provider>:<model> (for example openrouter:openrouter/auto or chatgpt:gpt-5) or its model name. Overrides the agent-selected model for this run.
       --working-directory PATH
                               Working directory for local tools. Default: current directory, or home when launched from the executable directory.
+      --worktree NAME         Work in the Git worktree NAME of the repository (created in <support>/worktrees on first use); terminal and --ui only.
       --skills LIST           Initial skill selection by name/number, all, or none. In the TUI use /skills to change or install skills.
       --max-tool-rounds N     Maximum model/tool loop rounds per prompt. Default: \(AgentToolRoundPolicy.defaultMaxToolRounds).
       --max-output-tokens N   Maximum generated tokens per model call. Default: model default.
@@ -69,7 +86,6 @@ public struct AgentConfiguration: Sendable {
       Figma MCP tools are added when the local Figma desktop MCP server exposes tools.
 
     Environment:
-      ZENCODE_AGENT_MODE           tui, telegram, acp, headless, or auto. Auto resolves to tui.
       ZENCODE_AGENT_NAME           Agent profile from ~/.zencode/agents.json. Default is used when omitted.
       ZENCODE_AGENT_MODEL          Configured model id <provider>:<model> or its model name. Overrides the agent-selected model for this run.
       ZENCODE_AGENT_CWD            Working directory for local tools.
@@ -91,6 +107,9 @@ public struct AgentConfiguration: Sendable {
     public let requestedAgentName: String?
     public let selectedAgent: AgentProfile?
     public let effectiveModelID: String?
+    /// The mode the options select (`--tui`, `--telegram`, `--acp`, `-p`/`--prompt`,
+    /// `-f`, `--jsonl`). Without a mode option it is `.tui`, or `.acp` when
+    /// the configuration is built with `appModeOverride: true`.
     public let runMode: AgentRunMode
     /// Enables the machine-readable JSON Lines headless output protocol.
     public let jsonl: Bool
@@ -101,6 +120,9 @@ public struct AgentConfiguration: Sendable {
     /// file is read when the headless run starts, not when arguments are parsed.
     public let headlessPromptFile: String?
     public let workingDirectory: URL
+    /// The Git worktree requested with `--worktree`, whose directory is
+    /// `workingDirectory`; `nil` when none was requested.
+    public let worktree: AgentWorktree?
     public let initialSkillSelection: String?
     public let maxToolRounds: Int
     public let maxOutputTokens: Int?
@@ -166,7 +188,7 @@ public struct AgentConfiguration: Sendable {
             ?? agentEnvironmentValue("NAME")
             ?? agentEnvironmentValue("AGENT")
         var rawModelID = agentEnvironmentValue("MODEL")
-        var rawRunMode = agentEnvironmentValue("MODE") ?? "automatic"
+        var requestedRunMode: AgentRunMode?
         var rawHeadlessPrompt: String?
         var rawHeadlessPromptFile: String?
         var rawJSONL = false
@@ -181,6 +203,7 @@ public struct AgentConfiguration: Sendable {
         var shouldPrintDoctor = false
         var requestedModeFlag: String?
         var explicitlyRequestedInlinePrompt = false
+        var requestedWorktreeName: String?
 
         var index = 1
         while index < arguments.count {
@@ -219,11 +242,15 @@ public struct AgentConfiguration: Sendable {
                 guard !rawJSONL else {
                     throw AgentConfigurationError.conflictingOptions(argument, "--jsonl")
                 }
+                // A worktree is for the terminal chat only.
+                guard argument == "--tui" || requestedWorktreeName == nil else {
+                    throw AgentConfigurationError.conflictingOptions("--worktree", argument)
+                }
                 requestedModeFlag = argument
                 switch argument {
-                case "--tui": rawRunMode = AgentRunMode.tui.rawValue
-                case "--telegram": rawRunMode = AgentRunMode.telegram.rawValue
-                default: rawRunMode = AgentRunMode.acp.rawValue  // --acp
+                case "--tui": requestedRunMode = .tui
+                case "--telegram": requestedRunMode = .telegram
+                default: requestedRunMode = .acp  // --acp
                 }
             case "--jsonl":
                 if let modeFlag = requestedModeFlag {
@@ -233,17 +260,23 @@ public struct AgentConfiguration: Sendable {
                         ? AgentConfigurationError.conflictingOptions(argument, modeFlag)
                         : AgentConfigurationError.conflictingOptions(modeFlag, argument)
                 }
+                guard requestedWorktreeName == nil else {
+                    throw AgentConfigurationError.conflictingOptions("--worktree", argument)
+                }
                 rawJSONL = true
-                rawRunMode = AgentRunMode.headless.rawValue
+                requestedRunMode = .headless
             case "-p", "--prompt":
                 if let modeFlag = requestedModeFlag {
                     throw AgentConfigurationError.conflictingOptions(modeFlag, "-p/--prompt")
+                }
+                guard requestedWorktreeName == nil else {
+                    throw AgentConfigurationError.conflictingOptions("--worktree", "-p/--prompt")
                 }
                 guard !explicitlyRequestedInlinePrompt else {
                     throw AgentConfigurationError.conflictingOptions(argument, "-p/--prompt")
                 }
                 explicitlyRequestedInlinePrompt = true
-                rawRunMode = AgentRunMode.headless.rawValue
+                requestedRunMode = .headless
                 index += 1
                 guard index < arguments.count else {
                     throw AgentConfigurationError.missingValue(argument)
@@ -260,10 +293,13 @@ public struct AgentConfiguration: Sendable {
                 if let modeFlag = requestedModeFlag {
                     throw AgentConfigurationError.conflictingOptions(modeFlag, argument)
                 }
+                guard requestedWorktreeName == nil else {
+                    throw AgentConfigurationError.conflictingOptions("--worktree", argument)
+                }
                 guard rawHeadlessPromptFile == nil else {
                     throw AgentConfigurationError.conflictingOptions(argument, argument)
                 }
-                rawRunMode = AgentRunMode.headless.rawValue
+                requestedRunMode = .headless
                 index += 1
                 guard index < arguments.count else {
                     throw AgentConfigurationError.missingValue(argument)
@@ -286,6 +322,31 @@ public struct AgentConfiguration: Sendable {
                 }
                 rawWorkingDirectory = arguments[index]
                 hasExplicitWorkingDirectory = true
+            case "--worktree":
+                // The terminal chat only: no ACP, Telegram or headless run.
+                // `--worktree` is named first whatever the order. Repeating
+                // it is allowed and the last name wins.
+                if let modeFlag = requestedModeFlag, modeFlag != "--tui" {
+                    throw AgentConfigurationError.conflictingOptions(argument, modeFlag)
+                }
+                guard !explicitlyRequestedInlinePrompt else {
+                    throw AgentConfigurationError.conflictingOptions(argument, "-p/--prompt")
+                }
+                guard rawHeadlessPromptFile == nil else {
+                    throw AgentConfigurationError.conflictingOptions(argument, "-f")
+                }
+                guard !rawJSONL else {
+                    throw AgentConfigurationError.conflictingOptions(argument, "--jsonl")
+                }
+                index += 1
+                guard index < arguments.count else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                let name = arguments[index]
+                guard Self.isValidWorktreeName(name) else {
+                    throw AgentConfigurationError.invalidValue(argument, name)
+                }
+                requestedWorktreeName = name
             case "--skills":
                 index += 1
                 guard index < arguments.count else {
@@ -319,22 +380,22 @@ public struct AgentConfiguration: Sendable {
             throw AgentConfigurationError.missingValue("--prompt")
         }
 
-        let normalizedRunMode = rawRunMode
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        guard let runMode = AgentRunMode(rawValue: normalizedRunMode == "auto" ? "automatic" : normalizedRunMode) else {
-            throw AgentConfigurationError.invalidValue("--mode", rawRunMode)
-        }
         let workingDirectory = Self.resolvedWorkingDirectory(
             rawValue: rawWorkingDirectory,
             applyLaunchDirectoryFallback: !hasExplicitWorkingDirectory
         )
+        let worktree = requestedWorktreeName.map {
+            AgentWorktree(name: $0, directory: workingDirectory)
+        }
         let maxToolRounds = try Self.maxToolRounds(
             rawMaxToolRounds,
             argument: "--max-tool-rounds"
         )
         let maxOutputTokens = try Self.positiveInt(rawMaxOutputTokens, argument: "--max-output-tokens")
         let appMode = appModeOverride ?? false
+        // Without a mode option, the terminal chat runs, or the ACP bridge
+        // when the app hosts the configuration.
+        let runMode = requestedRunMode ?? (appMode ? .acp : .tui)
         let requestedAgentName = rawAgentName?.nilIfBlank
         let settingsManifest: AgentSettingsManifest?
         let selectedAgent: AgentProfile?
@@ -372,6 +433,7 @@ public struct AgentConfiguration: Sendable {
         self.headlessPrompt = rawHeadlessPrompt
         self.headlessPromptFile = rawHeadlessPromptFile
         self.workingDirectory = workingDirectory
+        self.worktree = worktree
         self.initialSkillSelection = rawInitialSkillSelection?.nilIfBlank
         self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)
         self.maxOutputTokens = maxOutputTokens
@@ -426,6 +488,7 @@ public struct AgentConfiguration: Sendable {
         self.headlessPrompt = nil
         self.headlessPromptFile = nil
         self.workingDirectory = workingDirectory
+        self.worktree = nil
         self.initialSkillSelection = initialSkillSelection?.nilIfBlank
         self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)
         self.maxOutputTokens = maxOutputTokens.map { max(1, $0) }
@@ -447,8 +510,6 @@ public struct AgentConfiguration: Sendable {
             return .telegram
         case .headless:
             return .headless
-        case .automatic:
-            return appMode ? .acp : .tui
         }
     }
 
@@ -519,6 +580,17 @@ public struct AgentConfiguration: Sendable {
             rawValue: argumentValue ?? defaultWorkingDirectoryRawPath(environment: environment),
             applyLaunchDirectoryFallback: !hasExplicitWorkingDirectory
         )
+    }
+
+    /// Whether `name` can name a worktree (and its branch): not empty, not
+    /// `.` or `..`, without `/`, `\` or whitespace, and not starting with `-`.
+    /// Git may still reject a name it does not accept as a branch name.
+    static func isValidWorktreeName(_ name: String) -> Bool {
+        !name.isEmpty
+            && name != "."
+            && name != ".."
+            && !name.hasPrefix("-")
+            && !name.contains(where: { $0 == "/" || $0 == "\\" || $0.isWhitespace })
     }
 
     private static func shellWorkingDirectory(environment: [String: String]) -> String? {

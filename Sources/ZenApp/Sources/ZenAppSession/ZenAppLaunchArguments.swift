@@ -3,8 +3,8 @@
 //  ZenApp
 //
 //  The options the app reads from its command line: the ones `zen --ui`
-//  forwards, so that the app opens with the agent, the model, the skills and
-//  the workspace asked for in the terminal.
+//  forwards, so that the app opens with the agent, the model, the skills,
+//  the workspace and the worktree asked for in the terminal.
 //
 
 import Foundation
@@ -17,11 +17,14 @@ public enum ZenAppLaunchArguments {
     /// `ZenAppLaunchCommand.forwardedOptions` of ZenCODECore
     /// (`Sources/ZenCODECore/Support/App/ZenAppLaunchCommand.swift`), which
     /// accepts them on the `zen` command line.
-    public static let forwardedOptions: Set<String> = ["--agent", "--model", "--skills", "--working-directory"]
+    public static let forwardedOptions: Set<String> = [
+        "--agent", "--model", "--skills", "--working-directory", "--worktree"
+    ]
 
     /// The arguments to build the launch configuration from:
-    /// `executableName`, then every `--agent`, `--model`, `--skills` and
-    /// `--working-directory` of `processArguments` with its value, in order.
+    /// `executableName`, then every `--agent`, `--model`, `--skills`,
+    /// `--working-directory` and `--worktree` of `processArguments` with its
+    /// value, in order.
     ///
     /// Everything else is ignored: the executable path at index 0, and the
     /// arguments AppKit or Xcode add, such as `-NSDocumentRevisionsDebugMode

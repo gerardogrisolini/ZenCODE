@@ -9,6 +9,8 @@ import Foundation
 import ToolCore
 
 extension DirectSubAgentRuntime {
+    /// - Parameter responseLanguageSection: The coordinator's locked
+    ///   response-language section; `nil` keeps the generic rule.
     public static func systemPrompt(
         name: String,
         role: String,
@@ -16,12 +18,14 @@ extension DirectSubAgentRuntime {
         taskAttemptID: String? = nil,
         allowedToolNames: Set<String>? = nil,
         selectedProfile: AgentProfile? = nil,
-        workingDirectory: URL? = nil
+        workingDirectory: URL? = nil,
+        responseLanguageSection: String? = nil
     ) -> String {
         var lines = [
             "You are ZenCODE delegated sub-agent \(name).",
             "Role: \(role)",
-            SystemPromptBuilder.responseLanguageSection(),
+            responseLanguageSection?.nilIfBlank
+                ?? SystemPromptBuilder.responseLanguageSection(),
             "You are running inside ZenCODE and receive the complete direct toolset available to this process, including local, shell, git, MCP, and sub-agent tools when exposed.",
             "Work only on the delegated scope. Be concise, concrete, and report blockers clearly.",
             "Briefly narrate progress at each meaningful step — what you are inspecting, deciding, building, or validating — rather than working silently. Your intermediate output is streamed to the coordinator, so short status updates let progress be observed incrementally instead of only seeing your final result."

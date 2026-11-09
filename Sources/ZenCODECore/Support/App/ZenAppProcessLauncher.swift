@@ -18,10 +18,6 @@ import Foundation
 /// input from `/dev/null`, standard output and error to the log file, which
 /// only the user can read. When `zen` exits, launchd adopts it.
 enum ZenAppProcessLauncher {
-    /// Variables of `zen`'s environment the app does not inherit:
-    /// `ZENCODE_AGENT_MODE` selects a mode of `zen`, not of the app.
-    static let removedEnvironmentKeys: Set<String> = ["ZENCODE_AGENT_MODE"]
-
     /// The mode of the log file: the app's output can quote the user's work.
     static let logFilePermissions: mode_t = 0o600
 
@@ -48,12 +44,6 @@ enum ZenAppProcessLauncher {
                 return "\(text)\n\(output.isEmpty ? "(no output)" : output)"
             }
         }
-    }
-
-    /// The environment of the app: `environment` without
-    /// `removedEnvironmentKeys`.
-    static func childEnvironment(_ environment: [String: String]) -> [String: String] {
-        environment.filter { !removedEnvironmentKeys.contains($0.key) }
     }
 
     /// How a child ended, from its `waitpid` status. The `WIF*` macros are not
@@ -107,7 +97,7 @@ enum ZenAppProcessLauncher {
             executable: executable,
             arguments: arguments,
             logFile: logFile,
-            environment: childEnvironment(environment)
+            environment: environment
         )
 
         let clock = ContinuousClock()

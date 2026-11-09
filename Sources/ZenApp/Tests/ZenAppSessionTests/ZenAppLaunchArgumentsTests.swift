@@ -25,6 +25,7 @@ struct ZenAppLaunchArgumentsTests {
             "--model", "openrouter:openrouter/auto",
             "--skills", "all",
             "--working-directory", "/tmp/project",
+            "--worktree", "feature",
             "--max-tool-rounds", "3"
         ])
         #expect(arguments == [
@@ -32,7 +33,16 @@ struct ZenAppLaunchArgumentsTests {
             "--agent", "Developer",
             "--model", "openrouter:openrouter/auto",
             "--skills", "all",
-            "--working-directory", "/tmp/project"
+            "--working-directory", "/tmp/project",
+            "--worktree", "feature"
+        ])
+    }
+
+    @Test("the forwarded options are the ones zen --ui forwards, --worktree included")
+    func theForwardedOptions() {
+        // Keep in sync with `ZenAppLaunchCommand.forwardedOptions` of ZenCODECore.
+        #expect(ZenAppLaunchArguments.forwardedOptions == [
+            "--agent", "--model", "--skills", "--working-directory", "--worktree"
         ])
     }
 
@@ -48,7 +58,7 @@ struct ZenAppLaunchArgumentsTests {
         )
     }
 
-    @Test("a forwarded option without its value is an error", arguments: ["--agent", "--model", "--skills", "--working-directory"])
+    @Test("a forwarded option without its value is an error", arguments: ["--agent", "--model", "--skills", "--working-directory", "--worktree"])
     func aMissingValueIsAnError(option: String) {
         do {
             _ = try ZenAppLaunchArguments.configurationArguments(from: ["/path/ZenCODE", "--agent", "Developer", option])
@@ -129,6 +139,27 @@ struct ZenAppLaunchConfigurationTests {
             #expect(configuration.modelID == "zen-app-model")
             #expect(configuration.initialSkillSelection == "none")
             #expect(configuration.selectedAgent != nil)
+        }
+    }
+
+    @Test("the worktree reaches the configuration, with the working directory zen prepared")
+    func theWorktree() async throws {
+        try await withSupportDirectory(configured: true) { workspace in
+            let arguments = try ZenAppLaunchArguments.configurationArguments(from: [
+                "/Users/me/.zencode/app/current/ZenCODE",
+                "--worktree", "feature",
+                "--working-directory", workspace.path
+            ])
+            #expect(arguments == ["ZenCODE", "--worktree", "feature", "--working-directory", workspace.path])
+            let result = await ZenAppRuntime.readLaunchConfiguration(
+                arguments: arguments,
+                migratingProviderKeys: false
+            )
+            let configuration = try result.get()
+            let worktree = try #require(configuration.worktree)
+            #expect(worktree.name == "feature")
+            #expect(worktree.directory == configuration.workingDirectory)
+            #expect(configuration.workingDirectory == workspace.standardizedFileURL.resolvingSymlinksInPath())
         }
     }
 

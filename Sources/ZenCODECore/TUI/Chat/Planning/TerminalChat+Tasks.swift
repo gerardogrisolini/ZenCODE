@@ -82,13 +82,13 @@ extension TerminalChat {
             }
             _ = await renderCoordinator.renderTaskGraphOverview(
                 signature: overview.signature,
-                markdown: Self.taskGraphMarkdown(graph: overview.graph, tasks: overview.tasks),
+                markdown: TerminalTaskGraphLayout.markdown(graph: overview.graph, tasks: overview.tasks),
                 revision: revision
             )
         case .explicit:
             _ = await renderCoordinator.renderTaskGraphOverview(
                 signature: overview.signature,
-                markdown: Self.taskGraphMarkdown(graph: overview.graph, tasks: overview.tasks),
+                markdown: TerminalTaskGraphLayout.markdown(graph: overview.graph, tasks: overview.tasks),
                 revision: revision,
                 force: true,
                 rememberSignature: false,
@@ -109,166 +109,7 @@ extension TerminalChat {
         await writeSessionNotices(await chatSession.runTasksCommand(line: command).notices)
     }
 
-    nonisolated static func taskGraphMarkdown(
-        graph: TaskGraphSnapshot,
-        tasks: [TaskRecordView],
-        ansiEnabled: Bool = AgentOutput.standardErrorIsTerminal
-    ) -> String {
-        let completed = tasks.filter { $0.task.status == .completed }.count
-        let running = tasks.filter { $0.task.status == .inProgress }.count
-        let validating = tasks.filter { $0.task.status == .awaitingValidation }.count
-        let waiting = tasks.filter { $0.task.status == .pending }.count
-        let blocked = tasks.filter { $0.task.status == .blocked }.count
-        let failed = tasks.filter { $0.task.status == .failed }.count
-
-        var summary = ["\(tasks.count) total"]
-        if running > 0 {
-            summary.append(
-                taskSummarySegment(
-                    "▸ \(running) running",
-                    color: TerminalStyle.Status.active,
-                    ansiEnabled: ansiEnabled
-                )
-            )
-        }
-        if completed > 0 {
-            summary.append(
-                taskSummarySegment(
-                    "✓ \(completed) completed",
-                    color: TerminalStyle.Status.success,
-                    ansiEnabled: ansiEnabled
-                )
-            )
-        }
-        if validating > 0 {
-            summary.append(
-                taskSummarySegment(
-                    "◇ \(validating) awaiting validation",
-                    color: TerminalStyle.Status.inactive,
-                    ansiEnabled: ansiEnabled
-                )
-            )
-        }
-        if waiting > 0 {
-            summary.append(
-                taskSummarySegment(
-                    "◇ \(waiting) waiting",
-                    color: TerminalStyle.Status.inactive,
-                    ansiEnabled: ansiEnabled
-                )
-            )
-        }
-        if blocked > 0 {
-            summary.append(
-                taskSummarySegment(
-                    "⊘ \(blocked) blocked",
-                    color: TerminalStyle.Status.queued,
-                    ansiEnabled: ansiEnabled
-                )
-            )
-        }
-        if failed > 0 {
-            summary.append(
-                taskSummarySegment(
-                    "✗ \(failed) failed",
-                    color: TerminalStyle.Status.failure,
-                    ansiEnabled: ansiEnabled
-                )
-            )
-        }
-
-        let orange = TerminalStyle.Accent.primary
-        let reset = TerminalStyle.reset
-        let taskHeader = ansiEnabled ? "\(orange)Tasks:\(reset)" : "Tasks:"
-        var lines = [
-            "🫧 \(taskHeader)",
-            summary.joined(separator: " "),
-            "",
-            "**Graph:** `\(graph.id)` · **state:** `\(graph.state.rawValue)` · **revision:** `\(graph.revision)`",
-        ]
-        if tasks.isEmpty {
-            lines.append("No tasks.")
-            return lines.joined(separator: "\n") + "\n"
-        }
-
-        for view in tasks.sorted(by: { lhs, rhs in
-            if lhs.task.order != rhs.task.order { return lhs.task.order < rhs.task.order }
-            return lhs.task.id < rhs.task.id
-        }) {
-            let marker: String
-            switch view.task.status {
-            case .completed: marker = "✓"
-            case .inProgress: marker = "▸"
-            case .awaitingValidation: marker = "◇"
-            case .blocked: marker = "⊘"
-            case .failed: marker = "✗"
-            case .cancelled: marker = "—"
-            case .pending: marker = "○"
-            }
-            var suffix: [String] = []
-            suffix.append("complexity: `\(view.task.complexity)/10`")
-            if let agentID = view.task.assigneeAgentID {
-                suffix.append(agentID)
-            }
-            if !view.blockedBy.isEmpty {
-                suffix.append("waits: " + view.blockedBy.map { "`\($0)`" }.joined(separator: ", "))
-            } else if let reason = view.blockedReason,
-                      !view.isRunnable,
-                      view.task.status != .completed {
-                suffix.append(reason)
-            }
-            let metadata = suffix.joined(separator: " · ")
-            lines.append("\(marker) `\(view.task.id)`  \(escapedTaskMarkdown(view.task.title))")
-            lines.append(contentsOf: taskGraphDetailLines(metadata, ansiEnabled: ansiEnabled))
-        }
-        return lines.joined(separator: "\n   ") + "\n\n"
-    }
-
-    /// Renders task metadata as indented detail lines under the task's header
-    /// line. Long descriptive content wraps to hanging-indent continuation
-    /// lines, so verbose reasons stay readable inside the vertical task block.
-    /// Returned rows carry only the detail-relative indent: the section join
-    /// adds the shared three-space task indent on top of every row.
-    private nonisolated static func taskGraphDetailLines(
-        _ metadata: String,
-        ansiEnabled: Bool = AgentOutput.standardErrorIsTerminal
-    ) -> [String] {
-        guard !metadata.isEmpty else {
-            return []
-        }
-        let detailPrefix = taskSummarySegment(
-            "· ",
-            color: TerminalStyle.Status.inactive,
-            ansiEnabled: ansiEnabled
-        )
-        let wrapWidth = max(40, TerminalChat.terminalColumnCount() - 20)
-        // Word-wrapping (`wrap`) collapses repeated internal spaces past the
-        // wrap threshold and leaves single tokens wider than `width` intact.
-        // Reflow at visible cell boundaries instead: internal spacing and
-        // content are preserved exactly, and over-long tokens are split at the
-        // column limit so no detail row exceeds the wrap width.
-        return TerminalANSIText.wrapPreservingWhitespace(
-            detailPrefix + metadata,
-            width: wrapWidth,
-            hangingIndent: "    "
-        )
-            .enumerated()
-            .map { index, row in index == 0 ? "  " + row : row }
-    }
-
-    nonisolated static func taskSummarySegment(
-        _ text: String,
-        color: String,
-        ansiEnabled: Bool
-    ) -> String {
-        ansiEnabled ? "\(color)\(text)\(TerminalStyle.reset)" : text
-    }
-
     nonisolated static func taskDetailMarkdown(_ view: TaskRecordView) -> String {
         ChatSessionNoticeText.taskDetailMarkdown(view)
-    }
-
-    private nonisolated static func escapedTaskMarkdown(_ text: String) -> String {
-        ChatSessionNoticeText.escapedTaskMarkdown(text)
     }
 }

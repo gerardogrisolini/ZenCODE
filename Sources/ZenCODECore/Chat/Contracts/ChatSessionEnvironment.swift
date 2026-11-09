@@ -42,6 +42,11 @@ public struct ChatSessionEnvironment: Sendable {
     /// home to offer: `~` is then not expanded (the path resolves like any
     /// relative path) and `/attach` offers no picker.
     public let userHomeDirectoryURL: URL?
+    /// The Git worktree the launch asked for with `--worktree`, whose
+    /// directory is the launch working directory; `nil` without one. A
+    /// session whose working directory is that worktree gets its section in
+    /// the system prompt.
+    public let worktree: AgentWorktree?
 
     /// Whether model and thinking choices become the persisted defaults.
     /// A host that supplies its own models owns that choice, so nothing is
@@ -66,5 +71,6 @@ public struct ChatSessionEnvironment: Sendable {
         self.initialSkillSelection = configuration.initialSkillSelection
         self.featureRuntime = featureRuntime
         self.userHomeDirectoryURL = userHomeDirectoryURL
+        self.worktree = configuration.worktree
     }
 }

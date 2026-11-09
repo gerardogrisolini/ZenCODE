@@ -222,6 +222,7 @@ extension DirectSubAgentRuntime {
             modelID: agent.modelID,
             currentActivity: agent.currentActivity,
             currentActivityKind: agent.currentActivityKind,
+            currentThought: agent.currentThought,
             currentActivityRevision: agent.currentActivityRevision,
             currentToolName: agent.currentToolName,
             currentToolTarget: agent.currentToolTarget,
@@ -233,7 +234,6 @@ extension DirectSubAgentRuntime {
             executionRevision: agent.executionRevision,
             completedExecutionRevision: agent.completedExecutionRevision,
             latestOutputRevision: agent.latestOutputRevision,
-            accumulatedOutput: agent.accumulatedOutput,
             latestError: agent.latestError,
             createdAt: agent.createdAt,
             updatedAt: agent.updatedAt

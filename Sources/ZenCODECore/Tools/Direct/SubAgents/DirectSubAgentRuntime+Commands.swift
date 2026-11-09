@@ -9,12 +9,23 @@ import Foundation
 import ToolCore
 
 extension DirectSubAgentRuntime {
+    /// One `agent.create` item after validation and profile resolution.
+    private struct PreparedAgent {
+        let offset: Int
+        let payload: RequestedAgentPayload
+        let id: String
+        let profile: AgentProfile
+        let workingDirectory: URL
+        let note: String?
+    }
+
     public func createAgents(
         arguments: [String: JSONValue],
         workingDirectory: URL,
         parentAllowedToolNames: Set<String>?,
         rootSessionID: String = "default"
     ) async throws -> String {
+        // MARK: Validate
         let payloads = try Self.requestedAgentPayloads(from: arguments)
         guard !payloads.isEmpty else {
             throw DirectSubAgentRuntimeError.missingArgument("agents")
@@ -46,126 +57,33 @@ extension DirectSubAgentRuntime {
         // transient overview instead of replacing each other.
         let overviewBatchID = currentOverviewWaveID()
         let previousOverviewBatchID = latestOverviewBatchID
-        let preparePayloads = { () throws -> [(
-            offset: Int,
-            payload: RequestedAgentPayload,
-            id: String,
-            profile: AgentProfile,
-            workingDirectory: URL,
-            note: String?
-        )] in
-            // Capture one authoritative snapshot so every agent in this batch
-            // uses the same provider identities through backend creation.
-            let catalogSnapshot = self.coordinatesLiveManifestReads
-                ? AgentDelegationCatalog.liveSnapshotUnlocked(
-                    fileManager: .default
-                )
-                : self.modelCatalogProvider()
-            // Role-based items choose among the configured profiles; read them
-            // once per batch and only when needed.
-            let roleCatalog = payloads.contains { $0.profileRole != nil }
-                ? self.profileCatalogProvider()
-                : []
-            // Only profiles visible to the item's project may be delegated to:
-            // the saved selection, or the system profiles when there is none.
-            // The selection is read once per distinct directory.
-            var projectSelections: [String: Set<String>?] = [:]
-            return try payloads.enumerated().map { offset, payload in
-                let itemDirectory = try payload.workingDirectory.map {
-                    try Self.resolvedAgentWorkingDirectory(
-                        $0,
-                        coordinatorDirectory: workingDirectory
-                    )
-                } ?? workingDirectory
-                let projectSelection: Set<String>?
-                if let cached = projectSelections[itemDirectory.path] {
-                    projectSelection = cached
-                } else {
-                    projectSelection = ProjectAgentSelectionStore.load(
-                        workspaceRootURL: itemDirectory
-                    )
-                    projectSelections[itemDirectory.path] = projectSelection
-                }
-                let projectPath = ProjectAgentSelectionStore.workspacePath(
-                    workspaceRootURL: itemDirectory
-                )
-                let id = "agent_\(UUID().uuidString.lowercased())"
 
-                if let profileRole = payload.profileRole {
-                    guard payload.profileReference == nil else {
-                        throw DirectSubAgentRuntimeError.invalidArgument(
-                            "agent.create profile and profileRole are mutually exclusive"
-                        )
-                    }
-                    guard payload.requestedModelID == nil else {
-                        throw DirectSubAgentRuntimeError.invalidArgument(
-                            "agent.create model cannot be combined with profileRole"
-                        )
-                    }
-                    guard let complexity = payload.taskID.flatMap({ complexityByTaskID[$0] })
-                        ?? payload.complexity else {
-                        throw DirectSubAgentRuntimeError.missingArgument("complexity")
-                    }
-                    let resolution = try Self.resolvingProfileRole(
-                        for: payload,
-                        role: profileRole,
-                        complexity: complexity,
-                        profiles: roleCatalog,
-                        projectSelection: projectSelection,
-                        projectPath: projectPath,
-                        snapshot: catalogSnapshot
-                    )
-                    return (
-                        offset: offset,
-                        payload: resolution.payload,
-                        id: id,
-                        profile: resolution.profile,
-                        workingDirectory: itemDirectory,
-                        note: resolution.note
-                    )
-                }
-
-                guard let profileReference = payload.profileReference?.nilIfBlank else {
-                    throw DirectSubAgentRuntimeError.missingArgument("profile or profileRole")
-                }
-                guard let profile = self.profileResolver(payload) else {
-                    throw DirectSubAgentRuntimeError.agentProfileNotFound(profileReference)
-                }
-                guard ProjectAgentSelectionStore.isAssociated(
-                    profile,
-                    selection: projectSelection
-                ) else {
-                    throw DirectSubAgentRuntimeError.agentProfileNotAssociatedWithProject(
-                        profileReference,
-                        projectPath
-                    )
-                }
-                return (
-                    offset: offset,
-                    payload: try Self.resolvingModelBinding(
-                        for: payload,
-                        profile: profile,
-                        snapshot: catalogSnapshot
-                    ),
-                    id: id,
-                    profile: profile,
-                    workingDirectory: itemDirectory,
-                    note: nil
+        // MARK: Prepare
+        let prepared = if coordinatesLiveManifestReads {
+            try SensitiveManifestCoordination.withExclusiveLock {
+                try self.prepareAgents(
+                    payloads,
+                    complexityByTaskID: complexityByTaskID,
+                    workingDirectory: workingDirectory
                 )
             }
-        }
-        let prepared = if coordinatesLiveManifestReads {
-            try SensitiveManifestCoordination.withExclusiveLock(
-                operation: preparePayloads
-            )
         } else {
-            try preparePayloads()
+            try prepareAgents(
+                payloads,
+                complexityByTaskID: complexityByTaskID,
+                workingDirectory: workingDirectory
+            )
         }
+
+        // MARK: Materialize
         let reservationIDs = try await reserveTasklessDelegationReservations(
             count: prepared.filter { $0.payload.taskID == nil }.count,
             parentAllowedToolNames: parentAllowedToolNames,
             rootSessionID: rootSessionID
         )
+        // One read per batch: every agent of the batch answers in the
+        // coordinator's language; without a source the generic rule applies.
+        let responseLanguageSection = await responseLanguageSectionProvider?(rootSessionID)
         let tasklessAgentIDs = prepared
             .filter { $0.payload.taskID == nil }
             .map(\.id)
@@ -252,6 +170,14 @@ extension DirectSubAgentRuntime {
                     )
                 }
                 await synchronizeSubAgentToolEventHandler(with: backend)
+                if payload.taskID == nil {
+                    // A taskless child may delegate in turn: its runtime
+                    // resolves the same root room and reads the same source.
+                    // A task-bound child cannot create nested sub-agents.
+                    await backend.updateSubAgentResponseLanguageSectionProvider(
+                        responseLanguageSectionProvider
+                    )
+                }
                 createdBackends.append((id, backend))
                 if let taskOrchestrator {
                     await backend.installTaskOrchestrator(taskOrchestrator)
@@ -266,34 +192,13 @@ extension DirectSubAgentRuntime {
                            graphID: receipt.graphID
                        ),
                        taskView.task.complexity > capability {
-                        let capabilityGap = taskView.task.complexity - capability
-                        if let profileRole = payload.profileRole {
-                            // The runtime chose the profile and binding, so the
-                            // coordinator has no other choice to make here.
-                            advisories.append(
-                                "Warning: task \"\(receipt.taskID)\" has complexity "
-                                    + "\(taskView.task.complexity) but profileRole "
-                                    + "\"\(profileRole.rawValue)\" for agent "
-                                    + "\"\(payload.name)\" resolved to profile "
-                                    + "\"\(item.profile.name)\" with model "
-                                    + "\"\(payload.modelID ?? "unknown")\" at capability "
-                                    + "\(capability)/10, a capability gap of \(capabilityGap); "
-                                    + "no authorized binding with this role meets the "
-                                    + "complexity in this project."
-                            )
-                        } else {
-                            advisories.append(
-                                "Warning: task \"\(receipt.taskID)\" has complexity "
-                                    + "\(taskView.task.complexity) but agent \"\(payload.name)\" "
-                                    + "uses profile \"\(item.profile.name)\" with "
-                                    + "model \"\(payload.modelID ?? "unknown")\" at capability "
-                                    + "\(capability)/10, a capability gap of "
-                                    + "\(capabilityGap). Use this profile only when no "
-                                    + "role-compatible profile with the required tool access has "
-                                    + "sufficient capability; otherwise select the lowest-capability "
-                                    + "compatible profile that meets the task complexity."
-                            )
-                        }
+                        advisories.append(Self.capabilityGapAdvisory(
+                            taskID: receipt.taskID,
+                            taskComplexity: taskView.task.complexity,
+                            capability: capability,
+                            payload: payload,
+                            profile: item.profile
+                        ))
                     }
                     try await taskOrchestrator.registerExecutionScope(
                         executionSessionID: sessionID,
@@ -306,41 +211,13 @@ extension DirectSubAgentRuntime {
                     )
                 }
 
-                var childAllowedToolNames: Set<String>?
-                if inheritsParentToolGrant(for: item.profile) {
-                    // A child with the same resolved profile inherits the
-                    // coordinator's effective session grant, including
-                    // session-local additions and removals. A nil parent
-                    // allowlist remains nil (unrestricted). Payload toolNames
-                    // is rejected during parsing and never participates here.
-                    childAllowedToolNames = parentAllowedToolNames
-                } else {
-                    // Different profiles retain their own grant boundary;
-                    // especially read-only Reviewer/Planner and Minimal must
-                    // not receive the coordinator's tools accidentally.
-                    childAllowedToolNames = item.profile.allowedToolNames()
-                }
-                if payload.taskID != nil {
-                    // Assigned task attempts need these intrinsic reporting tools
-                    // even when the selected profile does not coordinate tasks.
-                    childAllowedToolNames?.formUnion(["tasks.list", "tasks.get", "tasks.update"])
-                }
-                // Prompt-skill tools are intrinsic and always-on: every
-                // delegated sub-agent must be able to discover and read
-                // selected prompt-skill guidance, mirroring the top-level
-                // session allowlist resolved by AgentCoreAppSessionFactory.
-                childAllowedToolNames?.formUnion(PromptSkillToolProvider.toolNames)
-                if let explicitChildAllowedToolNames = childAllowedToolNames {
-                    childAllowedToolNames = item.profile.resolvedAllowedToolNames(
-                        explicitChildAllowedToolNames
-                    )
-                }
-                // Live collaboration is intrinsic for every delegated agent.
-                // list/get are read-only views of the parent's agent graph;
-                // message mutates only the transient in-memory mailbox.
-                childAllowedToolNames?.formUnion([
-                    "agent.list", "agent.get", "agent.message"
-                ])
+                let childAllowedToolNames = SubAgentToolGrant.resolve(
+                    parentAllowedToolNames: parentAllowedToolNames,
+                    parentProfileID: parentProfileID,
+                    parentProfileName: parentProfileName,
+                    profile: item.profile,
+                    isTaskBound: payload.taskID != nil
+                )
                 await backend.createSession(
                     id: sessionID,
                     cwd: item.workingDirectory.path,
@@ -353,7 +230,8 @@ extension DirectSubAgentRuntime {
                         selectedProfile: item.profile,
                         workingDirectory: payload.workingDirectory == nil
                             ? nil
-                            : item.workingDirectory
+                            : item.workingDirectory,
+                        responseLanguageSection: responseLanguageSection
                     ),
                     history: [],
                     cacheKey: nil,
@@ -371,31 +249,15 @@ extension DirectSubAgentRuntime {
                     )
                 }
 
-                let now = Date()
-                agents[id] = AgentRecord(
-                    id: id,
+                agents[id] = Self.makeAgentRecord(
+                    for: item,
                     sessionID: sessionID,
                     rootSessionID: rootSessionID,
-                    taskID: payload.taskID,
-                    taskAttemptID: receipt?.attemptID,
-                    taskAttemptOrdinal: receipt?.ordinal,
+                    receipt: receipt,
                     tasklessDelegationReservationID: reservationIDsByAgentID[id],
-                    name: payload.name.nilIfBlank ?? "sub-agent-\(item.offset + 1)",
-                    role: payload.role.nilIfBlank ?? "worker",
-                    profileID: item.profile.id,
-                    profileName: item.profile.name,
-                    profileRole: item.profile.role,
                     overviewBatchID: overviewBatchID,
                     backend: backend,
-                    createdAt: now,
-                    updatedAt: now,
-                    status: payload.prompt == nil ? .idle : .queued,
-                    pendingPrompts: [],
-                    latestOutput: nil,
-                    latestError: nil,
-                    configuredModelID: backendContext.modelID,
-                    modelID: backendContext.modelID,
-                    runTask: nil
+                    modelID: backendContext.modelID
                 )
                 // From this point every following operation can throw. Record
                 // the id first so the batch rollback also removes this record,
@@ -458,6 +320,115 @@ extension DirectSubAgentRuntime {
         return response
     }
 
+    /// Resolves the directory, profile, and model binding of every item
+    /// against one catalog snapshot. Synchronous: `createAgents` runs it under
+    /// the manifest lock when the runtime coordinates live manifest reads.
+    private func prepareAgents(
+        _ payloads: [RequestedAgentPayload],
+        complexityByTaskID: [String: Int],
+        workingDirectory: URL
+    ) throws -> [PreparedAgent] {
+        // Capture one authoritative snapshot so every agent in this batch
+        // uses the same provider identities through backend creation.
+        let catalogSnapshot = self.coordinatesLiveManifestReads
+            ? AgentDelegationCatalog.liveSnapshotUnlocked(
+                fileManager: .default
+            )
+            : self.modelCatalogProvider()
+        // Role-based items choose among the configured profiles; read them
+        // once per batch and only when needed.
+        let roleCatalog = payloads.contains { $0.profileRole != nil }
+            ? self.profileCatalogProvider()
+            : []
+        // Only profiles visible to the item's project may be delegated to:
+        // the saved selection, or the system profiles when there is none.
+        // The selection is read once per distinct directory.
+        var projectSelections: [String: Set<String>?] = [:]
+        return try payloads.enumerated().map { offset, payload in
+            let itemDirectory = try payload.workingDirectory.map {
+                try Self.resolvedAgentWorkingDirectory(
+                    $0,
+                    coordinatorDirectory: workingDirectory
+                )
+            } ?? workingDirectory
+            let projectSelection: Set<String>?
+            if let cached = projectSelections[itemDirectory.path] {
+                projectSelection = cached
+            } else {
+                projectSelection = ProjectAgentSelectionStore.load(
+                    workspaceRootURL: itemDirectory
+                )
+                projectSelections[itemDirectory.path] = projectSelection
+            }
+            let projectPath = ProjectAgentSelectionStore.workspacePath(
+                workspaceRootURL: itemDirectory
+            )
+            let id = "agent_\(UUID().uuidString.lowercased())"
+
+            if let profileRole = payload.profileRole {
+                guard payload.profileReference == nil else {
+                    throw DirectSubAgentRuntimeError.invalidArgument(
+                        "agent.create profile and profileRole are mutually exclusive"
+                    )
+                }
+                guard payload.requestedModelID == nil else {
+                    throw DirectSubAgentRuntimeError.invalidArgument(
+                        "agent.create model cannot be combined with profileRole"
+                    )
+                }
+                guard let complexity = payload.taskID.flatMap({ complexityByTaskID[$0] })
+                    ?? payload.complexity else {
+                    throw DirectSubAgentRuntimeError.missingArgument("complexity")
+                }
+                let resolution = try Self.resolvingProfileRole(
+                    for: payload,
+                    role: profileRole,
+                    complexity: complexity,
+                    profiles: roleCatalog,
+                    projectSelection: projectSelection,
+                    projectPath: projectPath,
+                    snapshot: catalogSnapshot
+                )
+                return PreparedAgent(
+                    offset: offset,
+                    payload: resolution.payload,
+                    id: id,
+                    profile: resolution.profile,
+                    workingDirectory: itemDirectory,
+                    note: resolution.note
+                )
+            }
+
+            guard let profileReference = payload.profileReference?.nilIfBlank else {
+                throw DirectSubAgentRuntimeError.missingArgument("profile or profileRole")
+            }
+            guard let profile = self.profileResolver(payload) else {
+                throw DirectSubAgentRuntimeError.agentProfileNotFound(profileReference)
+            }
+            guard ProjectAgentSelectionStore.isAssociated(
+                profile,
+                selection: projectSelection
+            ) else {
+                throw DirectSubAgentRuntimeError.agentProfileNotAssociatedWithProject(
+                    profileReference,
+                    projectPath
+                )
+            }
+            return PreparedAgent(
+                offset: offset,
+                payload: try Self.resolvingModelBinding(
+                    for: payload,
+                    profile: profile,
+                    snapshot: catalogSnapshot
+                ),
+                id: id,
+                profile: profile,
+                workingDirectory: itemDirectory,
+                note: nil
+            )
+        }
+    }
+
     /// Resolves an `agent.create` `workingDirectory`: `~` is expanded and a
     /// relative path is taken from the coordinator's directory. Both paths are
     /// standardized with symlinks resolved only to verify that the result is an
@@ -495,29 +466,79 @@ extension DirectSubAgentRuntime {
             .standardizedFileURL
     }
 
-    private func inheritsParentToolGrant(for profile: AgentProfile) -> Bool {
-        let normalizedProfileID = profile.id.trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        if let parentProfileID = parentProfileID?.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        ).lowercased(), !parentProfileID.isEmpty {
-            // Stable IDs are authoritative. Never compare a coordinator ID
-            // with a child name (or vice versa), since those namespaces may
-            // legitimately collide.
-            return normalizedProfileID == parentProfileID
+    /// The warning reported when an item's task is more complex than the
+    /// capability of the model binding its agent uses.
+    private static func capabilityGapAdvisory(
+        taskID: String,
+        taskComplexity: Int,
+        capability: Int,
+        payload: RequestedAgentPayload,
+        profile: AgentProfile
+    ) -> String {
+        let capabilityGap = taskComplexity - capability
+        if let profileRole = payload.profileRole {
+            // The runtime chose the profile and binding, so the
+            // coordinator has no other choice to make here.
+            return "Warning: task \"\(taskID)\" has complexity "
+                + "\(taskComplexity) but profileRole "
+                + "\"\(profileRole.rawValue)\" for agent "
+                + "\"\(payload.name)\" resolved to profile "
+                + "\"\(profile.name)\" with model "
+                + "\"\(payload.modelID ?? "unknown")\" at capability "
+                + "\(capability)/10, a capability gap of \(capabilityGap); "
+                + "no authorized binding with this role meets the "
+                + "complexity in this project."
         }
+        return "Warning: task \"\(taskID)\" has complexity "
+            + "\(taskComplexity) but agent \"\(payload.name)\" "
+            + "uses profile \"\(profile.name)\" with "
+            + "model \"\(payload.modelID ?? "unknown")\" at capability "
+            + "\(capability)/10, a capability gap of "
+            + "\(capabilityGap). Use this profile only when no "
+            + "role-compatible profile with the required tool access has "
+            + "sufficient capability; otherwise select the lowest-capability "
+            + "compatible profile that meets the task complexity."
+    }
 
-        guard let parentProfileName = parentProfileName?.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        ).lowercased(), !parentProfileName.isEmpty else {
-            return false
-        }
-        // Name matching is only a compatibility fallback when no parent ID is
-        // available; it remains name-to-name to keep profile boundaries intact.
-        let normalizedProfileName = profile.name.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        ).lowercased()
-        return normalizedProfileName == parentProfileName
+    /// The registry record of an agent that has just been created: idle, or
+    /// queued when its item carries a prompt.
+    private static func makeAgentRecord(
+        for item: PreparedAgent,
+        sessionID: String,
+        rootSessionID: String,
+        receipt: TaskClaimReceipt?,
+        tasklessDelegationReservationID: UUID?,
+        overviewBatchID: UUID,
+        backend: any AgentRuntimeBackend,
+        modelID: String?
+    ) -> AgentRecord {
+        let payload = item.payload
+        let now = Date()
+        return AgentRecord(
+            id: item.id,
+            sessionID: sessionID,
+            rootSessionID: rootSessionID,
+            taskID: payload.taskID,
+            taskAttemptID: receipt?.attemptID,
+            taskAttemptOrdinal: receipt?.ordinal,
+            tasklessDelegationReservationID: tasklessDelegationReservationID,
+            name: payload.name.nilIfBlank ?? "sub-agent-\(item.offset + 1)",
+            role: payload.role.nilIfBlank ?? "worker",
+            profileID: item.profile.id,
+            profileName: item.profile.name,
+            profileRole: item.profile.role,
+            overviewBatchID: overviewBatchID,
+            backend: backend,
+            createdAt: now,
+            updatedAt: now,
+            status: payload.prompt == nil ? .idle : .queued,
+            pendingPrompts: [],
+            latestOutput: nil,
+            latestError: nil,
+            configuredModelID: modelID,
+            modelID: modelID,
+            runTask: nil
+        )
     }
 
     func reserveTasklessDelegationReservations(
@@ -625,11 +646,11 @@ extension DirectSubAgentRuntime {
             // themselves are about to make live.
             let overviewWaveID = currentOverviewWaveID()
             for (agentID, reservationID) in reservationIDsByAgentID {
-                guard var agent = agents[agentID] else {
+                guard mutateAgent(agentID, {
+                    $0.tasklessDelegationReservationID = reservationID
+                }) != nil else {
                     throw DirectSubAgentRuntimeError.agentNotFound(agentID)
                 }
-                agent.tasklessDelegationReservationID = reservationID
-                agents[agentID] = agent
             }
             for id in targetIDs {
                 try queuePrompt(message, for: id)
@@ -637,10 +658,11 @@ extension DirectSubAgentRuntime {
             adoptOverviewWave(overviewWaveID, for: targetIDs)
         } catch {
             for (agentID, reservationID) in reservationIDsByAgentID {
-                if var agent = agents[agentID],
-                   agent.tasklessDelegationReservationID == reservationID {
-                    agent.tasklessDelegationReservationID = nil
-                    agents[agentID] = agent
+                mutateAgent(
+                    agentID,
+                    where: { $0.tasklessDelegationReservationID == reservationID }
+                ) {
+                    $0.tasklessDelegationReservationID = nil
                 }
                 if let rootSessionID = agents[agentID]?.rootSessionID,
                    let taskOrchestrator {
@@ -712,27 +734,26 @@ extension DirectSubAgentRuntime {
         error: String?,
         discardingPendingPrompts: Bool = true
     ) {
-        guard var agent = agents[agentID],
-              agent.taskID != nil,
-              agent.status != .closed else {
-            return
+        mutateAgent(
+            agentID,
+            where: { $0.taskID != nil && $0.status != .closed }
+        ) { agent in
+            if discardingPendingPrompts {
+                agent.pendingPrompts.removeAll()
+                agent.pendingOperatorReplyFlags.removeAll()
+            }
+            // `runTask` is deliberately left untouched: the work loop owns it and
+            // clears it when it exits. Clearing it here while the loop is still in
+            // flight would let a concurrent `queuePrompt` pass the
+            // `startAgentIfNeeded` guard and start a second parallel loop.
+            agent.status = .idle
+            agent.resetActivityState()
+            if error != nil {
+                agent.latestContentPreview = nil
+            }
+            agent.latestError = error
+            agent.updatedAt = .now
         }
-        if discardingPendingPrompts {
-            agent.pendingPrompts.removeAll()
-            agent.pendingOperatorReplyFlags.removeAll()
-        }
-        // `runTask` is deliberately left untouched: the work loop owns it and
-        // clears it when it exits. Clearing it here while the loop is still in
-        // flight would let a concurrent `queuePrompt` pass the
-        // `startAgentIfNeeded` guard and start a second parallel loop.
-        agent.status = .idle
-        agent.resetActivityState()
-        if error != nil {
-            agent.latestContentPreview = nil
-        }
-        agent.latestError = error
-        agent.updatedAt = .now
-        agents[agentID] = agent
     }
 
     func discardInactiveTaskAttemptWork(for agentID: String) {
@@ -816,10 +837,9 @@ extension DirectSubAgentRuntime {
             _ = try await closeAgent(arguments: ["id": .string(id)])
             return true
         } catch {
-            if var agent = agents[id] {
+            mutateAgent(id) { agent in
                 agent.latestError = "Unable to close delegated task attempt: \(error.localizedDescription)"
                 agent.updatedAt = .now
-                agents[id] = agent
             }
             return false
         }
@@ -852,20 +872,31 @@ extension DirectSubAgentRuntime {
             .filter { $0.rootSessionID == rootSessionID && $0.status != .closed }
             .map(\.id)
         for id in targetIDs {
-            guard var agent = agents[id] else { continue }
-            let isStandby = isStandbyResident(agent)
-            let runTask = agent.runTask
-            agent.runTask = nil
-            agent.pendingPrompts.removeAll()
-            agent.pendingOperatorReplyFlags.removeAll()
-            agent.pendingRelease = false
-            agent.pendingReleaseReason = nil
-            agent.status = .closed
-            agent.latestError = "Delegated execution interrupted with its root session."
-            agent.prepareForTerminalRetention()
-            agent.updatedAt = .now
-            let releasedReservation = takeTasklessDelegationReservation(from: &agent)
-            agents[id] = agent
+            guard let interruption = mutateAgent(id, { agent in
+                let isStandby = isStandbyResident(agent)
+                let runTask = agent.revokeWorkLoop()
+                agent.pendingPrompts.removeAll()
+                agent.pendingOperatorReplyFlags.removeAll()
+                agent.pendingRelease = false
+                agent.pendingReleaseReason = nil
+                agent.status = .closed
+                agent.latestError = "Delegated execution interrupted with its root session."
+                agent.prepareForTerminalRetention()
+                agent.updatedAt = .now
+                let releasedReservation = takeTasklessDelegationReservation(from: &agent)
+                return (
+                    agent: agent,
+                    isStandby: isStandby,
+                    runTask: runTask,
+                    releasedReservation: releasedReservation
+                )
+            }) else {
+                continue
+            }
+            var agent = interruption.agent
+            let isStandby = interruption.isStandby
+            let runTask = interruption.runTask
+            let releasedReservation = interruption.releasedReservation
 
             if let taskID = agent.taskID,
                let attemptID = agent.taskAttemptID,
@@ -881,6 +912,7 @@ extension DirectSubAgentRuntime {
                             reason: "Root session closed during delegated execution."
                         )
                     } catch {
+                        // Copy taken before the await above: rewriting it is the existing behavior.
                         agent.latestError = "Delegated execution interrupted with its root session.\nUnable to interrupt task attempt: \(error.localizedDescription)"
                         agent.updatedAt = .now
                         agents[id] = agent
@@ -907,23 +939,26 @@ extension DirectSubAgentRuntime {
 
     public func closeAgent(arguments: [String: JSONValue]) async throws -> String {
         guard let id = try resolveCloseTargetID(arguments: arguments),
-              var agent = agents[id] else {
+              let closing = mutateAgent(id, { agent in
+                  let task = agent.revokeWorkLoop()
+                  agent.pendingPrompts.removeAll()
+                  agent.pendingOperatorReplyFlags.removeAll()
+                  agent.pendingRelease = false
+                  agent.pendingReleaseReason = nil
+                  agent.status = .closed
+                  agent.latestError = nil
+                  agent.prepareForTerminalRetention()
+                  agent.updatedAt = .now
+                  let releasedReservation = takeTasklessDelegationReservation(from: &agent)
+                  return (agent: agent, task: task, releasedReservation: releasedReservation)
+              }) else {
             throw DirectSubAgentRuntimeError.missingArgument("id")
         }
         defer { pruneTerminalAgentRecords() }
 
-        let task = agent.runTask
-        agent.runTask = nil
-        agent.pendingPrompts.removeAll()
-        agent.pendingOperatorReplyFlags.removeAll()
-        agent.pendingRelease = false
-        agent.pendingReleaseReason = nil
-        agent.status = .closed
-        agent.latestError = nil
-        agent.prepareForTerminalRetention()
-        agent.updatedAt = .now
-        let releasedReservation = takeTasklessDelegationReservation(from: &agent)
-        agents[id] = agent
+        var agent = closing.agent
+        let task = closing.task
+        let releasedReservation = closing.releasedReservation
 
         var taskCancellationError: (any Error)?
         if let taskID = agent.taskID,
@@ -938,6 +973,7 @@ extension DirectSubAgentRuntime {
                 )
             } catch {
                 taskCancellationError = error
+                // Copy taken before the await above: rewriting it is the existing behavior.
                 agent.latestError = "Closed delegated sub-agent, but unable to cancel task attempt: \(error.localizedDescription)"
                 agent.updatedAt = .now
                 agents[id] = agent

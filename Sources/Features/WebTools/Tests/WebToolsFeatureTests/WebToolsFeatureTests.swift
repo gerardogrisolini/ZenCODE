@@ -111,32 +111,32 @@ struct WebURLPolicyTests {
         #expect(try policy.validate("https://cafe.de/").host == "cafe.de")
         #expect(try policy.validate("https://face.be/").host == "face.be")
         #expect(try policy.validate("https://0xdead.beef.example/").host == "0xdead.beef.example")
-        #expect(WebURLPolicy.endsInNumber("abc.de") == false)
-        #expect(WebURLPolicy.endsInNumber("example.com") == false)
-        #expect(WebURLPolicy.endsInNumber("127.1") == true)
-        #expect(WebURLPolicy.endsInNumber("0x7f.1") == true)
-        #expect(WebURLPolicy.endsInNumber("1.0x") == true)
-        #expect(WebURLPolicy.endsInNumber("example.0x1g") == false)
+        #expect(FeatureIPAddress.endsInNumber("abc.de") == false)
+        #expect(FeatureIPAddress.endsInNumber("example.com") == false)
+        #expect(FeatureIPAddress.endsInNumber("127.1") == true)
+        #expect(FeatureIPAddress.endsInNumber("0x7f.1") == true)
+        #expect(FeatureIPAddress.endsInNumber("1.0x") == true)
+        #expect(FeatureIPAddress.endsInNumber("example.0x1g") == false)
     }
 
     @Test
     func alternativeIPv4LiteralFormsAreParsedAndRestricted() throws {
         let policy = WebURLPolicy(environment: [:])
 
-        #expect(WebURLPolicy.parseIPv4Literal("0177.0.0.1") == [127, 0, 0, 1])
-        #expect(WebURLPolicy.parseIPv4Literal("2130706433") == [127, 0, 0, 1])
-        #expect(WebURLPolicy.parseIPv4Literal("0x7f.1") == [127, 0, 0, 1])
-        #expect(WebURLPolicy.parseIPv4Literal("127.1") == [127, 0, 0, 1])
-        #expect(WebURLPolicy.parseIPv4Literal("0x7f000001") == [127, 0, 0, 1])
-        #expect(WebURLPolicy.parseIPv4Literal("10.0.1") == [10, 0, 0, 1])
-        #expect(WebURLPolicy.parseIPv4Literal("0xa9.0xfe.1.1") == [169, 254, 1, 1])
-        #expect(WebURLPolicy.parseIPv4Literal("1.2.3.4.5") == nil)
-        #expect(WebURLPolicy.parseIPv4Literal("256.1") == nil)
-        #expect(WebURLPolicy.parseIPv4Literal("1.2.3.256") == nil)
-        #expect(WebURLPolicy.parseIPv4Literal("4294967296") == nil)
-        #expect(WebURLPolicy.parseIPv4Literal("08.1.1.1") == nil)
-        #expect(WebURLPolicy.parseIPv4Literal("+1.1.1.1") == nil)
-        #expect(WebURLPolicy.parseIPv4Literal("1.-1.1.1") == nil)
+        #expect(FeatureIPAddress.parseIPv4Literal("0177.0.0.1") == [127, 0, 0, 1])
+        #expect(FeatureIPAddress.parseIPv4Literal("2130706433") == [127, 0, 0, 1])
+        #expect(FeatureIPAddress.parseIPv4Literal("0x7f.1") == [127, 0, 0, 1])
+        #expect(FeatureIPAddress.parseIPv4Literal("127.1") == [127, 0, 0, 1])
+        #expect(FeatureIPAddress.parseIPv4Literal("0x7f000001") == [127, 0, 0, 1])
+        #expect(FeatureIPAddress.parseIPv4Literal("10.0.1") == [10, 0, 0, 1])
+        #expect(FeatureIPAddress.parseIPv4Literal("0xa9.0xfe.1.1") == [169, 254, 1, 1])
+        #expect(FeatureIPAddress.parseIPv4Literal("1.2.3.4.5") == nil)
+        #expect(FeatureIPAddress.parseIPv4Literal("256.1") == nil)
+        #expect(FeatureIPAddress.parseIPv4Literal("1.2.3.256") == nil)
+        #expect(FeatureIPAddress.parseIPv4Literal("4294967296") == nil)
+        #expect(FeatureIPAddress.parseIPv4Literal("08.1.1.1") == nil)
+        #expect(FeatureIPAddress.parseIPv4Literal("+1.1.1.1") == nil)
+        #expect(FeatureIPAddress.parseIPv4Literal("1.-1.1.1") == nil)
 
         for host in ["2130706433", "0x7f.1", "127.1", "0x7f000001", "10.0.1", "0xa9.0xfe.1.1", "0.0.0.0", "0", "0251.0376.1.1"] {
             #expect(throws: WebURLPolicyError.self, "\(host) should be restricted") {
@@ -495,7 +495,7 @@ struct WebBoundedLoaderTests {
     /// Drives the delegate directly with a never-resumed task, so no bytes
     /// hit the network and the limit logic alone is exercised.
     private func awaitResult(
-        of box: WebSingleResumeBox<WebBoundedResponse>
+        of box: FeatureSingleResumeBox<WebBoundedResponse>
     ) async throws -> WebBoundedResponse {
         try await withCheckedThrowingContinuation { continuation in
             box.attach(continuation)
@@ -674,7 +674,7 @@ struct WebBoundedLoaderTests {
 
     @Test
     func singleResumeBoxIgnoresLaterResults() async throws {
-        let box = WebSingleResumeBox<Int>()
+        let box = FeatureSingleResumeBox<Int>()
         box.resume(returning: 1)
         box.resume(returning: 2)
         let first: Int = try await withCheckedThrowingContinuation { box.attach($0) }

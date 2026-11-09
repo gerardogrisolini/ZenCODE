@@ -9,33 +9,40 @@
 
 import AppKit
 import Foundation
+import ZenAppSession
 
 /// The application delegate of ``ZenCODEApp``.
 @MainActor
 final class ZenAppDelegate: NSObject, NSApplicationDelegate {
     /// What a quit request runs: the launcher's termination step and
-    /// shutdown, and the reply to a deferred request. Tests replace them.
+    /// shutdown, the reply to a deferred request, and the request to ask how
+    /// to close the worktree. Tests replace them.
     struct Termination {
         var step: @MainActor () -> ZenAppLauncher.TerminationStep
         var shutdown: @MainActor () async -> Void
         var reply: @MainActor () -> Void
+        var requestWorktreeClosure: @MainActor () -> Void
 
         init(
             step: @escaping @MainActor () -> ZenAppLauncher.TerminationStep,
             shutdown: @escaping @MainActor () async -> Void,
-            reply: @escaping @MainActor () -> Void
+            reply: @escaping @MainActor () -> Void,
+            requestWorktreeClosure: @escaping @MainActor () -> Void
         ) {
             self.step = step
             self.shutdown = shutdown
             self.reply = reply
+            self.requestWorktreeClosure = requestWorktreeClosure
         }
 
-        /// The launcher's step and shutdown; the reply lets the app quit.
+        /// The launcher's step and shutdown; the reply lets the app quit; the
+        /// request opens the Worktree window (``ZenWorktreeClosure/request()``).
         init(launcher: ZenAppLauncher) {
             self.init(
                 step: { launcher.terminationStep() },
                 shutdown: { await launcher.shutdown() },
-                reply: { NSApp.reply(toApplicationShouldTerminate: true) }
+                reply: { NSApp.reply(toApplicationShouldTerminate: true) },
+                requestWorktreeClosure: { launcher.readyRuntime?.worktreeClosure?.request() }
             )
         }
     }
@@ -65,8 +72,11 @@ final class ZenAppDelegate: NSObject, NSApplicationDelegate {
         launcher.start()
     }
 
+    /// The app quits with its last window, except while the worktree of a
+    /// `--worktree` launch waits for the operator's choice: the Worktree
+    /// window asks it, and the choice quits the app.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        launcher.readyRuntime?.worktreeClosure?.isPending != true
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
@@ -79,6 +89,11 @@ final class ZenAppDelegate: NSObject, NSApplicationDelegate {
     /// ends or when the timeout passes, whichever comes first, with one reply.
     /// A request that arrives while the gate waits, even before its shutdown
     /// task started, is cancelled: the gate replies for the first one.
+    ///
+    /// With the worktree of a `--worktree` launch still to close, the request
+    /// is cancelled and the Worktree window opens instead: the operator's
+    /// choice shuts the runtime down and quits. While the chosen action runs,
+    /// a request is cancelled too: the Worktree window quits when it ends.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard terminationGate == nil else {
             return .terminateCancel
@@ -87,8 +102,12 @@ final class ZenAppDelegate: NSObject, NSApplicationDelegate {
         switch termination.step() {
         case .terminateNow:
             return .terminateNow
+        case .askWorktreeClosure:
+            termination.requestWorktreeClosure()
+            return .terminateCancel
         case .alreadyShuttingDown:
-            // The pending shutdown replies for the first request.
+            // The pending shutdown replies for the first request, or the
+            // Worktree window quits once its closing ends.
             return .terminateCancel
         case .shutDownFirst:
             let gate = ZenTerminationGate { _ in

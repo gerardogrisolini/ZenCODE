@@ -38,11 +38,12 @@ public struct ZenSubAgentDetailCard: View {
 /// The row is never empty while the agent is pending, except while a tool
 /// runs: the transcript already has the row of that call.
 public enum ZenSubAgentLiveActivity: Equatable, Sendable {
-    /// The reasoning in progress.
+    /// The reasoning of the thinking phase in progress, every paragraph
+    /// included.
     case thought(String)
-    /// The `🤔 thinking…` placeholder: the agent works without a reasoning
-    /// paragraph to show (it reasons without one yet, writes a message, or
-    /// is queued).
+    /// The `🤔 thinking…` placeholder: the agent works without reasoning to
+    /// show (it reasons without any yet, writes a message without reasoning
+    /// before it, or is queued).
     case thinkingPlaceholder
     /// Nothing: the agent is not pending, or a tool runs.
     case none
@@ -50,17 +51,17 @@ public enum ZenSubAgentLiveActivity: Equatable, Sendable {
     /// The live activity of `snapshot`: while it is pending and no tool
     /// runs (a tool the transcript hides does not count, and neither does
     /// one that completed: the snapshot keeps its name until the next model
-    /// state), the reasoning paragraph during the thinking phase, else the
-    /// placeholder, the message phase included; `.none` otherwise and
-    /// without a snapshot.
+    /// state), the reasoning of the thinking phase, growing with every
+    /// paragraph (`currentThought`), else the placeholder, the message phase
+    /// included; `.none` otherwise and without a snapshot.
     public init(_ snapshot: DirectSubAgentRuntime.AgentSnapshot?) {
         guard let snapshot, snapshot.pending, !ZenSubAgentActivity(snapshot).toolIsRunning else {
             self = .none
             return
         }
         if snapshot.currentActivityKind == .thinking,
-           let paragraph = ZenTranscriptText.nonBlank(snapshot.currentActivity) {
-            self = .thought(paragraph)
+           let thought = ZenTranscriptText.nonBlank(snapshot.currentThought) {
+            self = .thought(thought)
         } else {
             self = .thinkingPlaceholder
         }
@@ -68,9 +69,10 @@ public enum ZenSubAgentLiveActivity: Equatable, Sendable {
 }
 
 /// The live activity of a sub-agent, after the transcript of its tab
-/// (``ZenSubAgentLiveActivity``): the reasoning in progress as a streaming
-/// thinking block, or the `🤔 thinking…` placeholder. It draws nothing while
-/// the agent is not pending or a tool runs.
+/// (``ZenSubAgentLiveActivity``): the reasoning of the thinking phase as a
+/// streaming thinking block, growing until the transcript has it, or the
+/// `🤔 thinking…` placeholder. It draws nothing while the agent is not
+/// pending or a tool runs.
 public struct ZenSubAgentLiveActivityView: View {
     private let activity: ZenSubAgentLiveActivity
 
@@ -141,6 +143,7 @@ public struct ZenSubAgentLiveActivityView: View {
             pending: true,
             currentActivity: "Reading the tab bar and the conversation list.",
             currentActivityKind: .thinking,
+            currentThought: "Checking the sub-agent tab first.\n\nReading the tab bar and the conversation list.",
             latestOutput: nil,
             latestError: nil,
             createdAt: now,

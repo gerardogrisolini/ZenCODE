@@ -96,7 +96,7 @@ enum WebContentRuleListProvider {
             throw WebToolsFeatureError.permissionDenied("WKContentRuleListStore could not be created at \(directory.path).")
         }
         let encoded = try WebContentBlockerRules.encodedRuleList()
-        let box = WebSingleResumeBox<WKContentRuleList>()
+        let box = FeatureSingleResumeBox<WKContentRuleList>()
         let timeout = Task(name: "WebTools.rule-list-compile-timeout") {
             try? await Task.sleep(nanoseconds: UInt64(compilationTimeout * 1_000_000_000))
             box.resume(throwing: WebToolsFeatureError.permissionDenied(
@@ -194,7 +194,7 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
     private var abortError: (any Error)?
     /// Evaluations in flight, resumed with the abort error on deadline so a
     /// slow script cannot hold the render past its budget.
-    private var pendingEvaluations: [ObjectIdentifier: WebSingleResumeBox<String>] = [:]
+    private var pendingEvaluations: [ObjectIdentifier: FeatureSingleResumeBox<String>] = [:]
 
     /// Stops everything in flight and makes the pending phase (navigation,
     /// settle polling or extraction) throw `error`.
@@ -337,7 +337,7 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
 
     private func evaluateString(_ javaScript: String) async throws -> String {
         try checkAborted()
-        let box = WebSingleResumeBox<String>()
+        let box = FeatureSingleResumeBox<String>()
         let key = ObjectIdentifier(box)
         pendingEvaluations[key] = box
         defer { pendingEvaluations[key] = nil }

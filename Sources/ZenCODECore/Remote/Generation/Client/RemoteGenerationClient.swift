@@ -540,69 +540,26 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
                 )
             }
 
-            var completedToolCount = 0
-            do {
-                for toolCall in streamResult.toolCalls {
-                    try Task.checkCancellation()
-                    guard currentSession(for: lease) != nil else {
-                        throw RemoteGenerationClientError.missingSession
-                    }
-                    await onEvent(.toolCallStarted(toolCall))
-                    try Task.checkCancellation()
-                    guard let activeSession = currentSession(for: lease) else {
-                        throw RemoteGenerationClientError.missingSession
-                    }
-                    let result = await toolExecutor.execute(
-                        sessionID: activeSession.id,
-                        toolCall: toolCall,
-                        workingDirectory: activeSession.cwd,
-                        allowedToolNames: activeSession.allowedToolNames
-                    )
-                    // Persist an obtained result before a reentrant callback can
-                    // cancel the turn. Never replace an executed tool's result.
-                    guard mutateSession(for: lease, { session in
-                        session.messages.append(
-                            Self.toolResultMessage(toolCall: toolCall, result: result)
-                        )
-                    }) else {
-                        throw RemoteGenerationClientError.missingSession
-                    }
-                    completedToolCount += 1
-                    await onEvent(.toolCallCompleted(toolCall, result))
-                }
-                // Includes cancellation by the final completion callback, even
-                // when this is the last permitted tool round.
-                try Task.checkCancellation()
-                guard currentSession(for: lease) != nil else {
-                    throw RemoteGenerationClientError.missingSession
-                }
-            } catch is CancellationError {
-                let pending = streamResult.toolCalls.dropFirst(completedToolCount)
-                let cancellation = DirectAgentToolResult(
-                    output: "Tool execution cancelled before dispatch.",
-                    summary: "Tool execution cancelled before dispatch.",
-                    status: DirectToolExecutor.toolResultStatus(for: CancellationError())
-                )
-                // Close the entire committed batch without suspension. Completion
-                // callbacks may reset the session, so none may run before all
-                // pending results are appended to the still-valid lease.
-                guard mutateSession(for: lease, { session in
-                    for toolCall in pending {
-                        session.messages.append(
-                            Self.toolResultMessage(toolCall: toolCall, result: cancellation)
+            try await RemoteToolBatchDispatcher.dispatch(
+                streamResult.toolCalls,
+                toolExecutor: toolExecutor,
+                currentSession: {
+                    currentSession(for: lease).map { session in
+                        RemoteToolDispatchSession(
+                            sessionID: session.id,
+                            workingDirectory: session.cwd,
+                            allowedToolNames: session.allowedToolNames
                         )
                     }
-                }) else {
-                    throw RemoteGenerationClientError.missingSession
-                }
-                for toolCall in pending {
-                    guard currentSession(for: lease) != nil else {
-                        throw RemoteGenerationClientError.missingSession
+                },
+                appendToolResults: { messages in
+                    mutateSession(for: lease) { session in
+                        session.messages.append(contentsOf: messages)
                     }
-                    await onEvent(.toolCallCompleted(toolCall, cancellation))
-                }
-                throw CancellationError()
-            }
+                },
+                missingSessionError: RemoteGenerationClientError.missingSession,
+                onEvent: onEvent
+            )
 
             if round == configuration.maxToolRounds - 1 {
                 throw RemoteGenerationClientError.tooManyToolRounds(configuration.maxToolRounds)

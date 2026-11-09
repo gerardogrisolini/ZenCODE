@@ -100,7 +100,8 @@ extension AgentCoreSessionConfiguration {
             maxOutputTokens: maxOutputTokens,
             appMode: appMode,
             thinkingSelection: thinkingSelection,
-            preserveThinking: preserveThinking
+            preserveThinking: preserveThinking,
+            responseLanguageSection: responseLanguageSection
         )
     }
 }

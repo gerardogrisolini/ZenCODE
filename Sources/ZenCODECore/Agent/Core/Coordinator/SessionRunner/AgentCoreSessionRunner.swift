@@ -198,7 +198,8 @@ public actor AgentCoreSessionRunner {
             cacheKey: configuration.cacheKey,
             allowedToolNames: configuration.allowedToolNames,
             thinkingSelection: configuration.thinkingSelection,
-            preserveThinking: configuration.preserveThinking
+            preserveThinking: configuration.preserveThinking,
+            responseLanguageSection: configuration.responseLanguageSection
         )
     }
 
@@ -243,7 +244,8 @@ public actor AgentCoreSessionRunner {
             dynamicContext: configuration.dynamicContext,
             allowedToolNames: configuration.allowedToolNames,
             thinkingSelection: configuration.thinkingSelection,
-            preserveThinking: configuration.preserveThinking
+            preserveThinking: configuration.preserveThinking,
+            responseLanguageSection: configuration.responseLanguageSection
         )
         try verifyBackendGeneration(generation)
         sessions[configuration.sessionID] = configuration

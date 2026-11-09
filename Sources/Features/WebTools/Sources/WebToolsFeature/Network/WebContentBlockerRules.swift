@@ -32,7 +32,8 @@ enum WebContentBlockerRules {
     private static let hostEnd = "[:/]"
 
     /// Dotted-quad patterns of the restricted IPv4 ranges (first octet, or
-    /// first two octets, fixed), mirroring `WebURLPolicy.isRestrictedIPv4`.
+    /// first two octets, fixed), mirroring the non-public and loopback ranges of
+    /// FeatureKit's `FeatureIPAddress.classifyIPv4`.
     static let restrictedIPv4Prefixes: [String] = {
         let first = ["0", "10", "127", "22[4-9]", "2[3-5][0-9]"]
         let firstTwo = [

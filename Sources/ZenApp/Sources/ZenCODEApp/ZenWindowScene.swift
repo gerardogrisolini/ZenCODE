@@ -13,11 +13,15 @@ import ZenAppSession
 import ZenAppTheme
 import ZenAppTranscript
 
-/// The root of a window, following the launcher's phase.
+/// The root of a window, following the launcher's phase. Once the operator
+/// is asked how to close the worktree of a `--worktree` launch (a quit), it
+/// opens the Worktree window.
 struct ZenWindowScene: View {
     let launcher: ZenAppLauncher
     /// The workspace the window was opened for; `nil` is the launch one.
     let requestedWorkspace: URL?
+
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Group {
@@ -37,6 +41,12 @@ struct ZenWindowScene: View {
         .environment(\.zenMarkdownRenderer, .zenMarkdownView)
         .environment(\.zenCodeHighlighter, .zenSyntaxHighlighter)
         .onAppear { launcher.start() }
+        .onChange(of: launcher.readyRuntime?.worktreeClosure?.isRequested ?? false) { _, requested in
+            // Every workspace window asks; the Worktree window is single.
+            if requested {
+                openWindow(id: ZenWorktreeClosureWindow.id)
+            }
+        }
     }
 }
 

@@ -77,6 +77,19 @@ semantics: a read returns exactly what decoding the current files would
 return, and cross-process freshness holds because every ZenCODE writer publishes
 via `rename`, which always creates a new inode.
 
+The persistence actor runs on its own serial executor
+(`MemoryPersistenceSerialExecutor`, a private serial dispatch queue per
+instance), not on Swift's cooperative pool. Its isolated methods block their
+thread: `flock(LOCK_EX)` waits for as long as another process holds the graph
+lock, possibly for a whole long transaction, and the reads and writes are
+synchronous. On the dedicated queue that thread is a dispatch thread, so lock
+waiters never park the cooperative pool's fixed set of workers and unrelated
+tasks keep running. The semantics are those of a default actor: jobs run one at
+a time and in order, no suspension point is added, and cancellation and
+task-locals behave as before. The registry keeps one persistence per graph URL,
+so a process has one queue per open graph; a queue owns no thread, and GCD
+lends one from its shared pool only while a job runs.
+
 Every mutation — `write`, `update`, `archive`, `delete` — runs through the
 engine's transaction primitive
 (`ZenMemory.transaction(_:)`), which commits after save: the body mutates a

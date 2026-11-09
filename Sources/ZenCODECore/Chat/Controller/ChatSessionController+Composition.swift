@@ -76,7 +76,8 @@ extension ChatSessionController {
             maxOutputTokens: environment.maxOutputTokens,
             appMode: environment.appMode,
             thinkingSelection: currentAgentThinkingSelection(),
-            preserveThinking: false
+            preserveThinking: false,
+            responseLanguageSection: responseLanguageSection
         )
         .makeConfiguration()
     }
@@ -149,8 +150,29 @@ extension ChatSessionController {
             selectedAgent: selection.agent,
             locksModelToSession: environment.hostedAgentProfiles != nil,
             responseLanguageSection: responseLanguageSection,
-            launchFolderProjects: launchFolderProjectsForSelectedAgent()
+            launchFolderProjects: launchFolderProjectsForSelectedAgent(),
+            worktreeSection: worktreeSection()
         )
+    }
+
+    /// The Git worktree section of the system prompt when the launch asked
+    /// for a worktree (`--worktree`) and this session works in it; `nil`
+    /// otherwise. A host shares one environment between sessions that may
+    /// work in other folders (an app window opened on another workspace),
+    /// which never get the section.
+    func worktreeSection() -> String? {
+        guard let worktree = environment.worktree,
+              Self.resolvedPath(of: worktree.directory) == Self.resolvedPath(of: workingDirectory) else {
+            return nil
+        }
+        return SystemPromptBuilder.worktreeSection(
+            name: worktree.name,
+            path: worktree.directory.path
+        )
+    }
+
+    private nonisolated static func resolvedPath(of directory: URL) -> String {
+        directory.standardizedFileURL.resolvingSymlinksInPath().path
     }
 
     /// The launch-folder listing for the selected agent, or `nil` when there is

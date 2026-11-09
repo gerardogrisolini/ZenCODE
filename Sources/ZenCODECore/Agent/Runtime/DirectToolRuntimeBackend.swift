@@ -105,6 +105,12 @@ extension DirectToolRuntimeBackend {
     ) async {
         await toolExecutor.updateSubAgentToolEventHandler(handler)
     }
+
+    public func updateSubAgentResponseLanguageSectionProvider(
+        _ provider: DirectSubAgentResponseLanguageSectionProvider?
+    ) async {
+        await toolExecutor.updateSubAgentResponseLanguageSectionProvider(provider)
+    }
 }
 
 extension DirectToolRuntimeBackend {

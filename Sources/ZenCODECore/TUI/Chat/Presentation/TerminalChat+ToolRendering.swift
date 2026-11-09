@@ -8,23 +8,12 @@
 import Foundation
 
 extension TerminalChat {
-    /// Tool executions that remain observable to the runtime but have no terminal
-    /// representation. Keep this presentation-only: authorization, dispatch,
-    /// transcript persistence and shared-chat delivery must still see the call.
-    nonisolated static func shouldSuppressToolRendering(for toolName: String) -> Bool {
-        toolName == "agent.message"
-    }
-
-    /// Whether a completed call failed, as its status marker shows it: the
-    /// result failed, or `local.exec` ended with a non-zero exit code. The
-    /// terminal marks it ⚠️, Telegram's activity rows ❌.
-    nonisolated static func toolResultIsFailure(
-        for toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult
-    ) -> Bool {
-        let hasFailedProcessExit = compactLocalExecExitCode(for: toolCall, result: result)
-            .map { $0 != 0 } ?? false
-        return result.isFailure || hasFailedProcessExit
+    /// The syntax-highlighting language of a file, chosen strictly from its
+    /// extension (`swift`, `python`, `typescript`, …); see
+    /// ``ToolLanguageHint/hint(forPath:)``. A host app uses it to color a file
+    /// as the terminal does.
+    public nonisolated static func codeLanguageHint(forPath path: String) -> String? {
+        ToolLanguageHint.hint(forPath: path)
     }
 
     /// Builds the canonical compact and detailed rows for a tool lifecycle.
@@ -40,7 +29,7 @@ extension TerminalChat {
     ) -> ToolPresentationRows {
         let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
         let statusIcon = result.map { result in
-            toolResultIsFailure(for: toolCall, result: result) ? "⚠️" : "✅"
+            ToolRenderingPolicy.toolResultIsFailure(for: toolCall, result: result) ? "⚠️" : "✅"
         } ?? "⏳"
 
         return ToolPresentationRows(
@@ -53,14 +42,14 @@ extension TerminalChat {
             ).map(DetailedToolRow.text),
             detailRows: includesSourceChanges
                 ? safelyWrappedDetailedToolRows(
-                    standardToolCallRows(
+                    ToolSnippetRenderer.standardToolCallRows(
                         for: toolCall,
                         result: result,
                         contentWidth: safeContentWidth
                     ),
                     contentInsetWidth: contentInsetWidth,
                     columnWidth: columnWidth,
-                    codeLanguage: codeLanguageHint(for: toolCall)
+                    codeLanguage: ToolLanguageHint.hint(for: toolCall)
                 )
                 : [],
             detailContentWidth: safeContentWidth
@@ -125,9 +114,10 @@ extension TerminalChat {
         contentInsetWidth: Int = 0,
         columnWidth: Int? = nil
     ) -> [String] {
-        let title = sanitizedMetadataText(toolCall.name) ?? "tool"
+        let title = ToolArgumentReader.sanitizedMetadataText(toolCall.name) ?? "tool"
         let header = "\(ToolCallPresentation.toolIcon(for: toolCall.name))  \(title)"
-        let target = ToolCallPresentation.displayToolTarget(for: toolCall).flatMap(sanitizedMetadataText)
+        let target = ToolCallPresentation.displayToolTarget(for: toolCall)
+            .flatMap(ToolArgumentReader.sanitizedMetadataText)
         let statusLine = compactToolStatusLine(
             target: target ?? header,
             statusIcon: statusIcon,
@@ -153,42 +143,13 @@ extension TerminalChat {
         if let elapsed {
             components.append(ToolCallPresentation.elapsedTimeText(elapsed))
         }
-        if let exitCode = compactLocalExecExitCode(
+        if let exitCode = ToolRenderingPolicy.compactLocalExecExitCode(
             for: toolCall,
             result: result
         ), exitCode != 0 {
             components.append("exit \(exitCode)")
         }
         return components.isEmpty ? nil : components.joined(separator: " ")
-    }
-
-    /// Reads only the leading, complete canonical process-result line. In
-    /// particular, an arbitrary phrase or a later stdout line containing
-    /// `exit_code:` is not treated as structured process metadata, avoiding
-    /// false failures from tool output text.
-    nonisolated static func compactLocalExecExitCode(
-        for toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult
-    ) -> Int? {
-        guard toolCall.name == "local.exec" else {
-            return nil
-        }
-        for payload in [result.summary, result.output] {
-            guard let line = payload.split(
-                omittingEmptySubsequences: false,
-                whereSeparator: \.isNewline
-            ).first else {
-                continue
-            }
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("exit_code: "),
-               case let value = trimmed.dropFirst("exit_code: ".count),
-               isCanonicalExitCode(value),
-               let exitCode = Int(value) {
-                return exitCode
-            }
-        }
-        return nil
     }
 
     nonisolated static func compactToolStatusLine(
@@ -199,7 +160,7 @@ extension TerminalChat {
         contentInsetWidth: Int = 0,
         columnWidth: Int? = nil
     ) -> String {
-        let resolvedColumns = columnWidth ?? terminalColumnCount()
+        let resolvedColumns = columnWidth ?? TerminalTextMetrics.terminalColumnCount()
         let columns = max(0, resolvedColumns - contentInsetWidth)
         // Reserve one trailing column: a line exactly terminal-width wraps
         // ambiguously, so the in-place rewrite on completion would move up one
@@ -210,7 +171,7 @@ extension TerminalChat {
             detail: statusDetail,
             maximumWidth: safeLineWidth
         )
-        let suffixWidth = displayWidth(statusText)
+        let suffixWidth = TerminalTextMetrics.displayWidth(statusText)
         let textWidthLimit = safeLineWidth - suffixWidth - 1
         guard textWidthLimit > 0 else {
             return suffixWidth <= safeLineWidth ? statusText : ""
@@ -241,7 +202,7 @@ extension TerminalChat {
         // extra separator so the icon stays visually separated from the detail.
         let separator = icon == "⚠️" ? "  " : " "
         let expanded = "\(icon)\(separator)\(detail)"
-        return displayWidth(expanded) <= maximumWidth ? expanded : icon
+        return TerminalTextMetrics.displayWidth(expanded) <= maximumWidth ? expanded : icon
     }
 
     /// Compact status rows have no font-size control, so elapsed time uses the
@@ -279,7 +240,7 @@ extension TerminalChat {
         if !suffix.isEmpty {
             let exitPrefix = " exit "
             guard suffix.hasPrefix(exitPrefix),
-                  isCanonicalExitCode(suffix.dropFirst(exitPrefix.count)) else {
+                  ToolRenderingPolicy.isCanonicalExitCode(suffix.dropFirst(exitPrefix.count)) else {
                 return nil
             }
         }
@@ -308,32 +269,6 @@ extension TerminalChat {
             }
     }
 
-    private nonisolated static func isCanonicalExitCode(
-        _ value: Substring
-    ) -> Bool {
-        let digits = value.first == "-" ? value.dropFirst() : value
-        return !digits.isEmpty && digits.allSatisfy(\.isWholeNumber)
-    }
-
-    nonisolated static func renderedTerminalRowCount(
-        for lines: [String],
-        contentInsetWidth: Int = 0,
-        columnWidth: Int? = nil
-    ) -> Int {
-        let resolvedColumns = columnWidth ?? terminalColumnCount()
-        let columns = max(1, resolvedColumns - contentInsetWidth)
-        return lines.reduce(0) { result, line in
-            let segments = line.split(
-                omittingEmptySubsequences: false,
-                whereSeparator: \.isNewline
-            )
-            return result + segments.reduce(0) { segmentResult, segment in
-                let width = max(1, displayWidth(String(segment)))
-                return segmentResult + max(1, (width + columns - 1) / columns)
-            }
-        }
-    }
-
     nonisolated static func compactToolInlineTarget(_ target: String) -> String {
         target
             .split(whereSeparator: \.isWhitespace)
@@ -341,7 +276,7 @@ extension TerminalChat {
     }
 
     nonisolated static func fitDisplayWidth(_ text: String, width: Int) -> String {
-        guard displayWidth(text) > width else {
+        guard TerminalTextMetrics.displayWidth(text) > width else {
             return text
         }
         guard width > 0 else {
@@ -370,10 +305,6 @@ extension TerminalChat {
             ellipsis: "...",
             ellipsisWidth: 3
         )
-    }
-
-    nonisolated static func displayWidth(_ text: String) -> Int {
-        TerminalANSIText.visibleWidth(text)
     }
 
     /// Renders a structured detailed row. A side-by-side row draws its two
@@ -418,7 +349,7 @@ extension TerminalChat {
         // Paint only the source viewport, including short rows and the spare
         // cell from an odd side-by-side budget. Reset before EL so the reserved
         // right margin (and any stale background there) uses the host surface.
-        let padding = max(0, (contentWidth ?? 0) - displayWidth(rendered))
+        let padding = max(0, (contentWidth ?? 0) - TerminalTextMetrics.displayWidth(rendered))
         return rendered + codeAreaBackgroundColor + String(repeating: " ", count: padding)
             + TerminalStyle.reset + "\u{1B}[K"
     }

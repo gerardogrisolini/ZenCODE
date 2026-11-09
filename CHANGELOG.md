@@ -21,6 +21,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   the call to its completion, while the name and the target stay until the
   next model state, so a live presentation can tell a running call from the
   one that just completed.
+- `DirectSubAgentRuntime.AgentSnapshot.currentThought` holds the reasoning of
+  the thinking phase in progress, every paragraph included, while
+  `currentActivity` keeps only the paragraph in progress for the overview. It
+  stays while the agent writes the message that follows its reasoning and is
+  cleared when a tool call starts or the turn changes; it is kept in memory
+  only.
 - `AgentRuntimeBackend.knownToolDescriptors(sessionID:)` (with a default
   implementation that returns `activeToolDescriptors(sessionID:)`),
   `SwiftFeatureRuntime.knownDescriptors(allowedToolNames:excludingFeatureIDs:)`
@@ -43,9 +49,54 @@ Release tags follow the strict `vX.Y.Z` contract described in
   <option> cannot be combined.`, exit status 1); `--help`, `--version`,
   `--doctor`, and `--install-features` keep precedence over it. `zen --help`
   lists it. See [Docs/zen.md](Docs/zen.md#first-setup).
+- `zen --worktree NAME` works in the Git worktree `NAME` of the repository that
+  contains the launch directory, in the terminal chat and with `zen --ui`; it
+  is refused with `--acp`, `--telegram`, `-p`/`--prompt`, `-f`, and `--jsonl`.
+  The worktree lives in
+  `<support>/worktrees/<project key>/<NAME>/<repository folder name>` on the
+  branch `NAME` (checked out if it exists, otherwise created from `HEAD`), and
+  keeps the repository's project key, so the project memory, saved sessions,
+  task graphs, and project agents are shared with the main checkout. The
+  terminal startup summary shows it (`Worktree: <name> (branch <name>)`) and
+  the system prompt of the sessions working in it gets a `Git worktree:`
+  section. When the terminal chat ends, a menu offers to merge the branch into
+  the main branch and remove the worktree, to keep it (the default), or to
+  remove it without merging; the app asks the same in a `Worktree` window when
+  its last window closes or on a quit. The new public API is `AgentWorktree`,
+  `AgentWorktreeManager`, `AgentWorktreeError`, `AgentConfiguration.worktree`,
+  `ChatSessionEnvironment.worktree`,
+  `SystemPromptBuilder.worktreeSection(name:path:)` (with the
+  `worktreeSection:` parameter of the prompt-section builders), and
+  `ZenWorktreeClosure` with `ZenAppRuntime.worktreeClosure` in the app package.
+  See [Docs/zen.md](Docs/zen.md#git-worktrees).
+- `AgentCoreSessionConfiguration.responseLanguageSection` (with the
+  `responseLanguageSection:` parameter of its initializers, of
+  `AgentCoreSessionConfigurationBuilder`, and of
+  `AgentCoreBackend.createSession`/`updateSessionOptions`) carries the
+  channel's locked response-language section; it is outside the session
+  identity, so it never recreates the backend or the session.
+  `AgentRuntimeBackend.updateSubAgentResponseLanguageSectionProvider(_:)` (with
+  a default implementation that ignores it), the
+  `DirectSubAgentResponseLanguageSectionProvider` type,
+  `DirectToolExecutor.updateSubAgentResponseLanguageSectionProvider(_:)`,
+  `DirectSubAgentRuntime.updateResponseLanguageSectionProvider(_:)`, and the
+  `responseLanguageSection:` parameter of `DirectSubAgentRuntime.systemPrompt`
+  give delegated agents that section.
+- `FeatureKit` offers shared network primitives for features
+  (`Sources/FeatureKit/Network`): `FeatureIPAddress` (parsing and
+  classification of numeric IP addresses, with no policy of its own),
+  `FeatureSystemHostResolver`, `FeatureSingleResumeBox`, and
+  `FeatureBlockingOperation`. Web Tools and Browser use them instead of their
+  own copies, while the access policies stay in the features.
 
 ### Changed
 
+- The response-language rule of the system prompt, locked or generic, also
+  asks to write in the session language the text the model writes for other
+  agents: the `agent.create` prompts, the task descriptions and acceptance
+  criteria, and the `agent.message` messages. The system prompt prefix
+  changes once, so the first turn after the update does not reuse the
+  provider's prompt cache; a saved session keeps the prompt it was saved with.
 - `agent.create` no longer caps a single request at 8 sub-agents: the
   `maxItems: 8` of its schema, the "1–8" of its description, the
   `DirectSubAgentRuntime.maximumAgentsPerCreate` constant and the
@@ -83,8 +134,7 @@ Release tags follow the strict `vX.Y.Z` contract described in
   zen again.`` on standard error (with `--jsonl`, as the framed `error` record
   of category `configuration` on standard output) and exit with status 1. Run
   `zen --setup` first. ACP is the only exception: it still answers
-  `initialize` when it is the effective mode (`--acp`, or
-  `ZENCODE_AGENT_MODE=acp` with no other mode-selecting option). `--telegram`
+  `initialize` when it is the effective mode (`--acp`). `--telegram`
   requires Telegram set up and paired with `zen --setup`. The hints of
   `zen --doctor`, of the macOS app, and of the Telegram, voice, ZenCRON, and
   provider-key messages that sent you to `/setup` or to run `zen` now name
@@ -133,9 +183,70 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `shutdown()` now always shuts the whole runner down, including the connected
   external MCP servers. An embedder that needs to keep them can call
   `AgentCoreSessionRunner.shutdownBackendKeepingExternalTools()` on its runner.
+- **Breaking:** the `ZENCODE_AGENT_MODE` environment variable is removed. It is
+  no longer read, and a leftover value is ignored, without a warning or an
+  error (the `Invalid value for --mode` error goes with it): it no longer
+  selects a mode, not even ACP. The mode is chosen only with the command-line
+  options `--tui` (the default), `--telegram`, `--acp`, `-p`/`--prompt`, `-f`,
+  or `--jsonl`, so an ACP client configured with the variable alone must now
+  pass `--acp`. The other `ZENCODE_AGENT_*` variables are unchanged.
+- **Breaking (ZenCODECore API):** `AgentRunMode.automatic` is removed, with the
+  environment variable that could select it. Without a mode option,
+  `AgentConfiguration.runMode` is now `.tui`, or `.acp` when the configuration
+  is built with `appModeOverride: true`, so `resolvedRunMode(stdinIsTerminal:)`
+  resolves as before. A `switch` over `AgentRunMode` that has a case for
+  `.automatic` no longer compiles: drop it.
+- **Breaking:** `DirectSubAgentRuntime.AgentSnapshot.accumulatedOutput` and
+  the `accumulatedOutput:` parameter of its initializer are removed. Nothing
+  read it: the runtime joined the output of every turn of an agent into it
+  and copied it into every snapshot. `latestOutput` keeps the output of the
+  latest turn.
+- **Breaking (ToolCore API):** public symbols with no callers are removed:
+  `JSONValue.encodedData()` (use `try JSONEncoder().encode(value)`);
+  `JSONValue.encoded()`, which returned empty `Data` on failure (the same,
+  with `try?` where that fallback is wanted); `ToolDescriptor.fromJSON(_:)`
+  (use `JSONDecoder().decode(ToolDescriptor.self, from:)`, but note that the
+  decoder is strict: it requires `name`, `description` and `inputSchema` and
+  accepts only camelCase keys, while `fromJSON` fell back to the whole string
+  as the name and also accepted `input_schema` and `output_schema`); the free
+  functions `rebasedWorkspaceRelativePaths(in:workspaceRootPath:)` and
+  `rebasedSkillRelativePaths(in:workspaceRootPath:skillRootPaths:)`, and
+  `shouldDropLeadingMissingWorkspaceContainer(_:workspaceRootURL:)`, with no
+  replacement; and the factory
+  `ToolPresentationValueDefinition.toolName(format:)` (use
+  `ToolPresentationValueDefinition(source: .toolName, format:)`).
+- **Breaking (FeatureMCPBridgeKit API):** public symbols with no callers are
+  removed: `RemoteMCPFeatureRunner.emitJSON(_:)` (use
+  `FeatureProcessProtocol.emitJSON(_:)`); `ListToolsResponse` (use
+  `FeatureListToolsResponse` from FeatureKit, which also carries
+  `schemaVersion`); `ParsedFeatureCommand` (use
+  `FeatureProcessProtocol.parse(arguments:)`, whose `.invoke` case also
+  carries the working directory); `MCPTransportCodec.nextMessageBody(from:)`
+  (use `nextMessage(from:)`, which tells incomplete data from malformed
+  framing); and the cases `MCPClientError.missingContentLength` and
+  `.invalidContentLength`, which were never thrown: framing errors arrive as
+  `.malformedTransport`. A client with an exhaustive `switch` over
+  `MCPClientError` must drop the two cases.
+- **Breaking (ZenCODECore API):**
+  `ZenCODEACPBridge.subscriptionUsageData(for:)` is removed (use
+  `subscriptionUsageJSONData(for:)`), and so is
+  `ZenCODEACPBridge.objectParams(from:)`, with no replacement. These three
+  entries change source compatibility only: the output of `zen`, the ACP
+  wire, the `--list-tools` and `--invoke` JSON, and the persisted formats are
+  unchanged.
 
 ### Fixed
 
+- Delegated sub-agents answer in the coordinator's locked response language
+  (the one of the settings, else the system's) instead of falling back to the
+  language of their English brief: `agent.create` reads the root session's
+  section once per batch and puts it in their system prompt, nested taskless
+  agents included. Without a locked language (before the first prompt,
+  headless runs, ACP) they keep the generic rule, as the coordinator does.
+- The `/subagent` detail and the macOS sub-agent tab show the reasoning of a
+  sub-agent growing, every paragraph of the phase in progress, until the
+  transcript has it: they no longer show only the latest paragraph, replaced
+  by the next one and by `🤔 thinking…` in between.
 - Reading the transcript of a sub-agent (`/subagent`, the macOS sub-agent
   tabs) no longer starts the tool discovery of a feature (`--list-tools`, and
   the consent it can ask for), not even after the feature bundles were
@@ -153,6 +264,29 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - The ACP `tool_call_update` of a delegated tool call no longer rebuilds its
   title: it prefixes the agent's name to the title the completion payload
   already carries, with the same result on the wire.
+- With the ChatGPT and Claude subscription providers, Stop during a batch of
+  tool calls no longer starts the remaining tools of the batch. The calls that
+  did not run are closed with the result "Tool execution cancelled before
+  dispatch.", so the conversation resumes at the next prompt, as it already
+  did with the API providers. In the last permitted tool round, Stop ends the
+  turn as a cancellation instead of a too-many-rounds error. The tool loop is
+  now shared by all the remote clients (`RemoteToolBatchDispatcher`).
+- Waiting for the cross-process lock on the memory graph, for example while
+  another ZenCODE session is in the middle of a long transaction, no longer
+  occupies the threads of Swift's cooperative pool. It could previously block
+  all the other work of the process until the lock was released. Persistence
+  now runs on a dedicated serial queue per graph
+  (`MemoryPersistenceSerialExecutor`).
+- `web.fetch` and `web.search` no longer copy the whole body already
+  downloaded for every received chunk: large downloads used to have a
+  quadratic cost.
+- The Browser request guard now blocks the same non-public IPv6 ranges as Web
+  Tools: NAT64 `64:ff9b::/96` with an embedded restricted IPv4 address and
+  `64:ff9b:1::/48`, 6to4 `2002::/16` with an embedded restricted IPv4
+  address, discard `100::/64`, documentation `2001:db8::/32`, benchmarking
+  `2001:2::/48`, and ORCHID `2001:10::/28` and `2001:20::/28`. Previously a
+  URL or a host resolving to one of these addresses could reach a private
+  destination.
 
 ## [4.1.0] - 2026-11-07
 

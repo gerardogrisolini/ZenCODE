@@ -71,7 +71,7 @@ extension TerminalChatRenderCoordinatorTests {
             )
         )
 
-        #expect(TerminalChat.standardToolCallRows(for: toolCall).isEmpty)
+        #expect(ToolSnippetRenderer.standardToolCallRows(for: toolCall).isEmpty)
     }
 
     @Test
@@ -280,6 +280,6 @@ extension TerminalChatRenderCoordinatorTests {
         #expect(!text.contains("\u{1B}[2J"))
         #expect(!visibleRows.contains { $0.hasPrefix("target: ") })
         #expect(visibleRows.filter { !$0.hasPrefix("  ") }.allSatisfy { !$0.contains("\u{1B}") })
-        #expect(visibleRows.allSatisfy { TerminalChat.displayWidth($0) <= 100 })
+        #expect(visibleRows.allSatisfy { TerminalTextMetrics.displayWidth($0) <= 100 })
     }
 }

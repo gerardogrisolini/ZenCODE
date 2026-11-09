@@ -19,6 +19,10 @@ import ZenCODECore
 /// The window of `workspace` once the runtime is up. The session lives as
 /// long as the NSWindow (``ZenWindowLifetime``): hiding the content (a
 /// background tab, a minimized or ordered-out window) keeps it.
+///
+/// After a `--worktree` launch, closing the last workspace window opens the
+/// Worktree window (``ZenWorktreeClosureWindow``) to ask how to close the
+/// worktree before the app quits.
 struct ZenWindowRoot: View {
     let runtime: ZenAppRuntime
     let workspace: URL
@@ -26,6 +30,7 @@ struct ZenWindowRoot: View {
     @State private var lifetime = ZenWindowLifetime()
 
     @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let session = lifetime.session
@@ -40,6 +45,11 @@ struct ZenWindowRoot: View {
             }
             .onAppear {
                 lifetime.open(runtime: runtime, workspace: workspace)
+                lifetime.onWindowWillClose = Self.askWorktreeClosureIfLast(
+                    lifetime: lifetime,
+                    runtime: runtime,
+                    openWindow: openWindow
+                )
             }
             .onChange(of: session?.closeRequested ?? false) { _, requested in
                 guard requested else { return }
@@ -58,6 +68,25 @@ struct ZenWindowRoot: View {
             ProgressView()
                 .controlSize(.large)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// What the window of `lifetime` runs when it closes: when it was the
+    /// last workspace window and the worktree of a `--worktree` launch is
+    /// still to close, the operator is asked and the Worktree window opens.
+    /// It opens from here: the view of the closing window is being torn
+    /// down, so its own `.onChange` may never run.
+    private static func askWorktreeClosureIfLast(
+        lifetime: ZenWindowLifetime,
+        runtime: ZenAppRuntime,
+        openWindow: OpenWindowAction
+    ) -> @MainActor () -> Void {
+        // Weak: the lifetime keeps this closure.
+        { [weak lifetime] in
+            guard let closure = runtime.worktreeClosure, closure.isPending,
+                  !runtime.hasOpenWindow(otherThan: lifetime?.session) else { return }
+            closure.request()
+            openWindow(id: ZenWorktreeClosureWindow.id)
         }
     }
 

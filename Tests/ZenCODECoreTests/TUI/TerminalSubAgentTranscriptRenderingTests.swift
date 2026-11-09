@@ -49,6 +49,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
         pending: Bool = true,
         currentActivity: String? = nil,
         currentActivityKind: DirectSubAgentRuntime.ActivityKind? = nil,
+        currentThought: String? = nil,
         currentToolName: String? = nil,
         currentToolIsRunning: Bool = false,
         latestOutput: String? = nil,
@@ -66,6 +67,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
             configuredModelID: "openai:gpt-test",
             currentActivity: currentActivity,
             currentActivityKind: currentActivityKind,
+            currentThought: currentThought,
             currentToolName: currentToolName,
             currentToolIsRunning: currentToolIsRunning,
             latestMetrics: DirectAgentGenerationMetrics(
@@ -372,12 +374,12 @@ struct TerminalSubAgentTranscriptRenderingTests {
     }
 
     @Test(arguments: [false, true])
-    func liveActivityShowsTheReasoningParagraphAsAThinkingBlock(standardErrorIsTerminal: Bool) {
+    func liveActivityShowsTheReasoningAsAThinkingBlock(standardErrorIsTerminal: Bool) {
         let paragraph = "Weighing the options.\n\nThe second paragraph also wraps around the width."
 
         for width in [30, 80] {
             let rows = liveActivity(
-                snapshot(currentActivity: paragraph, currentActivityKind: .thinking),
+                snapshot(currentActivityKind: .thinking, currentThought: paragraph),
                 width: width,
                 standardErrorIsTerminal: standardErrorIsTerminal
             )
@@ -402,6 +404,47 @@ struct TerminalSubAgentTranscriptRenderingTests {
         }
     }
 
+    /// The live activity shows the whole reasoning of the phase
+    /// (`currentThought`), not only the paragraph in progress: the earlier
+    /// paragraphs stay, also once the paragraph in progress ended. Without
+    /// `currentThought` the paragraph in progress alone is not shown: the
+    /// placeholder is.
+    @Test(arguments: [false, true])
+    func liveActivityShowsTheWholeReasoningOfThePhase(standardErrorIsTerminal: Bool) {
+        let thought = "Weighing the options.\n\nReading the parser next."
+
+        for paragraph in ["Reading the parser next.", nil] {
+            let rows = liveActivity(
+                snapshot(
+                    currentActivity: paragraph,
+                    currentActivityKind: .thinking,
+                    currentThought: thought
+                ),
+                width: 80,
+                standardErrorIsTerminal: standardErrorIsTerminal
+            )
+
+            #expect(rows == TerminalChat.renderSubAgentTranscriptRows(
+                [.thought(thought)],
+                width: 80,
+                standardErrorIsTerminal: standardErrorIsTerminal
+            ))
+            let plainRows = rows.map(TerminalANSIText.stripANSI)
+            #expect(plainRows.contains { $0.contains("Weighing the options.") })
+            #expect(plainRows.contains { $0.contains("Reading the parser next.") })
+        }
+
+        let withoutThought = liveActivity(
+            snapshot(
+                currentActivity: "Reading the parser next.",
+                currentActivityKind: .thinking
+            ),
+            width: 80,
+            standardErrorIsTerminal: standardErrorIsTerminal
+        )
+        #expect(withoutThought == [thinkingTitle(standardErrorIsTerminal: standardErrorIsTerminal)])
+    }
+
     @Test(arguments: [false, true])
     func liveActivityHasNoRowsWhileAToolRuns(standardErrorIsTerminal: Bool) {
         // As the runtime leaves the agent at a call's start: the message that
@@ -409,8 +452,8 @@ struct TerminalSubAgentTranscriptRenderingTests {
         let agents = [
             snapshot(currentToolName: "local.readFile", currentToolIsRunning: true),
             snapshot(
-                currentActivity: "Weighing the options.",
                 currentActivityKind: .thinking,
+                currentThought: "Weighing the options.",
                 currentToolName: "local.readFile",
                 currentToolIsRunning: true
             ),
@@ -483,8 +526,8 @@ struct TerminalSubAgentTranscriptRenderingTests {
             snapshot(
                 status: .standby,
                 pending: false,
-                currentActivity: "Weighing the options.",
-                currentActivityKind: .thinking
+                currentActivityKind: .thinking,
+                currentThought: "Weighing the options."
             ),
             snapshot(
                 status: .failed,
@@ -512,8 +555,8 @@ struct TerminalSubAgentTranscriptRenderingTests {
             ),
             snapshot(currentActivityKind: .thinking),
             snapshot(
-                currentActivity: "Weighing the options and the very long reasoning that wraps.\n\nSecond paragraph.",
-                currentActivityKind: .thinking
+                currentActivityKind: .thinking,
+                currentThought: "Weighing the options and the very long reasoning that wraps.\n\nSecond paragraph."
             )
         ]
 

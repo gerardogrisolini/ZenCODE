@@ -98,7 +98,7 @@ public enum ZenGitStatus {
     }
 
     /// The file-mutation tools after which the terminal refreshes the
-    /// summary (`TerminalChat.isFileMutationTool`).
+    /// summary (`ToolMutationClassifier.isFileMutationTool`).
     public static func isFileMutationTool(_ toolName: String) -> Bool {
         switch toolName.trimmingCharacters(in: .whitespacesAndNewlines) {
         case "local.writeFile", "local.append", "local.replace",

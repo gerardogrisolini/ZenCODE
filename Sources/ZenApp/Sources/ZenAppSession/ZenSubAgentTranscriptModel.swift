@@ -366,6 +366,9 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
         let modelID: String?
         let activityKind: DirectSubAgentRuntime.ActivityKind?
         let activity: String?
+        /// The reasoning of the thinking phase grows after the paragraph in
+        /// progress ended too: the live activity shows it.
+        let thought: String?
         let toolName: String?
         let toolTarget: String?
         /// The end of the call flips it while its name and target stay: the
@@ -393,6 +396,7 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
             modelID = snapshot.modelID
             activityKind = snapshot.currentActivityKind
             activity = snapshot.currentActivity
+            thought = snapshot.currentThought
             toolName = snapshot.currentToolName
             toolTarget = snapshot.currentToolTarget
             toolIsRunning = snapshot.currentToolIsRunning

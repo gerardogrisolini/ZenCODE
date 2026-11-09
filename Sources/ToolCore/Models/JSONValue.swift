@@ -249,16 +249,6 @@ public nonisolated enum JSONValue: Codable, Hashable, Sendable {
         }
     }
 
-    public func encodedData() throws -> Data {
-        try JSONEncoder().encode(self)
-    }
-
-    /// Compatibility wrapper. New callers should use `encodedData()` to retain
-    /// encoding failures; this method never substitutes a different JSON value.
-    public func encoded() -> Data {
-        (try? encodedData()) ?? Data()
-    }
-
     public var objectValue: [String: JSONValue]? {
         guard case let .object(value) = self else {
             return nil

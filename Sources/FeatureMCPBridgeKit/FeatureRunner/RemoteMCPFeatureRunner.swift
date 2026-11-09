@@ -299,20 +299,8 @@ public enum RemoteMCPFeatureRunner {
         return arguments
     }
 
-    public static func emitJSON<T: Encodable>(_ value: T) throws {
-        try FeatureProcessProtocol.emitJSON(value)
-    }
-
     public static func terminate(code: Int32) -> Never {
         FeatureProcessProtocol.terminate(code: code)
-    }
-}
-
-public struct ListToolsResponse: Encodable {
-    public let tools: [FeatureToolDescriptor]
-
-    public init(tools: [FeatureToolDescriptor]) {
-        self.tools = tools
     }
 }
 
@@ -347,23 +335,6 @@ public struct InvocationResponse: Encodable {
         try container.encodeIfPresent(error, forKey: .error)
         if !fileChanges.isEmpty {
             try container.encode(fileChanges, forKey: .fileChanges)
-        }
-    }
-}
-
-public enum ParsedFeatureCommand {
-    case listTools
-    case invoke(String)
-    case usage
-
-    public init(arguments: [String]) {
-        switch FeatureProcessProtocol.parse(arguments: arguments) {
-        case .listTools:
-            self = .listTools
-        case let .invoke(toolName, _):
-            self = .invoke(toolName)
-        case .usage:
-            self = .usage
         }
     }
 }

@@ -60,6 +60,9 @@ public final class ZenAppRuntime {
     /// that voice mode moved to; `nil` before any did, and once it closed
     /// with no other active window left.
     public private(set) var activeVoiceWindowID: UUID?
+    /// How the worktree of a `--worktree` launch is closed before the app
+    /// quits; `nil` without one. Its decision shuts this runtime down first.
+    public private(set) var worktreeClosure: ZenWorktreeClosure?
     /// The session's state, from its stream.
     private var voiceSessionState = VoiceModeSessionState.off
     /// The controller reads aloud, as it last reported.
@@ -93,7 +96,7 @@ public final class ZenAppRuntime {
     ///
     /// - Parameter arguments: The executable name, then the configuration
     ///   options (see ``ZenAppLaunchArguments``): `--agent`, `--model`,
-    ///   `--skills`, `--working-directory`.
+    ///   `--skills`, `--working-directory`, `--worktree`.
     /// - Returns: The runtime, ``ZenAppLaunchFailure/invalidArguments(_:)``
     ///   when an argument is wrong (an unknown agent, a missing or invalid
     ///   value), or ``ZenAppLaunchFailure/notConfigured(_:)`` when the
@@ -199,6 +202,13 @@ public final class ZenAppRuntime {
         self.shell = shell
         self.localExecAccessMode = accessMode
         self.voice = voice
+        if let worktree = configuration.worktree {
+            // Weak: the runtime owns the closure.
+            self.worktreeClosure = ZenWorktreeClosure(
+                worktree: worktree,
+                shutdown: { [weak self] in await self?.shutdown() }
+            )
+        }
         observeShell()
         observeVoice(states: voiceStates)
     }
@@ -229,6 +239,13 @@ public final class ZenAppRuntime {
         // A toggle that finished while the window was opening.
         window.adoptLocalExecAccessMode(localExecAccessMode)
         return window
+    }
+
+    /// Whether a window other than `session` is open: one whose session
+    /// opened and has not started to close. A window whose session is still
+    /// opening, or never opened, is not counted.
+    package func hasOpenWindow(otherThan session: ZenWindowSession?) -> Bool {
+        windows.contains { $0 !== session && !$0.isClosed }
     }
 
     /// Forgets `window`. When voice mode followed it, it moves to the most

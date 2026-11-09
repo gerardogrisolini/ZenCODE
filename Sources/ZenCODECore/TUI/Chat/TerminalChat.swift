@@ -569,6 +569,9 @@ public final class TerminalChat {
             // controller stays readable through `chatSession`.
             await sessionHost.closeSession(in: terminalSlotID, runtimeSession: .close)
             await stopTerminalServices()
+            // Only once the chat ended normally: a failed chat keeps its
+            // worktree untouched.
+            await offerWorktreeClosureIfNeeded()
         } catch {
             await stopTerminalServices()
             throw error

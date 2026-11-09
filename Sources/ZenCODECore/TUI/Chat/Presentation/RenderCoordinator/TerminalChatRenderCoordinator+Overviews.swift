@@ -374,7 +374,7 @@ extension TerminalChatRenderCoordinator {
         guard rows.count > 1, rows.removeLast().isEmpty else {
             return nil
         }
-        guard rows.allSatisfy({ TerminalChat.displayWidth($0) < columnWidth }) else {
+        guard rows.allSatisfy({ TerminalTextMetrics.displayWidth($0) < columnWidth }) else {
             return nil
         }
         return rows.count

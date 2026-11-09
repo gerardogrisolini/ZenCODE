@@ -29,7 +29,7 @@ extension TerminalChatRenderCoordinatorTests {
         let inset = stdinIsTerminal ? TerminalChatTextFormatting.chatLineInsetPrefix : ""
         let rule = String(
             repeating: "─",
-            count: terminalColumns - TerminalChat.displayWidth(inset) - 1
+            count: terminalColumns - TerminalTextMetrics.displayWidth(inset) - 1
         )
         let renderer = makeRenderer(
             stdinIsTerminal: stdinIsTerminal,
@@ -54,7 +54,7 @@ extension TerminalChatRenderCoordinatorTests {
         #expect(!TerminalANSIText.stripANSI(firstTurn).contains("─"))
         #expect(ruleRows == ["\(inset)\(rule)", "\(inset)\(rule)"])
         #expect(ruleRows.allSatisfy {
-            TerminalChat.displayWidth($0) == terminalColumns - 1
+            TerminalTextMetrics.displayWidth($0) == terminalColumns - 1
         })
         #expect(stderr.components(separatedBy: "\u{1B}[90m\(rule)\u{1B}[0m").count - 1 == 2)
         #expect(stderr.components(separatedBy: "> first turn").count - 1 == 1)
@@ -82,7 +82,7 @@ extension TerminalChatRenderCoordinatorTests {
             let trimmed = row.trimmingCharacters(in: .whitespaces)
             return !trimmed.isEmpty && trimmed.allSatisfy { $0 == "─" }
         }
-        let ruleWidth = max(1, terminalColumns - TerminalChat.displayWidth(inset) - 1)
+        let ruleWidth = max(1, terminalColumns - TerminalTextMetrics.displayWidth(inset) - 1)
 
         #expect(ruleRows == [inset + String(repeating: "─", count: ruleWidth)])
     }

@@ -83,7 +83,7 @@ struct TaskCommandTests {
             ),
         ]
 
-        let rendered = TerminalChat.taskGraphMarkdown(
+        let rendered = TerminalTaskGraphLayout.markdown(
             graph: graph,
             tasks: views,
             ansiEnabled: true
@@ -110,7 +110,7 @@ struct TaskCommandTests {
         #expect(rendered.contains("○ `task-2`"))
         #expect(rendered.contains("waits: `task-1`"))
 
-        let plainText = TerminalChat.taskGraphMarkdown(
+        let plainText = TerminalTaskGraphLayout.markdown(
             graph: graph,
             tasks: views,
             ansiEnabled: false

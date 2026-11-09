@@ -52,16 +52,17 @@ not configured, `zen --ui` stops with the not-configured message and exit
 status 1, without starting setup: run `zen --setup` first.
 
 `zen --ui` accepts only the options that the app reads, and forwards them to
-it: `--agent NAME`, `--model MODEL_ID`, `--skills LIST`, and
-`--working-directory PATH` (see [zen.md](zen.md#command-line-options)). For
-example, `zen --ui --agent Reviewer --working-directory ~/Projects/site` opens
-the first window on `~/Projects/site` with the Reviewer agent. An unknown
-agent is reported in the terminal, and the options of the other modes (`-p`,
-`-f`, `--jsonl`, `--acp`, `--tui`, `--telegram`, and the limits of a turn) are
-refused. The app reads
-the same four options from its own command line and ignores the others, such
-as the ones AppKit and Xcode add; a wrong one (an unknown agent, a missing
-value) is shown in the window, without the setup hint.
+it: `--agent NAME`, `--model MODEL_ID`, `--skills LIST`,
+`--working-directory PATH`, and `--worktree NAME` (see
+[zen.md](zen.md#command-line-options)). For example, `zen --ui --agent Reviewer
+--working-directory ~/Projects/site` opens the first window on
+`~/Projects/site` with the Reviewer agent, and `zen --ui --worktree fix-login`
+opens it on a Git worktree (see [Worktrees](#worktrees)). An unknown agent is
+reported in the terminal, and the options of the other modes (`-p`, `-f`,
+`--jsonl`, `--acp`, `--tui`, `--telegram`, and the limits of a turn) are
+refused. The app reads the same five options from its own command line and
+ignores the others, such as the ones AppKit and Xcode add; a wrong one (an
+unknown agent, a missing value) is shown in the window, without the setup hint.
 
 For development, run the package with `swift run`. It is outside the root
 package: root commands such as `swift build` and `swift test` do not build it.
@@ -95,7 +96,42 @@ session title and the workspace path. **File > Open Folder…** (⌘O) opens a
 window on another folder, or brings forward the window already open on it.
 `/exit` closes a window (it is refused while a turn runs, as in the terminal),
 closing the last window quits the app, and quitting waits for the sessions to
-shut down, for about 5 seconds at most.
+shut down, for about 5 seconds at most. After a `--worktree` launch, closing the
+last window or quitting first asks what to do with the worktree (see
+[Worktrees](#worktrees)).
+
+### Worktrees
+
+`zen --ui --worktree NAME` opens the app on the Git worktree `NAME` of the
+repository of the current folder (or of `--working-directory`). `zen` creates or
+reuses the worktree, with the branch `NAME` and in the support directory, as the
+terminal does (see [Git Worktrees](zen.md#git-worktrees)), then starts the app
+with `--worktree NAME` and `--working-directory <worktree>`, so the line
+`Started the ZenCODE app in <workspace>.` shows the worktree path. The app does
+not create worktrees: it expects `--working-directory` to be the worktree, as
+`zen --ui` passes it. The project memory, saved sessions, task graphs, and
+project agents are those of the repository. The sessions that work in the
+worktree get the `Git worktree:` section of the system prompt; a window opened
+on another folder does not.
+
+When the last workspace window closes, or on a quit (⌘Q), the app opens a
+**Worktree** window instead of quitting, with the worktree name and path:
+
+- **Keep worktree** (the default) leaves the worktree and its branch; resume it
+  with `zen --worktree NAME`.
+- **Merge into `<branch>` and remove** commits uncommitted changes as
+  `zen: worktree NAME`, merges the branch into the branch checked out in the
+  main working tree, then removes the worktree and deletes the branch.
+- **Remove without merging** asks for confirmation, then removes the worktree
+  and deletes its branch; its changes are lost.
+
+Closing the Worktree window without choosing keeps the worktree. The sessions
+shut down first, then the chosen action runs, and the app quits once it
+succeeds. If the repository cannot be read, only **Keep worktree** is available.
+If the action fails (for example a merge conflict, which is aborted and leaves
+the worktree in place), the window shows Git's message, as the terminal prints
+it, and a **Quit ZenCODE** button. The Worktree window is not restored at the
+next launch and is not listed in the Window menu.
 
 ## Conversation
 
@@ -181,9 +217,10 @@ time (live while it works, else its duration), and its latest error. Under it
 is the agent's conversation, with the rows of the chat: the brief and the
 messages it received, as prompts, its reasoning, its text, and its tool calls
 with their results. While the agent works, the last row is its reasoning in
-progress, else `🤔 thinking…`, so it is never empty; only a running tool
-call, which has its own row, replaces it. The tab follows the bottom as the
-chat does.
+progress, the whole reasoning of the current phase growing paragraph after
+paragraph until the conversation has it, else `🤔 thinking…`, so it is never
+empty; only a running tool call, which has its own row, replaces it. The tab
+follows the bottom as the chat does.
 
 The selected tab updates live, at most twice a second, and at once when the
 agent starts, ends, or begins a new run. A tab that is not selected keeps the

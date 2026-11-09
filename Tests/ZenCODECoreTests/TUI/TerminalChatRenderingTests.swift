@@ -1412,8 +1412,8 @@ struct TerminalChatRenderingTests {
 
     @Test
     func toolAndStatusWidthsUseTerminalCellWidth() {
-        #expect(TerminalChat.displayWidth("🛠️ Tool") == TerminalANSIText.visibleWidth("🛠️ Tool"))
-        #expect(TerminalChat.displayWidth("e\u{301}") == 1)
+        #expect(TerminalTextMetrics.displayWidth("🛠️ Tool") == TerminalANSIText.visibleWidth("🛠️ Tool"))
+        #expect(TerminalTextMetrics.displayWidth("e\u{301}") == 1)
         #expect(TerminalStatusBar.visibleCharacterCount("🛠️ Tool") == 7)
         #expect(TerminalStatusBar.visibleCharacterCount("你好") == 4)
     }
@@ -1855,13 +1855,13 @@ struct TerminalChatRenderingTests {
         )
 
         let first = try #require(
-            TerminalChat.subAgentMarkdownResponses([firstCompletion]).first
+            TerminalSubAgentOverviewLayout.markdownResponses([firstCompletion]).first
         )
         let closed = try #require(
-            TerminalChat.subAgentMarkdownResponses([closedAfterCompletion]).first
+            TerminalSubAgentOverviewLayout.markdownResponses([closedAfterCompletion]).first
         )
         let repeated = try #require(
-            TerminalChat.subAgentMarkdownResponses([repeatedContentInNewCompletion]).first
+            TerminalSubAgentOverviewLayout.markdownResponses([repeatedContentInNewCompletion]).first
         )
 
         #expect(first.markdown == "**Done**")

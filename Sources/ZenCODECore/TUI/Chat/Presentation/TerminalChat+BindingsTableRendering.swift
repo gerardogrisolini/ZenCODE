@@ -26,7 +26,7 @@ extension TerminalChat {
     nonisolated static func renderAgentModelBindingsTable(
         agents: [AgentProfile],
         selectedAgent: AgentProfile?,
-        columns: Int = terminalColumnCount(),
+        columns: Int = TerminalTextMetrics.terminalColumnCount(),
         colorsEnabled: Bool = AgentOutput.standardErrorIsTerminal
     ) -> String {
         guard !agents.isEmpty else {

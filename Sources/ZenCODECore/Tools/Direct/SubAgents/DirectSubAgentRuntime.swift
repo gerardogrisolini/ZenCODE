@@ -8,6 +8,11 @@ public typealias DirectSubAgentContextualBackendFactory = @Sendable (
 public typealias DirectSubAgentProfileResolver = @Sendable (
     DirectSubAgentRuntime.RequestedAgentPayload
 ) -> AgentProfile?
+/// Returns the coordinator's response-language section for a root session,
+/// `nil` while none is locked.
+public typealias DirectSubAgentResponseLanguageSectionProvider = @Sendable (
+    _ rootSessionID: String
+) async -> String?
 
 /// The error reported when a backend that supports sub-agents was initialized
 /// without a contextual backend factory.
@@ -77,7 +82,8 @@ public actor DirectSubAgentRuntime {
     /// start with "🤔 " is never mistaken for reasoning.
     public enum ActivityKind: String, Sendable, Equatable {
         /// Streamed reasoning. `currentActivity` holds the paragraph in
-        /// progress, or nil while no non-blank paragraph exists yet.
+        /// progress, or nil while no non-blank paragraph exists yet; the
+        /// reasoning of the whole phase is in `currentThought`.
         case thinking
         /// A completed assistant message projected into the overview.
         case content
@@ -148,7 +154,6 @@ public actor DirectSubAgentRuntime {
         public var executionRevision: UInt64 = 0
         public var completedExecutionRevision: UInt64 = 0
         public var latestOutputRevision: UInt64 = 0
-        public var accumulatedOutput: String?
         public var latestError: String?
         /// Stable configured model reference selected for this agent. Providers
         /// may later report a less-specific runtime model identifier, so the TUI
@@ -168,6 +173,16 @@ public actor DirectSubAgentRuntime {
         /// paragraphs are deliberately discarded: the overview owns one rewrite
         /// slot and presents only the latest paragraph.
         var pendingThoughtParagraph: String? = nil
+        /// The reasoning of the thinking phase in progress, every paragraph
+        /// included, for the live detail of the agent; see
+        /// ``AgentSnapshot/currentThought``.
+        public var currentThought: String? = nil
+        /// The reasoning of the thinking phase in progress as
+        /// ``DirectSubAgentRuntime/accumulatedThought(appending:to:)`` keeps
+        /// it: line endings normalized, and a trailing CR kept verbatim while
+        /// its LF may still arrive. `nil` once the phase ended (a message or a
+        /// tool call started), so the next reasoning starts a new phase.
+        var pendingThought: String? = nil
         var pendingContentBuffer: String? = nil
         public var currentToolName: String? = nil
         public var currentToolTarget: String? = nil
@@ -236,10 +251,26 @@ public actor DirectSubAgentRuntime {
             currentActivity = nil
             currentActivityKind = nil
             pendingThoughtParagraph = nil
+            currentThought = nil
+            pendingThought = nil
             pendingContentBuffer = nil
             currentToolName = nil
             currentToolTarget = nil
             currentToolIsRunning = false
+        }
+
+        /// Hands the work-loop ownership token back from inside the loop; see
+        /// ``DirectSubAgentRuntime/releaseWorkLoopOwnership(agentID:)``.
+        mutating func releaseWorkLoop() {
+            runTask = nil
+        }
+
+        /// Takes the work-loop ownership token from a loop that is cancelled
+        /// with the agent, and returns that loop so the caller can cancel it
+        /// once the record is written.
+        mutating func revokeWorkLoop() -> Task<Void, Never>? {
+            defer { runTask = nil }
+            return runTask
         }
 
         /// Drops heavyweight report prefixes before this inactive record enters
@@ -249,7 +280,6 @@ public actor DirectSubAgentRuntime {
         /// and a transcript read after the agent ended must not lose them.
         mutating func prepareForTerminalRetention() {
             latestOutput = DirectSubAgentRuntime.boundedTerminalOutput(latestOutput)
-            accumulatedOutput = DirectSubAgentRuntime.boundedTerminalOutput(accumulatedOutput)
             latestContentPreview = DirectSubAgentRuntime.boundedTerminalOutput(latestContentPreview)
             resetActivityState()
         }
@@ -289,6 +319,9 @@ public actor DirectSubAgentRuntime {
     /// never enters task/session persistence, and forwards only tool lifecycles.
     var subAgentToolEventHandler: DirectSubAgentToolEventHandler?
     var subAgentToolEventHandlerRevision: UInt64 = 0
+    /// Source of the coordinator's response-language section, read once per
+    /// `agent.create` batch. Transient: it never enters persistence.
+    var responseLanguageSectionProvider: DirectSubAgentResponseLanguageSectionProvider?
     private var agentStorage: [String: AgentRecord] = [:]
     private var snapshotObservers: [UUID: (String, AsyncStream<[AgentSnapshot]>.Continuation)] = [:]
 
@@ -318,6 +351,25 @@ public actor DirectSubAgentRuntime {
             }
         }
     }
+    /// Applies `body` to the record of `id` and writes it back: one registry
+    /// read and one registry write, so one snapshot broadcast. Returns nil
+    /// without writing when no such agent exists or `predicate` rejects its
+    /// record. Synchronous, so no suspension can separate the read from the
+    /// write and lose a concurrent update.
+    @discardableResult
+    func mutateAgent<T>(
+        _ id: String,
+        where predicate: (AgentRecord) -> Bool = { _ in true },
+        _ body: (inout AgentRecord) -> T
+    ) -> T? {
+        guard var agent = agents[id], predicate(agent) else {
+            return nil
+        }
+        let result = body(&agent)
+        agents[id] = agent
+        return result
+    }
+
     var latestOverviewBatchID: UUID?
     /// One graph-completion observer per root session. Started when the first
     /// task-bound agent enters standby; cancelled in `shutdown`/
@@ -464,6 +516,14 @@ public actor DirectSubAgentRuntime {
 
     public func installTaskOrchestrator(_ orchestrator: SessionTaskOrchestrator) {
         taskOrchestrator = orchestrator
+    }
+
+    /// Installs the source of the response-language section for future
+    /// delegated agents; agents already created keep their prompt.
+    public func updateResponseLanguageSectionProvider(
+        _ provider: DirectSubAgentResponseLanguageSectionProvider?
+    ) {
+        responseLanguageSectionProvider = provider
     }
 
     /// Stores the parent session's prompt-skill provider so that newly

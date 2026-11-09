@@ -19,7 +19,7 @@ extension TerminalChat {
         columnWidth: Int? = nil,
         codeLanguage: String? = nil
     ) -> [DetailedToolRow] {
-        let resolvedColumns = columnWidth ?? terminalColumnCount()
+        let resolvedColumns = columnWidth ?? TerminalTextMetrics.terminalColumnCount()
         let contentColumns = max(1, resolvedColumns - contentInsetWidth)
         let safeLineWidth = max(1, contentColumns - 1)
 
@@ -66,10 +66,10 @@ extension TerminalChat {
         codeLanguage: String?,
         row: (_ index: Int, _ fragment: String) -> DetailedToolRow
     ) -> [DetailedToolRow] {
-        guard displayWidth(plainText) > width else {
+        guard TerminalTextMetrics.displayWidth(plainText) > width else {
             return [unwrapped]
         }
-        let prefixWidth = displayWidth(prefix)
+        let prefixWidth = TerminalTextMetrics.displayWidth(prefix)
         guard prefixWidth < width else {
             return wrappedDetailedToolTextLines(plainText, width: width).map(DetailedToolRow.text)
         }
@@ -140,12 +140,12 @@ extension TerminalChat {
         width: Int,
         codeLanguage: String?
     ) -> [DetailedToolRow] {
-        guard displayWidth(cells.plainText) > width else {
+        guard TerminalTextMetrics.displayWidth(cells.plainText) > width else {
             return [.diff(cells)]
         }
 
-        let dividerWidth = displayWidth(DetailedToolDiffCells.divider)
-        let indentWidth = displayWidth(cells.indentation)
+        let dividerWidth = TerminalTextMetrics.displayWidth(DetailedToolDiffCells.divider)
+        let indentWidth = TerminalTextMetrics.displayWidth(cells.indentation)
         let columnWidth = (width - indentWidth - dividerWidth) / 2
         guard columnWidth > 0 else {
             // No room for two columns: degrade to stacked text rows rather
@@ -218,7 +218,7 @@ extension TerminalChat {
         width: Int,
         paddingStyle: String = ""
     ) -> String {
-        let padding = max(0, width - displayWidth(text))
+        let padding = max(0, width - TerminalTextMetrics.displayWidth(text))
         guard padding > 0 else {
             return text
         }

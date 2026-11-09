@@ -43,6 +43,9 @@ final class ZenWindowLifetime {
     private(set) var openFailure: String?
     /// The hosting window closed.
     @ObservationIgnored private(set) var isWindowClosed = false
+    /// Runs first when the hosting window closes, once, before the session
+    /// closes.
+    @ObservationIgnored var onWindowWillClose: (@MainActor () -> Void)?
 
     @ObservationIgnored private var openTask: Task<Void, Never>?
     @ObservationIgnored private weak var window: NSWindow?
@@ -115,11 +118,12 @@ final class ZenWindowLifetime {
         runtime.windowDidBecomeActive(session)
     }
 
-    /// The hosting window closes: the session closes, and one still opening
-    /// closes when it opens.
+    /// The hosting window closes: ``onWindowWillClose`` runs, then the
+    /// session closes, and one still opening closes when it opens.
     func windowWillClose() {
         guard !isWindowClosed else { return }
         isWindowClosed = true
+        onWindowWillClose?()
         stopObserving()
         closeSession()
     }

@@ -91,8 +91,6 @@ public nonisolated struct MCPServerConfiguration: Hashable, Sendable {
 }
 
 public nonisolated enum MCPClientError: LocalizedError, Sendable {
-    case missingContentLength
-    case invalidContentLength
     case malformedTransport(String)
     case invalidResponse
     case connectionClosed
@@ -105,10 +103,6 @@ public nonisolated enum MCPClientError: LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .missingContentLength:
-            return "Missing Content-Length header in MCP response."
-        case .invalidContentLength:
-            return "Invalid Content-Length value in MCP response."
         case let .malformedTransport(message):
             return "Malformed MCP transport: \(message)"
         case .invalidResponse:

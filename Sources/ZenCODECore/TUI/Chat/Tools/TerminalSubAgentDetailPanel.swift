@@ -159,7 +159,8 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
     /// Draws the framed panel as exactly `rows` lines, each `columns` visible
     /// columns wide (at least the minimal 5-column frame). One row draws only
     /// the top border, two rows draw both borders. When the body exceeds its
-    /// window the bottom border carries a 1-based `rows a–b/n` indicator.
+    /// window the bottom border carries a right-aligned 1-based `rows a–b/n`
+    /// indicator.
     func frameLines(rows: Int, columns: Int) -> [String] {
         guard rows > 0 else { return [] }
         let columns = max(Self.minimumColumns, columns)
@@ -182,7 +183,7 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
         let indicator: String? = window.total > layout.bodyCapacity && layout.bodyCapacity > 0
             ? " rows \(window.start + 1)–\(window.start + window.rows.count)/\(window.total) "
             : nil
-        lines.append(Self.borderLine(left: "╰", right: "╯", label: indicator, columns: columns))
+        lines.append(Self.borderLine(left: "╰", right: "╯", label: indicator, trailing: true, columns: columns))
         return lines
     }
 
@@ -252,15 +253,23 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
     }
 
     /// A horizontal border `columns` wide, embedding `label` after the first
-    /// rule segment when it fits with at least one trailing `─`.
-    private static func borderLine(left: String, right: String, label: String?, columns: Int) -> String {
+    /// rule segment when it fits with at least one trailing `─`. With
+    /// `trailing` the label is right-aligned instead, before the last segment.
+    private static func borderLine(
+        left: String,
+        right: String,
+        label: String?,
+        trailing: Bool = false,
+        columns: Int
+    ) -> String {
         let border = TerminalStyle.Chrome.border, reset = TerminalStyle.reset
         let inner = columns - 2
         var rule = String(repeating: "─", count: inner)
         if let label {
             let fill = inner - 1 - TerminalANSIText.visibleWidth(label)
             if fill >= 1 {
-                rule = "─" + label + String(repeating: "─", count: fill)
+                let filler = String(repeating: "─", count: fill)
+                rule = trailing ? filler + label + "─" : "─" + label + filler
             }
         }
         return border + left + rule + right + reset

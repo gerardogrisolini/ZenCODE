@@ -253,9 +253,7 @@ extension TelegramChannel {
         resetRootResponseBlock()
         resetThoughtBlock()
         if adoptingStreamingBlock {
-            rootResponseBlockHasContent = true
-            rootResponseBlockIsSuppressed = true
-            thoughtBlockIsSuppressed = true
+            turnBlocks.adoptStreamingBlocks()
         } else {
             appendThoughtDelta(liveThought)
         }
@@ -495,8 +493,7 @@ extension TelegramChannel {
         guard !delta.isEmpty else {
             return
         }
-        rootResponseBlockHasContent = true
-        guard !rootResponseBlockIsSuppressed,
+        guard turnBlocks.recordRootResponseContent(),
               let reporter = activeProgressReporter else {
             return
         }
@@ -511,9 +508,7 @@ extension TelegramChannel {
     /// and started a tool, or reasoned before it wrote again. A suppressed
     /// block ends here unsent; the next one is sent again.
     func publishRootResponseAtToolBoundary() async {
-        let wasSuppressed = rootResponseBlockIsSuppressed
-        rootResponseBlockHasContent = false
-        rootResponseBlockIsSuppressed = false
+        let wasSuppressed = turnBlocks.endRootResponseBlock()
         guard let reporter = activeProgressReporter else {
             return
         }
@@ -525,7 +520,7 @@ extension TelegramChannel {
             return
         }
         if await reporter.publishPendingAgentResponseAtBoundary() {
-            didPublishIntermediateRootResponse = true
+            turnBlocks.didPublishIntermediateRootResponse = true
         }
     }
 
@@ -536,7 +531,7 @@ extension TelegramChannel {
     /// included. Once one was published, the trailing block aggregated since
     /// the last boundary, the final response itself, is sent instead.
     func finalResponseText(fallback: String) async -> String {
-        guard didPublishIntermediateRootResponse,
+        guard turnBlocks.didPublishIntermediateRootResponse,
               let reporter = activeProgressReporter else {
             return fallback
         }
@@ -547,17 +542,12 @@ extension TelegramChannel {
     /// Marks the streaming root response as unsendable, when one is in
     /// flight: a reporter is retired or replaced in the middle of it.
     func suppressRootResponseBlockIfStreaming() {
-        guard rootResponseBlockHasContent else {
-            return
-        }
-        rootResponseBlockIsSuppressed = true
+        turnBlocks.suppressRootResponseIfStreaming()
     }
 
     /// Resets the root-response state at a turn boundary.
     func resetRootResponseBlock() {
-        rootResponseBlockHasContent = false
-        rootResponseBlockIsSuppressed = false
-        didPublishIntermediateRootResponse = false
+        turnBlocks.resetRootResponse()
     }
 
     // MARK: - Reasoning
@@ -568,11 +558,7 @@ extension TelegramChannel {
     /// buffer is bounded just above the message limit, so a long block cannot
     /// grow unbounded and its cut is still seen.
     func appendThoughtDelta(_ delta: String) {
-        guard !delta.isEmpty, !thoughtBlockIsSuppressed else { return }
-        let remainingCount = TerminalTelegramTurnProgressReporter.maximumMessageLength + 1
-            - pendingThought.count
-        guard remainingCount > 0 else { return }
-        pendingThought.append(contentsOf: delta.prefix(remainingCount))
+        turnBlocks.appendThought(delta)
     }
 
     /// Closes the reasoning block streaming now: assistant content, a tool
@@ -581,8 +567,7 @@ extension TelegramChannel {
     /// closed it, when a reporter sends the turn and the block is not blank;
     /// a suppressed block ends here and the next one is sent again.
     func closeThoughtBlock() async {
-        let thought = pendingThought
-        resetThoughtBlock()
+        let thought = turnBlocks.takeThought()
         guard thought.nilIfBlank != nil, let reporter = activeProgressReporter else { return }
         await reporter.enqueue(.thought(thought))
     }
@@ -597,7 +582,7 @@ extension TelegramChannel {
     /// block; the end of the turn closes it without a boundary, and the
     /// response before it stays the final response.
     func closeThoughtBlockBeforeAssistantContent() async {
-        if pendingThought.nilIfBlank != nil, activeProgressReporter != nil {
+        if turnBlocks.pendingThought.nilIfBlank != nil, activeProgressReporter != nil {
             await publishRootResponseAtToolBoundary()
         }
         await closeThoughtBlock()
@@ -605,8 +590,7 @@ extension TelegramChannel {
 
     /// Forgets the reasoning block at a turn boundary.
     func resetThoughtBlock() {
-        pendingThought = ""
-        thoughtBlockIsSuppressed = false
+        turnBlocks.resetThought()
     }
 
     // MARK: - Tool activity
@@ -614,10 +598,10 @@ extension TelegramChannel {
     /// Shows a root tool call that started in the turn's activity message:
     /// its title (``ToolCallPresentation/toolTitle(for:)``), never its
     /// arguments. A call the terminal does not show in its tool blocks
-    /// (``TerminalChat/shouldSuppressToolRendering(for:)``) is not shown
+    /// (``ToolRenderingPolicy/shouldSuppressToolRendering(for:)``) is not shown
     /// either; nothing is shown without a reporter.
     func presentToolCallActivityStarted(_ toolCall: DirectAgentToolCall) async {
-        guard !TerminalChat.shouldSuppressToolRendering(for: toolCall.name),
+        guard !ToolRenderingPolicy.shouldSuppressToolRendering(for: toolCall.name),
               let reporter = activeProgressReporter else { return }
         await reporter.toolCallDidStart(
             id: toolCall.id, title: ToolCallPresentation.toolTitle(for: toolCall)
@@ -626,18 +610,18 @@ extension TelegramChannel {
 
     /// Writes the outcome of a root tool call in its activity row: ✅, or ❌
     /// when it failed as the terminal judges it
-    /// (``TerminalChat/toolResultIsFailure(for:result:)``), with the time the
+    /// (``ToolRenderingPolicy/toolResultIsFailure(for:result:)``), with the time the
     /// tool executor measured for it (``DirectAgentToolResult/elapsed``),
     /// when the result has one. Its result is never sent.
     func presentToolCallActivityCompleted(
         _ toolCall: DirectAgentToolCall,
         result: DirectAgentToolResult
     ) async {
-        guard !TerminalChat.shouldSuppressToolRendering(for: toolCall.name),
+        guard !ToolRenderingPolicy.shouldSuppressToolRendering(for: toolCall.name),
               let reporter = activeProgressReporter else { return }
         await reporter.toolCallDidComplete(
             id: toolCall.id,
-            failed: TerminalChat.toolResultIsFailure(for: toolCall, result: result),
+            failed: ToolRenderingPolicy.toolResultIsFailure(for: toolCall, result: result),
             elapsed: result.elapsed
         )
     }

@@ -106,13 +106,19 @@ public enum AgentSessionComposition {
 
     /// Produces the stable standalone instruction prefix independently from
     /// context that can change while the session is alive.
+    ///
+    /// - Parameter worktreeSection: The Git worktree section of a session
+    ///   whose `cwd` is a `--worktree` worktree
+    ///   (``SystemPromptBuilder/worktreeSection(name:path:)``), placed right
+    ///   after the working-directory section; `nil` otherwise.
     public static func standardPromptSections(
         cwd: String,
         allowedToolNames: Set<String>?,
         selectedAgent: AgentProfile?,
         locksModelToSession: Bool = false,
         responseLanguageSection: String? = nil,
-        launchFolderProjects: LaunchFolderProjects? = nil
+        launchFolderProjects: LaunchFolderProjects? = nil,
+        worktreeSection: String? = nil
     ) -> SystemPromptSections {
         let memoryToolEnabled = memoryToolEnabled(allowedToolNames)
         return AgentStandaloneSystemPrompt.promptSections(
@@ -126,7 +132,8 @@ public enum AgentSessionComposition {
             selectedAgentRole: selectedAgent?.role,
             launchFolderProjects: launchFolderProjects,
             selectedSkillSection: SystemPromptBuilder.staticSkillSection,
-            responseLanguageSection: responseLanguageSection
+            responseLanguageSection: responseLanguageSection,
+            worktreeSection: worktreeSection
         )
     }
 
@@ -240,6 +247,7 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
     public var appMode: Bool
     public var thinkingSelection: AgentThinkingSelection?
     public var preserveThinking: Bool
+    public var responseLanguageSection: String?
 
     public init(
         sessionID: String,
@@ -258,7 +266,8 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
         maxOutputTokens: Int? = nil,
         appMode: Bool = false,
         thinkingSelection: AgentThinkingSelection? = nil,
-        preserveThinking: Bool = false
+        preserveThinking: Bool = false,
+        responseLanguageSection: String? = nil
     ) {
         self.sessionID = sessionID
         self.modelID = modelID
@@ -277,6 +286,7 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
         self.appMode = appMode
         self.thinkingSelection = thinkingSelection
         self.preserveThinking = preserveThinking
+        self.responseLanguageSection = responseLanguageSection
     }
 
     /// Builds the session identity. Trimming, clamping, and allowlist
@@ -300,7 +310,8 @@ public struct AgentCoreSessionConfigurationBuilder: Sendable {
             maxOutputTokens: maxOutputTokens,
             appMode: appMode,
             thinkingSelection: thinkingSelection,
-            preserveThinking: preserveThinking
+            preserveThinking: preserveThinking,
+            responseLanguageSection: responseLanguageSection
         )
     }
 }

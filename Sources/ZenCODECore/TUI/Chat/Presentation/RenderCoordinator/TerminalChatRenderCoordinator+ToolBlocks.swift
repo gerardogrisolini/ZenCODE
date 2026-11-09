@@ -17,7 +17,7 @@ extension TerminalChatRenderCoordinator {
         _ toolCall: DirectAgentToolCall,
         maximumInPlaceRows: Int? = nil
     ) {
-        guard !TerminalChat.shouldSuppressToolRendering(for: toolCall.name) else {
+        guard !ToolRenderingPolicy.shouldSuppressToolRendering(for: toolCall.name) else {
             return
         }
         let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
@@ -52,7 +52,7 @@ extension TerminalChatRenderCoordinator {
         result: DirectAgentToolResult,
         maximumInPlaceRows: Int? = nil
     ) {
-        guard !TerminalChat.shouldSuppressToolRendering(for: toolCall.name) else {
+        guard !ToolRenderingPolicy.shouldSuppressToolRendering(for: toolCall.name) else {
             return
         }
         let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
@@ -89,7 +89,7 @@ extension TerminalChatRenderCoordinator {
     /// standalone transcript block. The next overview publication lays these
     /// calls out with the canonical tool rows inside its single rewrite slot.
     func recordSubAgentToolEvent(_ event: DirectSubAgentToolEvent) {
-        guard !TerminalChat.shouldSuppressToolRendering(for: event.toolCall.name) else {
+        guard !ToolRenderingPolicy.shouldSuppressToolRendering(for: event.toolCall.name) else {
             return
         }
         let lifecycle: ToolBlockLifecycle
@@ -197,7 +197,7 @@ extension TerminalChatRenderCoordinator {
         let columnWidth = lifecycle.isCompletion
             ? freshColumnWidthProvider()
             : columnWidthProvider()
-        let contentInsetWidth = TerminalChat.displayWidth(lineInset)
+        let contentInsetWidth = TerminalTextMetrics.displayWidth(lineInset)
         let renderRows = toolBlockRows(
             for: toolCall,
             lifecycle: lifecycle,
@@ -209,7 +209,7 @@ extension TerminalChatRenderCoordinator {
             pendingOwnership = nil
         } else {
             pendingOwnership = (
-                rows: TerminalChat.renderedTerminalRowCount(
+                rows: TerminalTextMetrics.renderedTerminalRowCount(
                     for: renderRows.allRows.map(\.plainText),
                     contentInsetWidth: contentInsetWidth,
                     columnWidth: columnWidth
@@ -350,7 +350,7 @@ extension TerminalChatRenderCoordinator {
             writeToolBlock(
                 renderRows.detailRows,
                 contentWidth: renderRows.detailContentWidth,
-                codeLanguage: TerminalChat.codeLanguageHint(for: toolCall)
+                codeLanguage: ToolLanguageHint.hint(for: toolCall)
             )
             if lifecycle.isCompletion { writeChat("\n", to: .standardError) }
         }

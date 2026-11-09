@@ -70,14 +70,32 @@ extension TerminalChat {
 
         let commands = "Commands: \(visibleCommandNamesForCurrentAgent().joined(separator: ", "))"
 
+        lines.append(contentsOf: Self.startupWorkspaceLines(
+            workingDirectory: configuration.workingDirectory,
+            worktree: configuration.worktree
+        ))
         lines.append(contentsOf: [
-            "Working directory: \(configuration.workingDirectory.path)",
             "",
             commands
         ])
 
         let startupBox = Self.renderStartupBox(lines: lines)
         await renderCoordinator.writeStartupSummary(startupBox + "\n")
+    }
+
+    /// The workspace lines of the startup summary: the worktree of a
+    /// `--worktree` launch (whose branch has its name), then the working
+    /// directory.
+    nonisolated static func startupWorkspaceLines(
+        workingDirectory: URL,
+        worktree: AgentWorktree?
+    ) -> [String] {
+        var lines: [String] = []
+        if let worktree {
+            lines.append("Worktree: \(worktree.name) (branch \(worktree.name))")
+        }
+        lines.append("Working directory: \(workingDirectory.path)")
+        return lines
     }
 
     public func toolCompletionSummary(
@@ -146,7 +164,7 @@ extension TerminalChat {
     }
 
     public nonisolated static func renderStartupBox(lines: [String]) -> String {
-        let columns = terminalColumnCount()
+        let columns = TerminalTextMetrics.terminalColumnCount()
         let horizontalInset = terminalBoxHorizontalInset(columns: columns)
         let contentWidth = max(20, columns - horizontalInset * 2)
                 let linePrefix = String(repeating: " ", count: horizontalInset)
@@ -217,12 +235,10 @@ extension TerminalChat {
         return trimmedValue.isEmpty ? nil : trimmedValue
     }
 
+    /// Width of the terminal on the standard error (see
+    /// ``TerminalTextMetrics/terminalColumnCount(forceRefresh:)``).
     public nonisolated static func terminalColumnCount(forceRefresh: Bool = false) -> Int {
-        TerminalWidth.current(
-            descriptors: [AgentOutput.standardError.fileDescriptor],
-            fallback: 100,
-            forceRefresh: forceRefresh
-        )
+        TerminalTextMetrics.terminalColumnCount(forceRefresh: forceRefresh)
     }
 
     public nonisolated static func terminalBoxHorizontalInset(columns _: Int? = nil) -> Int {

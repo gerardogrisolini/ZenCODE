@@ -261,6 +261,12 @@ public actor DirectToolExecutor {
         await subAgentRuntime.updateSubAgentToolEventHandler(handler)
     }
 
+    public func updateSubAgentResponseLanguageSectionProvider(
+        _ provider: DirectSubAgentResponseLanguageSectionProvider?
+    ) async {
+        await subAgentRuntime.updateResponseLanguageSectionProvider(provider)
+    }
+
     public func updateToolProviders(
         _ providers: [AgentToolProvider],
         sessionID: String? = nil
@@ -744,13 +750,7 @@ public actor DirectToolExecutor {
             return false
         }
 
-        if allowedToolNames.contains(toolName) {
-            return true
-        }
-
-        if allowedToolNames.contains(where: { allowedToolName in
-            allowedToolName.hasSuffix(".") && toolName.hasPrefix(allowedToolName)
-        }) {
+        if ToolAllowlist.matches(toolName, in: allowedToolNames) {
             return true
         }
 

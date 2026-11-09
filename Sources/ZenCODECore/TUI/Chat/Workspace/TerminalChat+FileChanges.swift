@@ -73,7 +73,7 @@ extension TerminalChat {
         let markdown = Self.renderFileArtifacts(
             turns,
             includeHistoryHeadings: includeHistoryHeadings,
-            columnWidth: Self.terminalColumnCount(),
+            columnWidth: TerminalTextMetrics.terminalColumnCount(),
             isEnabled: AgentOutput.standardErrorIsTerminal
         )
         if let context {
@@ -143,7 +143,7 @@ extension TerminalChat {
                 }
 
                 let languagePath = artifact.displayPath.nilIfBlank ?? artifact.absolutePath
-                let language = codeLanguageHint(forPath: languagePath)
+                let language = ToolLanguageHint.hint(forPath: languagePath)
                 if let diff = fileArtifactDiff(artifact, presentation: presentation) {
                     appendMarkdownCodeBlock(
                         TerminalCodeBlockRenderer.numberedArtifactDiff(diff),

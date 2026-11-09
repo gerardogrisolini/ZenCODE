@@ -32,12 +32,29 @@ final class ZenAppLauncher {
         case terminateNow
         /// Shut the runtime down (or wait for the launch), then quit.
         case shutDownFirst
-        /// A shutdown already runs; it answers the pending request.
+        /// A shutdown already runs: the request is cancelled. The gate of the
+        /// first request answers that one; after a worktree decision, the
+        /// Worktree window quits when the closing ends.
         case alreadyShuttingDown
+        /// The worktree of a `--worktree` launch waits for the operator's
+        /// choice: the Worktree window asks it, and the request is
+        /// cancelled; the choice quits the app.
+        case askWorktreeClosure
     }
 
-    /// Where the launch is, as ``terminationStep(isShuttingDown:launch:)``
-    /// reads it.
+    /// Where the closing of the worktree is, as
+    /// ``terminationStep(isShuttingDown:launch:worktreeClosure:)`` reads it.
+    enum WorktreeClosureState: Equatable {
+        /// No worktree to close, or its closing finished.
+        case none
+        /// The operator has not chosen how to close it.
+        case pending
+        /// The chosen action runs; the Worktree window quits when it ends.
+        case running
+    }
+
+    /// Where the launch is, as
+    /// ``terminationStep(isShuttingDown:launch:worktreeClosure:)`` reads it.
     enum LaunchState: Equatable {
         /// ``start()`` did not run.
         case notStarted
@@ -57,6 +74,11 @@ final class ZenAppLauncher {
     static let terminationTimeout: Duration = .seconds(5)
 
     private(set) var phase: Phase = .launching
+
+    /// The runtime, once it is up.
+    var readyRuntime: ZenAppRuntime? {
+        if case let .ready(runtime) = phase { runtime } else { nil }
+    }
 
     @ObservationIgnored private var launchTask: Task<Void, Never>?
     @ObservationIgnored private var shutdownTask: Task<Void, Never>?
@@ -105,7 +127,24 @@ final class ZenAppLauncher {
 
     /// Decides how a quit request proceeds.
     func terminationStep() -> TerminationStep {
-        Self.terminationStep(isShuttingDown: shutdownTask != nil, launch: launchState)
+        Self.terminationStep(
+            isShuttingDown: shutdownTask != nil,
+            launch: launchState,
+            worktreeClosure: worktreeClosureState
+        )
+    }
+
+    /// Where the closing of the worktree is now.
+    var worktreeClosureState: WorktreeClosureState {
+        guard let closure = readyRuntime?.worktreeClosure else { return .none }
+        switch closure.phase {
+        case .choosing:
+            return .pending
+        case .running:
+            return .running
+        case .finished:
+            return .none
+        }
     }
 
     /// Where the launch is now.
@@ -120,10 +159,24 @@ final class ZenAppLauncher {
         }
     }
 
-    /// How a quit request proceeds: a shutdown already running answers it;
-    /// otherwise a launch in progress or a runtime that is up is shut down
-    /// first, and anything else quits at once.
-    static func terminationStep(isShuttingDown: Bool, launch: LaunchState) -> TerminationStep {
+    /// How a quit request proceeds: a worktree still to close is asked
+    /// first, and one whose closing runs cancels the request (its window
+    /// quits when it ends); otherwise a shutdown already running answers it,
+    /// a launch in progress or a runtime that is up is shut down first, and
+    /// anything else quits at once.
+    static func terminationStep(
+        isShuttingDown: Bool,
+        launch: LaunchState,
+        worktreeClosure: WorktreeClosureState
+    ) -> TerminationStep {
+        switch worktreeClosure {
+        case .pending:
+            return .askWorktreeClosure
+        case .running:
+            return .alreadyShuttingDown
+        case .none:
+            break
+        }
         if isShuttingDown {
             return .alreadyShuttingDown
         }

@@ -150,30 +150,14 @@ extension ZenCODEACPBridge {
             workingDirectory: workingDirectoryURL
         )
         let sessionID = "swift-agent-\(UUID().uuidString.lowercased())"
-        // Open the incarnation in the host before the MCP servers are
-        // installed: the ownership stamped on those registrations must
-        // identify exactly the session incarnation this handler is about to
-        // publish, so a failed or fenced creation can release them again.
-        let incarnation = try await openACPSession(sessionID: sessionID, cwd: cwd)
-        let sessionEpoch = incarnation.epoch
-        let cacheKey = (params["sessionKey"] as? String)
-            ?? (params["cacheKey"] as? String)
-        // MCP servers installed below carry this incarnation's ownership. Every
-        // `throw` from here on means this incarnation never became (or did not
-        // stay) live, so the catch releases its registrations before
-        // propagating; a successful exit keeps them bound to the live session.
-        let offersResumableTaskGraphs: Bool
-        do {
-            try ensureLifecycleOperationLive(operation)
-            let acpMCPDescriptors = await registerACPProvidedMCPServers(
-                from: params,
-                ownership: DirectMCPToolRuntime.MCPSessionOwnership(
-                    sessionID: sessionID,
-                    epoch: sessionEpoch
-                ),
-                operation: operation
-            )
-            try ensureLifecycleOperationLive(operation)
+        let (sessionEpoch, offersResumableTaskGraphs) = try await withNewIncarnation(
+            sessionID: sessionID,
+            cwd: cwd,
+            params: params,
+            operation: operation
+        ) { incarnation, acpMCPDescriptors in
+            let cacheKey = (params["sessionKey"] as? String)
+                ?? (params["cacheKey"] as? String)
             let requestedAllowedToolNames = Self.allowedToolNames(from: params)
                 ?? selectedAgent?.allowedToolNames()
             let resolvedRequestedAllowedToolNames = await resolvedAllowedToolNames(
@@ -181,19 +165,11 @@ extension ZenCODEACPBridge {
                 workingDirectory: workingDirectoryURL
             )
             try ensureLifecycleOperationLive(operation)
-            var allowedToolNames = Self.allowedToolNames(
+            let allowedToolNames = Self.sessionAllowedToolNames(
                 resolvedRequestedAllowedToolNames,
-                adding: acpMCPDescriptors
+                adding: acpMCPDescriptors,
+                selectedAgent: selectedAgent
             )
-            if var effectiveAllowedToolNames = allowedToolNames {
-                effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
-                allowedToolNames = effectiveAllowedToolNames
-            }
-            if let selectedAgent, let effectiveAllowedToolNames = allowedToolNames {
-                allowedToolNames = selectedAgent.resolvedAllowedToolNames(
-                    effectiveAllowedToolNames
-                )
-            }
             try ensureLifecycleOperationLive(operation)
             let promptSections = resolvedPromptSections(
                 providedSystemPrompt: nil,
@@ -228,32 +204,21 @@ extension ZenCODEACPBridge {
                 thinkingSelection: thinkingSelection,
                 preserveThinking: preserveThinking
             )
-            // Last fence before any observable effect. Past this point the session
-            // entry, the runner session and the JSON-RPC reply are published, so a
-            // shutdown that lands *here* must abort rather than leave a live
-            // session and a backend behind a closed transport.
-            try ensureLifecycleOperationLive(operation)
-            let sessionEntry = sessionState(
+            // Past the last fence the session entry, the runner session and
+            // the JSON-RPC reply are published.
+            try publishNewIncarnation(
+                incarnation,
+                sessionID: sessionID,
                 configuration: runnerConfiguration,
                 selectedAgent: selectedAgent,
-                incarnation: incarnation
+                operation: operation
             )
-            sessions[sessionID] = sessionEntry
-            // From here the session exists, so a `session/close` for it must be
-            // able to invalidate this handler before it answers.
-            bindLifecycleOperation(operation, sessionID: sessionID, epoch: sessionEpoch)
-            do {
-                try await sessionRunner.createSession(configuration: runnerConfiguration)
-            } catch {
-                // Do not leave a session entry that has no runner session behind.
-                // Scope the removal to our own incarnation so a racing handler's
-                // newer session is never dropped.
-                await discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
-                throw error
-            }
+            // A runner session that cannot be created leaves no session
+            // entry behind: the cleanup drops our own incarnation's entry.
+            try await sessionRunner.createSession(configuration: runnerConfiguration)
             // Whether earlier sessions left task graphs to offer: only then
             // is the startup offer registered below.
-            offersResumableTaskGraphs = await hasOfferableResumableTaskGraphs(
+            let offersResumableTaskGraphs = await hasOfferableResumableTaskGraphs(
                 sessionID: sessionID,
                 workingDirectory: workingDirectoryURL
             )
@@ -261,20 +226,9 @@ extension ZenCODEACPBridge {
             // them, drop the session we just created instead of announcing it
             // to a closing host.
             guard isLifecycleOperationLive(operation) else {
-                await discardSessionIfCurrent(id: sessionID, epoch: sessionEpoch)
                 throw ACPShutdownFenceError()
             }
-        } catch {
-            // This incarnation never became live, or was discarded again: its
-            // host slot (closed already when it was discarded) and its MCP
-            // registrations are orphaned, so release them before propagating
-            // the failure.
-            await closeACPSlot(of: incarnation)
-            await sessionRunner.releaseSessionMCPOwnership(
-                sessionID: sessionID,
-                epoch: sessionEpoch
-            )
-            throw error
+            return (incarnation.epoch, offersResumableTaskGraphs)
         }
 
         // The startup offer of the task graphs earlier sessions left
@@ -295,6 +249,101 @@ extension ZenCODEACPBridge {
         )
         await publishAvailableCommands(sessionID: sessionID, epoch: sessionEpoch)
         resumableTaskGraphOfferGate?.finish()
+    }
+
+    /// Opens, for the lifecycle `operation`, a new incarnation of the ACP
+    /// session `sessionID` in `cwd`, installs the MCP servers `params`
+    /// provide, and runs `body` with the incarnation and the descriptors of
+    /// those servers: the shared part of `session/new` and of the restore of
+    /// a session that is not live.
+    ///
+    /// The incarnation is opened in the host before the MCP servers are
+    /// installed: the ownership stamped on those registrations identifies
+    /// exactly the incarnation the handler is about to publish, so a failed
+    /// or fenced creation can release them again. Every `throw` after the
+    /// opening, `body`'s included, means the incarnation never became (or did
+    /// not stay) live: its session entry, if it is still ours, is dropped
+    /// (a racing handler's newer incarnation is never touched), its host slot
+    /// is closed (already, when the entry was dropped), and its MCP
+    /// registrations are released before the error propagates. A successful
+    /// exit keeps them bound to the live session.
+    private func withNewIncarnation<Value>(
+        sessionID: String,
+        cwd: String,
+        params: [String: Any],
+        operation: UInt64,
+        _ body: (_ incarnation: ChatSessionIncarnation, _ acpMCPDescriptors: [DirectToolDescriptor]) async throws -> Value
+    ) async throws -> Value {
+        let incarnation = try await openACPSession(sessionID: sessionID, cwd: cwd)
+        do {
+            try ensureLifecycleOperationLive(operation)
+            let acpMCPDescriptors = await registerACPProvidedMCPServers(
+                from: params,
+                ownership: DirectMCPToolRuntime.MCPSessionOwnership(
+                    sessionID: sessionID,
+                    epoch: incarnation.epoch
+                ),
+                operation: operation
+            )
+            try ensureLifecycleOperationLive(operation)
+            return try await body(incarnation, acpMCPDescriptors)
+        } catch {
+            await discardSessionIfCurrent(id: sessionID, epoch: incarnation.epoch)
+            await closeACPSlot(of: incarnation)
+            await sessionRunner.releaseSessionMCPOwnership(
+                sessionID: sessionID,
+                epoch: incarnation.epoch
+            )
+            throw error
+        }
+    }
+
+    /// Publishes the entry of the new `incarnation` of `sessionID` and binds
+    /// the lifecycle `operation` to it, after the last fence before any
+    /// observable effect: a shutdown that lands right before must abort
+    /// rather than leave a live session and a backend behind a closed
+    /// transport. From here the session exists, so a `session/close` for it
+    /// invalidates the handler before it answers.
+    private func publishNewIncarnation(
+        _ incarnation: ChatSessionIncarnation,
+        sessionID: String,
+        configuration: AgentCoreSessionConfiguration,
+        selectedAgent: AgentProfile?,
+        operation: UInt64
+    ) throws {
+        try ensureLifecycleOperationLive(operation)
+        let sessionEntry = sessionState(
+            configuration: configuration,
+            selectedAgent: selectedAgent,
+            incarnation: incarnation
+        )
+        sessions[sessionID] = sessionEntry
+        bindLifecycleOperation(operation, sessionID: sessionID, epoch: incarnation.epoch)
+    }
+
+    /// The tools of a new ACP session: the resolved request, with the tools
+    /// of the MCP servers the session provided and the prompt-skill tools,
+    /// then narrowed by the selected agent. `nil` (no restriction) stays
+    /// `nil`.
+    private static func sessionAllowedToolNames(
+        _ resolvedRequestedAllowedToolNames: Set<String>?,
+        adding acpMCPDescriptors: [DirectToolDescriptor],
+        selectedAgent: AgentProfile?
+    ) -> Set<String>? {
+        var allowedToolNames = Self.allowedToolNames(
+            resolvedRequestedAllowedToolNames,
+            adding: acpMCPDescriptors
+        )
+        if var effectiveAllowedToolNames = allowedToolNames {
+            effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
+            allowedToolNames = effectiveAllowedToolNames
+        }
+        if let selectedAgent, let effectiveAllowedToolNames = allowedToolNames {
+            allowedToolNames = selectedAgent.resolvedAllowedToolNames(
+                effectiveAllowedToolNames
+            )
+        }
+        return allowedToolNames
     }
 
     public func resolvedAllowedToolNames(
@@ -540,163 +589,7 @@ extension ZenCODEACPBridge {
         )
     }
 
-    /// Reserves, in the host, the reconfiguration of the incarnation `session`
-    /// names: from here no prompt can be reserved on it until the
-    /// reconfiguration commits, rolls back, or fails. Answers as the bridge
-    /// always did: `busyMessage` while a prompt (or another reconfiguration)
-    /// holds the session, the unknown-session error when the entry is not this
-    /// incarnation anymore after the hop, and silence after a shutdown.
-    ///
-    /// Returns with the reservation the entry as it is after the hop, which
-    /// the reconfiguration starts from: a prompt that ended while the host
-    /// was asked (an agent mention routes the session to another agent) may
-    /// have written it since `session` was read.
-    private func reserveReconfiguration(
-        of session: SessionState,
-        busyMessage: String
-    ) async throws -> (reservation: ChatReconfigurationReservation, session: SessionState) {
-        let reservation: ChatReconfigurationReservation
-        do {
-            reservation = try await host.reserveReconfiguration(in: session.slotID)
-        } catch {
-            throw acpError(for: error, busyMessage: busyMessage)
-        }
-        guard let current = liveSession(id: session.id, epoch: session.epoch) else {
-            await host.releaseReconfiguration(reservation)
-            try ensureNotShutDown()
-            throw ACPError.invalidParams("Unknown or missing sessionId.")
-        }
-        return (reservation, current)
-    }
-
-    /// Releases a reservation whose operation stops at a parameter check, and
-    /// throws `error`.
-    private func failReconfiguration(
-        _ reservation: ChatReconfigurationReservation,
-        _ error: Error
-    ) async throws -> Never {
-        await host.releaseReconfiguration(reservation)
-        throw error
-    }
-
-    /// Re-check for the handlers that reconfigure an existing session through
-    /// the runner.
-    ///
-    /// `createSession` suspends, so a `session/close` or `shutdown` can land
-    /// inside it and re-create the session in the runner after the host already
-    /// dropped it. When that happened, undo the resurrection before failing, so
-    /// no orphan runner session survives a closed ACP session.
-    private func ensureLifecycleOperationLiveAfterSessionWrite(
-        _ operation: UInt64,
-        sessionID: String
-    ) async throws {
-        guard !isLifecycleOperationLive(operation) else {
-            return
-        }
-        // Only clean up when the id is genuinely gone: if a newer incarnation
-        // exists, it owns the runner session and must not be torn down.
-        if sessions[sessionID] == nil {
-            await sessionRunner.closeSession(id: sessionID)
-        }
-        throw ACPShutdownFenceError()
-    }
-
-    /// Commits only the reconfiguration reserved by this operation. The ACP
-    /// state is written first, while the reservation still keeps every prompt
-    /// out, then the reservation is released in the host: no prompt can
-    /// observe the previous configuration under a released reservation. A
-    /// reservation that is gone (the incarnation ended) commits nothing: the
-    /// entry is gone with it, or the write is undone.
-    private func commitReconfiguration(
-        _ reservation: ChatReconfigurationReservation,
-        configuration: AgentCoreSessionConfiguration,
-        selectedAgent: AgentProfile?
-    ) async throws {
-        let previous = liveSession(id: reservation.sessionID, epoch: reservation.epoch)
-        let written = updateLiveSession(id: reservation.sessionID, epoch: reservation.epoch) { live in
-            live = sessionState(configuration: configuration, selectedAgent: selectedAgent, inheriting: live)
-        }
-        guard written else {
-            throw ACPShutdownFenceError()
-        }
-        guard await host.releaseReconfiguration(reservation) else {
-            if let previous {
-                updateLiveSession(id: reservation.sessionID, epoch: reservation.epoch) { $0 = previous }
-            }
-            throw ACPShutdownFenceError()
-        }
-    }
-
-    /// Saves a committed model choice, with the thinking level it resulted
-    /// in, as the default of the next sessions (nothing with hosted models,
-    /// see ``ChatModelCatalog/persistsSelections``).
-    ///
-    /// Call it only right after a successful `commitReconfiguration` and
-    /// before any suspension, so the operation is still the live one. A
-    /// failed write is logged and never changes the response.
-    private func persistModelSelection(
-        of sessionConfiguration: AgentCoreSessionConfiguration
-    ) {
-        guard let modelID = sessionConfiguration.modelID else {
-            return
-        }
-        do {
-            try modelCatalog.saveModelSelection(
-                modelID: modelID,
-                thinking: sessionConfiguration.thinkingSelection
-            )
-        } catch {
-            ZenLogger.warning(
-                .viewModelRuntime,
-                "failed to save the ACP model selection '\(modelID)': \(error.localizedDescription)"
-            )
-        }
-    }
-
-    /// Saves a committed thinking choice as the default of the next sessions,
-    /// under the same rules as ``persistModelSelection(of:)``.
-    private func persistThinkingSelection(_ selection: AgentThinkingSelection?) {
-        do {
-            try modelCatalog.saveThinkingSelection(selection)
-        } catch {
-            ZenLogger.warning(
-                .viewModelRuntime,
-                "failed to save the ACP thinking selection '\(selection?.rawValue ?? "default")': \(error.localizedDescription)"
-            )
-        }
-    }
-
-    /// Rebuilds the prior runner configuration, then releases the reservation.
-    /// If close/shutdown invalidated the incarnation, nothing is restored: the
-    /// close path owns the backend cleanup in that case.
-    private func rollbackReconfiguration(
-        _ reservation: ChatReconfigurationReservation,
-        originalSession: SessionState
-    ) async {
-        guard liveSession(id: reservation.sessionID, epoch: reservation.epoch) != nil,
-              await host.holdsReconfiguration(reservation) else {
-            return
-        }
-        _ = try? await sessionRunner.createSession(
-            configuration: originalSession.configuration
-        )
-        guard liveSession(id: reservation.sessionID, epoch: reservation.epoch) != nil,
-              await host.holdsReconfiguration(reservation) else {
-            return
-        }
-        // The ACP state goes back first, then the reservation is released:
-        // the next prompt reads the restored configuration.
-        updateLiveSession(id: reservation.sessionID, epoch: reservation.epoch) { live in
-            live = sessionState(
-                configuration: originalSession.configuration,
-                selectedAgent: originalSession.selectedAgent,
-                inheriting: live
-            )
-        }
-        await host.releaseReconfiguration(reservation)
-    }
-
-        public func restoreSession(
+    public func restoreSession(
         id: JSONValue?,
         params: [String: Any],
         replayHistory: Bool
@@ -751,25 +644,12 @@ extension ZenCODEACPBridge {
             applyLaunchDirectoryFallback: false
         )
         try ensureLifecycleOperationLive(operation)
-        // Same early incarnation as `newSession`: the MCP registrations
-        // installed below carry the ownership of the incarnation this handler
-        // is about to publish, so a fenced or failed restore can release them.
-        let incarnation = try await openACPSession(sessionID: sessionID, cwd: workingDirectory.path)
-        let restoredSessionEpoch = incarnation.epoch
-        // Every `throw` after the installs began means this incarnation never
-        // became (or did not stay) live, so the catch releases its MCP
-        // registrations before propagating.
-        do {
-            try ensureLifecycleOperationLive(operation)
-            let acpMCPDescriptors = await registerACPProvidedMCPServers(
-                from: params,
-                ownership: DirectMCPToolRuntime.MCPSessionOwnership(
-                    sessionID: sessionID,
-                    epoch: restoredSessionEpoch
-                ),
-                operation: operation
-            )
-            try ensureLifecycleOperationLive(operation)
+        let restoredSessionEpoch = try await withNewIncarnation(
+            sessionID: sessionID,
+            cwd: workingDirectory.path,
+            params: params,
+            operation: operation
+        ) { incarnation, acpMCPDescriptors in
             let selectedAgent = try resolvedACPAgentProfile(
                 from: params,
                 workingDirectory: workingDirectory
@@ -782,16 +662,15 @@ extension ZenCODEACPBridge {
                 selectedAgent: selectedAgent
             )
             try ensureLifecycleOperationLive(operation)
-            // Last fence before the session entry, the runner session, the history
-            // replay and the reply become observable.
-            try ensureLifecycleOperationLive(operation)
-            let sessionEntry = sessionState(
+            // Past the last fence the session entry, the runner session, the
+            // history replay and the reply become observable.
+            try publishNewIncarnation(
+                incarnation,
+                sessionID: sessionID,
                 configuration: configuration,
                 selectedAgent: selectedAgent,
-                incarnation: incarnation
+                operation: operation
             )
-            sessions[sessionID] = sessionEntry
-            bindLifecycleOperation(operation, sessionID: sessionID, epoch: restoredSessionEpoch)
             try await sessionRunner.restoreSession(configuration: configuration)
             try await ensureLifecycleOperationLiveAfterSessionWrite(
                 operation,
@@ -814,18 +693,7 @@ extension ZenCODEACPBridge {
                 )
                 try ensureLifecycleOperationLive(operation)
             }
-        } catch {
-            // The incarnation never became live, or was discarded again: drop
-            // the entry we may have published, close its host slot, and
-            // release its orphaned MCP registrations before propagating the
-            // failure.
-            await discardSessionIfCurrent(id: sessionID, epoch: restoredSessionEpoch)
-            await closeACPSlot(of: incarnation)
-            await sessionRunner.releaseSessionMCPOwnership(
-                sessionID: sessionID,
-                epoch: restoredSessionEpoch
-            )
-            throw error
+            return incarnation.epoch
         }
         try ensureLifecycleOperationLive(operation)
 
@@ -929,19 +797,11 @@ extension ZenCODEACPBridge {
             requestedAllowedToolNames,
             workingDirectory: workingDirectory
         )
-        var allowedToolNames = Self.allowedToolNames(
+        let allowedToolNames = Self.sessionAllowedToolNames(
             resolvedRequestedAllowedToolNames,
-            adding: acpMCPDescriptors
+            adding: acpMCPDescriptors,
+            selectedAgent: selectedAgent
         )
-        if var effectiveAllowedToolNames = allowedToolNames {
-            effectiveAllowedToolNames.formUnion(PromptSkillToolProvider.toolNames)
-            allowedToolNames = effectiveAllowedToolNames
-        }
-        if let selectedAgent, let effectiveAllowedToolNames = allowedToolNames {
-            allowedToolNames = selectedAgent.resolvedAllowedToolNames(
-                effectiveAllowedToolNames
-            )
-        }
         let promptSections = resolvedPromptSections(
             providedSystemPrompt: nil,
             cwd: workingDirectory.path,

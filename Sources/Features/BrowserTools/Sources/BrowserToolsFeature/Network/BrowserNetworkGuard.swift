@@ -9,15 +9,9 @@
 //  feature process cannot supervise a persistent Chrome target between calls.
 //
 
-import Dispatch
+import FeatureKit
 import Foundation
 import Synchronization
-
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
 
 enum BrowserNetworkGuardError: LocalizedError {
     case unsupportedRequestScheme(String)
@@ -53,104 +47,23 @@ protocol BrowserHostResolving: Sendable {
     func resolve(host: String) throws -> [String]
 }
 
+/// System resolution through FeatureKit's policy-free
+/// ``FeatureSystemHostResolver``, with its neutral errors mapped onto the
+/// Browser feature's own messages. `localhost` and `.localhost` names resolve
+/// to loopback without the platform resolver (RFC 6761), retaining Browser's
+/// intended local-development support.
 struct BrowserSystemHostResolver: BrowserHostResolving {
     func resolve(host: String) throws -> [String] {
-        let normalizedHost = host
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
-        guard !normalizedHost.isEmpty else { throw BrowserNetworkGuardError.unresolvedHost(host) }
-        // RFC 6761 makes these loopback names special in browsers. Resolving
-        // them explicitly avoids platform resolver differences while retaining
-        // Browser's intended local-development support.
-        if normalizedHost.caseInsensitiveCompare("localhost") == .orderedSame
-            || normalizedHost.lowercased().hasSuffix(".localhost")
-        {
-            return ["127.0.0.1", "::1"]
-        }
-
-        var hints = addrinfo()
-        hints.ai_family = AF_UNSPEC
-        hints.ai_socktype = 0
-        hints.ai_protocol = 0
-        hints.ai_flags = 0
-        var rawResults: UnsafeMutablePointer<addrinfo>?
-        let status = normalizedHost.withCString { hostPointer in
-            getaddrinfo(hostPointer, nil, &hints, &rawResults)
-        }
-        guard status == 0, let firstResult = rawResults else { throw BrowserNetworkGuardError.unresolvedHost(host) }
-        defer { freeaddrinfo(firstResult) }
-
-        var addresses = Set<String>()
-        var current: UnsafeMutablePointer<addrinfo>? = firstResult
-        while let entry = current {
-            let info = entry.pointee
-            if let socketAddress = info.ai_addr {
-                var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                let nameStatus = getnameinfo(
-                    socketAddress,
-                    info.ai_addrlen,
-                    &buffer,
-                    socklen_t(buffer.count),
-                    nil,
-                    0,
-                    NI_NUMERICHOST
-                )
-                if nameStatus == 0 {
-                    let nullTerminator = buffer.firstIndex(of: 0) ?? buffer.endIndex
-                    let address = String(decoding: buffer[..<nullTerminator].map(UInt8.init(bitPattern:)), as: UTF8.self)
-                    addresses.insert(address)
-                }
+        do {
+            return try FeatureSystemHostResolver().resolve(host: host)
+        } catch {
+            switch error {
+            case .unresolvedHost:
+                throw BrowserNetworkGuardError.unresolvedHost(host)
+            case .noResolvedAddresses:
+                throw BrowserNetworkGuardError.noResolvedAddresses(host)
             }
-            current = info.ai_next
         }
-        let values = addresses.sorted()
-        guard !values.isEmpty else { throw BrowserNetworkGuardError.noResolvedAddresses(host) }
-        return values
-    }
-}
-
-/// Thread-safe single-shot holder for the continuation that bridges a blocking
-/// DNS resolver to async Swift code. Exactly one of the resolver result or a
-/// cancellation error resumes the continuation, regardless of arrival order, so
-/// a blocking resolver can be abandoned on cancellation without a double resume.
-private final class BrowserOffloadResolutionBox: Sendable {
-    private struct State: Sendable {
-        var continuation: CheckedContinuation<[String], Error>?
-        var pending: Result<[String], Error>?
-    }
-    private let state = Mutex(State())
-
-    func attach(_ continuation: CheckedContinuation<[String], Error>) {
-        let early: Result<[String], Error>? = state.withLock { state in
-            if let pending = state.pending {
-                state.pending = nil
-                return pending
-            }
-            state.continuation = continuation
-            return nil
-        }
-        if let early {
-            continuation.resume(with: early)
-        }
-    }
-
-    func resume(with result: Result<[String], Error>) {
-        let continuation: CheckedContinuation<[String], Error>? = state.withLock { state in
-            if let continuation = state.continuation {
-                state.continuation = nil
-                return continuation
-            }
-            state.pending = result
-            return nil
-        }
-        if let continuation {
-            continuation.resume(with: result)
-        }
-    }
-
-    func resume(throwing error: Error) {
-        resume(with: .failure(error))
     }
 }
 
@@ -258,22 +171,12 @@ struct BrowserNetworkRequestPolicy: Sendable {
     }
 
     /// Runs the blocking resolver on a global dispatch queue (never on the
-    /// cooperative thread pool) and resumes the awaiting continuation either
-    /// with the resolver's result or, if the surrounding task is cancelled
-    /// first, with ``CancellationError``.
+    /// cooperative thread pool) and returns either the resolver's result or,
+    /// if the surrounding task is cancelled first, ``CancellationError``.
     private func resolveHostOffloaded(_ host: String) async throws -> [String] {
-        let box = BrowserOffloadResolutionBox()
         let resolver = self.resolver
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[String], Error>) in
-                box.attach(continuation)
-                DispatchQueue.global(qos: .userInitiated).async {
-                    let result = Result<[String], Error> { try resolver.resolve(host: host) }
-                    box.resume(with: result)
-                }
-            }
-        } onCancel: {
-            box.resume(throwing: CancellationError())
+        return try await FeatureBlockingOperation.run(qos: .userInitiated) {
+            try resolver.resolve(host: host)
         }
     }
 }

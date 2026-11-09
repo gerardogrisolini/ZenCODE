@@ -258,7 +258,11 @@ final class AppChannelHooks: ChatSessionChannelHooks {
 
 `responseLanguageSection()` is the response-language section of the system
 prompt that a selection operation composes; the app returns the same value it
-passes as `responseLanguageSection` to a turn. The id of the session
+passes as `responseLanguageSection` to a turn. The controller also copies it
+into `AgentCoreSessionConfiguration.responseLanguageSection`, from which the
+agents the session delegates get the same section in their own system prompt;
+an app that builds its configurations without the controller sets that field
+itself, or its delegated agents keep the generic rule. The id of the session
 `/sessions new` starts is the slot's: its `ChatSlotDescriptor.sessionIDPrefix`
 (`ChatSlotDescriptor.defaultSessionIDPrefix`, `chat`, unless the app names
 another), a dash, and a new lowercased UUID.

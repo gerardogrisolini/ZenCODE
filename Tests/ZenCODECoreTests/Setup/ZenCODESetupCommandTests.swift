@@ -194,24 +194,17 @@ struct ZenCODESetupGateTests {
 
     @Test
     func acpIsTheOnlyModeExemptFromTheGate() {
-        let noMode: [String: String] = [:]
-        // Exempt: ACP by option, or by environment.
-        #expect(!ZenCODESetupRequirement.gateApplies(arguments: ["zen", "--acp"], environment: noMode))
-        #expect(!ZenCODESetupRequirement.gateApplies(arguments: ["zen", "--acp", "--acp"], environment: noMode))
+        // Exempt: ACP, selected by `--acp`.
+        #expect(!ZenCODESetupRequirement.gateApplies(arguments: ["zen", "--acp"]))
+        #expect(!ZenCODESetupRequirement.gateApplies(arguments: ["zen", "--acp", "--acp"]))
         #expect(!ZenCODESetupRequirement.gateApplies(
-            arguments: ["zen", "--acp", "--model", "provider:model"], environment: noMode
+            arguments: ["zen", "--acp", "--model", "provider:model"]
         ))
-        for mode in ["acp", "ACP", "  acp\n"] {
-            #expect(!ZenCODESetupRequirement.gateApplies(
-                arguments: ["zen"], environment: ["ZENCODE_AGENT_MODE": mode]
-            ), "\(mode)")
-        }
         #expect(!ZenCODESetupRequirement.gateApplies(
-            arguments: ["zen", "--agent", "Developer"], environment: ["ZENCODE_AGENT_MODE": "acp"]
+            arguments: ["zen", "--agent", "Developer", "--acp"]
         ))
 
-        // Gated: the TUI (default, option, or environment), headless, JSONL,
-        // and Telegram.
+        // Gated: the TUI (default or option), headless, JSONL, and Telegram.
         let gated: [[String]] = [
             ["zen"],
             ["zen", "--tui"],
@@ -221,48 +214,27 @@ struct ZenCODESetupGateTests {
             ["zen", "--jsonl", "-p", "hello"],
             ["zen", "--telegram"],
             ["zen", "--model", "provider:model"],
+            ["zen", "--agent", "Developer"],
         ]
         for arguments in gated {
-            #expect(ZenCODESetupRequirement.gateApplies(arguments: arguments, environment: noMode), "\(arguments)")
-        }
-        for mode in ["tui", "headless", "telegram", "auto", "automatic"] {
-            #expect(ZenCODESetupRequirement.gateApplies(
-                arguments: ["zen"], environment: ["ZENCODE_AGENT_MODE": mode]
-            ), "\(mode)")
+            #expect(ZenCODESetupRequirement.gateApplies(arguments: arguments), "\(arguments)")
         }
     }
 
     @Test
-    func anOptionThatSelectsAnotherModeWinsOverTheACPEnvironment() {
-        let acpEnvironment = ["ZENCODE_AGENT_MODE": "acp"]
-        for arguments in [
-            ["zen", "--tui"],
-            ["zen", "--telegram"],
-            ["zen", "-p", "hello"],
-            ["zen", "--prompt", "hello"],
-            ["zen", "-f", "/tmp/prompt.md"],
-            ["zen", "--jsonl", "-p", "hello"],
-        ] {
-            #expect(ZenCODESetupRequirement.gateApplies(arguments: arguments, environment: acpEnvironment), "\(arguments)")
-        }
-    }
-
-    @Test
-    func optionValuesAreNeverReadAsModeOptions() {
-        let acpEnvironment = ["ZENCODE_AGENT_MODE": "acp"]
-        // The value of `--agent` (or of any other option) is not `--tui`...
-        #expect(!ZenCODESetupRequirement.gateApplies(
-            arguments: ["zen", "--agent", "--tui"], environment: acpEnvironment
-        ))
-        #expect(!ZenCODESetupRequirement.gateApplies(
-            arguments: ["zen", "--working-directory", "--jsonl"], environment: acpEnvironment
-        ))
-        // ...nor `--acp`.
+    func anOptionValueIsNeverReadAsTheACPOption() {
+        // The value of `--agent` (or of any other option that takes one) is
+        // not `--acp`, whatever follows it.
+        #expect(ZenCODESetupRequirement.gateApplies(arguments: ["zen", "--agent", "--acp"]))
         #expect(ZenCODESetupRequirement.gateApplies(
-            arguments: ["zen", "--agent", "--acp"], environment: [:]
+            arguments: ["zen", "--skills", "--acp", "--tui"]
         ))
         #expect(ZenCODESetupRequirement.gateApplies(
-            arguments: ["zen", "--skills", "--acp", "--tui"], environment: [:]
+            arguments: ["zen", "--working-directory", "--acp"]
+        ))
+        // A real `--acp` after the value of another option still counts.
+        #expect(!ZenCODESetupRequirement.gateApplies(
+            arguments: ["zen", "--model", "x", "--acp"]
         ))
     }
 

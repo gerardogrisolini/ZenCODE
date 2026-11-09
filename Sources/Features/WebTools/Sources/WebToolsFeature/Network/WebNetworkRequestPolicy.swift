@@ -1,6 +1,7 @@
 //  Request policy, redirect guard and URL redaction applied to every fetch hop.
 
 import Dispatch
+import FeatureKit
 import Foundation
 import Synchronization
 
@@ -79,22 +80,12 @@ struct WebNetworkRequestPolicy: Sendable {
     }
 
     /// Runs the blocking resolver on a global dispatch queue (never on the
-    /// cooperative thread pool) and resumes the awaiting continuation either
-    /// with the resolver's result or, if the surrounding task is cancelled
-    /// first, with ``CancellationError``.
+    /// cooperative thread pool) and returns either the resolver's result or,
+    /// if the surrounding task is cancelled first, ``CancellationError``.
     private func resolveHostOffloaded(_ host: String) async throws -> [String] {
-        let box = WebSingleResumeBox<[String]>()
         let resolver = self.resolver
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[String], Error>) in
-                box.attach(continuation)
-                DispatchQueue.global(qos: .userInitiated).async {
-                    let result = Result<[String], Error> { try resolver.resolve(host: host) }
-                    box.resume(with: result)
-                }
-            }
-        } onCancel: {
-            box.resume(throwing: CancellationError())
+        return try await FeatureBlockingOperation.run(qos: .userInitiated) {
+            try resolver.resolve(host: host)
         }
     }
 }

@@ -37,6 +37,17 @@ extension DirectSubAgentRuntime {
         /// Typed provenance of `currentActivity`. Presentation must branch on
         /// this instead of inspecting the activity text.
         public let currentActivityKind: ActivityKind?
+        /// The reasoning of the thinking phase in progress, every paragraph
+        /// included, oldest first, as the live detail of the agent shows it
+        /// growing (`currentActivity` keeps only the paragraph in progress,
+        /// for the overview's single rewrite slot). Line endings are
+        /// normalized to LF and the text is trimmed; `nil` while the phase has
+        /// no non-blank reasoning yet. The text stays while the agent writes
+        /// the message that follows its reasoning, and is cleared when a tool
+        /// call starts or the turn changes: by then the backend's history has
+        /// the reasoning, and the transcript shows it. Reasoning after a
+        /// message starts a new phase. Kept in memory only.
+        public let currentThought: String?
         public let currentActivityRevision: UInt64
         /// The name of the latest tool call of the turn: the one running now
         /// (``currentToolIsRunning``), or the last one completed, kept until
@@ -59,7 +70,6 @@ extension DirectSubAgentRuntime {
         public let executionRevision: UInt64
         public let completedExecutionRevision: UInt64
         public let latestOutputRevision: UInt64
-        public let accumulatedOutput: String?
         public let latestError: String?
         public let createdAt: Date
         public let updatedAt: Date
@@ -83,6 +93,7 @@ extension DirectSubAgentRuntime {
             modelID: String? = nil,
             currentActivity: String? = nil,
             currentActivityKind: ActivityKind? = nil,
+            currentThought: String? = nil,
             currentActivityRevision: UInt64 = 0,
             currentToolName: String? = nil,
             currentToolTarget: String? = nil,
@@ -94,7 +105,6 @@ extension DirectSubAgentRuntime {
             executionRevision: UInt64 = 0,
             completedExecutionRevision: UInt64 = 0,
             latestOutputRevision: UInt64 = 0,
-            accumulatedOutput: String? = nil,
             latestError: String?,
             createdAt: Date,
             updatedAt: Date
@@ -117,6 +127,7 @@ extension DirectSubAgentRuntime {
             self.modelID = modelID
             self.currentActivity = currentActivity
             self.currentActivityKind = currentActivityKind
+            self.currentThought = currentThought
             self.currentActivityRevision = currentActivityRevision
             self.currentToolName = currentToolName
             self.currentToolTarget = currentToolTarget
@@ -128,7 +139,6 @@ extension DirectSubAgentRuntime {
             self.executionRevision = executionRevision
             self.completedExecutionRevision = completedExecutionRevision
             self.latestOutputRevision = latestOutputRevision
-            self.accumulatedOutput = accumulatedOutput
             self.latestError = latestError
             self.createdAt = createdAt
             self.updatedAt = updatedAt

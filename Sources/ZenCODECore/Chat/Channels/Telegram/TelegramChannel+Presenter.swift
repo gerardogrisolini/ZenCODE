@@ -378,7 +378,7 @@ final class TelegramChannelPresenter: ChatSlotChannelPresenter {
         guard let channel, let overview else { return }
         guard origin == .explicit || overview.isSignificant else { return }
         let plainText = TerminalANSIText.stripANSI(
-            TerminalChat.taskGraphMarkdown(graph: overview.graph, tasks: overview.tasks, ansiEnabled: false)
+            TerminalTaskGraphLayout.markdown(graph: overview.graph, tasks: overview.tasks, ansiEnabled: false)
         ).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !plainText.isEmpty else { return }
         await channel.enqueueOverview(
@@ -456,7 +456,7 @@ final class TelegramChannelPresenter: ChatSlotChannelPresenter {
         lastPresentedSubAgentOverviewSignature = signature
         let newResponses = rememberSubAgentResponses(tokens)
         if let status = TerminalTelegramTurnActivity.subAgentStatusText(
-            rows: TerminalChat.subAgentStatusRows(overview.snapshots)
+            rows: TerminalSubAgentOverviewLayout.statusRows(overview.snapshots)
         ) {
             await channel.enqueueOverview(.subAgentStatus(status))
         }
@@ -480,9 +480,9 @@ final class TelegramChannelPresenter: ChatSlotChannelPresenter {
     /// order the presenter sends them: the partial ones first, then the
     /// completed ones.
     nonisolated static func subAgentResponses(of overview: ChatSubAgentOverview) -> [SubAgentResponse] {
-        TerminalChat.subAgentPartialResponses(overview.snapshots).map {
+        TerminalSubAgentOverviewLayout.partialResponses(overview.snapshots).map {
             SubAgentResponse(token: $0.token, heading: $0.heading, markdown: $0.markdown)
-        } + TerminalChat.subAgentMarkdownResponses(overview.snapshots).map {
+        } + TerminalSubAgentOverviewLayout.markdownResponses(overview.snapshots).map {
             SubAgentResponse(token: $0.token, heading: $0.heading, markdown: $0.markdown)
         }
     }

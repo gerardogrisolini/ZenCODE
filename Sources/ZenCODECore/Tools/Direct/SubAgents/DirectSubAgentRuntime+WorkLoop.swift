@@ -25,34 +25,44 @@ extension DirectSubAgentRuntime {
         for agentID: String,
         repliesToOperator: Bool = false
     ) throws {
-        guard var agent = agents[agentID] else {
+        guard let agent = agents[agentID] else {
             throw DirectSubAgentRuntimeError.agentNotFound(agentID)
         }
         guard agent.status != .closed else {
             throw DirectSubAgentRuntimeError.agentClosed(agent.name)
         }
 
-        agent.pendingPrompts.append(prompt)
-        agent.pendingOperatorReplyFlags.append(repliesToOperator)
-        agent.latestError = nil
-        if agent.status != .running {
-            agent.status = .queued
+        mutateAgent(agentID) { agent in
+            agent.pendingPrompts.append(prompt)
+            agent.pendingOperatorReplyFlags.append(repliesToOperator)
+            agent.latestError = nil
+            if agent.status != .running {
+                agent.status = .queued
+            }
+            agent.updatedAt = .now
         }
-        agent.updatedAt = .now
-        agents[agentID] = agent
         startAgentIfNeeded(agentID: agentID)
     }
 
     public func startAgentIfNeeded(agentID: String) {
-        guard var agent = agents[agentID],
+        guard let agent = agents[agentID],
               agent.runTask == nil else {
             return
         }
 
-        agent.runTask = Task(name: "Direct sub-agent work loop") {
-            await self.runAgentLoop(agentID: agentID)
-        }
-        agents[agentID] = agent
+        claimWorkLoop(
+            agentID: agentID,
+            runTask: Task(name: "Direct sub-agent work loop") {
+                await self.runAgentLoop(agentID: agentID)
+            }
+        )
+    }
+
+    /// Records `runTask` as the agent's work-loop ownership token. Only
+    /// ``startAgentIfNeeded(agentID:)`` claims it, and only while no loop
+    /// holds it.
+    private func claimWorkLoop(agentID: String, runTask: Task<Void, Never>) {
+        mutateAgent(agentID) { $0.runTask = runTask }
     }
 
     /// Releases the work-loop ownership token when the loop exits.
@@ -61,14 +71,11 @@ extension DirectSubAgentRuntime {
     /// Only the loop itself may clear it: if any other call site cleared it while
     /// the loop was still in flight, a concurrent ``queuePrompt(_:for:)`` would
     /// pass the guard and start a second parallel loop over the same pending
-    /// queue.
+    /// queue. The loop's own exits release it through
+    /// ``AgentRecord/releaseWorkLoop()``; closing an agent revokes it together
+    /// with the cancellation of the loop through ``AgentRecord/revokeWorkLoop()``.
     func releaseWorkLoopOwnership(agentID: String) {
-        guard var agent = agents[agentID],
-              agent.runTask != nil else {
-            return
-        }
-        agent.runTask = nil
-        agents[agentID] = agent
+        mutateAgent(agentID, where: { $0.runTask != nil }) { $0.releaseWorkLoop() }
     }
 
     public func runAgentLoop(agentID: String) async {
@@ -152,21 +159,21 @@ extension DirectSubAgentRuntime {
     }
 
     public func nextWork(for agentID: String) -> AgentWork? {
-        guard var agent = agents[agentID] else {
+        guard let agent = agents[agentID] else {
             return nil
         }
         guard agent.status != .closed else {
-            agent.runTask = nil
-            agents[agentID] = agent
+            mutateAgent(agentID) { $0.releaseWorkLoop() }
             return nil
         }
         guard !agent.pendingPrompts.isEmpty else {
-            agent.runTask = nil
-            if agent.status != .failed && agent.status != .standby {
-                agent.status = .idle
+            mutateAgent(agentID) { agent in
+                agent.releaseWorkLoop()
+                if agent.status != .failed && agent.status != .standby {
+                    agent.status = .idle
+                }
+                agent.updatedAt = .now
             }
-            agent.updatedAt = .now
-            agents[agentID] = agent
             // Backpressure may have stopped the shared-chat drain while the
             // pending queue was full, and the hold-back stops it entirely while
             // a turn is running. Now that the queue is empty and no turn is in
@@ -176,43 +183,57 @@ extension DirectSubAgentRuntime {
             return nil
         }
 
-        let prompt = agent.pendingPrompts.removeFirst()
-        let repliesToOperator = agent.pendingOperatorReplyFlags.isEmpty
-            ? false
-            : agent.pendingOperatorReplyFlags.removeFirst()
-        agent.currentTurnRepliesToOperator = repliesToOperator
-        agent.currentTurnSentOperatorMessage = false
-        agent.status = .running
-        agent.executionRevision &+= 1
-        agent.resetActivityState()
-        // Keep the previous turn's counters on screen until this turn reports
-        // its own, then replace them wholesale.
-        agent.shouldReplaceMetricsOnNextUpdate = true
-        agent.latestContentPreview = nil
-        agent.updatedAt = .now
-        agents[agentID] = agent
-
-        return AgentWork(
-            backend: agent.backend,
-            sessionID: agent.sessionID,
-            prompt: prompt
-        )
+        return mutateAgent(agentID) { agent in
+            let prompt = agent.pendingPrompts.removeFirst()
+            let repliesToOperator = agent.pendingOperatorReplyFlags.isEmpty
+                ? false
+                : agent.pendingOperatorReplyFlags.removeFirst()
+            agent.currentTurnRepliesToOperator = repliesToOperator
+            agent.currentTurnSentOperatorMessage = false
+            agent.status = .running
+            agent.executionRevision &+= 1
+            agent.resetActivityState()
+            // Keep the previous turn's counters on screen until this turn reports
+            // its own, then replace them wholesale.
+            agent.shouldReplaceMetricsOnNextUpdate = true
+            agent.latestContentPreview = nil
+            agent.updatedAt = .now
+            return AgentWork(
+                backend: agent.backend,
+                sessionID: agent.sessionID,
+                prompt: prompt
+            )
+        }
     }
 
     public func recordEvent(
         _ event: DirectAgentEvent,
         agentID: String
     ) async {
-        guard var agent = agents[agentID],
-              agent.status != .closed else {
-            return
-        }
         if case let .metrics(metrics) = event, metrics.isLiveProgress {
             // The overview does not render throughput: a live update must not
             // touch the agent or bump its activity timestamps.
             return
         }
 
+        // Nothing is recorded, and no lifecycle is forwarded, for an agent
+        // that is gone or closed.
+        let recorded = mutateAgent(agentID, where: { $0.status != .closed }) {
+            Self.apply(event, to: &$0)
+        }
+        if let delegatedToolEvent = recorded ?? nil,
+           let subAgentToolEventHandler {
+            await subAgentToolEventHandler(delegatedToolEvent)
+        }
+    }
+
+    /// Projects `event` onto the record of a live agent and returns the tool
+    /// lifecycle to forward to the presentation sink, if any. Pure over the
+    /// record: it reads nothing of the runtime.
+    private static func apply(
+        _ event: DirectAgentEvent,
+        to agent: inout AgentRecord
+    ) -> DirectSubAgentToolEvent? {
         var delegatedToolEvent: DirectSubAgentToolEvent?
         switch event {
         case .status, .diagnostic:
@@ -233,6 +254,12 @@ extension DirectSubAgentRuntime {
                 appending: delta,
                 to: &agent.pendingThoughtParagraph
             )
+            // The live detail shows the whole reasoning of the phase growing,
+            // not only its latest paragraph.
+            agent.currentThought = Self.accumulatedThought(
+                appending: delta,
+                to: &agent.pendingThought
+            )
             agent.currentToolName = nil
             agent.currentToolTarget = nil
             agent.currentToolIsRunning = false
@@ -243,6 +270,9 @@ extension DirectSubAgentRuntime {
             // A visible answer starts a new model phase; never let a later
             // thought delta continue the paragraph that preceded it.
             agent.pendingThoughtParagraph = nil
+            // The reasoning stays visible while the message streams, as the
+            // paragraph does; a later thought delta starts a new phase.
+            agent.pendingThought = nil
             // Assistant content is also streamed as deltas. Buffer it without
             // touching snapshot-visible fields; it becomes visible only when a
             // tool boundary proves that the model's message is complete, or in
@@ -250,6 +280,10 @@ extension DirectSubAgentRuntime {
             agent.pendingContentBuffer = (agent.pendingContentBuffer ?? "") + delta
         case let .toolCallStarted(toolCall):
             agent.pendingThoughtParagraph = nil
+            // The backend recorded the message, its reasoning included, before
+            // the call started: the transcript shows it from now on.
+            agent.currentThought = nil
+            agent.pendingThought = nil
             agent.currentActivity = Self.takeCompletedContent(
                 from: &agent.pendingContentBuffer
             )
@@ -314,11 +348,7 @@ extension DirectSubAgentRuntime {
 
         agent.latestEventAt = .now
         agent.updatedAt = .now
-        agents[agentID] = agent
-        if let delegatedToolEvent,
-           let subAgentToolEventHandler {
-            await subAgentToolEventHandler(delegatedToolEvent)
-        }
+        return delegatedToolEvent
     }
 
     /// Reduces the reasoning stream to the paragraph currently being written.
@@ -355,6 +385,38 @@ extension DirectSubAgentRuntime {
         return tail.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
     }
 
+    /// Accumulates the reasoning stream of one thinking phase, every
+    /// paragraph included.
+    ///
+    /// As in ``latestThoughtParagraph(appending:to:)``, the result depends
+    /// only on the concatenation of every delta received so far, never on
+    /// where the transport split it: CRLF and lone CR become LF, and a
+    /// trailing CR is kept verbatim in `buffer`, because it may be the first
+    /// half of a CRLF whose LF arrives in the next delta. `buffer` holds the
+    /// normalized text, so each delta normalizes only itself. Returns the
+    /// text trimmed of leading and trailing whitespace, or nil while it is
+    /// blank.
+    static func accumulatedThought(
+        appending delta: String,
+        to buffer: inout String?
+    ) -> String? {
+        var accumulated = buffer ?? ""
+        var chunk = delta
+        if accumulated.hasSuffix("\r") {
+            accumulated.removeLast()
+            chunk = "\r" + chunk
+        }
+        let endsWithUnresolvedCR = chunk.hasSuffix("\r")
+        if endsWithUnresolvedCR {
+            chunk.removeLast()
+        }
+        accumulated += chunk
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        buffer = endsWithUnresolvedCR ? accumulated + "\r" : accumulated
+        return accumulated.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+    }
+
     private static func takeCompletedContent(
         from buffer: inout String?
     ) -> String? {
@@ -384,6 +446,7 @@ extension DirectSubAgentRuntime {
                 attemptID: attemptID
             )
         } catch {
+            // Copy taken before the await above: rewriting it is the existing behavior.
             var failedAgent = agent
             failedAgent.latestError = "Unable to mark task attempt running: \(error.localizedDescription)"
             failedAgent.updatedAt = .now
@@ -431,36 +494,29 @@ extension DirectSubAgentRuntime {
         // and harmless when the loop immediately starts the next queued prompt:
         // the drain simply observes `.running` again and holds back.
         defer { rearmSharedChatDrain(for: agentID) }
-        guard var agent = agents[agentID],
-              agent.status != .closed else {
+        let trimmedOutput = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let agent = mutateAgent(agentID, where: { $0.status != .closed }, { agent in
+            let finalContent = Self.takeCompletedContent(
+                from: &agent.pendingContentBuffer
+            )
+            agent.latestOutput = trimmedOutput
+            agent.latestOutputRevision &+= 1
+            agent.completedExecutionRevision = agent.executionRevision
+            agent.latestError = nil
+            agent.modelID = response.modelID.nilIfBlank ?? agent.modelID
+            // The turn is over: drop the visible activity together with the private
+            // thinking/content buffers so no partial paragraph leaks into the next
+            // turn.
+            agent.resetActivityState()
+            // `response.text` may contain commentary from every prior tool round.
+            // Preserve it for agent.get/wait, but let the TUI present only the final
+            // completed content block when the backend emitted one.
+            agent.latestContentPreview = finalContent
+            agent.updatedAt = .now
+            return agent
+        }) else {
             return
         }
-        let finalContent = Self.takeCompletedContent(
-            from: &agent.pendingContentBuffer
-        )
-        let trimmedOutput = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        agent.latestOutput = trimmedOutput
-        agent.latestOutputRevision &+= 1
-        agent.completedExecutionRevision = agent.executionRevision
-        if let existing = agent.accumulatedOutput?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !existing.isEmpty,
-           !trimmedOutput.isEmpty {
-            agent.accumulatedOutput = existing + "\n\n" + trimmedOutput
-        } else if !trimmedOutput.isEmpty {
-            agent.accumulatedOutput = trimmedOutput
-        }
-        agent.latestError = nil
-        agent.modelID = response.modelID.nilIfBlank ?? agent.modelID
-        // The turn is over: drop the visible activity together with the private
-        // thinking/content buffers so no partial paragraph leaks into the next
-        // turn.
-        agent.resetActivityState()
-        // `response.text` may contain commentary from every prior tool round.
-        // Preserve it for agent.get/wait, but let the TUI present only the final
-        // completed content block when the backend emitted one.
-        agent.latestContentPreview = finalContent
-        agent.updatedAt = .now
-        agents[agentID] = agent
 
         // A direct operator message is a normal agent conversation, not a
         // coordinator turn. Models are instructed to answer with
@@ -501,18 +557,23 @@ extension DirectSubAgentRuntime {
 
         // Re-read the agent under a distinct binding: the record was written
         // above and the `.standby` branch may have changed it.
-        guard var updatedAgent = agents[agentID] else { return }
-        updatedAgent.status = updatedAgent.pendingPrompts.isEmpty ? .idle : .queued
-        let releasedReservation = updatedAgent.pendingPrompts.isEmpty
-            ? takeTasklessDelegationReservation(from: &updatedAgent)
-            : nil
-        if releasedReservation != nil {
-            // Keep the agent pending until the cross-actor lease release has
-            // completed, so graph activation cannot race an apparently idle
-            // taskless agent.
-            updatedAgent.status = .running
+        guard let completion = mutateAgent(agentID, { updatedAgent in
+            updatedAgent.status = updatedAgent.pendingPrompts.isEmpty ? .idle : .queued
+            let releasedReservation = updatedAgent.pendingPrompts.isEmpty
+                ? takeTasklessDelegationReservation(from: &updatedAgent)
+                : nil
+            if releasedReservation != nil {
+                // Keep the agent pending until the cross-actor lease release has
+                // completed, so graph activation cannot race an apparently idle
+                // taskless agent.
+                updatedAgent.status = .running
+            }
+            return (agent: updatedAgent, releasedReservation: releasedReservation)
+        }) else {
+            return
         }
-        agents[agentID] = updatedAgent
+        let updatedAgent = completion.agent
+        let releasedReservation = completion.releasedReservation
 
         if let taskID = updatedAgent.taskID,
            let attemptID = updatedAgent.taskAttemptID,
@@ -545,26 +606,29 @@ extension DirectSubAgentRuntime {
         _ error: Error,
         agentID: String
     ) async {
-        guard var agent = agents[agentID] else {
+        guard let failure = mutateAgent(agentID, { agent in
+            agent.pendingPrompts.removeAll()
+            agent.pendingOperatorReplyFlags.removeAll()
+            agent.releaseWorkLoop()
+            if agent.status != .closed {
+                agent.status = .failed
+                agent.latestError = error.localizedDescription
+                if agent.taskID == nil {
+                    // Taskless conversational agents are intentionally retryable via
+                    // `agent.message`; keep their backend session available.
+                    agent.resetActivityState()
+                } else {
+                    agent.prepareForTerminalRetention()
+                }
+            }
+            agent.updatedAt = .now
+            let releasedReservation = takeTasklessDelegationReservation(from: &agent)
+            return (agent: agent, releasedReservation: releasedReservation)
+        }) else {
             return
         }
-        agent.pendingPrompts.removeAll()
-        agent.pendingOperatorReplyFlags.removeAll()
-        agent.runTask = nil
-        if agent.status != .closed {
-            agent.status = .failed
-            agent.latestError = error.localizedDescription
-            if agent.taskID == nil {
-                // Taskless conversational agents are intentionally retryable via
-                // `agent.message`; keep their backend session available.
-                agent.resetActivityState()
-            } else {
-                agent.prepareForTerminalRetention()
-            }
-        }
-        agent.updatedAt = .now
-        let releasedReservation = takeTasklessDelegationReservation(from: &agent)
-        agents[agentID] = agent
+        var agent = failure.agent
+        let releasedReservation = failure.releasedReservation
         if let taskID = agent.taskID,
            let attemptID = agent.taskAttemptID,
            let taskOrchestrator {
@@ -577,6 +641,7 @@ extension DirectSubAgentRuntime {
                     output: agent.latestOutput
                 )
             } catch {
+                // Copy taken before the await above: rewriting it is the existing behavior.
                 agent.latestError = "\(agent.latestError ?? "Failed.")\nUnable to fail task attempt: \(error.localizedDescription)"
                 agent.updatedAt = .now
                 agents[agentID] = agent
@@ -598,20 +663,23 @@ extension DirectSubAgentRuntime {
     }
 
     public func recordCancellation(agentID: String) async {
-        guard var agent = agents[agentID] else {
+        guard let cancellation = mutateAgent(agentID, { agent in
+            agent.pendingPrompts.removeAll()
+            agent.pendingOperatorReplyFlags.removeAll()
+            agent.releaseWorkLoop()
+            if agent.status != .closed {
+                agent.status = .closed
+                agent.latestError = "Cancelled."
+                agent.prepareForTerminalRetention()
+            }
+            agent.updatedAt = .now
+            let releasedReservation = takeTasklessDelegationReservation(from: &agent)
+            return (agent: agent, releasedReservation: releasedReservation)
+        }) else {
             return
         }
-        agent.pendingPrompts.removeAll()
-        agent.pendingOperatorReplyFlags.removeAll()
-        agent.runTask = nil
-        if agent.status != .closed {
-            agent.status = .closed
-            agent.latestError = "Cancelled."
-            agent.prepareForTerminalRetention()
-        }
-        agent.updatedAt = .now
-        let releasedReservation = takeTasklessDelegationReservation(from: &agent)
-        agents[agentID] = agent
+        var agent = cancellation.agent
+        let releasedReservation = cancellation.releasedReservation
         if let taskID = agent.taskID,
            let attemptID = agent.taskAttemptID,
            let taskOrchestrator {
@@ -623,6 +691,7 @@ extension DirectSubAgentRuntime {
                     reason: "Delegated sub-agent cancelled."
                 )
             } catch {
+                // Copy taken before the await above: rewriting it is the existing behavior.
                 agent.latestError = "\(agent.latestError ?? "Cancelled.")\nUnable to cancel task attempt: \(error.localizedDescription)"
                 agent.updatedAt = .now
                 agents[agentID] = agent

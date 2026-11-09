@@ -5,13 +5,8 @@
 //  Created by Gerardo Grisolini on 30/05/26.
 //
 
+import FeatureKit
 import Foundation
-
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
 
 /// Validates navigation destinations before they reach Chrome. The Browser
 /// feature remains opt-in, but web content is still untrusted and must not be
@@ -45,9 +40,11 @@ enum BrowserURLPolicyError: LocalizedError, Equatable, Sendable {
 /// A deliberately small, deterministic policy for direct Browser navigations.
 ///
 /// Loopback remains available by default because Browser is used to inspect
-/// local development servers. RFC1918, link-local, multicast and ambiguous
-/// numeric hosts require an explicit environment-level opt-in; the model cannot
-/// weaken this policy through a tool argument.
+/// local development servers. RFC1918, link-local, multicast, the other
+/// non-public ranges classified by FeatureKit (including non-public IPv4
+/// embedded through NAT64 or 6to4), and ambiguous numeric hosts require an
+/// explicit environment-level opt-in; the model cannot weaken this policy
+/// through a tool argument.
 struct BrowserURLPolicy: Sendable {
     let allowsPrivateNetwork: Bool
 
@@ -111,15 +108,19 @@ struct BrowserURLPolicy: Sendable {
         if host == "::1" {
             return true
         }
-        if let octets = ipv4Octets(host) {
-            return octets[0] == 127
+        if let octets = FeatureIPAddress.parseDottedQuad(host) {
+            return FeatureIPAddress.classifyIPv4(octets) == .loopback
         }
-        guard let bytes = ipv6Bytes(host) else { return false }
-        let isIPv4Compatible = bytes[0..<12].allSatisfy { $0 == 0 }
-        let isIPv4Mapped = bytes[0..<10].allSatisfy { $0 == 0 }
-            && bytes[10] == 0xff
-            && bytes[11] == 0xff
-        return (isIPv4Compatible || isIPv4Mapped) && bytes[12] == 127
+        // Only IPv4-compatible (`::a.b.c.d`) and IPv4-mapped (`::ffff:a.b.c.d`)
+        // literals carry a loopback of this host. A 127 address relayed through
+        // 6to4 or NAT64 is not local development and stays restricted.
+        guard let bytes = FeatureIPAddress.parseIPv6(host),
+              let embedded = FeatureIPAddress.embeddedIPv4(in: bytes),
+              embedded.kind == .compatible || embedded.kind == .mapped
+        else {
+            return false
+        }
+        return FeatureIPAddress.classifyIPv4(embedded.octets) == .loopback
     }
 
     private func normalizedHost(_ host: String) -> String {
@@ -130,6 +131,8 @@ struct BrowserURLPolicy: Sendable {
             .lowercased()
     }
 
+    /// Loopback recognised by ``isLoopbackHost(_:)`` is the local-development
+    /// exception; every other non-public classification is restricted.
     private func isRestricted(host: String) -> Bool {
         if isLoopbackHost(host) {
             return false
@@ -140,8 +143,8 @@ struct BrowserURLPolicy: Sendable {
         if host == "local" || host.hasSuffix(".local") {
             return true
         }
-        if let octets = ipv4Octets(host) {
-            return isRestrictedIPv4(octets)
+        if let octets = FeatureIPAddress.parseDottedQuad(host) {
+            return FeatureIPAddress.classifyIPv4(octets) != .publicAddress
         }
         if isAmbiguousNumericHost(host) {
             return true
@@ -149,101 +152,24 @@ struct BrowserURLPolicy: Sendable {
         return isRestrictedIPv6(host)
     }
 
-    private func ipv4Octets(_ host: String) -> [UInt8]? {
-        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
-        guard parts.count == 4 else { return nil }
-        var result: [UInt8] = []
-        result.reserveCapacity(4)
-        for part in parts {
-            guard !part.isEmpty,
-                  !(part.count > 1 && part.first == "0"),
-                  part.allSatisfy({ $0.isNumber }),
-                  let value = UInt8(part)
-            else {
-                return nil
-            }
-            result.append(value)
-        }
-        return result
-    }
-
-    private func isRestrictedIPv4(_ octets: [UInt8]) -> Bool {
-        guard octets.count == 4 else { return true }
-        let first = octets[0]
-        let second = octets[1]
-        switch first {
-        case 0, 10, 224...255:
-            return true
-        case 100 where (64...127).contains(second):
-            return true
-        case 169 where second == 254:
-            return true
-        case 172 where (16...31).contains(second):
-            return true
-        case 192 where second == 0 || second == 168:
-            return true
-        case 198 where second == 18 || second == 19 || second == 51:
-            return true
-        case 203 where second == 0:
-            return true
-        default:
-            return false
-        }
-    }
-
     private func isRestrictedIPv6(_ host: String) -> Bool {
         guard host.contains(":") else { return false }
         // A colon can only belong to an IPv6 literal here (URLComponents never
-        // leaves a port in the host). Anything inet_pton cannot parse, such as
-        // a zone-scoped link-local literal (`fe80::1%en0`), cannot be
-        // classified and must fail closed rather than bypass the checks below.
-        guard let bytes = ipv6Bytes(host) else { return true }
-
-        // :: is unspecified; ::1 was handled as loopback above.
-        if bytes.allSatisfy({ $0 == 0 }) {
-            return true
-        }
-        // Link-local fe80::/10, legacy site-local fec0::/10, unique-local
-        // fc00::/7, and multicast ff00::/8 are not public destinations.
-        if bytes[0] == 0xfe {
-            let scope = bytes[1] & 0xc0
-            if scope == 0x80 || scope == 0xc0 {
-                return true
-            }
-        }
-        if (bytes[0] & 0xfe) == 0xfc || bytes[0] == 0xff {
-            return true
-        }
-
-        // IPv4-compatible and IPv4-mapped literals can encode restricted IPv4
-        // targets without a dotted suffix (for example ::ffff:a00:1).
-        let hasIPv4CompatiblePrefix = bytes[0..<12].allSatisfy { $0 == 0 }
-        let hasIPv4MappedPrefix = bytes[0..<10].allSatisfy { $0 == 0 }
-            && bytes[10] == 0xff
-            && bytes[11] == 0xff
-        if hasIPv4CompatiblePrefix || hasIPv4MappedPrefix {
-            let octets = Array(bytes[12..<16])
-            return isRestrictedIPv4(octets)
-        }
-        return false
-    }
-
-    private func ipv6Bytes(_ host: String) -> [UInt8]? {
-        var address = in6_addr()
-        let parsed = host.withCString { pointer in
-            inet_pton(AF_INET6, pointer, &address)
-        }
-        guard parsed == 1 else { return nil }
-        return withUnsafeBytes(of: &address) { rawBuffer in
-            Array(rawBuffer.prefix(16))
-        }
+        // leaves a port in the host). Anything the platform cannot parse, such
+        // as a malformed literal or a zone identifier where inet_pton rejects
+        // it, cannot be classified and must fail closed.
+        guard let bytes = FeatureIPAddress.parseIPv6(host) else { return true }
+        // Recognised loopback literals returned above. A loopback spelling the
+        // host policy does not recognise (`0:0:0:0:0:0:0:1`) fails closed with
+        // every other non-public classification.
+        return FeatureIPAddress.classifyIPv6(bytes) != .publicAddress
     }
 
     /// Chrome parses a host as an IPv4 address whenever its last dot-separated
     /// label "ends in a number" (WHATWG URL): all decimal digits, or `0x`
     /// followed by hexadecimal digits. Canonical dotted-quad literals were
-    /// classified by `ipv4Octets` already, so any other host of that shape is
-    /// either an alternative literal (octal/hex/short/decimal forms such as
+    /// classified already, so any other host of that shape is either an
+    /// alternative literal (octal/hex/short/decimal forms such as
     /// `0177.0.0.1`, `0x7f.1`, or `2130706433`) or an invalid URL; both fail
     /// closed. Ordinary hostnames whose labels merely use hexadecimal letters
     /// (`adac.de`, `abc.de`) are not numeric and stay subject to the normal
@@ -251,21 +177,11 @@ struct BrowserURLPolicy: Sendable {
     private func isAmbiguousNumericHost(_ host: String) -> Bool {
         guard !host.isEmpty,
               !host.contains(":"),
-              let lastLabel = host.split(separator: ".", omittingEmptySubsequences: false).last,
-              !lastLabel.isEmpty,
-              ipv4Octets(host) == nil
+              FeatureIPAddress.parseDottedQuad(host) == nil
         else {
             return false
         }
-        let decimalDigits = CharacterSet(charactersIn: "0123456789")
-        let hexadecimalDigits = CharacterSet(charactersIn: "0123456789abcdef")
-        if lastLabel.unicodeScalars.allSatisfy(decimalDigits.contains) {
-            return true
-        }
-        if lastLabel.hasPrefix("0x") {
-            return lastLabel.dropFirst(2).unicodeScalars.allSatisfy(hexadecimalDigits.contains)
-        }
-        return false
+        return FeatureIPAddress.endsInNumber(host)
     }
 }
 
