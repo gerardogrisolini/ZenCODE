@@ -85,8 +85,12 @@ enum TerminalSubAgentOverviewLayout {
     enum Density: CaseIterable {
         /// Every metadata line, with multi-row activity and detail text.
         case full
-        /// Status header, agent/model identity, and capped activity lines.
+        /// Status header, agent/model identity, and capped activity lines,
+        /// with a blank separator row before each agent.
         case compact
+        /// Like compact without the blank separator rows: status header,
+        /// agent/model identity, and capped activity lines.
+        case condensed
         /// Status header plus a single activity line, without separators.
         case dense
         /// One row per agent: status header with an inline activity fragment.
@@ -100,6 +104,21 @@ enum TerminalSubAgentOverviewLayout {
             self == .full
         }
 
+        /// Whether the entry keeps the single `agent:` / `model:` identity row
+        /// in place of the full metadata lines.
+        var includesAgentAndModel: Bool {
+            self == .compact || self == .condensed
+        }
+
+        /// Whether the running tool is laid out with the canonical tool rows
+        /// instead of the one-row fallback.
+        var usesCanonicalToolRows: Bool {
+            switch self {
+            case .full, .compact, .condensed: true
+            case .dense, .inline: false
+            }
+        }
+
         /// Rows a single activity or detail entry may occupy.
         var maximumEntryRows: Int {
             self == .full ? .max : 1
@@ -109,7 +128,7 @@ enum TerminalSubAgentOverviewLayout {
         var activityLineLimit: Int? {
             switch self {
             case .full: nil
-            case .compact: 2
+            case .compact, .condensed: 2
             case .dense, .inline: 1
             }
         }
@@ -266,7 +285,7 @@ enum TerminalSubAgentOverviewLayout {
             ) {
                 lines.append(.regular(model))
             }
-        } else if density == .compact {
+        } else if density.includesAgentAndModel {
             lines.append(
                 .regular(
                     agentAndModel(
@@ -552,7 +571,7 @@ enum TerminalSubAgentOverviewLayout {
         guard !ToolRenderingPolicy.shouldSuppressToolRendering(for: presentation.toolCall.name) else {
             return []
         }
-        guard density == .full || density == .compact else {
+        guard density.usesCanonicalToolRows else {
             return [
                 toolFallbackLine(
                     name: presentation.toolCall.name,

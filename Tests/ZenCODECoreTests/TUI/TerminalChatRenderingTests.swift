@@ -1794,6 +1794,90 @@ struct TerminalChatRenderingTests {
     }
 
     @Test
+    func subAgentOverviewCondensedDensityKeepsAgentRowsWithoutSeparators() {
+        let now = Date(timeIntervalSince1970: 0)
+        let agentCount = 8
+        let snapshots = (1...agentCount).map { index in
+            DirectSubAgentRuntime.AgentSnapshot(
+                id: "a\(index)",
+                name: "scout-\(index)",
+                role: "",
+                profileID: "dev",
+                profileName: "Dev",
+                status: .running,
+                pending: true,
+                configuredModelID: "m1",
+                currentToolName: "search.grep",
+                currentToolTarget: "needle",
+                latestOutput: nil,
+                latestError: nil,
+                createdAt: now,
+                updatedAt: now
+            )
+        }
+
+        // `render` frames the section with a leading and a trailing newline,
+        // so the physical rows are the ones between them.
+        func visibleRows(rowBudget: Int) -> [String] {
+            ansiStripped(
+                TerminalSubAgentOverviewLayout.render(
+                    snapshots,
+                    modelTitleResolver: { $0 },
+                    includesFinalResponses: false,
+                    toolPresentationsByAgentID: [:],
+                    rowBudget: rowBudget
+                )
+            )
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .dropFirst()
+            .dropLast()
+            .map(String.init)
+        }
+        func isBlank(_ row: String) -> Bool {
+            row.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+
+        // Title and summary, then per agent: separator + header + agent/model
+        // + tool (compact), header + agent/model + tool (condensed), or
+        // header + tool (dense).
+        let sectionRows = 2
+        let compactRows = sectionRows + agentCount * 4
+        let condensedRows = sectionRows + agentCount * 3
+        let denseRows = sectionRows + agentCount * 2
+
+        // The budget fits compact: separators and agent rows are kept.
+        let compact = visibleRows(rowBudget: compactRows)
+        #expect(compact.count == compactRows)
+        #expect(compact.filter(isBlank).count == agentCount)
+        #expect(compact.filter { $0.contains("agent: Dev") }.count == agentCount)
+
+        // One row short of compact: condensed keeps every agent row and drops
+        // only the blank separators.
+        let condensed = visibleRows(rowBudget: compactRows - 1)
+        #expect(condensed.count == condensedRows)
+        #expect(condensed.filter(isBlank).isEmpty)
+        #expect(condensed.filter { $0.contains("agent: Dev") }.count == agentCount)
+        for index in 0..<agentCount {
+            let first = sectionRows + index * 3
+            #expect(condensed[first].contains("scout-\(index + 1)"))
+            #expect(condensed[first + 1].contains("agent: Dev"))
+            #expect(condensed[first + 1].contains("model: m1"))
+            #expect(condensed[first + 2].contains("search.grep needle"))
+        }
+
+        // One row short of condensed: only dense fits, with no agent rows.
+        let dense = visibleRows(rowBudget: condensedRows - 1)
+        #expect(dense.count == denseRows)
+        #expect(dense.filter(isBlank).isEmpty)
+        #expect(dense.filter { $0.contains("agent:") }.isEmpty)
+        for index in 0..<agentCount {
+            let first = sectionRows + index * 2
+            #expect(dense[first].contains("scout-\(index + 1)"))
+            #expect(dense[first + 1].contains("search.grep needle"))
+        }
+    }
+
+    @Test
     func subAgentOverviewPrintsOnlyTheCompleteFinalContentBlock() {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_final",

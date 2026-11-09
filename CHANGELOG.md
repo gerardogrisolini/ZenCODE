@@ -91,6 +91,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- The `👥 Sub-Agents` overview has a presentation between the compact one and
+  the dense one: the compact presentation without its blank separator rows.
+  With many agents it keeps each agent, its model, its metrics, and the row of
+  the tool it runs, instead of dropping straight to two rows per agent.
 - The response-language rule of the system prompt, locked or generic, also
   asks to write in the session language the text the model writes for other
   agents: the `agent.create` prompts, the task descriptions and acceptance
