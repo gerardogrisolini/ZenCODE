@@ -893,7 +893,7 @@ extension DirectSubAgentRuntime {
             }) else {
                 continue
             }
-            var agent = interruption.agent
+            let agent = interruption.agent
             let isStandby = interruption.isStandby
             let runTask = interruption.runTask
             let releasedReservation = interruption.releasedReservation
@@ -912,10 +912,11 @@ extension DirectSubAgentRuntime {
                             reason: "Root session closed during delegated execution."
                         )
                     } catch {
-                        // Copy taken before the await above: rewriting it is the existing behavior.
-                        agent.latestError = "Delegated execution interrupted with its root session.\nUnable to interrupt task attempt: \(error.localizedDescription)"
-                        agent.updatedAt = .now
-                        agents[id] = agent
+                        // Annotates the current record: a close or prune during the await is kept.
+                        mutateAgent(id) { current in
+                            current.latestError = "Delegated execution interrupted with its root session.\nUnable to interrupt task attempt: \(error.localizedDescription)"
+                            current.updatedAt = .now
+                        }
                     }
                 }
                 await taskOrchestrator.unregisterExecutionScope(
@@ -956,7 +957,7 @@ extension DirectSubAgentRuntime {
         }
         defer { pruneTerminalAgentRecords() }
 
-        var agent = closing.agent
+        let agent = closing.agent
         let task = closing.task
         let releasedReservation = closing.releasedReservation
 
@@ -973,10 +974,11 @@ extension DirectSubAgentRuntime {
                 )
             } catch {
                 taskCancellationError = error
-                // Copy taken before the await above: rewriting it is the existing behavior.
-                agent.latestError = "Closed delegated sub-agent, but unable to cancel task attempt: \(error.localizedDescription)"
-                agent.updatedAt = .now
-                agents[id] = agent
+                // Annotates the current record: a close or prune during the await is kept.
+                mutateAgent(id) { current in
+                    current.latestError = "Closed delegated sub-agent, but unable to cancel task attempt: \(error.localizedDescription)"
+                    current.updatedAt = .now
+                }
             }
             await taskOrchestrator.unregisterExecutionScope(
                 executionSessionID: agent.sessionID

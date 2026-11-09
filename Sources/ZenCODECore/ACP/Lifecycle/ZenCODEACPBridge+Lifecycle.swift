@@ -222,12 +222,13 @@ extension ZenCODEACPBridge {
                 sessionID: sessionID,
                 workingDirectory: workingDirectoryURL
             )
-            // `createSession` and the scan suspend: if shutdown landed during
-            // them, drop the session we just created instead of announcing it
-            // to a closing host.
-            guard isLifecycleOperationLive(operation) else {
-                throw ACPShutdownFenceError()
-            }
+            // `createSession` and the scan suspend: if a shutdown or a
+            // `session/close` landed during them, close the runner session we
+            // just created instead of announcing it.
+            try await ensureLifecycleOperationLiveAfterSessionWrite(
+                operation,
+                sessionID: sessionID
+            )
             return (incarnation.epoch, offersResumableTaskGraphs)
         }
 

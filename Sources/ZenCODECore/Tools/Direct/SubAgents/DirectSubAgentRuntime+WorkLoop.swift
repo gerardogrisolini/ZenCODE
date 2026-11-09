@@ -446,11 +446,11 @@ extension DirectSubAgentRuntime {
                 attemptID: attemptID
             )
         } catch {
-            // Copy taken before the await above: rewriting it is the existing behavior.
-            var failedAgent = agent
-            failedAgent.latestError = "Unable to mark task attempt running: \(error.localizedDescription)"
-            failedAgent.updatedAt = .now
-            agents[agentID] = failedAgent
+            // Annotates the current record: a close or prune during the await is kept.
+            mutateAgent(agentID, where: { $0.status != .closed }) { current in
+                current.latestError = "Unable to mark task attempt running: \(error.localizedDescription)"
+                current.updatedAt = .now
+            }
             return false
         }
     }
@@ -627,7 +627,7 @@ extension DirectSubAgentRuntime {
         }) else {
             return
         }
-        var agent = failure.agent
+        let agent = failure.agent
         let releasedReservation = failure.releasedReservation
         if let taskID = agent.taskID,
            let attemptID = agent.taskAttemptID,
@@ -641,10 +641,11 @@ extension DirectSubAgentRuntime {
                     output: agent.latestOutput
                 )
             } catch {
-                // Copy taken before the await above: rewriting it is the existing behavior.
-                agent.latestError = "\(agent.latestError ?? "Failed.")\nUnable to fail task attempt: \(error.localizedDescription)"
-                agent.updatedAt = .now
-                agents[agentID] = agent
+                // Annotates the current record: a close or prune during the await is kept.
+                mutateAgent(agentID) { current in
+                    current.latestError = "\(current.latestError ?? "Failed.")\nUnable to fail task attempt: \(error.localizedDescription)"
+                    current.updatedAt = .now
+                }
             }
             await taskOrchestrator.unregisterExecutionScope(
                 executionSessionID: agent.sessionID
@@ -678,7 +679,7 @@ extension DirectSubAgentRuntime {
         }) else {
             return
         }
-        var agent = cancellation.agent
+        let agent = cancellation.agent
         let releasedReservation = cancellation.releasedReservation
         if let taskID = agent.taskID,
            let attemptID = agent.taskAttemptID,
@@ -691,10 +692,11 @@ extension DirectSubAgentRuntime {
                     reason: "Delegated sub-agent cancelled."
                 )
             } catch {
-                // Copy taken before the await above: rewriting it is the existing behavior.
-                agent.latestError = "\(agent.latestError ?? "Cancelled.")\nUnable to cancel task attempt: \(error.localizedDescription)"
-                agent.updatedAt = .now
-                agents[agentID] = agent
+                // Annotates the current record: a close or prune during the await is kept.
+                mutateAgent(agentID) { current in
+                    current.latestError = "\(current.latestError ?? "Cancelled.")\nUnable to cancel task attempt: \(error.localizedDescription)"
+                    current.updatedAt = .now
+                }
             }
             await taskOrchestrator.unregisterExecutionScope(
                 executionSessionID: agent.sessionID

@@ -10,6 +10,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- A delegated sub-agent closed while its turn was starting no longer comes
+  back as an idle agent, with its backend already shut down, when the task
+  graph rejects the start of its attempt. More generally, when the task graph
+  rejects the start, failure, cancellation, close, or interruption of an
+  attempt, the error is added to the agent's current record instead of
+  rewriting a copy taken before the update, which could undo a close or bring
+  back a record already removed.
+- In ACP, a `session/close` or a shutdown that lands while `session/new` is
+  still creating the session no longer leaves that session in the runner: it
+  is closed there too, as `session/load` and `session/resume` already did.
+
 ## [5.0.0] - 2026-11-09
 
 > **Breaking release:** compared with v4.1.0, v5.0.0 makes `zen --setup` the

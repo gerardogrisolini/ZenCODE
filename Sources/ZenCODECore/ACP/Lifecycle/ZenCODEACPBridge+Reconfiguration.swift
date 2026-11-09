@@ -48,8 +48,7 @@ extension ZenCODEACPBridge {
         throw error
     }
 
-    /// Re-check for the handlers that reconfigure an existing session through
-    /// the runner.
+    /// Re-check for the handlers that write a session into the runner.
     ///
     /// `createSession` suspends, so a `session/close` or `shutdown` can land
     /// inside it and re-create the session in the runner after the host already
