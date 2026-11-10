@@ -98,9 +98,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   restarts at the code column (file diffs keep the line-number gutter).
 - `search.glob` does not list the contents of `.git`, `.build`, `.swiftpm`,
   `node_modules`, and `DerivedData` unless the requested path is inside one of
-  them; the directory itself is still listed. `search.grep` and
-  `search.locate` stop grep once `maxResults` is reached, so errors in files
-  not yet searched are not reported.
+  them or the pattern names one of them (`.build/checkouts/**/Package.swift`);
+  the directory itself is still listed. `search.grep` and `search.locate` stop
+  grep once `maxResults` is reached, so errors in files not yet searched are
+  not reported.
 - `agent.wait` and `agent.message` with `awaitReply` return as soon as the
   state of a sub-agent changes or a message arrives, instead of at the next
   poll; polling remains as a fallback.

@@ -235,12 +235,12 @@ is a core group, like `files` and `text`: the tools run inside `zen` on macOS
 and Linux, need no installation, and are read-only, so a `readOnly` profile
 such as `Reviewer` or `Planner` keeps them. `search.glob` does not list the
 contents of `.git`, `.build`, `.swiftpm`, `node_modules`, and `DerivedData`
-unless the requested path is inside one of them, and `search.grep` and
-`search.locate` stop once `maxResults` is reached, so errors in files not yet
-searched are not reported. Older `agents.json` files that
-name the former optional package as `feature:search-tools` or `search-tools`
-keep working: both keys are read as `search`, and the profile is rewritten with
-`search` the next time profiles are saved. See
+unless the requested path is inside one of them or the pattern names one of
+them, and `search.grep` and `search.locate` stop once `maxResults` is reached,
+so errors in files not yet searched are not reported. Older `agents.json` files
+that name the former optional package as `feature:search-tools` or
+`search-tools` keep working: both keys are read as `search`, and the profile is
+rewritten with `search` the next time profiles are saved. See
 [Search tools moved into the core](zen.md#search-tools-moved-into-the-core).
 
 ## Sub-Agents

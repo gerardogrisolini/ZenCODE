@@ -76,7 +76,7 @@ struct SearchGlobTool: FeatureTool {
     }
 
     static let name = "search.glob"
-    static let description = "Finds files under a local path. Pass pattern for a glob such as **/*.swift; omit pattern to list files recursively. Contents of VCS and build directories (.git, .build, .swiftpm, node_modules, DerivedData) are not listed unless path is inside one."
+    static let description = "Finds files under a local path. Pass pattern for a glob such as **/*.swift; omit pattern to list files recursively. Contents of VCS and build directories (.git, .build, .swiftpm, node_modules, DerivedData) are not listed unless path is inside one or pattern names one."
     static let inputSchema = buildInputSchema([.string("pattern"), .string("path")] + CommonSchemaProperties.limit)
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {

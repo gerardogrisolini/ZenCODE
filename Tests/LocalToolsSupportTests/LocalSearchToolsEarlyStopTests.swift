@@ -4,7 +4,8 @@ import FeatureKit
 @testable import LocalToolsSupport
 
 /// search.glob does not descend into VCS and build directories met below the
-/// root; search.grep and search.locate stop grep once their cut is filled.
+/// root unless the root is inside one or the pattern names one; search.grep and
+/// search.locate stop grep once their cut is filled.
 @Suite
 struct LocalSearchToolsEarlyStopTests {
     @Test
@@ -28,6 +29,39 @@ struct LocalSearchToolsEarlyStopTests {
         // Inside an excluded root nothing is pruned, not even a nested `.git`.
         let inside = try await glob("node_modules")
         #expect(inside.contains { $0.hasSuffix("pkg/.git/HEAD") })
+    }
+
+    @Test
+    func globPatternNamesSearchExcludedDirectoryChecksWholePathComponents() {
+        for pattern in [".build/checkouts/**/Package.swift", "node_modules/react/package.json", "**/node_modules/**"] {
+            #expect(LocalToolsSupport.globPatternNamesSearchExcludedDirectory(pattern), "\(pattern)")
+        }
+        for pattern in [nil, "**/*.swift", "src/build/a.swift", ".buildx/a", "my.git/HEAD"] as [String?] {
+            #expect(!LocalToolsSupport.globPatternNamesSearchExcludedDirectory(pattern), "\(pattern ?? "nil")")
+        }
+    }
+
+    @Test
+    func globDescendsIntoExcludedDirectoriesNamedByThePatternAndStillPrunesTheOthers() async throws {
+        let root = try makeTree(["ws/src/a.swift", "ws/.build/checkouts/dep/Package.swift",
+                                 "ws/node_modules/react/package.json", "ws/.git/HEAD"])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let context = FeatureContext(workingDirectory: root, environment: [:])
+        func glob(_ pattern: String) async throws -> [String] {
+            let input = SearchGlobTool.Input(pattern: pattern, path: nil, maxResults: nil, max_results: nil)
+            return try await SearchGlobTool().run(input, context: context).components(separatedBy: "\n")
+        }
+        // The leading `*` also crosses `/`, so it absorbs the stray prefix that
+        // the relative paths carry under `/private` (see the test above).
+        let checkouts = try await glob("*/.build/checkouts/**/Package.swift")
+        #expect(checkouts.contains { $0.hasSuffix(".build/checkouts/dep/Package.swift") }, "\(checkouts)")
+        let modules = try await glob("*/node_modules/react/package.json")
+        #expect(modules.contains { $0.hasSuffix("node_modules/react/package.json") }, "\(modules)")
+        // A pattern that names no excluded directory keeps the pruning.
+        for pattern in ["*/package.json", "*.json"] {
+            let pruned = try await glob(pattern)
+            #expect(pruned == ["<empty>"], "\(pattern): \(pruned)")
+        }
     }
 
     @Test

@@ -207,8 +207,10 @@ enum LocalToolsSupport {
         }
         // Like grep, do not descend into VCS and build directories met below the
         // root; the directory entry itself is still listed. A root that is, or
-        // lies inside, one of them is searched without pruning.
+        // lies inside, one of them is searched without pruning, and so is a
+        // pattern that names one (`.build/checkouts/**/Package.swift`).
         let prunesExcludedDirectories = !isInsideSearchExcludedDirectory(root)
+            && !globPatternNamesSearchExcludedDirectory(pattern)
         var matches: [String] = []
         var visited = 0
         let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
@@ -254,6 +256,15 @@ enum LocalToolsSupport {
         [root, root.resolvingSymlinksInPath()].contains { url in
             url.pathComponents.contains { searchExcludedDirectories.contains($0) }
         }
+    }
+
+    /// Whether a path component of `pattern` is a directory listed in
+    /// `searchExcludedDirectories`, as in `node_modules/react/package.json`.
+    static func globPatternNamesSearchExcludedDirectory(_ pattern: String?) -> Bool {
+        guard let pattern else {
+            return false
+        }
+        return pattern.split(separator: "/").contains { searchExcludedDirectories.contains(String($0)) }
     }
 
     static func existingGlobPatternPath(_ pattern: String, context: FeatureContext) -> URL? {
