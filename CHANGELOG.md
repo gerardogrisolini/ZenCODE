@@ -10,6 +10,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Jira: the browser setup page accepts its own form again. The page was served
+  with `Referrer-Policy: no-referrer`, which makes browsers send `Origin: null`
+  on the form submission; the setup server rejected that origin, so every
+  attempt to connect ended with "The submission did not come from this Jira
+  setup page". The page is now served with `Referrer-Policy: same-origin`: the
+  submission carries its loopback origin, and the Atlassian help link still
+  receives no `Referer`.
+
 ## [5.0.1] - 2026-11-10
 
 ### Fixed

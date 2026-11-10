@@ -93,6 +93,34 @@ struct JiraBrowserSetupStateTests {
         #expect((formResponse as? HTTPURLResponse)?.value(forHTTPHeaderField: "Cache-Control") == "no-store")
     }
 
+    /// A browser derives the `Origin` of the form POST from the page's
+    /// `Referrer-Policy`: under `no-referrer` it sends `Origin: null`, which the
+    /// server rejects as cross-site. The page must therefore be served with a
+    /// policy that keeps the real loopback origin on that POST.
+    @Test
+    func formPagePolicyLetsTheBrowserPostWithItsLoopbackOrigin() async throws {
+        let server = try JiraBrowserSetupServer(
+            reason: .manual,
+            defaults: nil,
+            validate: { _ in .failure(JiraSetupValidationError(message: "Invalid credentials")) }
+        )
+        let port = try await server.start()
+        defer { server.stop() }
+
+        let (_, formResponse) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/")!)
+        #expect((formResponse as? HTTPURLResponse)?.value(forHTTPHeaderField: "Referrer-Policy") == "same-origin")
+
+        let (_, browserResponse) = try await Self.submit(
+            to: port,
+            state: server.formToken,
+            origin: "http://127.0.0.1:\(port)"
+        )
+        #expect((browserResponse as? HTTPURLResponse)?.statusCode == 200)
+
+        let (_, opaqueResponse) = try await Self.submit(to: port, state: server.formToken, origin: "null")
+        #expect((opaqueResponse as? HTTPURLResponse)?.statusCode == 403)
+    }
+
     @Test
     func loopbackHeaderChecksAcceptOnlyLocalAuthorities() {
         #expect(JiraBrowserSetupServer.isLoopbackHost(nil))
@@ -158,10 +186,17 @@ struct JiraBrowserSetupStateTests {
         )
     }()
 
-    private static func submit(to port: UInt16, state: String) async throws -> (Data, URLResponse) {
+    private static func submit(
+        to port: UInt16,
+        state: String,
+        origin: String? = nil
+    ) async throws -> (Data, URLResponse) {
         var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/")!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        if let origin {
+            request.setValue(origin, forHTTPHeaderField: "Origin")
+        }
         request.httpBody = Data(
             "site=https%3A%2F%2Fexample.atlassian.net&email=person%40example.com&token=token&state=\(state)".utf8
         )

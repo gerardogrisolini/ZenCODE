@@ -397,10 +397,13 @@ final class JiraBrowserSetupServer: Sendable {
             "HTTP/1.1 \(statusCode) \(JiraBrowserSetupServer.reasonPhrase(for: statusCode))",
             "Content-Type: text/html; charset=utf-8",
             "Content-Length: \(body.count)",
-            // The form page embeds the one-time token; never let it be cached
-            // or leak through the Referer of the Atlassian help link.
+            // The form page embeds the one-time token; never let it be cached,
+            // and never send a Referer to the Atlassian help link.
+            // `same-origin` rather than `no-referrer`: under `no-referrer` a
+            // browser sends `Origin: null` on the form POST, which
+            // `isLoopbackOrigin` rejects as a cross-site submission.
             "Cache-Control: no-store",
-            "Referrer-Policy: no-referrer",
+            "Referrer-Policy: same-origin",
             "X-Content-Type-Options: nosniff",
             "Connection: close",
             "",
