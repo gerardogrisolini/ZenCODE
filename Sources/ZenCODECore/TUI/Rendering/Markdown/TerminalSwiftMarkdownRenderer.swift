@@ -66,6 +66,10 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
     /// Shared with the streaming formatter to preserve Markdown semantics.
     private let palette: TerminalMarkdownPalette
 
+    /// Whether code surfaces reach the right edge with `ESC[K` instead of
+    /// padding spaces (see `TerminalCodeBlockRenderer.renderBackgroundRow`).
+    private let codeBlocksUseEraseToEndOfLine: Bool
+
     /// Visible width used for rules, tables, and code surfaces. The shared
     /// lookup is short-lived and has no terminal input/output interaction.
     private var renderWidth: Int {
@@ -82,11 +86,13 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
     init(
         supportsHyperlinks: Bool = false,
         renderWidth: Int = 0,
-        palette: TerminalMarkdownPalette? = nil
+        palette: TerminalMarkdownPalette? = nil,
+        codeBlocksUseEraseToEndOfLine: Bool = false
     ) {
         self.supportsHyperlinks = supportsHyperlinks
         self.fixedRenderWidth = renderWidth > 0 ? renderWidth : nil
         self.palette = palette ?? .detected
+        self.codeBlocksUseEraseToEndOfLine = codeBlocksUseEraseToEndOfLine
     }
 
     mutating func defaultVisit(_ markup: Markup) -> String {
@@ -215,7 +221,8 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
             trimmedCode,
             language: codeBlock.language,
             width: renderWidth,
-            palette: palette
+            palette: palette,
+            usesEraseToEndOfLine: codeBlocksUseEraseToEndOfLine
         )
     }
 

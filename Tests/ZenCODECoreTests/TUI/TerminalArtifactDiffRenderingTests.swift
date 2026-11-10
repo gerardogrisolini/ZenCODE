@@ -142,11 +142,10 @@ struct TerminalArtifactDiffRenderingTests {
                 expectBackground(row, background: background, width: 19, palette: palette)
                 #expect(row.contains(palette.syntaxString))
             }
-            let reassembled = rows.enumerated().map { index, row in
+            let reassembled = rows.map { row in
                 let visible = TerminalANSIText.stripANSI(row)
-                let source = index == 0 ? visible : String(visible.dropFirst(2))
-                if index > 0 { #expect(visible.hasPrefix("↳ ")) }
-                return source.trimmingCharacters(in: .whitespaces)
+                #expect(!visible.contains("↳"))
+                return visible.trimmingCharacters(in: .whitespaces)
             }.joined()
             #expect(reassembled == marker + payload)
         }

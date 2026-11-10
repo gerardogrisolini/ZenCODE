@@ -109,6 +109,10 @@ public struct TerminalMarkdownStreamFormatter {
     /// such as nested sub-agent response indentation.
     let presentationPrefixWidth: Int
     let palette: TerminalMarkdownPalette
+    /// Whether fenced code and its header reach the right edge with `ESC[K`
+    /// instead of padding spaces. Only for surfaces whose rows end up in the
+    /// terminal scrollback, where padding spaces would be wrapped on a resize.
+    let codeBlocksUseEraseToEndOfLine: Bool
 
     /// Visible terminal width used for structured Markdown reflow. When no fixed
     /// width was injected (production), this is re-read on each access so output
@@ -152,7 +156,8 @@ public struct TerminalMarkdownStreamFormatter {
         isEnabled: Bool,
         removesUnbalancedStrongMarkers: Bool = false,
         usesTerminalWidthForStructuredContent: Bool = true,
-        presentationPrefixWidth: Int = 0
+        presentationPrefixWidth: Int = 0,
+        codeBlocksUseEraseToEndOfLine: Bool = false
     ) {
         self.isEnabled = isEnabled
         self.fixedRenderWidth = usesTerminalWidthForStructuredContent ? nil : 0
@@ -160,6 +165,7 @@ public struct TerminalMarkdownStreamFormatter {
         self.removesUnbalancedStrongMarkers = removesUnbalancedStrongMarkers
         self.presentationPrefixWidth = max(0, presentationPrefixWidth)
         self.palette = .detected
+        self.codeBlocksUseEraseToEndOfLine = codeBlocksUseEraseToEndOfLine
     }
 
     init(
@@ -169,7 +175,8 @@ public struct TerminalMarkdownStreamFormatter {
         removesUnbalancedStrongMarkers: Bool = false,
         usesTerminalWidthForStructuredContent: Bool = true,
         presentationPrefixWidth: Int = 0,
-        palette: TerminalMarkdownPalette? = nil
+        palette: TerminalMarkdownPalette? = nil,
+        codeBlocksUseEraseToEndOfLine: Bool = false
     ) {
         self.isEnabled = isEnabled
         self.fixedRenderWidth = usesTerminalWidthForStructuredContent ? renderWidth : 0
@@ -177,6 +184,7 @@ public struct TerminalMarkdownStreamFormatter {
         self.removesUnbalancedStrongMarkers = removesUnbalancedStrongMarkers
         self.presentationPrefixWidth = max(0, presentationPrefixWidth)
         self.palette = palette ?? .detected
+        self.codeBlocksUseEraseToEndOfLine = codeBlocksUseEraseToEndOfLine
     }
 
     public mutating func consume(_ text: String) -> String {
@@ -343,7 +351,8 @@ public struct TerminalMarkdownStreamFormatter {
                 language: activeCodeFence.language,
                 width: codeBlockWidth,
                 palette: palette,
-                diffKind: diffKind
+                diffKind: diffKind,
+                usesEraseToEndOfLine: codeBlocksUseEraseToEndOfLine
             ).joined(separator: "\n") + newline
         }
 
@@ -353,7 +362,8 @@ public struct TerminalMarkdownStreamFormatter {
             let header = TerminalCodeBlockRenderer.renderHeader(
                 language: openingFence.language,
                 width: codeBlockWidth,
-                palette: palette
+                palette: palette,
+                usesEraseToEndOfLine: codeBlocksUseEraseToEndOfLine
             )
             return flushed + header + newline
         }

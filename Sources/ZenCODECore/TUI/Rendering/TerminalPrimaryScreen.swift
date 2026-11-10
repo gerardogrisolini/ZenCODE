@@ -289,6 +289,18 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
                     stream.newline()
                 case .carriageReturn:
                     sequence += "\r"; stream.carriageReturn(columns: geometry.columns)
+                case .eraseToEndOfLine:
+                    // Forwarded only when it can paint the right edge without
+                    // erasing owned cells: under an active rendition (with the
+                    // default one it is a no-op on rows allocated blank), with
+                    // the cursor at the end of the unfinished paragraph, and
+                    // not in the delayed-wrap column, where the cursor still
+                    // sits on the last cell. It does not move the cursor.
+                    if !stream.rendition.isEmpty,
+                       stream.index == stream.glyphs.count,
+                       stream.position(columns: geometry.columns).column <= geometry.columns {
+                        sequence += "\u{1B}[K"
+                    }
                 case .tab:
                     let count = 8 - (stream.position(columns: geometry.columns).column - 1) % 8
                     for _ in 0..<count { appendGlyph(" ", sequence: &sequence) }

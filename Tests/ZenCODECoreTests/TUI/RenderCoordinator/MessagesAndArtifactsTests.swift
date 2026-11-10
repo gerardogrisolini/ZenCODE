@@ -95,4 +95,25 @@ extension TerminalChatRenderCoordinatorTests {
         let separator = beforeArtifact.reversed().prefix { $0 == "\n" || $0 == " " }
         #expect(separator.filter { $0 == "\n" }.count == 2)
     }
+
+    @Test
+    func onlyTheAssistantStreamExtendsCodeBackgroundsWithEraseToEndOfLine() async {
+        let renderer = makeRenderer(
+            standardErrorIsTerminal: true, standardOutputIsTerminal: true,
+            columnWidthProvider: { 100 }
+        )
+        let flags = await renderer.codeBlockEraseFlags
+        #expect(flags.assistant)
+        #expect(!flags.thought)
+    }
+}
+
+private extension TerminalChatRenderCoordinator {
+    /// Reads the actor-isolated streaming formatters for the wiring assertions.
+    var codeBlockEraseFlags: (assistant: Bool, thought: Bool) {
+        (
+            assistantStreamingState.markdownFormatter.codeBlocksUseEraseToEndOfLine,
+            thoughtStreamingState.markdownFormatter.codeBlocksUseEraseToEndOfLine
+        )
+    }
 }

@@ -203,7 +203,8 @@ actor TerminalChatRenderCoordinator {
         }
         self.assistantStreamingState = StreamingContentState(
             markdownFormatter: TerminalMarkdownStreamFormatter(
-                isEnabled: standardOutputIsTerminal
+                isEnabled: standardOutputIsTerminal,
+                codeBlocksUseEraseToEndOfLine: true
             )
         )
         self.thoughtStreamingState = StreamingContentState(

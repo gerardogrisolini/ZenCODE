@@ -21,7 +21,8 @@ extension TerminalChatRenderCoordinator {
         }
         var formatter = TerminalMarkdownStreamFormatter(
             isEnabled: channelIsTerminal(channel),
-            presentationPrefixWidth: TerminalANSIText.visibleWidth(linePrefix)
+            presentationPrefixWidth: TerminalANSIText.visibleWidth(linePrefix),
+            codeBlocksUseEraseToEndOfLine: true
         )
         let rendered = Self.indentedMarkdown(
             formatter.consume(markdown) + formatter.finish(),

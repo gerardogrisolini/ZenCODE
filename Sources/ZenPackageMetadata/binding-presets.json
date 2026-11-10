@@ -6,8 +6,8 @@
                 "modelBindings": [
                     {
                         "capability" : 10,
-                        "id" : "claude:claude-fable-5-1",
-                        "modelID" : "claude-fable-5-1",
+                        "id" : "claude:claude-fable-5-2",
+                        "modelID" : "claude-fable-5-2",
                         "modelProvider" : "Claude Subscription",
                         "thinkingSelection" : "xhigh"
                     },
@@ -39,8 +39,8 @@
                 "modelBindings": [
                     {
                         "capability" : 10,
-                        "id" : "claude:claude-fable-5-1",
-                        "modelID" : "claude-fable-5-1",
+                        "id" : "claude:claude-fable-5-2",
+                        "modelID" : "claude-fable-5-2",
                         "modelProvider" : "Claude Subscription",
                         "thinkingSelection" : "max"
                     },
@@ -52,14 +52,14 @@
                         "thinkingSelection" : "max"
                     }
                 ],
-                "defaultModelBindingID": "claude:claude-fable-5-1"
+                "defaultModelBindingID": "claude:claude-fable-5-2"
             },
             "reviewer": {
                 "modelBindings": [
                     {
                         "capability" : 10,
-                        "id" : "claude:claude-fable-5-1",
-                        "modelID" : "claude-fable-5-1",
+                        "id" : "claude:claude-fable-5-2",
+                        "modelID" : "claude-fable-5-2",
                         "modelProvider" : "Claude Subscription",
                         "thinkingSelection" : "xhigh"
                     },
@@ -71,7 +71,7 @@
                         "thinkingSelection" : "xhigh"
                     }
                 ],
-                "defaultModelBindingID": "claude:claude-fable-5-1"
+                "defaultModelBindingID": "claude:claude-fable-5-2"
             },
             "reporter": {
                 "modelBindings": [

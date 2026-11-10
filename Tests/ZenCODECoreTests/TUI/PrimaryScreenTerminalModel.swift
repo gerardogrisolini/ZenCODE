@@ -95,7 +95,21 @@ struct PrimaryScreenTerminalModel: Sendable {
             pendingWrap = false
         case "X":
             for column in x..<min(columns, x + max(1, p.first ?? 1)) { viewport[y].cells[column] = " " }
-        case "K": viewport[y] = blank(); pendingWrap = false
+        case "K":
+            // EL: 2 erases the whole line, 1 the cells up to and including the
+            // cursor, 0 (or none) from the cursor to the end of the line. In
+            // delayed-wrap state the cursor sits on the last column, so EL 0
+            // erases that last cell.
+            switch p.first ?? 0 {
+            case 2:
+                viewport[y] = blank()
+            case 1:
+                for column in 0...min(x, columns - 1) { viewport[y].cells[column] = " " }
+            default:
+                if x < columns { for column in x..<columns { viewport[y].cells[column] = " " } }
+                viewport[y].softWrapped = false
+            }
+            pendingWrap = false
         case "r":
             top = max(0, (p.first ?? 1) - 1)
             bottom = p.count > 1 ? min(rows - 1, p[1] - 1) : rows - 1

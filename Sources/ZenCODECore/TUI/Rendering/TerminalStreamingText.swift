@@ -10,7 +10,11 @@ struct TerminalStreamingText: Sendable {
     struct Glyph: Sendable { var text: String; var style: String
         var width: Int { TerminalANSIText.visibleWidth(text) }
     }
-    enum Token { case glyph(String), carriageReturn, newline, tab, rendition(String) }
+    enum Token {
+        case glyph(String), carriageReturn, newline, tab, rendition(String)
+        /// `ESC[K` / `ESC[0K`: extends the active rendition to the right edge.
+        case eraseToEndOfLine
+    }
     private(set) var glyphs: [Glyph] = []
     private(set) var index = 0
     private(set) var rendition = ""
@@ -29,6 +33,11 @@ struct TerminalStreamingText: Sendable {
                 if complete || escape.utf8.count > 4096 {
                     if isCSI && escape.hasSuffix("m") || isOSC && escape.hasPrefix("\u{1B}]8;") {
                         result.append(.rendition(escape))
+                    } else if escape == "\u{1B}[K" || escape == "\u{1B}[0K" {
+                        // Only EL 0 is forwarded; EL 1/2 would erase cells the
+                        // screen model owns, so they stay discarded like any
+                        // other CSI.
+                        result.append(.eraseToEndOfLine)
                     }
                     escape = ""
                 }

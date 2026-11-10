@@ -34,7 +34,13 @@ extension TerminalChatRenderCoordinator {
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
         let background = TerminalStyle.Prompt.background
-        let clearToEnd = "\u{1B}[K"
+        // The screen forwards `ESC[K` under an active rendition, which would
+        // stretch the prompt band to the right edge. There the band keeps
+        // covering only the text, as it always has; the erase is emitted only
+        // when the bytes reach the terminal directly (no screen owning the
+        // channel, or one that is append-only).
+        let fillsRow = primaryScreen(for: .standardError)?.isAppendOnly ?? true
+        let clearToEnd = fillsRow ? "\u{1B}[K" : ""
         let reset = TerminalStyle.reset
         let renderedLines = prompt
             .split(separator: "\n", omittingEmptySubsequences: false)

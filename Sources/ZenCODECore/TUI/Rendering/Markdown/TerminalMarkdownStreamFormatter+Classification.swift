@@ -428,7 +428,8 @@ extension TerminalMarkdownStreamFormatter {
         TerminalSwiftMarkdownRenderer(
             supportsHyperlinks: supportsHyperlinks,
             renderWidth: codeBlockWidth,
-            palette: palette
+            palette: palette,
+            codeBlocksUseEraseToEndOfLine: codeBlocksUseEraseToEndOfLine
         )
     }
 

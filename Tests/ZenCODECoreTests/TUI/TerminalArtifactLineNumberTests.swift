@@ -127,8 +127,8 @@ struct TerminalArtifactLineNumberTests {
                 expectBackground(row, background: background, width: 19, palette: palette)
                 #expect(row.contains(palette.syntaxString))
                 let visible = TerminalANSIText.stripANSI(row)
-                #expect(visible.hasPrefix(index == 0 ? "42 │ " : "   │ ↳ "))
-                return String(visible.dropFirst(index == 0 ? 5 : 7))
+                #expect(visible.hasPrefix(index == 0 ? "42 │ " : "   │ "))
+                return String(visible.dropFirst(5))
                     .trimmingCharacters(in: .whitespaces)
             }.joined()
             #expect(reassembled == marker + payload)
@@ -138,6 +138,33 @@ struct TerminalArtifactLineNumberTests {
             )[0]
             #expect(TerminalANSIText.stripANSI(blank).hasPrefix("42 │ " + marker))
             expectBackground(blank, background: background, width: 19, palette: palette)
+        }
+    }
+
+    @Test(arguments: [TerminalMarkdownPalette.dark, .light])
+    func numberedUnicodeWrapsKeepTheGutterWithoutMarkerWhenErasingToEndOfLine(
+        palette: TerminalMarkdownPalette
+    ) {
+        let payload = "\"" + String(repeating: "界e\u{301}🚀", count: 18) + "\""
+        let erase = "\u{1B}[K"
+        for (marker, background) in [("+", palette.diffAdditionBackground), ("-", palette.diffRemovalBackground)] {
+            let rows = TerminalCodeBlockRenderer.renderCodeLine(
+                "42 │ " + marker + payload, language: "artifact-diff-swift", width: 19,
+                palette: palette, usesEraseToEndOfLine: true
+            )
+            #expect(rows.count > 2)
+            let reassembled = rows.enumerated().map { index, row in
+                #expect(row.hasPrefix(palette.codeForeground + background))
+                #expect(row.hasSuffix(TerminalStyle.reset))
+                #expect(row.contains(palette.syntaxString))
+                #expect(TerminalANSIText.visibleWidth(row) <= 19)
+                #expect(row.hasSuffix(erase + TerminalStyle.reset) == (TerminalANSIText.visibleWidth(row) < 19))
+                let visible = TerminalANSIText.stripANSI(row)
+                #expect(visible.hasPrefix(index == 0 ? "42 │ " : "   │ "))
+                #expect(!visible.contains("↳") && !visible.contains("›"))
+                return String(visible.dropFirst(5))
+            }.joined()
+            #expect(reassembled == marker + payload)
         }
     }
 
@@ -163,8 +190,9 @@ struct TerminalArtifactLineNumberTests {
             #expect(TerminalANSIText.visibleWidth(row) == 8)
             let visible = TerminalANSIText.stripANSI(row)
             #expect(visible.hasPrefix(index == 0 ? "123 │ " : "    │ "))
-            var content = String(visible.dropFirst(6))
-            if index > 0, content.hasPrefix("›") { content.removeFirst() }
+            let content = String(visible.dropFirst(6))
+            // Continuations restart at the code column with no marker.
+            #expect(!content.contains("›"))
             return content.trimmingCharacters(in: .whitespaces)
         }.joined()
         #expect(reassembled == payload)

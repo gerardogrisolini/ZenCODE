@@ -37,6 +37,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - In ACP, a `session/close` or a shutdown that lands while `session/new` is
   still creating the session no longer leaves that session in the runner: it
   is closed there too, as `session/load` and `session/resume` already did.
+- Narrowing the terminal window no longer leaves background-only rows below
+  code blocks and below the diffs of changed files in the transcript: the
+  background is now extended to the right edge by the terminal (`ESC[K`)
+  instead of being written as padding spaces, which the terminal wrapped into
+  extra rows when the window shrank. Rows longer than the new width still wrap,
+  like any other text already printed.
 
 ### Changed
 
@@ -75,6 +81,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
   DuckDuckGo result and pagination-form patterns once per endpoint, and
   `web.fetch` compiles the charset-sniffing pattern once. The output is
   unchanged.
+- Code lines that wrap no longer start with the `↳` marker: the text
+  restarts at the code column (file diffs keep the line-number gutter).
 
 ### Removed
 

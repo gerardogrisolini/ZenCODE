@@ -378,4 +378,104 @@ final class PrimaryScreenCapture: Sendable {
                             sequence: footer(rows: 20, columns: 60))
         #expect(size(screen.dialogViewport()) == [12, 60])
     }
+
+    // MARK: - ESC[K forwarding
+
+    private static let eraseStyle = "\u{1B}[48;5;236m"
+    private static let erase = "\u{1B}[K"
+    private static let reset = "\u{1B}[0m"
+
+    /// The bytes written to the terminal after `count` earlier writes. The
+    /// footer redraw carries `ESC[2K`, which does not contain `ESC[K`.
+    private func emitted(_ capture: PrimaryScreenCapture, after count: Int) -> String {
+        capture.writes.withLock { $0.dropFirst(count).joined() }
+    }
+
+    @Test(arguments: ["\u{1B}[K", "\u{1B}[0K"])
+    func eraseToEndOfLineUnderARenditionReachesTheTerminalRightAfterTheText(sequence: String) {
+        let capture = PrimaryScreenCapture(), screen = capture.screen()
+        install(screen)
+        let before = capture.writes.withLock { $0.count }
+        screen.append("\(Self.eraseStyle)ERASE_ROW\(sequence)\(Self.reset)\n")
+        let bytes = emitted(capture, after: before)
+        // EL 0 is forwarded in its canonical short form.
+        #expect(bytes.contains("ERASE_ROW\(Self.erase)"))
+        #expect(bytes.components(separatedBy: Self.erase).count == 2)
+        #expect(!bytes.contains("\u{1B}[0K"))
+        #expect(capture.visible.contains("ERASE_ROW"))
+    }
+
+    @Test func eraseToEndOfLineWithoutARenditionIsDiscarded() {
+        let capture = PrimaryScreenCapture(), screen = capture.screen()
+        install(screen)
+        let before = capture.writes.withLock { $0.count }
+        // The reset before the erase is how tool code areas emit it.
+        screen.append("\(Self.eraseStyle)PLAIN_ROW\(Self.reset)\(Self.erase)\n")
+        screen.append("BARE_ROW\(Self.erase)\n")
+        let bytes = emitted(capture, after: before)
+        #expect(bytes.contains("PLAIN_ROW"))
+        #expect(bytes.contains("BARE_ROW"))
+        #expect(!bytes.contains(Self.erase))
+        #expect(!bytes.contains("\u{1B}[0K"))
+        #expect(capture.visible.contains("PLAIN_ROW"))
+    }
+
+    @Test func eraseToEndOfLineInTheDelayedWrapColumnIsDiscardedAndKeepsTheLastCell() {
+        let capture = PrimaryScreenCapture(columns: 40), screen = capture.screen()
+        install(screen, columns: 40)
+        let before = capture.writes.withLock { $0.count }
+        // 39 cells leave the cursor on the last column: the erase is forwarded.
+        screen.append("\(Self.eraseStyle)\(String(repeating: "N", count: 39))\(Self.erase)\(Self.reset)\n")
+        #expect(emitted(capture, after: before).contains(Self.erase))
+
+        // A row as wide as the screen leaves the delayed-wrap column: forwarding
+        // the erase there would wipe the last cell.
+        let middle = capture.writes.withLock { $0.count }
+        let full = String(repeating: "W", count: 40)
+        screen.append("\(Self.eraseStyle)\(full)\(Self.erase)\(Self.reset)\n")
+        #expect(!emitted(capture, after: middle).contains(Self.erase))
+        #expect(capture.visible.contains(full))
+    }
+
+    @Test func eraseToEndOfLineSplitAcrossAppendsIsForwardedOnce() throws {
+        let capture = PrimaryScreenCapture(), screen = capture.screen()
+        install(screen)
+        let before = capture.writes.withLock { $0.count }
+        screen.append("\(Self.eraseStyle)SPLIT_ROW\u{1B}[")
+        screen.append("K\(Self.reset)\n")
+        let bytes = emitted(capture, after: before)
+        // The second write restores the cursor and rendition, so the erase is
+        // not adjacent to the text but must follow it, once.
+        #expect(bytes.components(separatedBy: Self.erase).count == 2)
+        let text = try #require(bytes.range(of: "SPLIT_ROW"))
+        let erase = try #require(bytes.range(of: Self.erase))
+        #expect(text.upperBound <= erase.lowerBound)
+        #expect(capture.visible.contains("SPLIT_ROW"))
+    }
+
+    @Test func otherEraseSequencesInsideTheTranscriptStayDiscarded() {
+        let capture = PrimaryScreenCapture(), screen = capture.screen()
+        install(screen)
+        let before = capture.writes.withLock { $0.count }
+        screen.append("\(Self.eraseStyle)A\u{1B}[2KB\u{1B}[1KC\u{1B}[0m\n")
+        let bytes = emitted(capture, after: before)
+        // Discarded sequences leave the glyphs adjacent; the footer's own
+        // `ESC[2K` is written elsewhere in the stream.
+        #expect(bytes.contains("ABC"))
+        #expect(!bytes.contains("\u{1B}[1K"))
+        #expect(!bytes.contains(Self.erase))
+        #expect(capture.visible.contains("ABC"))
+    }
+
+    @Test func eraseToEndOfLineAfterACarriageReturnInsideTheParagraphIsDiscarded() {
+        let capture = PrimaryScreenCapture(), screen = capture.screen()
+        install(screen)
+        let before = capture.writes.withLock { $0.count }
+        // The CR puts the cursor back over owned cells: erasing would wipe them.
+        screen.append("\(Self.eraseStyle)OWNED_CELLS\r\(Self.erase)\(Self.reset)\n")
+        let bytes = emitted(capture, after: before)
+        #expect(bytes.contains("OWNED_CELLS\r"))
+        #expect(!bytes.contains(Self.erase))
+        #expect(capture.visible.contains("OWNED_CELLS"))
+    }
 }
