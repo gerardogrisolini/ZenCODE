@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [5.0.1] - 2026-11-10
+
 ### Fixed
 
 - `local.exec` authorization no longer mistakes long shell options that
@@ -4873,7 +4875,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v5.0.0...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v5.0.1...HEAD
+[5.0.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v5.0.0...v5.0.1
 [5.0.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v4.1.0...v5.0.0
 [4.1.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v4.0.2...v4.1.0
 [4.0.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v4.0.1...v4.0.2
