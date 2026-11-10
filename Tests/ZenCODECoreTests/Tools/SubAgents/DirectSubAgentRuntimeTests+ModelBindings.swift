@@ -177,9 +177,9 @@ extension DirectSubAgentRuntimeTests {
     @Test(arguments: [false, true])
     func createAgentWithoutModelProfileInheritsParentConfiguration(catalogAvailable: Bool) async throws {
         let minimal = AgentProfile(
-            id: AgentProfileRole.minimal.rawValue,
+            id: AgentProfileRole.generic.rawValue,
             name: "Minimal",
-            role: .minimal,
+            role: .generic,
             tools: []
         )
         let backend = CapturingSubAgentRuntimeBackend()

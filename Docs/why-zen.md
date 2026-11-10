@@ -4,7 +4,7 @@ Why this project exists and where it differs from other coding agents.
 
 ## Agentic workflow
 
-- Agent profiles (`Developer`, `Builder`, `Minimal`, `Planner`, `Reviewer`, `Reporter`) with dedicated tools, skills, model bindings, and instructions — see [agents.md](agents.md).
+- Agent profiles (`Developer`, `Builder`, `Planner`, `Reviewer`, `Reporter`) with dedicated tools, skills, model bindings, and instructions — see [agents.md](agents.md).
 - `/plan` authored by one read-only `Planner`, with `/plan save` and `/plan load` for reviewable handoffs between sessions of the same project; `/review` delegated to read-only `Reviewer` sub-agents.
 - `/goal` works until completion or a genuine blocker on a persistent dependency-aware task graph, executing directly or delegating when useful, with validation and retry. Delegated results still require independent validation.
 - Capability-based delegation: each profile's model bindings carry a capability score (1–10) and every task a complexity (1–10), so the coordinator steers each unit of work to the lowest-capability sub-agent that still meets it — matching effort to task instead of picking by seniority. See [bindings.md](bindings.md). A whole provider's bindings can be applied to every profile in one step from `binding-presets.json` — see [bindings.md](bindings.md#binding-presets).

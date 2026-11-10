@@ -111,7 +111,7 @@ struct AgentProfileRoleTests {
             let message = try #require(error.errorDescription)
             #expect(message.contains(
                 "profile 'No Role' is missing the required \"role\" field (one of: "
-                    + "developer, builder, minimal, planner, reviewer, reporter, organizer, promoter, tester)."
+                    + "developer, builder, generic, planner, reviewer, reporter, organizer, tester)."
             ))
         }
     }
@@ -120,6 +120,8 @@ struct AgentProfileRoleTests {
     func unknownBlankOrNonStringRoleMakesTheManifestInvalid() throws {
         let values: [(json: String, value: String?)] = [
             (#""architect""#, "architect"),
+            (#""promoter""#, "promoter"),
+            (#""minimal""#, "minimal"),
             (#"" Reviewer ""#, " Reviewer "),
             (#""Reviewer""#, "Reviewer"),
             (#""""#, ""),
@@ -200,12 +202,11 @@ struct AgentProfileRoleTests {
         #expect(defaults.allSatisfy { !$0.id.hasPrefix("00000000-") })
         #if os(macOS)
         #expect(defaults.map(\.role) == [
-            .developer, .builder, .minimal, .reviewer, .reporter, .tester, .planner, .organizer,
-            .promoter,
+            .developer, .builder, .reviewer, .reporter, .tester, .planner, .organizer,
         ])
         #else
         #expect(!defaults.contains { $0.role == .organizer })
-        #expect(defaults.count == AgentProfileRole.allCases.count - 1)
+        #expect(defaults.count == AgentProfileRole.allCases.count - 2)
         #endif
     }
 
@@ -224,8 +225,29 @@ struct AgentProfileRoleTests {
         #expect(!TerminalChat.isReviewerProfile(namedPlanner))
         #expect(AgentProfileStore.isPlannerAgent(Roles.pluto))
         #expect(AgentProfileStore.isBuilderAgent(AgentProfile(id: "forge", name: "Forge", role: .builder)))
-        #expect(!AgentProfileStore.isBuilderAgent(AgentProfile(id: "builder", name: "Builder", role: .minimal)))
+        #expect(!AgentProfileStore.isBuilderAgent(AgentProfile(id: "builder", name: "Builder", role: .generic)))
         #expect(!AgentProfileStore.isBuilderAgent(nil))
+    }
+
+    @Test
+    func genericIsTheNeutralRoleWithoutARecommendedProfileOrRuntimeSemantics() throws {
+        let profiles = try Roles.loadManifest(Roles.manifest(
+            profile: #"{"id": "scribe", "name": "Scribe", "role": "generic", "tools": []}"#
+        ))
+        let scribe = try #require(profiles.last)
+        let generic = AgentProfile(id: "scribe", name: "Scribe", role: .generic)
+        let coreNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
+
+        #expect(scribe.role == .generic)
+        #expect(AgentProfileRole.generic.rawValue == "generic")
+        #expect(!AgentProfileStore.defaultProfiles().contains { $0.role == .generic })
+        #expect(!AgentProfileRole.generic.usesGlobalMemory)
+        #expect(!AgentProfileRole.generic.delegatesByRole)
+        #expect(!AgentProfileStore.isPlannerAgent(generic))
+        #expect(!AgentProfileStore.isBuilderAgent(generic))
+        #expect(!AgentProfileStore.isReviewerAgent(generic))
+        #expect(coreNames.contains("local.writeFile"))
+        #expect(generic.resolvedAllowedToolNames(coreNames) == coreNames)
     }
 
     @Test

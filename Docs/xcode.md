@@ -21,7 +21,7 @@ Xcode can run `zen` as an ACP stdio coding agent.
    SwiftPM graph. It runs through the separately installed
    `xcode-tools-feature` process.
 
-3. Make sure the recommended agents exist. The setup can create `Developer`, `Builder`, `Minimal`, `Planner`, `Reviewer`, and `Reporter`.
+3. Make sure the recommended agents exist. The setup can create `Developer`, `Builder`, `Planner`, `Reviewer`, and `Reporter`.
 4. Verify the executable path:
 
    ```bash
@@ -50,7 +50,7 @@ In the agent editor, set:
 
 To pin a specific agent profile, add this environment variable:
 - **Name**: `ZENCODE_AGENT_NAME`
-- **Value**: `Minimal`
+- **Value**: `Developer`
 
 ![Xcode agent arguments and environment configuration](Images/xcode-agent-arguments.png)
 
@@ -66,7 +66,7 @@ Executable: /usr/local/bin/zen
 Arguments: --acp
 Interpreter: <empty>
 Environment:
-  ZENCODE_AGENT_NAME=Minimal
+  ZENCODE_AGENT_NAME=Developer
 ```
 
 ## Troubleshooting

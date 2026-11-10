@@ -40,19 +40,17 @@ extension AgentConfigurationTests {
             featureStatuses: unavailableOptionalFeatureStatuses
         )
         let developerProfile = try #require(profiles["Developer"])
-        let minimalProfile = try #require(profiles["Minimal"])
         let builderProfile = try #require(profiles["Builder"])
         let reviewerProfile = try #require(profiles["Reviewer"])
         let reporterProfile = try #require(profiles["Reporter"])
         let testerProfile = try #require(profiles["Tester"])
         let plannerProfile = try #require(profiles["Planner"])
-        let promoterProfile = try #require(profiles["Promoter"])
         #if os(macOS)
         let organizerProfile = try #require(profiles["Organizer"])
-        #expect(profiles.count == 9)
+        #expect(profiles.count == 7)
         #else
         #expect(profiles["Organizer"] == nil)
-        #expect(profiles.count == 8)
+        #expect(profiles.count == 6)
         #endif
         #expect(profiles["Xcode"] == nil)
         #expect(reviewerProfile.tools == AgentProfileStore.reviewerToolNames)
@@ -142,7 +140,7 @@ extension AgentConfigurationTests {
             ).isDisjoint(with: mutatingCoreNames)
         )
 
-        for profile in profiles.values where !["Planner", "Organizer", "Promoter"].contains(profile.name) {
+        for profile in profiles.values where !["Planner", "Organizer"].contains(profile.name) {
             #expect(!profile.tools.contains(xcodeKey))
             #expect(!profile.tools.contains(figmaKey))
             #expect(profile.tools.contains("files"))
@@ -170,11 +168,6 @@ extension AgentConfigurationTests {
         #expect(builderProfile.tools.contains(webKey))
         #expect(!builderProfile.tools.contains("sub-agents"))
         #expect(builderProfile.instructions?.contains("Builder agent") == true)
-        #expect(!minimalProfile.tools.contains(webKey))
-        #expect(!minimalProfile.tools.contains("memory"))
-        #expect(!minimalProfile.tools.contains("sub-agents"))
-        #expect(minimalProfile.tools == AgentProfileStore.minimalToolNames)
-        #expect(minimalProfile.instructions?.contains("Minimal agent") == true)
         #if os(macOS)
         let macOSKey = TerminalToolSelectionCatalog.featurePackageKey(id: "macOS")
         #expect(organizerProfile.id == AgentProfileRole.organizer.rawValue)
@@ -200,23 +193,6 @@ extension AgentConfigurationTests {
         #expect(!organizerAllowedToolNames.contains("local.writeFile"))
         #expect(!organizerAllowedToolNames.contains("local.exec"))
         #endif
-        let browserKey = TerminalToolSelectionCatalog.featurePackageKey(id: "browser-tools")
-        #expect(promoterProfile.id == AgentProfileRole.promoter.rawValue)
-        #expect(promoterProfile.tools == AgentProfileStore.promoterToolNames)
-        #expect(promoterProfile.tools == ["memory", browserKey])
-        #expect(!promoterProfile.readOnly)
-        #expect(promoterProfile.modelBindings.isEmpty)
-        #expect(promoterProfile.defaultModelBindingID == nil)
-        #expect(promoterProfile.instructions?.contains("Promoter agent") == true)
-        #expect(promoterProfile.instructions?.contains("ZenCODE") == false)
-        #expect(promoterProfile.instructions?.contains("NEVER click the final publish") == true)
-        let promoterAllowedToolNames = promoterProfile.allowedToolNames(
-            featureStatuses: unavailableOptionalFeatureStatuses
-        )
-        #expect(promoterAllowedToolNames.contains("memory.write"))
-        #expect(!promoterAllowedToolNames.contains("agent.create"))
-        #expect(!promoterAllowedToolNames.contains("local.writeFile"))
-        #expect(!promoterAllowedToolNames.contains("local.exec"))
     }
 
     @Test

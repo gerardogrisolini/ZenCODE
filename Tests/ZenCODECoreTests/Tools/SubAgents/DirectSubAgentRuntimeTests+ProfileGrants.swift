@@ -230,9 +230,9 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func emptyResolvedProfileGrantDoesNotFallBackToParentTools() async throws {
         let minimal = AgentProfile(
-            id: AgentProfileRole.minimal.rawValue,
+            id: AgentProfileRole.generic.rawValue,
             name: "Minimal",
-            role: .minimal,
+            role: .generic,
             tools: []
         )
         let backend = CapturingSubAgentRuntimeBackend()

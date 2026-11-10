@@ -447,14 +447,8 @@ public enum AgentProfileStore {
     public static let reviewerAgentName = "Reviewer"
     public static let plannerAgentName = "Planner"
     public static let organizerAgentName = "Organizer"
-    public static let promoterAgentName = "Promoter"
     public static let testerAgentName = "Tester"
     public static let manifestFilename = "agents.json"
-    public static let minimalToolNames: [String] = [
-        "shell",
-        "files",
-        "text"
-    ]
     public static let codingToolNames: [String] = [
         "shell",
         "files",
@@ -491,10 +485,6 @@ public enum AgentProfileStore {
         TerminalToolSelectionCatalog.featurePackageKey(id: "macOS"),
         "memory",
         "sub-agents"
-    ]
-    public static let promoterToolNames: [String] = [
-        "memory",
-        TerminalToolSelectionCatalog.featurePackageKey(id: "browser-tools")
     ]
     public static let featureManagementToolNames = Set(DirectToolCatalog.featureDescriptors.map(\.name))
 

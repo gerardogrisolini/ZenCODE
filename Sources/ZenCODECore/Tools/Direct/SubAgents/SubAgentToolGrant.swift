@@ -54,8 +54,8 @@ enum SubAgentToolGrant {
             childAllowedToolNames = parentAllowedToolNames
         } else {
             // Different profiles retain their own grant boundary;
-            // especially read-only Reviewer/Planner and Minimal must
-            // not receive the coordinator's tools accidentally.
+            // especially read-only Reviewer/Planner must not receive
+            // the coordinator's tools accidentally.
             childAllowedToolNames = profile.allowedToolNames()
         }
         if isTaskBound {

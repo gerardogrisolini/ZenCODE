@@ -1170,13 +1170,13 @@ struct ZenWindowSessionTests {
 
             let window = try await runtime.openWindow(workspace: workspace)
             #expect(await eventually { window.snapshot != nil && window.epoch == window.current.epoch })
-            for line in ["/agents minimal", "/tools shell", "/skills kept-skill"] {
+            for line in ["/agents tester", "/tools shell", "/skills kept-skill"] {
                 window.draft = line
                 window.submitDraft()
                 #expect(await window.waitUntilIdle())
             }
             #expect(await eventually {
-                window.snapshot?.selection.agent?.id == "minimal"
+                window.snapshot?.selection.agent?.id == "tester"
                     && window.snapshot?.selection.toolKeys == ["shell"]
                     && window.snapshot?.selection.skillIDs.count == 1
             })
@@ -1217,15 +1217,15 @@ struct ZenWindowSessionTests {
             #expect(opened.activeTools == (await controller.activeToolsSummary()))
             #expect(opened.activeSkills == (await controller.selectedPromptSkills()))
 
-            for line in ["/agents minimal", "/tools shell", "/skills summary-skill"] {
+            for line in ["/agents tester", "/tools shell", "/skills summary-skill"] {
                 window.draft = line
                 window.submitDraft()
                 #expect(await window.waitUntilIdle())
             }
-            let minimal = AgentProfileStore.defaultProfiles().first { $0.id == "minimal" }?.displayName
-            #expect(minimal != nil)
+            let tester = AgentProfileStore.defaultProfiles().first { $0.id == "tester" }?.displayName
+            #expect(tester != nil)
             #expect(await eventually {
-                window.startupSummary?.agentName == minimal
+                window.startupSummary?.agentName == tester
                     && window.startupSummary?.activeTools.groups.first?.title == "Shell"
                     && window.startupSummary?.activeSkills.map(\.canonicalName) == ["summary-skill"]
             })

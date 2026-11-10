@@ -327,14 +327,14 @@ extension DirectSubAgentRuntimeTests {
         let blankShadow = try DirectSubAgentRuntime.requestedAgentPayload(
             from: .object([
                 "profileRole": .string("  "),
-                "profile_role": .string("promoter"),
+                "profile_role": .string("tester"),
                 "workingDirectory": .string("\n"),
                 "working_directory": .string("Sources"),
                 "complexity": .string("  "),
             ]),
             fallbackIndex: 0
         )
-        #expect(blankShadow.profileRole == .promoter)
+        #expect(blankShadow.profileRole == .tester)
         #expect(blankShadow.workingDirectory == "Sources")
         #expect(blankShadow.complexity == nil)
 
@@ -379,7 +379,7 @@ extension DirectSubAgentRuntimeTests {
         } catch DirectSubAgentRuntimeError.invalidArgument(let message) {
             #expect(
                 message == "agent.create profileRole must be one of: "
-                    + "developer, builder, minimal, planner, reviewer, reporter, organizer, promoter, tester"
+                    + "developer, builder, generic, planner, reviewer, reporter, organizer, tester"
             )
         }
     }

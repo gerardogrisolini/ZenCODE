@@ -13,8 +13,10 @@ import Foundation
 ///
 /// - `developer`: the default agent when none is selected.
 /// - `builder`: owns `/feature` and the feature-management tools.
-/// - `minimal`, `reporter`, `organizer`, `promoter`, `tester`: no runtime
-///   semantics beyond their profile's own configuration.
+/// - `generic`, `reporter`, `organizer`, `tester`: no runtime
+///   semantics beyond their profile's own configuration. `generic` is the
+///   neutral role for custom agents that fit none of the other roles; it has
+///   no recommended profile.
 /// - `planner`: `/plan` delegates to it and its core tools are forced
 ///   read-only.
 /// - `reviewer`: `/review` delegates to it.
@@ -24,12 +26,11 @@ import Foundation
 public enum AgentProfileRole: String, Codable, Sendable, CaseIterable, Hashable {
     case developer
     case builder
-    case minimal
+    case generic
     case planner
     case reviewer
     case reporter
     case organizer
-    case promoter
     case tester
 
     /// Human-readable title.
@@ -37,12 +38,11 @@ public enum AgentProfileRole: String, Codable, Sendable, CaseIterable, Hashable 
         switch self {
         case .developer: "Developer"
         case .builder: "Builder"
-        case .minimal: "Minimal"
+        case .generic: "Generic"
         case .planner: "Planner"
         case .reviewer: "Reviewer"
         case .reporter: "Reporter"
         case .organizer: "Organizer"
-        case .promoter: "Promoter"
         case .tester: "Tester"
         }
     }
@@ -52,12 +52,11 @@ public enum AgentProfileRole: String, Codable, Sendable, CaseIterable, Hashable 
         switch self {
         case .developer: "General software development; the default agent"
         case .builder: "/feature and the feature-management tools"
-        case .minimal: "Essential tools and concise replies"
+        case .generic: "Neutral role for custom agents; no runtime effect"
         case .planner: "/plan delegates to it; core tools are forced read-only"
         case .reviewer: "/review delegates to it"
         case .reporter: "Evidence-based code analysis reports"
         case .organizer: "Personal assistant with macOS apps, memory, and delegation"
-        case .promoter: "Daily project promotion with browser drafts and memory"
         case .tester: "Runs builds, tests, and checks and reports the results without editing files"
         }
     }

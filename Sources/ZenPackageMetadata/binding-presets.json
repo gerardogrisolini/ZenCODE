@@ -115,18 +115,6 @@
                     }
                 ],
                 "defaultModelBindingID": "claude:claude-opus-5-5"
-            },
-            "promoter": {
-                "modelBindings": [
-                    {
-                        "capability" : 8,
-                        "id" : "claude:claude-opus-5-5",
-                        "modelID" : "claude-opus-5-5",
-                        "modelProvider" : "Claude Subscription",
-                        "thinkingSelection" : "medium"
-                    }
-                ],
-                "defaultModelBindingID": "claude:claude-opus-5-5"
             }
         },
         "ChatGPT Subscription": {
@@ -243,18 +231,6 @@
                     }
                 ],
                 "defaultModelBindingID": "chatgpt:gpt-6.1-sol"
-            },
-            "promoter": {
-                "modelBindings": [
-                    {
-                        "capability" : 8,
-                        "id" : "chatgpt:gpt-6.1-sol",
-                        "modelID" : "gpt-6.1-sol",
-                        "modelProvider" : "ChatGPT Subscription",
-                        "thinkingSelection" : "medium"
-                    }
-                ],
-                "defaultModelBindingID": "chatgpt:gpt-6.1-sol"
             }
         },
         "OpenRouter": {
@@ -361,18 +337,6 @@
                 "defaultModelBindingID": "openrouter:z-ai/glm-5.3-flash"
             },
             "organizer": {
-                "modelBindings": [
-                    {
-                        "capability" : 6,
-                        "id" : "openrouter:deepseek/deepseek-v4.1-flash-1017",
-                        "modelID" : "deepseek/deepseek-v4.1-flash-1017",
-                        "modelProvider" : "OpenRouter",
-                        "thinkingSelection" : "medium"
-                    }
-                ],
-                "defaultModelBindingID": "openrouter:deepseek/deepseek-v4.1-flash-1017"
-            },
-            "promoter": {
                 "modelBindings": [
                     {
                         "capability" : 6,

@@ -898,12 +898,10 @@ struct MemoryServiceTests {
         var expectedNames: Set<String> = [
             "Developer",
             "Builder",
-            "Minimal",
             "Reviewer",
             "Reporter",
             "Tester",
-            "Planner",
-            "Promoter"
+            "Planner"
         ]
         #if os(macOS)
         expectedNames.insert("Organizer")

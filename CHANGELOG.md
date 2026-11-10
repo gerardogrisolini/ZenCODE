@@ -10,6 +10,31 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- `generic` agent role: a neutral role with no runtime effect, for custom
+  agents that fit none of the other roles (a documentation writer, a
+  translator, a researcher). It is a valid `role` in `agents.json` and a valid
+  `agent.create` `profileRole`, and it has no recommended profile.
+
+### Removed
+
+- The `promoter` agent role and the recommended `Promoter` profile are
+  removed, together with the `promoter` blocks of `binding-presets.json`.
+  `promoter` is no longer a valid `role` value or `agent.create`
+  `profileRole`: an `agents.json` that still has a profile with
+  `"role": "promoter"` is invalid, so setup is required and `zen --setup`
+  offers to rewrite the file. There is no automatic migration.
+- The `minimal` agent role and the recommended `Minimal` profile are removed;
+  `generic` replaces the role. `minimal` is no longer a valid `role` value or
+  `agent.create` `profileRole`: an `agents.json` that still has a profile with
+  `"role": "minimal"` is invalid, so setup is required and `zen --setup`
+  offers to rewrite the file. There is no automatic migration. To keep an
+  existing `Minimal` profile, change its `"role"` to `"generic"` by hand: it
+  then counts as a custom profile (its ID no longer equals its role), so it
+  stays selectable as the active agent, but a project without a saved agent
+  selection no longer delegates to it until it is ticked with `/agents`.
+
 ### Fixed
 
 - Jira: the browser setup page accepts its own form again. The page was served

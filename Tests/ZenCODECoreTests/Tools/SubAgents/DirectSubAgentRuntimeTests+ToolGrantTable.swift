@@ -56,7 +56,7 @@ enum SubAgentToolGrantTable {
     static let minimal = AgentProfile(
         id: "minimal",
         name: "Minimal",
-        role: .minimal,
+        role: .generic,
         tools: []
     )
     static let builder = AgentProfile(
