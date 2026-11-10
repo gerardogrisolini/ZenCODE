@@ -219,8 +219,9 @@ public enum TerminalSessionStore {
             return []
         }
 
+        var migratedSessions: [String: TerminalSavedSession] = [:]
         if migrating {
-            try migrateNonCurrentSessionFiles(
+            migratedSessions = try migrateNonCurrentSessionFiles(
                 in: directoryURL,
                 fileManager: fileManager
             )
@@ -235,6 +236,9 @@ public enum TerminalSessionStore {
         return fileURLs
             .filter { $0.pathExtension == fileExtension }
             .compactMap { url in
+                if let session = migratedSessions[url.lastPathComponent] {
+                    return session
+                }
                 do {
                     return try load(from: url)
                 } catch {
@@ -403,13 +407,18 @@ public enum TerminalSessionStore {
         workingDirectory.standardizedFileURL.path
     }
 
+    /// Returns the sessions it decoded, keyed by the file name each file has after
+    /// the migration (the name the listing sees), so `savedSessions` does not
+    /// decode them again: its list reflects what this same call read.
+    @discardableResult
     private static func migrateNonCurrentSessionFiles(
         in directoryURL: URL,
         fileManager: FileManager
-    ) throws {
+    ) throws -> [String: TerminalSavedSession] {
         guard fileManager.fileExists(atPath: directoryURL.path) else {
-            return
+            return [:]
         }
+        var decodedSessions: [String: TerminalSavedSession] = [:]
 
         let fileURLs = try fileManager.contentsOfDirectory(
             at: directoryURL,
@@ -441,17 +450,21 @@ public enum TerminalSessionStore {
             )
             guard sourceURL.standardizedFileURL != destinationURL.standardizedFileURL,
                   !fileManager.fileExists(atPath: destinationURL.path) else {
+                decodedSessions[sourceURL.lastPathComponent] = session
                 continue
             }
             do {
                 try fileManager.moveItem(at: sourceURL, to: destinationURL)
+                decodedSessions[destinationURL.lastPathComponent] = session
             } catch {
                 ZenLogger.warning(
                     .sessionService,
                     "Failed to import session \(sourceURL.lastPathComponent): \(error.localizedDescription)"
                 )
+                decodedSessions[sourceURL.lastPathComponent] = session
             }
         }
+        return decodedSessions
     }
 
     private static func isEngineCheckpointArtifact(_ url: URL) -> Bool {

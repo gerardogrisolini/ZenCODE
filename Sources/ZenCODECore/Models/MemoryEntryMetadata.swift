@@ -109,12 +109,9 @@ extension MemoryEntryMetadata {
         let dateAndTime = components.prefix(2).joined(separator: " ")
         let zoneIdentifier = components.count >= 3 ? String(components[2]) : nil
 
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        formatter.timeZone = zoneIdentifier.flatMap { TimeZone(identifier: $0) }
+        let timeZone = zoneIdentifier.flatMap { TimeZone(identifier: $0) }
             ?? TimeZone(abbreviation: zoneIdentifier ?? "")
             ?? .current
-        return formatter.date(from: dateAndTime)
+        return MemoryTimestampFormatting.date(from: dateAndTime, timeZone: timeZone)
     }
 }

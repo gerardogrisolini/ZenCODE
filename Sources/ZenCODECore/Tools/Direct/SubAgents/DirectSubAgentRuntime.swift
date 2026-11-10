@@ -89,6 +89,16 @@ public actor DirectSubAgentRuntime {
         case content
     }
 
+    /// What a wait for agents observes of one record; see
+    /// ``AgentRecord/waitObservedState``.
+    struct WaitObservedState: Equatable {
+        let status: Status
+        let hasWorkInFlight: Bool
+        let pendingRelease: Bool
+        let isSuperseded: Bool
+        let isStandbyResident: Bool
+    }
+
     /// The durations of an agent's completed tool calls, as the tool executor
     /// measured them, by tool call id, bounded to the `limit` most recent
     /// ones. A repeated id overwrites its duration and becomes the most
@@ -241,6 +251,20 @@ public actor DirectSubAgentRuntime {
             status.isPending || !pendingPrompts.isEmpty
         }
 
+        /// The part of the record that `agent.wait` and an `awaitReply` wait
+        /// decide on. A write that changes it wakes those waits at once
+        /// instead of at their next polling interval; see
+        /// ``DirectSubAgentRuntime/signalWakeWaiters()``.
+        var waitObservedState: WaitObservedState {
+            WaitObservedState(
+                status: status,
+                hasWorkInFlight: hasWorkInFlight,
+                pendingRelease: pendingRelease,
+                isSuperseded: supersededByAttemptID != nil,
+                isStandbyResident: standbyGraphID != nil
+            )
+        }
+
         /// Clears every in-flight model-phase projection: the visible activity
         /// and its kind plus the private thinking/content buffers and the tool
         /// row. Lifecycle transitions call this so no partial paragraph,
@@ -343,8 +367,8 @@ public actor DirectSubAgentRuntime {
     /// no individual agent record remains available to carry the error.
     public private(set) var lastLifecycleErrors: [String] = []
     /// The agent registry. Read-only: every write goes through
-    /// `mutateAgents` or `mutateAgent`, which publish one snapshot broadcast
-    /// per write.
+    /// `mutateAgents`, `mutateAgent` or `mutateAgentInPlace`, which publish
+    /// one snapshot broadcast per write.
     var agents: [String: AgentRecord] {
         agentStorage
     }
@@ -355,6 +379,9 @@ public actor DirectSubAgentRuntime {
     @discardableResult
     func mutateAgents<T>(_ body: (inout [String: AgentRecord]) -> T) -> T {
         let result = body(&agentStorage)
+        // Registry-wide writes (creation, removal, pruning) are rare and may
+        // change what any wait observes.
+        signalWakeWaiters()
         publishAgentSnapshots()
         return result
     }
@@ -374,8 +401,36 @@ public actor DirectSubAgentRuntime {
         guard var agent = agentStorage[id], predicate(agent) else {
             return nil
         }
+        let observedState = agent.waitObservedState
         let result = body(&agent)
+        let changesObservedState = agent.waitObservedState != observedState
         agentStorage[id] = agent
+        if changesObservedState {
+            signalWakeWaiters()
+        }
+        publishAgentSnapshots()
+        return result
+    }
+
+    /// Like ``mutateAgent(_:where:_:)``, but `body` mutates the record in
+    /// place inside the registry, so a buffer it appends to is not copied
+    /// first. `body` must therefore not read the registry through `self`.
+    /// Writes and publishes exactly as ``mutateAgent(_:where:_:)`` does.
+    @discardableResult
+    func mutateAgentInPlace<T>(
+        _ id: String,
+        where predicate: (AgentRecord) -> Bool = { _ in true },
+        _ body: (inout AgentRecord) -> T
+    ) -> T? {
+        guard let index = agentStorage.index(forKey: id),
+              predicate(agentStorage.values[index]) else {
+            return nil
+        }
+        let observedState = agentStorage.values[index].waitObservedState
+        let result = body(&agentStorage.values[index])
+        if agentStorage.values[index].waitObservedState != observedState {
+            signalWakeWaiters()
+        }
         publishAgentSnapshots()
         return result
     }
@@ -384,6 +439,75 @@ public actor DirectSubAgentRuntime {
         for (_, observer) in snapshotObservers {
             observer.1.yield(agentStorage.values.filter { $0.rootSessionID == observer.0 }.map { snapshot(from: $0) })
         }
+    }
+
+    /// Advanced by every wake signal. A wait reads it together with the state
+    /// it checks, so a change that lands while the wait is still checking
+    /// (across one of its awaits) is not lost: the wait returns at once.
+    private var wakeGeneration: UInt64 = 0
+    /// The suspended waits, resumed by the next wake signal.
+    private var wakeWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+
+    /// The current wake generation, to pass to
+    /// ``waitForWake(after:upTo:)`` once the wait has checked its condition.
+    var currentWakeGeneration: UInt64 {
+        wakeGeneration
+    }
+
+    /// Wakes every suspended wait: an agent changed what waits observe, or a
+    /// live message reached a watched mailbox. Waits always re-check their
+    /// condition, so a wake that turns out to be irrelevant costs one check.
+    func signalWakeWaiters() {
+        wakeGeneration &+= 1
+        guard !wakeWaiters.isEmpty else { return }
+        let waiters = wakeWaiters
+        wakeWaiters.removeAll()
+        for continuation in waiters.values {
+            continuation.resume()
+        }
+    }
+
+    /// Suspends until a wake signal arrives after `generation`, `timeout`
+    /// elapses, or the task is cancelled. Returns at once when a signal
+    /// already arrived after `generation`. The timeout keeps polling as the
+    /// fallback for changes that raise no signal.
+    ///
+    /// - Throws: `CancellationError` when the task is cancelled, before or
+    ///   during the wait, as `Task.sleep` does.
+    func waitForWake(after generation: UInt64, upTo timeout: Duration) async throws {
+        try Task.checkCancellation()
+        guard wakeGeneration == generation else { return }
+        let token = UUID()
+        let timer = Task { [weak self] in
+            do {
+                try await Task.sleep(for: timeout)
+            } catch {
+                return
+            }
+            await self?.resumeWakeWaiter(token)
+        }
+        defer { timer.cancel() }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                if Task.isCancelled {
+                    continuation.resume()
+                } else {
+                    wakeWaiters[token] = continuation
+                }
+            }
+        } onCancel: { [weak self] in
+            Task { await self?.resumeWakeWaiter(token) }
+        }
+        try Task.checkCancellation()
+    }
+
+    private func resumeWakeWaiter(_ token: UUID) {
+        wakeWaiters.removeValue(forKey: token)?.resume()
+    }
+
+    /// Number of suspended waits, for tests.
+    var suspendedWakeWaiterCount: Int {
+        wakeWaiters.count
     }
 
     var latestOverviewBatchID: UUID?

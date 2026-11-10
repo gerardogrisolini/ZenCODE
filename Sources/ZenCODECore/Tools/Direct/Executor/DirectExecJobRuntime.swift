@@ -162,6 +162,8 @@ private final class DirectExecJobOutputReader: Sendable {
 public actor DirectExecJobRuntime {
     public static let toolName = "exec.job"
     public static let defaultMaxRunningJobs = 8
+    /// Grace between SIGTERM and SIGKILL for every job termination path.
+    public static let defaultTerminationGracePeriod: Duration = .seconds(2)
     static let maxRetainedTranscriptBytes = 2_000_000
     static let maxRetainedFinishedJobs = 16
 
@@ -221,9 +223,15 @@ public actor DirectExecJobRuntime {
     private var jobOrder: [String] = []
     private var nextJobNumber = 1
     private let maxRunningJobs: Int
+    /// How long a job gets after SIGTERM before SIGKILL is sent.
+    private let terminationGracePeriod: Duration
 
-    public init(maxRunningJobs: Int = DirectExecJobRuntime.defaultMaxRunningJobs) {
+    public init(
+        maxRunningJobs: Int = DirectExecJobRuntime.defaultMaxRunningJobs,
+        terminationGracePeriod: Duration = DirectExecJobRuntime.defaultTerminationGracePeriod
+    ) {
         self.maxRunningJobs = max(maxRunningJobs, 1)
+        self.terminationGracePeriod = terminationGracePeriod
     }
 
     // MARK: - Launch
@@ -428,7 +436,7 @@ public actor DirectExecJobRuntime {
             job.terminationTask = nil
             sendSignal(SIGTERM, to: job)
         }
-        await waitForJobsToExit(runningIDs, timeout: .seconds(2))
+        await waitForJobsToExit(runningIDs, timeout: terminationGracePeriod)
 
         for jobID in runningIDs {
             guard let job = jobsByID[jobID], job.status == .running else { continue }
@@ -521,9 +529,10 @@ public actor DirectExecJobRuntime {
         sendSignal(SIGTERM, to: job)
         job.terminationTask?.cancel()
         let pid = job.process.processIdentifier
+        let gracePeriod = terminationGracePeriod
         job.terminationTask = Task(name: "local.exec background job SIGKILL fallback") { [self] in
             do {
-                try await Task.sleep(for: .seconds(2))
+                try await Task.sleep(for: gracePeriod)
             } catch {
                 return
             }
@@ -581,8 +590,12 @@ public actor DirectExecJobRuntime {
         return jobID
     }
 #else
-    public init(maxRunningJobs: Int = DirectExecJobRuntime.defaultMaxRunningJobs) {
+    public init(
+        maxRunningJobs: Int = DirectExecJobRuntime.defaultMaxRunningJobs,
+        terminationGracePeriod: Duration = DirectExecJobRuntime.defaultTerminationGracePeriod
+    ) {
         _ = maxRunningJobs
+        _ = terminationGracePeriod
     }
 
     public func startBackgroundJob(

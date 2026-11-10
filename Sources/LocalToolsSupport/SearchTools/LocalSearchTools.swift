@@ -16,6 +16,7 @@ private func runGrep(
     path: URL,
     maximumMatches: Int?,
     options: [String],
+    stdoutLineLimit: Int,
     context: FeatureContext
 ) async throws -> FeatureProcessResult {
     var arguments = ["-E", "-R", "-n", "-I"]
@@ -25,12 +26,44 @@ private func runGrep(
         arguments.append(contentsOf: ["-m", "\(maximumMatches)"])
     }
     arguments.append(contentsOf: ["-e", pattern, "--", path.path])
-    return try await FeatureProcessRunner.run(
+    let result = try await FeatureProcessRunner.run(
         executableURL: URL(fileURLWithPath: "/usr/bin/grep"),
         arguments: arguments,
         workingDirectory: context.workingDirectory,
         environment: context.environment,
-        timeout: 60
+        timeout: 60,
+        stdoutLineLimit: stdoutLineLimit
+    )
+    return grepResultInterpretingLineLimit(result)
+}
+
+/// `-m` bounds matches per file, not in total, so the callers' cut also stops
+/// grep once stdout holds `stdoutLineLimit` complete lines. That run reads as a
+/// completed one: no safety-limit banner, and grep's own exit status (matches
+/// found, `2` if an error was already reported) instead of the stopping signal.
+/// Errors grep would have met after the cut are not reported. Reaching the
+/// 16 MiB byte bound or the timeout keeps the banner and the real exit status.
+func grepResultInterpretingLineLimit(_ result: FeatureProcessResult) -> FeatureProcessResult {
+    guard result.stdoutWasTruncated,
+          !result.timedOut,
+          result.stdoutData.count < FeatureProcessRunner.defaultMaximumOutputBytesPerStream else {
+        return result
+    }
+    let exitCode: Int32
+    switch result.exitCode {
+    case 0, 1, 2:
+        // grep finished on its own before the stop request.
+        exitCode = result.exitCode
+    default:
+        exitCode = result.stderrData.isEmpty ? 0 : 2
+    }
+    return FeatureProcessResult(
+        exitCode: exitCode,
+        stdoutData: result.stdoutData,
+        stderrData: result.stderrData,
+        timedOut: result.timedOut,
+        stdoutWasTruncated: false,
+        stderrWasTruncated: result.stderrWasTruncated
     )
 }
 
@@ -43,7 +76,7 @@ struct SearchGlobTool: FeatureTool {
     }
 
     static let name = "search.glob"
-    static let description = "Finds files under a local path. Pass pattern for a glob such as **/*.swift; omit pattern to list files recursively."
+    static let description = "Finds files under a local path. Pass pattern for a glob such as **/*.swift; omit pattern to list files recursively. Contents of VCS and build directories (.git, .build, .swiftpm, node_modules, DerivedData) are not listed unless path is inside one."
     static let inputSchema = buildInputSchema([.string("pattern"), .string("path")] + CommonSchemaProperties.limit)
 
     func run(_ input: Input, context: FeatureContext) async throws -> String {
@@ -65,7 +98,7 @@ struct SearchGrepTool: FeatureTool {
     }
 
     static let name = "search.grep"
-    static let description = "Searches text with grep from a local path. Use context for surrounding lines and filesOnly to list only matching file paths. VCS and build directories (.git, .build, .swiftpm, node_modules, DerivedData) are skipped."
+    static let description = "Searches text with grep from a local path. Use context for surrounding lines and filesOnly to list only matching file paths. VCS and build directories (.git, .build, .swiftpm, node_modules, DerivedData) are skipped. The search stops once maxResults is reached, so errors in files not yet searched are not reported."
     static let inputSchema = buildInputSchema(
         [.string("pattern"), .string("path"), .string("glob")]
             + CommonSchemaProperties.limit
@@ -89,7 +122,12 @@ struct SearchGrepTool: FeatureTool {
         let result = try await runGrep(
             pattern: pattern, path: path,
             maximumMatches: maxResults < 10000 ? maxResults : nil,
-            options: options, context: context
+            options: options,
+            // The cut below keeps `maxResults` rendered lines, headers included;
+            // context lines and `--` separators are stdout lines too, and each
+            // stdout line renders as at least one line.
+            stdoutLineLimit: maxResults,
+            context: context
         )
         if result.exitCode == 1,
            result.stdout.isEmpty,
@@ -113,7 +151,7 @@ struct SearchLocateTool: FeatureTool {
     }
 
     static let name = "search.locate"
-    static let description = "Locates text matches compactly and returns file:line snippets plus local.readFile suggestions for focused follow-up reads."
+    static let description = "Locates text matches compactly and returns file:line snippets plus local.readFile suggestions for focused follow-up reads. The search stops once maxResults is reached, so errors in files not yet searched are not reported."
     static let inputSchema = buildInputSchema(
         [.string("pattern"), .string("path")]
             + CommonSchemaProperties.limit
@@ -130,7 +168,8 @@ struct SearchLocateTool: FeatureTool {
         let maxResults = min(max(1, input.maxResults ?? input.max_results ?? 40), 500)
         let result = try await runGrep(
             pattern: pattern, path: path, maximumMatches: maxResults,
-            options: [], context: context
+            // Every match line yields one non-empty `path:line:` entry.
+            options: [], stdoutLineLimit: maxResults, context: context
         )
         if result.exitCode == 1,
            result.stdout.isEmpty,

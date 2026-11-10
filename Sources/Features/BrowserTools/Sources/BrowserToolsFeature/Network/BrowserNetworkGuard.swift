@@ -289,9 +289,50 @@ final class BrowserNetworkGuard: Sendable {
         _ = try? await session.send(method: "Fetch.disable")
     }
 
-    func validateCurrentDocument() async throws {
-        let url = try await session.evalString("location.href || ''")
+    /// Validates the URL of the document loaded in the page. When the page
+    /// readiness was not awaited, the document can be in the middle of a
+    /// navigation and `Runtime.evaluate` can briefly fail: with
+    /// `retryingTransientErrors` the evaluation is retried (see
+    /// ``retryingTransientEvaluationErrors(budget:interval:isTerminated:_:)``)
+    /// and its last error is thrown once the budget is spent (fail-closed).
+    /// A URL rejected by the request policy is never retried.
+    func validateCurrentDocument(retryingTransientErrors: Bool = false) async throws {
+        let url: String
+        if retryingTransientErrors {
+            url = try await Self.retryingTransientEvaluationErrors(isTerminated: { self.session.isTerminated }) {
+                try await self.session.evalString("location.href || ''")
+            }
+        } else {
+            url = try await session.evalString("location.href || ''")
+        }
         try await requestPolicy.validateRequestURLOffloaded(url)
+    }
+
+    static let transientEvaluationRetryBudget: Duration = .seconds(1)
+    static let transientEvaluationRetryInterval: Duration = .milliseconds(100)
+
+    /// Runs `evaluate` and retries its failures every `interval` while the
+    /// next attempt still starts within `budget`; then the last error is
+    /// thrown. Cancellation and a terminated session are not transient and
+    /// are thrown at once.
+    static func retryingTransientEvaluationErrors<T>(
+        budget: Duration = transientEvaluationRetryBudget,
+        interval: Duration = transientEvaluationRetryInterval,
+        isTerminated: () -> Bool,
+        _ evaluate: () async throws -> T
+    ) async throws -> T {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: budget)
+        while true {
+            do {
+                return try await evaluate()
+            } catch {
+                if error is CancellationError || isTerminated() || clock.now.advanced(by: interval) > deadline {
+                    throw error
+                }
+            }
+            try await Task.sleep(for: interval)
+        }
     }
 
     func throwIfBlocked() throws {

@@ -7,8 +7,17 @@ import Foundation
 /// emitted on every append; only an incomplete escape is withheld. The final
 /// grapheme is reconciled across chunks before any CUP can break its cluster.
 struct TerminalStreamingText: Sendable {
-    struct Glyph: Sendable { var text: String; var style: String
-        var width: Int { TerminalANSIText.visibleWidth(text) }
+    struct Glyph: Sendable {
+        var text: String { didSet { width = TerminalANSIText.visibleWidth(text) } }
+        var style: String
+        /// `TerminalANSIText.visibleWidth(text)`, measured once per text.
+        private(set) var width: Int
+
+        init(text: String, style: String) {
+            self.text = text
+            self.style = style
+            width = TerminalANSIText.visibleWidth(text)
+        }
     }
     enum Token {
         case glyph(String), carriageReturn, newline, tab, rendition(String)
@@ -19,17 +28,25 @@ struct TerminalStreamingText: Sendable {
     private(set) var index = 0
     private(set) var rendition = ""
     private var escape = ""
+    /// Unicode scalars in `escape` and its second scalar (the CSI/OSC marker),
+    /// tracked so a long escape is not re-scanned for every scalar.
+    private var escapeLength = 0
+    private var escapeMarker: Unicode.Scalar?
+    /// Pen states of `glyphs` for one column count, kept in step by every
+    /// mutation so the cursor and the paragraph end need no full relayout.
+    private var layout: Layout?
 
     mutating func tokens(_ text: String) -> [Token] {
         var result: [Token] = []
         for scalar in text.unicodeScalars {
             if !escape.isEmpty {
                 escape.unicodeScalars.append(scalar)
-                let values = Array(escape.unicodeScalars)
-                let isCSI = values.count > 1 && values[1] == "["
-                let isOSC = values.count > 1 && values[1] == "]"
-                let complete = isCSI ? (values.count > 2 && (0x40...0x7e).contains(scalar.value))
-                    : isOSC ? (scalar.value == 7 || escape.hasSuffix("\u{1B}\\")) : values.count >= 2
+                escapeLength += 1
+                if escapeLength == 2 { escapeMarker = scalar }
+                let isCSI = escapeLength > 1 && escapeMarker == "["
+                let isOSC = escapeLength > 1 && escapeMarker == "]"
+                let complete = isCSI ? (escapeLength > 2 && (0x40...0x7e).contains(scalar.value))
+                    : isOSC ? (scalar.value == 7 || escape.hasSuffix("\u{1B}\\")) : escapeLength >= 2
                 if complete || escape.utf8.count > 4096 {
                     if isCSI && escape.hasSuffix("m") || isOSC && escape.hasPrefix("\u{1B}]8;") {
                         result.append(.rendition(escape))
@@ -40,11 +57,13 @@ struct TerminalStreamingText: Sendable {
                         result.append(.eraseToEndOfLine)
                     }
                     escape = ""
+                    escapeLength = 0
+                    escapeMarker = nil
                 }
                 continue
             }
             switch scalar.value {
-            case 27: escape = String(scalar)
+            case 27: escape = String(scalar); escapeLength = 1; escapeMarker = nil
             case 13: result.append(.carriageReturn)
             case 10: result.append(.newline)
             case 9: result.append(.tab)
@@ -67,8 +86,25 @@ struct TerminalStreamingText: Sendable {
         let joined = glyphs[index - 1].text + text
         return joined.count == 1 ? joined : nil
     }
-    mutating func replaceLast(with text: String) { glyphs[index - 1].text = text }
-    mutating func put(_ text: String) {
+    /// `columns` only selects the layout kept up to date; the glyphs are the same.
+    mutating func replaceLast(with text: String, columns: Int) {
+        guard index == glyphs.count else {
+            glyphs[index - 1].text = text
+            layout = Self.measure(glyphs, index: index, columns: columns)
+            return
+        }
+        // The pen before the last glyph does not depend on that glyph, so
+        // only its own wrap decision and advance are recomputed.
+        syncLayout(columns: columns)
+        glyphs[index - 1].text = text
+        if var layout {
+            layout.end = Self.advance(layout.beforeLast, by: glyphs[index - 1].width, columns: layout.columns)
+            layout.cursor = layout.end
+            self.layout = layout
+        }
+    }
+    /// `columns` only selects the layout kept up to date; the glyphs are the same.
+    mutating func put(_ text: String, columns: Int) {
         let glyph = Glyph(text: text, style: rendition)
         if index < glyphs.count {
             var covered = 0
@@ -82,13 +118,29 @@ struct TerminalStreamingText: Sendable {
                     glyphs.insert(Glyph(text: " ", style: rendition), at: index + 1)
                 }
             }
-        } else { glyphs.append(glyph) }
-        index += 1
+            index += 1
+            layout = Self.measure(glyphs, index: index, columns: columns)
+        } else {
+            syncLayout(columns: columns)
+            glyphs.append(glyph)
+            index += 1
+            if var layout {
+                layout.beforeLast = layout.end
+                layout.end = Self.advance(layout.end, by: glyph.width, columns: layout.columns)
+                layout.cursor = layout.end
+                self.layout = layout
+            }
+        }
     }
-    mutating func newline() { glyphs.removeAll(keepingCapacity: true); index = 0 }
+    mutating func newline() {
+        glyphs.removeAll(keepingCapacity: true); index = 0
+        if let columns = layout?.columns { layout = Layout(columns: columns) }
+    }
     mutating func carriageReturn(columns: Int) {
-        let targetRow = position(columns: columns).row
-        index = positions(columns: columns).firstIndex(where: { $0.row == targetRow }) ?? 0
+        let starts = positions(columns: columns)
+        let targetRow = starts[index].row
+        index = starts.firstIndex(where: { $0.row == targetRow }) ?? 0
+        layout = Self.measure(glyphs, index: index, columns: columns)
     }
     struct Position { var row: Int; var column: Int }
     func positions(columns: Int) -> [Position] {
@@ -104,6 +156,64 @@ struct TerminalStreamingText: Sendable {
         result.append(Position(row: row, column: column))
         return result
     }
-    func position(columns: Int) -> Position { positions(columns: columns)[index] }
-    func finalPosition(columns: Int) -> Position { positions(columns: columns).last! }
+    /// `positions(columns:)[index]`; O(1) while the layout matches `columns`.
+    func position(columns: Int) -> Position {
+        let layout = currentLayout(columns: columns)
+        guard index < glyphs.count else { return layout.cursor }
+        return Self.place(glyphs[index].width, at: layout.cursor, columns: layout.columns)
+    }
+    /// `positions(columns:).last`; O(1) while the layout matches `columns`.
+    func finalPosition(columns: Int) -> Position { currentLayout(columns: columns).end }
+    /// `positions(columns:)[offset]`; O(1) for the last glyph.
+    func glyphPosition(at offset: Int, columns: Int) -> Position {
+        guard offset >= 0, offset == glyphs.count - 1 else { return positions(columns: columns)[offset] }
+        let layout = currentLayout(columns: columns)
+        return Self.place(glyphs[offset].width, at: layout.beforeLast, columns: layout.columns)
+    }
+
+    /// Pen states of a paragraph for one column count. A pen state is where
+    /// the next glyph would start before its own wrap decision, so the end
+    /// state can sit in the delayed-wrap column (`columns + 1`).
+    private struct Layout: Sendable {
+        var columns: Int
+        /// Pen after `glyphs[..<index]`.
+        var cursor = TerminalStreamingText.origin
+        /// Pen after every glyph but the last (the origin when empty).
+        var beforeLast = TerminalStreamingText.origin
+        /// Pen after every glyph: `positions(columns:).last`.
+        var end = TerminalStreamingText.origin
+    }
+    private static let origin = Position(row: 0, column: 1)
+
+    /// Same rule as `positions(columns:)`: a glyph that would cross the last
+    /// column starts the next row; a zero-width glyph never wraps.
+    private static func place(_ width: Int, at pen: Position, columns: Int) -> Position {
+        width > 0 && pen.column + width - 1 > columns ? Position(row: pen.row + 1, column: 1) : pen
+    }
+    private static func advance(_ pen: Position, by width: Int, columns: Int) -> Position {
+        var next = place(width, at: pen, columns: columns)
+        next.column += width
+        return next
+    }
+    /// Full relayout, used when the column count changes and after a carriage
+    /// return or an overwrite in the middle of the paragraph.
+    private static func measure(_ glyphs: [Glyph], index: Int, columns: Int) -> Layout {
+        var layout = Layout(columns: max(1, columns))
+        var pen = origin
+        for (offset, glyph) in glyphs.enumerated() {
+            if offset == index { layout.cursor = pen }
+            if offset == glyphs.count - 1 { layout.beforeLast = pen }
+            pen = advance(pen, by: glyph.width, columns: layout.columns)
+        }
+        layout.end = pen
+        if index >= glyphs.count { layout.cursor = pen }
+        return layout
+    }
+    private func currentLayout(columns: Int) -> Layout {
+        if let layout, layout.columns == max(1, columns) { return layout }
+        return Self.measure(glyphs, index: index, columns: columns)
+    }
+    private mutating func syncLayout(columns: Int) {
+        if layout?.columns != max(1, columns) { layout = Self.measure(glyphs, index: index, columns: columns) }
+    }
 }

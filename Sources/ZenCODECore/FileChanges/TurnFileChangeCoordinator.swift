@@ -59,6 +59,11 @@ public actor TurnFileChangeCoordinator {
         await tracker.matchingLiveArtifactPaths
     }
 
+    /// The Git processes the tracker launched, as an internal test seam.
+    func gitInvocationCount() async -> Int {
+        await tracker.gitInvocationCount
+    }
+
     public func latestFileChangeSummary() -> TurnFileChangeSummary? {
         latestSummary
     }

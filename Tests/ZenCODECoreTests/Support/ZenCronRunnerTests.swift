@@ -131,6 +131,29 @@ struct ZenCronRunnerTests {
         return url
     }
 
+    /// Shell command that creates `markerURL`, so a test knows the command
+    /// has started (and passed any preceding `trap`) instead of guessing.
+    private static func createMarkerCommand(_ markerURL: URL) -> String {
+        ": > '\(markerURL.path)'"
+    }
+
+    /// Waits until the shell created `markerURL`; `false` once `timeout`
+    /// elapsed without it.
+    private static func waitForMarker(
+        _ markerURL: URL,
+        timeout: Duration = .seconds(10)
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        while !FileManager.default.fileExists(atPath: markerURL.path) {
+            guard clock.now < deadline else {
+                return false
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return true
+    }
+
     @Test("feeds the part after the first percent to stdin")
     func runCatWithStdin() async throws {
         let outcome = try await run("cat%hello%second line")
@@ -198,18 +221,20 @@ struct ZenCronRunnerTests {
         let runner = self.runner
         let clock = ContinuousClock()
         let started = clock.now
+        let markerURL = home.appendingPathComponent("started")
 
         let task = Task {
             try await runner.run(
-                cronCommand: "sleep 30",
+                cronCommand: "\(Self.createMarkerCommand(markerURL)); sleep 30",
                 environment: ZenCronEnvironment.minimal(home: home),
                 homeDirectory: home
             )
         }
-        try await Task.sleep(for: .milliseconds(400))
+        let markerAppeared = await Self.waitForMarker(markerURL)
         task.cancel()
         let outcome = try await task.value
 
+        #expect(markerAppeared)
         #expect(outcome.wasTerminated)
         #expect(outcome.exitStatus != 0)
         #expect(clock.now - started < .seconds(15))
@@ -245,20 +270,22 @@ struct ZenCronRunnerTests {
         let runner = self.runner
         let clock = ContinuousClock()
         let started = clock.now
+        let markerURL = home.appendingPathComponent("started")
 
         // The shell stays the parent of `sleep`, so SIGTERM may leave the
         // sleep behind holding the output pipes open.
         let task = Task {
             try await runner.run(
-                cronCommand: "sleep 20; echo never",
+                cronCommand: "\(Self.createMarkerCommand(markerURL)); sleep 20; echo never",
                 environment: ZenCronEnvironment.minimal(home: home),
                 homeDirectory: home
             )
         }
-        try await Task.sleep(for: .milliseconds(400))
+        let markerAppeared = await Self.waitForMarker(markerURL)
         task.cancel()
         let outcome = try await task.value
 
+        #expect(markerAppeared)
         #expect(outcome.wasTerminated)
         #expect(clock.now - started < .seconds(12))
     }
@@ -267,24 +294,32 @@ struct ZenCronRunnerTests {
     func cancelStubbornChild() async throws {
         let home = try Self.makeScratchHome()
         defer { try? FileManager.default.removeItem(at: home) }
-        let runner = self.runner
+        // Short graces keep the SIGKILL fallback and the bounded drain fast;
+        // the production defaults are covered by the other cancellation tests.
+        let runner = SystemCronJobRunner(
+            killGrace: .milliseconds(150),
+            drainGrace: .milliseconds(150)
+        )
         let clock = ContinuousClock()
         let started = clock.now
+        let markerURL = home.appendingPathComponent("trapped")
 
         // Both the shell and the sleep ignore SIGTERM: the runner must fall
         // back to SIGKILL for the shell, then stop waiting for the orphaned
-        // sleep that still holds the output pipes.
+        // sleep that still holds the output pipes. The marker is created only
+        // once the trap is in place, so SIGTERM is always ignored.
         let task = Task {
             try await runner.run(
-                cronCommand: "trap '' TERM; sleep 15",
+                cronCommand: "trap '' TERM; \(Self.createMarkerCommand(markerURL)); sleep 15",
                 environment: ZenCronEnvironment.minimal(home: home),
                 homeDirectory: home
             )
         }
-        try await Task.sleep(for: .milliseconds(400))
+        let markerAppeared = await Self.waitForMarker(markerURL)
         task.cancel()
         let outcome = try await task.value
 
+        #expect(markerAppeared)
         #expect(outcome.wasTerminated)
         #expect(outcome.exitStatus == 128 + SIGKILL)
         #expect(clock.now - started < .seconds(12))

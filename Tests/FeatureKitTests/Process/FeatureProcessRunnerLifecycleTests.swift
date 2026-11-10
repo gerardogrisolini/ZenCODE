@@ -23,7 +23,8 @@ struct FeatureProcessRunnerLifecycleTests {
         let result = try await FeatureProcessRunner.run(
             executableURL: Self.shell,
             arguments: ["-c", "trap '' TERM; sleep 30"],
-            timeout: 0.3
+            timeout: 0.3,
+            terminationGrace: .milliseconds(200)
         )
 
         #expect(result.timedOut)
@@ -45,7 +46,8 @@ struct FeatureProcessRunnerLifecycleTests {
         let task = Task {
             try await FeatureProcessRunner.run(
                 executableURL: Self.shell,
-                arguments: ["-c", "trap '' TERM; touch \"\(markerPath)\"; sleep 30"]
+                arguments: ["-c", "trap '' TERM; touch \"\(markerPath)\"; sleep 30"],
+                terminationGrace: .milliseconds(200)
             )
         }
 
@@ -93,7 +95,8 @@ struct FeatureProcessRunnerLifecycleTests {
         let result = try await FeatureProcessRunner.run(
             executableURL: Self.shell,
             arguments: ["-c", "trap '' TERM; while :; do printf 'line\\n'; done"],
-            stdoutLineLimit: 5
+            stdoutLineLimit: 5,
+            terminationGrace: .milliseconds(200)
         )
 
         #expect(result.stdoutWasTruncated)
@@ -114,7 +117,8 @@ struct FeatureProcessRunnerLifecycleTests {
                 "-c",
                 "trap '' TERM; while :; do printf '\(chunk)'; done",
             ],
-            maximumOutputBytesPerStream: byteLimit
+            maximumOutputBytesPerStream: byteLimit,
+            terminationGrace: .milliseconds(200)
         )
 
         #expect(result.stdoutWasTruncated)

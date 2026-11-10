@@ -45,6 +45,11 @@ public actor TurnFileChangeTracker {
     /// changes that actually happened during this turn.
     var initialWorktreeDirtyContents: [String: Data?] = [:]
     var didCaptureInitialWorktree = false
+    /// The repository root of `baseDirectoryURL` after the first successful
+    /// lookup; a failed lookup is not cached and is retried on the next call.
+    var cachedRepositoryRootPath: String?
+    /// The Git processes this tracker launched, as an internal test seam.
+    var gitInvocationCount = 0
 
     public init(workspacePath: String?) {
         let baseURL: URL

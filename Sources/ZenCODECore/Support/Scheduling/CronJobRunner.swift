@@ -170,6 +170,24 @@ struct SystemCronJobRunner: CronJobRunning {
     static let stdoutLimit = 1 << 20
     /// Retained standard error.
     static let stderrLimit = 64 * 1024
+    /// Default time a child gets to honour SIGTERM before it is killed.
+    static let defaultKillGrace: DispatchTimeInterval = .seconds(3)
+    /// Default time granted to the pipes to reach EOF after a cancellation: a
+    /// grandchild that survived the shell may keep them open indefinitely.
+    static let defaultDrainGrace: DispatchTimeInterval = .seconds(2)
+
+    /// Time a child gets to honour SIGTERM before it is killed.
+    let killGrace: DispatchTimeInterval
+    /// Time granted to the pipes to reach EOF after a cancellation.
+    let drainGrace: DispatchTimeInterval
+
+    init(
+        killGrace: DispatchTimeInterval = Self.defaultKillGrace,
+        drainGrace: DispatchTimeInterval = Self.defaultDrainGrace
+    ) {
+        self.killGrace = killGrace
+        self.drainGrace = drainGrace
+    }
 
     func run(
         cronCommand: String,
@@ -177,7 +195,7 @@ struct SystemCronJobRunner: CronJobRunning {
         homeDirectory: URL
     ) async throws -> ZenCronRunOutcome {
         let parts = ZenCronCommandSplit.split(cronCommand)
-        let session = CronProcessSession()
+        let session = CronProcessSession(killGrace: killGrace, drainGrace: drainGrace)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 session.launch(
@@ -217,10 +235,10 @@ private final class CronProcessSession: @unchecked Sendable {
     }
 
     /// Time a child gets to honour SIGTERM before it is killed.
-    private static let killGrace: DispatchTimeInterval = .seconds(3)
+    private let killGrace: DispatchTimeInterval
     /// Time granted to the pipes to reach EOF after a cancellation: a grandchild
     /// that survived the shell may keep them open indefinitely.
-    private static let drainGrace: DispatchTimeInterval = .seconds(2)
+    private let drainGrace: DispatchTimeInterval
 
     private let lock = NSLock()
     private let process = Process()
@@ -232,6 +250,11 @@ private final class CronProcessSession: @unchecked Sendable {
     /// The shell leads its own process group, so signals target `-pid`.
     private var leadsProcessGroup = false
     private var drainedOutput: (stdout: Data, stderr: Data)?
+
+    init(killGrace: DispatchTimeInterval, drainGrace: DispatchTimeInterval) {
+        self.killGrace = killGrace
+        self.drainGrace = drainGrace
+    }
 
     /// Runs the command on a dedicated thread and calls `completion` exactly once.
     func launch(
@@ -266,7 +289,7 @@ private final class CronProcessSession: @unchecked Sendable {
         case .running:
             terminateSent = true
             signalChild(SIGTERM)
-            DispatchQueue.global().asyncAfter(deadline: .now() + Self.killGrace) { [self] in
+            DispatchQueue.global().asyncAfter(deadline: .now() + killGrace) { [self] in
                 killIfStillRunning()
             }
         case .draining:
@@ -378,7 +401,7 @@ private final class CronProcessSession: @unchecked Sendable {
         collector.stackSize = 256 * 1024
         collector.start()
         if terminatedByUs || cancelledAlready {
-            _ = drainSignal.wait(timeout: .now() + Self.drainGrace)
+            _ = drainSignal.wait(timeout: .now() + drainGrace)
         } else {
             drainSignal.wait()
         }

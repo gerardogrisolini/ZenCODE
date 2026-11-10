@@ -37,8 +37,8 @@ extension ChatSessionController {
         await presenter.presentSubAgentToolEvent(event)
         if case let .completed(result) = event.lifecycle {
             await publishLiveFileArtifacts(
-                result, callID: event.toolCall.id, agentID: event.agentID,
-                context: artifactTurn
+                result, callID: event.toolCall.id, toolName: event.toolCall.name,
+                agentID: event.agentID, context: artifactTurn
             )
         }
         await publishSubAgentOverviewIfChanged(presenter: presenter)

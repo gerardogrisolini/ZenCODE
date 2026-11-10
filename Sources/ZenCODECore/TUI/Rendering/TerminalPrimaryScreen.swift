@@ -316,13 +316,13 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
         let before = stream.position(columns: geometry.columns)
         if let merged = stream.mergedGlyph(text) {
             let old = stream.glyphs[stream.index - 1]
-            let start = stream.positions(columns: geometry.columns)[stream.index - 1]
+            let start = stream.glyphPosition(at: stream.index - 1, columns: geometry.columns)
             sequence += cup(max(1, cursorRow - (before.row - start.row)), start.column)
                 + "\u{1B}[\(max(1, old.width))X" + old.style + merged
-            stream.replaceLast(with: merged)
+            stream.replaceLast(with: merged, columns: geometry.columns)
         } else {
             sequence += text
-            stream.put(text)
+            stream.put(text, columns: geometry.columns)
         }
         let after = stream.position(columns: geometry.columns)
         cursorRow = min(height, cursorRow + after.row - before.row)

@@ -68,11 +68,7 @@ public final class MemoryService: @unchecked Sendable {
     }
 
     public static func timestampString(_ date: Date, timeZone: TimeZone) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = timeZone
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return "\(formatter.string(from: date)) \(timeZone.identifier)"
+        "\(MemoryTimestampFormatting.string(from: date, timeZone: timeZone)) \(timeZone.identifier)"
     }
 
     /// Absolute path of the graph backing a workspace.

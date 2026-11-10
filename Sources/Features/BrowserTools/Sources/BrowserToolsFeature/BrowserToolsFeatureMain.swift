@@ -124,9 +124,12 @@ struct BrowserOpenTool: FeatureTool {
                 let allowsLoopback = requestedURL.map {
                     BrowserURLPolicy(environment: context.environment).isLoopbackURL($0.absoluteString)
                 } ?? false
+                // When a URL is requested the blank page is left immediately,
+                // so waiting for its readiness first would only add latency.
                 return try await BrowserToolsRunner.withTab(
                     tab,
                     context: context,
+                    waitForReady: requestedURL == nil,
                     allowsLoopback: allowsLoopback
                 ) { session, resolvedTab in
                     if let url = requestedURL {
@@ -196,9 +199,12 @@ struct BrowserGotoTool: FeatureTool {
         let url = try BrowserURLPolicy(environment: context.environment).validate(rawURL)
         let allowsLoopback = BrowserURLPolicy(environment: context.environment)
             .isLoopbackURL(url.absoluteString)
+        // The current document is left immediately, so its readiness is not
+        // awaited; `navigate` still waits for the destination to settle.
         return try await BrowserToolsRunner.withPage(
             pageID: pageID,
             context: context,
+            waitForReady: false,
             allowsLoopback: allowsLoopback
         ) { session, tab in
             try await session.navigate(to: url.absoluteString)
@@ -344,7 +350,14 @@ enum BrowserToolsRunner {
             do {
                 let allowsLoopback = BrowserURLPolicy(environment: context.environment)
                     .isLoopbackURL(url)
-                let result = try await withTab(tab, context: context, allowsLoopback: allowsLoopback) { session, _ in
+                // The fresh blank tab is left immediately, so its readiness
+                // is not awaited; `navigate` waits for the destination.
+                let result = try await withTab(
+                    tab,
+                    context: context,
+                    waitForReady: false,
+                    allowsLoopback: allowsLoopback
+                ) { session, _ in
                     try await session.navigate(to: url)
                     return try await body(session)
                 }
@@ -457,7 +470,9 @@ enum BrowserToolsRunner {
                 try await session.waitReady()
             }
             if validateCurrentDocument, let networkGuard {
-                try await networkGuard.validateCurrentDocument()
+                // Without the readiness wait the page may be mid-navigation:
+                // transient evaluation failures are briefly retried.
+                try await networkGuard.validateCurrentDocument(retryingTransientErrors: !waitForReady)
             }
             let result = try await body(session, tab)
             if let networkGuard {

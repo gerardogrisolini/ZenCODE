@@ -107,6 +107,15 @@ extension DirectSubAgentRuntime {
     static let maximumSharedChatReplyTimeoutSeconds: Double = 900
     static let sharedChatReplyPollInterval: Duration = .milliseconds(500)
 
+    /// Wakes this runtime's waits whenever a live message reaches the mailbox
+    /// of `participantID`. Pass the returned token to
+    /// `sharedChat.deliverySignal.cancel(_:)` when the wait ends.
+    func observeSharedChatDeliveries(to participantID: String) -> UUID {
+        sharedChat.deliverySignal.observe(participantID: participantID) { [weak self] in
+            Task { await self?.signalWakeWaiters() }
+        }
+    }
+
     /// Keeps a delegated agent's `agent.message` tool call open until a live
     /// reply reaches its mailbox, so the agent's turn (a task attempt or a
     /// standby follow-up) stays open while it waits instead of ending.
@@ -126,17 +135,28 @@ extension DirectSubAgentRuntime {
     ///
     /// The wait never consumes standby turns: the budget is charged once, when
     /// the standby turn itself completes.
+    ///
+    /// `pollInterval` bounds each wait between two checks; it is a test seam
+    /// and every caller keeps ``sharedChatReplyPollInterval``.
     func awaitSharedChatReply(
         senderID: String,
         roomID: String,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        pollInterval: Duration = DirectSubAgentRuntime.sharedChatReplyPollInterval
     ) async -> String {
         let clock = ContinuousClock()
         let deadline = clock.now + .seconds(timeoutSeconds)
+        // Watch the mailbox before the first drain below, so a reply that
+        // arrives between a drain and the wait still wakes it.
+        let deliveryObservation = observeSharedChatDeliveries(to: senderID)
+        defer { sharedChat.deliverySignal.cancel(deliveryObservation) }
         while true {
             if Task.isCancelled {
                 return Self.sharedChatReplyCancelledText
             }
+            // Read together with the state checked below: a change that lands
+            // during one of its awaits makes the wait return at once.
+            let wakeGeneration = currentWakeGeneration
             switch await sharedChatReplyLiveness(senderID: senderID) {
             case .live:
                 break
@@ -162,8 +182,11 @@ extension DirectSubAgentRuntime {
                 return Self.sharedChatReplyTimeoutText(seconds: timeoutSeconds)
             }
             do {
-                try await Task.sleep(
-                    for: min(Self.sharedChatReplyPollInterval, now.duration(to: deadline))
+                // Polling stays the fallback: a reply in the mailbox or a
+                // change of an agent's lifecycle wakes the wait earlier.
+                try await waitForWake(
+                    after: wakeGeneration,
+                    upTo: min(pollInterval, now.duration(to: deadline))
                 )
             } catch {
                 // Cancellation during the sleep only: nothing was drained in

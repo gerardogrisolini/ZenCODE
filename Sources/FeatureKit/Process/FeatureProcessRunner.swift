@@ -11,6 +11,10 @@ public enum FeatureProcessRunner {
     /// grow for hours without ever producing a stdout newline.
     public static let defaultMaximumOutputBytesPerStream = 16 * 1_024 * 1_024
 
+    /// Grace window between SIGTERM and SIGKILL when a run is stopped by a
+    /// timeout, cancellation, or an output limit.
+    public static let defaultTerminationGrace: Duration = FeatureProcessTerminationEscalator.defaultGrace
+
     public static func run(
         executableURL: URL,
         arguments: [String],
@@ -19,7 +23,8 @@ public enum FeatureProcessRunner {
         stdinData: Data? = nil,
         timeout: TimeInterval? = nil,
         stdoutLineLimit: Int? = nil,
-        maximumOutputBytesPerStream: Int = defaultMaximumOutputBytesPerStream
+        maximumOutputBytesPerStream: Int = defaultMaximumOutputBytesPerStream,
+        terminationGrace: Duration = defaultTerminationGrace
     ) async throws -> FeatureProcessResult {
         #if os(macOS) || os(Linux)
         try Task.checkCancellation()
@@ -104,7 +109,8 @@ public enum FeatureProcessRunner {
             process,
             exitObserver: exitObserver,
             timeout: timeout,
-            terminationRequest: terminationRequest
+            terminationRequest: terminationRequest,
+            terminationGrace: terminationGrace
         )
 
         process.terminationHandler = nil
@@ -136,6 +142,7 @@ public enum FeatureProcessRunner {
         _ = timeout
         _ = stdoutLineLimit
         _ = maximumOutputBytesPerStream
+        _ = terminationGrace
         throw FeatureProcessRunnerError.unsupportedPlatform
         #endif
     }
@@ -308,7 +315,8 @@ public enum FeatureProcessRunner {
         _ process: Process,
         exitObserver: FeatureProcessExitSignal,
         timeout: TimeInterval?,
-        terminationRequest: FeatureProcessTerminationSignal
+        terminationRequest: FeatureProcessTerminationSignal,
+        terminationGrace: Duration
     ) async -> Bool {
         let outcome = await withTaskGroup(of: FeatureProcessExitOutcome.self) { group -> FeatureProcessExitOutcome in
             // Natural exit waiter. `exitObserver.wait()` resumes on process exit
@@ -353,7 +361,11 @@ public enum FeatureProcessRunner {
         // SIGTERM.
         guard exitObserver.hasExited else {
             // Shared, bounded TERM -> grace -> KILL -> reap escalation.
-            await FeatureProcessTerminationEscalator.escalate(process, exitSignal: exitObserver)
+            await FeatureProcessTerminationEscalator.escalate(
+                process,
+                exitSignal: exitObserver,
+                grace: terminationGrace
+            )
             // A line-limit truncation triggers escalation so the run always
             // returns, but it is not a timeout: preserve timedOut == false.
             return timedOut

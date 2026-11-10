@@ -125,7 +125,8 @@ extension TurnFileChangeTracker {
     }
 
     func runGit(arguments: [String]) async throws -> AsyncProcessResult {
-        try await AsyncProcessRunner.run(
+        gitInvocationCount += 1
+        return try await AsyncProcessRunner.run(
             executableURL: GitExecutableResolver.executableURL(),
             arguments: arguments,
             environment: DeveloperToolEnvironment.processEnvironment(),
@@ -222,7 +223,12 @@ extension TurnFileChangeTracker {
         }
     }
 
+    /// The repository root, looked up with `git rev-parse` once per tracker:
+    /// only a successful lookup is cached.
     func repositoryRootPath() async -> String? {
+        if let cachedRepositoryRootPath {
+            return cachedRepositoryRootPath
+        }
         guard let result = try? await runGit(
             arguments: ["-C", baseDirectoryURL.path, "rev-parse", "--show-toplevel"]
         ),
@@ -231,7 +237,12 @@ extension TurnFileChangeTracker {
             return nil
         }
         let path = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        return path.isEmpty ? nil : URL(fileURLWithPath: path).standardizedFileURL.path
+        guard !path.isEmpty else {
+            return nil
+        }
+        let repositoryRoot = URL(fileURLWithPath: path).standardizedFileURL.path
+        cachedRepositoryRootPath = repositoryRoot
+        return repositoryRoot
     }
 
     func gitStatusDirtyRelativePaths(repositoryRoot: String) async -> [String] {

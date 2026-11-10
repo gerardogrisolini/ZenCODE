@@ -288,7 +288,13 @@ struct ZenSyntaxScanner {
                 while end < count, Self.isMarkupNameCharacter(characters[end]) {
                     end += 1
                 }
-                emit(.attribute, to: end)
+                if end == index {
+                    // An identifier start that is not a name character (`$`):
+                    // emit it alone as plain text, or the cursor never moves.
+                    emit(.plain, to: index + 1)
+                } else {
+                    emit(.attribute, to: end)
+                }
             } else {
                 emit(.plain, to: index + 1)
             }

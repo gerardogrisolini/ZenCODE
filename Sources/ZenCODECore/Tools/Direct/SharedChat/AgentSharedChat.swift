@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Synchronization
 import ToolCore
 
 /// A bounded, in-memory message bus shared by a coordinator and its delegated
@@ -186,6 +187,11 @@ public actor AgentSharedChat {
     }
 
     private var rooms: [String: Room] = [:]
+
+    /// Wakes in-process waits as soon as a message reaches a mailbox they
+    /// watch. Synchronous, so a wait can start watching before it probes the
+    /// mailbox and miss no delivery in between.
+    nonisolated let deliverySignal = DeliverySignal()
 
     public init() {}
 
@@ -564,6 +570,7 @@ public actor AgentSharedChat {
         for callback in callbacks {
             callback()
         }
+        deliverySignal.notify(recipientIDs: recipientIDs)
         return Delivery(message: message, recipients: resolved)
     }
 
@@ -691,5 +698,52 @@ public actor AgentSharedChat {
         }
         let order = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
         return order == .orderedAscending || (order == .orderedSame && lhs.id < rhs.id)
+    }
+}
+
+extension AgentSharedChat {
+    /// Observers of mailbox deliveries, by participant identifier. It only
+    /// shortens waits: an observer is told that a message reached a mailbox,
+    /// never what it holds, and every wait still re-reads the mailbox and
+    /// keeps polling as its fallback. Delivery itself and the mailbox's
+    /// single destructive owner are unchanged.
+    final class DeliverySignal: Sendable {
+        private struct Observer: Sendable {
+            let participantID: String
+            let callback: @Sendable () -> Void
+        }
+
+        private let observers = Mutex<[UUID: Observer]>([:])
+
+        /// Calls `callback` after each delivery to the mailbox of
+        /// `participantID`, until ``cancel(_:)`` is called with the returned
+        /// token. The callback runs after the delivery is committed, on the
+        /// delivering actor: it must only schedule work.
+        func observe(
+            participantID: String,
+            _ callback: @escaping @Sendable () -> Void
+        ) -> UUID {
+            let token = UUID()
+            observers.withLock {
+                $0[token] = Observer(participantID: participantID, callback: callback)
+            }
+            return token
+        }
+
+        func cancel(_ token: UUID) {
+            _ = observers.withLock { $0.removeValue(forKey: token) }
+        }
+
+        func notify(recipientIDs: [String]) {
+            let callbacks = observers.withLock { observers -> [@Sendable () -> Void] in
+                guard !observers.isEmpty else { return [] }
+                return observers.values
+                    .filter { recipientIDs.contains($0.participantID) }
+                    .map(\.callback)
+            }
+            for callback in callbacks {
+                callback()
+            }
+        }
     }
 }

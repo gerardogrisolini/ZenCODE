@@ -202,9 +202,13 @@ enum LocalToolsSupport {
             root = context.resolvePath(input.path ?? ".")
         }
         let maxResults = max(1, input.maxResults ?? input.max_results ?? 200)
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey]) else {
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: []) else {
             return "<empty>"
         }
+        // Like grep, do not descend into VCS and build directories met below the
+        // root; the directory entry itself is still listed. A root that is, or
+        // lies inside, one of them is searched without pruning.
+        let prunesExcludedDirectories = !isInsideSearchExcludedDirectory(root)
         var matches: [String] = []
         var visited = 0
         let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
@@ -212,6 +216,10 @@ enum LocalToolsSupport {
             visited += 1
             if visited.isMultiple(of: 64) {
                 try Task.checkCancellation()
+            }
+            if prunesExcludedDirectories, searchExcludedDirectories.contains(url.lastPathComponent) {
+                // A no-op for a regular file with the same name.
+                enumerator.skipDescendants()
             }
             let relative: String
             if url.path.hasPrefix(rootPrefix) {
@@ -238,6 +246,14 @@ enum LocalToolsSupport {
             }
         }
         return matches.isEmpty ? "<empty>" : matches.joined(separator: "\n")
+    }
+
+    /// Whether `root`, as requested or with symlinks resolved, is or lies inside
+    /// a directory listed in `searchExcludedDirectories`.
+    static func isInsideSearchExcludedDirectory(_ root: URL) -> Bool {
+        [root, root.resolvingSymlinksInPath()].contains { url in
+            url.pathComponents.contains { searchExcludedDirectories.contains($0) }
+        }
     }
 
     static func existingGlobPatternPath(_ pattern: String, context: FeatureContext) -> URL? {

@@ -187,24 +187,26 @@ public nonisolated struct ThinkingBoundarySpacingNormalizer: Sendable {
             return text
         }
 
-        var output = text
-        var searchStart = output.startIndex
-        while let opening = Self.nextOpeningMarker(in: output, from: searchStart) {
-            let contentStart = opening.range.upperBound
-            while contentStart < output.endIndex,
-                  output[contentStart].isWhitespace {
-                output.remove(at: contentStart)
+        // Built by appending segments of the unmutated `text`: an index kept
+        // across a mutation can cache the stride of a character that is no
+        // longer there and step out of bounds. Whitespace is skipped scalar
+        // by scalar, so a mark carried by a space stays, as it does when the
+        // space ends a streamed chunk.
+        var output = ""
+        var segmentStart = text.startIndex
+        while let opening = Self.nextOpeningMarker(in: text, from: segmentStart) {
+            var contentStart = opening.range.upperBound
+            while contentStart < text.endIndex,
+                  text.unicodeScalars[contentStart].properties.isWhitespace {
+                contentStart = text.unicodeScalars.index(after: contentStart)
             }
 
-            if contentStart == output.endIndex {
-                output.insert("\n", at: contentStart)
-                suppressNextLeadingOpeningNewline = true
-            } else {
-                output.insert("\n", at: contentStart)
-                suppressNextLeadingOpeningNewline = false
-            }
-            searchStart = output.index(after: contentStart)
+            output += text[segmentStart..<opening.range.upperBound]
+            output += "\n"
+            suppressNextLeadingOpeningNewline = contentStart == text.endIndex
+            segmentStart = contentStart
         }
+        output += text[segmentStart...]
 
         return output
     }

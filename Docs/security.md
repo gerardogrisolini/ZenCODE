@@ -22,6 +22,11 @@ On macOS, Linux, and WSL, that boundary applies the following protections to
   changing an unrelated target's permissions;
 - preserves the existing JSON filenames, schema, and setup/provider flows.
 
+The shared HTTP transport keeps a small, bounded cache of TLS client contexts,
+keyed by the additional trust roots. An entry expires 10 minutes after its
+context was created, so a long-running process picks up changes to the system
+trust store.
+
 `settings.json`, `agents.json`, and the other remote-reset writers additionally
 share the cross-process `.manifests.lock` coordination boundary. Setup
 prevalidates and serializes both payloads, verifies that neither manifest changed

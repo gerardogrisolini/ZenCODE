@@ -453,23 +453,17 @@ public final class RemoteTransportCore: Sendable {
         try await outbound.write(.end(nil))
     }
 
-    private static func makeTLSHandler(
+    /// Only the handler is per connection: it carries the supplied hostname
+    /// used for both TLS SNI and certificate matching. The context, with full
+    /// certificate-chain and hostname verification and platform trust roots
+    /// (see `RemoteTransportTLSContextCache.makeConfiguration`), is shared by
+    /// every connection with the same trust configuration.
+    static func makeTLSHandler(
         serverHostname: String,
-        tls: RemoteTransportTLSConfiguration
+        tls: RemoteTransportTLSConfiguration,
+        contextCache: RemoteTransportTLSContextCache = .shared
     ) throws -> NIOSSLClientHandler {
-        var configuration = TLSConfiguration.makeClientConfiguration()
-        // Make the secure default explicit: full certificate-chain and hostname
-        // verification, platform trust roots, and the supplied hostname used for
-        // both TLS SNI and certificate matching.
-        configuration.certificateVerification = .fullVerification
-        configuration.trustRoots = .default
-        if !tls.additionalTrustRootPEMs.isEmpty {
-            let certificates = try tls.additionalTrustRootPEMs.map {
-                try NIOSSLCertificate(bytes: Array($0), format: .pem)
-            }
-            configuration.additionalTrustRoots = [.certificates(certificates)]
-        }
-        let context = try NIOSSLContext(configuration: configuration)
+        let context = try contextCache.context(for: tls)
         return try NIOSSLClientHandler(context: context, serverHostname: serverHostname)
     }
 

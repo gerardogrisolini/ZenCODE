@@ -65,13 +65,25 @@ extension ChatSessionController {
             && activeFileArtifactTurn?.id == context.id
     }
 
+    /// Records and presents the file changes of a completed tool call, then
+    /// a workspace checkpoint of the turn. `toolName` names the completed
+    /// tool: a core tool that only reads and reports no file change takes no
+    /// checkpoint (see ``TurnFileChangeLiveCheckpointPolicy``); `nil` takes it.
     func publishLiveFileArtifacts(
         _ result: DirectAgentToolResult,
         callID: String,
+        toolName: String? = nil,
         agentID: String? = nil,
         context: ChatFileArtifactTurn?
     ) async {
         guard let context, context.acceptsPublications, isActiveFileArtifactTurn(context) else {
+            return
+        }
+        guard !TurnFileChangeLiveCheckpointPolicy.skipsCheckpoint(
+            toolName: toolName, fileChanges: result.fileChanges
+        ) else {
+            // Nothing to record or present; still return after the earlier ones.
+            await context.pendingPublication?.value
             return
         }
         let previous = context.pendingPublication

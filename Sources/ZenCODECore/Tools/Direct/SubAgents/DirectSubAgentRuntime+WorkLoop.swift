@@ -217,8 +217,10 @@ extension DirectSubAgentRuntime {
         }
 
         // Nothing is recorded, and no lifecycle is forwarded, for an agent
-        // that is gone or closed.
-        let recorded = mutateAgent(agentID, where: { $0.status != .closed }) {
+        // that is gone or closed. `apply` reads nothing of the runtime, so the
+        // record is mutated in place and the streamed buffers grow without
+        // being copied first.
+        let recorded = mutateAgentInPlace(agentID, where: { $0.status != .closed }) {
             Self.apply(event, to: &$0)
         }
         if let delegatedToolEvent = recorded ?? nil,
@@ -277,7 +279,11 @@ extension DirectSubAgentRuntime {
             // touching snapshot-visible fields; it becomes visible only when a
             // tool boundary proves that the model's message is complete, or in
             // `recordCompletion` as the final response.
-            agent.pendingContentBuffer = (agent.pendingContentBuffer ?? "") + delta
+            if agent.pendingContentBuffer == nil {
+                agent.pendingContentBuffer = delta
+            } else {
+                agent.pendingContentBuffer!.append(delta)
+            }
         case let .toolCallStarted(toolCall):
             agent.pendingThoughtParagraph = nil
             // The backend recorded the message, its reasoning included, before
@@ -361,28 +367,46 @@ extension DirectSubAgentRuntime {
     /// paragraph boundary. A delta that completes a paragraph (for example the
     /// single delta "A\n\n") leaves an empty tail and returns nil, exactly as
     /// the same text split across two deltas does.
+    ///
+    /// `buffer` holds the normalized tail, so each delta normalizes only
+    /// itself and is scanned once for paragraph boundaries; the tail grows in
+    /// place while no boundary arrives.
     static func latestThoughtParagraph(
         appending delta: String,
         to buffer: inout String?
     ) -> String? {
-        var raw = (buffer ?? "") + delta
-        let endsWithUnresolvedCR = raw.hasSuffix("\r")
+        // Take the buffer out so the tail is uniquely referenced and grows in
+        // place.
+        var tail = buffer ?? ""
+        buffer = nil
+        var chunk = delta
+        if tail.utf8.last == ThoughtStreamByte.carriageReturn {
+            tail.removeLast()
+            chunk = "\r" + chunk
+        }
+        let endsWithUnresolvedCR = chunk.utf8.last == ThoughtStreamByte.carriageReturn
         if endsWithUnresolvedCR {
-            raw.removeLast()
+            chunk.removeLast()
         }
-        var tail = raw
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
+        let normalized = normalizedThoughtLineEndings(chunk)
         // A blank line (optionally padded with horizontal whitespace) ends a
-        // paragraph. Only the text after the last boundary is still in progress.
-        while let boundary = tail.range(
-            of: #"\n[ \t]*\n"#,
-            options: .regularExpression
+        // paragraph. Only the text after the last boundary is still in
+        // progress. The tail holds no complete boundary, so a new one ends in
+        // this delta, possibly opened by a line the tail left open.
+        if let paragraphStart = lastParagraphStart(
+            in: normalized,
+            afterOpenLine: endsWithOpenLine(tail)
         ) {
-            tail = String(tail[boundary.upperBound...])
+            tail = String(normalized[paragraphStart...])
+        } else {
+            tail += normalized
         }
-        buffer = endsWithUnresolvedCR ? tail + "\r" : tail
-        return tail.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+        let paragraph = trimmedNonBlankThought(tail)
+        if endsWithUnresolvedCR {
+            tail.append("\r")
+        }
+        buffer = tail
+        return paragraph
     }
 
     /// Accumulates the reasoning stream of one thinking phase, every
@@ -400,21 +424,110 @@ extension DirectSubAgentRuntime {
         appending delta: String,
         to buffer: inout String?
     ) -> String? {
+        // Take the buffer out so the text is uniquely referenced and grows in
+        // place.
         var accumulated = buffer ?? ""
+        buffer = nil
         var chunk = delta
-        if accumulated.hasSuffix("\r") {
+        if accumulated.utf8.last == ThoughtStreamByte.carriageReturn {
             accumulated.removeLast()
             chunk = "\r" + chunk
         }
-        let endsWithUnresolvedCR = chunk.hasSuffix("\r")
+        let endsWithUnresolvedCR = chunk.utf8.last == ThoughtStreamByte.carriageReturn
         if endsWithUnresolvedCR {
             chunk.removeLast()
         }
-        accumulated += chunk
+        accumulated += normalizedThoughtLineEndings(chunk)
+        let thought = trimmedNonBlankThought(accumulated)
+        if endsWithUnresolvedCR {
+            accumulated.append("\r")
+        }
+        buffer = accumulated
+        return thought
+    }
+
+    /// The bytes the thought reducers scan for. CR, LF, space and tab are
+    /// ASCII, and UTF-8 never uses an ASCII byte inside a multi-byte scalar,
+    /// so a byte scan finds exactly the scalars. A text whose last byte is CR
+    /// ends with a lone CR character: a CR always starts its own grapheme,
+    /// and only an LF after it could join it.
+    private enum ThoughtStreamByte {
+        static let carriageReturn = UInt8(ascii: "\r")
+        static let lineFeed = UInt8(ascii: "\n")
+        static let space = UInt8(ascii: " ")
+        static let tab = UInt8(ascii: "\t")
+    }
+
+    /// CRLF and lone CR become LF, as the reducers have always normalized a
+    /// whole text. A chunk without CR is returned as it is.
+    private static func normalizedThoughtLineEndings(_ chunk: String) -> String {
+        guard chunk.utf8.contains(ThoughtStreamByte.carriageReturn) else {
+            return chunk
+        }
+        return chunk
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
-        buffer = endsWithUnresolvedCR ? accumulated + "\r" : accumulated
-        return accumulated.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+    }
+
+    /// The text trimmed of leading and trailing whitespace, or nil while it
+    /// is blank. Trimming is idempotent, so one pass gives what
+    /// `trimmingCharacters(in:)` followed by `nilIfBlank` gives.
+    private static func trimmedNonBlankThought(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// True when `text` ends with a line feed followed only by spaces and
+    /// tabs: that line feed opens a paragraph boundary that the next line
+    /// feed closes.
+    private static func endsWithOpenLine(_ text: String) -> Bool {
+        for byte in text.utf8.reversed() {
+            switch byte {
+            case ThoughtStreamByte.space, ThoughtStreamByte.tab:
+                continue
+            case ThoughtStreamByte.lineFeed:
+                return true
+            default:
+                return false
+            }
+        }
+        return false
+    }
+
+    /// Where the text after the last paragraph boundary of `text` starts, or
+    /// nil when `text` closes no boundary. A boundary is a line feed, any
+    /// spaces and tabs, then a line feed, matched left to right without
+    /// overlap, as repeated `\n[ \t]*\n` searches from the end of the
+    /// previous match find them. `afterOpenLine` tells that the text before
+    /// `text` left a boundary open (see ``endsWithOpenLine(_:)``).
+    private static func lastParagraphStart(
+        in text: String,
+        afterOpenLine: Bool
+    ) -> String.Index? {
+        var isOpen = afterOpenLine
+        var paragraphStart: String.Index?
+        let bytes = text.utf8
+        var index = bytes.startIndex
+        while index != bytes.endIndex {
+            let byte = bytes[index]
+            bytes.formIndex(after: &index)
+            switch byte {
+            case ThoughtStreamByte.lineFeed:
+                if isOpen {
+                    // A line feed always ends its grapheme, so this index
+                    // is a character boundary of `text`.
+                    paragraphStart = index
+                    isOpen = false
+                } else {
+                    isOpen = true
+                }
+            case ThoughtStreamByte.space, ThoughtStreamByte.tab:
+                break
+            default:
+                isOpen = false
+            }
+        }
+        return paragraphStart
     }
 
     private static func takeCompletedContent(

@@ -620,14 +620,14 @@ if(el.tagName==='CODE')return '`'+clean(el.innerText||el.textContent).replace(/`
 return [...el.childNodes].map(inline).join('');};
 const lines=[`# ${clean(document.title)||location.href}`,'',`URL: ${location.href}`,'','## Content'];
 const blocks=[...document.body.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,pre,blockquote,td,th,[id="content-text"],[class*="comment-body"],[class*="comment-content"],[data-testid*="comment-text"]')];
-const seen=new Set();
+const seen=new Set();let joinedLength=lines.reduce((a,l)=>a+l.length,0)+lines.length-1;
 for(const el of blocks){if(!visible(el))continue;let s='';const tag=el.tagName;
 if(/^H[1-6]$/.test(tag)){s='#'.repeat(Number(tag[1]))+' '+inline(el);}
 else if(tag==='LI'){s='- '+inline(el);}
 else if(tag==='PRE'){s='```\n'+(el.innerText||el.textContent||'').trimEnd()+'\n```';}
 else if(tag==='BLOCKQUOTE'){s='> '+clean(el.innerText||el.textContent);}
-else{s=inline(el);}s=s.trim();if(!s||seen.has(s))continue;seen.add(s);lines.push('',s);
-if(lines.join('\n').length>900000){lines.push('','[Content truncated by browser extractor.]');break;}}
+else{s=inline(el);}s=s.trim();if(!s||seen.has(s))continue;seen.add(s);lines.push('',s);joinedLength+=2+s.length;
+if(joinedLength>900000){lines.push('','[Content truncated by browser extractor.]');break;}}
 lines.push('','## Visible links');let n=0;const linkSeen=new Set();
 for(const a of document.querySelectorAll('a[href]')){if(!visible(a))continue;const t=esc(a.innerText||a.textContent);if(t.length<3)continue;
 let u;try{u=new URL(a.href);}catch{continue;}if(!/^https?:$/.test(u.protocol)||linkSeen.has(u.href))continue;linkSeen.add(u.href);

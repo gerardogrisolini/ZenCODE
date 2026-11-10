@@ -43,6 +43,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
   instead of being written as padding spaces, which the terminal wrapped into
   extra rows when the window shrank. Rows longer than the new width still wrap,
   like any other text already printed.
+- A thinking marker followed by a multi-byte character (a CRLF, an accented
+  letter, an emoji) no longer crashes the stream or drops characters: the
+  opening marker of a thinking block was normalized with a string index kept
+  across a mutation, so `<think>` followed by `\r\n abc` lost the `a`, and
+  other inputs stopped the process with an out-of-bounds index. A space
+  carrying a combining mark after the marker now loses only the space.
+- In the macOS app, a `$` inside an HTML or XML tag (`<a $x>`) in a code block
+  no longer hangs the window: the highlighter did not advance past it.
+- On Linux, a memory entry whose `Timestamp:` names a time zone that the
+  system has no data file for (legacy names such as `Asia/Calcutta` without
+  `tzdata-legacy`), or a current time zone with such a name, no longer crashes
+  `zen`: these timestamps are now rendered and parsed without `DateFormatter`,
+  with the same result as on macOS.
 
 ### Changed
 
@@ -83,6 +96,28 @@ Release tags follow the strict `vX.Y.Z` contract described in
   unchanged.
 - Code lines that wrap no longer start with the `↳` marker: the text
   restarts at the code column (file diffs keep the line-number gutter).
+- `search.glob` does not list the contents of `.git`, `.build`, `.swiftpm`,
+  `node_modules`, and `DerivedData` unless the requested path is inside one of
+  them; the directory itself is still listed. `search.grep` and
+  `search.locate` stop grep once `maxResults` is reached, so errors in files
+  not yet searched are not reported.
+- `agent.wait` and `agent.message` with `awaitReply` return as soon as the
+  state of a sub-agent changes or a message arrives, instead of at the next
+  poll; polling remains as a fallback.
+- Live file artifacts no longer take the git checkpoint after a core read-only
+  tool (file reads and listings, `search.*`, `text.*`, memory reads, skills,
+  `todo.read`, `tasks.list`, `tasks.get`) completes without file changes; every
+  other tool still takes it, and the final turn summary is unchanged.
+- `browser.open` with a URL, `browser.goto`, and ephemeral tabs no longer wait
+  for the page they are about to leave to settle before navigating.
+- Less repeated work, with no change of output: the remote transport reuses
+  its TLS context for up to 10 minutes instead of building one per
+  connection; listing saved sessions decodes each session file once instead
+  of twice; the terminal lays out a streamed paragraph incrementally; the
+  latest thought paragraph of a sub-agent is tracked incrementally instead of
+  rescanning the whole thought on every delta; the page
+  extractor of `browser.read` and `browser.visit_page` no longer rejoins the
+  collected text for every block.
 
 ### Removed
 

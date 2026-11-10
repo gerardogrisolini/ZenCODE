@@ -33,6 +33,11 @@ fallbacks for binary, uncertain, or over-budget evidence (64 KiB per text and
 deleted or modified text file exceeds that limit, the artifact shows the first
 whole diff lines that fit, with a truncation note; `/undo` still uses the full
 patch. Normal tool blocks remain compact without code or diffs.
+The live checkpoint is skipped when a core read-only tool (file reads and
+listings, `search.*`, `text.*`, `memory` reads, skills, `todo.read`,
+`tasks.list`, `tasks.get`) completes without reporting file changes; any other
+completion still takes it, and the final turn summary always reconciles the
+whole worktree.
 The history is scoped to the active
 session and is cleared by `/sessions new` and by loading/restoring a session;
 it is never written to saved snapshots, checkpoints, transcripts, or

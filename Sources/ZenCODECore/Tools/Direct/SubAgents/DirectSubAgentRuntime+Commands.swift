@@ -796,8 +796,21 @@ extension DirectSubAgentRuntime {
         let mailboxParticipantID = roomID.map {
             AgentSharedChat.mailboxParticipantID(senderID: sharedChatSenderID, roomID: $0)
         }
+        // Watch the mailbox before the first probe below, so a message that
+        // arrives between a probe and the wait still wakes it.
+        let deliveryObservation = mailboxParticipantID.map {
+            observeSharedChatDeliveries(to: $0)
+        }
+        defer {
+            if let deliveryObservation {
+                sharedChat.deliverySignal.cancel(deliveryObservation)
+            }
+        }
 
         while true {
+            // Read together with the state checked below: a change that lands
+            // during the mailbox probe makes the wait return at once.
+            let wakeGeneration = currentWakeGeneration
             let currentSnapshots = snapshots(for: targetIDs)
             let hasPendingWork = currentSnapshots.contains { $0.pending }
             if !hasPendingWork {
@@ -818,7 +831,9 @@ extension DirectSubAgentRuntime {
             }
 
             do {
-                try await Task.sleep(for: .seconds(pollInterval))
+                // Polling stays the fallback: a change of an agent's lifecycle
+                // or a message for the watched mailbox wakes the wait earlier.
+                try await waitForWake(after: wakeGeneration, upTo: .seconds(pollInterval))
             } catch {
                 // Cooperative cancellation: `try?` would swallow the
                 // CancellationError and busy-loop on the immediately-returning

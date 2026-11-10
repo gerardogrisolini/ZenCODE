@@ -273,7 +273,8 @@ extension ChatSessionController {
             await turn.transcript.appendToolCallCompleted(toolCall, result: result)
             await turn.presenter.presentToolCallCompleted(toolCall, result: result)
             await publishLiveFileArtifacts(
-                result, callID: toolCall.id, context: turn.artifactTurn
+                result, callID: toolCall.id, toolName: toolCall.name,
+                context: turn.artifactTurn
             )
             await recordPlanProgress(toolCall: toolCall, result: result, turn: turn)
             await turn.presenter.presentToolCallSettled(toolCall, result: result)

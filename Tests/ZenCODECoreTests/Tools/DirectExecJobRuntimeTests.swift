@@ -43,7 +43,7 @@ struct DirectExecJobRuntimeTests {
 
     @Test
     func shutdownEscalatesAndWaitsForTermIgnoringJob() async throws {
-        let runtime = DirectExecJobRuntime()
+        let runtime = DirectExecJobRuntime(terminationGracePeriod: .milliseconds(200))
         _ = try await runtime.startBackgroundJob(
             command: "trap '' TERM; printf ready; while :; do sleep 1; done",
             shellPath: "/bin/sh",
