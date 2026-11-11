@@ -188,7 +188,7 @@ extension ChatSessionController {
             agentID: selection.agent?.id,
             agentName: selection.agent?.name,
             selectedTools: Self.selectedToolSelectionNames(selection.toolKeys),
-            selectedSkillIDs: selection.skillIDs.sorted(),
+            selectedSkillNames: selection.skillNames.sorted(),
             thinkingSelection: currentAgentThinkingSelection()?.rawValue,
             contextWindow: contextWindow.map {
                 TerminalSavedSessionContextWindow($0)
@@ -537,7 +537,7 @@ extension ChatSessionController {
             from: savedSession.selectedTools,
             items: items
         )
-        selection.skillIDs = Set(savedSession.selectedSkillIDs)
+        selection.skillNames = Set(savedSession.selectedSkillNames)
         await presentSessionStateChanged()
 
         await ensureWorkspaceAccess()

@@ -51,15 +51,37 @@ struct PromptSkillToolProviderTests {
         )
 
         // Ordered by canonical name: "other-skill" precedes "release-review".
-        #expect(output.contains(#""name":"other-skill""#))
-        #expect(output.contains(#""id":"other-skill-hash""#))
-        #expect(output.contains(#""name":"release-review""#))
-        #expect(output.contains(#""id":"release-review-hash""#))
-        #expect(output.range(of: "other-skill")!.lowerBound < output.range(of: "release-review")!.lowerBound)
+        // Each entry carries only `name` and `description`: no `id`, hash, or title.
+        #expect(output == #"{"skills":[{"description":"Other skill.","name":"other-skill"},{"description":"Review release changes before publishing.","name":"release-review"}]}"#)
+        #expect(!output.contains(#""id""#))
+        #expect(!output.contains("-hash"))
         #expect(!output.contains("BODY"))
         #expect(!output.contains("/tmp/skills"))
         #expect(!output.contains("sourceDirectoryPath"))
         #expect(!output.contains("Release Review"))
+    }
+
+    @Test
+    func listAndReadDescriptorsIdentifySkillsByNameOnly() {
+        let list = PromptSkillToolProvider.listToolDescriptor
+        let read = PromptSkillToolProvider.readToolDescriptor
+
+        #expect(list.description.contains("returning only their name and description"))
+        #expect(!list.description.contains("id, name"))
+        #expect(read.description.contains("Use the name returned by skills.list."))
+        #expect(read.inputSchema.contains("Selected skill name from skills.list."))
+        #expect(!read.inputSchema.contains("skill id"))
+        #expect(SystemPromptBuilder.staticSkillSection.contains("(name and description)"))
+        #expect(SystemPromptBuilder.staticSkillSection.contains("with a listed name"))
+        #expect(!SystemPromptBuilder.staticSkillSection.contains("listed id"))
+    }
+
+    @Test
+    func listOrdersSkillsSharingANameByTitle() {
+        let zeta = PromptSkill(canonicalName: "same-name", title: "Zeta", summary: "", promptBody: "", sourceHash: "1")
+        let alpha = PromptSkill(canonicalName: "same-name", title: "Alpha", summary: "", promptBody: "", sourceHash: "2")
+
+        #expect(PromptSkillToolProvider.sortedForListing([zeta, alpha]).map(\.title) == ["Alpha", "Zeta"])
     }
 
     @Test
@@ -86,9 +108,37 @@ struct PromptSkillToolProviderTests {
         #expect(secondPage.contains("Skill sourceDirectoryPath:"))
         #expect(firstPage.contains("Skill: Release Review"))
         #expect(firstPage.contains("offset 6000"))
+        // The continuation names the skill by its canonical name, never by hash.
+        #expect(firstPage.contains("using identifier `release-review` and offset 6000"))
+        #expect(!firstPage.contains("release-review-hash"))
         #expect(!firstPage.contains("TAIL-MARKER"))
         #expect(secondPage.contains("TAIL-MARKER"))
         #expect(secondPage.contains("This is the final page."))
+    }
+
+    @Test
+    func readByNameIsCaseInsensitiveAndNeverByHashOrTitle() async throws {
+        let provider = PromptSkillSessionProvider(skills: [
+            PromptSkill(
+                canonicalName: "release-review",
+                title: "Shipping Checklist",
+                summary: "Review release changes before publishing.",
+                promptBody: "RELEASE-BODY",
+                sourceHash: "release-review-hash"
+            )
+        ])
+
+        let exact = try await read(provider, arguments: #"{"identifier":"release-review"}"#)
+        let differentCase = try await read(provider, arguments: #"{"identifier":"Release-Review"}"#)
+        #expect(exact.contains("RELEASE-BODY"))
+        #expect(differentCase.contains("RELEASE-BODY"))
+
+        // Neither the content hash nor the title identifies a skill.
+        for identifier in ["release-review-hash", "Shipping Checklist"] {
+            await #expect(throws: PromptSkillToolProviderError.self) {
+                _ = try await self.read(provider, arguments: #"{"identifier":"\#(identifier)"}"#)
+            }
+        }
     }
 
     @Test
@@ -138,7 +188,7 @@ struct PromptSkillToolProviderTests {
         #expect(exactOutput.contains("SECOND"))
         #expect(!exactOutput.contains("FIRST"))
 
-        await #expect(throws: PromptSkillToolProviderError.self) {
+        let ambiguous = await #expect(throws: PromptSkillToolProviderError.self) {
             _ = try await provider.execute(
                 toolCall: AgentToolCall(
                     id: "ambiguous-normalized",
@@ -147,6 +197,11 @@ struct PromptSkillToolProviderTests {
                 )
             )
         }
+        // The ambiguity lists the candidates' names, not their hashes.
+        let message = try #require(ambiguous?.localizedDescription)
+        #expect(message.contains("foo-bar, foobar"))
+        #expect(message.contains("skill names"))
+        #expect(!message.contains("hash"))
     }
 
     @Test

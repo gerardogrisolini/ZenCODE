@@ -137,7 +137,7 @@ extension ZenCODEAgentProfileSetupRunner {
     }
 
     static func skillList(_ skills: [AgentProfileSkill]) -> String {
-        skills.map(\.id).filter { !$0.isEmpty }.joined(separator: ", ")
+        skills.map(\.name).filter { !$0.isEmpty }.joined(separator: ", ")
     }
 
     /// Compiled once: `truncatedInline` runs for every menu row detail.

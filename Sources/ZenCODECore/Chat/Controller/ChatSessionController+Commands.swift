@@ -358,10 +358,10 @@ extension ChatSessionController {
         }
     }
 
-    /// The skills `ids` (``selectSkills(ids:)``), as a channel applies them
+    /// The skills `names` (``selectSkills(names:)``), as a channel applies them
     /// itself.
-    func applySkillSelectionCommand(ids: Set<String>) async -> ChatCommandOutcome {
-        await selectionCommandOutcome(await selectSkills(ids: ids), command: .skills)
+    func applySkillSelectionCommand(names: Set<String>) async -> ChatCommandOutcome {
+        await selectionCommandOutcome(await selectSkills(names: names), command: .skills)
     }
 
     /// Installs the skill at `source` (``installSkill(from:)``), as a channel

@@ -62,7 +62,10 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
     public let agentID: String?
     public let agentName: String?
     public let selectedTools: [String]
-    public let selectedSkillIDs: [String]
+    /// Canonical names of the selected prompt skills. Sessions saved before
+    /// the name became the only skill identifier carry `selectedSkillIDs`
+    /// instead: that key is ignored and they decode with no skill selected.
+    public let selectedSkillNames: [String]
     public let thinkingSelection: String?
     public let contextWindow: TerminalSavedSessionContextWindow?
     public let systemPrompt: String?
@@ -93,7 +96,7 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         agentID: String?,
         agentName: String?,
         selectedTools: [String],
-        selectedSkillIDs: [String],
+        selectedSkillNames: [String],
         thinkingSelection: String?,
         contextWindow: TerminalSavedSessionContextWindow? = nil,
         systemPrompt: String?,
@@ -118,7 +121,7 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         self.agentID = agentID?.nilIfBlank
         self.agentName = agentName?.nilIfBlank
         self.selectedTools = selectedTools
-        self.selectedSkillIDs = selectedSkillIDs
+        self.selectedSkillNames = selectedSkillNames
         self.thinkingSelection = thinkingSelection?.nilIfBlank
         self.contextWindow = contextWindow
         self.systemPrompt = systemPrompt?.nilIfBlank
@@ -129,6 +132,41 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         self.queuedPlans = queuedPlans
         self.taskGraph = taskGraph
         self.checkpointTree = checkpointTree
+    }
+
+    /// Decodes exactly what the synthesized conformance would, except that
+    /// `selectedSkillNames` may be absent (a session saved while skills were
+    /// identified by id) and then decodes as empty.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.version = try container.decode(Int.self, forKey: .version)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.sessionID = try container.decode(String.self, forKey: .sessionID)
+        self.cacheKey = try container.decodeIfPresent(String.self, forKey: .cacheKey)
+        self.workingDirectoryPath = try container.decode(String.self, forKey: .workingDirectoryPath)
+        self.createdAt = try container.decode(Date.self, forKey: .createdAt)
+        self.savedAt = try container.decode(Date.self, forKey: .savedAt)
+        self.modelID = try container.decodeIfPresent(String.self, forKey: .modelID)
+        self.agentID = try container.decodeIfPresent(String.self, forKey: .agentID)
+        self.agentName = try container.decodeIfPresent(String.self, forKey: .agentName)
+        self.selectedTools = try container.decode([String].self, forKey: .selectedTools)
+        self.selectedSkillNames = try container.decodeIfPresent([String].self, forKey: .selectedSkillNames) ?? []
+        self.thinkingSelection = try container.decodeIfPresent(String.self, forKey: .thinkingSelection)
+        self.contextWindow = try container.decodeIfPresent(
+            TerminalSavedSessionContextWindow.self,
+            forKey: .contextWindow
+        )
+        self.systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt)
+        self.dynamicContext = try container.decodeIfPresent(String.self, forKey: .dynamicContext)
+        self.history = try container.decode([AgentRuntimeMessage].self, forKey: .history)
+        self.transcriptHistory = try container.decodeIfPresent(
+            [AgentRuntimeMessage].self,
+            forKey: .transcriptHistory
+        )
+        self.activePlan = try container.decodeIfPresent(TerminalSessionPlan.self, forKey: .activePlan)
+        self.queuedPlans = try container.decodeIfPresent([TerminalSessionPlan].self, forKey: .queuedPlans)
+        self.taskGraph = try container.decodeIfPresent(TaskGraphSnapshot.self, forKey: .taskGraph)
+        self.checkpointTree = try container.decode(SessionCheckpointTree.self, forKey: .checkpointTree)
     }
 
     public var displayHistory: [AgentRuntimeMessage] {

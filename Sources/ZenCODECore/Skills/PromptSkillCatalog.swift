@@ -43,6 +43,10 @@ public enum PromptSkillCatalog {
         return uniqueStandardizedURLs(searchRoots)
     }
 
+    /// Discovers the skills installed under `searchRoots`. The canonical name
+    /// is the only identity: skills are deduplicated by their name, compared
+    /// case-insensitively (see ``skillNameKey(_:)``), and the first one found
+    /// in the order of the search roots wins.
     public static func discoverSkills(
         searchRoots: [URL]? = nil,
         fileManager: FileManager = .default
@@ -55,7 +59,7 @@ public enum PromptSkillCatalog {
                 continue
             }
             let skill = PromptSkill(payload: payload)
-            let key = skill.sourceHash.nilIfBlank ?? skill.canonicalName
+            let key = skillNameKey(skill.canonicalName)
             guard skillsByKey[key] == nil else {
                 continue
             }
@@ -69,6 +73,14 @@ public enum PromptSkillCatalog {
             }
             return lhs.canonicalName.localizedStandardCompare(rhs.canonicalName) == .orderedAscending
         }
+    }
+
+    /// The case-insensitive key two skill names are compared with when the
+    /// catalog is deduplicated: the one the chat's skill selection uses
+    /// (``TerminalSelection/lookupKey(_:)``).
+    static func skillNameKey(_ name: String) -> String {
+        let key = TerminalSelection.lookupKey(name)
+        return key.isEmpty ? name.lowercased() : key
     }
 
     private static func skillMarkdownURLs(

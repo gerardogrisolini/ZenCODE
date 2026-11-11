@@ -18,7 +18,7 @@ struct AgentProfileBindingReconcilerTests {
         let alpha = Self.model(providerName: "Alpha", modelID: "alpha-model")
         let beta = Self.model(providerName: "Beta", modelID: "shared-model", providerID: "openrouter")
         let gamma = Self.model(providerName: "Gamma", modelID: "shared-model", providerID: "deepseek")
-        let skill = AgentProfileSkill(id: "swift-review", canonicalName: "swift-review")
+        let skill = AgentProfileSkill(name: "swift-review")
         let original = AgentProfile(
             id: "custom-agent",
             name: "Custom",
@@ -97,7 +97,7 @@ struct AgentProfileBindingReconcilerTests {
                 instructions: "Persist me.",
                 role: .developer,
                 tools: ["files"],
-                skills: [AgentProfileSkill(id: "skill")],
+                skills: [AgentProfileSkill(name: "skill")],
                 modelBindings: [
                     AgentModelBinding(id: "gone", modelID: "gone"),
                     AgentModelBinding(id: "kept", modelID: retained.id)
@@ -116,7 +116,7 @@ struct AgentProfileBindingReconcilerTests {
             #expect(result.supportDirectoryURL == directory.standardizedFileURL)
             #expect(stored.instructions == "Persist me.")
             #expect(stored.tools == ["files"])
-            #expect(stored.skills == [AgentProfileSkill(id: "skill")])
+            #expect(stored.skills == [AgentProfileSkill(name: "skill")])
             #expect(stored.modelBindings.map(\.id) == ["kept"])
             #expect(stored.defaultModelBindingID == "kept")
             #expect(FileManager.default.fileExists(atPath: result.settingsFileURL.path))

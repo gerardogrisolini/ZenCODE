@@ -221,7 +221,7 @@ struct GoalCommandTests {
         _ = try await runner.saveSession(
             id: sessionID, named: "workflow", fallbackSnapshot: snapshot,
             fallbackCreatedAt: Date(), modelID: "test-model", agentID: nil, agentName: nil,
-            selectedTools: ["sub-agents"], selectedSkillIDs: [], thinkingSelection: nil,
+            selectedTools: ["sub-agents"], selectedSkillNames: [], thinkingSelection: nil,
             contextWindow: nil, transcriptHistory: history,
             checkpointTree: SessionCheckpointTree.fromLinearHistory(history, sessionID: sessionID),
             supportDirectoryURL: support
@@ -260,7 +260,7 @@ struct GoalCommandTests {
                 name: "ordinary-\(manualGraph)", sessionID: otherID, cacheKey: nil,
                 workingDirectoryPath: workspace.path, createdAt: Date(), savedAt: Date(),
                 modelID: "test-model", agentID: nil, agentName: nil, selectedTools: ["sub-agents"],
-                selectedSkillIDs: [], thinkingSelection: nil, systemPrompt: "Test", history: [],
+                selectedSkillNames: [], thinkingSelection: nil, systemPrompt: "Test", history: [],
                 taskGraph: manualGraph ? TaskGraphSnapshot(id: "manual", source: .manual, state: .active) : nil,
                 checkpointTree: SessionCheckpointTree.fromLinearHistory([], sessionID: otherID)
             )

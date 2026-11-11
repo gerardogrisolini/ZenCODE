@@ -224,7 +224,7 @@ struct ChatSessionOperationsTests {
             controller.selection.modelIDOverride = Fixtures.beta.id
             controller.selection.thinkingOverride = .high
             controller.selection.toolKeys = ["files"]
-            controller.selection.skillIDs = [skill.id]
+            controller.selection.skillNames = [skill.canonicalName]
             try await harness.startSession(conversation: Fixtures.longConversation)
             let savedSessionID = controller.sessionID
             controller.activePlan = Self.plan()
@@ -258,7 +258,7 @@ struct ChatSessionOperationsTests {
             #expect(controller.selection.modelIDOverride == Fixtures.beta.id)
             #expect(controller.selection.thinkingOverride == .high)
             #expect(controller.selection.toolKeys == ["files"])
-            #expect(controller.selection.skillIDs == [skill.id])
+            #expect(controller.selection.skillNames == [skill.canonicalName])
 
             // The runtime steps, in the order the terminal always ran them.
             let calls = await harness.runtime.calls
@@ -278,7 +278,7 @@ struct ChatSessionOperationsTests {
             #expect(restored.agentID == Fixtures.reviewer.id)
             #expect(restored.thinkingSelection == .high)
             #expect(restored.historyContents == Self.contents(saved.history))
-            #expect(calls[3] == .updatePromptSkillSelection(skillIDs: [skill.id], sessionID: savedSessionID))
+            #expect(calls[3] == .updatePromptSkillSelection(skillNames: [skill.canonicalName], sessionID: savedSessionID))
             #expect(calls[4] == .restoreTaskGraph(graphID: "graph-full", sessionID: savedSessionID))
             #expect(try await harness.runtime.taskGraphSnapshot(sessionID: savedSessionID, graphID: nil)?.id
                 == "graph-full")
@@ -616,7 +616,7 @@ struct ChatSessionOperationsTests {
             #expect(created.sessionID == "channel-session-42")
             #expect(created.modelID == Fixtures.beta.id)
             #expect(created.historyContents.isEmpty)
-            #expect(calls[2] == .updatePromptSkillSelection(skillIDs: [], sessionID: "channel-session-42"))
+            #expect(calls[2] == .updatePromptSkillSelection(skillNames: [], sessionID: "channel-session-42"))
             #expect(await harness.runtime.sessionIDs == ["channel-session-42"])
         }
     }

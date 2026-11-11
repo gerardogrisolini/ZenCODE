@@ -65,7 +65,7 @@ struct TerminalChatProjectAgentsTests {
                 name: "stale", sessionID: "stale-session", cacheKey: nil,
                 workingDirectoryPath: "/tmp/ZenCODE-stale-profile-ids", createdAt: Date(), savedAt: Date(),
                 modelID: nil, agentID: agentID, agentName: agentName, selectedTools: [],
-                selectedSkillIDs: [], thinkingSelection: nil, systemPrompt: nil,
+                selectedSkillNames: [], thinkingSelection: nil, systemPrompt: nil,
                 history: [],
                 checkpointTree: SessionCheckpointTree.fromLinearHistory([], sessionID: "stale-session")
             )

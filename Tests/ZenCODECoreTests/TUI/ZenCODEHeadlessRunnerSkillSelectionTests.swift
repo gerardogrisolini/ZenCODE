@@ -20,7 +20,7 @@ struct ZenCODEHeadlessRunnerSkillSelectionTests {
         id: "BBBBBBBB-0000-0000-0000-000000000001",
         name: "Skilled",
         role: .developer,
-        skills: [AgentProfileSkill(id: "alpha", canonicalName: "alpha")]
+        skills: [AgentProfileSkill(name: "alpha")]
     )
 
     @Test

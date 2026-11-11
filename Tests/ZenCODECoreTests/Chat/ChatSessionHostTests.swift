@@ -657,7 +657,7 @@ struct ChatSessionHostTests {
             // with the same bindings.
             first.controller.selection.modelIDOverride = "other-model"
             first.controller.selection.toolKeys = ["local"]
-            first.controller.selection.skillIDs = ["skill"]
+            first.controller.selection.skillNames = ["skill"]
             let second = try await host.newSession(in: slot, sessionID: "second")
             #expect(second.controller !== first.controller)
             #expect(second.epoch > first.epoch)

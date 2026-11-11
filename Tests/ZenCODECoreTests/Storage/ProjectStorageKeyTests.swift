@@ -147,7 +147,7 @@ struct ProjectStorageKeyTests {
             agentID: nil,
             agentName: nil,
             selectedTools: [],
-            selectedSkillIDs: [],
+            selectedSkillNames: [],
             thinkingSelection: nil,
             systemPrompt: nil,
             history: history,

@@ -89,7 +89,7 @@ struct TerminalChatPromptHistoryLifecycleTests {
                 name: "other-conversation", sessionID: "terminal-loaded", cacheKey: nil,
                 workingDirectoryPath: workspace.path, createdAt: Date(), savedAt: Date(),
                 modelID: "test-model", agentID: nil, agentName: nil, selectedTools: [],
-                selectedSkillIDs: [], thinkingSelection: nil, systemPrompt: "Test",
+                selectedSkillNames: [], thinkingSelection: nil, systemPrompt: "Test",
                 history: savedHistory,
                 checkpointTree: SessionCheckpointTree.fromLinearHistory(
                     savedHistory, sessionID: "terminal-loaded"

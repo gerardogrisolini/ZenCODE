@@ -126,7 +126,7 @@ struct TerminalSessionStoreTests {
             "createdAt": Date(timeIntervalSince1970: 10),
             "savedAt": Date(timeIntervalSince1970: 20),
             "selectedTools": [],
-            "selectedSkillIDs": [],
+            "selectedSkillNames": [],
             "history": [],
             "checkpointTree": checkpointTreeDict,
             "activePlan": [
@@ -146,6 +146,79 @@ struct TerminalSessionStoreTests {
 
         #expect(decoded.activePlan?.originalGoal == "Existing goal")
         #expect(decoded.queuedPlans == nil)
+    }
+
+    @Test
+    func selectedSkillNamesArePersistedUnderTheirOwnKeyAndNoOtherKeyChanges() throws {
+        let session = sampleSession(
+            name: "skill names",
+            workingDirectory: temporaryDirectory().appendingPathComponent("Project")
+        )
+
+        let encoded = try PropertyListEncoder().encode(session)
+        let propertyList = try #require(
+            try PropertyListSerialization.propertyList(
+                from: encoded,
+                format: nil
+            ) as? [String: Any]
+        )
+
+        #expect(propertyList["selectedSkillNames"] as? [String] == ["skill-a"])
+        #expect(propertyList["selectedSkillIDs"] == nil)
+        // Every other key is encoded exactly as before the rename; the keys of
+        // the optional values that this sample leaves unset are omitted.
+        #expect(Set(propertyList.keys) == [
+            "version", "name", "sessionID", "cacheKey", "workingDirectoryPath",
+            "createdAt", "savedAt", "modelID", "agentID", "agentName",
+            "selectedTools", "selectedSkillNames", "thinkingSelection",
+            "contextWindow", "systemPrompt", "history", "checkpointTree",
+        ])
+        #expect(try PropertyListDecoder().decode(TerminalSavedSession.self, from: encoded) == session)
+    }
+
+    @Test
+    func snapshotSavedWithSkillIDsLoadsWithAnEmptySkillSelection() throws {
+        let supportDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+        let session = sampleSession(
+            name: "legacy skill ids",
+            workingDirectory: supportDirectory.appendingPathComponent("Project")
+        )
+        // A current-version snapshot as it was written while skills were
+        // identified by the hash of their content: `selectedSkillIDs` only.
+        var propertyList = try #require(
+            try PropertyListSerialization.propertyList(
+                from: PropertyListEncoder().encode(session),
+                format: nil
+            ) as? [String: Any]
+        )
+        propertyList["selectedSkillNames"] = nil
+        propertyList["selectedSkillIDs"] = [
+            "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: propertyList,
+            format: .binary,
+            options: 0
+        )
+        try FileManager.default.createDirectory(
+            at: supportDirectory,
+            withIntermediateDirectories: true
+        )
+        let fileURL = supportDirectory.appendingPathComponent("legacy-skill-ids.session")
+        try data.write(to: fileURL)
+
+        let decoded = try PropertyListDecoder().decode(TerminalSavedSession.self, from: data)
+        let loaded = try TerminalSessionStore.load(from: fileURL)
+
+        // The old key is ignored: no skill is restored, and the rest is intact.
+        #expect(decoded.selectedSkillNames.isEmpty)
+        #expect(loaded == decoded)
+        #expect(loaded.name == session.name)
+        #expect(loaded.version == TerminalSavedSession.currentVersion)
+        #expect(loaded.selectedTools == session.selectedTools)
+        #expect(loaded.history == session.history)
+        #expect(loaded.checkpointTree == session.checkpointTree)
     }
 
     @Test
@@ -203,7 +276,7 @@ struct TerminalSessionStoreTests {
             "createdAt": Date(timeIntervalSince1970: 10),
             "savedAt": Date(timeIntervalSince1970: 20),
             "selectedTools": [],
-            "selectedSkillIDs": [],
+            "selectedSkillNames": [],
             "history": [],
         ]
         let data = try PropertyListSerialization.data(
@@ -236,7 +309,7 @@ struct TerminalSessionStoreTests {
             "createdAt": Date(timeIntervalSince1970: 10),
             "savedAt": Date(timeIntervalSince1970: 20),
             "selectedTools": [],
-            "selectedSkillIDs": [],
+            "selectedSkillNames": [],
             "history": [],
             "checkpointTree": checkpointTreeDict,
             "activePlan": [
@@ -277,7 +350,7 @@ struct TerminalSessionStoreTests {
             "createdAt": Date(timeIntervalSince1970: 10),
             "savedAt": Date(timeIntervalSince1970: 20),
             "selectedTools": [],
-            "selectedSkillIDs": [],
+            "selectedSkillNames": [],
             "history": [],
             "checkpointTree": checkpointTreeDict,
         ]
@@ -388,7 +461,7 @@ struct TerminalSessionStoreTests {
             agentID: currentSession.agentID,
             agentName: currentSession.agentName,
             selectedTools: currentSession.selectedTools,
-            selectedSkillIDs: currentSession.selectedSkillIDs,
+            selectedSkillNames: currentSession.selectedSkillNames,
             thinkingSelection: currentSession.thinkingSelection,
             contextWindow: currentSession.contextWindow,
             systemPrompt: currentSession.systemPrompt,
@@ -495,7 +568,7 @@ struct TerminalSessionStoreTests {
             agentID: "developer",
             agentName: "Developer",
             selectedTools: ["shell"],
-            selectedSkillIDs: ["skill-a"],
+            selectedSkillNames: ["skill-a"],
             thinkingSelection: nil,
             contextWindow: TerminalSavedSessionContextWindow(
                 usedTokens: 32,
@@ -557,7 +630,7 @@ struct TerminalSessionStoreTests {
                 "shell",
                 TerminalToolSelectionCatalog.featurePackageKey(id: "git-tools")
             ],
-            selectedSkillIDs: ["skill-a"],
+            selectedSkillNames: ["skill-a"],
             thinkingSelection: "on",
             contextWindow: TerminalSavedSessionContextWindow(
                 usedTokens: 2_048,

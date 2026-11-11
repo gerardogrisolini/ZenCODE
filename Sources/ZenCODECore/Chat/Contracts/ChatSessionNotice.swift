@@ -100,7 +100,7 @@ public enum ChatSessionNotice: Sendable, Equatable {
     // MARK: - Skills
 
     /// `Selected skills: <titles>`, or `none` (`chooseSkills()`, and the report
-    /// of `selectSkills(ids:)`).
+    /// of `selectSkills(names:)`).
     case selectedSkills([PromptSkill])
     /// The `/skills` usage line (`applySkillSelectionCommand(rawSelection:)`,
     /// `installSkill(source:)`).

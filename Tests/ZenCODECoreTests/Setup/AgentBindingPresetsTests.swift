@@ -73,7 +73,7 @@ struct AgentBindingPresetsTests {
             readOnly: true,
             role: role,
             tools: ["files", "text"],
-            skills: [AgentProfileSkill(id: "swift-review", canonicalName: "swift-review")],
+            skills: [AgentProfileSkill(name: "swift-review")],
             modelBindings: bindings,
             defaultModelBindingID: defaultBindingID
         )

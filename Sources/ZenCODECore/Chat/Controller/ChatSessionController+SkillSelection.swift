@@ -18,7 +18,7 @@ extension ChatSessionController {
                 ? ""
                 : " (\(skill.canonicalName))"
             return ChatChoiceItem(
-                id: skill.id,
+                id: skill.canonicalName,
                 title: "\(skill.title)\(canonicalName)",
                 detail: InlineTextTruncation.truncatedInline(skill.summary, limit: 96)
             )
@@ -31,7 +31,7 @@ extension ChatSessionController {
         ChatChoiceList(
             title: "Prompt skills",
             items: skillChoiceItems(),
-            selectedIDs: selection.skillIDs
+            selectedIDs: selection.skillNames
         )
     }
 
@@ -50,29 +50,29 @@ extension ChatSessionController {
                 .selectedSkills(selectedPromptSkills()),
             ])
         }
-        guard let selectedSkillIDs = await host.chooseMany(
+        guard let selectedSkillNames = await host.chooseMany(
             title: choices.title,
             items: choices.items,
             selectedIDs: choices.selectedIDs
         ) else {
             return ChatSelectionOutcome(notices: [.selectedSkills(selectedPromptSkills())])
         }
-        return await selectSkills(ids: selectedSkillIDs)
+        return await selectSkills(names: selectedSkillNames)
     }
 
     /// Selects the prompt skills `rawSelection` names (`all`, `none`, names,
     /// numbers).
     public func selectSkills(rawSelection: String) async throws -> ChatSelectionOutcome {
-        let selectedSkillIDs = try Self.parseSkillSelection(
+        let selectedSkillNames = try Self.parseSkillSelection(
             rawSelection,
             availableSkills: availableSkills()
         )
-        return await selectSkills(ids: selectedSkillIDs)
+        return await selectSkills(names: selectedSkillNames)
     }
 
-    /// Selects the prompt skills `ids`.
-    public func selectSkills(ids: Set<String>) async -> ChatSelectionOutcome {
-        selection.skillIDs = ids
+    /// Selects the prompt skills `names` (canonical names).
+    public func selectSkills(names: Set<String>) async -> ChatSelectionOutcome {
+        selection.skillNames = names
         await presentSessionStateChanged()
         await updateRuntimePromptSkills()
         return ChatSelectionOutcome(
@@ -136,7 +136,7 @@ extension ChatSessionController {
         }
 
         availableSkillsCache = nil
-        selection.skillIDs.insert(result.skill.id)
+        selection.skillNames.insert(result.skill.canonicalName)
         await presentSessionStateChanged()
         await updateRuntimePromptSkills()
         return ChatSelectionOutcome(
@@ -158,19 +158,20 @@ extension ChatSessionController {
         guard !availableSkills().isEmpty else {
             return ChatSelectionOutcome(notices: [.noPromptSkillsInstalled])
         }
-        guard let selectedSkillIDs = await host.chooseMany(
+        guard let selectedSkillNames = await host.chooseMany(
             title: "Uninstall prompt skills",
             items: skillChoiceItems(),
             selectedIDs: []
         ) else {
             return ChatSelectionOutcome()
         }
-        return await uninstallSkills(ids: selectedSkillIDs)
+        return await uninstallSkills(names: selectedSkillNames)
     }
 
-    /// Uninstalls the installed skills `ids` and deselects them.
-    public func uninstallSkills(ids: Set<String>) async -> ChatSelectionOutcome {
-        let selectedSkills = availableSkills().filter { ids.contains($0.id) }
+    /// Uninstalls the installed skills `names` (canonical names) and deselects
+    /// them.
+    public func uninstallSkills(names: Set<String>) async -> ChatSelectionOutcome {
+        let selectedSkills = availableSkills().filter { names.contains($0.canonicalName) }
         guard !selectedSkills.isEmpty else {
             return ChatSelectionOutcome(notices: [.noSkillsSelectedForUninstall])
         }
@@ -184,7 +185,7 @@ extension ChatSessionController {
             ])
         }
         availableSkillsCache = nil
-        selection.skillIDs.subtract(ids)
+        selection.skillNames.subtract(names)
         await presentSessionStateChanged()
         await updateRuntimePromptSkills()
         return ChatSelectionOutcome(

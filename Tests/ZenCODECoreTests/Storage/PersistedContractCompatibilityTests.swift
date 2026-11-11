@@ -298,8 +298,7 @@ struct PersistedContractCompatibilityTests {
                 "role": "reviewer",
                 "tools": ["files", "git"],
                 "skills": [{
-                  "id": "review-skill",
-                  "canonicalName": "review",
+                  "name": "review",
                   "title": "Review",
                   "summary": "Inspect proposed changes.",
                   "symbolName": "checkmark"
@@ -332,7 +331,7 @@ struct PersistedContractCompatibilityTests {
         #expect(settings.models.first?.defaultThinkingSelection == .high)
         #expect(settings.remoteAPIKeysByProviderID.count == 1)
         #expect(settings.localExecAllowedCommands == ["swift", "git"])
-        #expect(profiles.agents.first?.skills.first?.canonicalName == "review")
+        #expect(profiles.agents.first?.skills.first?.name == "review")
         #expect(profiles.agents.first?.role == .reviewer)
         #expect(profiles.agents.first?.thinkingSelection == .high)
         #expect(permissions.localExecAllowedCommands == ["swift test --filter Focused", "git status"])
@@ -404,7 +403,7 @@ struct PersistedContractCompatibilityTests {
             agentID: "reviewer",
             agentName: "Reviewer",
             selectedTools: ["files", "git"],
-            selectedSkillIDs: ["review-skill"],
+            selectedSkillNames: ["review-skill"],
             thinkingSelection: "high",
             contextWindow: TerminalSavedSessionContextWindow(
                 usedTokens: 120,

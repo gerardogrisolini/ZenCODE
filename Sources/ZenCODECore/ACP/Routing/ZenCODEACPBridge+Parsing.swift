@@ -451,7 +451,7 @@ extension ZenCODEACPBridge {
             searchRoots: PromptSkillCatalog.appCatalogSearchRoots()
         )
         return ChatSessionController.promptSkills(
-            withIDs: ChatSessionController.promptSkillIDs(
+            withNames: ChatSessionController.promptSkillNames(
                 of: selectedAgent,
                 in: availableSkills
             ),

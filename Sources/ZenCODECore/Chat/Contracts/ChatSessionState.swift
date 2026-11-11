@@ -19,21 +19,21 @@ public struct ChatSessionSelection: Sendable, Equatable {
     public var thinkingOverride: AgentThinkingSelection?
     /// Keys of the selected tool groups (see ``TerminalToolSelectionItem``).
     public var toolKeys: Set<String>
-    /// IDs of the selected prompt skills.
-    public var skillIDs: Set<String>
+    /// Canonical names of the selected prompt skills.
+    public var skillNames: Set<String>
 
     public init(
         agent: AgentProfile? = nil,
         modelIDOverride: String? = nil,
         thinkingOverride: AgentThinkingSelection? = nil,
         toolKeys: Set<String> = [],
-        skillIDs: Set<String> = []
+        skillNames: Set<String> = []
     ) {
         self.agent = agent
         self.modelIDOverride = modelIDOverride
         self.thinkingOverride = thinkingOverride
         self.toolKeys = toolKeys
-        self.skillIDs = skillIDs
+        self.skillNames = skillNames
     }
 }
 

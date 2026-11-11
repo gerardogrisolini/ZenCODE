@@ -45,7 +45,11 @@ struct TerminalToolSelectionHardeningTests {
         let skills = ["alpha", "alpine"].map { name in
             PromptSkill(canonicalName: name, title: name, summary: "", promptBody: "", sourceHash: name)
         }
-        #expect(try ChatSessionController.parseSkillSelection("al", availableSkills: skills) == ["alpha"])
+        // A skill is selected by its exact name only: a prefix selects nothing.
+        #expect(throws: TerminalSkillSelectionError.self) {
+            _ = try ChatSessionController.parseSkillSelection("al", availableSkills: skills)
+        }
+        #expect(try ChatSessionController.parseSkillSelection("alpha", availableSkills: skills) == ["alpha"])
 
         do {
             _ = try TerminalToolSelectionCatalog.parseSelection("feature:al", items: items)

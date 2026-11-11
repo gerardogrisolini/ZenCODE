@@ -10,6 +10,32 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Prompt skills are identified by their name everywhere, and the id is gone.
+  The id was the hash of the `SKILL.md` content, so every edit of a skill
+  broke the profiles and sessions that referred to it; the skill's name (the
+  `name:` of its front matter) is now the only identifier. The skills of a
+  profile in `agents.json` are matched by name, without regard to case:
+  `"skills": [{"name": "swift-review"}]`. `title`, `summary`, and `symbolName`
+  stay as optional metadata and no longer take part in the match. There is no
+  migration: an `agents.json` that still saves skills by `id`, as
+  `{"id": "<hash>"}`, is now invalid, and `zen --setup` offers to rewrite it
+  (as it does for an unknown `role`); select the skills again there. The
+  catalog deduplicates skills by name (the first search root wins) instead of by
+  content hash, and a skill is selected by its name only, without regard to
+  case: `/skills` and `--skills` no longer accept a title or a hash prefix.
+  `skills.list` no longer returns an `id` (only `name` and `description`) and
+  `skills.read` takes the skill name, exactly or without regard to case.
+  Sessions saved before this change load without restoring the selected
+  skills; select them again with `/skills`. For hosts embedding `ZenCODECore`:
+  `PromptSkill` is no longer `Identifiable`; `AgentProfileSkill(name:)`
+  replaces `id` and `canonicalName`; and `ChatSessionSelection.skillIDs`,
+  `TerminalChat.selectedSkillIDs`, `selectSkills(ids:)`,
+  `uninstallSkills(ids:)`, and `TerminalSavedSession.selectedSkillIDs` are now
+  `skillNames`, `selectedSkillNames`, `selectSkills(names:)`,
+  `uninstallSkills(names:)`, and `selectedSkillNames`.
+
 ### Fixed
 
 - Anthropic API: the provider setup now reads each model's thinking

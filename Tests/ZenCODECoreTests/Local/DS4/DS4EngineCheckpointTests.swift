@@ -474,7 +474,7 @@ struct DS4EngineCheckpointStoreTests {
             agentID: nil,
             agentName: nil,
             selectedTools: [],
-            selectedSkillIDs: [],
+            selectedSkillNames: [],
             thinkingSelection: nil,
             systemPrompt: "System",
             history: [],

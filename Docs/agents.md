@@ -19,7 +19,7 @@ start by `AgentProfileStore`.
 | `instructions` | System-prompt fragment defining the role and constraints |
 | `tools` | Allowed tool groups and feature packages |
 | `readOnly` | Enforces only non-mutating catalog-owned core tools (`false` by default) |
-| `skills` | Optional prompt skills from the app catalog |
+| `skills` | Optional prompt skills from the app catalog, as `[{"name": "swift-review"}]`. A skill is identified only by its name (the `name:` of its `SKILL.md`), compared without regard to case; `title`, `summary`, and `symbolName` are optional descriptive metadata that never take part in the match. `name` is required: an entry without it, such as the former `{"id": "<hash>"}`, makes `agents.json` invalid (there is no migration), and `zen --setup` offers to rewrite the file |
 | `modelBindings` | Models explicitly authorized for the profile — see [bindings.md](bindings.md) |
 | `defaultModelBindingID` | Profile default for direct/profile-selected sessions; delegation still names a binding explicitly |
 | `symbolName` | SF Symbol shown in the TUI picker (presentational only) |
@@ -478,7 +478,7 @@ See the [zen.md](zen.md#task-orchestration) task orchestration section.
   highlighted entry is the profile's current role, or `Developer` for a new
   profile, and must be confirmed; cancelling the choice ends the agents setup
   with an error, as the other prompts do.
-- **Skills** — optional reusable prompt fragments from the catalog.
+- **Skills** — optional reusable prompt fragments from the catalog, saved by name (`{"name": "…"}`).
 - **Instructions** — the role definition, edited in a real text editor.
 - **Symbol** — SF Symbol for the TUI picker (presentational).
 

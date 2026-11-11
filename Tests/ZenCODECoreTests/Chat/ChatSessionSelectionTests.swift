@@ -60,7 +60,7 @@ struct ChatSessionSelectionTests {
             #expect(created.modelID == Fixtures.beta.id)
             // The conversation survives the model change.
             #expect(created.historyContents == Fixtures.conversation.map(\.content))
-            #expect(calls[2] == .updatePromptSkillSelection(skillIDs: [], sessionID: sessionID))
+            #expect(calls[2] == .updatePromptSkillSelection(skillNames: [], sessionID: sessionID))
             #expect(try #require(calls[3].digest).modelID == Fixtures.beta.id)
 
             // No hooks are set, so the backend's events reach the presenter.
@@ -589,7 +589,7 @@ struct ChatSessionSelectionTests {
             name: "Skilled",
             role: .developer,
             tools: ["files"],
-            skills: [AgentProfileSkill(id: "alpha-skill", canonicalName: "alpha-skill")]
+            skills: [AgentProfileSkill(name: "alpha-skill")]
         )
         try await withChatHarness(
             catalog: .hosted(agents: [Fixtures.developer, skilled])
@@ -600,7 +600,7 @@ struct ChatSessionSelectionTests {
             _ = try await controller.selectAgent(skilled)
 
             #expect(controller.selection.toolKeys == ["files"])
-            #expect(controller.selection.skillIDs == [alpha.id])
+            #expect(controller.selection.skillNames == [alpha.canonicalName])
             let calls = await harness.runtime.calls
             let created = try #require(calls.first { $0.name == "createSession" }?.digest)
             let allowed = try #require(created.allowedToolNames)
@@ -608,9 +608,9 @@ struct ChatSessionSelectionTests {
             #expect(!allowed.contains("local.exec"))
             // The skills reach the new session before the model loads.
             #expect(calls.contains(
-                .updatePromptSkillSelection(skillIDs: [alpha.id], sessionID: controller.sessionID)
+                .updatePromptSkillSelection(skillNames: [alpha.canonicalName], sessionID: controller.sessionID)
             ))
-            #expect(await harness.runtime.promptSkills(for: controller.sessionID).map(\.id) == [alpha.id])
+            #expect(await harness.runtime.promptSkills(for: controller.sessionID).map(\.canonicalName) == [alpha.canonicalName])
         }
     }
 
@@ -645,7 +645,7 @@ struct ChatSessionSelectionTests {
         try await withChatHarness { harness in
             let controller = harness.controller
             let skill = try harness.installSkills("release-review")[0]
-            controller.selection.skillIDs = [skill.id]
+            controller.selection.skillNames = [skill.canonicalName]
             controller.selection.toolKeys = ["shell", "files"]
             try await harness.startSession(conversation: Fixtures.conversation)
             let sessionID = controller.sessionID
@@ -653,7 +653,7 @@ struct ChatSessionSelectionTests {
             let initialAllowed = try #require(initial.allowedToolNames)
             #expect(initialAllowed.contains("local.exec"))
             // The runtime session holds the skills from its creation on.
-            #expect(await harness.runtime.promptSkills(for: sessionID).map(\.id) == [skill.id])
+            #expect(await harness.runtime.promptSkills(for: sessionID).map(\.canonicalName) == [skill.canonicalName])
 
             let outcome = await controller.selectTools(keys: ["files"])
 
@@ -685,8 +685,8 @@ struct ChatSessionSelectionTests {
             #expect(message.content.contains("Removed tool names:"))
             #expect(message.content.contains("local.exec"))
             // The rebuild dropped the skills; they are handed over again.
-            #expect(calls[2] == .updatePromptSkillSelection(skillIDs: [skill.id], sessionID: sessionID))
-            #expect(await harness.runtime.promptSkills(for: sessionID).map(\.id) == [skill.id])
+            #expect(calls[2] == .updatePromptSkillSelection(skillNames: [skill.canonicalName], sessionID: sessionID))
+            #expect(await harness.runtime.promptSkills(for: sessionID).map(\.canonicalName) == [skill.canonicalName])
         }
     }
 
@@ -766,15 +766,15 @@ struct ChatSessionSelectionTests {
             try await harness.startSession(conversation: Fixtures.conversation)
             let sessionID = controller.sessionID
 
-            let outcome = await controller.selectSkills(ids: [alpha.id])
+            let outcome = await controller.selectSkills(names: [alpha.canonicalName])
 
             #expect(outcome == ChatSelectionOutcome(change: .sessionUpdated, notices: [.selectedSkills([alpha])]))
             // The prompt, the allowlist, and the history are not touched.
             #expect(await harness.runtime.calls == [
-                .updatePromptSkillSelection(skillIDs: [alpha.id], sessionID: sessionID),
+                .updatePromptSkillSelection(skillNames: [alpha.canonicalName], sessionID: sessionID),
             ])
-            #expect(controller.selection.skillIDs == [alpha.id])
-            #expect(await harness.presenter.states.last?.selection.skillIDs == [alpha.id])
+            #expect(controller.selection.skillNames == [alpha.canonicalName])
+            #expect(await harness.presenter.states.last?.selection.skillNames == [alpha.canonicalName])
 
             // The same selection, spelled in the command arguments.
             let all = try await controller.selectSkills(rawSelection: "all")
@@ -783,7 +783,7 @@ struct ChatSessionSelectionTests {
             #expect(byName.notices == [.selectedSkills([beta])])
             let none = try await controller.selectSkills(rawSelection: "none")
             #expect(none.notices == [.selectedSkills([])])
-            #expect(controller.selection.skillIDs.isEmpty)
+            #expect(controller.selection.skillNames.isEmpty)
 
             let error = await capturedError { try await controller.selectSkills(rawSelection: "zzz") }
             #expect(error is TerminalSkillSelectionError)
@@ -801,7 +801,7 @@ struct ChatSessionSelectionTests {
             #expect(await harness.host.interactions.isEmpty)
 
             let skills = try harness.installSkills("alpha-skill", "beta-skill")
-            await harness.host.answerChooseMany([skills[1].id])
+            await harness.host.answerChooseMany([skills[1].canonicalName])
             let applied = await controller.chooseSkills()
             #expect(applied == ChatSelectionOutcome(
                 change: .sessionUpdated,
@@ -814,7 +814,7 @@ struct ChatSessionSelectionTests {
                 return
             }
             #expect(title == "Prompt skills")
-            #expect(items.map(\.id) == skills.map(\.id))
+            #expect(items.map(\.id) == skills.map(\.canonicalName))
             #expect(selectedIDs.isEmpty)
 
             // A cancelled menu keeps the selection and reports it.
@@ -852,12 +852,12 @@ struct ChatSessionSelectionTests {
             #expect(FileManager.default.fileExists(
                 atPath: harness.skillsRoot.appendingPathComponent("release-review/SKILL.md").path
             ))
-            #expect(controller.selection.skillIDs == [skill.id])
-            #expect(controller.availableSkills().map(\.id) == [skill.id])
+            #expect(controller.selection.skillNames == [skill.canonicalName])
+            #expect(controller.availableSkills().map(\.canonicalName) == [skill.canonicalName])
             #expect(await harness.runtime.calls == [
-                .updatePromptSkillSelection(skillIDs: [skill.id], sessionID: sessionID),
+                .updatePromptSkillSelection(skillNames: [skill.canonicalName], sessionID: sessionID),
             ])
-            #expect(await harness.presenter.states.last?.selection.skillIDs == [skill.id])
+            #expect(await harness.presenter.states.last?.selection.skillNames == [skill.canonicalName])
         }
     }
 
@@ -868,8 +868,8 @@ struct ChatSessionSelectionTests {
             let skills = try harness.installSkills("alpha-skill", "beta-skill")
             let alpha = skills[0]
             let beta = skills[1]
-            controller.selection.skillIDs = [alpha.id, beta.id]
-            await harness.host.answerChooseMany([alpha.id])
+            controller.selection.skillNames = [alpha.canonicalName, beta.canonicalName]
+            await harness.host.answerChooseMany([alpha.canonicalName])
 
             let outcome = await controller.chooseSkillsToUninstall()
 
@@ -884,7 +884,7 @@ struct ChatSessionSelectionTests {
                 return
             }
             #expect(title == "Uninstall prompt skills")
-            #expect(items.map(\.id) == [alpha.id, beta.id])
+            #expect(items.map(\.id) == [alpha.canonicalName, beta.canonicalName])
             #expect(selectedIDs.isEmpty)
             #expect(!FileManager.default.fileExists(
                 atPath: harness.skillsRoot.appendingPathComponent("alpha-skill").path
@@ -892,10 +892,10 @@ struct ChatSessionSelectionTests {
             #expect(FileManager.default.fileExists(
                 atPath: harness.skillsRoot.appendingPathComponent("beta-skill").path
             ))
-            #expect(controller.selection.skillIDs == [beta.id])
-            #expect(controller.availableSkills().map(\.id) == [beta.id])
+            #expect(controller.selection.skillNames == [beta.canonicalName])
+            #expect(controller.availableSkills().map(\.canonicalName) == [beta.canonicalName])
             #expect(await harness.runtime.calls == [
-                .updatePromptSkillSelection(skillIDs: [beta.id], sessionID: controller.sessionID),
+                .updatePromptSkillSelection(skillNames: [beta.canonicalName], sessionID: controller.sessionID),
             ])
         }
     }

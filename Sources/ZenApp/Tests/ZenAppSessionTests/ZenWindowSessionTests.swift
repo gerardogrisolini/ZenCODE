@@ -1234,7 +1234,7 @@ struct ZenWindowSessionTests {
             #expect(await eventually {
                 window.snapshot?.selection.agent?.id == "tester"
                     && window.snapshot?.selection.toolKeys == ["shell"]
-                    && window.snapshot?.selection.skillIDs.count == 1
+                    && window.snapshot?.selection.skillNames == ["kept-skill"]
             })
             let kept = try #require(window.snapshot?.selection)
 

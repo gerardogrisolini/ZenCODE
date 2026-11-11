@@ -97,7 +97,7 @@ struct TerminalChatSessionHostTests {
                 name: name, sessionID: sessionID, cacheKey: nil,
                 workingDirectoryPath: workspace.path, createdAt: Date(), savedAt: Date(),
                 modelID: "test-model", agentID: nil, agentName: nil, selectedTools: [],
-                selectedSkillIDs: [], thinkingSelection: nil, systemPrompt: "Test",
+                selectedSkillNames: [], thinkingSelection: nil, systemPrompt: "Test",
                 history: history,
                 checkpointTree: SessionCheckpointTree.fromLinearHistory(history, sessionID: sessionID)
             )
@@ -235,7 +235,7 @@ struct TerminalChatSessionHostTests {
             terminal.manualModelIDOverride = "other-model"
             terminal.manualThinkingSelectionOverride = .high
             terminal.selectedToolKeys = ["local"]
-            terminal.selectedSkillIDs = ["skill"]
+            terminal.selectedSkillNames = ["skill"]
             terminal.activeSessionHistory = [AgentRuntimeMessage(role: .user, content: "Before")]
             await terminal.startNewSession()
 
@@ -247,7 +247,7 @@ struct TerminalChatSessionHostTests {
             #expect(terminal.manualModelIDOverride == launchSelection.modelIDOverride)
             #expect(terminal.manualThinkingSelectionOverride == nil)
             #expect(terminal.selectedToolKeys.isEmpty)
-            #expect(terminal.selectedSkillIDs.isEmpty)
+            #expect(terminal.selectedSkillNames.isEmpty)
             #expect(terminal.activeSessionHistory.isEmpty)
             #expect(previous.selection.modelIDOverride == "other-model")
             // The slot is the same and runs the new incarnation; the Telegram

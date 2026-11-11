@@ -86,7 +86,7 @@ struct TerminalSessionStepsCharacterizationTests {
                 name: name, sessionID: sessionID, cacheKey: nil,
                 workingDirectoryPath: workspace.path, createdAt: date, savedAt: date,
                 modelID: "test-model", agentID: nil, agentName: nil, selectedTools: [],
-                selectedSkillIDs: [], thinkingSelection: nil, systemPrompt: "Test",
+                selectedSkillNames: [], thinkingSelection: nil, systemPrompt: "Test",
                 history: history,
                 checkpointTree: SessionCheckpointTree.fromLinearHistory(history, sessionID: sessionID)
             )

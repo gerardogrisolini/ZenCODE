@@ -18,7 +18,7 @@ public struct AgentCoreAppSessionRequest: Sendable {
     public let history: [AgentRuntimeMessage]
     public let allowedToolNames: Set<String>?
     public let selectedToolKeys: Set<String>?
-    public let selectedSkillIDs: Set<String>
+    public let selectedSkillNames: Set<String>
     public let maxToolRounds: Int
     public let maxOutputTokens: Int?
     public let thinkingSelection: AgentThinkingSelection?
@@ -34,7 +34,7 @@ public struct AgentCoreAppSessionRequest: Sendable {
         history: [AgentRuntimeMessage] = [],
         allowedToolNames: Set<String>? = nil,
         selectedToolKeys: Set<String>? = nil,
-        selectedSkillIDs: Set<String> = [],
+        selectedSkillNames: Set<String> = [],
         maxToolRounds: Int = AgentToolRoundPolicy.defaultMaxToolRounds,
         maxOutputTokens: Int? = nil,
         thinkingSelection: AgentThinkingSelection? = nil,
@@ -49,7 +49,7 @@ public struct AgentCoreAppSessionRequest: Sendable {
         self.history = history
         self.allowedToolNames = allowedToolNames
         self.selectedToolKeys = selectedToolKeys
-        self.selectedSkillIDs = selectedSkillIDs
+        self.selectedSkillNames = selectedSkillNames
         self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)
         self.maxOutputTokens = maxOutputTokens
         self.thinkingSelection = thinkingSelection
@@ -81,7 +81,7 @@ public enum AgentCoreAppSessionFactory {
             cwd: request.workingDirectory.path,
             selectedAgent: agentConfiguration.selectedAgent,
             allowedToolNames: allowedToolNames,
-            selectedSkillIDs: request.selectedSkillIDs
+            selectedSkillNames: request.selectedSkillNames
         )
         let thinkingSelection = resolvedThinkingSelection(
             request.thinkingSelection,
@@ -125,14 +125,14 @@ public enum AgentCoreAppSessionFactory {
         cwd: String,
         selectedAgent: AgentProfile?,
         allowedToolNames: Set<String>?,
-        selectedSkillIDs: Set<String> = []
+        selectedSkillNames: Set<String> = []
     ) -> String {
         resolvedPromptSections(
             providedSystemPrompt: providedSystemPrompt,
             cwd: cwd,
             selectedAgent: selectedAgent,
             allowedToolNames: allowedToolNames,
-            selectedSkillIDs: selectedSkillIDs
+            selectedSkillNames: selectedSkillNames
         )
         .combinedPrompt
     }
@@ -142,9 +142,9 @@ public enum AgentCoreAppSessionFactory {
         cwd: String,
         selectedAgent: AgentProfile?,
         allowedToolNames: Set<String>?,
-        selectedSkillIDs: Set<String> = []
+        selectedSkillNames: Set<String> = []
     ) -> SystemPromptSections {
-        _ = selectedSkillIDs
+        _ = selectedSkillNames
         if let providedSystemPrompt = providedSystemPrompt?.nilIfBlank {
             return AgentSessionComposition.appProvidedPromptSections(
                 providedSystemPrompt,

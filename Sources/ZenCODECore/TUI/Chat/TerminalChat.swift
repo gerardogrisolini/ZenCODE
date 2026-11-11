@@ -155,9 +155,9 @@ public final class TerminalChat {
         get { chatSession.selection.toolKeys }
         set { chatSession.selection.toolKeys = newValue }
     }
-    public var selectedSkillIDs: Set<String> {
-        get { chatSession.selection.skillIDs }
-        set { chatSession.selection.skillIDs = newValue }
+    public var selectedSkillNames: Set<String> {
+        get { chatSession.selection.skillNames }
+        set { chatSession.selection.skillNames = newValue }
     }
     /// The attachments `/attach` staged for the next prompt (see
     /// ``ChatSessionController/pendingAttachments``).

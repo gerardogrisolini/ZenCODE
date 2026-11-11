@@ -195,7 +195,7 @@ public struct AgentProfile: Codable, Hashable, Sendable {
         self.readOnly = try container.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
         self.role = try Self.decodeRole(from: container, profileName: name)
         self.tools = try container.decodeIfPresent([String].self, forKey: .tools) ?? []
-        self.skills = try container.decodeIfPresent([AgentProfileSkill].self, forKey: .skills) ?? []
+        self.skills = try Self.decodeSkills(from: container, profileName: name)
 
         let legacyModelID = try container.decodeIfPresent(String.self, forKey: .modelID)?.nilIfBlank
         (self.modelBindings, self.defaultModelBindingID) = Self.resolvedBindings(
@@ -265,6 +265,29 @@ public struct AgentProfile: Codable, Hashable, Sendable {
             throw AgentProfileRoleDecodingError.invalid(profile: profileName, value: rawValue)
         }
         return role
+    }
+
+    /// Strict decoding of the profile's skills: every entry needs a usable
+    /// `name`. An entry without one (such as the legacy `{"id": "<hash>"}`)
+    /// fails with an error that names the profile; there is no migration.
+    private static func decodeSkills(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        profileName: String
+    ) throws -> [AgentProfileSkill] {
+        guard container.contains(.skills),
+              try !container.decodeNil(forKey: .skills) else {
+            return []
+        }
+        var entries = try container.nestedUnkeyedContainer(forKey: .skills)
+        var skills: [AgentProfileSkill] = []
+        while !entries.isAtEnd {
+            do {
+                skills.append(try entries.decode(AgentProfileSkill.self))
+            } catch AgentProfileSkillDecodingError.missingName {
+                throw AgentProfileSkillDecodingError.missingName(profile: profileName)
+            }
+        }
+        return skills
     }
 
     private static func resolvedBindings(
@@ -433,8 +456,10 @@ public struct AgentProfile: Codable, Hashable, Sendable {
             .union(readOnlyCoreToolNames)
     }
 
-    public func selectedSkillIDs(availableSkills: [PromptSkill]) -> Set<String> {
-        Set(skills.compactMap { $0.matchingSkillID(in: availableSkills) })
+    /// The canonical names of the installed skills among `availableSkills`
+    /// that this profile's skills name (compared case-insensitively).
+    public func selectedSkillNames(availableSkills: [PromptSkill]) -> Set<String> {
+        Set(skills.compactMap { $0.matchingSkillName(in: availableSkills) })
     }
 }
 

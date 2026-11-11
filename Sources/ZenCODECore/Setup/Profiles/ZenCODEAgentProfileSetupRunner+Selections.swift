@@ -42,18 +42,23 @@ extension ZenCODEAgentProfileSetupRunner {
         )
     }
 
-    /// The prompt skills of the agent being added or edited. Esc throws
+    /// The prompt skills of the agent being added or edited. Skills are
+    /// identified by their canonical name: the saved names are matched to the
+    /// installed skills case-insensitively. Esc throws
     /// `ZenCODESetupError.cancelled`, so the agent is left as it was.
     static func promptSkillSelection(
         title: String,
         defaultSkills: [AgentProfileSkill]
     ) throws -> [AgentProfileSkill] {
-        let selectedSkillIDs = Set(defaultSkills.compactMap { $0.id.nilIfBlank })
+        let availableSkills = PromptSkillCatalog.discoverSkills(
+            searchRoots: PromptSkillCatalog.appCatalogSearchRoots()
+        )
+        let selectedSkillNames = Set(defaultSkills.compactMap { skill in
+            skill.matchingSkillName(in: availableSkills) ?? skill.name.nilIfBlank
+        })
         let items = skillCheckboxItems(
-            availableSkills: PromptSkillCatalog.discoverSkills(
-                searchRoots: PromptSkillCatalog.appCatalogSearchRoots()
-            ),
-            selectedSkillIDs: selectedSkillIDs
+            availableSkills: availableSkills,
+            selectedSkillNames: selectedSkillNames
         )
         guard !items.isEmpty else {
             AgentOutput.standardError.writeString("No prompt skills installed by the app.\n")
@@ -62,33 +67,36 @@ extension ZenCODEAgentProfileSetupRunner {
         let selection = try ZenCODESetupRunner.promptMenuSelection(
             title: title,
             items: items,
-            selected: selectedSkillIDs
+            selected: selectedSkillNames
         )
-        return selection.sorted().map { AgentProfileSkill(id: $0) }
+        return selection.sorted().map { AgentProfileSkill(name: $0) }
     }
 
+    /// The menu entries of the setup's skill selection: every installed skill
+    /// (valued by its canonical name), then the `selectedSkillNames` that no
+    /// installed skill has, compared case-insensitively.
     static func skillCheckboxItems(
         availableSkills: [PromptSkill],
-        selectedSkillIDs: Set<String>
+        selectedSkillNames: Set<String>
     ) -> [TerminalCheckboxMenuItem<String>] {
-        let availableIDs = Set(availableSkills.map(\.id))
+        let availableNameKeys = Set(availableSkills.map { $0.canonicalName.selectionKey })
         let availableItems = availableSkills.map { skill in
             let canonicalName = skill.canonicalName == skill.title
                 ? ""
                 : " (\(skill.canonicalName))"
             return TerminalCheckboxMenuItem(
-                value: skill.id,
+                value: skill.canonicalName,
                 title: "\(skill.title)\(canonicalName)",
                 detail: truncatedInline(skill.summary, limit: 96)
             )
         }
-        let missingItems = selectedSkillIDs
-            .subtracting(availableIDs)
+        let missingItems = selectedSkillNames
+            .filter { !availableNameKeys.contains($0.selectionKey) }
             .sorted()
-            .map { skillID in
+            .map { skillName in
                 TerminalCheckboxMenuItem(
-                    value: skillID,
-                    title: skillID,
+                    value: skillName,
+                    title: skillName,
                     detail: "saved skill not currently installed",
                     groupTitle: "Saved"
                 )

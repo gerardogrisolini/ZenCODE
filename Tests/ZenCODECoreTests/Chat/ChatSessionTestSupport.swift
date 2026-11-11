@@ -599,7 +599,7 @@ actor ScriptedChatRuntime: ChatSessionManagementRuntime {
         case shutdownBackendKeepingExternalTools
         case compactSession(sessionID: String, force: Bool, maxTokensOverride: Int?)
         case preloadModel(SessionDigest)
-        case updatePromptSkillSelection(skillIDs: [String], sessionID: String)
+        case updatePromptSkillSelection(skillNames: [String], sessionID: String)
         case saveEngineCheckpoint(sessionID: String, fileName: String)
         case restoreEngineCheckpoint(sessionID: String, fileName: String)
         case restoreTaskGraph(graphID: String, sessionID: String)
@@ -967,7 +967,7 @@ actor ScriptedChatRuntime: ChatSessionManagementRuntime {
     }
 
     func updatePromptSkillSelection(_ skills: [PromptSkill], sessionID: String) async {
-        calls.append(.updatePromptSkillSelection(skillIDs: skills.map(\.id), sessionID: sessionID))
+        calls.append(.updatePromptSkillSelection(skillNames: skills.map(\.canonicalName), sessionID: sessionID))
         sessionPromptSkills[sessionID] = skills
     }
 

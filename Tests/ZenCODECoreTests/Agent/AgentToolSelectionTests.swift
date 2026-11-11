@@ -157,7 +157,7 @@ extension AgentConfigurationTests {
             await runner.snapshotSession(id: terminal.sessionID)
         )
 
-        _ = await terminal.chatSession.applySkillSelectionCommand(ids: [skill.id])
+        _ = await terminal.chatSession.applySkillSelectionCommand(names: [skill.canonicalName])
         let snapshot = try #require(
             await runner.snapshotSession(id: terminal.sessionID)
         )

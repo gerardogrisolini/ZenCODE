@@ -16,8 +16,9 @@ import ToolCore
 /// state (owned by `PromptSkillSessionProvider`) is mutable; that keeps the
 /// remote continuation and KV-cache prefix stable across selection changes.
 ///
-/// `skills.read` deliberately accepts an identifier rather than a file path, so
-/// a model cannot use it to read arbitrary installed skill files.
+/// `skills.read` deliberately accepts a skill name rather than a file path, so
+/// a model cannot use it to read arbitrary installed skill files. The skill's
+/// canonical name is its only identifier.
 public enum PromptSkillToolProvider {
     public static let listToolName = "skills.list"
     public static let toolName = "skills.read"
@@ -27,7 +28,7 @@ public enum PromptSkillToolProvider {
 
     public static let listToolDescriptor = DirectToolDescriptor(
         name: listToolName,
-        description: "Lists the prompt skills currently selected for this session, returning only their id, name, and description. Prompt skills may be added or removed during the session, so call this to discover the current selection before reading guidance.",
+        description: "Lists the prompt skills currently selected for this session, returning only their name and description. Prompt skills may be added or removed during the session, so call this to discover the current selection before reading guidance.",
         inputSchema: #"{"type":"object","properties":{}}"#,
         presentation: .standard(
             title: "Prompt skills",
@@ -39,8 +40,8 @@ public enum PromptSkillToolProvider {
 
     public static let readToolDescriptor = DirectToolDescriptor(
         name: toolName,
-        description: "Loads one page of complete guidance or a resource for a selected prompt skill. Use the id or canonical name returned by skills.list. To read a skill resource, provide its relative path in resource. `skills.read` is a reader, not an executor, and cannot access arbitrary filesystem paths; it reads only selected-skill guidance or a relative regular file within that skill's boundary. The tool can read only skills selected for the current session; request the next page with its nextOffset when supplied.",
-        inputSchema: #"{"type":"object","properties":{"identifier":{"type":"string","description":"Selected skill id or canonical name from skills.list."},"resource":{"type":"string","description":"Optional relative path to a regular file within the selected skill."},"offset":{"type":"integer","minimum":0,"description":"Zero-based character offset in the selected guidance or resource. Defaults to 0."},"limit":{"type":"integer","minimum":1,"maximum":8000,"description":"Maximum characters to return. Defaults to 6000."}},"required":["identifier"],"additionalProperties":false}"#,
+        description: "Loads one page of complete guidance or a resource for a selected prompt skill. Use the name returned by skills.list. To read a skill resource, provide its relative path in resource. `skills.read` is a reader, not an executor, and cannot access arbitrary filesystem paths; it reads only selected-skill guidance or a relative regular file within that skill's boundary. The tool can read only skills selected for the current session; request the next page with its nextOffset when supplied.",
+        inputSchema: #"{"type":"object","properties":{"identifier":{"type":"string","description":"Selected skill name from skills.list."},"resource":{"type":"string","description":"Optional relative path to a regular file within the selected skill."},"offset":{"type":"integer","minimum":0,"description":"Zero-based character offset in the selected guidance or resource. Defaults to 0."},"limit":{"type":"integer","minimum":1,"maximum":8000,"description":"Maximum characters to return. Defaults to 6000."}},"required":["identifier"],"additionalProperties":false}"#,
         presentation: .standard(
             title: "Prompt skill",
             action: "Read",
@@ -55,24 +56,23 @@ public enum PromptSkillToolProvider {
         readToolDescriptor
     ]
 
-    /// Returns the skills sorted deterministically (canonical name, then id) so
-    /// `skills.list` output and listing comparisons are stable.
+    /// Returns the skills sorted deterministically (canonical name, then title)
+    /// so `skills.list` output and listing comparisons are stable.
     public static func sortedForListing(_ skills: [PromptSkill]) -> [PromptSkill] {
         skills.sorted { lhs, rhs in
             if lhs.canonicalName != rhs.canonicalName {
                 return lhs.canonicalName < rhs.canonicalName
             }
-            return lhs.id < rhs.id
+            return lhs.title < rhs.title
         }
     }
 
     /// Renders the `skills.list` payload as deterministic JSON containing only
-    /// each selected skill's id, canonical `name`, and `description`.
+    /// each selected skill's canonical `name` and `description`.
     public static func renderSkillList(skills: [PromptSkill]) -> String {
         let ordered = sortedForListing(skills)
         let skillObjects: [[String: Any]] = ordered.map { skill in
             [
-                "id": skill.id,
                 "name": skill.canonicalName,
                 "description": skill.summary
             ]
@@ -131,15 +131,15 @@ public enum PromptSkillToolProvider {
         let contentDescription = resource.map { "resource `\($0)`" } ?? "guidance"
         let continuation: String
         if let resource {
-            continuation = " using identifier `\(skill.id)` and the same resource `\(resource)`"
+            continuation = " using identifier `\(skill.canonicalName)` and the same resource `\(resource)`"
         } else {
-            continuation = " using identifier `\(skill.id)`"
+            continuation = " using identifier `\(skill.canonicalName)`"
         }
         let pageMetadata: String
         if let nextOffset {
             pageMetadata = "Skill \(contentDescription) characters \(offset)..<\(endOffset) of \(bodyCharacters.count). Continue with `skills.read`\(continuation) and offset \(nextOffset)."
         } else if let resource {
-            pageMetadata = "Skill \(contentDescription) characters \(offset)..<\(endOffset) of \(bodyCharacters.count). This is the final page. To read it again, call `skills.read` using identifier `\(skill.id)` and the same resource `\(resource)`."
+            pageMetadata = "Skill \(contentDescription) characters \(offset)..<\(endOffset) of \(bodyCharacters.count). This is the final page. To read it again, call `skills.read` using identifier `\(skill.canonicalName)` and the same resource `\(resource)`."
         } else {
             pageMetadata = "Skill \(contentDescription) characters \(offset)..<\(endOffset) of \(bodyCharacters.count). This is the final page."
         }
@@ -151,23 +151,15 @@ public enum PromptSkillToolProvider {
         """
     }
 
+    /// The selected skill `identifier` names: its canonical name exactly, else
+    /// its canonical name compared case-insensitively. The name is the only
+    /// identifier; neither a title nor a content hash selects a skill.
     public static func selectedSkill(
         matching identifier: String,
         in selectedSkills: [PromptSkill]
     ) throws -> PromptSkill {
-        if let exactID = selectedSkills.first(where: { $0.id == identifier }) {
-            return exactID
-        }
-
         if let skill = try uniqueSkill(
             selectedSkills.filter { $0.canonicalName == identifier },
-            identifier: identifier
-        ) {
-            return skill
-        }
-
-        if let skill = try uniqueSkill(
-            selectedSkills.filter { $0.title == identifier },
             identifier: identifier
         ) {
             return skill
@@ -176,7 +168,6 @@ public enum PromptSkillToolProvider {
         let normalizedIdentifier = normalizedKey(identifier)
         let normalizedMatches = selectedSkills.filter { skill in
             normalizedKey(skill.canonicalName) == normalizedIdentifier
-                || normalizedKey(skill.title) == normalizedIdentifier
         }
         if let skill = try uniqueSkill(normalizedMatches, identifier: identifier) {
             return skill
@@ -322,19 +313,21 @@ public enum PromptSkillToolProvider {
         _ candidates: [PromptSkill],
         identifier: String
     ) throws -> PromptSkill? {
-        let skillsByID = Dictionary(
-            candidates.map { ($0.id, $0) },
+        // The canonical name is the identity: candidates that share it are one
+        // skill (the first wins), while distinct names are ambiguous.
+        let skillsByName = Dictionary(
+            candidates.map { ($0.canonicalName, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        switch skillsByID.values.count {
+        switch skillsByName.values.count {
         case 0:
             return nil
         case 1:
-            return skillsByID.values.first
+            return skillsByName.values.first
         default:
             throw PromptSkillToolProviderError.ambiguousIdentifier(
                 identifier,
-                matches: skillsByID.values.map(\.id).sorted()
+                matches: skillsByName.keys.sorted()
             )
         }
     }
@@ -456,7 +449,7 @@ public enum PromptSkillToolProviderError: LocalizedError, Sendable {
         case let .skillNotSelected(identifier):
             return "The skill '\(identifier)' is not selected for this session."
         case let .ambiguousIdentifier(identifier, matches):
-            return "The skill identifier '\(identifier)' is ambiguous. Use one of these skill ids instead: \(matches.joined(separator: ", "))."
+            return "The skill identifier '\(identifier)' is ambiguous. Use one of these skill names instead: \(matches.joined(separator: ", "))."
         }
     }
 }

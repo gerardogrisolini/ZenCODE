@@ -461,29 +461,29 @@ extension ChatSessionController {
     /// summary and `/skills` list them.
     public func selectedPromptSkills() -> [PromptSkill] {
         let skills = availableSkills()
-        return Self.promptSkills(withIDs: selection.skillIDs, in: skills)
+        return Self.promptSkills(withNames: selection.skillNames, in: skills)
     }
 
-    /// The IDs of the skills among `availableSkills` that `agent` declares.
-    /// Shared with ACP, which derives an agent's skills the same way.
-    nonisolated static func promptSkillIDs(
+    /// The canonical names of the skills among `availableSkills` that `agent`
+    /// declares. Shared with ACP, which derives an agent's skills the same way.
+    nonisolated static func promptSkillNames(
         of agent: AgentProfile,
         in availableSkills: [PromptSkill]
     ) -> Set<String> {
-        agent.selectedSkillIDs(availableSkills: availableSkills)
+        agent.selectedSkillNames(availableSkills: availableSkills)
     }
 
-    /// The skills among `availableSkills` whose ID is in `skillIDs`, in
-    /// catalog order; empty for no ID. Shared with ACP.
+    /// The skills among `availableSkills` whose canonical name is in
+    /// `skillNames`, in catalog order; empty for no name. Shared with ACP.
     nonisolated static func promptSkills(
-        withIDs skillIDs: Set<String>,
+        withNames skillNames: Set<String>,
         in availableSkills: [PromptSkill]
     ) -> [PromptSkill] {
-        guard !skillIDs.isEmpty else {
+        guard !skillNames.isEmpty else {
             return []
         }
 
-        return availableSkills.filter { skillIDs.contains($0.id) }
+        return availableSkills.filter { skillNames.contains($0.canonicalName) }
     }
 
     public func applyInitialSkillSelectionIfNeeded() throws {
@@ -491,7 +491,7 @@ extension ChatSessionController {
             return
         }
 
-        selection.skillIDs = try Self.parseSkillSelection(
+        selection.skillNames = try Self.parseSkillSelection(
             initialSkillSelection,
             availableSkills: availableSkills()
         )
@@ -501,14 +501,17 @@ extension ChatSessionController {
         _ rawSelection: String,
         availableSkills: [PromptSkill]
     ) throws -> Set<String> {
-        try TerminalSelection.parse(rawSelection, keys: availableSkills.map(\.id)) { token in
+        try TerminalSelection.parse(rawSelection, keys: availableSkills.map(\.canonicalName)) { token in
             guard let skill = skill(matching: token, in: availableSkills) else {
                 throw TerminalSkillSelectionError.unknownToken(token)
             }
-            return skill.id
+            return skill.canonicalName
         }
     }
 
+    /// The skill whose canonical name `rawToken` names, compared with the
+    /// normalized, case-insensitive ``selectionKey(_:)``. The name is the
+    /// only identifier: neither the title nor the content hash matches.
     nonisolated static func skill(
         matching rawToken: String,
         in availableSkills: [PromptSkill]
@@ -520,9 +523,6 @@ extension ChatSessionController {
 
         return availableSkills.first { skill in
             token == selectionKey(skill.canonicalName)
-                || token == selectionKey(skill.title)
-                || skill.sourceHash.hasPrefix(token)
-                || skill.id.hasPrefix(token)
         }
     }
 
@@ -546,7 +546,7 @@ extension ChatSessionController {
             from: agent.tools,
             items: items
         )
-        selection.skillIDs = Self.promptSkillIDs(
+        selection.skillNames = Self.promptSkillNames(
             of: agent,
             in: availableSkills()
         )

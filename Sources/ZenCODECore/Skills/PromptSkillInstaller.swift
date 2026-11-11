@@ -438,7 +438,7 @@ public enum PromptSkillInstaller {
         fileManager: FileManager
     ) throws -> URL {
         guard let sourceDirectoryPath = skill.sourceDirectoryPath?.nilIfBlank else {
-            throw PromptSkillInstallerError.skillNotFound(skill.id)
+            throw PromptSkillInstallerError.skillNotFound(skill.canonicalName)
         }
 
         let destinationURL = URL(

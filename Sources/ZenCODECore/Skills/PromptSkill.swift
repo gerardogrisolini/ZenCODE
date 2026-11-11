@@ -60,8 +60,12 @@ public struct PromptSkillPayload: Equatable, Sendable {
     }
 }
 
-public struct PromptSkill: Identifiable, Hashable, Sendable {
-    public let id: String
+/// An installed prompt skill. Its identity is ``canonicalName``: the `name:`
+/// of its `SKILL.md` front matter is the only identifier used by profiles,
+/// session selections, and the skill tools. ``sourceHash`` is a fingerprint of
+/// the content, kept as metadata; it changes with every edit of the skill and
+/// is never an identifier or a comparison key.
+public struct PromptSkill: Hashable, Sendable {
     public let canonicalName: String
     public let title: String
     public let summary: String
@@ -89,7 +93,6 @@ public struct PromptSkill: Identifiable, Hashable, Sendable {
         self.sourceFilename = sourceFilename
         self.sourceDirectoryPath = sourceDirectoryPath
         self.sourceHash = sourceHash
-        self.id = sourceHash.nilIfBlank ?? canonicalName.nilIfBlank ?? UUID().uuidString.lowercased()
     }
 
     public init(payload: PromptSkillPayload) {

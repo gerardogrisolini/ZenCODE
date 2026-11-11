@@ -1156,6 +1156,27 @@ without sacrificing the continuation). A session persisted with a legacy
 eager/lazy skill catalog is normalized to the static instruction on restore,
 which is a one-time full replay; subsequent selection changes are cache-stable.
 
+A prompt skill has exactly one identifier: its canonical name, the `name:` of its
+`SKILL.md` front matter. `PromptSkill` has no `id`; `sourceHash` is a fingerprint
+of the content, kept as metadata, and is neither an identifier nor a comparison
+key (it changes with every edit of the skill). `PromptSkillCatalog.discoverSkills`
+deduplicates by name, compared case-insensitively, and the first skill found in
+the order of the search roots wins. The name is what every layer exchanges:
+`skills.list` returns only each skill's `name` and `description`, and
+`skills.read` takes that name (exact first, then case-insensitively; a title or a
+hash selects nothing, and an ambiguous match lists the candidate names); the
+session selection (`ChatSessionSelection.skillNames`) and the menus hold names;
+and saved sessions persist the selection as `selectedSkillNames`. A session saved
+while skills were identified by hash carries `selectedSkillIDs` instead: it still
+loads (the old key is ignored, the format version is unchanged) with no skill
+selected. In `agents.json` a profile declares its skills as
+`"skills": [{"name": "…"}]`, matched to the installed skills by name without
+regard to case, never by `title` or `summary` (optional metadata). An entry
+without a usable `name`, such as the former `{"id": "<hash>"}`, makes the
+manifest invalid (`AgentProfileSkillDecodingError`, through
+`AgentProfileStoreError.invalidFile`); there is no migration, and `zen --setup`
+offers to rewrite the file, after which the skills are selected again.
+
 Remote generation has one cross-platform transport stack. HTTP/1.1, incremental
 SSE, and ChatGPT Responses WebSockets under `Remote/Generation`, the ChatGPT
 client/task/pool, and Anthropic messages are expressed as `RemoteHTTP*` /
