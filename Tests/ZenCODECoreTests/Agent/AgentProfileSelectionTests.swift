@@ -160,8 +160,9 @@ extension AgentConfigurationTests {
         }
         #expect(developerProfile.instructions?.contains("Developer agent") == true)
         #expect(developerProfile.instructions?.contains("Do not take initiative") == true)
-        #expect(developerProfile.instructions?.contains("multiple reasonable options") == true)
-        #expect(developerProfile.instructions?.contains("always stop and ask the user") == true)
+        #expect(developerProfile.instructions?.contains("Ask only when a decision is really needed") == true)
+        #expect(developerProfile.instructions?.contains("proceed with the most conservative option") == true)
+        #expect(developerProfile.instructions?.contains("always stop and ask the user") == false)
         #expect(developerProfile.instructions?.contains("coordinated workflow") == false)
         #expect(developerProfile.instructions?.contains("implementation tasks in parallel") == false)
         #expect(developerProfile.instructions?.contains("mutable scopes do not overlap") == false)
