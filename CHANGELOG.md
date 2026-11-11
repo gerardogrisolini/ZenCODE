@@ -10,6 +10,27 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [6.0.0] - 2026-11-11
+
+> **Breaking release:** compared with v5.0.2, v6.0.0 identifies prompt skills
+> by their name only. An `agents.json` that still saves the skills of a
+> profile by `id` is invalid until `zen --setup` rewrites it, sessions saved
+> earlier load without their selected skills, and `/skills` and `--skills` no
+> longer accept a title or a hash prefix. For code that integrates
+> `ZenCODECore` directly, the public Chat API renames
+> `ChatSessionSelection.skillIDs`, `ChatSessionController.selectSkills(ids:)`,
+> and `ChatSessionController.uninstallSkills(ids:)` to `skillNames`,
+> `selectSkills(names:)`, and `uninstallSkills(names:)`. See the **Breaking**
+> entry below.
+
+### Added
+
+- `ChatSessionController.startInitialSession()` creates a channel's first
+  runtime session and loads its model through the same channel hooks as a
+  later recreation, which receive the new
+  `ChatSessionRecreationReason.sessionStarted`. The macOS app calls it at
+  startup (see **Fixed**).
+
 ### Changed
 
 - The default Developer profile asks only when a decision is really needed and
@@ -17,7 +38,7 @@ Release tags follow the strict `vX.Y.Z` contract described in
   short question and one line per option; otherwise it proceeds with the most
   conservative option and says which one it chose. It no longer stops to ask
   whenever more than one approach is possible.
-- Prompt skills are identified by their name everywhere, and the id is gone.
+- **Breaking:** prompt skills are identified by their name everywhere, and the id is gone.
   The id was the hash of the `SKILL.md` content, so every edit of a skill
   broke the profiles and sessions that referred to it; the skill's name (the
   `name:` of its front matter) is now the only identifier. The skills of a
@@ -5006,7 +5027,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v5.0.2...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.0.0...HEAD
+[6.0.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v5.0.2...v6.0.0
 [5.0.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v5.0.1...v5.0.2
 [5.0.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v5.0.0...v5.0.1
 [5.0.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v4.1.0...v5.0.0

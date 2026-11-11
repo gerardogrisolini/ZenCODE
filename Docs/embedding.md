@@ -18,7 +18,7 @@ contract of [release.md](release.md).
 
 ```swift
 // Package.swift of the app
-.package(url: "https://github.com/gerardogrisolini/ZenCODE.git", from: "5.0.0"),
+.package(url: "https://github.com/gerardogrisolini/ZenCODE.git", from: "6.0.0"),
 // in the target
 .product(name: "ZenCODECore", package: "ZenCODE"),
 ```
@@ -1113,7 +1113,7 @@ switch.
 ## Compatibility
 
 The public API of `Sources/ZenCODECore/Chat` follows semantic versioning (see
-[Compatibility Contract](architecture.md#compatibility-contract)). From 5.0.0
+[Compatibility Contract](architecture.md#compatibility-contract)). From 6.0.0
 it comprises:
 
 - the session host: `ChatSessionHost` (with `RuntimeSessionDisposition`),
