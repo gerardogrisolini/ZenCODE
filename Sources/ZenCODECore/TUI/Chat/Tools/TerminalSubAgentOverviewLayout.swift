@@ -88,16 +88,16 @@ enum TerminalSubAgentOverviewLayout {
         /// Status header, agent/model identity, and capped activity lines,
         /// with a blank separator row before each agent.
         case compact
-        /// Like compact without the blank separator rows: status header,
-        /// agent/model identity, and capped activity lines.
-        case condensed
-        /// Status header plus a single activity line, without separators.
+        /// Status header plus a single activity line, with a blank separator
+        /// row before each agent.
         case dense
         /// One row per agent: status header with an inline activity fragment.
         case inline
 
+        /// Whether a blank row precedes each agent. Every multi-row
+        /// presentation keeps it, so consecutive agents never run together.
         var includesSeparators: Bool {
-            self == .full || self == .compact
+            self != .inline
         }
 
         var includesMetadata: Bool {
@@ -107,14 +107,14 @@ enum TerminalSubAgentOverviewLayout {
         /// Whether the entry keeps the single `agent:` / `model:` identity row
         /// in place of the full metadata lines.
         var includesAgentAndModel: Bool {
-            self == .compact || self == .condensed
+            self == .compact
         }
 
         /// Whether the running tool is laid out with the canonical tool rows
         /// instead of the one-row fallback.
         var usesCanonicalToolRows: Bool {
             switch self {
-            case .full, .compact, .condensed: true
+            case .full, .compact: true
             case .dense, .inline: false
             }
         }
@@ -128,7 +128,7 @@ enum TerminalSubAgentOverviewLayout {
         var activityLineLimit: Int? {
             switch self {
             case .full: nil
-            case .compact, .condensed: 2
+            case .compact: 2
             case .dense, .inline: 1
             }
         }

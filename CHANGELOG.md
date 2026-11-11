@@ -19,6 +19,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- The `👥 Sub-Agents` overview always keeps a blank row between the agents
+  shown on more than one row. With many agents the presentation with two rows
+  per agent (status and the current activity) now has the blank row too; the
+  compact presentation without its blank rows, added in 5.0.0, is removed, so
+  from the compact presentation the overview steps straight to two rows per
+  agent. Only the one-row-per-agent presentation stays without blank rows.
 - The sub-agent tabs of the macOS app keep a 24 pt margin below their last
   row instead of 16 pt, so it sits further from the window's edge.
 - In the conversation of the macOS app, the prompts and the echoed slash
