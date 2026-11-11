@@ -144,6 +144,13 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
     private(set) var attachments: [[AgentRuntimeAttachment]] = []
     /// The system prompts the sessions were created or updated with.
     private(set) var systemPrompts: [String] = []
+    /// The sessions explicitly created by the runner.
+    private(set) var createdSessionIDs: [String] = []
+    /// How many times the model was preloaded.
+    private(set) var preloadCount = 0
+    /// How many times the live backend supplied its tool descriptors.
+    private(set) var toolDescriptorReadCount = 0
+    private var scriptedToolDescriptors: [DirectToolDescriptor] = []
     private var scripts: [String: [DirectAgentEvent]] = [:]
     private var subAgents: [DirectSubAgentRuntime.AgentSnapshot] = []
     private var subAgentTranscripts: [String: ChatSubAgentTranscript] = [:]
@@ -233,7 +240,7 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
     }
 
     func createSession(
-        id _: String,
+        id: String,
         cwd _: String,
         systemPrompt: String?,
         history _: [AgentRuntimeMessage],
@@ -242,11 +249,12 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
         thinkingSelection _: AgentThinkingSelection?,
         preserveThinking _: Bool
     ) {
+        createdSessionIDs.append(id)
         systemPrompts.append(systemPrompt ?? "")
     }
 
     func createSessionIfNeeded(
-        id _: String,
+        id: String,
         cwd _: String,
         systemPrompt: String?,
         history _: [AgentRuntimeMessage],
@@ -255,6 +263,7 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
         thinkingSelection _: AgentThinkingSelection?,
         preserveThinking _: Bool
     ) {
+        createdSessionIDs.append(id)
         systemPrompts.append(systemPrompt ?? "")
     }
 
@@ -297,6 +306,7 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
     func preloadModel(
         onEvent _: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> String {
+        preloadCount += 1
         if let preloadGate {
             await preloadGate.pass()
         }
@@ -308,7 +318,13 @@ actor ZenScriptedBackend: AgentRuntimeBackend {
     }
 
     func activeToolDescriptors() async -> [DirectToolDescriptor] {
-        []
+        toolDescriptorReadCount += 1
+        return scriptedToolDescriptors
+    }
+
+    /// The descriptors this backend reports until the next call.
+    func setToolDescriptors(_ descriptors: [DirectToolDescriptor]) {
+        scriptedToolDescriptors = descriptors
     }
 
     func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {

@@ -38,6 +38,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- The first window of the macOS app now creates its runtime session and
+  preloads its model at startup, as the terminal does. Its initial tool
+  discovery therefore uses the live backend, so runtime-discovered tools such
+  as Xcode are available immediately and can request authorization without a
+  preliminary `/sessions new` or prompt.
 - Anthropic API: the provider setup now reads each model's thinking
   `capabilities` from `/v1/models` and saves the right thinking mode and
   levels, as the Anthropic Subscription setup already does. Models with

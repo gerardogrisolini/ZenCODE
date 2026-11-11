@@ -1248,6 +1248,37 @@ struct ZenWindowSessionTests {
         }
     }
 
+    @Test("The first window creates its session, preloads the model, and discovers backend tools before the first prompt")
+    func firstWindowStartsLikeTheTerminal() async throws {
+        try await withRuntime { runtime, backend, workspace in
+            let xcode = DirectToolDescriptor(
+                name: "xcode.build",
+                description: "Builds an Xcode project.",
+                inputSchema: #"{"type":"object"}"#
+            )
+            await backend.setToolDescriptors([xcode])
+
+            let window = try await runtime.openWindow(workspace: workspace)
+            let sessionID = await window.current.controller.sessionID
+            let initialCreations = await backend.createdSessionIDs
+            #expect(initialCreations == [sessionID])
+            #expect(await backend.preloadCount == 1)
+            #expect(await backend.toolDescriptorReadCount > 0)
+            #expect(window.startupSummary?.activeTools == (await window.current.controller.activeToolsSummary()))
+            #expect(window.status.modelID == "zen-app-model")
+
+            window.draft = "Hello"
+            window.submitDraft()
+            #expect(await window.waitUntilIdle())
+            #expect(await backend.prompts == ["Hello"])
+            // The prompt refreshes dynamic context and locks the response
+            // language, but it must keep the same runtime session and model.
+            #expect(Set(await backend.createdSessionIDs) == [sessionID])
+            #expect(await backend.preloadCount == 1)
+            await runtime.shutdown()
+        }
+    }
+
     @Test("The welcome view's startup summary is read with the status bar and follows the agent, tools, and skills")
     func startupSummaryFollowsTheSelection() async throws {
         try await withRuntime { runtime, _, workspace in

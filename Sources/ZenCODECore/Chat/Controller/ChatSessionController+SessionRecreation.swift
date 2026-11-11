@@ -28,6 +28,15 @@ extension ChatSessionController {
         )
     }
 
+    /// Creates the channel's first runtime session and loads its model, using
+    /// the same hooks and steps as a later session recreation. This is the
+    /// startup counterpart of the terminal's `createCurrentSession()` followed
+    /// by `preloadCurrentModel()`: the backend and its feature-tool discovery
+    /// are live before the channel reads its startup summary.
+    public func startInitialSession() async throws {
+        try await recreateSession(reason: .sessionStarted)
+    }
+
     /// Stops the backend and creates the session anew, then loads the model,
     /// calling the channel hooks between the steps.
     func recreateSession(reason: ChatSessionRecreationReason) async throws {
