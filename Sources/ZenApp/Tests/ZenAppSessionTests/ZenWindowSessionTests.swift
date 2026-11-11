@@ -797,6 +797,62 @@ struct ZenWindowSessionTests {
         }
     }
 
+    @Test("/tasks in a turn shows its card once, even when the snapshot's graph is stale: the explicit overview never reaches the reducer")
+    func tasksCommandInATurnShowsOneCard() async throws {
+        try await withRuntime { runtime, backend, workspace in
+            let window = try await runtime.openWindow(workspace: workspace)
+            #expect(await window.waitUntilIdle())
+            let orchestrator = await runtime.runner.taskOrchestrator
+            let sessionID = window.current.sessionID
+            try? await orchestrator.registerSession(id: sessionID, workingDirectory: workspace)
+
+            await backend.hold()
+            window.draft = "Busy"
+            window.submitDraft()
+            await backend.waitUntilHeld()
+            #expect(await eventually { window.isGenerating })
+
+            // Without the observer the snapshot keeps its old graph (none): a
+            // significant graph created now reaches no automatic overview, so
+            // it shows no card of the turn.
+            await window.current.controller.stopTaskGraphObserver()
+            _ = try await orchestrator.createTasks(
+                sessionID: sessionID,
+                tasks: [TaskDefinition(title: "A"), TaskDefinition(title: "B")]
+            )
+            let before = ChatSessionNotice.help(commandHelp: ["Before /tasks"])
+            await Self.present(before, in: window.sessionHost, slotID: window.slotID)
+            #expect(await eventually { window.transcript.contains { $0.content == .notice(before) } })
+            #expect(Self.taskCards(in: window.transcript).isEmpty)
+            #expect(window.snapshot?.taskGraph == nil)
+
+            // /tasks beside the turn: exactly one card, the graph it read,
+            // after its echo. The snapshots reach the window in order, so the
+            // row presented after the card is behind any snapshot the explicit
+            // overview would have produced.
+            window.draft = "/tasks"
+            window.submitDraft()
+            #expect(await eventually { !Self.taskCards(in: window.transcript).isEmpty })
+            let after = ChatSessionNotice.help(commandHelp: ["After /tasks"])
+            await Self.present(after, in: window.sessionHost, slotID: window.slotID)
+            #expect(await eventually { window.transcript.contains { $0.content == .notice(after) } })
+            let cards = Self.taskCards(in: window.transcript)
+            #expect(cards.count == 1)
+            let card = try #require(cards.first)
+            #expect(Self.taskCount(card) == 2)
+            let echo = try #require(window.transcript.lastIndex { $0.content == .commandLine("/tasks") })
+            #expect(try #require(Self.index(of: card, in: window.transcript)) > echo)
+            // The explicit overview is the presenter's: the snapshot is as it was.
+            #expect(window.snapshot?.taskGraph == nil)
+
+            await backend.release()
+            #expect(await window.waitUntilIdle())
+            #expect(Self.taskCards(in: window.transcript).map(\.id) == [card.id])
+            #expect(window.snapshot?.taskGraph == nil)
+            await runtime.shutdown()
+        }
+    }
+
     @Test("The window presenter publishes the sub-agent overview around agent.* calls")
     func subAgentOverviewReachesTheReducer() async throws {
         try await withRuntime { runtime, backend, workspace in

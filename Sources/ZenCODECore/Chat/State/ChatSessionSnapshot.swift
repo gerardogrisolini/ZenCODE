@@ -123,7 +123,8 @@ public struct ChatSessionSnapshot: Sendable, Equatable {
     public internal(set) var activity: [ChatTurnEntry] = []
     /// The turn that runs or ran last.
     public internal(set) var turn = ChatTurnState()
-    /// The latest task-graph overview presented; `nil` when the session has
+    /// The latest automatic task-graph overview presented (the observer's; the
+    /// explicit one of `/tasks` is not recorded); `nil` when the session has
     /// no task graph.
     public internal(set) var taskGraph: ChatTaskGraphOverview?
     /// The latest sub-agent overview presented.

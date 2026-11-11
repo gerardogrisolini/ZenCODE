@@ -483,7 +483,10 @@ The task-graph and sub-agent overviews reach the presenter as values
   changes. The controller then calls
   `presentTaskGraphOverview(_:origin:publication:)`, debounced. Do not show an
   `.automatic` overview whose `isSignificant` is `false`; an `.explicit` one,
-  from `/tasks`, is always shown.
+  from `/tasks`, is always shown. The `taskGraph` of a
+  `ChatSessionStateReducer` snapshot follows the automatic overviews only: the
+  explicit one reaches the presenter of the channel where the command runs
+  and no one else.
 - `publishSubAgentOverviewIfChanged(relatedToolName:presenter:)` publishes the
   sub-agent overview around an `agent.*` tool call. While a blocking `agent.*`
   call runs, `startSubAgentOverviewRefreshIfNeeded(presenter:)` refreshes it
@@ -561,7 +564,8 @@ records what the controller presents in one ordered log per session
 `fileChanges.artifactHistory` are projections of the `log`. The other members
 are sub-states of their own: `turn` (phase, the text still streaming in
 `liveAssistantText` and `liveThought`, metrics, context window, usage),
-`taskGraph`, `subAgents`, `fileChanges.turnSummary`, `selection`,
+`taskGraph` (the latest automatic overview; see [Overviews](#overviews)),
+`subAgents`, `fileChanges.turnSummary`, `selection`,
 `savedSession`, `pendingRequests`, and `summary`. Assistant text reaches the
 log in blocks, closed where the session transcript closes them.
 

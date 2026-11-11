@@ -10,7 +10,8 @@ import SwiftUI
 import ZenAppTheme
 
 /// The echo of a slash command the operator typed: monospaced and muted,
-/// with the `/command` token in the accent color.
+/// with the `/command` token in the accent color. It has no marker: the
+/// disclosure chevron marks only the rows that expand.
 public struct ZenCommandLineView: View {
     private let text: String
 
@@ -30,14 +31,10 @@ public struct ZenCommandLineView: View {
         } else {
             runs = [ZenTextRun(text: line, color: palette.textMuted)]
         }
-        return HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("❯")
-                .foregroundStyle(palette.textMuted)
-            Text(AttributedString.zen(runs))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .font(ZenFonts.monoSmall)
+        return Text(AttributedString.zen(runs))
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .font(ZenFonts.monoSmall)
     }
 }
 

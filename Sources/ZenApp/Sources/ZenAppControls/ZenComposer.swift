@@ -373,7 +373,7 @@ public struct ZenComposer: View {
                 .buttonStyle(.glassProminent)
                 .buttonBorderShape(.circle)
                 .controlSize(.large)
-                .tint(palette.statusFailure)
+                .tint(palette.statusActive)
                 .help("Stop the generation")
                 .accessibilityLabel("Stop")
             }

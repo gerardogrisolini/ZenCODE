@@ -17,6 +17,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
   translator, a researcher). It is a valid `role` in `agents.json` and a valid
   `agent.create` `profileRole`, and it has no recommended profile.
 
+### Changed
+
+- The sub-agent tabs of the macOS app keep a 24 pt margin below their last
+  row instead of 16 pt, so it sits further from the window's edge.
+- In the conversation of the macOS app, the prompts and the echoed slash
+  commands no longer start with the `❯` marker: only the rows that expand
+  (tool calls, thoughts, file changes) show their disclosure chevron.
+- The stop button of the macOS app's composer is orange, the color of the
+  work in progress, instead of red.
+
 ### Removed
 
 - The `promoter` agent role and the recommended `Promoter` profile are
@@ -44,6 +54,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   setup page". The page is now served with `Referrer-Policy: same-origin`: the
   submission carries its loopback origin, and the Atlassian help link still
   receives no `Referer`.
+- In the macOS app, `/tasks` typed while a turn generates no longer shows the
+  task card twice. The session state's `ChatSessionSnapshot.taskGraph`
+  followed the explicit overview of `/tasks` as well, so the window added the
+  card of the turn right after the card of the command. `taskGraph` now follows
+  only the automatic overviews of the task-graph observer; the explicit one
+  reaches the presenter of the channel where the command runs and nothing else.
 
 ## [5.0.1] - 2026-11-10
 

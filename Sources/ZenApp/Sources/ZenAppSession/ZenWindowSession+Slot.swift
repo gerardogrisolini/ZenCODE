@@ -135,10 +135,12 @@ extension ZenWindowSession {
     }
 
     /// The card of a turn, as the terminal writes its `Tasks` section: a
-    /// change of the graph while a turn generates, when the graph is
-    /// significant (``ChatTaskGraphOverview/isSignificant``), shows the card
-    /// of the turn after the last log entry of `snapshot` (so before the
-    /// block still streaming), with the graph as it is now. The first such
+    /// change of the graph of the snapshot (the observer's automatic
+    /// overviews; the explicit one of `/tasks` never changes it) while a turn
+    /// generates, when the graph is significant
+    /// (``ChatTaskGraphOverview/isSignificant``), shows the card of the turn
+    /// after the last log entry of `snapshot` (so before the block still
+    /// streaming), with the graph as it is now. The first such
     /// change of a turn adds the card, a later one moves it
     /// (``ZenTranscriptProjection/moveLocal(id:to:content:)``), keeping its
     /// id. Once the turn ended the card stays where it is; a change outside

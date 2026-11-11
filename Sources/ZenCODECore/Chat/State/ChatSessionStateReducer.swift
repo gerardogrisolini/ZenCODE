@@ -413,12 +413,17 @@ public final class ChatSessionStateReducer: ChatSessionObserver {
 
     // MARK: - Overviews
 
+    /// Records the task-graph overview the session's observer presents
+    /// (``ChatOverviewOrigin/automatic``) in ``ChatSessionSnapshot/taskGraph``;
+    /// `nil` clears it. An ``ChatOverviewOrigin/explicit`` one (`/tasks`) is
+    /// ignored: the channel where the command runs shows it, and the snapshot
+    /// follows the live graph only.
     public func presentTaskGraphOverview(
         _ overview: ChatTaskGraphOverview?,
         origin: ChatOverviewOrigin,
         publication: ChatOverviewPublication?
     ) async {
-        guard overview != snapshot.taskGraph else { return }
+        guard origin == .automatic, overview != snapshot.taskGraph else { return }
         snapshot.taskGraph = overview
         commit()
     }

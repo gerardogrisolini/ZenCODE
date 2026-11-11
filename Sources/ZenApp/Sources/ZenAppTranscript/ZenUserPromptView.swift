@@ -11,10 +11,10 @@ import ZenAppTheme
 import ZenCODECore
 
 /// The operator's prompt: a full-width rounded block on the prompt surface
-/// with the `❯` marker in the accent color, the attachments
-/// (``ZenAttachmentPreviewView``: each image shown small, each video as a
-/// chip), and a small badge naming the channel when the prompt did not come
-/// from the app.
+/// with the text, the attachments (``ZenAttachmentPreviewView``: each image
+/// shown small, each video as a chip), and a small badge naming the channel
+/// when the prompt did not come from the app. It has no marker: the
+/// disclosure chevron marks only the rows that expand.
 public struct ZenUserPromptView: View {
     private let text: String
     private let attachments: [AgentRuntimeAttachment]
@@ -36,9 +36,6 @@ public struct ZenUserPromptView: View {
     public var body: some View {
         let isLong = text.utf8.count > ZenTranscriptText.longTextLimit
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text("❯")
-                .font(.body.monospaced().weight(.bold))
-                .foregroundStyle(palette.accent)
             VStack(alignment: .leading, spacing: 8) {
                 Text(isShowingFullText || !isLong
                     ? text

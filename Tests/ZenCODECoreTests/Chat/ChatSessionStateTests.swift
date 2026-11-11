@@ -396,6 +396,36 @@ struct ChatSessionStateTests {
         #expect(reducer.snapshot.summary.title == "One")
     }
 
+    // MARK: - Overviews
+
+    /// The snapshot follows the overviews the session observes by itself: an
+    /// explicit one (`/tasks`) is shown by the channel where the command ran,
+    /// and never reaches it.
+    @Test
+    @ChatSessionActor
+    func theTaskGraphOfTheSnapshotFollowsTheAutomaticOverviewsOnly() async throws {
+        let reducer = Self.reducer()
+        #expect(reducer.snapshot.taskGraph == nil)
+
+        let observed = ChatTaskGraphOverview(graph: Fixtures.taskGraph(id: "observed"), tasks: [])
+        await reducer.presentTaskGraphOverview(observed, origin: .automatic, publication: nil)
+        #expect(reducer.snapshot.taskGraph == observed)
+
+        // An explicit overview, of another graph or none, leaves it as it is.
+        let requested = ChatTaskGraphOverview(graph: Fixtures.taskGraph(id: "requested"), tasks: [])
+        await reducer.presentTaskGraphOverview(requested, origin: .explicit, publication: nil)
+        #expect(reducer.snapshot.taskGraph == observed)
+        await reducer.presentTaskGraphOverview(nil, origin: .explicit, publication: nil)
+        #expect(reducer.snapshot.taskGraph == observed)
+
+        // An automatic overview without a graph clears it, and an explicit
+        // one does not bring it back.
+        await reducer.presentTaskGraphOverview(nil, origin: .automatic, publication: nil)
+        #expect(reducer.snapshot.taskGraph == nil)
+        await reducer.presentTaskGraphOverview(requested, origin: .explicit, publication: nil)
+        #expect(reducer.snapshot.taskGraph == nil)
+    }
+
     // MARK: - Pending requests
 
     @Test
