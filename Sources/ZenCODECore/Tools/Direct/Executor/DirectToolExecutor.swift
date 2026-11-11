@@ -366,9 +366,10 @@ public actor DirectToolExecutor {
     /// `allowedToolNames`.
     ///
     /// With `discoversFeatureTools` (the default) a relevant feature that
-    /// discovers its tools at runtime and has not been discovered yet, or
-    /// whose discovery was cleared by a reload of the feature bundles, is
-    /// discovered now (`--list-tools`, and the consent it can ask for).
+    /// discovers its tools at runtime and has no successful discovery cached
+    /// (not discovered yet, last discovery failed, or discovery cleared by a
+    /// reload of the feature bundles) is discovered now (`--list-tools`, and
+    /// the consent it can ask for).
     /// Without it the descriptors are only the ones already known
     /// (``SwiftFeatureRuntime/knownDescriptors(allowedToolNames:excludingFeatureIDs:)``):
     /// nothing is discovered, so such a feature contributes only its declared

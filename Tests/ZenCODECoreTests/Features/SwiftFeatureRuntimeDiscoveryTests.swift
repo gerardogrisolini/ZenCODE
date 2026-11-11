@@ -271,6 +271,143 @@ extension SwiftFeatureRuntimeTests {
         #expect(SwiftFeatureRuntime.defaultFeatureToolDescriptors(searchRoots: [rootURL]).isEmpty)
     }
 
+    @Test
+    func oneShotFailedDiscoveryIsRetriedAndOnlySuccessIsCached() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-feature-retry-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+        let markerURL = rootURL.appendingPathComponent("list-tools-marker")
+        let failURL = rootURL.appendingPathComponent("fail")
+        try Data().write(to: failURL)
+        let executableURL = rootURL.appendingPathComponent("feature")
+        try """
+        #!/bin/sh
+        if [ "$1" = "--list-tools" ]; then
+          printf x >> "\(markerURL.path)"
+          if [ -e "\(failURL.path)" ]; then
+            exit 1
+          fi
+          printf '{"tools":[{"name":"dynamic.echo","description":"Dynamic echo","inputSchema":"{}","presentation":{"title":"Dynamic tool","action":"Use","kind":"other","metadata":[],"sections":[]}}]}\n'
+          exit 0
+        fi
+        cat >/dev/null
+        printf '{"ok":true,"output":"dynamic-output"}\n'
+        """.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+
+        let runtime = SwiftFeatureRuntime(
+            features: [
+                SwiftFeatureBundle(
+                    id: "dynamic-retry-fixture",
+                    executableURL: executableURL,
+                    tools: [],
+                    toolNamePrefixes: ["dynamic."],
+                    discoversToolsAtRuntime: true
+                )
+            ]
+        )
+
+        // A discovery that exits with a failure status is not cached: the
+        // next request runs `--list-tools` again.
+        #expect(await runtime.descriptors().isEmpty)
+        #expect(try Self.markerCount(at: markerURL) == 1)
+        #expect(await runtime.descriptors().isEmpty)
+        #expect(try Self.markerCount(at: markerURL) == 2)
+        #expect(await runtime.knownDescriptors().isEmpty)
+
+        // The first successful discovery is cached.
+        try FileManager.default.removeItem(at: failURL)
+        #expect(await runtime.descriptors().map(\.name) == ["dynamic.echo"])
+        #expect(try Self.markerCount(at: markerURL) == 3)
+        #expect(await runtime.descriptors().map(\.name) == ["dynamic.echo"])
+        #expect(try Self.markerCount(at: markerURL) == 3)
+        #expect(await runtime.knownDescriptors().map(\.name) == ["dynamic.echo"])
+    }
+
+    @Test
+    func persistentFailedDiscoveryIsRetriedOnTheNextRequest() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-feature-persistent-retry-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true
+        )
+        let failURL = rootURL.appendingPathComponent("fail")
+        try Data().write(to: failURL)
+        let executableURL = rootURL.appendingPathComponent("feature")
+        let listResponse = #"{"tools":[{"name":"fixture.echo","description":"Fixture echo","inputSchema":"{}","presentation":{"title":"Echo","action":"Echo","kind":"other","metadata":[],"sections":[]}}]}"#
+        try """
+        #!/bin/sh
+        fail_marker='\(failURL.path)'
+        list_response=$(printf '%s' '\(listResponse)' | base64 | tr -d '\\n')
+        if [ "$1" = "--serve" ]; then
+          while IFS= read -r line; do
+            request_id=$(printf '%s' "$line" | sed -n 's/.*"id":"\\([^"\\]*\\)".*/\\1/p')
+            case "$line" in
+              *'"operation":"listTools"'*)
+                if [ -e "$fail_marker" ]; then
+                  printf '{"id":"%s","error":"unavailable"}\\n' "$request_id"
+                else
+                  printf '{"id":"%s","responseData":"%s"}\\n' "$request_id" "$list_response"
+                fi
+                ;;
+              *'"operation":"shutdown"'*)
+                printf '{"id":"%s","responseData":""}\\n' "$request_id"
+                exit 0
+                ;;
+            esac
+          done
+          exit 0
+        fi
+        exit 1
+        """.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+
+        let runtime = SwiftFeatureRuntime(
+            features: [
+                SwiftFeatureBundle(
+                    id: "persistent-retry-fixture",
+                    executableURL: executableURL,
+                    tools: [],
+                    toolNamePrefixes: ["fixture."],
+                    discoversToolsAtRuntime: true,
+                    supportsPersistentSession: true
+                )
+            ]
+        )
+
+        // An error frame is a failed discovery: it is not cached.
+        #expect(await runtime.descriptors(allowedToolNames: ["fixture."]).isEmpty)
+
+        try FileManager.default.removeItem(at: failURL)
+        #expect(
+            await runtime.descriptors(allowedToolNames: ["fixture."]).map(\.name)
+                == ["fixture.echo"]
+        )
+        await runtime.shutdown()
+    }
+
+    /// The number of `--list-tools` runs the fixture script recorded: one `x`
+    /// per run.
+    private static func markerCount(at markerURL: URL) throws -> Int {
+        try String(contentsOf: markerURL, encoding: .utf8).count
+    }
+
     /// Builds one self-contained optional feature without using or probing the
     /// root package's build products. The caller owns `scratchPath` and removes
     /// it with its UUID test root.

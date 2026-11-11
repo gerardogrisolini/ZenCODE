@@ -19,7 +19,13 @@ extension SwiftFeatureRuntime {
             return cachedTools
         }
 
-        let discoveredTools = (try? await discoverRuntimeTools(feature: feature)) ?? []
+        // Only a successful discovery is cached (even an empty one: a valid
+        // empty response is a success). A failed one (feature unavailable,
+        // consent declined, process exited) is not remembered, so it is
+        // retried on the next request until it succeeds.
+        guard let discoveredTools = try? await discoverRuntimeTools(feature: feature) else {
+            return ToolDescriptor.canonicalized(feature.tools)
+        }
         let canonicalTools = ToolDescriptor.canonicalized(feature.tools + discoveredTools)
         runtimeDiscoveredToolsByFeatureID[feature.id] = canonicalTools
         return canonicalTools
@@ -35,9 +41,12 @@ extension SwiftFeatureRuntime {
         return runtimeDiscoveredToolsByFeatureID[feature.id] ?? feature.tools
     }
 
+    /// The tools `feature` lists, or `nil` when its one-shot `--list-tools`
+    /// exits with a failure status. Persistent-session errors, error frames
+    /// and undecodable responses throw.
     private func discoverRuntimeTools(
         feature: SwiftFeatureBundle
-    ) async throws -> [ToolDescriptor] {
+    ) async throws -> [ToolDescriptor]? {
         // No timeout: a feature may trigger a user-consent dialog while listing
         // tools, and the process must wait until the user responds.
         let responseData: Data
@@ -54,7 +63,7 @@ extension SwiftFeatureRuntime {
                 environment: DeveloperToolEnvironment.processEnvironment()
             )
             guard result.exitCode == 0 else {
-                return []
+                return nil
             }
             responseData = result.stdoutData
         }

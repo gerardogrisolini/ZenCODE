@@ -53,6 +53,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   emoji), for example while voice dictation revises its preview, and the
   field still holds the cursor of the previous draft: a cursor outside the
   new draft now counts as the end of the draft.
+- A failed discovery of the tools of an optional feature is no longer
+  remembered for the rest of the session: it is retried on the next request
+  until it succeeds, and only a successful discovery stays cached. The Xcode
+  tools, for example, stayed off until `zen` or the app was restarted when, at
+  the first attempt, Xcode was closed, had no project open, or the connection
+  was refused. While the discovery keeps failing, Xcode may ask for
+  authorization again at each attempt. The feature does not need to be
+  reinstalled: the fix is in the `zen` runtime.
 
 ## [5.0.2] - 2026-11-11
 

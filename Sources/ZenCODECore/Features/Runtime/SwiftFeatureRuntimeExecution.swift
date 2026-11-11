@@ -22,11 +22,12 @@ extension SwiftFeatureRuntime {
             excludingFeatureIDs: excludingFeatureIDs
         ) {
             // Runtime discovery invokes the `--list-tools` subprocess and waits
-            // for completion, including any feature-owned consent. Results are
-            // cached per-feature in `runtimeDiscoveredToolsByFeatureID`, so only
-            // the first call for each feature incurs the cost. When the
-            // SwiftFeatureRuntime is shared (parent → subagent), the cache is
-            // reused across all sessions.
+            // for completion, including any feature-owned consent. Only a
+            // successful discovery is cached per-feature in
+            // `runtimeDiscoveredToolsByFeatureID`, so only the first successful
+            // call for each feature incurs the cost; a failed discovery is
+            // retried on the next call. When the SwiftFeatureRuntime is shared
+            // (parent → subagent), the cache is reused across all sessions.
             let featureTools = feature.discoversToolsAtRuntime
                 ? await tools(for: feature)
                 : feature.tools
@@ -45,9 +46,9 @@ extension SwiftFeatureRuntime {
     /// resolves, from the tools already known only: it never starts a
     /// feature's tool discovery (`--list-tools`) or the consent it can ask
     /// for. A feature that discovers its tools at runtime contributes the
-    /// tools its last discovery cached, or only its declared tools when it
-    /// has not been discovered since the runtime was created or its bundles
-    /// were reloaded.
+    /// tools its last successful discovery cached, or only its declared tools
+    /// when it has no successful discovery since the runtime was created or
+    /// its bundles were reloaded (a failed discovery is not cached).
     public func knownDescriptors(
         allowedToolNames: Set<String>? = nil,
         excludingFeatureIDs: Set<String> = []
