@@ -459,6 +459,11 @@ public final class ZenWindowSession: Identifiable {
             let controller = incarnation.controller
             await controller.applyInitialAgentSelectionIfNeeded()
             try await controller.applyInitialSkillSelectionIfNeeded()
+            // As the terminal does before its startup summary, create the
+            // runtime session and load the model. Reading the tool descriptors
+            // then uses the live backend, including runtime-discovered feature
+            // tools such as Xcode, whose discovery may request authorization.
+            try await controller.startInitialSession()
             // The first session's observer; the hooks move it with the
             // session from now on.
             await controller.startTaskGraphObserver()

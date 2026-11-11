@@ -944,9 +944,15 @@ struct ZenVoiceWindowTests {
             #expect(toAgent.destination == .direct([Self.agentID]))
             #expect(toAgent.text == "check the diff")
             await runtime.waitForVoice()
-            // A message is not a prompt: no turn starts for it.
+            // With the backend live from startup, the coordinator message can
+            // start its automatic turn while voice delivers the direct one.
+            // Wait for that legitimate turn before asserting that neither live
+            // message added a prompt of its own.
             #expect(await window.waitUntilIdle())
-            #expect(await backend.prompts == ["Hello"])
+            let promptsAfterLiveMessages = await backend.prompts
+            #expect(promptsAfterLiveMessages.count == 2)
+            #expect(promptsAfterLiveMessages.first == "Hello")
+            #expect(promptsAfterLiveMessages.last?.contains("status?") == true)
             #expect(window.draft.isEmpty)
         }
     }

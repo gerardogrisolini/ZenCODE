@@ -7,6 +7,8 @@
 
 /// Why an operation creates the session anew.
 public enum ChatSessionRecreationReason: Sendable, Equatable {
+    /// The channel started its first session and loaded its model.
+    case sessionStarted
     /// A model other than the current one was selected.
     case modelChanged
     /// An agent profile was activated.
@@ -122,7 +124,8 @@ public protocol ChatSessionChannelHooks: AnyObject, Sendable {
     /// configuration is composed.
     func agentDidChange(_ agent: AgentProfile) async
 
-    /// The backend was stopped and the session is about to be created anew.
+    /// The session is about to be created, optionally after its backend was
+    /// stopped for a selection change.
     func sessionWillCreate(reason: ChatSessionRecreationReason) async
 
     /// The session was created and its prompt skills applied; the model has
