@@ -89,32 +89,31 @@ public enum ZenComposerLogic {
 
     /// Whether the cursor is on the first line (moving up) or on the last line
     /// (moving down) of `text`, so the arrow recalls the history instead of
-    /// moving between lines. Without a selection the cursor is at the end.
+    /// moving between lines. Without a selection, or with one outside `text`
+    /// (left over from an older draft), the cursor is at the end.
     static func cursorIsOnBoundaryLine(
         _ text: String,
         selection: Range<String.Index>?,
         movingUp: Bool
     ) -> Bool {
-        let cursor: String.Index
-        if let selection {
-            cursor = min(movingUp ? selection.lowerBound : selection.upperBound, text.endIndex)
-        } else {
-            cursor = text.endIndex
-        }
+        let cursor = selection.flatMap {
+            position(movingUp ? $0.lowerBound : $0.upperBound, in: text)
+        } ?? text.endIndex
         return movingUp
             ? !text[..<cursor].contains("\n")
             : !text[cursor...].contains("\n")
     }
 
     /// `text` with the selection (or the end, without one) replaced by a
-    /// newline, and the cursor after it.
+    /// newline, and the cursor after it. A bound outside `text` (a selection
+    /// left over from an older draft) is the end.
     static func insertingNewline(
         into text: String,
         replacing selection: Range<String.Index>?
     ) -> (text: String, cursor: String.Index) {
         var result = text
-        let lower = min(selection?.lowerBound ?? text.endIndex, text.endIndex)
-        let upper = min(max(selection?.upperBound ?? text.endIndex, lower), text.endIndex)
+        let lower = selection.flatMap { position($0.lowerBound, in: text) } ?? text.endIndex
+        let upper = max(selection.flatMap { position($0.upperBound, in: text) } ?? text.endIndex, lower)
         let offset = text.distance(from: text.startIndex, to: lower)
         result.replaceSubrange(lower..<upper, with: "\n")
         let cursor = result.index(result.startIndex, offsetBy: offset + 1)
@@ -128,11 +127,10 @@ public enum ZenComposerLogic {
     static func cursorOffset(in text: String, selection: Range<String.Index>?) -> Int? {
         guard let selection,
               selection.isEmpty,
-              selection.lowerBound >= text.startIndex,
-              selection.lowerBound <= text.endIndex else {
+              let cursor = position(selection.lowerBound, in: text) else {
             return nil
         }
-        return text.distance(from: text.startIndex, to: selection.lowerBound)
+        return text.distance(from: text.startIndex, to: cursor)
     }
 
     /// The selection of `selection` in `text`, in characters; `nil` without
@@ -140,12 +138,42 @@ public enum ZenComposerLogic {
     /// older draft).
     static func selectionOffsets(in text: String, selection: Range<String.Index>?) -> Range<Int>? {
         guard let selection,
-              selection.lowerBound >= text.startIndex,
-              selection.upperBound <= text.endIndex else {
+              let lower = position(selection.lowerBound, in: text),
+              let upper = position(selection.upperBound, in: text) else {
             return nil
         }
-        let lower = text.distance(from: text.startIndex, to: selection.lowerBound)
-        return lower..<(lower + text.distance(from: selection.lowerBound, to: selection.upperBound))
+        let start = text.distance(from: text.startIndex, to: lower)
+        return start..<(start + text.distance(from: lower, to: max(upper, lower)))
+    }
+
+    /// `index` as an index of `text`, when it lies within the bounds of
+    /// `text` counted in the encoding of the index; `nil` otherwise. A
+    /// `String.Index` counts UTF-8 bytes (a native string) or UTF-16 units
+    /// (the field's selection, from its bridged text), and `String` converts
+    /// one into the other, but `<` and `<=` compare the numbers alone: a
+    /// selection left over from an older draft can pass `<= text.endIndex`
+    /// and trap when `text` measures from it. The encoding is read from the
+    /// index's debug description (`12[utf16]`, `7[utf8]`, `0[any]`): an
+    /// index valid in both encodings, or in one not recognized, is held to
+    /// the UTF-16 count, which is never more than the UTF-8 one. An index
+    /// inside a scalar (`+1` after the encoding) is refused: the field never
+    /// puts the cursor there. The index returned is in the encoding of
+    /// `text`, rounded down to a character, so comparing it with `text`'s
+    /// own indices compares positions. Should the description change format
+    /// and its offset no longer read, every index is refused: the composer
+    /// then works at the end of the draft, without trapping.
+    private static func position(_ index: String.Index, in text: String) -> String.Index? {
+        let description = index.debugDescription
+        let digits = description.prefix { $0.isASCII && $0.isNumber }
+        let rest = description.dropFirst(digits.count)
+        guard let offset = Int(digits), !rest.contains("+") else {
+            return nil
+        }
+        let count = rest.hasPrefix("[utf8]") ? text.utf8.count : text.utf16.count
+        guard offset <= count else {
+            return nil
+        }
+        return text.index(index, offsetBy: 0)
     }
 
     /// The selection, in characters, once the owner changed the draft

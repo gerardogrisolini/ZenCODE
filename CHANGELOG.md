@@ -48,6 +48,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   OpenRouter metadata no longer replaces this native thinking support. Models
   already configured keep their old thinking metadata: remove them and add
   them again from the catalog in setup.
+- The composer of the macOS app no longer crashes when the app replaces the
+  draft with a shorter one containing non-ASCII characters (accented letters,
+  emoji), for example while voice dictation revises its preview, and the
+  field still holds the cursor of the previous draft: a cursor outside the
+  new draft now counts as the end of the draft.
 
 ## [5.0.2] - 2026-11-11
 
