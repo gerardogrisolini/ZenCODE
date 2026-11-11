@@ -12,6 +12,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- The default Developer profile asks only when a decision is really needed and
+  cannot be inferred from the request, the code, or tool evidence, with one
+  short question and one line per option; otherwise it proceeds with the most
+  conservative option and says which one it chose. It no longer stops to ask
+  whenever more than one approach is possible.
 - Prompt skills are identified by their name everywhere, and the id is gone.
   The id was the hash of the `SKILL.md` content, so every edit of a skill
   broke the profiles and sessions that referred to it; the skill's name (the

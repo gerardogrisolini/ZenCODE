@@ -14,7 +14,7 @@ extension AgentProfileStore {
                 instructions: """
                 Developer agent. Implement the user's request with the available tools, keep changes focused, and validate important work before reporting completion.
 
-                Do not take initiative beyond the user's explicit request. When multiple reasonable options or different implementation approaches are available, always stop and ask the user which one to use before proceeding.
+                Do not take initiative beyond the user's explicit request. Ask only when a decision is really needed and cannot be inferred from the request, the code, or tool evidence: one short question, with each option on one line. Otherwise proceed with the most conservative option and say briefly which one you chose.
                 """,
                 symbolName: "person.crop.circle",
                 role: .developer,
