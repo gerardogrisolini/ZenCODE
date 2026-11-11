@@ -10,6 +10,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Anthropic API: the provider setup now reads each model's thinking
+  `capabilities` from `/v1/models` and saves the right thinking mode and
+  levels, as the Anthropic Subscription setup already does. Models with
+  adaptive thinking only (Claude 5.x) no longer fail with HTTP 400
+  (`thinking.type.enabled` is not supported for this model): the request now
+  sends `thinking.type: adaptive` with `output_config.effort`. "Off" is
+  offered only when the catalog says the model accepts disabled thinking, and
+  OpenRouter metadata no longer replaces this native thinking support. Models
+  already configured keep their old thinking metadata: remove them and add
+  them again from the catalog in setup.
+
 ## [5.0.2] - 2026-11-11
 
 ### Added

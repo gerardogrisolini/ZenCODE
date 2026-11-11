@@ -28,16 +28,18 @@ struct SubscriptionModelCatalogClient: Sendable {
         var anthropicSupportsDisabledThinking: Bool? = nil
 
         var thinkingSupport: ModelThinkingSupport? {
-            if anthropicThinkingMode == "enabled" { return .generic }
+            if let anthropicThinkingMode {
+                return AnthropicModelCapabilities.thinkingSupport(
+                    mode: anthropicThinkingMode, effortLevels: reasoningLevels,
+                    supportsDisabledThinking: anthropicSupportsDisabledThinking == true)
+            }
             let levels = reasoningLevels.compactMap(Self.reasoningSelection)
             guard !levels.isEmpty else { return nil }
             let hasThinking = levels.contains { $0 != .off }
-            let offSelection: [ThinkingSelection] = anthropicThinkingMode == "adaptive"
-                && anthropicSupportsDisabledThinking == true ? [.off] : []
             return ModelThinkingSupport(
                 supportsThinking: hasThinking, supportsReasoningEffort: hasThinking,
                 supportsPreserveThinking: false,
-                availableSelections: offSelection + levels,
+                availableSelections: levels,
                 defaultSelection: defaultReasoningLevel.flatMap(Self.reasoningSelection)
                     .flatMap { levels.contains($0) ? $0 : nil } ?? levels[0]
             )
@@ -192,23 +194,13 @@ struct SubscriptionModelCatalogClient: Sendable {
                 var anthropicSupportsDisabled: Bool?
                 var modalities = entry["input_modalities"] as? [String] ?? []
                 if provider == .anthropic {
-                    let capabilities = entry["capabilities"] as? [String: Any] ?? [:]
-                    let thinking = capabilities["thinking"] as? [String: Any] ?? [:]
-                    let types = thinking["types"] as? [String: Any] ?? [:]
-                    let effort = capabilities["effort"] as? [String: Any] ?? [:]
-                    anthropicMode = "disabled"
-                    anthropicSupportsDisabled = Self.supported(types["disabled"])
-                    if thinking["supported"] as? Bool == true {
-                        if Self.supported(types["adaptive"]), effort["supported"] as? Bool == true {
-                            levels = ["low", "medium", "high", "xhigh", "max"].filter { Self.supported(effort[$0]) }
-                            if !levels.isEmpty { anthropicMode = "adaptive" }
-                        } else if Self.supported(types["enabled"]) {
-                            anthropicMode = "enabled"
-                        }
-                    }
+                    let capabilities = AnthropicModelCapabilities(entry: entry)
+                    anthropicMode = capabilities.thinkingMode
+                    anthropicSupportsDisabled = capabilities.supportsDisabledThinking
+                    levels = capabilities.effortLevels
                     modalities = ["text"]
-                    if Self.supported(capabilities["image_input"]) { modalities.append("image") }
-                    if Self.supported(capabilities["pdf_input"]) { modalities.append("pdf") }
+                    if capabilities.supportsImageInput { modalities.append("image") }
+                    if capabilities.supportsPDFInput { modalities.append("pdf") }
                 }
                 models.append(Model(id: id, title: entry["display_name"] as? String ?? id,
                     contextWindow: positive(entry[provider == .chatGPT ? "context_window" : "max_input_tokens"]),
@@ -234,10 +226,6 @@ struct SubscriptionModelCatalogClient: Sendable {
         } while cursor != nil
         guard Self.valid(models) else { throw CatalogError.invalidResponse }
         return models
-    }
-
-    private static func supported(_ value: Any?) -> Bool {
-        (value as? [String: Any])?["supported"] as? Bool == true
     }
 
     private func positive(_ value: Any?) -> Int? {

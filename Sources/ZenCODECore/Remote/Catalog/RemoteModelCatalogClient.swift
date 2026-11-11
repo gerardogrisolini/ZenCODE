@@ -212,6 +212,21 @@ extension RemoteModelCatalogClient {
         }
 
         let metadata = modelMetadata(from: entry)
+        var overrides = generationParameterOverrides(from: entry.values)
+        var thinkingSupport = Self.thinkingSupport(
+            fromModelMetadata: metadata,
+            baseURL: baseURL,
+            modelID: id
+        )
+        // The Anthropic API advertises the wire thinking mode per model:
+        // adaptive-only models reject the manual `enabled` budget with HTTP 400.
+        if isAnthropicAPIBaseURL(baseURL), metadata["capabilities"] is [String: Any] {
+            let capabilities = AnthropicModelCapabilities(entry: metadata)
+            thinkingSupport = capabilities.thinkingSupport
+            var merged = overrides ?? AgentGenerationParameterOverrides()
+            merged.subscriptionThinkingMode = capabilities.thinkingMode
+            overrides = merged.nilIfEmpty
+        }
         return OpenRouterModelInfo(
             id: id,
             name: stringValue(entry.values, "name")
@@ -219,12 +234,8 @@ extension RemoteModelCatalogClient {
                 ?? id,
             contextLength: contextLength(from: entry.values),
             pricing: pricing(from: entry.values),
-            thinkingSupport: Self.thinkingSupport(
-                fromModelMetadata: metadata,
-                baseURL: baseURL,
-                modelID: id
-            ),
-            generationParameterOverrides: generationParameterOverrides(from: entry.values),
+            thinkingSupport: thinkingSupport,
+            generationParameterOverrides: overrides,
             installed: boolValue(entry.values, "installed"),
             loaded: boolValue(entry.values, "loaded"),
             serverLoaded: boolValue(entry.values, "server_loaded")

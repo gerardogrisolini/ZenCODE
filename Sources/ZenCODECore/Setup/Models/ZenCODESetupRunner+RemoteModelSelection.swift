@@ -306,7 +306,11 @@ extension ZenCODESetupRunner {
                 return modelMergingOpenRouterMetadata(
                     model,
                     metadata: metadata,
+                    // DeepSeek and Anthropic API models carry authoritative
+                    // thinking metadata (direct API / `capabilities`) that
+                    // OpenRouter's routed catalog must not replace.
                     includeThinkingSupport: !AgentRemoteProvider.isDeepSeekBaseURL(providerBaseURL)
+                        && model.generationParameterOverrides?.subscriptionThinkingMode == nil
                 )
             }
         } catch let error as CancellationError {
