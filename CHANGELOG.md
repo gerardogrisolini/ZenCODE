@@ -35,6 +35,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `uninstallSkills(ids:)`, and `TerminalSavedSession.selectedSkillIDs` are now
   `skillNames`, `selectedSkillNames`, `selectSkills(names:)`,
   `uninstallSkills(names:)`, and `selectedSkillNames`.
+- The system prompt now tells the agent to honor a tool's own precedence: when a
+  tool's description asks to be preferred over the generic shell, file, search,
+  text, or build tools within a scope, that tool takes precedence there. The
+  Xcode tools already ask for this, so the agent now uses them by default for
+  the workspace open in Xcode instead of the generic file, search, shell, and
+  SwiftPM tools. The generic tools remain for paths outside that scope, for
+  commands that the project instructions explicitly require, and as a fallback
+  when the preferred tool fails. The rule names no specific tool and is part of
+  the stable system prompt, so it applies on every platform and also when such
+  tools connect to a session that is already open.
 
 ### Fixed
 

@@ -623,6 +623,7 @@ public enum SystemPromptBuilder {
         Coding workflow:
         Prefer concrete tool evidence over assumptions. Search before broad reads, read before edits, and keep edits narrowly scoped to the user's request. When inspecting unfamiliar or large files, prefer compact orientation tools such as `local.inspectFile` and `search.locate`, then read only the specific ranges needed with `local.readFile` offset/limit. Preserve unrelated user changes and do not revert work you did not make. Prefer dedicated tools when they are exposed; use shell execution only for work not covered by a dedicated tool. Validate important changes with the available build, test, lint, or diagnostic tools when the risk justifies it.
         For file changes, read enough exact text to make `old` unique; use `local.editFile` once, `local.multiEdit` for ordered atomic edits to one file, `local.applyPatch` for large or multi-file changes, and avoid `local.writeFile` for partial edits.
+        Tool precedence: when a tool's description says it should be preferred over generic shell, filesystem, search, text, or build tools within a scope (such as the project open in an IDE), that preference takes precedence over the generic tools named above for work in that scope. In that scope, use the generic tools only for paths the preferred tool cannot reach, for exact commands that project instructions explicitly require, or when the preferred tool fails or cannot perform the operation.
         """
     }
 
