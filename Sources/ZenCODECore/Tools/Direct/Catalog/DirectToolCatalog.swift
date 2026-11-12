@@ -83,6 +83,28 @@ public enum DirectToolCatalog {
 #endif
     }
 
+    /// The core tools that only read, by exact name: the read-only Files
+    /// tools (`local.pwd`, `local.ls`, `local.readFile`, `local.readFiles`,
+    /// `local.inspectFile`), every Search and Text tool, the read-only memory
+    /// tools, the prompt-skill tools, `todo.read`, `tasks.list`, and
+    /// `tasks.get`. Built from the read-only descriptors; of the todo and
+    /// task ones only the three that read are kept.
+    ///
+    /// A call to one of them changes nothing another call can observe, which
+    /// is what its two readers rely on: no live workspace checkpoint follows
+    /// it (``TurnFileChangeLiveCheckpointPolicy``), and consecutive calls of
+    /// one tool batch run concurrently (``RemoteToolBatchDispatcher``).
+    static let coreReadOnlyToolNames: Set<String> = {
+        let readingTodoTaskToolNames: Set<String> = ["todo.read", "tasks.list", "tasks.get"]
+        let descriptors = coreReadLocalFileAndTextDescriptors
+            + skillToolDescriptors
+            + coreReadMemoryDescriptors
+            + coreReadTodoTaskDescriptors.filter {
+                readingTodoTaskToolNames.contains($0.name)
+            }
+        return Set(descriptors.map(\.name))
+    }()
+
     /// Intrinsic, always-on prompt-skill tools (`skills.list`, `skills.read`).
     /// They are not user-selectable from `/tools` and remain available even when
     /// every user tool group is disabled.

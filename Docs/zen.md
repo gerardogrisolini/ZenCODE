@@ -1640,6 +1640,8 @@ When a scheduled prompt seems never to run, or its mail never arrives:
 
 Core tool groups are filesystem, shell, text, search, memory, and sub-agents; Git, generated Swift features, and installed optional feature packages such as XcodeTools on macOS or FigmaTools come in addition. Use `/tools` to select per session. ACP clients pass enabled tools directly.
 
+When the model asks for several tools in one response, they run in the order it asked for them, one after the other. Consecutive calls to core tools that only read run at the same time: the read-only Files tools (`local.pwd`, `local.ls`, `local.readFile`, `local.readFiles`, `local.inspectFile`), the Search and Text tools, `memory.read`, `memory.search`, `memory.get`, `skills.list`, `skills.read`, `todo.read`, `tasks.list`, and `tasks.get`. Every other tool, including shell commands, file edits, Git, feature and MCP tools, waits for the call before it. The calls are shown and recorded in the order the model asked for them either way.
+
 ### Search tools moved into the core
 
 `search.glob`, `search.grep`, and `search.locate` were the optional

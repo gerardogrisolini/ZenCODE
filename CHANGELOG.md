@@ -43,6 +43,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - The default semantic recall bound (`ZENCODE_MEMORY_RECALL_SEMANTIC_TIMEOUT_MS`)
   is 6000 ms again, as documented; releases since v2.3.6 used 8000 ms. An
   explicit value keeps overriding it.
+- When the model asks for several tools in one response, consecutive calls to
+  core tools that only read (the read-only Files tools, Search, Text, the
+  read-only memory tools, `skills.list`, `skills.read`, `todo.read`,
+  `tasks.list`, `tasks.get`) now run at the same time instead of one after the
+  other. Every other tool still runs alone, in the order the model asked for
+  it, and the calls are shown and recorded in that order. Measured in a debug
+  build on three `search.grep` over the ZenCODE sources, the batch takes about
+  65 ms instead of about 155 ms.
 
 ## [6.0.0] - 2026-11-11
 
