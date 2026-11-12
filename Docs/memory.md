@@ -382,7 +382,9 @@ resolves the session's graph (the workspace graph, or the global graph for
 inline: offline BM25 seeds, graph expansion, and selection through
 `ScoreThresholdMemorySelector`. Without an endpoint, retrieval is local BM25
 and costs no extra round trip; with an endpoint, a bounded HTTP call to the
-embedding service adds semantic similarity and fusion. Neither adds a second
+embedding service adds semantic similarity and fusion. The request is sent
+while the engine ranks the graph locally, so the endpoint's latency overlaps
+the lexical pass instead of following it. Neither adds a second
 LLM call — what reaches the wire is the formatted block, which
 does add input tokens to the outgoing request and is therefore bounded by a
 character budget (`ZENCODE_MEMORY_RECALL_MAX_CHARACTERS`, default 4 000

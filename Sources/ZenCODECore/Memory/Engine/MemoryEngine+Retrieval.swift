@@ -128,6 +128,14 @@ extension MemoryEngine {
         }
         let overfetch = 4
 
+        // The embedding request does not depend on the local rankings, so it
+        // starts before them: the endpoint's latency overlaps the BM25 pass
+        // over the whole graph instead of following it.
+        let semanticQueries = includeSemantic && embedder != nil && configuration.maxSemanticQueries > 0
+            ? Array(queries.prefix(configuration.maxSemanticQueries))
+            : []
+        async let pendingQueryEmbeddings = Self.embeddings(for: semanticQueries, using: embedder)
+
         var rankings: [[ScoredMemoryID]] = []
         rankings.reserveCapacity(queries.count + configuration.maxSemanticQueries + 1)
 
@@ -152,15 +160,13 @@ extension MemoryEngine {
         )
         if !metadata.isEmpty { rankings.append(weighted(metadata, keeping: lexicalLimit)) }
 
-        if includeSemantic,
-           let embedder,
-           configuration.maxSemanticQueries > 0 {
-            let semanticQueries = Array(queries.prefix(configuration.maxSemanticQueries))
+        let queryEmbeddings = await pendingQueryEmbeddings
+        if let embedder, !semanticQueries.isEmpty {
             var semanticFailures = 0
             var firstFailure: (any Error)?
-            for query in semanticQueries {
+            for embedding in queryEmbeddings {
                 do {
-                    let queryEmbedding = try await embedder.embed(query)
+                    let queryEmbedding = try embedding.get()
                     // Gated per prompt (see `MemorySearch.semantic`): a prompt
                     // with no semantic outlier contributes no semantic seeds
                     // instead of a noise-filled list.
@@ -252,6 +258,27 @@ extension MemoryEngine {
         let selected = try await selectWithPolicy(context: prompt, candidates: candidates, limit: resultLimit)
         return (plan, candidates, selected)
     }
+
+    /// The embedding of each query, in order, or the error its request ended
+    /// with. Off the engine actor, so the requests run while the engine ranks
+    /// locally; the caller handles the failures where it used to await them.
+    private static func embeddings(
+        for queries: [String],
+        using embedder: (any EmbeddingProvider)?
+    ) async -> [Result<[Float], any Error>] {
+        guard let embedder else { return [] }
+        var embeddings: [Result<[Float], any Error>] = []
+        embeddings.reserveCapacity(queries.count)
+        for query in queries {
+            do {
+                embeddings.append(.success(try await embedder.embed(query)))
+            } catch {
+                embeddings.append(.failure(error))
+            }
+        }
+        return embeddings
+    }
+
     func retrievalQueries(from plan: MemoryQueryPlan, originalPrompt: String) -> [String] {
         var values = Array(plan.queries.prefix(configuration.maxAnalyzedQueries))
         if configuration.includeOriginalQuery {

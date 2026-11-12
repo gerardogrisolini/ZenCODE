@@ -34,6 +34,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
   blocks even in a session loaded without a usable KV checkpoint, where the
   prompt is evaluated again in full. The blocks of earlier turns stay in the
   context until compaction removes their messages.
+- With an embedding endpoint configured, a memory retrieval (the automatic
+  recall before a turn and `memory.search`) sends the embedding request while
+  it ranks the graph locally instead of after, so the turn no longer waits for
+  the lexical ranking on top of the endpoint. Measured on a graph of 320
+  entries, the wait beyond the endpoint's own latency drops from about 120 ms
+  to about 25 ms. The recalled block is unchanged.
+- The default semantic recall bound (`ZENCODE_MEMORY_RECALL_SEMANTIC_TIMEOUT_MS`)
+  is 6000 ms again, as documented; releases since v2.3.6 used 8000 ms. An
+  explicit value keeps overriding it.
 
 ## [6.0.0] - 2026-11-11
 
