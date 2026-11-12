@@ -9,9 +9,9 @@ import Foundation
 import ToolCore
 
 extension DirectTodoRuntime {
-    private static let taskExecutionSchema = #"{"type":"object","properties":{"executor":{"type":"string","enum":["coordinator","sub_agent"]},"profile":{"type":"string"},"role":{"type":"string"},"fileScopes":{"type":"array","items":{"type":"string"}},"file_scopes":{"type":"array","items":{"type":"string"}}}}"#
+    private static let taskExecutionSchema = #"{"type":"object","properties":{"executor":{"type":"string","enum":["coordinator","sub_agent"]},"profile":{"type":"string"},"role":{"type":"string"},"fileScopes":{"type":"array","items":{"type":"string"}}}}"#
 
-    private static let taskDefinitionSchema = #"{"type":"object","properties":{"id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"title":{"type":"string"},"name":{"type":"string"},"details":{"type":"string"},"description":{"type":"string"},"order":{"type":"integer"},"priority":{"type":"string","enum":["low","normal","high"]},"complexity":{"type":"integer","minimum":1,"maximum":10},"dependsOn":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}},"acceptanceCriteria":{"type":"array","items":{"type":"string"}},"acceptance_criteria":{"type":"array","items":{"type":"string"}},"execution":\#(taskExecutionSchema)}}"#
+    private static let taskDefinitionSchema = #"{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"order":{"type":"integer"},"priority":{"type":"string","enum":["low","normal","high"]},"complexity":{"type":"integer","minimum":1,"maximum":10,"description":"Task difficulty 1-10. \#(TaskRecord.complexityRubric)."},"dependsOn":{"type":"array","items":{"type":"string"}},"acceptanceCriteria":{"type":"array","items":{"type":"string"}},"execution":\#(taskExecutionSchema)}}"#
 
     private static let todoReadDescriptor = DirectToolDescriptor(
             name: "todo.read",
@@ -29,43 +29,43 @@ extension DirectTodoRuntime {
 
     private static let taskCreateDescriptor = DirectToolDescriptor(
             name: "tasks.create",
-            description: "Atomically creates one or more tasks in the session task graph. Use the canonical tasks array and do not mix it with root-level single-task fields or the legacy items alias. Give every task a stable id, title, complexity, explicit dependsOn and acceptanceCriteria arrays, and execution. Dependencies must reference tasks in the same graph. Model true prerequisites as edges, leave independent tasks dependency-free, and prefer safe, useful parallelism over list-order sequencing. In a /goal graph, keep direct work in the DAG with execution.executor coordinator and use tasks.update pending to in_progress to completed after validation. Delegation is optional: only for delegated work use execution.executor sub_agent and claim it atomically by putting its ID in an agent.create agents item's taskID field.",
-            inputSchema: #"{"type":"object","properties":{"graphID":{"type":"string"},"graph_id":{"type":"string"},"id":{"type":"string"},"title":{"type":"string"},"name":{"type":"string"},"details":{"type":"string"},"description":{"type":"string"},"order":{"type":"integer"},"priority":{"type":"string","enum":["low","normal","high"]},"complexity":{"type":"integer","minimum":1,"maximum":10,"description":"Task difficulty 1-10. \#(TaskRecord.complexityRubric). Agent selection policy: \#(TaskRecord.agentSelectionPolicy)"},"dependsOn":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}},"acceptanceCriteria":{"type":"array","items":{"type":"string"}},"acceptance_criteria":{"type":"array","items":{"type":"string"}},"execution":\#(taskExecutionSchema),"tasks":{"type":"array","items":\#(taskDefinitionSchema)},"items":{"type":"array","items":\#(taskDefinitionSchema)}}}"#,
+            description: "Atomically creates one or more tasks in the session task graph. Give every task a stable id, title, complexity, explicit dependsOn and acceptanceCriteria arrays, and execution; dependencies must reference tasks in the same graph. Model true prerequisites as edges, leave independent tasks dependency-free, and prefer safe, useful parallelism over list-order sequencing. In a /goal graph, keep direct work in the DAG with execution.executor coordinator and use tasks.update pending to in_progress to completed after validation. Delegation is optional: only for delegated work use execution.executor sub_agent and claim it atomically by putting its ID in an agent.create agents item's taskID field.",
+            inputSchema: #"{"type":"object","properties":{"graphID":{"type":"string"},"tasks":{"type":"array","items":\#(taskDefinitionSchema)}},"required":["tasks"]}"#,
             presentation: .standard(title: "Tasks", action: "Create", kind: .create, targetKeyPaths: ["graphID", "graph_id", "title", "name", "id"])
         )
 
     private static let taskListDescriptor = DirectToolDescriptor(
             name: "tasks.list",
             description: "Lists task graph records with derived runnable and dependency state.",
-            inputSchema: #"{"type":"object","properties":{"graphID":{"type":"string"},"graph_id":{"type":"string"},"status":{"type":"string"},"assigneeAgentID":{"type":"string"},"assignee_agent_id":{"type":"string"},"agentID":{"type":"string"},"agent_id":{"type":"string"},"runnableOnly":{"type":"boolean"},"runnable_only":{"type":"boolean"},"includeTerminal":{"type":"boolean"},"include_terminal":{"type":"boolean"},"limit":{"type":"integer"}}}"#,
+            inputSchema: #"{"type":"object","properties":{"graphID":{"type":"string"},"status":{"type":"string"},"assigneeAgentID":{"type":"string"},"runnableOnly":{"type":"boolean"},"includeTerminal":{"type":"boolean"},"limit":{"type":"integer"}}}"#,
             presentation: .standard(title: "Tasks", action: "List", kind: .read, targetKeyPaths: ["graphID", "graph_id", "status", "assigneeAgentID", "assignee_agent_id"])
         )
 
     private static let taskGetDescriptor = DirectToolDescriptor(
             name: "tasks.get",
             description: "Returns one task with dependencies, dependents, attempts, results, evidence, and runnable reason.",
-            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"graphID":{"type":"string"},"graph_id":{"type":"string"}},"required":["id"]}"#,
+            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"graphID":{"type":"string"}},"required":["id"]}"#,
             presentation: .standard(title: "Task", action: "Get", kind: .read, targetKeyPaths: ["id", "taskID", "task_id", "graphID", "graph_id"])
         )
 
     private static let taskUpdateDescriptor = DirectToolDescriptor(
             name: "tasks.update",
-            description: "Updates task metadata, progress, result, evidence, or an allowed lifecycle transition. Use tasks.retry and tasks.cancel for those operations. Alternatively the root coordinator may update /goal workflow control with only graphID, expectedRevision (from tasks.list), and workflow {state: running|awaiting_user|blocked|completed, message}. This mode requires an active current workflow graph and forbids every task field; originalGoal is immutable. Completing tasks does not close /goal: use workflow state completed only after the entire objective is verified; a non-empty graph with every task completed and validated is required. Paused states require a message. Text headings do not suspend or complete a workflow.",
-            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"graphID":{"type":"string"},"graph_id":{"type":"string"},"title":{"type":"string"},"name":{"type":"string"},"details":{"type":["string","null"]},"description":{"type":["string","null"]},"status":{"type":"string"},"statusReason":{"type":"string"},"status_reason":{"type":"string"},"priority":{"type":"string"},"complexity":{"type":"integer","minimum":1,"maximum":10,"description":"Task difficulty 1-10. \#(TaskRecord.complexityRubric). Agent selection policy: \#(TaskRecord.agentSelectionPolicy)"},"dependsOn":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}},"output":{"type":"string"},"progress":{"type":"string"},"error":{"type":"string"},"workflow":{"type":"object","properties":{"state":{"type":"string","enum":["running","awaiting_user","blocked","completed"]},"message":{"type":"string"}},"required":["state"],"additionalProperties":false},"evidence":{"type":"array","items":{}},"expectedRevision":{"type":"integer"},"expected_revision":{"type":"integer"}}}"#,
+            description: "Updates task metadata, progress, result, evidence, or an allowed lifecycle transition; use tasks.retry and tasks.cancel for those operations. Workflow mode, for the root coordinator on the active /goal workflow graph only: pass only graphID, expectedRevision (from tasks.list), and workflow {state, message}, with no task field; originalGoal is immutable. Paused states require a message. Completing tasks does not close /goal: set state completed only after the entire objective is verified and a non-empty graph has every task completed and validated. Text headings do not suspend or complete a workflow.",
+            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"graphID":{"type":"string"},"title":{"type":"string"},"description":{"type":["string","null"]},"status":{"type":"string"},"statusReason":{"type":"string"},"priority":{"type":"string"},"complexity":{"type":"integer","minimum":1,"maximum":10,"description":"Task difficulty 1-10. \#(TaskRecord.complexityRubric)."},"dependsOn":{"type":"array","items":{"type":"string"}},"output":{"type":"string"},"error":{"type":"string"},"workflow":{"type":"object","properties":{"state":{"type":"string","enum":["running","awaiting_user","blocked","completed"]},"message":{"type":"string"}},"required":["state"],"additionalProperties":false},"evidence":{"type":"array","items":{}},"expectedRevision":{"type":"integer"}}}"#,
             presentation: .standard(title: "Task", action: "Update", kind: .edit, targetKeyPaths: ["id", "taskID", "task_id", "title", "name"])
         )
 
     private static let taskRetryDescriptor = DirectToolDescriptor(
             name: "tasks.retry",
             description: "Retries a failed or blocked task while preserving all prior attempts and outputs. Start a new direct attempt with tasks.update status in_progress, or a new delegated attempt through a canonical agent.create agents item containing `taskID`; use agent.message to clarify or query a completed agent, but new implementation work needs this new attempt.",
-            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"graphID":{"type":"string"},"graph_id":{"type":"string"},"expectedRevision":{"type":"integer"},"expected_revision":{"type":"integer"}},"required":["id"]}"#,
+            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"graphID":{"type":"string"},"expectedRevision":{"type":"integer"}},"required":["id"]}"#,
             presentation: .standard(title: "Task", action: "Retry", kind: .other, targetKeyPaths: ["id", "taskID", "task_id"])
         )
 
     private static let taskCancelDescriptor = DirectToolDescriptor(
             name: "tasks.cancel",
             description: "Cancels a task and its active attempt.",
-            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"taskID":{"type":"string"},"task_id":{"type":"string"},"graphID":{"type":"string"},"graph_id":{"type":"string"},"reason":{"type":"string"}},"required":["id"]}"#,
+            inputSchema: #"{"type":"object","properties":{"id":{"type":"string"},"graphID":{"type":"string"},"reason":{"type":"string"}},"required":["id"]}"#,
             presentation: .standard(title: "Task", action: "Cancel", kind: .delete, targetKeyPaths: ["id", "taskID", "task_id"])
         )
 

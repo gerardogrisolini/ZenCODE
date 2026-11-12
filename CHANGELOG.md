@@ -12,6 +12,20 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- The instructions sent for the sub-agent tools (`agent.*` and `tasks.*`) are
+  about 2 300 tokens shorter, measured on the first request of a session
+  (Claude tokenizer, four delegatable profiles): from about 9 000 to 6 700
+  tokens for the `sub-agents` tool group. The schemas of `tasks.create`,
+  `tasks.list`, `tasks.get`, `tasks.update`, `tasks.retry`, `tasks.cancel`, and
+  `agent.message` now show the model only their canonical fields, as
+  `agent.create` and the file edit tools already did: no snake_case aliases,
+  root-level single-task fields, legacy `items` array, or `target`, `prompt`,
+  and `input` aliases. Those forms are still accepted when a model sends them.
+  Rules that the task workflow policy, the delegation roster, the collaboration
+  policy, and the tool descriptions each repeated are now stated once, in a
+  place that is shown whenever the rule applies. The agent selection policy is
+  no longer repeated in the `complexity` field of `tasks.create` and
+  `tasks.update`. No rule was dropped, and the roster keeps its format.
 - The prompts of earlier turns are now resent with the recalled
   `<project-memory>` block and the turn instruction they were first sent with,
   so the request prefix stays stable from one turn to the next for the

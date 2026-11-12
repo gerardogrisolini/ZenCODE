@@ -335,8 +335,7 @@ public struct TaskRecord: Codable, Equatable, Sendable, Identifiable {
         + "your reply when they hit an ambiguity or a decision outside their brief, and they "
         + "do not send progress reports. Use the chat to clarify, steer, and query agents, "
         + "including standby ones, for example to learn what an agent did before deciding on a "
-        + "retry; new implementation work after an attempt closed needs tasks.retry and a new "
-        + "agent.create item with `taskID`."
+        + "retry; a closed attempt cannot resume implementation."
 
     public let id: String
     public var title: String

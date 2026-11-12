@@ -475,6 +475,256 @@ struct DirectTaskToolAdapterTests {
         )
     }
 
+    // MARK: - Legacy input forms
+    //
+    // The model-visible schemas expose only canonical properties. The tests below
+    // pin the aliases and legacy shapes that stay invisible but accepted.
+
+    @Test
+    func tasksCreateAcceptsLegacyItemsAndSnakeCaseKeys() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
+        let sessionID = "legacy-create-\(UUID().uuidString)"
+
+        _ = try await adapter.execute(
+            sessionID: sessionID,
+            toolCall: call(name: "tasks.create", arguments: [
+                "graph_id": "legacy-graph",
+                "items": [
+                    [
+                        "task_id": "base",
+                        "name": "Base",
+                        "details": "Foundation work",
+                        "execution": ["executor": "coordinator"],
+                    ],
+                    [
+                        "id": "feature",
+                        "title": "Feature",
+                        "depends_on": ["base"],
+                        "acceptance_criteria": ["It compiles", "It is tested"],
+                        "execution": ["executor": "sub_agent", "file_scopes": ["Sources/Feature"]],
+                    ],
+                ],
+            ])
+        )
+
+        let graph = try #require(try await orchestrator.graphSnapshot(
+            sessionID: sessionID, graphID: "legacy-graph"
+        ))
+        #expect(graph.id == "legacy-graph")
+        #expect(graph.tasks.map(\.id) == ["base", "feature"])
+
+        let base = try await orchestrator.task(
+            sessionID: sessionID, taskID: "base", graphID: "legacy-graph"
+        ).task
+        #expect(base.title == "Base")
+        #expect(base.details == "Foundation work")
+        #expect(base.execution.executor == .coordinator)
+
+        let feature = try await orchestrator.task(
+            sessionID: sessionID, taskID: "feature", graphID: "legacy-graph"
+        ).task
+        #expect(feature.dependsOn == ["base"])
+        #expect(feature.acceptanceCriteria == ["It compiles", "It is tested"])
+        #expect(feature.execution.executor == .subAgent)
+        #expect(feature.execution.fileScopes == ["Sources/Feature"])
+    }
+
+    @Test
+    func tasksCreateAcceptsASingleTaskInRootForm() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
+        let sessionID = "legacy-root-form-\(UUID().uuidString)"
+
+        _ = try await adapter.execute(
+            sessionID: sessionID,
+            toolCall: call(name: "tasks.create", arguments: [
+                "id": "solo",
+                "title": "Solo",
+                "description": "Single task without a tasks array",
+                "priority": "high",
+                "complexity": 3,
+                "acceptanceCriteria": ["Done"],
+                "execution": ["executor": "sub_agent", "role": "reviewer"],
+            ])
+        )
+
+        let solo = try await orchestrator.task(sessionID: sessionID, taskID: "solo").task
+        #expect(solo.title == "Solo")
+        #expect(solo.details == "Single task without a tasks array")
+        #expect(solo.priority == .high)
+        #expect(solo.complexity == 3)
+        #expect(solo.order == 1)
+        #expect(solo.acceptanceCriteria == ["Done"])
+        #expect(solo.execution.executor == .subAgent)
+        #expect(solo.execution.role == "reviewer")
+    }
+
+    @Test
+    func tasksUpdateAcceptsLegacySnakeCaseKeys() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let sessionID = "legacy-update-\(UUID().uuidString)"
+        _ = try await orchestrator.createGraph(
+            sessionID: sessionID,
+            id: "legacy-graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "work", title: "Work")]
+        )
+        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
+
+        _ = try await adapter.execute(
+            sessionID: sessionID,
+            toolCall: call(name: "tasks.update", arguments: [
+                "task_id": "work",
+                "graph_id": "legacy-graph",
+                "status": "in_progress",
+                "status_reason": "picked up",
+                "progress": "step 1",
+            ])
+        )
+        let started = try await orchestrator.task(
+            sessionID: sessionID, taskID: "work", graphID: "legacy-graph"
+        ).task
+        #expect(started.status == .inProgress)
+        #expect(started.statusReason == "picked up")
+        #expect(started.activeAttempt?.output == "step 1")
+
+        // A stale expected_revision must be read and enforced, leaving the task untouched.
+        do {
+            _ = try await adapter.execute(
+                sessionID: sessionID,
+                toolCall: call(name: "tasks.update", arguments: [
+                    "task_id": "work",
+                    "graph_id": "legacy-graph",
+                    "expected_revision": started.revision + 100,
+                    "progress": "step 2",
+                ])
+            )
+            Issue.record("A stale expected_revision should have been rejected.")
+        } catch SessionTaskOrchestratorError.staleRevision(let expected, let actual) {
+            #expect(expected == started.revision + 100)
+            #expect(actual == started.revision)
+        }
+        #expect(try await orchestrator.task(
+            sessionID: sessionID, taskID: "work", graphID: "legacy-graph"
+        ).task.activeAttempt?.output == "step 1")
+
+        _ = try await adapter.execute(
+            sessionID: sessionID,
+            toolCall: call(name: "tasks.update", arguments: [
+                "task_id": "work",
+                "graph_id": "legacy-graph",
+                "expected_revision": started.revision,
+                "progress": "step 2",
+            ])
+        )
+        #expect(try await orchestrator.task(
+            sessionID: sessionID, taskID: "work", graphID: "legacy-graph"
+        ).task.activeAttempt?.output == "step 2")
+    }
+
+    @Test
+    func tasksListGetRetryAndCancelAcceptLegacySnakeCaseKeys() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let sessionID = "legacy-read-\(UUID().uuidString)"
+        _ = try await orchestrator.createGraph(
+            sessionID: sessionID,
+            id: "legacy-graph",
+            source: .manual,
+            state: .active,
+            tasks: [
+                TaskDefinition(id: "a", title: "A"),
+                TaskDefinition(id: "b", title: "B", dependsOn: ["a"]),
+            ]
+        )
+        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
+
+        let runnable = try await adapter.execute(
+            sessionID: sessionID,
+            toolCall: call(name: "tasks.list", arguments: [
+                "graph_id": "legacy-graph",
+                "runnable_only": true,
+            ])
+        )
+        #expect(runnable.contains(" a: A"))
+        #expect(!runnable.contains(" b: B"))
+
+        let detail = try await adapter.execute(
+            sessionID: sessionID,
+            toolCall: call(name: "tasks.get", arguments: [
+                "task_id": "b",
+                "graph_id": "legacy-graph",
+            ])
+        )
+        #expect(detail.contains(" b: B"))
+
+        do {
+            _ = try await adapter.execute(
+                sessionID: sessionID,
+                toolCall: call(name: "tasks.retry", arguments: [
+                    "task_id": "a",
+                    "graph_id": "legacy-graph",
+                    "expected_revision": 999,
+                ])
+            )
+            Issue.record("A stale expected_revision should have been rejected.")
+        } catch SessionTaskOrchestratorError.staleRevision(let expected, _) {
+            #expect(expected == 999)
+        }
+
+        _ = try await adapter.execute(
+            sessionID: sessionID,
+            toolCall: call(name: "tasks.cancel", arguments: [
+                "task_id": "b",
+                "graph_id": "legacy-graph",
+                "message": "no longer needed",
+            ])
+        )
+        #expect(try await orchestrator.task(
+            sessionID: sessionID, taskID: "b", graphID: "legacy-graph"
+        ).task.status == .cancelled)
+        #expect(try await orchestrator.task(
+            sessionID: sessionID, taskID: "a", graphID: "legacy-graph"
+        ).task.status == .pending)
+    }
+
+    /// tasks.retry's hint is one of the places that state the retry mechanics
+    /// after the prompt policies stopped repeating them; keep it complete.
+    @Test
+    func retryAfterAFailedAttemptReturnsTheCompleteNewAttemptHint() async throws {
+        let orchestrator = SessionTaskOrchestrator()
+        let sessionID = "retry-hint-\(UUID().uuidString)"
+        _ = try await orchestrator.createGraph(
+            sessionID: sessionID,
+            id: "retry-graph",
+            source: .manual,
+            state: .active,
+            tasks: [TaskDefinition(id: "a", title: "A")]
+        )
+        let adapter = DirectTaskToolAdapter(orchestrator: orchestrator)
+        _ = try await adapter.execute(
+            sessionID: sessionID,
+            toolCall: call(name: "tasks.update", arguments: ["id": "a", "status": "in_progress"])
+        )
+        _ = try await adapter.execute(
+            sessionID: sessionID,
+            toolCall: call(name: "tasks.update", arguments: ["id": "a", "status": "failed", "error": "boom"])
+        )
+
+        let retried = try await adapter.execute(
+            sessionID: sessionID,
+            toolCall: call(name: "tasks.retry", arguments: ["id": "a"])
+        )
+
+        #expect(retried.contains("Hint: 1 previous attempt on this task"))
+        #expect(retried.contains("start a new direct attempt with tasks.update status in_progress"))
+        #expect(retried.contains("lowest-capability authorized model binding that meets the task complexity"))
+        #expect(retried.contains("omit model in agent.create to inherit the main session model and provider"))
+        #expect(retried.contains("Put taskID in the new agents item"))
+        #expect(retried.contains("cannot reopen a closed attempt"))
+    }
+
     private func call(name: String, arguments: [String: Any]) -> DirectAgentToolCall {
         let data = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys])
         return DirectAgentToolCall(

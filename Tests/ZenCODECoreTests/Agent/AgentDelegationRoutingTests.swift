@@ -119,6 +119,28 @@ struct AgentDelegationRoutingTests {
         #expect(!section.contains("removed-model"))
         #expect(section.contains("provider: Beta"))
         #expect(!section.contains("profile default"))
+        // The roster keeps only its own format instructions; the tool-grant and
+        // model-inheritance rules live once, in the agent.create contract and in
+        // the per-profile "no configured bindings" line.
+        #expect(section.contains("Give each sub-agent an explicit role and scope."))
+        #expect(section.contains("Do not substitute provider names"))
+        #expect(!section.contains("inherits the coordinator's effective session allowlist"))
+        #expect(!section.contains("For profiles without bindings, omit `model`"))
+    }
+
+    @Test
+    func profileWithoutBindingsCarriesTheModelInheritanceRuleOnItsOwnLine() throws {
+        let section = try #require(
+            SystemPromptBuilder.delegatableAgentsSection(
+                agents: [Self.profile(bindings: [])],
+                allowedToolNames: nil,
+                models: [Self.betaModel]
+            )
+        )
+
+        #expect(section.contains(
+            "  - no configured bindings: inherits the main session model and provider; omit `model`."
+        ))
     }
 
     @Test

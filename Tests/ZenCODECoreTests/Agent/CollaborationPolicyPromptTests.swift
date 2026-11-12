@@ -36,4 +36,14 @@ struct CollaborationPolicyPromptTests {
         )
         #expect(!withoutMessaging.combinedPrompt.contains("Collaboration policy:"))
     }
+
+    @Test
+    func policyKeepsTheClosedAttemptRuleWithoutRepeatingTheRetryMechanics() {
+        let policy = TaskRecord.collaborationPolicy
+        #expect(policy.contains("including standby ones"))
+        #expect(policy.contains("a closed attempt cannot resume implementation"))
+        // The retry mechanics are stated by tasks.retry and the task workflow
+        // policy; the chat policy no longer repeats them.
+        #expect(!policy.contains("needs tasks.retry and a new agent.create item"))
+    }
 }

@@ -193,11 +193,8 @@ public enum SystemPromptBuilder {
                 lowest-capability authorized binding that meets the task complexity.
                 """
                 : """
-                Select the most suitable \
-                agent profile from the delegatable roster: determine the task type and required tools, \
-                then, if the profile has bindings, choose the lowest-capability authorized binding \
-                that meets the task complexity. For profiles without bindings, omit `model` to inherit \
-                the main session model.
+                Select the agent profile and binding from the delegatable roster by the agent \
+                selection policy above.
                 """
             delegationInstruction = """
             In `/goal`, execute graph work directly or delegate when useful; delegation is optional. \
@@ -219,10 +216,7 @@ public enum SystemPromptBuilder {
             fits one compatible sub-agent, prefer a single delegation without manufacturing a \
             task graph. \
             After a delegated `/goal` implementation task completes, validate its result. If validation \
-            is negative, record the task as failed, call tasks.retry, then claim the new attempt \
-            with tasks.update in_progress for direct execution or a new canonical agent.create \
-            item containing `taskID` for delegation. The shared chat can clarify what a \
-            completed agent did, but implementation after an attempt closed always needs a new attempt.
+            is negative, record the task as failed and call tasks.retry before starting a new attempt.
             """
         } else {
             delegationInstruction = """
@@ -232,8 +226,12 @@ public enum SystemPromptBuilder {
             """
         }
 
+        // A role-delegating coordinator keeps the agent selection policy it
+        // used to read in the `complexity` field of the task tool schemas,
+        // which no longer repeat it.
         let agentSelectionPolicySentence = usesRoleDelegation
-            ? "The runtime uses each task's complexity to select the model binding of the delegated role."
+            ? "The runtime uses each task's complexity to select the model binding of the delegated role. "
+                + "Agent selection policy: \(TaskRecord.agentSelectionPolicy)"
             : "Agent selection policy: \(TaskRecord.agentSelectionPolicy)"
 
         return """
@@ -387,9 +385,8 @@ public enum SystemPromptBuilder {
         \(selectionPolicy)
         In every agent.create `agents` item, pass the exact profile name as `profile`. For profiles with configured bindings, \
         pass the exact `binding:...` value shown after “pass model” as `model`; it is required for those profiles. \
-        For profiles without bindings, omit `model` to inherit the main session model and provider. Do not \
-        substitute provider names, display names, raw model slugs, or aliases for a binding. Give each sub-agent \
-        an explicit role and scope. Different profiles retain their own tool grant; a child resolved to the coordinator's same profile inherits the coordinator's effective session allowlist, including session-local additions and removals. Child-intrinsic skills, collaboration, and applicable task-reporting tools are added automatically.
+        Do not substitute provider names, display names, raw model slugs, or aliases for a binding. Give each sub-agent \
+        an explicit role and scope.
         """
     }
 
@@ -622,8 +619,6 @@ public enum SystemPromptBuilder {
 
         Coding workflow:
         Prefer concrete tool evidence over assumptions. Search before broad reads, read before edits, and keep edits narrowly scoped to the user's request. When inspecting unfamiliar or large files, prefer compact orientation tools such as `local.inspectFile` and `search.locate`, then read only the specific ranges needed with `local.readFile` offset/limit. Preserve unrelated user changes and do not revert work you did not make. Prefer dedicated tools when they are exposed; use shell execution only for work not covered by a dedicated tool. Validate important changes with the available build, test, lint, or diagnostic tools when the risk justifies it.
-        For file changes, read enough exact text to make `old` unique; use `local.editFile` once, `local.multiEdit` for ordered atomic edits to one file, `local.applyPatch` for large or multi-file changes, and avoid `local.writeFile` for partial edits.
-        Tool precedence: when a tool's description says it should be preferred over generic shell, filesystem, search, text, or build tools within a scope (such as the project open in an IDE), that preference takes precedence over the generic tools named above for work in that scope. In that scope, use the generic tools only for paths the preferred tool cannot reach, for exact commands that project instructions explicitly require, or when the preferred tool fails or cannot perform the operation.
         """
     }
 

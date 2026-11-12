@@ -48,7 +48,8 @@ extension AgentConfigurationTests {
             "lowest-capability binding that is greater than or equal to task complexity"
         ))
         #expect(policy.contains("Never select a profile or model binding by capability alone"))
-        #expect(policy.contains("For profiles without bindings, omit `model` to inherit the main session model"))
+        #expect(policy.contains("Select the agent profile and binding from the delegatable roster by the agent selection policy above"))
+        #expect(!policy.contains("Select the most suitable agent profile"))
         #expect(policy.contains("For a profile without bindings, omit model in agent.create"))
         #expect(policy.contains("do not invent a binding or capability rating"))
         #expect(policy.contains(TaskRecord.delegationCostPolicy))
@@ -56,6 +57,9 @@ extension AgentConfigurationTests {
         #expect(policy.contains("delegate the task to the cheapest sufficient binding even when direct execution would be faster"))
         #expect(policy.contains("Only complexity-1 work whose context is already in hand stays direct"))
         #expect(policy.contains("When no compatible profile has bindings, delegation saves nothing"))
+        #expect(policy.contains("Use tasks.retry for failed or blocked work before starting a new attempt"))
+        #expect(policy.contains("record the task as failed and call tasks.retry before starting a new attempt"))
+        #expect(!policy.contains("then claim the new attempt with tasks.update in_progress"))
         #expect(SystemPromptBuilder.taskWorkflowToolsAreAvailable(taskTools))
         #expect(SystemPromptBuilder.taskOrchestrationSection(
             allowedToolNames: ["tasks.create", "tasks.list"]
@@ -86,6 +90,22 @@ extension AgentConfigurationTests {
             "Execute runnable graph work directly and record its lifecycle"
         ))
         #expect(!coordinatorOnlyPolicy.contains(TaskRecord.delegationCostPolicy))
+
+        // A role-delegating coordinator keeps the agent selection policy it
+        // used to read in the task tool schemas, next to its role guidance.
+        let rolePolicy = try #require(
+            SystemPromptBuilder.taskOrchestrationSection(
+                allowedToolNames: taskTools,
+                delegatesByRole: true
+            )
+        )
+        #expect(rolePolicy.contains("Delegate by role: in each item set `profileRole`"))
+        #expect(rolePolicy.contains(
+            "The runtime uses each task's complexity to select the model binding of the delegated role."
+        ))
+        #expect(rolePolicy.contains("Agent selection policy: \(TaskRecord.agentSelectionPolicy)"))
+        #expect(!rolePolicy.contains(TaskRecord.delegationCostPolicy))
+        #expect(!rolePolicy.contains("Select the agent profile and binding from the delegatable roster"))
 
         let singularTaskTools: Set<String> = [
             "task.create",

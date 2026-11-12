@@ -91,6 +91,49 @@ extension DirectSubAgentRuntimeTests {
         await runtime.shutdown()
     }
 
+    /// `target`, `prompt` and `input` are no longer in the model-visible
+    /// `agent.message` schema, but the parser still accepts them, both directly
+    /// and after the compatibility normalization applied to real tool calls.
+    @Test
+    func agentMessageStillAcceptsLegacyTargetPromptAndInputAliases() async throws {
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        let rootSessionID = "legacy-alias-\(UUID().uuidString)"
+        let operatorID = AgentSharedChat.operatorID(for: rootSessionID)
+
+        let direct = try await runtime.messageSharedChat(
+            arguments: [
+                "target": .string("operator"),
+                "prompt": .string("Legacy prompt alias"),
+            ],
+            rootSessionID: rootSessionID,
+            parentAllowedToolNames: nil
+        )
+        #expect(direct.contains("Delivered live message to Operator"))
+
+        let normalized = DirectSubAgentRuntime.normalizedToolRequest(
+            for: DirectAgentToolCall(
+                id: UUID().uuidString,
+                name: "agent.message",
+                argumentsObject: ["target": "operator", "input": "Legacy input alias"],
+                argumentsJSON: #"{"target":"operator","input":"Legacy input alias"}"#
+            )
+        )
+        let viaRequest = try await runtime.messageSharedChat(
+            arguments: normalized.arguments,
+            rootSessionID: rootSessionID,
+            parentAllowedToolNames: nil
+        )
+        #expect(viaRequest.contains("Delivered live message to Operator"))
+
+        let messages = await runtime.sharedChatTranscriptMessages(rootSessionID: rootSessionID)
+        #expect(messages.map(\.text) == ["Legacy prompt alias", "Legacy input alias"])
+        #expect(messages.allSatisfy { $0.recipientIDs == [operatorID] })
+        await runtime.shutdown()
+    }
+
     /// `coordinator:<room>` and `operator:<room>` are minted only by the actor.
     /// A delegated agent must never be able to take one of those identities,
     /// in any room and in any near-miss spelling.
