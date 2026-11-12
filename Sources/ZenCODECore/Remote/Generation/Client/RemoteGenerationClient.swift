@@ -362,12 +362,19 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
             throw RemoteGenerationClientError.missingSession
         }
 
+        let userMessage = Self.remoteMessage(
+            role: "user",
+            content: prompt,
+            attachments: attachments
+        )
+        // The turn's memory block and instruction are recorded on the prompt,
+        // so every later request sends it again as it was first sent. The
+        // in-process DS4 path freezes its own rendered content instead
+        // (`DS4MessageKeys.userContent`).
         session.messages.append(
-            Self.remoteMessage(
-                role: "user",
-                content: prompt,
-                attachments: attachments
-            )
+            ds4Generation == nil
+                ? Self.recordingTurnAddition(on: userMessage)
+                : userMessage
         )
         // Persist immediately so concurrent actor operations (compaction,
         // option updates) observe and build on the latest messages instead of
@@ -394,12 +401,12 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
             }
             let expectsPromptCache = Self.messagesExpectPromptCache(session.messages)
             // Every tool round rebuilds the outgoing payload from the fresh
-            // value of `session.messages`, so the turn's memory block is
-            // carried on each round's request — exactly once per round, because
-            // the block is never written back into `session.messages`. That
-            // keeps it out of history, snapshots and the cache key; the
-            // prompt-cache expectation above is deliberately computed from the
-            // unmodified array.
+            // value of `session.messages`, so each prompt carries the memory
+            // block of its own turn on each round's request — exactly once,
+            // because the block is never written into the content of a
+            // session message. That keeps it out of history, snapshots and
+            // the cache key; the prompt-cache expectation above is
+            // deliberately computed from the unmodified array.
             let outputRelay = RemoteRoundOutputRelay()
             let roundEvents: @Sendable (DirectAgentEvent) async -> Void = { event in
                 await outputRelay.forward(event, to: onEvent)

@@ -23,13 +23,19 @@ import Foundation
 ///   `matchesSessionIdentityIgnoringThinking`, so changing it per turn forces a
 ///   `createSession` and discards the whole conversation.
 ///
-/// The block therefore travels out-of-band and is merged into the *outgoing
-/// copy* of the last user message at request-assembly time. `session.messages`
-/// is never mutated, so the block never enters conversation history, saved
-/// session snapshots, or the session cache key. Because the value is read deep
-/// inside the concrete generation clients — across at least one actor hop from
-/// the runner — it relies on the same task-local inheritance that already
-/// carries `AgentToolAuthorizationContext.turnID` from
+/// The block therefore travels out-of-band. The `sendPrompt` of a generation
+/// client records it on the prompt it appends to the session, under a private
+/// key (`RemoteGenerationClient.turnAdditionKey`), and request assembly merges
+/// it into the *outgoing copy* of that prompt, on this turn and on every later
+/// one, so the prompt is always sent again exactly as it was first sent and
+/// the request prefix a provider caches stays valid across turns. The content
+/// of a session message is never mutated, and history and snapshots are
+/// derived from the known fields of a message only, so the block never enters
+/// conversation history, saved session snapshots, or the session cache key.
+/// Because the value is read deep inside the concrete generation clients —
+/// across at least one actor hop from the runner — it relies on the same
+/// task-local inheritance that already carries
+/// `AgentToolAuthorizationContext.turnID` from
 /// `AgentCoreSessionRunner.sendPrompt` into tool executors.
 ///
 /// `nil` (or a blank string) always means "send the request exactly as it would

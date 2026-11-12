@@ -25,11 +25,15 @@ extension AnthropicSubscriptionGenerationClient {
             throw RemoteGenerationClientError.missingSession
         }
 
+        // The turn's memory block and instruction are recorded on the prompt,
+        // so every later request sends it again as it was first sent.
         session.messages.append(
-            RemoteGenerationClient.remoteMessage(
-                role: AgentRuntimeMessage.Role.user.rawValue,
-                content: prompt,
-                attachments: attachments
+            RemoteGenerationClient.recordingTurnAddition(
+                on: RemoteGenerationClient.remoteMessage(
+                    role: AgentRuntimeMessage.Role.user.rawValue,
+                    content: prompt,
+                    attachments: attachments
+                )
             )
         )
         // A new user turn deserves its own explicit preflight diagnostic. A

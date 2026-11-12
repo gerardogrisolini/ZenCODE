@@ -17,15 +17,18 @@ extension AnthropicSubscriptionGenerationClient {
     /// the caller, which only writes the assistant reply back, so the very next
     /// round (and every snapshot) would have replayed the uncompacted history.
     ///
-    /// `applyTurnMemory` decides whether the turn's memory block is merged into
-    /// the outgoing copy of the last user message; the caller enables it on
-    /// every round of the tool loop. This function materialises the message
-    /// array itself from the lease instead of receiving it from the caller, so
-    /// the caller cannot apply the memory block on its side; the decision has
-    /// to be passed in and honoured here. It must be forwarded unchanged
-    /// through the preflight-compaction recursion below: that recursion
-    /// re-issues the *same* round, so dropping the flag there would silently
-    /// lose the block whenever a round happens to compact.
+    /// `applyTurnMemory` decides whether the current turn's memory block may
+    /// be merged into the outgoing copy of a last user message that carries
+    /// no recorded addition; the caller enables it on every round of the tool
+    /// loop. What a prompt recorded when it entered the session is merged
+    /// either way, because that is how the prompt was first sent. This
+    /// function materialises the message array itself from the lease instead
+    /// of receiving it from the caller, so the caller cannot apply the memory
+    /// block on its side; the decision has to be passed in and honoured here.
+    /// It must be forwarded unchanged through the preflight-compaction
+    /// recursion below: that recursion re-issues the *same* round, so
+    /// dropping the flag there would silently lose the block whenever a round
+    /// happens to compact.
     func streamAnthropicMessages(
         lease: SessionLease,
         modelID: String,
@@ -63,14 +66,18 @@ extension AnthropicSubscriptionGenerationClient {
         let expectsPromptCache = RemoteGenerationClient.messagesExpectPromptCache(
             session.messages
         )
-        // The outgoing copy is the only thing that carries the memory block.
-        // `session.messages` stays untouched, so the actor-owned history, every
-        // snapshot taken from it, and the cache key are unaffected — and the
-        // prompt-cache expectation above is measured against that unmodified
-        // array on purpose.
+        // The outgoing copy is the only thing that carries a memory block in
+        // its content. The content of `session.messages` stays untouched, so
+        // the actor-owned history, every snapshot taken from it, and the cache
+        // key are unaffected — and the prompt-cache expectation above is
+        // measured against that unmodified array on purpose.
         let outgoingMessages = applyTurnMemory
             ? RemoteGenerationClient.applyingCurrentTurnMemory(to: session.messages)
-            : session.messages
+            : RemoteGenerationClient.applyingCurrentTurnMemory(
+                to: session.messages,
+                block: nil,
+                instruction: nil
+            )
         let anthropicPayload = Self.anthropicMessagesPayload(
             from: toolCatalog.wireMessages(from: outgoingMessages),
             includeThinkingBlocks: replayThinkingBlocks

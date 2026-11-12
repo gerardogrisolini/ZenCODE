@@ -10,6 +10,25 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- The prompts of earlier turns are now resent with the recalled
+  `<project-memory>` block and the turn instruction they were first sent with,
+  so the request prefix stays stable from one turn to the next for the
+  provider's prompt cache. Before, both were merged only into the outgoing copy
+  of the last user message, so the next turn resent the previous prompt without
+  them and the prefix changed from that message on, which did not match what
+  the provider had cached. The text is now recorded on the prompt's user
+  message in the client's in-memory session, under a private key that the
+  chat-completions payload drops; the block and the instruction still never
+  enter conversation history, saved sessions, snapshots, or the session cache
+  key, and a session rebuilt from history (resume, model or agent switch,
+  dynamic-context change, snapshot restore) resends earlier prompts without
+  them. The blocks of earlier turns now stay in the context of the live
+  session, each up to the per-turn recall budget
+  (`ZENCODE_MEMORY_RECALL_MAX_CHARACTERS`, default 4 000 characters), until
+  compaction removes their messages.
+
 ## [6.0.0] - 2026-11-11
 
 > **Breaking release:** compared with v5.0.2, v6.0.0 identifies prompt skills

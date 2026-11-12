@@ -30,11 +30,14 @@ import Foundation
 ///
 /// The instruction therefore travels out-of-band. It is bound by
 /// `AgentCoreSessionRunner.sendPrompt` around the single `backend.sendPrompt`
-/// call and is merged into the *outgoing copy* of the last user message by
+/// call, recorded by the generation client on the prompt it appends to the
+/// session, after the recalled memory block
+/// (`RemoteGenerationClient.recordingTurnAddition(on:block:instruction:)`),
+/// and merged into the *outgoing copy* of that prompt by
 /// `RemoteGenerationClient.applyingCurrentTurnMemory(to:block:instruction:)`,
-/// after the recalled memory block. `session.messages` is never mutated, so the
-/// instruction never enters conversation history, saved session snapshots, or
-/// the session cache key.
+/// on this turn and on every later one. The content of a session message is
+/// never mutated, so the instruction never enters conversation history, saved
+/// session snapshots, or the session cache key.
 ///
 /// A `Task {}` inherits task-locals, so work that is not the main turn — a
 /// delegated sub-agent turn, the isolated memory proposal — binds `nil`

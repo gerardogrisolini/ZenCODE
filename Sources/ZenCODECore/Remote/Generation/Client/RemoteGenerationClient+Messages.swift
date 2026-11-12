@@ -49,8 +49,51 @@ extension RemoteGenerationClient {
             + (contextMessage.map { [$0] } ?? []) + seededHistory
     }
 
-    /// Returns a copy of `messages` with the current turn's memory block and
-    /// instruction appended to the last user message.
+    /// Private key of a user message held by a session: the text its turn
+    /// appended to it when it was sent (the recalled memory block, then the
+    /// turn instruction).
+    ///
+    /// ``recordingTurnAddition(on:block:instruction:)`` stores it when the
+    /// prompt enters the session and ``applyingCurrentTurnMemory(to:block:instruction:)``
+    /// merges it into every outgoing copy, so a prompt is sent again exactly
+    /// as it was first sent and the request prefix a provider caches stays
+    /// valid across turns. The key never leaves the client: snapshots and
+    /// compaction go through `agentRuntimeMessages`, which reads only the
+    /// known fields, the outgoing copy does not carry it, and the
+    /// chat-completions wire builder drops it.
+    static let turnAdditionKey = "zencode_turn_addition"
+
+    /// The text one turn appends to its user message: the memory block
+    /// followed by the instruction, each only when it is not blank, joined by
+    /// a blank line. `nil` when the turn adds nothing.
+    static func turnAddition(block: String?, instruction: String?) -> String? {
+        [block, instruction]
+            .compactMap { $0?.nilIfBlank }
+            .joined(separator: "\n\n")
+            .nilIfEmpty
+    }
+
+    /// `message`, the user message of a new prompt, with the text its turn
+    /// appends recorded under ``turnAdditionKey``. The message is returned
+    /// unchanged when the turn adds nothing; its content is never touched.
+    ///
+    /// The default arguments read the task-locals at the *call site*, which is
+    /// the `sendPrompt` of a generation client, inside the turn's bindings.
+    static func recordingTurnAddition(
+        on message: [String: Any],
+        block: String? = MemoryTurnContext.currentTurnMemoryBlock,
+        instruction: String? = AgentTurnInstructionContext.currentTurnInstruction
+    ) -> [String: Any] {
+        guard let addition = turnAddition(block: block, instruction: instruction) else {
+            return message
+        }
+        var message = message
+        message[turnAdditionKey] = addition
+        return message
+    }
+
+    /// Returns the outgoing copy of `messages`: every prompt carries the
+    /// memory block and the instruction of its own turn.
     ///
     /// This is the single place where automatically recalled memory and the
     /// per-turn instruction (``AgentTurnInstructionContext``) enter a provider
@@ -63,23 +106,32 @@ extension RemoteGenerationClient {
     ///   each only when it is not blank, joined by a blank line. The memory
     ///   block always comes first and the instruction is the last thing the
     ///   model reads.
-    /// - The input is returned **unchanged** when both the block and the
-    ///   instruction are nil or blank, so a turn without either produces a
-    ///   byte-identical payload. With only a block the result is the same as
-    ///   before the instruction existed.
+    /// - A user message that carries a recorded addition (``turnAdditionKey``)
+    ///   gets that addition, on every round and on every later turn, and the
+    ///   key is removed from the copy. A prompt is therefore sent again
+    ///   exactly as it was first sent: sending it without its block on the
+    ///   next turn would change the request from that message on and
+    ///   invalidate the prefix the provider cached.
+    /// - The last user message, when it carries no recorded addition, gets
+    ///   the current turn's `block` and `instruction`. This is the path of a
+    ///   session that records nothing (the in-process DS4 path freezes its own
+    ///   rendered content) and of a turn whose prompt a compaction removed.
+    /// - The input is returned **unchanged** when there is nothing to merge,
+    ///   so a conversation without a block or an instruction produces a
+    ///   byte-identical payload.
     /// - Only the outgoing copy is touched. Callers pass `session.messages` by
-    ///   value and must never write the result back, which is what keeps the
-    ///   block and the instruction out of conversation history, saved snapshots
-    ///   and the session cache key.
-    /// - Multimodal content is preserved: when the last user message already
-    ///   carries an array of content items (text plus images), the combined
-    ///   text is appended as one more `text` item instead of clobbering the
-    ///   array with a string, which would silently drop the attached images.
+    ///   value and must never write the result back: the content of a session
+    ///   message never holds the block or the instruction, which is what
+    ///   keeps them out of conversation history, saved snapshots and the
+    ///   session cache key.
+    /// - Multimodal content is preserved: when a user message already carries
+    ///   an array of content items (text plus images), the combined text is
+    ///   appended as one more `text` item instead of clobbering the array
+    ///   with a string, which would silently drop the attached images.
     /// - Callers apply this on **every** tool round, always against the current
-    ///   value of `session.messages`. Because the added text is never written
-    ///   back, each round's outgoing copy is rebuilt from the fresh original and
-    ///   carries it exactly once; applying the helper to an array that already
-    ///   contains it (a previous outgoing copy) is what would duplicate it, and
+    ///   value of `session.messages`, so each round's outgoing copy carries
+    ///   every addition exactly once; applying the helper to a previous
+    ///   outgoing copy is what would duplicate the current turn's text, and
     ///   call sites never do that.
     ///
     /// The default arguments read the task-locals at the *call site*, which is
@@ -90,37 +142,58 @@ extension RemoteGenerationClient {
         block: String? = MemoryTurnContext.currentTurnMemoryBlock,
         instruction: String? = AgentTurnInstructionContext.currentTurnInstruction
     ) -> [[String: Any]] {
-        let addition = [block, instruction]
-            .compactMap { $0?.nilIfBlank }
-            .joined(separator: "\n\n")
-        guard !addition.isEmpty else {
-            return messages
-        }
-        guard let lastUserIndex = messages.lastIndex(where: { message in
-            stringValue(message["role"])?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased() == "user"
-        }) else {
-            // No user message to attach to (a replayed tool-only tail, for
-            // example). Injecting a synthetic one would change the shape of the
-            // conversation, so the request is left exactly as it was.
-            return messages
+        var updated = messages
+        for index in messages.indices {
+            guard let recorded = messages[index][turnAdditionKey] else {
+                continue
+            }
+            var message = messages[index]
+            message.removeValue(forKey: turnAdditionKey)
+            if let addition = (recorded as? String)?.nilIfEmpty,
+               let merged = appendingTurnAddition(addition, to: message) {
+                message = merged
+            }
+            updated[index] = message
         }
 
-        var updated = messages
-        var message = updated[lastUserIndex]
+        guard let addition = turnAddition(block: block, instruction: instruction),
+              let lastUserIndex = messages.lastIndex(where: { message in
+                  stringValue(message["role"])?
+                      .trimmingCharacters(in: .whitespacesAndNewlines)
+                      .lowercased() == "user"
+              }),
+              // A prompt that recorded its addition is already complete: the
+              // last one is this turn's own, and the task-locals hold the
+              // very text recorded on it.
+              messages[lastUserIndex][turnAdditionKey] == nil,
+              let merged = appendingTurnAddition(addition, to: updated[lastUserIndex]) else {
+            // Nothing to add, no user message to attach to (a replayed
+            // tool-only tail, for example: injecting a synthetic one would
+            // change the shape of the conversation), or an unrecognized
+            // content shape, left untouched rather than guessing a
+            // representation the provider may reject.
+            return updated
+        }
+        updated[lastUserIndex] = merged
+        return updated
+    }
+
+    /// `message` with `addition` appended to its content, or `nil` when the
+    /// content has a shape the text cannot be appended to.
+    private static func appendingTurnAddition(
+        _ addition: String,
+        to message: [String: Any]
+    ) -> [String: Any]? {
+        var message = message
         if let text = message["content"] as? String {
             message["content"] = text.isEmpty ? addition : "\(text)\n\n\(addition)"
         } else if var items = message["content"] as? [[String: Any]] {
             items.append(["type": "text", "text": addition])
             message["content"] = items
         } else {
-            // Unrecognized content shape: leave the request untouched rather
-            // than guessing a representation the provider may reject.
-            return messages
+            return nil
         }
-        updated[lastUserIndex] = message
-        return updated
+        return message
     }
 
     public static func replacingSystemPrompt(
@@ -286,6 +359,9 @@ extension RemoteGenerationClient {
             message.removeValue(forKey: "is_error")
             // Private replay data of the in-process DS4 path never reaches a wire payload.
             message = DS4MessageKeys.removingPrivateKeys(from: message)
+            // Neither does a recorded turn addition: the outgoing copy has
+            // already merged it into the content.
+            message.removeValue(forKey: turnAdditionKey)
 
             let role = stringValue(message["role"])?
                 .trimmingCharacters(in: .whitespacesAndNewlines)

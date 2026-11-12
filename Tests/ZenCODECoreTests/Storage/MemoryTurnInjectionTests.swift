@@ -236,6 +236,81 @@ struct MemoryTurnInjectionTests {
         #expect(content.hasSuffix(Self.instruction))
     }
 
+    // MARK: - A prompt is sent again as it was first sent: what its turn
+    // recorded on it reaches every later request, so the request prefix stays
+    // the same across turns, and it still never enters history.
+
+    @Test
+    func promptOfAnEarlierTurnIsSentAgainAsItWasFirstSent() throws {
+        let firstBlock = "<project-memory>\nfirst turn\n</project-memory>"
+        let secondBlock = "<project-memory>\nsecond turn\n</project-memory>"
+        var sessionMessages: [[String: Any]] = [
+            ["role": "system", "content": "system prompt"],
+            RemoteGenerationClient.recordingTurnAddition(
+                on: ["role": "user", "content": "first question"],
+                block: firstBlock,
+                instruction: nil
+            )
+        ]
+        let firstRequest = RemoteGenerationClient.applyingCurrentTurnMemory(
+            to: sessionMessages,
+            block: firstBlock
+        )
+
+        sessionMessages.append(["role": "assistant", "content": "first answer"])
+        sessionMessages.append(
+            RemoteGenerationClient.recordingTurnAddition(
+                on: ["role": "user", "content": "second question"],
+                block: secondBlock,
+                instruction: Self.instruction
+            )
+        )
+        let secondRequest = RemoteGenerationClient.applyingCurrentTurnMemory(
+            to: sessionMessages,
+            block: secondBlock,
+            instruction: Self.instruction
+        )
+
+        // The second request starts with the first one, byte for byte: the
+        // first prompt keeps the block of its own turn.
+        #expect(
+            try jsonSnapshot(Array(secondRequest.prefix(firstRequest.count)))
+                == jsonSnapshot(firstRequest)
+        )
+        #expect(secondRequest[1]["content"] as? String == "first question\n\n\(firstBlock)")
+        // The prompt of the running turn carries its own text exactly once.
+        #expect(
+            secondRequest[3]["content"] as? String
+                == "second question\n\n\(secondBlock)\n\n\(Self.instruction)"
+        )
+
+        // The recorded text stays private to the session: neither the outgoing
+        // copy nor a chat-completions payload carries the key, and history,
+        // snapshots and compaction read the known fields only.
+        let wire = RemoteGenerationClient.chatCompletionsWireHistoryMessages(from: sessionMessages)
+        for message in secondRequest + wire {
+            #expect(message[RemoteGenerationClient.turnAdditionKey] == nil)
+        }
+        let history = RemoteGenerationClient.agentRuntimeMessages(from: sessionMessages)
+        #expect(history.map(\.content) == [
+            "system prompt", "first question", "first answer", "second question"
+        ])
+    }
+
+    @Test
+    func turnWithoutBlockOrInstructionRecordsNothing() throws {
+        let prompt: [String: Any] = ["role": "user", "content": "question"]
+
+        for blank in [String?.none, "", "  \n"] {
+            let recorded = RemoteGenerationClient.recordingTurnAddition(
+                on: prompt,
+                block: blank,
+                instruction: blank
+            )
+            #expect(try jsonSnapshot([recorded]) == jsonSnapshot([prompt]))
+        }
+    }
+
     // MARK: - Helpers
 
     /// Stable byte snapshot of a `[[String: Any]]` payload for identity checks.

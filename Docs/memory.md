@@ -447,19 +447,40 @@ setup for the workspace store; it is independent of the destination chat model
 or provider. Operator turns and delegated agents using GLM, Claude, GPT, or any
 other configured model query the same memory graph through that embedder, then
 receive only the selected memory text. Switching the chat backend neither
-re-embeds nor duplicates durable entries. At request assembly,
-`RemoteGenerationClient.applyingCurrentTurnMemory(to:)` merges the block into the
-outgoing copy of the last user message — the single shared injection point for
-all three concrete generation clients, so the wire formats cannot drift.
-Callers apply it on every tool round against the fresh value of
-`session.messages`, so each round's outgoing copy carries the block exactly
-once. The same helper also merges a turn instruction, when a turn binds one,
-after the block and under the same rules (see [voice.md](voice.md)).
-`session.messages` is never mutated, so the block never enters
-conversation history, saved-session snapshots, or the session cache key;
-saved-session and prompt-cache compatibility are preserved. The alternatives
-were rejected on purpose: `systemPrompt` participates in the session cache
-key, and `dynamicContext` is compared by
+re-embeds nor duplicates durable entries. When a prompt enters a session
+(`sendPrompt` of each of the three concrete remote generation clients),
+`RemoteGenerationClient.recordingTurnAddition(on:)` records the text the turn
+adds — the block, then the turn instruction when a turn binds one (see
+[voice.md](voice.md)), separated by a blank line — on that prompt's user
+message under a private key, `RemoteGenerationClient.turnAdditionKey`
+(`zencode_turn_addition`). At request assembly,
+`RemoteGenerationClient.applyingCurrentTurnMemory(to:)` merges every recorded
+addition into the outgoing copy of its own message and removes the key from that
+copy — the single shared injection point for all three concrete generation
+clients, so the wire formats cannot drift. Callers apply it on every tool round
+against the fresh value of `session.messages`, so each round's outgoing copy
+carries each addition exactly once, and a prompt is resent on every later turn
+exactly as it was first sent: the request prefix stays valid for the provider's
+prompt cache from one turn to the next. A user message with no recorded
+addition that is the last user message still receives the current turn's block
+and instruction in its outgoing copy only. That covers the in-process DS4 path,
+which records its rendered content itself (`DS4MessageKeys.userContent`), and a
+turn whose prompt a mid-turn compaction removed.
+
+The private key lives only in the client's in-memory session. Conversation
+history, snapshots, saved sessions, the compaction input, and the session cache
+key derive from `agentRuntimeMessages(from:)`, which reads only the known
+fields, so they still never contain the block or the instruction; the
+chat-completions payload builder drops the key, so it never reaches a network
+payload. A session rebuilt from history — resuming a saved session, switching
+model or agent, changing the dynamic context, or restoring a snapshot — loses
+the recorded additions and resends earlier prompts without them. The
+consequence is that the blocks of earlier turns stay in the live session's
+context, each up to the per-turn recall budget
+(`ZENCODE_MEMORY_RECALL_MAX_CHARACTERS`, default 4 000 characters, about 1k
+tokens), until compaction removes their messages or the session is rebuilt. The
+alternative channels were rejected on purpose: `systemPrompt` participates in
+the session cache key, and `dynamicContext` is compared by
 `matchesSessionIdentityIgnoringThinking`, so either would rotate the cache key
 or force a `createSession` on every turn.
 

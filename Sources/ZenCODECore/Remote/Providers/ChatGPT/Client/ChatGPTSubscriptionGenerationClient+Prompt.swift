@@ -53,11 +53,15 @@ extension ChatGPTSubscriptionGenerationClient {
             throw ChatGPTSubscriptionGenerationError.missingSession
         }
 
+        // The turn's memory block and instruction are recorded on the prompt,
+        // so every later request sends it again as it was first sent.
         session.messages.append(
-            RemoteGenerationClient.remoteMessage(
-                role: AgentRuntimeMessage.Role.user.rawValue,
-                content: prompt,
-                attachments: attachments
+            RemoteGenerationClient.recordingTurnAddition(
+                on: RemoteGenerationClient.remoteMessage(
+                    role: AgentRuntimeMessage.Role.user.rawValue,
+                    content: prompt,
+                    attachments: attachments
+                )
             )
         )
         // This is the first durable turn mutation; it must precede credential
@@ -172,9 +176,10 @@ extension ChatGPTSubscriptionGenerationClient {
                 session = latestSession
                 // Applied to the outgoing copy alone on every tool round: each
                 // round rebuilds from the fresh `session.messages` value, so
-                // the block appears exactly once per request. Keeping
-                // `session.messages` free of the block means it never reaches
-                // history, snapshots or the cache key.
+                // each prompt carries the block of its own turn exactly once
+                // per request. The content of a session message never holds
+                // the block, so it never reaches history, snapshots or the
+                // cache key.
                 let outgoingMessages = RemoteGenerationClient.applyingCurrentTurnMemory(
                     to: session.messages
                 )
