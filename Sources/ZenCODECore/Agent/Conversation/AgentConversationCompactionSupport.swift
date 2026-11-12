@@ -469,6 +469,8 @@ public enum AgentConversationCompactionSupport {
     ) -> Int {
         var count = message.role.rawValue.count + 12
         count += message.content.count
+        // Sent with the content on every request.
+        count += message.turnAddition?.count ?? 0
         count += message.reasoningContent?.count ?? 0
         count += message.reasoningItemsJSON?.count ?? 0
         count += message.thinkingBlocksJSON?.count ?? 0

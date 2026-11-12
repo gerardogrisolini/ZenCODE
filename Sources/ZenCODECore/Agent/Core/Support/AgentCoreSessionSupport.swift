@@ -40,7 +40,8 @@ actor AgentCorePromptTurnRecorder {
     init(
         initialSnapshot: AgentRuntimeSessionSnapshot,
         prompt: String,
-        attachments: [AgentRuntimeAttachment]
+        attachments: [AgentRuntimeAttachment],
+        turnAddition: String? = nil
     ) {
         self.initialSnapshot = initialSnapshot
         self.history = initialSnapshot.history
@@ -51,7 +52,10 @@ actor AgentCorePromptTurnRecorder {
                 AgentRuntimeMessage(
                     role: .user,
                     content: normalizedPrompt,
-                    attachments: attachments
+                    attachments: attachments,
+                    // What the backend records on the same prompt, so the
+                    // recorded turn matches the backend's own snapshot.
+                    turnAddition: turnAddition
                 )
             )
         }

@@ -57,21 +57,13 @@ extension RemoteGenerationClient {
     /// prompt enters the session and ``applyingCurrentTurnMemory(to:block:instruction:)``
     /// merges it into every outgoing copy, so a prompt is sent again exactly
     /// as it was first sent and the request prefix a provider caches stays
-    /// valid across turns. The key never leaves the client: snapshots and
-    /// compaction go through `agentRuntimeMessages`, which reads only the
-    /// known fields, the outgoing copy does not carry it, and the
-    /// chat-completions wire builder drops it.
+    /// valid across turns. Snapshots carry it as
+    /// `AgentRuntimeMessage.turnAddition` (`agentRuntimeMessages(from:)`) and
+    /// ``remoteMessage(from:)`` stores it again, so it also survives a
+    /// session rebuilt from its history or loaded from a saved one. The key
+    /// itself never reaches a wire: the outgoing copy does not carry it and
+    /// the chat-completions wire builder drops it.
     static let turnAdditionKey = "zencode_turn_addition"
-
-    /// The text one turn appends to its user message: the memory block
-    /// followed by the instruction, each only when it is not blank, joined by
-    /// a blank line. `nil` when the turn adds nothing.
-    static func turnAddition(block: String?, instruction: String?) -> String? {
-        [block, instruction]
-            .compactMap { $0?.nilIfBlank }
-            .joined(separator: "\n\n")
-            .nilIfEmpty
-    }
 
     /// `message`, the user message of a new prompt, with the text its turn
     /// appends recorded under ``turnAdditionKey``. The message is returned
@@ -84,7 +76,10 @@ extension RemoteGenerationClient {
         block: String? = MemoryTurnContext.currentTurnMemoryBlock,
         instruction: String? = AgentTurnInstructionContext.currentTurnInstruction
     ) -> [String: Any] {
-        guard let addition = turnAddition(block: block, instruction: instruction) else {
+        guard let addition = AgentRuntimeMessage.turnAddition(
+            memoryBlock: block,
+            instruction: instruction
+        ) else {
             return message
         }
         var message = message
@@ -112,18 +107,20 @@ extension RemoteGenerationClient {
     ///   exactly as it was first sent: sending it without its block on the
     ///   next turn would change the request from that message on and
     ///   invalidate the prefix the provider cached.
-    /// - The last user message, when it carries no recorded addition, gets
-    ///   the current turn's `block` and `instruction`. This is the path of a
-    ///   session that records nothing (the in-process DS4 path freezes its own
-    ///   rendered content) and of a turn whose prompt a compaction removed.
+    /// - The last user message gets the current turn's `block` and
+    ///   `instruction`, unless that very text is already its recorded
+    ///   addition, which is the case of the turn's own prompt. Any other last
+    ///   user message receives it: when a compaction removed the prompt of the
+    ///   running turn, every round still carries the block.
     /// - The input is returned **unchanged** when there is nothing to merge,
     ///   so a conversation without a block or an instruction produces a
     ///   byte-identical payload.
     /// - Only the outgoing copy is touched. Callers pass `session.messages` by
     ///   value and must never write the result back: the content of a session
     ///   message never holds the block or the instruction, which is what
-    ///   keeps them out of conversation history, saved snapshots and the
-    ///   session cache key.
+    ///   keeps them out of the conversation text and the session cache key.
+    ///   History and snapshots carry them beside the content, in
+    ///   `AgentRuntimeMessage.turnAddition`.
     /// - Multimodal content is preserved: when a user message already carries
     ///   an array of content items (text plus images), the combined text is
     ///   appended as one more `text` item instead of clobbering the array
@@ -156,16 +153,18 @@ extension RemoteGenerationClient {
             updated[index] = message
         }
 
-        guard let addition = turnAddition(block: block, instruction: instruction),
+        guard let addition = AgentRuntimeMessage.turnAddition(
+                  memoryBlock: block,
+                  instruction: instruction
+              ),
               let lastUserIndex = messages.lastIndex(where: { message in
                   stringValue(message["role"])?
                       .trimmingCharacters(in: .whitespacesAndNewlines)
                       .lowercased() == "user"
               }),
-              // A prompt that recorded its addition is already complete: the
-              // last one is this turn's own, and the task-locals hold the
-              // very text recorded on it.
-              messages[lastUserIndex][turnAdditionKey] == nil,
+              // The prompt of the running turn already carries this very
+              // text, recorded when it entered the session.
+              (messages[lastUserIndex][turnAdditionKey] as? String) != addition,
               let merged = appendingTurnAddition(addition, to: updated[lastUserIndex]) else {
             // Nothing to add, no user message to attach to (a replayed
             // tool-only tail, for example: injecting a synthetic one would
@@ -262,6 +261,11 @@ extension RemoteGenerationClient {
             if message.toolResultIsError == true {
                 payload["is_error"] = true
             }
+        }
+        // A prompt keeps what its turn appended when it was first sent, so a
+        // session rebuilt from its history sends it again unchanged.
+        if let turnAddition = message.turnAddition?.nilIfEmpty {
+            payload[turnAdditionKey] = turnAddition
         }
         guard responseMessagePayloadHasContent(payload) else {
             return nil

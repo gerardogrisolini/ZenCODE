@@ -178,7 +178,7 @@ extension ChatGPTSubscriptionGenerationClient {
                 // round rebuilds from the fresh `session.messages` value, so
                 // each prompt carries the block of its own turn exactly once
                 // per request. The content of a session message never holds
-                // the block, so it never reaches history, snapshots or the
+                // the block, so it never reaches the conversation text or the
                 // cache key.
                 let outgoingMessages = RemoteGenerationClient.applyingCurrentTurnMemory(
                     to: session.messages

@@ -68,9 +68,10 @@ extension AnthropicSubscriptionGenerationClient {
         )
         // The outgoing copy is the only thing that carries a memory block in
         // its content. The content of `session.messages` stays untouched, so
-        // the actor-owned history, every snapshot taken from it, and the cache
-        // key are unaffected — and the prompt-cache expectation above is
-        // measured against that unmodified array on purpose.
+        // the text of the actor-owned history and of every snapshot taken
+        // from it, and the cache key, are unaffected — and the prompt-cache
+        // expectation above is measured against that unmodified array on
+        // purpose.
         let outgoingMessages = applyTurnMemory
             ? RemoteGenerationClient.applyingCurrentTurnMemory(to: session.messages)
             : RemoteGenerationClient.applyingCurrentTurnMemory(

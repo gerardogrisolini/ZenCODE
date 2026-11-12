@@ -238,7 +238,7 @@ struct MemoryTurnInjectionTests {
 
     // MARK: - A prompt is sent again as it was first sent: what its turn
     // recorded on it reaches every later request, so the request prefix stays
-    // the same across turns, and it still never enters history.
+    // the same across turns, and it never enters the text of the history.
 
     @Test
     func promptOfAnEarlierTurnIsSentAgainAsItWasFirstSent() throws {
@@ -284,9 +284,10 @@ struct MemoryTurnInjectionTests {
                 == "second question\n\n\(secondBlock)\n\n\(Self.instruction)"
         )
 
-        // The recorded text stays private to the session: neither the outgoing
-        // copy nor a chat-completions payload carries the key, and history,
-        // snapshots and compaction read the known fields only.
+        // The key stays private to the session: neither the outgoing copy nor
+        // a chat-completions payload carries it. The history holds the text
+        // of each turn beside the prompt, never in its content, and a session
+        // created again from that history records it again.
         let wire = RemoteGenerationClient.chatCompletionsWireHistoryMessages(from: sessionMessages)
         for message in secondRequest + wire {
             #expect(message[RemoteGenerationClient.turnAdditionKey] == nil)
@@ -295,6 +296,40 @@ struct MemoryTurnInjectionTests {
         #expect(history.map(\.content) == [
             "system prompt", "first question", "first answer", "second question"
         ])
+        #expect(history.map(\.turnAddition) == [
+            nil, firstBlock, nil, "\(secondBlock)\n\n\(Self.instruction)"
+        ])
+        let rebuilt = history.compactMap(RemoteGenerationClient.remoteMessage(from:))
+        #expect(
+            try jsonSnapshot(RemoteGenerationClient.applyingCurrentTurnMemory(
+                to: rebuilt, block: nil, instruction: nil
+            )) == jsonSnapshot(secondRequest)
+        )
+    }
+
+    @Test
+    func blockFollowsTheLastUserMessageWhenThePromptOfTheTurnIsGone() throws {
+        // A compaction removed the prompt of the running turn: the last user
+        // message is the prompt of an earlier one, with its own recorded text.
+        let earlierBlock = "<project-memory>\nearlier turn\n</project-memory>"
+        let sessionMessages: [[String: Any]] = [
+            RemoteGenerationClient.recordingTurnAddition(
+                on: ["role": "user", "content": "earlier question"],
+                block: earlierBlock,
+                instruction: nil
+            ),
+            ["role": "assistant", "content": "earlier answer"]
+        ]
+
+        let outgoing = RemoteGenerationClient.applyingCurrentTurnMemory(
+            to: sessionMessages,
+            block: Self.memoryBlock
+        )
+
+        #expect(
+            outgoing[0]["content"] as? String
+                == "earlier question\n\n\(earlierBlock)\n\n\(Self.memoryBlock)"
+        )
     }
 
     @Test

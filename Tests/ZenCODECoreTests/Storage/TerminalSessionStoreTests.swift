@@ -149,6 +149,31 @@ struct TerminalSessionStoreTests {
     }
 
     @Test
+    func messageStoresItsTurnAdditionBesideTheContentAndOnlyWhenPresent() throws {
+        let block = "<project-memory>\nnote\n</project-memory>"
+        let messages = [
+            AgentRuntimeMessage(role: .user, content: "ciao", turnAddition: block),
+            AgentRuntimeMessage(role: .user, content: "ciao"),
+        ]
+
+        let encoded = try PropertyListEncoder().encode(messages)
+        let propertyList = try #require(
+            try PropertyListSerialization.propertyList(
+                from: encoded,
+                format: nil
+            ) as? [[String: Any]]
+        )
+
+        #expect(propertyList[0]["turnAddition"] as? String == block)
+        #expect(propertyList[0]["content"] as? String == "ciao")
+        // A message without it encodes no key, so sessions saved without
+        // recalled memory stay byte-compatible with files written before the
+        // field existed, and such a message decodes to nil.
+        #expect(propertyList[1]["turnAddition"] == nil)
+        #expect(try PropertyListDecoder().decode([AgentRuntimeMessage].self, from: encoded) == messages)
+    }
+
+    @Test
     func selectedSkillNamesArePersistedUnderTheirOwnKeyAndNoOtherKeyChanges() throws {
         let session = sampleSession(
             name: "skill names",

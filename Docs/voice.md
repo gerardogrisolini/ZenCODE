@@ -100,12 +100,10 @@ delegated agents and `/plan` turns are not read aloud.
 
 The instruction follows the state of voice mode when each request is made, so
 `/voice pause`, `/voice resume` and `/voice off` apply from the next prompt. It
-goes with the prompt it was sent with, so later requests of the same live
-session resend that prompt together with the instruction; a session rebuilt
-from its history, such as a resumed saved session, resends earlier prompts
-without it. The instruction is still not saved in the session history or in
-saved sessions, and it is not part of the system prompt. Delegated agents do
-not receive it.
+goes with the prompt it was sent with, so later requests resend that prompt
+together with the instruction, also in a saved session that is loaded again. It
+does not appear in the text of the history messages or in the transcript, and
+it is not part of the system prompt. Delegated agents do not receive it.
 
 ### The prompt draft
 

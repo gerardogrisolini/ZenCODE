@@ -103,11 +103,6 @@ extension AgentCoreSessionRunner {
         let initialSnapshot = await backend.snapshotSession(id: configuration.sessionID)
             ?? AgentRuntimeSessionSnapshot(configuration: configuration)
         try verifyBackendGeneration(generation)
-        let turnRecorder = AgentCorePromptTurnRecorder(
-            initialSnapshot: initialSnapshot,
-            prompt: prompt,
-            attachments: attachments
-        )
         // Every turn — operator, replayed, or synthetic — marks the room busy
         // for the Core auto-trigger, so a shared-chat message can never open a
         // second concurrent prompt behind a consumer's back. The prompt is
@@ -126,6 +121,15 @@ extension AgentCoreSessionRunner {
             sessionID: configuration.sessionID,
             graphTarget: configuration.memoryGraphTarget,
             prompt: prompt
+        )
+        let turnRecorder = AgentCorePromptTurnRecorder(
+            initialSnapshot: initialSnapshot,
+            prompt: prompt,
+            attachments: attachments,
+            turnAddition: AgentRuntimeMessage.turnAddition(
+                memoryBlock: memoryBlock,
+                instruction: turnInstruction
+            )
         )
 
         do {

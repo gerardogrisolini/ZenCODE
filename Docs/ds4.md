@@ -425,6 +425,11 @@ differ from the defaults of ds4-agent.
   Saving never opens the model. Restoring does: it opens the model if it is not
   loaded yet (status `Loading DS4 model …`) and waits its turn in the generation
   queue.
+- A session loaded without a usable checkpoint (skipped, absent, or not
+  compatible) evaluates the prompt again in full. The earlier prompts are
+  rendered again with the recalled memory blocks they were sent with, taken
+  from the session history. Sessions saved before ZenCODE recorded the blocks
+  render them without.
 - A save without a checkpoint removes an older `<name>.ds4kv`. Deleting a
   session deletes its checkpoint.
 - The checkpoint carries a versioned JSON trailer (version 1) with the DS4

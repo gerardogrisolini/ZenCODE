@@ -76,6 +76,15 @@ public struct AgentRuntimeMessage: Codable, Equatable, Sendable {
     /// Anthropic `tool_result.is_error`. Optional so snapshots written before
     /// this field was introduced continue to decode unchanged.
     public let toolResultIsError: Bool?
+    /// The text the turn of a prompt appended to it when it was sent: the
+    /// recalled memory block, then the turn instruction
+    /// (``turnAddition(memoryBlock:instruction:)``). It is not part of
+    /// `content`, which stays what the user wrote; a generation client sends
+    /// the prompt with it again on every later request, also in a session
+    /// rebuilt from its history or loaded from a saved one. Optional so
+    /// snapshots written before this field was introduced continue to decode
+    /// unchanged, and a message without it encodes no key.
+    public let turnAddition: String?
 
     public init(
         role: Role,
@@ -89,7 +98,8 @@ public struct AgentRuntimeMessage: Codable, Equatable, Sendable {
         toolCalls: [AgentRuntimeToolCall] = [],
         toolCallID: String? = nil,
         toolName: String? = nil,
-        toolResultIsError: Bool? = nil
+        toolResultIsError: Bool? = nil,
+        turnAddition: String? = nil
     ) {
         self.role = role
         self.content = content
@@ -103,6 +113,18 @@ public struct AgentRuntimeMessage: Codable, Equatable, Sendable {
         self.toolCallID = toolCallID?.nilIfBlank
         self.toolName = toolName?.nilIfBlank
         self.toolResultIsError = toolResultIsError
+        // Kept as given: it is sent again exactly as it was first sent.
+        self.turnAddition = turnAddition?.nilIfEmpty
+    }
+
+    /// The text one turn appends to its prompt: the memory block followed by
+    /// the instruction, each only when it is not blank, joined by a blank
+    /// line. `nil` when the turn adds nothing.
+    static func turnAddition(memoryBlock: String?, instruction: String?) -> String? {
+        [memoryBlock, instruction]
+            .compactMap { $0?.nilIfBlank }
+            .joined(separator: "\n\n")
+            .nilIfEmpty
     }
 
     /// The same message with `content` and `reasoningContent` replaced; a
@@ -123,7 +145,8 @@ public struct AgentRuntimeMessage: Codable, Equatable, Sendable {
             toolCalls: toolCalls,
             toolCallID: toolCallID,
             toolName: toolName,
-            toolResultIsError: toolResultIsError
+            toolResultIsError: toolResultIsError,
+            turnAddition: turnAddition
         )
     }
 }

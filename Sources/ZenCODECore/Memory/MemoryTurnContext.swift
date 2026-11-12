@@ -29,9 +29,10 @@ import Foundation
 /// it into the *outgoing copy* of that prompt, on this turn and on every later
 /// one, so the prompt is always sent again exactly as it was first sent and
 /// the request prefix a provider caches stays valid across turns. The content
-/// of a session message is never mutated, and history and snapshots are
-/// derived from the known fields of a message only, so the block never enters
-/// conversation history, saved session snapshots, or the session cache key.
+/// of a session message is never mutated: the block is carried beside it, in
+/// `AgentRuntimeMessage.turnAddition`, through snapshots, saved sessions and
+/// every session rebuilt from its history, and it never enters the
+/// conversation text, the system prompt, or the session cache key.
 /// Because the value is read deep inside the concrete generation clients —
 /// across at least one actor hop from the runner — it relies on the same
 /// task-local inheritance that already carries

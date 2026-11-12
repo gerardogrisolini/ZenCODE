@@ -449,38 +449,76 @@ other configured model query the same memory graph through that embedder, then
 receive only the selected memory text. Switching the chat backend neither
 re-embeds nor duplicates durable entries. When a prompt enters a session
 (`sendPrompt` of each of the three concrete remote generation clients),
-`RemoteGenerationClient.recordingTurnAddition(on:)` records the text the turn
-adds — the block, then the turn instruction when a turn binds one (see
-[voice.md](voice.md)), separated by a blank line — on that prompt's user
-message under a private key, `RemoteGenerationClient.turnAdditionKey`
+`RemoteGenerationClient.recordingTurnAddition(on:block:instruction:)` records
+the text the turn adds — the block, then the turn instruction when a turn binds
+one (see [voice.md](voice.md)), separated by a blank line — on that prompt's
+user message under a private key, `RemoteGenerationClient.turnAdditionKey`
 (`zencode_turn_addition`). At request assembly,
-`RemoteGenerationClient.applyingCurrentTurnMemory(to:)` merges every recorded
-addition into the outgoing copy of its own message and removes the key from that
-copy — the single shared injection point for all three concrete generation
-clients, so the wire formats cannot drift. Callers apply it on every tool round
-against the fresh value of `session.messages`, so each round's outgoing copy
-carries each addition exactly once, and a prompt is resent on every later turn
-exactly as it was first sent: the request prefix stays valid for the provider's
-prompt cache from one turn to the next. A user message with no recorded
-addition that is the last user message still receives the current turn's block
-and instruction in its outgoing copy only. That covers the in-process DS4 path,
-which records its rendered content itself (`DS4MessageKeys.userContent`), and a
-turn whose prompt a mid-turn compaction removed.
+`RemoteGenerationClient.applyingCurrentTurnMemory(to:block:instruction:)`
+merges every recorded addition into the outgoing copy of its own message and
+removes the key from that copy — the single shared injection point for all
+three concrete generation clients, so the wire formats cannot drift. Callers
+apply it on every tool round against the fresh value of `session.messages`, so
+each round's outgoing copy carries each addition exactly once, and a prompt is
+resent on every later turn exactly as it was first sent: the request prefix
+stays valid for the provider's prompt cache from one turn to the next. The last
+user message still receives the current turn's block and instruction in its
+outgoing copy only, unless that same text is already its recorded addition,
+which is the case of the prompt of the running turn. The rule serves a single
+case: when a mid-turn compaction removed the prompt of the running turn, every
+round keeps carrying the block. The in-process DS4 path records the text on its
+prompt as well, so the history is the same for every provider. It renders from
+its own frozen content (`DS4MessageKeys.userContent`), which it freezes again
+from the recorded text when the session is created from history.
 
-The private key lives only in the client's in-memory session. Conversation
-history, snapshots, saved sessions, the compaction input, and the session cache
-key derive from `agentRuntimeMessages(from:)`, which reads only the known
-fields, so they still never contain the block or the instruction; the
-chat-completions payload builder drops the key, so it never reaches a network
-payload. A session rebuilt from history — resuming a saved session, switching
-model or agent, changing the dynamic context, or restoring a snapshot — loses
-the recorded additions and resends earlier prompts without them. The
-consequence is that the blocks of earlier turns stay in the live session's
-context, each up to the per-turn recall budget
+The private key is the in-memory form of the text. In history it travels as
+`AgentRuntimeMessage.turnAddition`, an optional field that holds the text the
+turn of a prompt appended when the prompt was sent (the block, then the turn
+instruction); `content` stays what the user typed, and the block never enters
+the message content. `RemoteGenerationClient.agentRuntimeMessages(from:)` reads
+the private key into that field, so session snapshots and conversation history
+carry it, and `RemoteGenerationClient.remoteMessage(from:)` writes it back under
+the private key when a session is created from history. The text therefore
+survives every rebuild of the session from history — loading a saved session,
+switching model or agent, changing the dynamic context, restoring a snapshot,
+replacing the history after a `/plan` turn — and earlier prompts are resent
+afterwards exactly as they first went out.
+
+Saved sessions write the field inside the `history` messages of the `.session`
+file. It is an optional addition: the saved-session version stays 5, a message
+without an addition encodes no new key, so sessions without blocks produce the
+same files as before, a file saved earlier decodes with the field `nil` and
+resends earlier prompts without blocks, and an earlier build ignores the key and
+loads the session without blocks. Saved sessions therefore contain the memory
+text recalled for every turn, each up to the per-turn recall budget
 (`ZENCODE_MEMORY_RECALL_MAX_CHARACTERS`, default 4 000 characters, about 1k
-tokens), until compaction removes their messages or the session is rebuilt. The
-alternative channels were rejected on purpose: `systemPrompt` participates in
-the session cache key, and `dynamicContext` is compared by
+tokens), and so do the archives that include them. The blocks of earlier turns
+also stay in the context of the session until compaction removes their
+messages.
+
+The text stays out of the displayed transcript (`transcriptHistory`), the
+session's checkpoint tree, what the TUI, ACP and Telegram present, the system
+prompt, and the session cache key. The private key never reaches a network
+payload: the outgoing copy removes it and the chat-completions payload builder
+drops it. Compaction estimates
+(`AgentConversationCompactionSupport.estimatedTokenCount`) count the turn text
+together with the content. One limit remains: restoring from an entry of the
+checkpoint tree rebuilds the session from the transcript, so earlier prompts
+are resent without the turn text. The in-process DS4 path renders from its own
+frozen content (`DS4MessageKeys.userContent`), and when a DS4 session is
+created from history its first round freezes again the content of every
+earlier prompt that carries the recorded turn text and has no frozen content
+yet, so earlier prompts render with the blocks they went out with. This holds
+for every rebuild from history: a saved session loaded without a usable KV
+checkpoint (skipped for images or for lack of live DS4 state, absent, or not
+compatible with the engine), a model or agent switch, a dynamic-context change,
+a snapshot restore, and a session started with another provider and continued
+with DS4. With a usable checkpoint nothing changes: the trailer restores the
+frozen content and the saved KV prefix is reused; a session loaded without one
+starts from an empty KV and evaluates the prompt in full, so this concerns the
+completeness of the context the model reads, not KV reuse. The alternative
+channels were rejected on purpose: `systemPrompt` participates in the session
+cache key, and `dynamicContext` is compared by
 `matchesSessionIdentityIgnoringThinking`, so either would rotate the cache key
 or force a `createSession` on every turn.
 

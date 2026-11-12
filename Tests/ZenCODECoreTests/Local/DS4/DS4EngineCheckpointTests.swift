@@ -225,6 +225,39 @@ struct DS4EngineCheckpointTests {
     }
 
     @Test
+    func withoutACheckpointTheRebuiltSessionStillRendersTheSavedPrompt() async throws {
+        let harness = try DS4ClientHarness()
+        harness.mock.enqueueGeneration(["Reasoning", "</think>", "Answer."])
+        harness.mock.enqueueGeneration(["Second answer."])
+        let client = try await harness.makeClient(thinkingSelection: nil)
+        try await firstTurn(client)
+        let first = try #require(harness.engine.transcripts.first)
+        let history = try #require(await client.snapshotSession(id: "session")).history
+        await client.closeSession(id: "session")
+
+        // No checkpoint (skipped, missing or not compatible): the session is
+        // created from its history alone, as a model switch creates it too.
+        let rebuilt = try await harness.makeClient(
+            sessionID: "session", history: history, thinkingSelection: nil
+        )
+        _ = try await rebuilt.sendPrompt(sessionID: "session", prompt: "second", attachments: [], onEvent: { _ in })
+
+        // The earlier prompt renders as it was first sent, with the memory
+        // block the history carries beside its text, so the transcript is the
+        // same up to that prompt. The prompt is frozen again on the way.
+        let second = try #require(harness.engine.transcripts.last)
+        let prompt = DS4TranscriptOperation.message(role: "user", content: "first\n\nMEMORY BLOCK")
+        let promptIndex = try #require(first.firstIndex(of: prompt))
+        #expect(Array(second.prefix(promptIndex + 1)) == Array(first.prefix(promptIndex + 1)))
+        #expect(second.contains(.message(role: "user", content: "second")))
+        let url = checkpointURL(harness)
+        #expect(try await rebuilt.saveEngineCheckpoint(sessionID: "session", to: url) == .saved)
+        let trailer = try MockDS4Engine.checkpointTrailer(at: url)
+        #expect(trailer.messages.first?.ds4.userContent == "first\n\nMEMORY BLOCK")
+        await rebuilt.shutdown()
+    }
+
+    @Test
     func restoredMessagesThatChangedAreLeftWithoutKeys() async throws {
         let harness = try DS4ClientHarness()
         harness.mock.enqueueGeneration(["Reasoning", "</think>", "Answer."])

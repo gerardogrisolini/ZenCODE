@@ -36,8 +36,10 @@ import Foundation
 /// and merged into the *outgoing copy* of that prompt by
 /// `RemoteGenerationClient.applyingCurrentTurnMemory(to:block:instruction:)`,
 /// on this turn and on every later one. The content of a session message is
-/// never mutated, so the instruction never enters conversation history, saved
-/// session snapshots, or the session cache key.
+/// never mutated: the instruction is carried beside it, in
+/// `AgentRuntimeMessage.turnAddition`, through snapshots, saved sessions and
+/// every session rebuilt from its history, and it never enters the
+/// conversation text, the system prompt, or the session cache key.
 ///
 /// A `Task {}` inherits task-locals, so work that is not the main turn — a
 /// delegated sub-agent turn, the isolated memory proposal — binds `nil`

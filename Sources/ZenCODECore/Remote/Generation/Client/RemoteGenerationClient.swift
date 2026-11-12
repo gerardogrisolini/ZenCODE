@@ -362,19 +362,20 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
             throw RemoteGenerationClientError.missingSession
         }
 
-        let userMessage = Self.remoteMessage(
-            role: "user",
-            content: prompt,
-            attachments: attachments
-        )
         // The turn's memory block and instruction are recorded on the prompt,
         // so every later request sends it again as it was first sent. The
-        // in-process DS4 path freezes its own rendered content instead
-        // (`DS4MessageKeys.userContent`).
+        // in-process DS4 path records them as well, for a history that is the
+        // same under every provider; it renders from its own frozen content
+        // (`DS4MessageKeys.userContent`) and freezes it again from this
+        // record in a session created from its history.
         session.messages.append(
-            ds4Generation == nil
-                ? Self.recordingTurnAddition(on: userMessage)
-                : userMessage
+            Self.recordingTurnAddition(
+                on: Self.remoteMessage(
+                    role: "user",
+                    content: prompt,
+                    attachments: attachments
+                )
+            )
         )
         // Persist immediately so concurrent actor operations (compaction,
         // option updates) observe and build on the latest messages instead of
@@ -404,7 +405,7 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
             // value of `session.messages`, so each prompt carries the memory
             // block of its own turn on each round's request — exactly once,
             // because the block is never written into the content of a
-            // session message. That keeps it out of history, snapshots and
+            // session message. That keeps it out of the conversation text and
             // the cache key; the prompt-cache expectation above is
             // deliberately computed from the unmodified array.
             let outputRelay = RemoteRoundOutputRelay()
@@ -655,7 +656,8 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
                 toolCalls: runtimeToolCalls(from: message),
                 toolCallID: stringValue(message["tool_call_id"])?.nilIfBlank,
                 toolName: stringValue(message["name"])?.nilIfBlank,
-                toolResultIsError: message["is_error"] as? Bool
+                toolResultIsError: message["is_error"] as? Bool,
+                turnAddition: message[turnAdditionKey] as? String
             )
         }
     }

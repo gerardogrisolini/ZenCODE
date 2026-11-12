@@ -17,17 +17,23 @@ Release tags follow the strict `vX.Y.Z` contract described in
   so the request prefix stays stable from one turn to the next for the
   provider's prompt cache. Before, both were merged only into the outgoing copy
   of the last user message, so the next turn resent the previous prompt without
-  them and the prefix changed from that message on, which did not match what
-  the provider had cached. The text is now recorded on the prompt's user
-  message in the client's in-memory session, under a private key that the
-  chat-completions payload drops; the block and the instruction still never
-  enter conversation history, saved sessions, snapshots, or the session cache
-  key, and a session rebuilt from history (resume, model or agent switch,
-  dynamic-context change, snapshot restore) resends earlier prompts without
-  them. The blocks of earlier turns now stay in the context of the live
-  session, each up to the per-turn recall budget
-  (`ZENCODE_MEMORY_RECALL_MAX_CHARACTERS`, default 4 000 characters), until
-  compaction removes their messages.
+  them and the prefix changed from that message on. The text now travels with
+  the conversation history, in an optional `turnAddition` field of the history
+  message that is separate from its content, so it also holds after a saved
+  session is loaded and after any rebuild of the session from history (model or
+  agent switch, dynamic-context change, snapshot restore, `/plan`). Saved
+  sessions therefore contain the memory text recalled for every turn, each up
+  to the per-turn recall budget (`ZENCODE_MEMORY_RECALL_MAX_CHARACTERS`,
+  default 4 000 characters), and so do the archives that include them. The
+  field is an optional addition: the saved-session version is unchanged,
+  sessions without blocks produce the same files as before, and files saved
+  earlier still load, without blocks. The displayed transcript and the session
+  cache key do not change. One limit remains: restoring from a checkpoint-tree
+  entry rebuilds the session from the transcript and resends earlier prompts
+  without the text. The in-process DS4 path renders earlier prompts with their
+  blocks even in a session loaded without a usable KV checkpoint, where the
+  prompt is evaluated again in full. The blocks of earlier turns stay in the
+  context until compaction removes their messages.
 
 ## [6.0.0] - 2026-11-11
 

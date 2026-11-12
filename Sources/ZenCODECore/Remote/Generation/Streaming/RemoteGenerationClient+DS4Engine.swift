@@ -440,7 +440,7 @@ extension RemoteGenerationClient {
         let visionConfigured = info.hasVision && ds4.manifest.visionRelativePath != nil
 
         try await prepareDS4Images(lease: lease, visionConfigured: visionConfigured, onEvent: onEvent)
-        try freezeDS4CurrentTurnUserContent(lease: lease)
+        try freezeDS4UserContent(lease: lease)
         // `/ds4 hints`: the note of this conversation boundary, if the setting changed.
         try applyDS4HintsBoundary(lease: lease)
 
@@ -646,33 +646,48 @@ extension RemoteGenerationClient {
         return session
     }
 
-    /// Stores in the last user message the content it is sent with this turn
-    /// (memory block and instruction appended by `applyingCurrentTurnMemory`),
-    /// so later rounds and turns render it unchanged.
-    private func freezeDS4CurrentTurnUserContent(lease: SessionLease) throws {
+    /// Stores in a user message the content it is sent with (memory block and
+    /// instruction appended by `applyingCurrentTurnMemory`), so later rounds
+    /// and turns render it unchanged: the last user message, which is the
+    /// prompt of the running turn, and every earlier prompt that carries the
+    /// text of its own turn (`turnAdditionKey`) without its frozen content.
+    /// The latter is the state of a session created from its history, where
+    /// no KV checkpoint trailer brought the frozen content back.
+    private func freezeDS4UserContent(lease: SessionLease) throws {
         guard let session = currentSession(for: lease) else {
             throw RemoteGenerationClientError.missingSession
         }
-        guard let index = session.messages.lastIndex(where: { message in
+        let lastUserIndex = session.messages.lastIndex(where: { message in
             Self.stringValue(message["role"])?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased() == "user"
-        }), session.messages[index][DS4MessageKeys.userContent] == nil else {
+        })
+        let pending = session.messages.indices.filter { index in
+            let message = session.messages[index]
+            return message[DS4MessageKeys.userContent] == nil
+                && (index == lastUserIndex || message[Self.turnAdditionKey] != nil)
+        }
+        guard !pending.isEmpty else {
             return
         }
         let outgoing = Self.applyingCurrentTurnMemory(to: session.messages)
         guard outgoing.count == session.messages.count else {
             return
         }
-        let rendered = Self.contentString(from: outgoing[index]["content"]) ?? ""
-        guard rendered != DS4TranscriptRenderer.userContent(of: session.messages[index]) else {
+        let frozen = pending.compactMap { index -> (index: Int, content: String)? in
+            let rendered = Self.contentString(from: outgoing[index]["content"]) ?? ""
+            guard rendered != DS4TranscriptRenderer.userContent(of: session.messages[index]) else {
+                return nil
+            }
+            return (index, rendered)
+        }
+        guard !frozen.isEmpty else {
             return
         }
         mutateSession(for: lease) { session in
-            guard index < session.messages.count else {
-                return
+            for (index, content) in frozen where index < session.messages.count {
+                session.messages[index][DS4MessageKeys.userContent] = content
             }
-            session.messages[index][DS4MessageKeys.userContent] = rendered
         }
     }
 
