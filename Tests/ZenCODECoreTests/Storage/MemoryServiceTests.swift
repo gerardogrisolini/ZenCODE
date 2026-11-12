@@ -25,6 +25,69 @@ struct MemoryServiceTests {
         #expect(!prompt.contains("Before writing"))
     }
 
+    /// Each memory rule is stated once: the policy in the prompt section, the
+    /// tool contracts in the tool descriptions, which are always visible next
+    /// to the section and are the only memory guidance delegated agents get.
+    @Test
+    func memoryPromptKeepsEveryRuleAndLeavesToolContractsToTheDescriptions() throws {
+        let full = MemoryService.toolUsagePromptSection(readOnly: false)
+        for rule in [
+            "Memory tools:",
+            "its contents are not preloaded into this prompt",
+            "labelled `<project-memory>` block",
+            "call `memory.search` before concluding that no prior context exists",
+            "`memory.get` for one entry by id",
+            "`memory.read` with `detail: \"index\"`",
+            "Without a configured embedding endpoint, retrieval and recall are pure BM25 keyword matching.",
+            "Always verify the entries you retrieve against Git, files, tools, builds, tests, or current user messages before acting; fresh evidence wins when it conflicts with memory.",
+            "Journal a durable fact when substantial work reaches a verified handoff",
+            "a version or changelog edit alone is not evidence that it was published",
+            "Before writing, search for an active entry about the same durable project fact.",
+            "if nothing materially changed, do not write",
+            "consolidate with `memory.update` and archive the other",
+            "Do not write user preferences or operating rules to memory",
+            "Saved-session pointers are maintained programmatically",
+            "decide whether project memory should be created, updated, archived, or left unchanged",
+            "do not record intentions, unimplemented plans, or unverified results",
+            "`Summary` (the durable milestone or change)",
+            "Add `tags` when writing",
+            "Do not write every command or tool call",
+        ] {
+            #expect(full.contains(rule), "missing rule: \(rule)")
+        }
+        for duplicate in [
+            "rewrites the entry in place",
+            "Use `memory.archive` when",
+            "reciprocal-rank fusion",
+            "adds `Timestamp` automatically",
+            "Prefer fresh evidence",
+            "`offset` pages through the journal",
+        ] {
+            #expect(!full.contains(duplicate), "duplicate kept: \(duplicate)")
+        }
+
+        let readOnly = MemoryService.toolUsagePromptSection(readOnly: true)
+        #expect(readOnly.contains("Without a configured embedding endpoint, retrieval and recall use BM25 keyword matching."))
+        #expect(readOnly.contains("fresh evidence wins when it conflicts with memory"))
+        #expect(!readOnly.contains("`offset` pages through the journal"))
+
+        func description(_ name: String) throws -> String {
+            try #require(MemoryTool.toolDescriptors.first { $0.name == name }).description
+        }
+        #expect(try description("memory.update").contains(
+            "Its id, creation date, and archive state remain stable; Timestamp is preserved and Updated is stamped with the time of the update."
+        ))
+        #expect(try description("memory.archive").contains("stale, incorrect, or no-longer-useful"))
+        #expect(try description("memory.archive").contains("is not deleted; memory.restore brings it back"))
+        #expect(try description("memory.write").contains("Timestamp is added when missing"))
+        #expect(try description("memory.search").contains(
+            "BM25 keyword ranking, semantic similarity when an embedding endpoint is configured, and graph-related entries"
+        ))
+        #expect(try description("memory.search").contains("tags (all required) or category narrow them"))
+        #expect(try description("memory.read").contains("offset pages through the journal"))
+        #expect(try description("memory.read").contains("tags (all required) or category narrow it"))
+    }
+
     @Test
     func writingAndReadingEntriesRoundTripsAndDeduplicates() async throws {
         let workspace = try MemoryTestWorkspace()

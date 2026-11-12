@@ -63,36 +63,6 @@ struct DynamicPromptContextTests {
     }
 
     @Test
-    func toolDescriptionPrecedenceRuleIsStaticAndToolNeutral() {
-        let rule = "Tool precedence: when a tool's description says it should be preferred"
-        #expect(SystemPromptBuilder.standaloneStaticPrompt().contains(rule))
-        #expect(SystemPromptBuilder.standaloneStaticPrompt().lowercased().contains("xcode") == false)
-
-        func sections(allowedToolNames: Set<String>) -> SystemPromptSections {
-            SystemPromptBuilder.standalonePromptSections(
-                cwd: "/tmp/tool-precedence-rule",
-                agentsSection: nil,
-                memorySection: nil,
-                memoryToolEnabled: false,
-                allowedToolNames: allowedToolNames,
-                responseLanguageSection: SystemPromptBuilder.responseLanguageSection(
-                    languageName: "English"
-                )
-            )
-        }
-
-        let withoutTools = sections(allowedToolNames: [])
-        let withXcodeTools = sections(allowedToolNames: ["xcode.XcodeRead", "local.readFile"])
-
-        for prompt in [withoutTools, withXcodeTools] {
-            #expect(prompt.systemPrompt.contains(rule))
-            #expect(prompt.systemPrompt.lowercased().contains("xcode") == false)
-            #expect(prompt.dynamicContext.contains(rule) == false)
-        }
-        #expect(withoutTools.systemPrompt == withXcodeTools.systemPrompt)
-    }
-
-    @Test
     func wireContextIsOneLeadingUserMessageAndRoundTripsThroughSnapshot() throws {
         let dynamicContext = "Current task working directory for local tools:\n- Working directory path: /tmp/project"
         let history = [

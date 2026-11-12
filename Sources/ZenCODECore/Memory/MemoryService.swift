@@ -41,8 +41,8 @@ public final class MemoryService: @unchecked Sendable {
             return """
             Memory tools (read-only):
             Treat durable project memory as first-class context, but remember that its contents are not preloaded into this prompt.
-            Project memory is a graph. Before each turn ZenCODE automatically recalls entries it deems relevant and injects them as a labelled `<project-memory>` block. When no such block is present, either nothing relevant was found or recall was unavailable for this turn: call `memory.search` before concluding that no prior context exists. Use `memory.search` for a focused lookup, `memory.get` for one entry by id, or `memory.read` with `detail: "index"` for a compact overview when more context is needed; `tags` and `category` narrow reads and searches, and `offset` pages through the journal.
-            Semantic similarity requires a configured embedding endpoint; without one, retrieval and recall use BM25 keyword matching.
+            Project memory is a graph. Before each turn ZenCODE automatically recalls entries it deems relevant and injects them as a labelled `<project-memory>` block. When no such block is present, either nothing relevant was found or recall was unavailable for this turn: call `memory.search` before concluding that no prior context exists. Use `memory.search` for a focused lookup, `memory.get` for one entry by id, or `memory.read` with `detail: "index"` for a compact overview when more context is needed.
+            Without a configured embedding endpoint, retrieval and recall use BM25 keyword matching.
             Always verify retrieved entries against Git, files, builds, tests, releases, or current user messages before acting; fresh evidence wins when it conflicts with memory.
             This tool surface is read-only: do not claim to create, update, archive, or publish durable memory. Preserve durable facts or release evidence in your response so it can be recorded by an appropriate writer.
             """
@@ -50,20 +50,17 @@ public final class MemoryService: @unchecked Sendable {
         return """
         Memory tools:
         Treat durable project memory as first-class context, but remember that its contents are not preloaded into this prompt.
-        Project memory is a graph. Before each turn ZenCODE automatically recalls the entries it deems most relevant to the current prompt and injects them as a labelled `<project-memory>` block in the outgoing message. When no such block is present, either nothing relevant was found or recall was unavailable for this turn: call `memory.search` before concluding that no prior context exists. When you need more, use `memory.search` (keyword and, when an embedding endpoint is configured, semantic retrieval with reciprocal-rank fusion and graph expansion), `memory.get` for one entry by id, or `memory.read` with `detail: "index"` for a compact overview of the full store; `tags` and `category` narrow reads and searches, and `offset` pages through the journal.
-        Semantic similarity requires a configured embedding endpoint; without one, retrieval and recall are pure BM25 keyword matching.
-        Always verify the entries you retrieve against Git, files, builds, tests, or current user messages before acting.
+        Project memory is a graph. Before each turn ZenCODE automatically recalls the entries it deems most relevant to the current prompt and injects them as a labelled `<project-memory>` block in the outgoing message. When no such block is present, either nothing relevant was found or recall was unavailable for this turn: call `memory.search` before concluding that no prior context exists. When you need more, use `memory.search`, `memory.get` for one entry by id, or `memory.read` with `detail: "index"` for a compact overview of the full store.
+        Without a configured embedding endpoint, retrieval and recall are pure BM25 keyword matching.
+        Always verify the entries you retrieve against Git, files, tools, builds, tests, or current user messages before acting; fresh evidence wins when it conflicts with memory.
         Journal a durable fact when substantial work reaches a verified handoff; architecture, compatibility, dependencies, or persisted formats change; a durable decision, blocker, or caveat affects future work; prior recorded state becomes obsolete; or a release, version, or publication is completed. For a release, record the version or identifier, what was published, and concrete evidence such as its tag, artifact, build, test, or deployment result; a version or changelog edit alone is not evidence that it was published.
         Before writing, search for an active entry about the same durable project fact. Use `memory.update` when that entry should be brought current instead of appending a duplicate; if nothing materially changed, do not write. `memory.write` reports similar active entries: if one covers the same fact, consolidate with `memory.update` and archive the other.
-        `memory.update` rewrites the entry in place: the entry keeps its id, its creation date and its archive state, so an id stays valid after an update. It preserves the original `Timestamp` and stamps `Updated` with the time of the update.
         Do not write user preferences or operating rules to memory; keep entries scoped to durable project facts.
         Saved-session pointers are maintained programmatically in the sessions index when a session is saved; do not duplicate them with memory tools.
         At the end of a substantial project turn, before the final answer, decide whether project memory should be created, updated, archived, or left unchanged. When a trigger above produced a completed, verified durable fact and mutation tools are available, perform the appropriate mutation before finishing; do not record intentions, unimplemented plans, or unverified results.
-        A project journal entry should be concise and structured with `Summary` (the durable milestone or change), `State` (the current verified state and relevant caveats), and `Next` (the next useful open step, or `None currently`); `memory.write` adds `Timestamp` automatically when missing.
+        A project journal entry should be concise and structured with `Summary` (the durable milestone or change), `State` (the current verified state and relevant caveats), and `Next` (the next useful open step, or `None currently`).
         Add `tags` when writing so related entries link together and later retrieval can follow those links.
         Do not write every command or tool call, raw outputs, detailed logs, large diffs, temporary task state, guesses, speculative plans, transient chatter, or facts already obvious from current files.
-        Use `memory.archive` when a note is stale, incorrect, or no longer useful; archived entries stop influencing retrieval but are not deleted, and `memory.restore` brings one back.
-        Prefer fresh evidence from files, tools, builds, tests, or current user messages when it conflicts with memory.
         """
     }
 

@@ -23,7 +23,7 @@ extension DirectTodoRuntime {
     private static let todoWriteDescriptor = DirectToolDescriptor(
             name: "todo.write",
             description: "Creates or updates the session todo list. Supports replace, append, and upsert modes.",
-            inputSchema: #"{"type":"object","properties":{"todos":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"content":{"type":"string"},"title":{"type":"string"},"status":{"type":"string"},"dependsOn":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}}},"required":["content"]}},"items":{"type":"array","items":{"type":"object"}},"id":{"type":"string"},"content":{"type":"string"},"title":{"type":"string"},"status":{"type":"string"},"dependsOn":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}},"mode":{"type":"string"}}}"#,
+            inputSchema: #"{"type":"object","properties":{"todos":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"content":{"type":"string"},"status":{"type":"string"},"dependsOn":{"type":"array","items":{"type":"string"}}},"required":["content"]}},"mode":{"type":"string"}},"required":["todos"]}"#,
             presentation: .standard(title: "Todo list", action: "Update", kind: .edit, targetKeyPaths: ["id", "title", "content"])
         )
 

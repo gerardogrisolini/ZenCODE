@@ -547,8 +547,11 @@ The main model owns durable memory explicitly through the seven `memory.*`
 tools — read-only `memory.read`, `memory.search`, `memory.get`; mutating
 `memory.write`, `memory.update`, `memory.archive`, `memory.restore` — guided by
 `MemoryService.toolUsagePromptSection()` (search before writing, update
-instead of duplicating, archive stale entries, prefer fresh evidence over
-memory). `memory.read` pages the journal newest-first (`offset`, `limit`,
+instead of duplicating, decide at the end of a turn whether to create, update or
+archive, prefer fresh evidence over memory) and by the tool descriptions, which
+carry each tool's own contract (`memory.update` keeps the id, the creation date
+and `Timestamp`; `memory.archive` is for stale entries and `memory.restore`
+reverses it). `memory.read` pages the journal newest-first (`offset`, `limit`,
 `hasMore`) and both reads and searches accept a `MemoryEntryFilter` (`tags`,
 all required and case-insensitive; `category`). `memory.get` returns one entry
 by id, archived or not; `memory.restore` reactivates an archived entry and,

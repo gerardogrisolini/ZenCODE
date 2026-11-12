@@ -12,6 +12,24 @@
 #   container machine create local/rpios-trixie-swift:latest \
 #       --name zencode-rpios --cpus 4 --memory 8G --set-default
 #
+# Use it to reproduce Linux-only CI failures instead of inferring them from the
+# workflow status: a green macOS run is not evidence that the Linux gate passes.
+#
+# Targeted runs: call the machine directly and always pass the Linux build path,
+# because the repository `.build` directory is shared with macOS and holds
+# incompatible artifacts:
+#   container machine run -n zencode-rpios -w "$PWD" -- \
+#       swift test --build-path /tmp/zencode-build [--filter <suite-or-test>]
+# Quoting is not preserved through `container machine run -- bash -c`: put
+# multi-step or looping shell in a script file and run that file instead.
+# Concurrency and lifecycle races may not reproduce on an idle machine: when a
+# test fails only in CI, rerun it under CPU contention (background busy loops
+# oversubscribing the machine's cores) before concluding it is unrelated.
+# When finished, stop both the machine and the BuildKit builder, a separate
+# container that keeps running after the machine stops:
+#   container machine stop zencode-rpios
+#   container builder stop
+#
 # Usage:
 #   Scripts/rpios-test.sh            # build + test
 #   Scripts/rpios-test.sh build      # build only

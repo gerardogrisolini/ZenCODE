@@ -181,6 +181,25 @@ struct DirectToolCatalogSchemaTests {
         #expect((evidence["items"] as? [String: Any])?.isEmpty == true)
     }
 
+    @Test
+    func todoWriteSchemaExposesOnlyTheCanonicalTodosArray() throws {
+        let descriptor = try #require(
+            DirectTodoRuntime.toolDescriptors.first { $0.name == "todo.write" }
+        )
+        let schema = try #require(descriptor.schemaObject as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        #expect(Set(properties.keys) == ["todos", "mode"])
+        #expect(schema["required"] as? [String] == ["todos"])
+
+        let todos = try #require(properties["todos"] as? [String: Any])
+        #expect(todos["type"] as? String == "array")
+        let item = try #require(todos["items"] as? [String: Any])
+        let itemProperties = try #require(item["properties"] as? [String: Any])
+        #expect(Set(itemProperties.keys) == ["id", "content", "status", "dependsOn"])
+        #expect(item["required"] as? [String] == ["content"])
+        #expect(descriptor.description.contains("Supports replace, append, and upsert modes."))
+    }
+
     /// The descriptions keep each tool's own contract and leave the workflow,
     /// delegation, and chat policies to the prompt sections that state them
     /// once, so the same rule is not paid for several times per request.

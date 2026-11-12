@@ -26,6 +26,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
   place that is shown whenever the rule applies. The agent selection policy is
   no longer repeated in the `complexity` field of `tasks.create` and
   `tasks.update`. No rule was dropped, and the roster keeps its format.
+- The instructions sent for the memory tools (`memory.*` and `todo.*`) are
+  about 400 tokens shorter on the first request of a session (Claude
+  tokenizer): from about 2 870 to 2 450 tokens for the `memory` tool group. The
+  `Memory tools` prompt section no longer repeats what the tool descriptions
+  already state (how `memory.update` keeps an entry's id and dates, what
+  `memory.archive` and `memory.restore` do, how `memory.search` ranks, and how
+  `memory.read` pages and filters), and states once the rule to verify entries
+  against fresh evidence. The tool descriptions are unchanged; they are also
+  the only memory guidance that delegated agents receive. The `todo.write`
+  schema now shows only the canonical `todos` array; the root single-item form
+  and the `items`, `title`, and `depends_on` aliases are still accepted.
 - The prompts of earlier turns are now resent with the recalled
   `<project-memory>` block and the turn instruction they were first sent with,
   so the request prefix stays stable from one turn to the next for the
