@@ -150,21 +150,23 @@ extension ZenCODEACPBridge {
             workingDirectory: workingDirectoryURL
         )
         let sessionID = "swift-agent-\(UUID().uuidString.lowercased())"
+        // The session's own tool grant, resolved before its MCP servers are
+        // installed: it tells which of them a feature of the session replaces.
+        let resolvedRequestedAllowedToolNames = await requestedSessionAllowedToolNames(
+            from: params,
+            selectedAgent: selectedAgent,
+            workingDirectory: workingDirectoryURL
+        )
+        try ensureLifecycleOperationLive(operation)
         let (sessionEpoch, offersResumableTaskGraphs) = try await withNewIncarnation(
             sessionID: sessionID,
             cwd: cwd,
             params: params,
+            requestedAllowedToolNames: resolvedRequestedAllowedToolNames,
             operation: operation
         ) { incarnation, acpMCPDescriptors in
             let cacheKey = (params["sessionKey"] as? String)
                 ?? (params["cacheKey"] as? String)
-            let requestedAllowedToolNames = Self.allowedToolNames(from: params)
-                ?? selectedAgent?.allowedToolNames()
-            let resolvedRequestedAllowedToolNames = await resolvedAllowedToolNames(
-                requestedAllowedToolNames,
-                workingDirectory: workingDirectoryURL
-            )
-            try ensureLifecycleOperationLive(operation)
             let allowedToolNames = Self.sessionAllowedToolNames(
                 resolvedRequestedAllowedToolNames,
                 adding: acpMCPDescriptors,
@@ -256,7 +258,9 @@ extension ZenCODEACPBridge {
     /// session `sessionID` in `cwd`, installs the MCP servers `params`
     /// provide, and runs `body` with the incarnation and the descriptors of
     /// those servers: the shared part of `session/new` and of the restore of
-    /// a session that is not live.
+    /// a session that is not live. `requestedAllowedToolNames` is the
+    /// session's own tool grant (see `requestedSessionAllowedToolNames`): a
+    /// server one of its features replaces is not installed.
     ///
     /// The incarnation is opened in the host before the MCP servers are
     /// installed: the ownership stamped on those registrations identifies
@@ -272,6 +276,7 @@ extension ZenCODEACPBridge {
         sessionID: String,
         cwd: String,
         params: [String: Any],
+        requestedAllowedToolNames: Set<String>?,
         operation: UInt64,
         _ body: (_ incarnation: ChatSessionIncarnation, _ acpMCPDescriptors: [DirectToolDescriptor]) async throws -> Value
     ) async throws -> Value {
@@ -280,6 +285,7 @@ extension ZenCODEACPBridge {
             try ensureLifecycleOperationLive(operation)
             let acpMCPDescriptors = await registerACPProvidedMCPServers(
                 from: params,
+                requestedAllowedToolNames: requestedAllowedToolNames,
                 ownership: DirectMCPToolRuntime.MCPSessionOwnership(
                     sessionID: sessionID,
                     epoch: incarnation.epoch
@@ -355,8 +361,50 @@ extension ZenCODEACPBridge {
         return ExternalToolAvailability.resolvedAllowedToolNames(requestedAllowedToolNames)
     }
 
+    /// The tools a new session asks for on its own, before the tools of the
+    /// MCP servers it provides are added: the request's, else the selected
+    /// agent's. `nil` is a request with no tool grant of its own.
+    private func requestedSessionAllowedToolNames(
+        from params: [String: Any],
+        selectedAgent: AgentProfile?,
+        workingDirectory: URL
+    ) async -> Set<String>? {
+        await resolvedAllowedToolNames(
+            Self.allowedToolNames(from: params) ?? selectedAgent?.allowedToolNames(),
+            workingDirectory: workingDirectory
+        )
+    }
+
+    /// The server ids (`DirectMCPToolRuntime.externalServerID(for:)`) of the
+    /// features a session with the tool grant `requestedAllowedToolNames`
+    /// runs. `nil` names none: a session without a grant of its own that
+    /// installs an MCP server is granted the tools of its servers only (see
+    /// `allowedToolNames(_:adding:)`), so no feature runs beside them.
+    private func sessionFeatureServerIDs(
+        requestedAllowedToolNames: Set<String>?
+    ) async -> Set<String> {
+        guard let requestedAllowedToolNames else {
+            return []
+        }
+        let featureIDs = await sessionRunner.swiftFeatureRuntime.featureIDs(
+            relevantTo: requestedAllowedToolNames
+        )
+        return Set(featureIDs.map(DirectMCPToolRuntime.externalServerID(for:)))
+    }
+
+    /// Installs the MCP servers `params` provide and returns their tools.
+    ///
+    /// A server named like a feature the session's own tool grant
+    /// (`requestedAllowedToolNames`) already selects is the same integration
+    /// offered twice: Xcode passes its `xcode-tools` MCP bridge to every
+    /// session, including one whose agent runs the `xcode-tools` feature.
+    /// Such a server is not installed, so the session opens one connection to
+    /// the integration, and asks for its consent once, instead of twice, and
+    /// the model is not given two copies of the same tools. Without a grant
+    /// (`nil`) every server is installed.
     public func registerACPProvidedMCPServers(
         from params: [String: Any],
+        requestedAllowedToolNames: Set<String>? = nil,
         ownership: DirectMCPToolRuntime.MCPSessionOwnership? = nil,
         operation: UInt64? = nil
     ) async -> [DirectToolDescriptor] {
@@ -364,6 +412,9 @@ extension ZenCODEACPBridge {
         guard !definitions.isEmpty else {
             return []
         }
+        let featureServerIDs = await sessionFeatureServerIDs(
+            requestedAllowedToolNames: requestedAllowedToolNames
+        )
 
         var descriptors: [DirectToolDescriptor] = []
         for definition in definitions {
@@ -380,6 +431,15 @@ extension ZenCODEACPBridge {
                     )
                 }
                 return []
+            }
+            guard !featureServerIDs.contains(
+                DirectMCPToolRuntime.externalServerID(for: definition.name)
+            ) else {
+                ZenLogger.info(
+                    .viewModelRuntime,
+                    "ACP MCP server '\(definition.name)' is not installed: the session's feature of the same name provides its tools."
+                )
+                continue
             }
             do {
                 let installedDescriptors = try await sessionRunner.installACPProvidedMCPServer(
@@ -645,16 +705,25 @@ extension ZenCODEACPBridge {
             applyLaunchDirectoryFallback: false
         )
         try ensureLifecycleOperationLive(operation)
+        // Resolved before the incarnation opens, as `session/new` does: the
+        // agent's tool grant tells which MCP servers its features replace.
+        let selectedAgent = try resolvedACPAgentProfile(
+            from: params,
+            workingDirectory: workingDirectory
+        )
+        let requestedAllowedToolNames = await requestedSessionAllowedToolNames(
+            from: params,
+            selectedAgent: selectedAgent,
+            workingDirectory: workingDirectory
+        )
+        try ensureLifecycleOperationLive(operation)
         let restoredSessionEpoch = try await withNewIncarnation(
             sessionID: sessionID,
             cwd: workingDirectory.path,
             params: params,
+            requestedAllowedToolNames: requestedAllowedToolNames,
             operation: operation
         ) { incarnation, acpMCPDescriptors in
-            let selectedAgent = try resolvedACPAgentProfile(
-                from: params,
-                workingDirectory: workingDirectory
-            )
             let configuration = await restoredACPClientSessionConfiguration(
                 sessionID: sessionID,
                 params: params,

@@ -10,6 +10,30 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- In ACP clients such as Xcode, a session whose agent has the Xcode tools
+  enabled no longer asks for the Xcode MCP consent twice when its first prompt
+  is sent. Xcode passes its own `xcode-tools` MCP server to every session, and
+  `zen` connected to it in addition to the connection of the `xcode-tools`
+  feature, so the model was also given the same tools twice (`xcode-tools.*`
+  and `xcode.*`). An MCP server that the client provides is no longer started
+  when it has the name of a feature enabled for the session's agent: the
+  feature alone connects, and Xcode asks once. A session whose agent does not
+  have that feature still uses the client's server.
+- In ACP clients such as Xcode, the second prompt of a session no longer
+  rebuilds the session's backend. After each turn the session took the model
+  id its provider client reports, the bare id sent on the wire
+  (`claude-fable-5-2`), in place of the id it was configured with
+  (`claude:claude-fable-5-2`). The next prompt therefore built a new backend
+  for the bare id, with two effects. The features of the session started
+  again and asked again for their consent, the Xcode MCP consent for a
+  session with the Xcode tools. And the bare id was resolved to the first
+  configured model with that name: when two providers offer the same model,
+  such as an Anthropic API provider and the Claude subscription, the prompt
+  could be sent to the other provider and fail with "Remote provider failed:
+  Not found". The session now keeps the model it was configured with.
+
 ## [6.0.1] - 2026-11-13
 
 ### Changed

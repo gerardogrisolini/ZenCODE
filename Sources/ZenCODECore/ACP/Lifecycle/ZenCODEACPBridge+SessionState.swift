@@ -297,12 +297,20 @@ extension ZenCODEACPBridge {
                 return
             }
         }
-        // Rebuild from the entry as it is after the last hop.
+        // Rebuild from the entry as it is after the last hop. The model, like
+        // the profile and the model settings, stays the session's own (see
+        // `AgentCoreSessionConfiguration.replacingRuntimeState(with:)`): a
+        // backend reports the id it speaks on the wire (`claude-fable-5-2`
+        // for `claude:claude-fable-5-2`). Adopting it would make the next
+        // prompt's configuration fail `matchesRuntime`, so the backend would
+        // be built again (its features discovering their tools, and asking
+        // for their consent, again) for an id that no longer names the
+        // session's provider and may resolve to another provider's model.
         updateLiveSession(id: sessionID, epoch: epoch) { live in
             live = sessionState(
                 configuration: AgentCoreSessionConfiguration(
                     sessionID: snapshot.sessionID,
-                    modelID: snapshot.modelID ?? configuration.effectiveModelID,
+                    modelID: session.configuration.modelID,
                     agentID: session.configuration.agentID,
                     agentName: session.configuration.agentName,
                     agentRole: session.configuration.agentRole,

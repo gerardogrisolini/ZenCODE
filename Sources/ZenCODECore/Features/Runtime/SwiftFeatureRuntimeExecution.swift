@@ -71,6 +71,19 @@ extension SwiftFeatureRuntime {
         return ToolDescriptor.canonicalized(resolvedTools).map(DirectToolDescriptor.init)
     }
 
+    /// The IDs of the loaded features whose tools a session allowed
+    /// `allowedToolNames` lists: the features
+    /// ``descriptors(allowedToolNames:excludingFeatureIDs:)`` resolves, and
+    /// discovers when they discover their tools at runtime. Never starts a
+    /// feature's tool discovery.
+    public func featureIDs(relevantTo allowedToolNames: Set<String>?) -> Set<String> {
+        Set(
+            features
+                .filter { $0.isRelevant(allowedToolNames: allowedToolNames) }
+                .map(\.id)
+        )
+    }
+
     private func isListed(
         _ feature: SwiftFeatureBundle,
         allowedToolNames: Set<String>?,

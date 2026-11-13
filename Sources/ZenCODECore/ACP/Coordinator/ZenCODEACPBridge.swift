@@ -181,6 +181,7 @@ public actor ZenCODEACPBridge {
         writer: ACPWriter,
         backendFactory: AgentRuntimeBackendFactory? = nil,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
+        swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
         setupRequired: Bool = false
     ) {
         self.configuration = configuration
@@ -193,6 +194,7 @@ public actor ZenCODEACPBridge {
                 await permissionBroker.authorize(request)
             },
             mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime,
             backendFactory: backendFactory
         )
         self.sessionRunner = sessionRunner

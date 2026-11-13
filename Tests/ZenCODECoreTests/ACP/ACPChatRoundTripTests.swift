@@ -79,37 +79,90 @@ private extension Dictionary where Key == String, Value == JSONValue {
     }
 }
 
+/// The model ids the backends of a bridge were built for, in build order.
+private final class ACPBackendBuildLog: Sendable {
+    private let storage = Mutex<[String?]>([])
+
+    var modelIDs: [String?] {
+        storage.withLock { $0 }
+    }
+
+    func record(_ modelID: String?) {
+        storage.withLock { $0.append(modelID) }
+    }
+}
+
 /// Minimal backend that answers every prompt, optionally emitting subscription
 /// telemetry after the reply text.
+///
+/// With a `snapshotModelID` it also reports its sessions' snapshots, naming
+/// that model in them: the id a provider client speaks on the wire, which is
+/// not the id the session was configured with.
 private actor EchoACPBackend: AgentRuntimeBackend {
     private let emitsSubscriptionUsage: Bool
+    private let snapshotModelID: String?
+    private var sessions: [String: AgentRuntimeSessionSnapshot] = [:]
     private var prompts: [String] = []
 
-    init(emitsSubscriptionUsage: Bool = false) {
+    init(emitsSubscriptionUsage: Bool = false, snapshotModelID: String? = nil) {
         self.emitsSubscriptionUsage = emitsSubscriptionUsage
+        self.snapshotModelID = snapshotModelID
     }
 
     func createSession(
-        id _: String,
-        cwd _: String,
-        systemPrompt _: String?,
-        history _: [AgentRuntimeMessage],
-        cacheKey _: String?,
-        allowedToolNames _: Set<String>?,
-        thinkingSelection _: AgentThinkingSelection?,
-        preserveThinking _: Bool
-    ) {}
+        id: String,
+        cwd: String,
+        systemPrompt: String?,
+        history: [AgentRuntimeMessage],
+        cacheKey: String?,
+        allowedToolNames: Set<String>?,
+        thinkingSelection: AgentThinkingSelection?,
+        preserveThinking: Bool
+    ) {
+        guard let snapshotModelID else {
+            return
+        }
+        sessions[id] = AgentRuntimeSessionSnapshot(
+            sessionID: id,
+            modelID: snapshotModelID,
+            workingDirectoryPath: cwd,
+            systemPrompt: systemPrompt,
+            cacheKey: cacheKey,
+            history: history,
+            allowedToolNames: allowedToolNames,
+            thinkingSelection: thinkingSelection,
+            preserveThinking: preserveThinking
+        )
+    }
 
     func createSessionIfNeeded(
-        id _: String,
-        cwd _: String,
-        systemPrompt _: String?,
-        history _: [AgentRuntimeMessage],
-        cacheKey _: String?,
-        allowedToolNames _: Set<String>?,
-        thinkingSelection _: AgentThinkingSelection?,
-        preserveThinking _: Bool
-    ) {}
+        id: String,
+        cwd: String,
+        systemPrompt: String?,
+        history: [AgentRuntimeMessage],
+        cacheKey: String?,
+        allowedToolNames: Set<String>?,
+        thinkingSelection: AgentThinkingSelection?,
+        preserveThinking: Bool
+    ) {
+        guard sessions[id] == nil else {
+            return
+        }
+        createSession(
+            id: id,
+            cwd: cwd,
+            systemPrompt: systemPrompt,
+            history: history,
+            cacheKey: cacheKey,
+            allowedToolNames: allowedToolNames,
+            thinkingSelection: thinkingSelection,
+            preserveThinking: preserveThinking
+        )
+    }
+
+    func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot? {
+        sessions[id]
+    }
 
     func updateSessionOptions(
         id _: String,
@@ -241,6 +294,86 @@ struct ACPChatRoundTripTests {
         #expect(fixture.wire.stopReason(for: 11) == "end_turn")
     }
 
+    /// A backend reports the model id it speaks on the wire, which is not the
+    /// id its session was configured with (`claude-fable-5-2` for
+    /// `claude:claude-fable-5-2`). The session keeps its own id after a turn:
+    /// adopting the reported one makes the next prompt's configuration differ
+    /// from the running one, so the backend is built again (its features
+    /// discover their tools, and ask for their consent, again) for an id
+    /// that no longer names the provider of the session.
+    ///
+    /// The session is created by `session/new` in an existing workspace, so
+    /// its configuration is the one a client's session has.
+    @Test
+    func secondPromptKeepsTheConfiguredModelAndRunsOnTheSameBackend() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("acp-round-trip-wire-model-\(UUID().uuidString)", isDirectory: true)
+        let supportDirectory = root.appendingPathComponent("support", isDirectory: true)
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let backend = EchoACPBackend(snapshotModelID: "wire/test-model")
+        let builds = ACPBackendBuildLog()
+        let wire = ACPRoundTripWire()
+        try await AppStorageDirectory.withSupportDirectoryURL(supportDirectory) {
+            let bridge = ZenCODEACPBridge(
+                configuration: try Self.hostedConfiguration(workingDirectory: workspace),
+                writer: ACPWriter(sink: wire.sink),
+                backendFactory: { configuration, _ in
+                    builds.record(configuration.modelID)
+                    return backend
+                }
+            )
+            try await bridge.newSession(id: nil, params: ["cwd": workspace.path])
+            let sessionID = try #require(
+                await bridge.sessionConfigurationsForTesting().first?.sessionID
+            )
+
+            await bridge.handleLine("""
+            {"jsonrpc":"2.0","id":21,"method":"session/prompt","params":{"sessionId":"\
+            \(sessionID)","prompt":[{"type":"text","text":"first"}]}}
+            """)
+
+            #expect(wire.stopReason(for: 21) == "end_turn")
+            #expect(await bridge.sessionConfigurationsForTesting().map(\.modelID) == ["test-model"])
+
+            await bridge.handleLine("""
+            {"jsonrpc":"2.0","id":22,"method":"session/prompt","params":{"sessionId":"\
+            \(sessionID)","prompt":[{"type":"text","text":"second"}]}}
+            """)
+
+            #expect(wire.hasError(for: 22) == false)
+            #expect(wire.stopReason(for: 22) == "end_turn")
+            #expect(await backend.recordedPrompts() == ["first", "second"])
+            // One backend, built for the configured model, served both prompts.
+            #expect(builds.modelIDs == ["test-model"])
+            #expect(await bridge.sessionConfigurationsForTesting().map(\.modelID) == ["test-model"])
+            await bridge.shutdown()
+        }
+    }
+
+    private static func hostedConfiguration(
+        workingDirectory: URL,
+        appMode: Bool = false
+    ) throws -> AgentConfiguration {
+        try AgentConfiguration(
+            hostedModelID: "test-model",
+            availableAgents: AgentProfileStore.defaultProfiles(),
+            availableModels: [
+                AgentSettingsModelManifest(
+                    id: "test-model",
+                    kind: .remoteAPI,
+                    modelID: "local/test-model"
+                )
+            ],
+            runMode: .acp,
+            workingDirectory: workingDirectory,
+            appMode: appMode
+        )
+    }
+
     private static func makeFixture(
         sessionID: String,
         appMode: Bool = false,
@@ -255,22 +388,11 @@ struct ACPChatRoundTripTests {
             .appendingPathComponent(sessionID, isDirectory: true)
         let backend = EchoACPBackend(emitsSubscriptionUsage: emitsSubscriptionUsage)
         let wire = ACPRoundTripWire()
-        let configuration = try AgentConfiguration(
-            hostedModelID: "test-model",
-            availableAgents: AgentProfileStore.defaultProfiles(),
-            availableModels: [
-                AgentSettingsModelManifest(
-                    id: "test-model",
-                    kind: .remoteAPI,
-                    modelID: "local/test-model"
-                )
-            ],
-            runMode: .acp,
-            workingDirectory: workingDirectory,
-            appMode: appMode
-        )
         let bridge = ZenCODEACPBridge(
-            configuration: configuration,
+            configuration: try hostedConfiguration(
+                workingDirectory: workingDirectory,
+                appMode: appMode
+            ),
             writer: ACPWriter(sink: wire.sink),
             backendFactory: { _, _ in backend }
         )

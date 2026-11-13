@@ -21,6 +21,13 @@ Xcode can run `zen` as an ACP stdio coding agent.
    SwiftPM graph. It runs through the separately installed
    `xcode-tools-feature` process.
 
+   Xcode also passes its own `xcode-tools` MCP server to every ACP session.
+   When the session's agent has the Xcode feature enabled, `zen` does not
+   start that server: the feature is the only connection to Xcode, its tools
+   are named `xcode.*`, and Xcode asks for the MCP consent once. An agent
+   without the feature uses Xcode's server instead, with tools named
+   `xcode-tools.*`.
+
 3. Make sure the recommended agents exist. The setup can create `Developer`, `Builder`, `Planner`, `Reviewer`, and `Reporter`.
 4. Verify the executable path:
 
