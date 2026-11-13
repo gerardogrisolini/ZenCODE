@@ -115,6 +115,16 @@ private final class DirectExecJobOutputReader: Sendable {
         }
     }
 
+    /// Releases the descriptor of a reader that already finished. Called on the
+    /// runtime actor when the job record is dropped, never from `deinit`: the
+    /// last release can happen on the handle's own queue, where closing traps.
+    /// On Linux Foundation keeps a launched `Process`, and the pipes it
+    /// references, alive unless `waitUntilExit()` ran, so the descriptor would
+    /// otherwise stay open for the life of the process.
+    func close() {
+        try? handle.close()
+    }
+
     func start() {
         handle.readabilityHandler = { [self] _ in
             isFinishing.withLock { isFinishing in
@@ -554,7 +564,7 @@ public actor DirectExecJobRuntime {
         }
         let removeCount = finishedIDs.count - Self.maxRetainedFinishedJobs
         for jobID in finishedIDs.prefix(removeCount) {
-            jobsByID.removeValue(forKey: jobID)
+            jobsByID.removeValue(forKey: jobID)?.outputReaders.forEach { $0.close() }
             jobOrder.removeAll { $0 == jobID }
         }
     }

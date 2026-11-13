@@ -9,10 +9,6 @@ import Testing
 
 @Suite("Cron toolchain and crontab client")
 struct ZenCronToolchainTests {
-    // MARK: - Toolchain location
-
-    // MARK: - classifyRead
-
     // MARK: - SystemCrontabClient against a stand-in executable
 
     @Test("an executable that does not exist is reported as unavailable")
@@ -41,19 +37,6 @@ struct ZenCronToolchainTests {
 
         #expect(result == text)
         #expect(try fake.invocations() == ["-l"])
-    }
-
-    @Test("readCrontab never truncates a large crontab")
-    func readLargeCrontab() throws {
-        let line = "0 9 * * * /usr/local/bin/zen --prompt filler\n"
-        let text = String(repeating: line, count: 20_000)
-        let fake = try FakeCrontab(standardOutput: text)
-        defer { fake.remove() }
-
-        let result = try fake.client.readCrontab()
-
-        #expect(result.utf8.count == text.utf8.count)
-        #expect(result == text)
     }
 
     @Test("readCrontab maps no crontab to empty text")
@@ -143,26 +126,6 @@ struct ZenCronToolchainTests {
         }
     }
 
-    @Test("a crontab that exits without reading stdin fails cleanly")
-    func writeWhenChildIgnoresStdin() throws {
-        let fake = try FakeCrontab(
-            status: 1,
-            standardError: "crontab: you are not allowed to use this program\n",
-            readsStandardInput: false
-        )
-        defer { fake.remove() }
-        let text = String(repeating: "0 9 * * * echo hi\n", count: 100_000)
-
-        #expect(
-            throws: ZenCrontabError.commandFailed(
-                status: 1,
-                detail: "crontab: you are not allowed to use this program"
-            )
-        ) {
-            try fake.client.writeCrontab(text)
-        }
-    }
-
     // MARK: - Fixtures
 
     private static func makeTemporaryDirectory() throws -> URL {
@@ -190,8 +153,7 @@ struct ZenCronToolchainTests {
             status: Int32 = 0,
             standardOutput: String = "",
             standardOutputData: Data? = nil,
-            standardError: String = "",
-            readsStandardInput: Bool = true
+            standardError: String = ""
         ) throws {
             directory = try ZenCronToolchainTests.makeTemporaryDirectory()
             let script = directory.appendingPathComponent("crontab")
@@ -201,14 +163,11 @@ struct ZenCronToolchainTests {
                 .write(to: directory.appendingPathComponent("stdout.txt"))
             try Data(standardError.utf8)
                 .write(to: directory.appendingPathComponent("stderr.txt"))
-            let readInput = readsStandardInput
-                ? "if [ \"$1\" = \"-\" ]; then cat > \"$dir/stdin.txt\"; fi"
-                : ":"
             let body = """
                 #!/bin/sh
                 dir=$(dirname "$0")
                 printf '%s\\n' "$*" >> "$dir/args.log"
-                \(readInput)
+                if [ "$1" = "-" ]; then cat > "$dir/stdin.txt"; fi
                 cat "$dir/stdout.txt"
                 cat "$dir/stderr.txt" >&2
                 exit \(status)

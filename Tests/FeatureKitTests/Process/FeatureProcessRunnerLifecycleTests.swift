@@ -160,6 +160,35 @@ struct FeatureProcessRunnerLifecycleTests {
         #expect(result.exitCode == 0)
     }
 
+    @Test
+    func aRunClosesTheDescriptorsOfItsPipes() async throws {
+        // On Linux Foundation keeps a launched `Process`, and the pipes it
+        // references, alive unless `waitUntilExit()` ran. The runner therefore
+        // closes its pipe ends itself; when it does not, every run leaves two
+        // pipes open for the life of the process.
+        let runs = 64
+        let before = Self.openPipeCount()
+        for _ in 0 ..< runs {
+            _ = try await FeatureProcessRunner.run(
+                executableURL: Self.shell,
+                arguments: ["-c", "exit 0"],
+                timeout: 30
+            )
+        }
+        // Tests running at the same time move the count by far less than one
+        // pipe per run.
+        #expect(Self.openPipeCount() - before < runs)
+    }
+
+    /// Number of open descriptors of this process that are pipes.
+    private static func openPipeCount() -> Int {
+        (0 ..< 4_096).count { descriptor in
+            var status = stat()
+            return fstat(Int32(descriptor), &status) == 0
+                && (status.st_mode & S_IFMT) == S_IFIFO
+        }
+    }
+
     #if os(Linux)
     @Test
     func quickExitCompletesWhileFoundationManagerWaitsForLongRunningProcess() async throws {

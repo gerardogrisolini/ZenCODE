@@ -77,6 +77,20 @@ Release tags follow the strict `vX.Y.Z` contract described in
   build on three `search.grep` over the ZenCODE sources, the batch takes about
   65 ms instead of about 155 ms.
 
+### Fixed
+
+- On Linux, `zen` no longer leaves two file descriptors open for every process
+  it runs to completion, such as a `local.exec` command or a feature tool call.
+  They were closed only when the pipes of the process were released, which on
+  Linux never happens for a process that is not waited for with
+  `waitUntilExit()`. A long session could therefore reach the limit of open
+  files ("Too many open files"). Above about 1350 open descriptors, starting
+  one more process could also crash `zen`, because `Process.run()` in Swift
+  6.4 reads past a buffer there (swift-corelibs-foundation#5472). The
+  descriptors are now closed when the process ends. A background job of
+  `local.exec` releases its two descriptors when it drops out of the 16
+  finished jobs that `exec.job` keeps.
+
 ## [6.0.0] - 2026-11-11
 
 > **Breaking release:** compared with v5.0.2, v6.0.0 identifies prompt skills

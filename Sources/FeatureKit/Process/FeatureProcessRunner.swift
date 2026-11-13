@@ -61,6 +61,11 @@ public enum FeatureProcessRunner {
             try process.run()
         } catch {
             process.terminationHandler = nil
+            // Nothing was handed to a child, so every pipe end is still ours.
+            for pipe in [stdoutPipe, stderrPipe, stdinPipe].compactMap({ $0 }) {
+                FeatureProcessDescriptors.closeQuietly(pipe.fileHandleForReading)
+                FeatureProcessDescriptors.closeQuietly(pipe.fileHandleForWriting)
+            }
             throw error
         }
         exitMonitor.startMonitoring(processID: process.processIdentifier)
@@ -122,6 +127,12 @@ public enum FeatureProcessRunner {
         // swallowed by `try?`; we intentionally do not throw here to preserve the
         // runner's contract of returning whatever output the process produced.
         _ = await stdinOutcome
+
+        // Closed here rather than left to deallocation: on Linux Foundation
+        // keeps a launched `Process`, and the pipes it references, alive unless
+        // `waitUntilExit()` ran, so every run would leak both descriptors.
+        FeatureProcessDescriptors.closeQuietly(stdoutPipe.fileHandleForReading)
+        FeatureProcessDescriptors.closeQuietly(stderrPipe.fileHandleForReading)
 
         try Task.checkCancellation()
 

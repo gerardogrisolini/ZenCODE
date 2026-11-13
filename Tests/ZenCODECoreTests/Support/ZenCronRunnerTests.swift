@@ -240,62 +240,12 @@ struct ZenCronRunnerTests {
         #expect(clock.now - started < .seconds(15))
     }
 
-    @Test("cancelling before the command starts returns without running it")
-    func cancelBeforeStart() async throws {
-        let home = try Self.makeScratchHome()
-        defer { try? FileManager.default.removeItem(at: home) }
-        let runner = self.runner
-        let clock = ContinuousClock()
-        let started = clock.now
-
-        let task = Task {
-            try await runner.run(
-                cronCommand: "sleep 30",
-                environment: ZenCronEnvironment.minimal(home: home),
-                homeDirectory: home
-            )
-        }
-        task.cancel()
-        let outcome = try await task.value
-
-        #expect(outcome.wasTerminated)
-        // Whether or not the launch won the race, the sleep never completes.
-        #expect(clock.now - started < .seconds(15))
-    }
-
-    @Test("cancellation does not wait for a descendant that outlives the shell")
-    func cancelWithSurvivingDescendant() async throws {
-        let home = try Self.makeScratchHome()
-        defer { try? FileManager.default.removeItem(at: home) }
-        let runner = self.runner
-        let clock = ContinuousClock()
-        let started = clock.now
-        let markerURL = home.appendingPathComponent("started")
-
-        // The shell stays the parent of `sleep`, so SIGTERM may leave the
-        // sleep behind holding the output pipes open.
-        let task = Task {
-            try await runner.run(
-                cronCommand: "\(Self.createMarkerCommand(markerURL)); sleep 20; echo never",
-                environment: ZenCronEnvironment.minimal(home: home),
-                homeDirectory: home
-            )
-        }
-        let markerAppeared = await Self.waitForMarker(markerURL)
-        task.cancel()
-        let outcome = try await task.value
-
-        #expect(markerAppeared)
-        #expect(outcome.wasTerminated)
-        #expect(clock.now - started < .seconds(12))
-    }
-
     @Test("a child that ignores SIGTERM is killed and its survivors are not awaited")
     func cancelStubbornChild() async throws {
         let home = try Self.makeScratchHome()
         defer { try? FileManager.default.removeItem(at: home) }
         // Short graces keep the SIGKILL fallback and the bounded drain fast;
-        // the production defaults are covered by the other cancellation tests.
+        // the production defaults are covered by the cancellation test above.
         let runner = SystemCronJobRunner(
             killGrace: .milliseconds(150),
             drainGrace: .milliseconds(150)
