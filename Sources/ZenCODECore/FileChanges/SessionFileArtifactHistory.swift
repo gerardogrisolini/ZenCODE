@@ -101,6 +101,14 @@ public actor SessionFileArtifactHistory {
         return Turn(number: number, artifacts: artifacts)
     }
 
+    /// The number of a pending turn: the one it reserved, otherwise the one it
+    /// would reserve now, provisionally. Reserves nothing; `nil` when `id` is
+    /// not pending.
+    func pendingTurnNumber(_ id: UUID) -> UInt64? {
+        guard let pending = pendingTurns[id] else { return nil }
+        return pending.number ?? nextTurnNumber
+    }
+
     /// Stop admitting live events before final reconciliation suspends.
     func sealTurn(_ id: UUID) -> [OperationFileChange] {
         guard var pending = pendingTurns[id], !pending.isSealed else { return [] }

@@ -16,7 +16,7 @@ struct ChatCommandRegistryTests {
     // MARK: - Fixtures
 
     private static let channelCommands: Set<String> = [
-        "/ds4", "/feature", "/subagent", "/cron", "/telegram", "/voice", "/exit",
+        "/ds4", "/feature", "/artifacts", "/subagent", "/cron", "/telegram", "/voice", "/exit",
     ]
 
     private static let registry = TerminalChat.commandRegistry
@@ -29,6 +29,29 @@ struct ChatCommandRegistryTests {
         let channel = Self.registry.descriptors.filter { $0.scope == .channel }.map(\.command)
         #expect(Set(channel) == Self.channelCommands)
         #expect(channel.count == Self.channelCommands.count)
+    }
+
+    /// The terminal runs `/artifacts` itself, in the place of the shared one:
+    /// the shared commands keep their order, and the shared descriptor is
+    /// unchanged for the other channels.
+    @Test
+    func theTerminalReplacesTheSharedArtifactsInPlace() throws {
+        let shared = ChatCommandRegistry.sharedDescriptors
+        #expect(TerminalChat.sharedCommandDescriptors.map(\.command) == shared.map(\.command))
+        let descriptor = try #require(Self.registry.descriptor(forLine: "/artifacts"))
+        #expect(descriptor == TerminalChat.artifactsCommandDescriptor)
+        #expect(descriptor.scope == .channel)
+        #expect(descriptor.availableDuringGeneration)
+        #expect(Self.registry.descriptor(forLine: "/artifacts now") == descriptor)
+        #expect(descriptor.help.contains("Enter opens the diff"))
+        #expect(descriptor.help.contains("PgUp PgDn Home End"))
+        #expect(descriptor.help.contains("It accepts no arguments."))
+        let sharedArtifacts = try #require(shared.first { $0.command == "/artifacts" })
+        #expect(sharedArtifacts.scope == .shared)
+        #expect(!sharedArtifacts.availableDuringGeneration)
+        #expect(Self.sharedRegistry.descriptor(forLine: "/artifacts") == sharedArtifacts)
+        #expect(Self.registry.helpLines(in: []).contains(descriptor.help))
+        #expect(!Self.registry.helpLines(in: []).contains(sharedArtifacts.help))
     }
 
     @Test
@@ -94,6 +117,8 @@ struct ChatCommandRegistryTests {
             ("/tasks clear", false),
             ("/subagent", true),
             ("/subagent x", true),
+            ("/artifacts", true),
+            ("/artifacts now", true),
             ("/telegram", true),
             ("/telegram on", true),
             ("/telegram off", true),

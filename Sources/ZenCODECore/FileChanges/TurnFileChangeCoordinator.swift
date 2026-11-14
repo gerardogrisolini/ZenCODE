@@ -55,6 +55,14 @@ public actor TurnFileChangeCoordinator {
         return await tracker.collectLiveSummary(matching: changes)
     }
 
+    /// The net file changes of the turn so far, without side effects (see
+    /// ``TurnFileChangeTracker/peekNetSummary()``); once the summary is
+    /// published, the published summary.
+    func peekNetSummary() async -> TurnFileChangeSummary? {
+        guard !didPublishSummary else { return latestSummary }
+        return await tracker.peekNetSummary()
+    }
+
     func matchingLiveArtifactPaths() async -> Set<String> {
         await tracker.matchingLiveArtifactPaths
     }

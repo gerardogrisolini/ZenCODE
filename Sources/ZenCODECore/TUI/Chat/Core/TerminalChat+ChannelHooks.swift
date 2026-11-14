@@ -64,12 +64,12 @@ extension TerminalChat {
 
     /// The terminal's step of `/sessions new`, of a saved-session load (see
     /// `TerminalChat+Sessions.swift`), or of `/sessions compact`. An open
-    /// `/subagent` detail follows the root session it opened on, so it closes
-    /// before that session is replaced.
+    /// `/subagent` or `/artifacts` panel follows the root session it opened
+    /// on, so it closes before that session is replaced.
     public func incarnationDidChange(reason: ChatIncarnationChange) async {
         switch reason {
         case .newSessionWillStart:
-            await closeSubAgentDetail(reason: .sessionEnded)
+            await closeDetailPanel(reason: .sessionEnded)
             await stopTaskGraphObserver()
             resetResponseLanguageLock()
         case .newSessionDidStart:
@@ -81,7 +81,7 @@ extension TerminalChat {
             // Before the panel loop rebinds the shared-chat relay to the new room.
             await rebindTelegramTopicToCurrentSession()
         case .savedSessionWillLoad:
-            await closeSubAgentDetail(reason: .sessionEnded)
+            await closeDetailPanel(reason: .sessionEnded)
             await savedSessionLoadWillStart()
         case .savedSessionWillRestore:
             await savedSessionLoadWillRestore()

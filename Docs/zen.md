@@ -26,8 +26,12 @@ Headless JSONL mode is documented in the dedicated
 ## Session File Artifacts
 
 During the active terminal session, ZenCODE keeps an in-memory history
-of effective file mutations, grouped by turn. Use `/artifacts` without arguments
-to show the complete history, including text evidence, patches, and explicit
+of effective file mutations, grouped by turn. The terminal chat does not write
+them in the conversation: `/artifacts` (no arguments) opens a panel above the
+input panel that lists the changed files, the turn in progress first, and shows
+the numbered diff of the file you open (see `/artifacts` below). Without the
+interactive terminal layout `/artifacts` prints the history of the finished
+turns instead, including text evidence, patches, and explicit
 fallbacks for binary, uncertain, or over-budget evidence (64 KiB per text and
 256 KiB per turn). When the workspace checkpoint's evidence for an added,
 deleted or modified text file exceeds that limit, the artifact shows the first
@@ -766,7 +770,7 @@ Commands start with `/`:
 
 **Files and changes:**
 - `/open [file-or-url]` — list and open referenced files/URLs, or open one directly.
-- `/artifacts` — show the current session's file artifacts, grouped by turn; it accepts no arguments. See [Session File Artifacts](#session-file-artifacts).
+- `/artifacts` — open the panel of the files changed in the current session; interactive terminal only, available even while a prompt is running, and it accepts no arguments. It uses the panel and the keys of `/subagent`: the list shows one entry per file and turn, the turn in progress first (marked `in progress`), then the most recent turns, each with the file's status, path, `+`/`-` counts, turn, and explanation, if any; `↑`/`↓` choose, `Enter` opens the file, and `Esc` or `q` close. A file's detail shows the same header above its numbered diff (the changed lines with their context, as the artifacts are rendered; one line for a binary file or a file without a diff), opens at the top, scrolls with `↑`/`↓`, `PgUp`/`PgDn`, `Home`/`End`, and closes with `Esc`, while the prompt keeps every other key. With a single changed file the detail opens directly. The panel follows the new artifacts and the end of the turn, keeping the focused file and the scroll position; only one panel is open at a time, so `/subagent` replaces it, and it closes like the `/subagent` detail (a consent request writes `Artifacts panel closed: a tool asks for consent.`). Without the interactive layout it prints the artifacts of the finished turns, grouped by turn. See [Session File Artifacts](#session-file-artifacts).
 - `/changes` — show tracked file change summary.
 - `/changes diff` — include patches.
 - `/undo` — revert the most recent agent-tracked changes.

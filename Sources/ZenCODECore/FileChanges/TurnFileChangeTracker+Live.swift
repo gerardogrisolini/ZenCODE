@@ -35,4 +35,35 @@ extension TurnFileChangeTracker {
         }
         return entries.isEmpty ? nil : TurnFileChangeSummary(entries: entries)
     }
+
+    /// The net file changes of the turn so far, read without side effects:
+    /// every baseline compared with the worktree now, with the skip rules and
+    /// the order of ``makeSummary(matching:)``. It neither reconciles the
+    /// worktree nor moves the live checkpoint, so an edit that only a
+    /// reconciliation attributes (a shell command, a delegated agent, or an MCP
+    /// tool) is missing until the next checkpoint or the final summary adds
+    /// its baseline. Once the summary is final, it is the final summary.
+    func peekNetSummary() async -> TurnFileChangeSummary? {
+        if didFinalizeSummary {
+            return cachedSummary
+        }
+        // The actor is reentrant across the Git diffs: iterate over a copy.
+        let baselines = snapshotsByPath.values.sorted { $0.displayPath < $1.displayPath }
+        var entries: [TurnFileChangeSummary.Entry] = []
+        for baseline in baselines {
+            var isDirectory: ObjCBool = false
+            let existsNow = fileManager.fileExists(
+                atPath: baseline.absolutePath,
+                isDirectory: &isDirectory
+            ) && !isDirectory.boolValue
+            let afterData = existsNow ? try? Data(contentsOf: URL(fileURLWithPath: baseline.absolutePath)) : nil
+            guard !existsNow || afterData != nil else { continue }
+            guard baseline.existedInitially != existsNow || baseline.beforeData != afterData else { continue }
+            entries.append(await summaryEntry(for: baseline, afterData: afterData, existsNow: existsNow))
+        }
+        entries.sort { lhs, rhs in
+            lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
+        }
+        return entries.isEmpty ? nil : TurnFileChangeSummary(entries: entries)
+    }
 }

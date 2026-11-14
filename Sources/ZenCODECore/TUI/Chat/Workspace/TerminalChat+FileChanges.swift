@@ -55,11 +55,13 @@ extension TerminalChat {
         )
     }
 
+    /// Writes `turns` in the transcript, for `/changes diff` and for the
+    /// `/artifacts` history printed without the interactive layout. The live
+    /// and sealed artifacts of a turn are not written: the terminal shows them
+    /// only in the `/artifacts` panel (``fileArtifactsDidChange()``).
     func writeFileArtifacts(
         _ turns: [SessionFileArtifactHistory.Turn],
-        includeHistoryHeadings: Bool,
-        preservingStreamingContext: Bool = false,
-        replacingSubAgentOverviewFor context: FileArtifactTurnContext? = nil
+        includeHistoryHeadings: Bool
     ) async {
         let markdown = Self.renderFileArtifacts(
             turns,
@@ -67,22 +69,7 @@ extension TerminalChat {
             columnWidth: TerminalTextMetrics.terminalColumnCount(),
             isEnabled: AgentOutput.standardErrorIsTerminal
         )
-        if let context {
-            let maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
-            guard chatSession.isActiveFileArtifactTurn(context) else { return }
-            // Only a newly recorded delegated artifact removes the pending
-            // overview. The coordinator clears and inserts without suspension.
-            await renderCoordinator.writeSubAgentFileArtifactMessage(
-                markdown,
-                maximumInPlaceRows: maximumInPlaceRows
-            )
-        } else {
-            await renderCoordinator.writeMarkdownMessage(
-                markdown,
-                to: .standardError,
-                preservingStreamingContext: preservingStreamingContext
-            )
-        }
+        await renderCoordinator.writeMarkdownMessage(markdown, to: .standardError)
     }
 
     public nonisolated static func renderFileArtifacts(
@@ -96,8 +83,9 @@ extension TerminalChat {
         )
     }
 
-    /// Live turn output defaults to changed lines so edits stay visible inside
-    /// large files; `/artifacts` (history headings) defaults to the whole file.
+    /// Output without history headings (`/changes diff`) defaults to changed
+    /// lines so edits stay visible inside large files; the `/artifacts`
+    /// history (history headings) defaults to the whole file.
     nonisolated static func renderFileArtifacts(
         _ turns: [SessionFileArtifactHistory.Turn],
         includeHistoryHeadings: Bool,
@@ -113,7 +101,7 @@ extension TerminalChat {
         _ = columnWidth
         _ = isEnabled
 
-        // Automatic chat output starts at file metadata; only /artifacts groups turns.
+        // Output without headings starts at file metadata; only /artifacts groups turns.
         var lines = includeHistoryHeadings ? ["", "🪬 Artifacts"] : []
         for turn in turns {
             if includeHistoryHeadings {
@@ -129,22 +117,49 @@ extension TerminalChat {
                     lines.append("Explanation: \(explanation)")
                 }
 
-                guard !artifact.isBinary else {
-                    continue
-                }
-
-                let languagePath = artifact.displayPath.nilIfBlank ?? artifact.absolutePath
-                let language = ToolLanguageHint.hint(forPath: languagePath)
-                if let diff = fileArtifactDiff(artifact, presentation: presentation) {
-                    appendMarkdownCodeBlock(
-                        TerminalCodeBlockRenderer.numberedArtifactDiff(diff),
-                        language: language.map { "artifact-diff-\($0)" } ?? "artifact-diff",
-                        to: &lines
-                    )
-                }
+                appendFileArtifactDiff(artifact, presentation: presentation, to: &lines)
             }
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// The Markdown of the diff of one artifact, as ``renderFileArtifacts(_:includeHistoryHeadings:diffPresentation:columnWidth:isEnabled:)``
+    /// writes it below the artifact's metadata: an `artifact-diff` block
+    /// (`artifact-diff-<language>` when the path has a language) of the diff
+    /// numbered with the source lines. `nil` for a binary file and for an
+    /// artifact without a diff to show. The `/artifacts` panel renders it as
+    /// the body of a file's detail.
+    nonisolated static func fileArtifactDiffMarkdown(
+        _ artifact: FileChangeArtifact,
+        presentation: FileArtifactDiffPresentation
+    ) -> String? {
+        var lines: [String] = []
+        guard appendFileArtifactDiff(artifact, presentation: presentation, to: &lines) else {
+            return nil
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Appends the numbered diff block of `artifact` to `lines`; `false`, with
+    /// nothing appended, for a binary file or without a diff.
+    @discardableResult
+    private nonisolated static func appendFileArtifactDiff(
+        _ artifact: FileChangeArtifact,
+        presentation: FileArtifactDiffPresentation,
+        to lines: inout [String]
+    ) -> Bool {
+        guard !artifact.isBinary,
+              let diff = fileArtifactDiff(artifact, presentation: presentation) else {
+            return false
+        }
+        let languagePath = artifact.displayPath.nilIfBlank ?? artifact.absolutePath
+        let language = ToolLanguageHint.hint(forPath: languagePath)
+        appendMarkdownCodeBlock(
+            TerminalCodeBlockRenderer.numberedArtifactDiff(diff),
+            language: language.map { "artifact-diff-\($0)" } ?? "artifact-diff",
+            to: &lines
+        )
+        return true
     }
 
     /// The source line numbers of a unified diff, as the terminal's file

@@ -10,7 +10,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
     nonisolated func checkpointReplacesSameCompletionFallbackWithoutChangingHistoryOrUndo(
         delegated: Bool, isTerminal: Bool
     ) async throws {
-        try await withTerminal(isTerminal: isTerminal) { directory, terminal, renderer, coordinator in
+        try await withTerminal(isTerminal: isTerminal) { directory, terminal, renderer, coordinator, recorder in
             let prefix = String(repeating: "// unchanged context\n", count: 4_096)
             let before = prefix + "let value = 1\n"
             let after = prefix + "let value = 2\n"
@@ -24,13 +24,14 @@ struct TerminalChatRecoveredLiveArtifactTests {
             let change = fallback(path: directory.path + "/unused/../Value.swift")
             await publish(change, delegated: delegated, terminal: terminal, context: context)
 
-            let events = await renderer.capturedWriteEvents()
-            let output = TerminalANSIText.stripANSI(events.map(\.text).joined())
-            let displayedPath = isTerminal ? "Value.swift" : "`Value.swift`"
-            #expect(output.components(separatedBy: "modified \(displayedPath)").count - 1 == 1)
+            // Presented once, for the `/artifacts` panel; the chat gets nothing.
+            #expect(await renderer.capturedWriteEvents().isEmpty)
+            #expect(recorder.liveAgentIDs == [delegated ? "worker" : nil])
+            let output = recorder.markdown
+            #expect(output.components(separatedBy: "modified `Value.swift`").count - 1 == 1)
             #expect(output.contains("│ -let value = 1"))
             #expect(output.contains("│ +let value = 2"))
-            #expect(!output.contains("unknown \(displayedPath)"))
+            #expect(!output.contains("unknown `Value.swift`"))
             #expect(!output.contains("Diff unavailable"))
             #expect(!output.contains("🪬 Artifacts"))
             #expect(await context.history.snapshot().isEmpty)
@@ -47,7 +48,9 @@ struct TerminalChatRecoveredLiveArtifactTests {
             #expect(summary.entries.count == 1)
             #expect(summary.entries.first?.beforeDataBase64 == Data(before.utf8).base64EncodedString())
             #expect(summary.entries.first?.patch?.contains("+let value = 2") == true)
-            #expect(await renderer.capturedWriteEvents().count == events.count)
+            // The final reconciliation presents nothing more.
+            #expect(recorder.presentations.count == 1)
+            #expect(await renderer.capturedWriteEvents().isEmpty)
             #expect(terminal.chatSession.activeFileArtifactTurn == nil)
             #expect(terminal.lastFileChangeSummary == summary)
             let history = await context.history.snapshot()
@@ -56,10 +59,12 @@ struct TerminalChatRecoveredLiveArtifactTests {
             #expect(history.first?.artifacts.count == 1)
             #expect(history.first?.artifacts.first?.explanation == nil)
             #expect(history.first?.artifacts.first?.patch?.contains("+let value = 2") == true)
+            // Without the interactive layout `/artifacts` prints the history.
             _ = await terminal.submittedLineAction("/artifacts")
             let replay = TerminalANSIText.stripANSI(
-                await renderer.capturedWriteEvents().dropFirst(events.count).map(\.text).joined()
+                await renderer.capturedWriteEvents().map(\.text).joined()
             )
+            let displayedPath = isTerminal ? "Value.swift" : "`Value.swift`"
             #expect(replay.contains("Turn 1 — 1 file"))
             #expect(replay.components(separatedBy: "modified \(displayedPath)").count - 1 == 1)
             #expect(!replay.contains("Diff unavailable"))
@@ -72,7 +77,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
     nonisolated func fallbackRemainsOnlyWithoutSamePathCheckpoint(
         checkpoint: UnusableCheckpoint, delegated: Bool
     ) async throws {
-        try await withTerminal { directory, terminal, renderer, coordinator in
+        try await withTerminal { directory, terminal, renderer, coordinator, recorder in
             let trackedPath = checkpoint == .otherPath ? "Other.swift" : "Value.swift"
             let before: Data
             let after: Data?
@@ -102,9 +107,9 @@ struct TerminalChatRecoveredLiveArtifactTests {
                 try FileManager.default.removeItem(at: file)
             }
             await publish(fallback(), delegated: delegated, terminal: terminal, context: context)
-            let events = await renderer.capturedWriteEvents()
-            let output = TerminalANSIText.stripANSI(events.map(\.text).joined())
-            // A same-path checkpoint is printed instead of the fallback even
+            #expect(await renderer.capturedWriteEvents().isEmpty)
+            let output = recorder.markdown
+            // A same-path checkpoint is presented instead of the fallback even
             // without a renderable diff, so the file still appears once.
             let keepsFallback = checkpoint == .absent || checkpoint == .otherPath
             #expect(output.components(separatedBy: "`Value.swift`**").count - 1 == 1)
@@ -156,7 +161,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
 
     @Test
     nonisolated func checkpointReplacesDifferingArtifactButNotOtherCompletionsOrTurns() async throws {
-        try await withTerminal { directory, terminal, renderer, coordinator in
+        try await withTerminal { directory, terminal, renderer, coordinator, recorder in
             let file = directory.appendingPathComponent("Value.swift")
             try Data("let value = 1\n".utf8).write(to: file)
             await coordinator.captureBaselineIfNeeded(forAgentToolCall: call("first", path: "Value.swift"))
@@ -173,8 +178,9 @@ struct TerminalChatRecoveredLiveArtifactTests {
                 )
             )
             await publish(compact, callID: "second", terminal: terminal, context: context)
-            let events = await renderer.capturedWriteEvents()
-            let output = TerminalANSIText.stripANSI(events.map(\.text).joined())
+            let presentedCount = recorder.presentations.count
+            #expect(presentedCount == 2)
+            let output = recorder.markdown
             #expect(output.components(separatedBy: "unknown `Value.swift`").count - 1 == 1)
             // The workspace checkpoint wins even over a valid, differing operation diff.
             #expect(output.components(separatedBy: "modified `Value.swift`").count - 1 == 1)
@@ -183,16 +189,17 @@ struct TerminalChatRecoveredLiveArtifactTests {
             _ = await terminal.collectFileChangeSummaryIfNeeded(
                 from: coordinator, sessionID: context.sessionID, history: context.history, turnID: context.id
             )
-            #expect(await renderer.capturedWriteEvents().count == events.count)
+            #expect(recorder.presentations.count == presentedCount)
             let history = await context.history.snapshot()
             #expect(history.first?.artifacts.first?.patch?.contains("+let workspace = 2") == true)
             #expect(history.first?.artifacts.first?.patch?.contains("+let operation = 2") == false)
 
             let next = try #require(await terminal.beginFileArtifactTurn())
             await publish(fallback(), terminal: terminal, context: next)
-            let nextOutput = TerminalANSIText.stripANSI(
-                await renderer.capturedWriteEvents().dropFirst(events.count).map(\.text).joined()
+            let nextOutput = TerminalChat.renderFileArtifacts(
+                recorder.turns.dropFirst(presentedCount).map { $0 }, includeHistoryHeadings: false
             )
+            #expect(await renderer.capturedWriteEvents().isEmpty)
             #expect(nextOutput.contains("unknown `Value.swift`"))
             #expect(nextOutput.contains("Diff unavailable"))
             // Presentation filtering must not remove the fallback from recording.
@@ -202,7 +209,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
 
     @Test
     nonisolated func laterOpaqueEditStillReconcilesAgainstOriginalUndoBaseline() async throws {
-        try await withTerminal { directory, terminal, renderer, coordinator in
+        try await withTerminal { directory, terminal, renderer, coordinator, recorder in
             let file = directory.appendingPathComponent("Value.swift")
             let before = Data("let value = 1\n".utf8)
             try before.write(to: file)
@@ -210,14 +217,15 @@ struct TerminalChatRecoveredLiveArtifactTests {
             let context = try #require(await terminal.beginFileArtifactTurn(coordinator: coordinator))
             try Data("let value = 2\n".utf8).write(to: file)
             await publish(fallback(), terminal: terminal, context: context)
-            let eventCount = await renderer.capturedWriteEvents().count
+            #expect(recorder.presentations.count == 1)
             try Data("let value = 3\n".utf8).write(to: file)
             let summary = try #require(await terminal.collectFileChangeSummaryIfNeeded(
                 from: coordinator, sessionID: context.sessionID, history: context.history, turnID: context.id
             ))
-            let finalOutput = TerminalANSIText.stripANSI(
-                await renderer.capturedWriteEvents().dropFirst(eventCount).map(\.text).joined()
-            )
+            // The later edit is presented once, sealed; the chat gets nothing.
+            #expect(recorder.presentations.count == 2)
+            let finalOutput = TerminalChat.renderFileArtifacts(recorder.sealedTurns, includeHistoryHeadings: false)
+            #expect(await renderer.capturedWriteEvents().isEmpty)
             #expect(finalOutput.components(separatedBy: "modified `Value.swift`").count - 1 == 1)
             #expect(finalOutput.contains("1 │ -let value = 1"))
             #expect(finalOutput.contains("1 │ +let value = 3"))
@@ -262,7 +270,8 @@ struct TerminalChatRecoveredLiveArtifactTests {
     private nonisolated func withTerminal(
         isTerminal: Bool = false,
         _ body: @escaping @ChatSessionActor @Sendable (
-            URL, TerminalChat, TerminalChatRenderCoordinator, TurnFileChangeCoordinator
+            URL, TerminalChat, TerminalChatRenderCoordinator, TurnFileChangeCoordinator,
+            TerminalArtifactPresentationRecorder
         ) async throws -> Void
     ) async throws {
         let directory = FileManager.default.temporaryDirectory
@@ -285,7 +294,10 @@ struct TerminalChatRecoveredLiveArtifactTests {
                         )], workingDirectory: directory
                     ), stdinIsTerminal: false, telegramTransportFactory: nil, renderCoordinator: renderer
                 )
-                try await body(directory, terminal, renderer, TurnFileChangeCoordinator(baseDirectoryURL: directory))
+                let recorder = TerminalArtifactPresentationRecorder.attached(to: terminal)
+                try await body(
+                    directory, terminal, renderer, TurnFileChangeCoordinator(baseDirectoryURL: directory), recorder
+                )
             }.value
         }
     }

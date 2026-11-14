@@ -911,8 +911,12 @@ render the shared evidence differently, but path normalization, ordering,
 deduplication, byte-budget fallback, and binary/uncertain evidence semantics
 remain shared. The existing `Summary`, `/changes`, `/changes diff`, `/undo`,
 and ACP wire contracts remain unchanged. In TUI, root and delegated tool
-completions publish only their new operation artifacts through the same Markdown
-renderer as `/artifacts`, including during active thinking/assistant streams.
+completions record their new operation artifacts and present them only to an
+open `/artifacts` panel (`TerminalArtifactsPanelController`), which reads the
+controller's `fileArtifactSnapshot()` again at each live or sealed artifact and
+at the end of the turn; nothing is written in the transcript, so an active
+thinking/assistant stream is never interrupted. Without the interactive layout
+`/artifacts` prints the history through the same Markdown renderer.
 The history reserves a stable turn number on the first live or final artifact;
 it still stores only net-final turns, so reverted live turns can leave number
 gaps. Pending turn tokens and per-turn agent/call deduplication are runtime-only

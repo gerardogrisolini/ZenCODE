@@ -38,6 +38,20 @@ final class ChatFileArtifactTurn {
     }
 }
 
+/// The file artifacts of a session as `/artifacts` lists them: the finished
+/// turns and, while a turn runs, the net changes of that turn so far.
+public struct ChatFileArtifactSnapshot: Sendable, Equatable {
+    /// Finished turns, oldest first, then the turn in progress when it changed files.
+    public let turns: [SessionFileArtifactHistory.Turn]
+    /// The number of the turn in progress within `turns`, when present.
+    public let activeTurnNumber: UInt64?
+
+    public init(turns: [SessionFileArtifactHistory.Turn], activeTurnNumber: UInt64?) {
+        self.turns = turns
+        self.activeTurnNumber = activeTurnNumber
+    }
+}
+
 extension ChatSessionController {
     func beginFileArtifactTurn(
         coordinator: TurnFileChangeCoordinator? = nil,
@@ -63,6 +77,42 @@ extension ChatSessionController {
         sessionID == context.sessionID
             && fileArtifactHistory === context.history
             && activeFileArtifactTurn?.id == context.id
+    }
+
+    /// The file artifacts of the session as `/artifacts` lists them, safe to
+    /// read while the model is working: the finished turns, then the turn in
+    /// progress when it changed files. That turn shows its net changes so far
+    /// against the start of the turn, read without reconciling or
+    /// checkpointing it (see ``TurnFileChangeCoordinator/peekNetSummary()``),
+    /// with the mapping of a finished turn. A turn that finishes while this
+    /// reads is listed once, as finished. A session change while this reads
+    /// answers an empty snapshot, so nothing of the previous session is listed.
+    public func fileArtifactSnapshot() async -> ChatFileArtifactSnapshot {
+        let observedSessionID = sessionID
+        let history = fileArtifactHistory
+        let stale = ChatFileArtifactSnapshot(turns: [], activeTurnNumber: nil)
+        var active: SessionFileArtifactHistory.Turn?
+        if let context = activeFileArtifactTurn, isActiveFileArtifactTurn(context),
+           let coordinator = context.coordinator {
+            let summary = await coordinator.peekNetSummary()
+            guard sessionID == observedSessionID, fileArtifactHistory === history else { return stale }
+            if let summary {
+                let number = await history.pendingTurnNumber(context.id)
+                guard sessionID == observedSessionID, fileArtifactHistory === history else { return stale }
+                let artifacts = FileChangeArtifactMapper.artifacts(from: summary, workingDirectory: workingDirectory)
+                if let number, !artifacts.isEmpty {
+                    active = SessionFileArtifactHistory.Turn(number: number, artifacts: artifacts)
+                }
+            }
+        }
+        // Read last: a turn finished meanwhile wins over its view in progress.
+        var turns = await history.snapshot()
+        guard sessionID == observedSessionID, fileArtifactHistory === history else { return stale }
+        guard let active, !turns.contains(where: { $0.number == active.number }) else {
+            return ChatFileArtifactSnapshot(turns: turns, activeTurnNumber: nil)
+        }
+        turns.append(active)
+        return ChatFileArtifactSnapshot(turns: turns, activeTurnNumber: active.number)
     }
 
     /// Records and presents the file changes of a completed tool call, then

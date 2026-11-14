@@ -18,7 +18,7 @@ extension TerminalChat {
         }
         let requirements = rawRequirements.nilIfBlank
 
-        await closeSubAgentDetailForModalInput()
+        await closeDetailPanelForModalInput()
         guard let template = await TerminalCheckboxMenu.selectOneOffActor(
             title: "Feature template",
             items: [
@@ -95,7 +95,7 @@ extension TerminalChat {
             }
             arguments["toolPrefix"] = toolPrefix
 
-            await closeSubAgentDetailForModalInput()
+            await closeDetailPanelForModalInput()
             guard let transport = await TerminalCheckboxMenu.selectOneOffActor(
                 title: "MCP transport",
                 items: [
@@ -317,7 +317,7 @@ extension TerminalChat {
             let prompt = defaultValue?.isEmpty == false
                 ? "\(label) [\(defaultValue!)]: "
                 : "\(label): "
-            await closeSubAgentDetailForModalInput()
+            await closeDetailPanelForModalInput()
             guard let line = await Self.readLineOffActor(
                 reader: interactiveReader,
                 prompt: prompt
@@ -344,7 +344,7 @@ extension TerminalChat {
     ) async -> Bool? {
         let suffix = defaultValue ? "Y/n" : "y/N"
         while true {
-            await closeSubAgentDetailForModalInput()
+            await closeDetailPanelForModalInput()
             guard let line = await Self.readLineOffActor(
                 reader: interactiveReader,
                 prompt: "\(label) [\(suffix)]: "

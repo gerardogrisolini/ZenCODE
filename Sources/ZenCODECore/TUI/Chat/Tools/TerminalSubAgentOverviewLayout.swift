@@ -455,7 +455,11 @@ enum TerminalSubAgentOverviewLayout {
             .joined(separator: " ")
     }
 
-    private static func modelText(
+    /// The `model:` metadata text of the agent's configured model (the model
+    /// the backend reported when none is configured), titled by
+    /// `modelTitleResolver`, without the token counters of `modelLine`;
+    /// `nil` without a model. The `/subagent` list reuses it.
+    static func modelText(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
         modelTitleResolver: (String) -> String
     ) -> String? {
@@ -755,12 +759,13 @@ enum TerminalSubAgentOverviewLayout {
         colorText(text, code: TerminalStyle.Attribute.bold)
     }
 
-    private static func dimText(_ text: String) -> String {
+    static func dimText(_ text: String) -> String {
         colorText(text, code: TerminalStyle.Text.muted)
     }
 
     /// Keeps metadata labels muted while matching Task inline-code values.
-    private static func metadataText(
+    /// The `/subagent` list reuses it, so its rows match the detail header.
+    static func metadataText(
         label: String,
         value: String,
         ansiEnabled: Bool = AgentOutput.standardErrorIsTerminal

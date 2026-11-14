@@ -433,6 +433,30 @@ struct TerminalPromptInputPanelTests {
         }
     }
 
+    /// The `/artifacts` panel routes the keys as the `/subagent` detail does
+    /// and shows its own mode, `Artifacts`, with the same help in the list and
+    /// in a file's diff.
+    @Test
+    func theArtifactsPanelShowsItsModeWithTheHelpOfTheSubAgentDetail() {
+        typealias Mode = TerminalInteractiveLineReader.SubAgentDetailMode
+        #expect(TerminalChat.artifactsPanelModeOverride(for: .closed) == nil)
+        #expect(TerminalChat.artifactsPanelModeOverride(for: .list) == TerminalChat.artifactsListPanelOverride)
+        #expect(TerminalChat.artifactsPanelModeOverride(for: .detail) == TerminalChat.artifactsDetailPanelOverride)
+        for mode: Mode in [.list, .detail] {
+            let artifacts = TerminalChat.artifactsPanelModeOverride(for: mode)
+            let subAgent = TerminalChat.subAgentPanelModeOverride(for: mode)
+            #expect(artifacts?.modeText == "Artifacts")
+            #expect(subAgent?.modeText == "Sub-agent")
+            #expect(artifacts?.helpText == subAgent?.helpText)
+            #expect(TerminalDetailPanel.Kind.artifacts.panelModeOverride(for: mode) == artifacts)
+            #expect(TerminalDetailPanel.Kind.subAgent.panelModeOverride(for: mode) == subAgent)
+        }
+        #expect(TerminalChat.artifactsListPanelOverride.helpText == "↑↓ choose · Enter open · Esc close")
+        #expect(TerminalChat.artifactsDetailPanelOverride.helpText == "↑↓ PgUp PgDn Home End scroll · Esc close")
+        #expect(TerminalDetailPanel.Kind.artifacts.consentClosedMessage == "Artifacts panel closed: a tool asks for consent.\n")
+        #expect(TerminalDetailPanel.Kind.subAgent.consentClosedMessage == "Sub-agent detail closed: a tool asks for consent.\n")
+    }
+
     /// While the `/subagent` agent list is open every key it binds becomes a
     /// detail action, and none of them reaches the draft or history.
     @Test

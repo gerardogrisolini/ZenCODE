@@ -281,17 +281,22 @@ public final class TerminalChat {
     /// until the loop adopted that turn (see
     /// ``takeAdoptedTurnIfNeeded()``).
     var hasAdoptedTelegramTurn = false
-    /// The `/subagent` detail open now, from its opening to its teardown
-    /// (``closeSubAgentDetail(reason:)``); `nil` while none is open.
-    /// Transient: it lasts only while the panel is shown and is never saved.
-    var subAgentDetail: TerminalSubAgentDetail?
-    /// `true` while ``openSubAgentDetail(_:on:)`` runs: from its start, across
-    /// the suspensions before ``subAgentDetail`` is set, to its end.
-    var isOpeningSubAgentDetail = false
-    /// A ``closeSubAgentDetail(reason:)`` arrived while the detail was being
-    /// opened and did not exist yet: the opening gives the terminal back and
-    /// opens nothing. Reset at every opening.
-    var subAgentDetailCloseRequestedWhileOpening = false
+    /// The panel open now above the prompt, the `/subagent` detail or the
+    /// `/artifacts` panel, from its opening to its teardown
+    /// (``closeDetailPanel(reason:)``); `nil` while none is open. Transient:
+    /// it lasts only while the panel is shown and is never saved.
+    var detailPanel: TerminalDetailPanel?
+    /// `true` while ``openDetailPanel(_:on:)`` runs: from its start, across
+    /// the suspensions before ``detailPanel`` is set, to its end.
+    var isOpeningDetailPanel = false
+    /// A ``closeDetailPanel(reason:)`` arrived while a panel was being opened
+    /// and did not exist yet: the opening gives the terminal back and opens
+    /// nothing. Reset at every opening.
+    var detailPanelCloseRequestedWhileOpening = false
+    /// Counts the changes of the session's file artifacts the presenter
+    /// reported (``fileArtifactsDidChange()``), so an `/artifacts` panel
+    /// opened from a read older than a change reads again. Transient.
+    var fileArtifactsRevision: UInt64 = 0
     var optionalCommandAvailability = TerminalOptionalCommandAvailability.load()
     /// Reads and replaces the user's crontab for `/cron`. Tests install a
     /// stand-in so no command ever touches the real crontab.

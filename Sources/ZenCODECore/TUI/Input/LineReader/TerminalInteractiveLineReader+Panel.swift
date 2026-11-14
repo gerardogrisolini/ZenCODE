@@ -114,7 +114,8 @@ extension TerminalInteractiveLineReader {
 
     /// Replaces the panel mode override with `override`, and with
     /// `isProcessing` the processing flag, then redraws the panel. Production
-    /// sets the only override, the `/subagent` detail's, together with its key
+    /// sets the only overrides, those of the panels above the prompt (the
+    /// `/subagent` detail and the `/artifacts` panel), together with their key
     /// routing through ``setSubAgentDetailMode(_:panelModeOverride:)``; this
     /// entry point is left to tests of the override alone.
     func setPanelOverlay(_ override: TerminalPanelModeOverride?, isProcessing: Bool? = nil) async {
@@ -387,7 +388,9 @@ extension TerminalInteractiveLineReader {
         }
     }
 
-    /// What the `/subagent` detail does with the panel keys.
+    /// What the `/subagent` detail does with the panel keys. The `/artifacts`
+    /// panel routes its keys through the same modes: its file list is a
+    /// ``list``, a file's diff a ``detail``.
     enum SubAgentDetailMode: Sendable, Equatable {
         /// No detail is open: every key belongs to the draft.
         case closed

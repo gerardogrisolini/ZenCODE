@@ -272,6 +272,35 @@ extension TerminalChat {
         return rows.flatMap { TerminalANSIText.wrapPreservingWhitespace($0, width: width) }
     }
 
+    /// Renders `markdown` as the physical rows of a detail panel `width`
+    /// columns wide, the way the sub-agent detail renders an assistant block
+    /// (``renderSubAgentTranscriptRows(_:toolDurations:width:standardErrorIsTerminal:)``):
+    /// the chat's Markdown formatter at `width`, without hyperlinks, then the
+    /// blank rows that open or close it dropped. The `/artifacts` panel draws
+    /// the diff of a file with it.
+    ///
+    /// No row exceeds `width` visible columns. With `standardErrorIsTerminal`
+    /// every row is styled on its own; without it the rows are plain text.
+    nonisolated static func detailPanelMarkdownRows(
+        _ markdown: String,
+        width: Int,
+        standardErrorIsTerminal: Bool
+    ) -> [String] {
+        let width = max(1, width)
+        var formatter = TerminalMarkdownStreamFormatter(
+            isEnabled: standardErrorIsTerminal,
+            renderWidth: width,
+            // Only renderer-owned SGR may reach the detail view, never OSC.
+            supportsHyperlinks: false,
+            removesUnbalancedStrongMarkers: true
+        )
+        let logicalRows = subAgentTranscriptLogicalRows(formatter.consume(markdown) + formatter.finish())
+        let rows = standardErrorIsTerminal
+            ? subAgentTranscriptSelfStyledRows(logicalRows)
+            : logicalRows
+        return rows.flatMap { TerminalANSIText.wrapPreservingWhitespace($0, width: width) }
+    }
+
     /// The submitted-prompt band of `writeSubmittedPrompt`, wrapped at
     /// `width` with continuation rows aligned after `> `. On a terminal each
     /// physical row is padded to `width` inside the band background, then

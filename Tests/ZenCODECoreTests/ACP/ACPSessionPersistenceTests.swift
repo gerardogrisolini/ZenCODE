@@ -649,8 +649,15 @@ struct ACPSessionPersistenceTests {
     }
 
     /// A saved session that cannot be removed fails the request with an
-    /// internal error, so the client learns it was not deleted.
-    @Test
+    /// internal error, so the client learns it was not deleted. A read-only
+    /// directory is what keeps the file; it does not keep it from a process
+    /// whose privileges override the directory's permissions (root, as in the
+    /// Linux CI container), where the deletion rightly succeeds, so the test
+    /// runs only where it holds.
+    @Test(.enabled(
+        if: try ACPSessionPersistenceTests.readOnlyDirectoryKeepsItsFiles(),
+        "A read-only directory does not keep its files from this process (root)."
+    ))
     func aDeletionThatCannotRemoveTheFileAnswersAnInternalError() async throws {
         try await Self.withSupportDirectory { _, workspace in
             let sessionID = try await Self.runFirstProcess(workspace: workspace, prompt: "Locked")
@@ -1188,6 +1195,30 @@ struct ACPSessionPersistenceTests {
         defer { try? FileManager.default.removeItem(at: root) }
         try await AppStorageDirectory.withSupportDirectoryURL(support) {
             try await body(support, workspace)
+        }
+    }
+
+    /// Whether this process cannot remove a file from a directory with mode
+    /// `0o555`, the condition ``aDeletionThatCannotRemoveTheFileAnswersAnInternalError()``
+    /// builds. It is tried on a file of a UUID directory rather than assumed:
+    /// a superuser removes the file anyway.
+    private static func readOnlyDirectoryKeepsItsFiles() throws -> Bool {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory
+            .appendingPathComponent("acp-session-persistence-read-only-\(UUID().uuidString)", isDirectory: true)
+        let file = directory.appendingPathComponent("probe")
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
+            try? fileManager.removeItem(at: directory)
+        }
+        try Data().write(to: file)
+        try fileManager.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.path)
+        do {
+            try fileManager.removeItem(at: file)
+            return false
+        } catch {
+            return true
         }
     }
 

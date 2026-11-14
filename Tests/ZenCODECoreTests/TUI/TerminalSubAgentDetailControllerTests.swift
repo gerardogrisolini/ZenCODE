@@ -233,7 +233,9 @@ private final class DetailHarness {
         feed = DetailFeed(transcript: transcript, finishedStreams: finishedStreams)
     }
 
-    func makeController() -> TerminalSubAgentDetailController {
+    func makeController(
+        modelTitleResolver: @escaping (String) -> String = { $0 }
+    ) -> TerminalSubAgentDetailController {
         let feed = feed
         let resize = resize
         return TerminalSubAgentDetailController(environment: .init(
@@ -247,6 +249,7 @@ private final class DetailHarness {
                 self.closedWhileCancelled.append(Task.isCancelled)
             },
             modeDidChange: { self.modeChanges.append($0) },
+            modelTitleResolver: modelTitleResolver,
             standardErrorIsTerminal: false,
             sleep: gate.sleep,
             updateInterval: Self.updateInterval,
@@ -271,18 +274,27 @@ struct TerminalSubAgentDetailControllerTests {
         activity: String? = nil,
         toolName: String? = nil,
         toolIsRunning: Bool = false,
-        second: TimeInterval = 0
+        second: TimeInterval = 0,
+        role: String = "Reviews the change",
+        profileName: String? = nil,
+        configuredModelID: String? = nil,
+        modelID: String? = nil,
+        metrics: DirectAgentGenerationMetrics? = nil
     ) -> DirectSubAgentRuntime.AgentSnapshot {
         DirectSubAgentRuntime.AgentSnapshot(
             id: id,
             name: name,
-            role: "Reviews the change",
+            role: role,
+            profileName: profileName,
             status: status,
             pending: pending,
+            configuredModelID: configuredModelID,
+            modelID: modelID,
             currentActivity: activity,
             currentActivityKind: activity == nil ? nil : .content,
             currentToolName: toolName,
             currentToolIsRunning: toolIsRunning,
+            latestMetrics: metrics,
             latestEventAt: referenceDate.addingTimeInterval(second),
             latestOutput: nil,
             executionRevision: executionRevision,
@@ -317,6 +329,20 @@ struct TerminalSubAgentDetailControllerTests {
             // The harness environment's `standardErrorIsTerminal`.
             standardErrorIsTerminal: false
         )
+    }
+
+    /// The interior rows of a frame drawn without a header, without ANSI
+    /// styling, the `│ ` and ` │` borders, and the right padding.
+    private func bodyContents(_ frame: [String]) -> [String] {
+        frame.dropFirst().dropLast().map { line in
+            var text = TerminalANSIText.stripANSI(line)
+            guard text.hasPrefix("│ "), text.hasSuffix(" │") else { return text }
+            text = String(text.dropFirst(2).dropLast(2))
+            while text.last == " " {
+                text.removeLast()
+            }
+            return text
+        }
     }
 
     private func waitUntil(_ what: String, _ condition: () -> Bool) async {
@@ -498,11 +524,14 @@ struct TerminalSubAgentDetailControllerTests {
             return
         }
         let muted = TerminalStyle.Text.muted, reset = TerminalStyle.reset
-        #expect(entries.map(\.agentID) == ["agent-1", "agent-2", "agent-3", "agent-4"])
+        #expect(entries.map(\.id) == ["agent-1", "agent-2", "agent-3", "agent-4"])
         // Agents sharing a name show their id, muted; a blank name is the id.
         #expect(entries.map(\.title) == [
             "worker \(muted)agent-1\(reset)", "worker \(muted)agent-2\(reset)", "reviewer", "agent-4"
         ])
+        // Every entry keeps its own details, the shared names included.
+        let role = TerminalSubAgentOverviewLayout.metadataText(label: "role:", value: "Reviews the change")
+        #expect(entries.allSatisfy { $0.details == [role] })
         #expect(focus() == 0)
         #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
 
@@ -534,6 +563,86 @@ struct TerminalSubAgentDetailControllerTests {
         await waitUntil("the agent's transcript is read") { controller.panel.availability == .available }
         #expect(harness.feed.reads == ["agent-2"])
         #expect(controller.panel.bodyRows == rows(["SECOND_AGENT"]))
+        controller.stop()
+    }
+
+    @Test func theListEntriesShowTheRoleTheAgentAndTheModelOfTheSnapshots() async {
+        typealias Layout = TerminalSubAgentOverviewLayout
+        let harness = DetailHarness(transcript: nil)
+        let controller = harness.makeController(modelTitleResolver: { "Title of \($0)" })
+        let agents = [
+            agent(
+                "agent-1",
+                name: "worker",
+                profileName: "Developer",
+                configuredModelID: "gpt-5",
+                modelID: "gpt-5-2025",
+                metrics: DirectAgentGenerationMetrics(
+                    promptTokenCount: 1_200,
+                    cachedPromptTokenCount: 300,
+                    completionTokenCount: 80
+                )
+            ),
+            agent("agent-2", name: "tester", role: "  ", modelID: "local-model"),
+            agent("agent-3", name: "planner", role: "Plans\nthe   work  ", profileName: "Planner"),
+            agent("agent-4", name: "bare", role: "", profileName: "  ")
+        ]
+        controller.open(choosing: agents)
+        guard case let .choosing(entries, _) = controller.panel.mode else {
+            Issue.record("The list is not shown")
+            return
+        }
+        let dot = " \(Layout.dimText("·")) "
+        // The labels of the detail header: the role, then the agent and the
+        // configured model, titled, without the token counters.
+        #expect(entries[0].details == [
+            Layout.metadataText(label: "role:", value: "Reviews the change"),
+            Layout.metadataText(label: "agent:", value: "Developer") + dot
+                + Layout.metadataText(label: "model:", value: "Title of gpt-5")
+        ])
+        // Without a configured model the reported one; a blank role leaves no row.
+        #expect(entries[1].details == [Layout.metadataText(label: "model:", value: "Title of local-model")])
+        // A role on several lines takes one row.
+        #expect(entries[2].details == [
+            Layout.metadataText(label: "role:", value: "Plans the   work"),
+            Layout.metadataText(label: "agent:", value: "Planner")
+        ])
+        #expect(entries[3].details.isEmpty)
+
+        // Only what does not go stale: no status, no activity, no counters.
+        let text = entries.flatMap { [$0.title] + $0.details }.map(TerminalANSIText.stripANSI)
+        #expect(text == [
+            "worker", "role: Reviews the change", "agent: Developer · model: Title of gpt-5",
+            "tester", "model: Title of local-model",
+            "planner", "role: Plans the   work", "agent: Planner",
+            "bare"
+        ])
+
+        // The whole list fits the frame, one blank row between the entries.
+        let frame = controller.panel.frameLines(rows: 20, columns: 60)
+        #expect(harness.frames.last == frame)
+        #expect(Array(bodyContents(frame).prefix(12)) == [
+            "▸ worker",
+            "┃   role: Reviews the change",
+            "┃   agent: Developer · model: Title of gpt-5",
+            "",
+            "  tester",
+            "    model: Title of local-model",
+            "",
+            "  planner",
+            "    role: Plans the   work",
+            "    agent: Planner",
+            "",
+            "  bare"
+        ])
+        #expect(bodyContents(frame).dropFirst(12).allSatisfy { $0.isEmpty })
+
+        // Enter opens the agent of the focused entry.
+        await controller.handle(.focusNext)
+        await controller.handle(.focusNext)
+        await controller.handle(.confirm)
+        #expect(controller.agentID == "agent-3")
+        #expect(controller.snapshot?.profileName == "Planner")
         controller.stop()
     }
 

@@ -176,10 +176,11 @@ extension TerminalChat {
         ChatCommandRegistry.unknownCommandMessage(for: line)
     }
 
-    /// The terminal chat's slash commands: the shared ones, with the commands
-    /// only the terminal runs in their places.
+    /// The terminal chat's slash commands: the shared ones, `/artifacts` in
+    /// the terminal's own form (``artifactsCommandDescriptor``), with the
+    /// commands only the terminal runs in their places.
     nonisolated static let commandRegistry = ChatCommandRegistry(
-        shared: ChatCommandRegistry.sharedDescriptors,
+        shared: sharedCommandDescriptors,
         channel: [
             (after: "/think", descriptors: [
                 ChatCommandDescriptor(
@@ -252,4 +253,23 @@ extension TerminalChat {
             ]),
         ]
     )
+
+    /// `/artifacts` as the terminal runs it (``handleArtifactsCommand(_:)``):
+    /// it opens the panel of the changed files instead of writing the
+    /// artifact history in the transcript, and it runs while a prompt is
+    /// generating.
+    nonisolated static let artifactsCommandDescriptor = ChatCommandDescriptor(
+        command: "/artifacts",
+        summary: "browse the files changed in this session",
+        help: "/artifacts lists the files changed in this session, the most recent turn first and the turn in progress on top; Enter opens the diff of the focused file (↑↓ choose, Esc or q closes the list; ↑↓ PgUp PgDn Home End scroll the diff, Esc closes it). With a single changed file it opens its diff directly. Without the interactive terminal layout it prints the artifacts of the finished turns. It accepts no arguments.",
+        scope: .channel,
+        availableDuringGeneration: true
+    )
+
+    /// The shared commands, with ``artifactsCommandDescriptor`` in place of
+    /// the shared `/artifacts`.
+    nonisolated static let sharedCommandDescriptors: [ChatCommandDescriptor] =
+        ChatCommandRegistry.sharedDescriptors.map { descriptor in
+            descriptor.command == artifactsCommandDescriptor.command ? artifactsCommandDescriptor : descriptor
+        }
 }

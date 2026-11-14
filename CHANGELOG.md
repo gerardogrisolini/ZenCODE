@@ -40,6 +40,41 @@ Release tags follow the strict `vX.Y.Z` contract described in
   The sessions saved with `/sessions` and a session without turns are not
   listed, and listing restores or changes nothing.
 
+### Changed
+
+- The agent list that `/subagent` opens when more than one sub-agent is in
+  progress shows more than their names. Each agent takes a block: its name,
+  followed by its id, muted, when another agent has the same name, then,
+  indented, its role and, on the next row, its agent and its model, labeled
+  as in the agent's detail; a field the agent does not have is left out, and
+  a long role is cut at the edge of the panel. The focused agent is marked on
+  every row of its block, a blank row separates the agents when the whole list
+  fits, and otherwise the list shows only whole agents around the focused one,
+  with the bottom border counting the agents shown (`3–5/8`). The list shows
+  what the agents had when it opened; the keys are unchanged.
+- In the terminal chat the file artifacts of a turn are no longer written in
+  the conversation, neither the ones of each tool call while the model works
+  (the delegated ones included) nor the ones that only the end of the turn
+  finds: they are seen with `/artifacts`. The `Summary` at the end of a turn,
+  `/changes`, and `/changes diff` are unchanged, and so are the app, Telegram,
+  and ACP clients.
+- `/artifacts` in the terminal chat opens a panel above the input panel, with
+  the layout and the keys of `/subagent`, instead of printing every artifact.
+  It lists the changed files, one entry per file and turn, the turn in progress
+  first (marked `in progress`) and then the most recent turns: the status, the
+  path, and the `+`/`-` counts of the file, its turn, and the artifact's
+  explanation when it has one. `Enter` opens the diff of the file, numbered and
+  colored as the artifacts were in the chat, with the changed lines and their
+  context; with a single changed file the diff opens directly. `↑`/`↓`, `PgUp`,
+  `PgDn`, `Home`, and `End` scroll it, `Esc` closes the panel (`q` too in the
+  list), and the prompt stays usable below the diff. The panel works while the
+  model is working and follows the new artifacts and the end of the turn,
+  keeping the focused file and the scroll position. It replaces the `/subagent`
+  detail and is replaced by it, and closes like it for a consent request, a
+  menu or a line prompt, and the end of the session. Without the interactive
+  terminal layout `/artifacts` still prints the artifacts of the finished
+  turns; it still accepts no arguments.
+
 ### Fixed
 
 - In ACP clients such as Xcode, a conversation reopened after `zen --acp`

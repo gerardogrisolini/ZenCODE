@@ -31,11 +31,12 @@ extension TerminalChat {
     /// consume or contend for the operator's keystroke (no second terminal
     /// input device), then resumed. Reading runs off the cooperative executor
     /// so the authorizer actor is not blocked while the operator decides.
-    /// An open `/subagent` detail closes first: the consent takes the input,
-    /// and the dialog answers the keys the detail would otherwise receive.
+    /// An open panel (`/subagent` or `/artifacts`) closes first: the consent
+    /// takes the input, and the dialog answers the keys the panel would
+    /// otherwise receive.
     func configureConsentReader(eventQueue: TerminalChatEventQueue) async {
         await permissionAuthorizer.setConsentReader({ @ChatSessionActor [interactiveReader, renderCoordinator, statusBar, weak self] prompt in
-            await self?.closeSubAgentDetail(reason: .consent)
+            await self?.closeDetailPanel(reason: .consent)
             await interactiveReader.stopPanelInput(clearPanel: false)
             let outputCapacity = await statusBar.scrollableOutputRowCapacity()
             await renderCoordinator.beginExternalTerminalPrompt(
@@ -366,10 +367,10 @@ extension TerminalChat {
             }
 
             let action = await submittedLineAction(line, origin: origin)
-            // A `/subagent` detail the command left open keeps the overviews
-            // suspended: its external-writer phase releases them when it
-            // closes (`closeSubAgentDetail`).
-            if shouldSuspendPanel, !isSubAgentDetailOpen {
+            // A panel the command left open (`/subagent`, `/artifacts`) keeps
+            // the overviews suspended: its external-writer phase releases them
+            // when it closes (`closeDetailPanel`).
+            if shouldSuspendPanel, !isDetailPanelOpen {
                 await renderCoordinator.setOverviewPublishingSuspended(false)
             }
             // `/telegram off` while a turn from Telegram runs: the loop takes
@@ -660,10 +661,10 @@ extension TerminalChat {
                         }
                     }
                 case let .subAgentDetail(action):
-                    // The reader emits these only while the detail is open;
-                    // Esc (and `q` in the agent list) close it through the
-                    // controller's `onClosed`.
-                    await handleSubAgentDetailAction(action)
+                    // The reader emits these only while a panel is open
+                    // (`/subagent` or `/artifacts`); Esc (and `q` in a list)
+                    // close it through the controller's `onClosed`.
+                    await handleDetailPanelAction(action)
                 case .endOfInput:
                     generationTask?.cancel()
                     break eventLoop
@@ -857,9 +858,9 @@ extension TerminalChat {
         }
 
         // Every way out of the loop passes here (end of input, `/exit`, a
-        // dictated exit, the queue finishing): an open `/subagent`
-        // detail gives the terminal back before the teardown below.
-        await closeSubAgentDetail(reason: .sessionEnded)
+        // dictated exit, the queue finishing): an open `/subagent` or
+        // `/artifacts` panel gives the terminal back before the teardown below.
+        await closeDetailPanel(reason: .sessionEnded)
 
         // Teardown paths that bypass `finishPromptResult` (end-of-input during
         // generation, cancellation). Finish the queue BEFORE joining the

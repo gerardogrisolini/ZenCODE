@@ -3,11 +3,16 @@ import Testing
 import ToolCore
 @testable import ZenCODECore
 
+/// The terminal's live file artifacts: they are recorded, deduplicated and
+/// presented as before, and an open `/artifacts` panel shows them, but the
+/// terminal writes none of them in the chat. `/changes`, `/changes diff`, the
+/// final `Summary`, and the `/artifacts` history printed without the
+/// interactive layout keep their output.
 @Suite
 @ChatSessionActor
 struct TerminalChatLiveArtifactTests {
     @Test
-    nonisolated func rootAndDelegatedArtifactsAppearBeforeGenerationReturns() async throws {
+    nonisolated func rootAndDelegatedArtifactsArePresentedOnceButNotWrittenInTheChat() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         try await AppStorageDirectory.withSupportDirectoryURL(directory.appendingPathComponent("support")) {
@@ -16,15 +21,22 @@ struct TerminalChatLiveArtifactTests {
                 let backend = LiveArtifactBackend()
                 let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
                 let terminal = try makeTerminal(directory, renderer: renderer, runner: runner)
+                let recorder = TerminalArtifactPresentationRecorder.attached(to: terminal)
                 await backend.setProbe {
                     let output = TerminalANSIText.stripANSI(await renderer.capturedWriteEvents().map(\.text).joined())
-                    for row in ["1 │ +root source", "1 │ +delegated source", "1 │ +next source"] {
-                        #expect(output.components(separatedBy: row).count - 1 == 1)
+                    for source in ["root source", "delegated source", "next source"] {
+                        #expect(!output.contains(source))
                     }
                     #expect(!output.contains("🪬 Artifacts"))
-                    #expect(!output.contains("Turn 1 —"))
                     // The fake model has not returned its response yet.
                     #expect(!output.contains("generation ended"))
+                    // Every completion is presented once, attributed to its agent.
+                    let presented = await recorder.markdown
+                    for row in ["1 │ +root source", "1 │ +delegated source", "1 │ +next source"] {
+                        #expect(presented.components(separatedBy: row).count - 1 == 1)
+                    }
+                    #expect(await recorder.liveAgentIDs == [nil, "worker", "worker"])
+                    #expect(await recorder.sealedTurns.isEmpty)
                     let history = await terminal.fileArtifactHistory
                     #expect(await history.snapshot().isEmpty)
                 }
@@ -35,11 +47,11 @@ struct TerminalChatLiveArtifactTests {
                 #expect(success.response.text == "generation ended")
                 #expect(await backend.didProbeBeforeReturning())
                 let output = TerminalANSIText.stripANSI(await renderer.capturedWriteEvents().map(\.text).joined())
-                for row in ["1 │ +root source", "1 │ +delegated source", "1 │ +next source"] {
-                    #expect(output.components(separatedBy: row).count - 1 == 1)
+                for source in ["root source", "delegated source", "next source"] {
+                    #expect(!output.contains(source))
                 }
-                #expect(!output.contains("🪬 Artifacts"))
-                #expect(!output.contains("Turn 1 —"))
+                #expect(!output.contains("│ +"))
+                #expect(recorder.presentations.count == 3)
                 #expect(terminal.chatSession.activeFileArtifactTurn == nil)
                 await runner.shutdown()
             }.value
@@ -47,7 +59,7 @@ struct TerminalChatLiveArtifactTests {
     }
 
     @Test(arguments: [false, true], [false, true])
-    nonisolated func opaqueArtifactsAppearAtEachCompletionAndFinalAnswerPrecedesSummary(
+    nonisolated func opaqueArtifactsReachTheSnapshotAtEachCompletionAndTheSummaryFollowsTheAnswer(
         delegated: Bool, isTerminal: Bool
     ) async throws {
         let directory = try temporaryDirectory()
@@ -71,46 +83,126 @@ struct TerminalChatLiveArtifactTests {
                 let backend = CompletionArtifactBackend(workspace: workspace, delegated: delegated)
                 let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
                 let terminal = try makeTerminal(workspace, renderer: renderer, runner: runner)
+                let recorder = TerminalArtifactPresentationRecorder.attached(to: terminal)
                 await backend.setProbe { stage in
                     let output = TerminalANSIText.stripANSI(await renderer.capturedWriteEvents().map(\.text).joined())
                     #expect(output.contains("Preparing edits"))
-                    #expect(output.components(separatedBy: "1 │ +stage \(stage)").count - 1 == 1)
+                    #expect(!output.contains("+stage"))
                     #expect(!output.contains("Final answer"))
                     #expect(!output.contains("Summary"))
+                    // The completion is presented, and the panel's snapshot
+                    // lists the turn in progress with its net changes so far.
+                    #expect(await recorder.markdown.components(separatedBy: "1 │ +stage \(stage)").count - 1 == 1)
+                    let snapshot = await terminal.chatSession.fileArtifactSnapshot()
+                    #expect(snapshot.activeTurnNumber == 1)
+                    #expect(snapshot.turns.map(\.number) == [1])
+                    #expect(snapshot.turns.first?.artifacts.map(\.displayPath) == ["file.txt"])
+                    let listed = TerminalChat.renderFileArtifacts(snapshot.turns, includeHistoryHeadings: false)
+                    #expect(listed.contains("1 │ -initial"))
+                    #expect(listed.contains("1 │ +stage \(stage)"))
                 }
                 let success = try await terminal.generateResponse(attempt: TerminalPromptAttempt(
                     prompt: "edit files", attachments: [], origin: .local,
                     locksResponseLanguage: false, purpose: .normal
                 ))
                 let beforeFinish = TerminalANSIText.stripANSI(await renderer.capturedWriteEvents().map(\.text).joined())
-                #expect(beforeFinish.contains("1 │ +late fallback"))
+                #expect(!beforeFinish.contains("late fallback"))
                 #expect(!beforeFinish.contains("Final answer"))
+                // The edit after the last completion is presented once, sealed.
+                #expect(recorder.liveAgentIDs == (delegated ? ["worker", "worker"] : [nil, nil]))
+                #expect(recorder.sealedTurns.count == 1)
+                #expect(TerminalChat.renderFileArtifacts(recorder.sealedTurns, includeHistoryHeadings: false)
+                    .contains("1 │ +late fallback"))
                 await terminal.finishPromptResult(.success(success))
                 let output = TerminalANSIText.stripANSI(await renderer.capturedWriteEvents().map(\.text).joined())
-                for text in ["Preparing edits", "1 │ +stage 1", "1 │ +stage 2", "1 │ +late fallback", "Final answer"] {
+                for text in ["Preparing edits", "Final answer"] {
                     #expect(output.components(separatedBy: text).count - 1 == 1)
                 }
-                let artifact = try #require(output.range(of: "1 │ +late fallback"))
+                for text in ["+stage 1", "+stage 2", "late fallback", "│ +", "🪬 Artifacts"] {
+                    #expect(!output.contains(text))
+                }
                 let answer = try #require(output.range(of: "Final answer"))
                 let summary = try #require(output.range(of: "Summary"))
-                #expect(artifact.lowerBound < answer.lowerBound)
                 #expect(answer.lowerBound < summary.lowerBound)
                 let tail = output[answer.upperBound..<summary.lowerBound]
                 #expect(!tail.contains("file.txt"))
-                #expect(!tail.contains("│"))
                 #expect(success.fileChangeSummary?.entries.first?.beforeDataBase64 == Data("initial\n".utf8).base64EncodedString())
                 #expect(await terminal.fileArtifactHistory.snapshot().count == 1)
+                // Finished, the turn is listed once, with its final evidence.
+                let snapshot = await terminal.chatSession.fileArtifactSnapshot()
+                #expect(snapshot.activeTurnNumber == nil)
+                #expect(snapshot.turns.map(\.number) == [1])
+                #expect(TerminalChat.renderFileArtifacts(snapshot.turns, includeHistoryHeadings: false)
+                    .contains("1 │ +late fallback"))
+                await runner.shutdown()
+            }.value
+        }
+    }
+
+    /// A delegated mutation no longer writes an artifact in the chat: what
+    /// follows the delegated completion is the sub-agent overview alone,
+    /// published again with the completed tool row of the agent.
+    @Test
+    nonisolated func aDelegatedMutationRepublishesTheSubAgentOverviewWithItsToolRow() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try await AppStorageDirectory.withSupportDirectoryURL(directory.appendingPathComponent("support")) {
+            try await Task(name: "ZenCODE.Tests.delegated-overview") { @ChatSessionActor in
+                let renderer = makeRenderer(isTerminal: true)
+                let backend = DelegatedOverviewBackend()
+                let runner = AgentCoreSessionRunner(backendFactory: { _, _ in backend })
+                let terminal = try makeTerminal(directory, renderer: renderer, runner: runner)
+                let recorder = TerminalArtifactPresentationRecorder.attached(to: terminal)
+                let probes = DelegatedOverviewProbes()
+                await backend.setProbe { stage in
+                    let events = await renderer.capturedWriteEvents()
+                    await probes.record(stage, eventCount: events.count)
+                    let output = TerminalANSIText.stripANSI(events.map(\.text).joined())
+                    switch stage {
+                    case "started":
+                        let overview = output.components(separatedBy: "👥 Sub-Agents:").last ?? ""
+                        #expect(overview.contains("● worker"))
+                        #expect(overview.contains("local.writeFile ⏳"))
+                    default:
+                        let started = await probes.eventCount("started")
+                        let completion = TerminalANSIText.stripANSI(
+                            events.dropFirst(started).map(\.text).joined()
+                        )
+                        // Only the overview follows: one section, its tool row completed.
+                        #expect(completion.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("👥 Sub-Agents:"))
+                        #expect(completion.components(separatedBy: "👥 Sub-Agents:").count - 1 == 1)
+                        #expect(completion.contains("● worker"))
+                        #expect(completion.contains("local.writeFile ✅"))
+                        #expect(!completion.contains("Delegated.swift"))
+                        #expect(!completion.contains("delegated source"))
+                        #expect(!completion.contains("│ +"))
+                        let tool = await renderer.subAgentToolPresentationSnapshot().presentationsByAgentID["worker"]
+                        if case .completed? = tool?.lifecycle {} else {
+                            Issue.record("The delegated tool row did not complete")
+                        }
+                        #expect(await recorder.liveAgentIDs == ["worker"])
+                    }
+                }
+                _ = try await terminal.generateResponse(attempt: TerminalPromptAttempt(
+                    prompt: "delegate", attachments: [], origin: .local,
+                    locksResponseLanguage: false, purpose: .normal
+                ))
+                #expect(await probes.stages == ["started", "completed"])
+                let output = TerminalANSIText.stripANSI(await renderer.capturedWriteEvents().map(\.text).joined())
+                #expect(!output.contains("delegated source"))
+                #expect(!output.contains("│ +"))
                 await runner.shutdown()
             }.value
         }
     }
 
     @Test(arguments: [false, true])
-    func modifiedLiveAndPatchHistoryShareOneHighlightedDiff(isTerminal: Bool) async throws {
+    func liveArtifactsStayOutOfTheChatAndTheHistoryKeepsTheHighlightedDiff(isTerminal: Bool) async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let renderer = makeRenderer(isTerminal: isTerminal)
         let terminal = try makeTerminal(directory, renderer: renderer)
+        let recorder = TerminalArtifactPresentationRecorder.attached(to: terminal)
         let context = try #require(await terminal.beginFileArtifactTurn())
         let old = "let value = 1\n"
         let new = "let value = 2\n"
@@ -118,8 +210,9 @@ struct TerminalChatLiveArtifactTests {
             result([OperationFileChange(path: "Value.swift", oldText: old, newText: new)]),
             callID: "modify", context: context
         )
-        let liveEvents = await renderer.capturedWriteEvents()
-        let live = liveEvents.map(\.text).joined()
+        #expect(await renderer.capturedWriteEvents().isEmpty)
+        let live = try #require(recorder.turns.first?.artifacts.first)
+        #expect(recorder.liveAgentIDs == [nil])
         let summary = TurnFileChangeSummary(entries: [
             .init(path: "Value.swift", additions: 1, deletions: 1, status: .modified,
                   isBinary: false, existedBefore: true,
@@ -130,30 +223,36 @@ struct TerminalChatLiveArtifactTests {
         _ = await context.history.finishTurn(
             context.id, summary: summary, matchingLivePaths: [], workingDirectory: directory
         )
+        // Without the interactive layout `/artifacts` prints the history.
         _ = await terminal.submittedLineAction("/artifacts")
-        let history = await renderer.capturedWriteEvents().dropFirst(liveEvents.count).map(\.text).joined()
-        let liveBodyStart = try #require(live.range(of: "modified")).lowerBound
-        let historyBodyStart = try #require(history.range(of: "modified")).lowerBound
-        #expect(live[liveBodyStart...].trimmingCharacters(in: .whitespacesAndNewlines)
-            == history[historyBodyStart...].trimmingCharacters(in: .whitespacesAndNewlines))
-        let visibleLive = TerminalANSIText.stripANSI(live)
+        let history = await renderer.capturedWriteEvents().map(\.text).joined()
         let visibleHistory = TerminalANSIText.stripANSI(history)
-        #expect(!visibleLive.contains("🪬 Artifacts"))
-        #expect(!visibleLive.contains("Turn 1 —"))
         #expect(visibleHistory.contains("🪬 Artifacts"))
         #expect(visibleHistory.contains("Turn 1 — 1 file"))
-        for output in [live, history] {
-            let visible = TerminalANSIText.stripANSI(output)
-            #expect(visible.contains("1 │ -let value = 1"))
-            #expect(visible.contains("1 │ +let value = 2"))
-            #expect(!visible.contains("Before"))
-            #expect(!visible.contains("After"))
+        #expect(visibleHistory.contains("1 │ -let value = 1"))
+        #expect(visibleHistory.contains("1 │ +let value = 2"))
+        #expect(!visibleHistory.contains("Before"))
+        #expect(!visibleHistory.contains("After"))
+
+        // The panel draws the live artifact with the same numbered diff.
+        let panel = TerminalArtifactsPanelController.bodyRows(live, width: 96, standardErrorIsTerminal: isTerminal)
+        let visiblePanel = panel.map(TerminalANSIText.stripANSI)
+        func numberedRows(_ rows: [String]) -> [String] {
+            rows.filter { $0.contains(" │ ") }.map { row in
+                var row = row
+                while row.last == " " { row.removeLast() }
+                return row.trimmingCharacters(in: .whitespaces)
+            }
+        }
+        #expect(numberedRows(visiblePanel) == numberedRows(visibleHistory.components(separatedBy: "\n")))
+        #expect(numberedRows(visiblePanel) == ["│ @@ -1,1 +1,1 @@", "1 │ -let value = 1", "1 │ +let value = 2"])
+        for output in [history, panel.joined(separator: "\n")] {
             if isTerminal {
                 let palette = TerminalMarkdownPalette.detected
                 #expect(output.contains(palette.diffAdditionBackground))
                 #expect(output.contains(palette.diffRemovalBackground))
                 #expect(output.contains("\(palette.syntaxKeyword)let"))
-                #expect(visible.components(separatedBy: "Code · Diff · Swift").count - 1 == 1)
+                #expect(TerminalANSIText.stripANSI(output).components(separatedBy: "Code · Diff · Swift").count - 1 == 1)
             } else {
                 #expect(!output.contains("\u{1B}"))
             }
@@ -268,15 +367,16 @@ struct TerminalChatLiveArtifactTests {
     }
 
     @Test(arguments: ["assistant", "thought"])
-    func delegatedArtifactPreservesSplitCodeFenceInTTY(_ stream: String) async throws {
+    func aDelegatedArtifactLeavesAnOpenStreamUntouchedInTTY(_ stream: String) async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let renderer = makeRenderer(isTerminal: true)
         let reference = makeRenderer(isTerminal: true)
         let terminal = try makeTerminal(directory, renderer: renderer)
+        let recorder = TerminalArtifactPresentationRecorder.attached(to: terminal)
         let context = try #require(await terminal.beginFileArtifactTurn())
         // Keep both an open fence and an incomplete source line across the
-        // delegated completion. The continuation must not restart Markdown.
+        // delegated completion: the stream must go on as if nothing happened.
         let opening = "```swift\nlet first = 1\nlet second = \""
         let remaining = "**literal**\"\n```\n**Prose after fence**\n"
         for target in [renderer, reference] {
@@ -287,11 +387,7 @@ struct TerminalChatLiveArtifactTests {
             }
             await target.flushOutput()
         }
-        let referencePrefixCount = await reference.capturedWriteEvents().count
-        let deferred = await renderer.renderTaskGraphOverview(
-            signature: "split-fence", markdown: "## Deferred fence overview\n"
-        )
-        #expect(deferred == .deferred)
+        let beforeArtifact = await renderer.capturedWriteEvents().count
         await terminal.chatSession.presentSubAgentToolEvent(
             .init(
                 agentID: "worker", agentName: "worker",
@@ -301,18 +397,12 @@ struct TerminalChatLiveArtifactTests {
                 ]))
             )
         )
-        let afterArtifact = await renderer.capturedWriteEvents()
-        let visibleBeforeContinuation = TerminalANSIText.stripANSI(afterArtifact.map(\.text).joined())
-        let artifactPosition = try #require(visibleBeforeContinuation.range(of: "added Artifact.swift"))
-        let firstCodePosition = try #require(visibleBeforeContinuation.range(of: "let first = 1"))
-        let overviewPosition = try #require(visibleBeforeContinuation.range(of: "Deferred fence overview"))
-        #expect(firstCodePosition.lowerBound < artifactPosition.lowerBound)
-        #expect(artifactPosition.lowerBound < overviewPosition.lowerBound)
-        #expect(visibleBeforeContinuation.contains("1 │ +let artifact = 42"))
-        #expect(!visibleBeforeContinuation.contains("🪬 Artifacts"))
-        #expect(!visibleBeforeContinuation.contains("Turn 1 —"))
-        #expect(!visibleBeforeContinuation.contains("Prose after fence"))
+        // The artifact is presented for the panel; the chat gets nothing.
+        #expect(await renderer.capturedWriteEvents().count == beforeArtifact)
+        #expect(recorder.liveAgentIDs == ["worker"])
+        #expect(recorder.markdown.contains("1 │ +let artifact = 42"))
         #expect(await context.history.snapshot().isEmpty)
+        #expect(await renderer.snapshot().isStreamingThoughtOutput == (stream == "thought"))
 
         for target in [renderer, reference] {
             if stream == "thought" {
@@ -322,26 +412,26 @@ struct TerminalChatLiveArtifactTests {
             }
             await target.finishStreamingOutput()
         }
-        let continuation = await renderer.capturedWriteEvents().dropFirst(afterArtifact.count).map(\.text).joined()
-        let expectedContinuation = await reference.capturedWriteEvents().dropFirst(referencePrefixCount).map(\.text).joined()
-        // Compare the ANSI output too: source highlighting and post-fence prose
-        // must match an uninterrupted stream, with no new thinking/bubble label.
-        #expect(continuation == expectedContinuation)
-        let visibleContinuation = TerminalANSIText.stripANSI(continuation)
-        #expect(visibleContinuation.contains("let second = \"**literal**\""))
-        #expect(visibleContinuation.contains("Prose after fence"))
-        #expect(!visibleContinuation.contains("**Prose after fence**"))
-        #expect(!visibleContinuation.contains("```"))
-        #expect(!visibleContinuation.contains("Code"))
-        #expect(!visibleContinuation.contains("🪬 Artifacts"))
+        // The ANSI output too is the uninterrupted stream's: source
+        // highlighting and post-fence prose, with no new thinking/bubble label.
+        let output = await renderer.capturedWriteEvents().map(\.text).joined()
+        #expect(output == (await reference.capturedWriteEvents().map(\.text).joined()))
+        let visible = TerminalANSIText.stripANSI(output)
+        #expect(visible.contains("let second = \"**literal**\""))
+        #expect(visible.contains("Prose after fence"))
+        #expect(!visible.contains("**Prose after fence**"))
+        #expect(!visible.contains("Artifact.swift"))
+        #expect(!visible.contains("let artifact = 42"))
+        #expect(!visible.contains("🪬 Artifacts"))
     }
 
     @Test
-    func finalFallbackOmitsUnchangedLiveFilesButShowsLaterOpaqueEdits() async throws {
+    func finalFallbackOmitsUnchangedLiveFilesButPresentsLaterOpaqueEdits() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let renderer = makeRenderer()
         let terminal = try makeTerminal(directory, renderer: renderer)
+        let recorder = TerminalArtifactPresentationRecorder.attached(to: terminal)
         let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: directory)
         let context = try #require(await terminal.beginFileArtifactTurn())
         for path in ["same.txt", "later.txt", "final.txt"] {
@@ -356,12 +446,13 @@ struct TerminalChatLiveArtifactTests {
         try Data("live\n".utf8).write(to: directory.appendingPathComponent("same.txt"))
         try Data("opaque after live\n".utf8).write(to: directory.appendingPathComponent("later.txt"))
         try Data("final only\n".utf8).write(to: directory.appendingPathComponent("final.txt"))
-        let liveCount = await renderer.capturedWriteEvents().count
+        #expect(recorder.presentations.count == 1)
         let summary = await terminal.collectFileChangeSummaryIfNeeded(
             from: coordinator, sessionID: context.sessionID, history: context.history, turnID: context.id
         )
         #expect(summary?.fileCount == 3)
-        let fallback = await renderer.capturedWriteEvents().dropFirst(liveCount).map(\.text).joined()
+        #expect(recorder.presentations.count == 2)
+        let fallback = TerminalChat.renderFileArtifacts(recorder.sealedTurns, includeHistoryHeadings: false)
         #expect(!fallback.contains("🪬 Artifacts"))
         #expect(!fallback.contains("Turn 1 —"))
         #expect(!fallback.contains("same.txt"))
@@ -369,16 +460,18 @@ struct TerminalChatLiveArtifactTests {
         #expect(fallback.contains("opaque after live"))
         #expect(fallback.contains("final.txt"))
         #expect(fallback.contains("1 │ +final only"))
+        // Nothing of it is written in the chat.
+        #expect(await renderer.capturedWriteEvents().isEmpty)
         let turns = await terminal.fileArtifactHistory.snapshot()
         #expect(turns.count == 1)
         #expect(turns.first?.number == 1)
         #expect(turns.first?.artifacts.count == 3)
         #expect(terminal.lastFileChangeSummary == summary)
-        let count = await renderer.capturedWriteEvents().count
         #expect(await terminal.collectFileChangeSummaryIfNeeded(
             from: coordinator, sessionID: context.sessionID, history: context.history, turnID: context.id
         ) == nil)
-        #expect(await renderer.capturedWriteEvents().count == count)
+        #expect(recorder.presentations.count == 2)
+        #expect(await renderer.capturedWriteEvents().isEmpty)
     }
 
     @Test
@@ -430,6 +523,7 @@ struct TerminalChatLiveArtifactTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let renderer = makeRenderer()
         let terminal = try makeTerminal(directory, renderer: renderer)
+        let recorder = TerminalArtifactPresentationRecorder.attached(to: terminal)
         let old = try #require(await terminal.beginFileArtifactTurn())
         let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: directory)
         await coordinator.captureBaselineIfNeeded(forAgentToolCall: call("call", path: "stale.txt"))
@@ -442,15 +536,15 @@ struct TerminalChatLiveArtifactTests {
         #expect(await terminal.collectFileChangeSummaryIfNeeded(
             from: coordinator, sessionID: old.sessionID, history: old.history, turnID: old.id
         ) == nil)
-        #expect(await renderer.capturedWriteEvents().isEmpty)
+        #expect(recorder.presentations.isEmpty)
         #expect(terminal.lastFileChangeSummary == nil)
         #expect(await terminal.fileArtifactHistory.snapshot().isEmpty)
         await terminal.chatSession.publishLiveFileArtifacts(evidence, callID: "call", context: current)
-        let output = await renderer.capturedWriteEvents().map(\.text).joined()
-        #expect(output.contains("**added `stale.txt`**  +1 -0"))
-        #expect(output.contains("1 │ +stale"))
-        #expect(!output.contains("🪬 Artifacts"))
-        #expect(!output.contains("Turn 1 —"))
+        #expect(recorder.liveAgentIDs == [nil])
+        let presented = recorder.markdown
+        #expect(presented.contains("**added `stale.txt`**  +1 -0"))
+        #expect(presented.contains("1 │ +stale"))
+        #expect(await renderer.capturedWriteEvents().isEmpty)
     }
 
     private func makeRenderer(isTerminal: Bool = false) -> TerminalChatRenderCoordinator {
@@ -605,5 +699,78 @@ private actor ArtifactPublicationGate {
         released = true
         waiter?.resume()
         waiter = nil
+    }
+}
+
+/// The renderer's write count at each probe of ``DelegatedOverviewBackend``.
+private actor DelegatedOverviewProbes {
+    private(set) var stages: [String] = []
+    private var eventCounts: [String: Int] = [:]
+
+    func record(_ stage: String, eventCount: Int) {
+        stages.append(stage)
+        eventCounts[stage] = eventCount
+    }
+
+    func eventCount(_ stage: String) -> Int {
+        eventCounts[stage] ?? 0
+    }
+}
+
+/// A coordinator waiting for one sub-agent in progress, which writes a file:
+/// the delegated call is probed once started and once completed.
+private actor DelegatedOverviewBackend: AgentRuntimeBackend {
+    private var handler: DirectSubAgentToolEventHandler?
+    private var probe: (@Sendable (String) async -> Void)?
+
+    func setProbe(_ probe: @escaping @Sendable (String) async -> Void) { self.probe = probe }
+    func updateSubAgentToolEventHandler(_ handler: DirectSubAgentToolEventHandler?) { self.handler = handler }
+    func createSession(id: String, cwd: String, systemPrompt: String?, history: [AgentRuntimeMessage], cacheKey: String?, allowedToolNames: Set<String>?, thinkingSelection: AgentThinkingSelection?, preserveThinking: Bool) {}
+    func createSessionIfNeeded(id: String, cwd: String, systemPrompt: String?, history: [AgentRuntimeMessage], cacheKey: String?, allowedToolNames: Set<String>?, thinkingSelection: AgentThinkingSelection?, preserveThinking: Bool) {}
+    func updateSessionOptions(id: String, systemPrompt: String?, allowedToolNames: Set<String>?, thinkingSelection: AgentThinkingSelection?, preserveThinking: Bool) {}
+    func closeSession(id: String) {}
+    func shutdown() {}
+    func preloadModel(onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void) async throws -> String { "test-model" }
+    func activeToolDescriptors() -> [DirectToolDescriptor] { [] }
+
+    func subAgentSnapshots() -> [DirectSubAgentRuntime.AgentSnapshot] {
+        let date = Date(timeIntervalSince1970: 1_800_000_000)
+        return [DirectSubAgentRuntime.AgentSnapshot(
+            id: "worker",
+            name: "worker",
+            role: "Writes the file",
+            profileName: nil,
+            status: .running,
+            pending: true,
+            configuredModelID: nil,
+            modelID: nil,
+            currentActivity: nil,
+            currentActivityKind: nil,
+            currentToolName: "local.writeFile",
+            currentToolIsRunning: true,
+            latestMetrics: nil,
+            latestEventAt: date,
+            latestOutput: nil,
+            executionRevision: 1,
+            latestError: nil,
+            createdAt: date,
+            updatedAt: date
+        )]
+    }
+
+    func sendPrompt(sessionID: String, prompt: String, attachments: [AgentRuntimeAttachment], onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void) async throws -> DirectAgentResponse {
+        let wait = DirectAgentToolCall(id: "wait", name: "agent.wait", argumentsObject: [:], argumentsJSON: "{}")
+        await onEvent(.toolCallStarted(wait))
+        let call = DirectAgentToolCall(id: "delegated-write", name: "local.writeFile", argumentsObject: ["path": "Delegated.swift"], argumentsJSON: "{}")
+        await handler?(.init(agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .started, rootSessionID: sessionID))
+        await probe?("started")
+        let result = DirectAgentToolResult(output: "Updated", summary: "Updated", fileChanges: [
+            .init(path: "Delegated.swift", oldText: nil, newText: "delegated source\n")
+        ])
+        await handler?(.init(agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .completed(result), rootSessionID: sessionID))
+        await probe?("completed")
+        await onEvent(.toolCallCompleted(wait, .init(output: "done", summary: "done")))
+        await onEvent(.content("delegation ended"))
+        return DirectAgentResponse(text: "delegation ended", stopReason: "end_turn", modelID: "test-model")
     }
 }

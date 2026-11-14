@@ -112,33 +112,18 @@ final class TerminalChatSessionPresenter: ChatSlotChannelPresenter {
         }
     }
 
+    /// The terminal writes no live artifact in the transcript: they are seen
+    /// in the `/artifacts` panel, which reads them again when it is open.
     func presentLiveFileArtifacts(
         _ turns: [SessionFileArtifactHistory.Turn],
         agentID: String?
     ) async {
-        guard let chat else { return }
-        if agentID != nil {
-            // A delegated artifact replaces the pending sub-agent overview, and
-            // only while its recording turn is still the active one.
-            guard let context = chat.chatSession.activeFileArtifactTurn else { return }
-            await chat.writeFileArtifacts(
-                turns,
-                includeHistoryHeadings: false,
-                preservingStreamingContext: true,
-                replacingSubAgentOverviewFor: context
-            )
-        } else {
-            await chat.writeFileArtifacts(
-                turns,
-                includeHistoryHeadings: false,
-                preservingStreamingContext: true
-            )
-        }
+        chat?.fileArtifactsDidChange()
     }
 
     /// The delegated tool row in the sub-agent section, and the status-bar
     /// git summary after a delegated file mutation; the controller captures
-    /// the baseline, presents the artifacts, and publishes the overview.
+    /// the baseline, records the artifacts, and publishes the overview.
     func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
         guard let chat else { return }
         await chat.renderCoordinator.recordSubAgentToolEvent(event)
@@ -147,8 +132,10 @@ final class TerminalChatSessionPresenter: ChatSlotChannelPresenter {
         }
     }
 
+    /// Like the live artifacts, the sealed ones are seen only in the
+    /// `/artifacts` panel.
     func presentSealedFileArtifacts(_ turn: SessionFileArtifactHistory.Turn) async {
-        await chat?.writeFileArtifacts([turn], includeHistoryHeadings: false)
+        chat?.fileArtifactsDidChange()
     }
 
     func turnWillContinueAutomatically() async {
@@ -157,9 +144,12 @@ final class TerminalChatSessionPresenter: ChatSlotChannelPresenter {
         await chat.finishStreamingOutput()
     }
 
+    /// The turn's file-change summary is collected: its files move from the
+    /// turn in progress to the finished turns of an open `/artifacts` panel.
     func turnWillFinish() async {
         guard let chat else { return }
         await chat.stopSubAgentOverviewRefresh()
+        chat.fileArtifactsDidChange()
     }
 
     func presentWorkflowNotice(_ notice: ChatWorkflowNotice) async {

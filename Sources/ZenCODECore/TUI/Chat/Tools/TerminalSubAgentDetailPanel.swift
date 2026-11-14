@@ -27,10 +27,11 @@ public enum TerminalSubAgentDetailAction: Sendable, Equatable {
     case closeList
 }
 
-/// Pure layout/state model for the `/subagent` detail panel. Terminal drawing
-/// and data loading stay in the controller; this type makes the agent choice,
-/// follow mode, scrolling and framing deterministic and independent of TTY
-/// ownership.
+/// Pure layout/state model for the `/subagent` detail panel, and for the
+/// `/artifacts` panel that shares its layout under its own ``title``.
+/// Terminal drawing and data loading stay in the controller; this type makes
+/// the choice list, follow mode, scrolling and framing deterministic and
+/// independent of TTY ownership.
 ///
 /// Every frame shares one row budget, used identically by
 /// ``bodyCapacity(frameRows:)``, ``apply(_:frameRows:)``,
@@ -48,18 +49,47 @@ public enum TerminalSubAgentDetailAction: Sendable, Equatable {
 ///
 /// The body capacity therefore depends only on the header and the frame
 /// height, never on the body length, so a growing transcript does not move
-/// the frame. In ``Mode/choosing(entries:focusedIndex:)`` the body is the
-/// agent list, one row per entry. `scrollOffset` and `isFollowing` always
-/// refer to `bodyRows`; the list window is derived from the focused entry.
+/// the frame. `scrollOffset` and `isFollowing` always refer to `bodyRows`.
+///
+/// In ``Mode/choosing(entries:focusedIndex:)`` the body is the choice list
+/// instead of `bodyRows`, and the list knows nothing of what its entries
+/// stand for. Each ``ChoiceEntry`` is a block of rows: its title row, with
+/// `▸ ` and the accent on the focused entry and two spaces on the others,
+/// then its detail rows, indented four columns, behind an accent `┃` on the
+/// focused entry. The window is derived from the focused entry:
+///
+/// - when every block fits the body with one blank row between consecutive
+///   blocks, the whole list is shown that way;
+/// - otherwise the blocks are shown without the blank rows, and only whole
+///   ones: the focused entry, then its neighbours added alternately above
+///   and below (above first on a tie) while they fit, so the focused entry
+///   stays near the middle;
+/// - a body shorter than the focused block shows the first rows of that
+///   block alone.
 struct TerminalSubAgentDetailPanel: Sendable, Equatable {
+    /// One entry of the choice list: what the entry stands for, for the
+    /// caller that confirms it, and its rows, already rendered. Each row is
+    /// drawn on one frame row and may carry ANSI styling; the panel truncates
+    /// a row wider than the frame.
     struct ChoiceEntry: Sendable, Equatable {
-        let agentID: String
-        /// The already rendered row text; it may contain ANSI styling.
+        /// The identity the caller resolves when the entry is confirmed.
+        let id: String
+        /// The first row of the entry, the one the focus marks.
         let title: String
+        /// The rows drawn below the title, indented; none for a one-row
+        /// entry.
+        let details: [String]
+
+        init(id: String, title: String, details: [String] = []) {
+            self.id = id
+            self.title = title
+            self.details = details
+        }
     }
 
     enum Mode: Sendable, Equatable {
-        /// More than one agent can be shown: the operator picks one first.
+        /// The operator picks one of `entries` first; `focusedIndex` is the
+        /// entry the focus marks.
         case choosing(entries: [ChoiceEntry], focusedIndex: Int)
         /// The panel shows the selected agent's header and body rows.
         case showing
@@ -73,6 +103,9 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
 
     var mode: Mode
     var availability: Availability
+    /// The label of the top border, ``subAgentTitle`` unless the controller
+    /// gives its own.
+    var title: String
     var headerRows: [String]
     var bodyRows: [String]
     /// First body row shown when not following. Clamped on every update and
@@ -82,7 +115,8 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
     /// appended by ``replace(headerRows:bodyRows:frameRows:)`` stay visible.
     var isFollowing: Bool
 
-    private static let title = " 👥 Sub-agent "
+    /// The title of the `/subagent` detail panel.
+    static let subAgentTitle = " 👥 Sub-agent "
     /// Narrowest frame whose interior row keeps one content column between
     /// `│ ` and ` │`; narrower terminals get this minimal frame.
     private static let minimumColumns = 5
@@ -90,11 +124,13 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
     init(
         mode: Mode = .showing,
         availability: Availability = .loading,
+        title: String = subAgentTitle,
         headerRows: [String] = [],
         bodyRows: [String] = []
     ) {
         self.mode = mode
         self.availability = availability
+        self.title = title
         self.headerRows = headerRows
         self.bodyRows = bodyRows
         scrollOffset = 0
@@ -159,12 +195,14 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
     /// Draws the framed panel as exactly `rows` lines, each `columns` visible
     /// columns wide (at least the minimal 5-column frame). One row draws only
     /// the top border, two rows draw both borders. When the body exceeds its
-    /// window the bottom border carries a right-aligned 1-based `rows a–b/n`
-    /// indicator.
+    /// window the bottom border carries a right-aligned 1-based indicator:
+    /// `rows a–b/n` for the body rows in ``Mode/showing``, `a–b/n` for the
+    /// entries in ``Mode/choosing(entries:focusedIndex:)`` while some of them
+    /// are not shown.
     func frameLines(rows: Int, columns: Int) -> [String] {
         guard rows > 0 else { return [] }
         let columns = max(Self.minimumColumns, columns)
-        let top = Self.borderLine(left: "╭", right: "╮", label: Self.title, columns: columns)
+        let top = Self.borderLine(left: "╭", right: "╮", label: title, columns: columns)
         guard rows > 1 else { return [top] }
 
         let layout = Self.layout(headerCount: headerRows.count, frameRows: rows)
@@ -180,10 +218,9 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
             repeating: Self.interiorLine("", columns: columns),
             count: max(0, layout.bodyCapacity - window.rows.count)
         )
-        let indicator: String? = window.total > layout.bodyCapacity && layout.bodyCapacity > 0
-            ? " rows \(window.start + 1)–\(window.start + window.rows.count)/\(window.total) "
-            : nil
-        lines.append(Self.borderLine(left: "╰", right: "╯", label: indicator, trailing: true, columns: columns))
+        lines.append(
+            Self.borderLine(left: "╰", right: "╯", label: window.indicator, trailing: true, columns: columns)
+        )
         return lines
     }
 
@@ -207,28 +244,72 @@ struct TerminalSubAgentDetailPanel: Sendable, Equatable {
         max(0, rowCount - capacity)
     }
 
-    /// The body rows on screen, the index of the first one and the total the
-    /// window scrolls through.
-    private func bodyWindow(capacity: Int) -> (rows: [String], start: Int, total: Int) {
+    /// The body rows on screen and the indicator of the bottom border, `nil`
+    /// while the whole body is on screen.
+    private func bodyWindow(capacity: Int) -> (rows: [String], indicator: String?) {
         switch mode {
         case let .choosing(entries, focusedIndex):
-            guard capacity > 0, !entries.isEmpty else { return ([], 0, entries.count) }
-            let focused = min(max(0, focusedIndex), entries.count - 1)
-            // Same centred window as `TerminalCheckboxMenu.visibleItemLines`.
-            let start = min(max(0, focused - capacity / 2), max(0, entries.count - capacity))
-            let end = min(entries.count, start + capacity)
-            let rows = (start..<end).map { index in
-                index == focused
-                    ? TerminalStyle.Accent.primary + "▸ " + entries[index].title + TerminalStyle.reset
-                    : "  " + entries[index].title
-            }
-            return (rows, start, entries.count)
+            return Self.choiceWindow(entries, focusedIndex: focusedIndex, capacity: capacity)
         case .showing:
             let maximum = Self.maximumOffset(rowCount: bodyRows.count, capacity: capacity)
             let start = isFollowing ? maximum : min(max(0, scrollOffset), maximum)
             let end = min(bodyRows.count, start + capacity)
-            return (start < end ? Array(bodyRows[start..<end]) : [], start, bodyRows.count)
+            let rows = start < end ? Array(bodyRows[start..<end]) : []
+            let indicator = bodyRows.count > capacity && capacity > 0
+                ? " rows \(start + 1)–\(start + rows.count)/\(bodyRows.count) "
+                : nil
+            return (rows, indicator)
         }
+    }
+
+    /// The choice list's window documented on the type, and its `a–b/n`
+    /// indicator of the entries shown while some are not.
+    private static func choiceWindow(
+        _ entries: [ChoiceEntry],
+        focusedIndex: Int,
+        capacity: Int
+    ) -> (rows: [String], indicator: String?) {
+        guard capacity > 0, !entries.isEmpty else { return ([], nil) }
+        let focused = min(max(0, focusedIndex), entries.count - 1)
+        let blocks = entries.indices.map { choiceRows(entries[$0], isFocused: $0 == focused) }
+        let separatedHeight = blocks.reduce(0) { $0 + $1.count } + blocks.count - 1
+        if separatedHeight <= capacity {
+            return (Array(blocks.joined(separator: [""])), nil)
+        }
+        var lower = focused, upper = focused
+        var used = blocks[focused].count, above = 0, below = 0
+        while used < capacity {
+            let fitsAbove = lower > 0 && used + blocks[lower - 1].count <= capacity
+            let fitsBelow = upper < blocks.count - 1 && used + blocks[upper + 1].count <= capacity
+            if fitsAbove, above <= below || !fitsBelow {
+                lower -= 1
+                used += blocks[lower].count
+                above += blocks[lower].count
+            } else if fitsBelow {
+                upper += 1
+                used += blocks[upper].count
+                below += blocks[upper].count
+            } else {
+                break
+            }
+        }
+        // `prefix` only cuts a focused block taller than the body.
+        let rows = Array(blocks[lower...upper].joined().prefix(capacity))
+        let indicator = upper - lower + 1 < entries.count
+            ? " \(lower + 1)–\(upper + 1)/\(entries.count) "
+            : nil
+        return (rows, indicator)
+    }
+
+    /// The rows of one entry's block: the title row, then the detail rows
+    /// indented under it. The focused entry carries the accent `▸` on its
+    /// title and an accent `┃` before each detail row, so the whole block
+    /// stands out.
+    private static func choiceRows(_ entry: ChoiceEntry, isFocused: Bool) -> [String] {
+        let accent = TerminalStyle.Accent.primary, reset = TerminalStyle.reset
+        let title = isFocused ? accent + "▸ " + entry.title + reset : "  " + entry.title
+        let gutter = isFocused ? accent + "┃" + reset + "   " : "    "
+        return [title] + entry.details.map { gutter + $0 }
     }
 
     // MARK: - Drawing

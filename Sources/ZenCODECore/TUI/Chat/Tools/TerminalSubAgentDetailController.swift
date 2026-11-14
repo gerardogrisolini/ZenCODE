@@ -91,7 +91,8 @@ final class TerminalSubAgentDetailController {
         /// Called when the panel moves between the agent list
         /// (`isChoosing`) and an agent's detail.
         var modeDidChange: @ChatSessionActor (_ isChoosing: Bool) async -> Void
-        /// The title of a model identifier, for the header's model row.
+        /// The title of a model identifier, for the model rows of the header
+        /// and of the agent list.
         var modelTitleResolver: (String) -> String
         /// Whether the transcript rows carry ANSI styling.
         var standardErrorIsTerminal: Bool
@@ -198,9 +199,10 @@ final class TerminalSubAgentDetailController {
 
     // MARK: - Opening and closing
 
-    /// Shows the agent list, one entry per snapshot, focused on the first.
-    /// No transcript is read until an agent is confirmed. Does nothing after
-    /// ``stop()``.
+    /// Shows the agent list, one entry per snapshot, focused on the first
+    /// (``choiceEntries(_:modelTitleResolver:)``). The entries are built once
+    /// from `snapshots`: the list does not follow the updates. No transcript
+    /// is read until an agent is confirmed. Does nothing after ``stop()``.
     func open(choosing snapshots: [DirectSubAgentRuntime.AgentSnapshot]) {
         guard !isStopped else { return }
         endFollowing()
@@ -209,7 +211,10 @@ final class TerminalSubAgentDetailController {
         snapshot = nil
         reloadKey = nil
         panel = TerminalSubAgentDetailPanel(
-            mode: .choosing(entries: Self.choiceEntries(snapshots), focusedIndex: 0)
+            mode: .choosing(
+                entries: Self.choiceEntries(snapshots, modelTitleResolver: environment.modelTitleResolver),
+                focusedIndex: 0
+            )
         )
         render()
         watchViewport()
@@ -243,7 +248,7 @@ final class TerminalSubAgentDetailController {
                 render()
             case .confirm:
                 guard !entries.isEmpty else { return }
-                let agentID = entries[min(max(0, focusedIndex), entries.count - 1)].agentID
+                let agentID = entries[min(max(0, focusedIndex), entries.count - 1)].id
                 show(agentID: agentID, snapshot: choiceSnapshots.first { $0.id == agentID })
                 await environment.modeDidChange(false)
             case .close, .closeList:
@@ -563,22 +568,58 @@ final class TerminalSubAgentDetailController {
         return rows
     }
 
-    /// One entry per snapshot, titled with the agent's name (its id when the
-    /// name is blank). Agents that share a name also show their id, muted.
-    private static func choiceEntries(
-        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
+    /// One entry per snapshot, made only of what does not go stale while the
+    /// list is open (no status, no activity):
+    ///
+    /// - the title is the agent's name (its id when the name is blank);
+    ///   agents that share a name also show their id, muted;
+    /// - at most two detail rows, with the muted labels of the detail header
+    ///   (``TerminalSubAgentOverviewLayout/metadataText(label:value:ansiEnabled:)``):
+    ///   the `role:`, then the `agent:` (the profile name) and the `model:`
+    ///   (``TerminalSubAgentOverviewLayout/modelText(_:modelTitleResolver:)``,
+    ///   without the token counters) one `·` apart. Each field is on one line;
+    ///   a blank field is left out, and so is a row left without fields.
+    static func choiceEntries(
+        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
+        modelTitleResolver: (String) -> String
     ) -> [TerminalSubAgentDetailPanel.ChoiceEntry] {
         let names = snapshots.map { $0.name.nilIfBlank ?? $0.id }
         let counts = names.reduce(into: [String: Int]()) { $0[$1, default: 0] += 1 }
         return zip(snapshots, names).map { snapshot, name in
             let isShared = counts[name, default: 0] > 1 && name != snapshot.id
             return TerminalSubAgentDetailPanel.ChoiceEntry(
-                agentID: snapshot.id,
+                id: snapshot.id,
                 title: isShared
                     ? "\(name) \(TerminalStyle.Text.muted)\(snapshot.id)\(TerminalStyle.reset)"
-                    : name
+                    : name,
+                details: choiceDetails(snapshot, modelTitleResolver: modelTitleResolver)
             )
         }
+    }
+
+    /// The detail rows of ``choiceEntries(_:modelTitleResolver:)``.
+    private static func choiceDetails(
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
+        modelTitleResolver: (String) -> String
+    ) -> [String] {
+        typealias Layout = TerminalSubAgentOverviewLayout
+        var rows: [String] = []
+        let role = InlineTextTruncation.inlineText(snapshot.role)
+        if !role.isEmpty {
+            rows.append(Layout.metadataText(label: "role:", value: role))
+        }
+        var identity: [String] = []
+        let profile = InlineTextTruncation.inlineText(snapshot.profileName ?? "")
+        if !profile.isEmpty {
+            identity.append(Layout.metadataText(label: "agent:", value: profile))
+        }
+        if let model = Layout.modelText(snapshot, modelTitleResolver: modelTitleResolver) {
+            identity.append(model)
+        }
+        if !identity.isEmpty {
+            rows.append(identity.joined(separator: " \(Layout.dimText("·")) "))
+        }
+        return rows
     }
 
     // MARK: - Keys

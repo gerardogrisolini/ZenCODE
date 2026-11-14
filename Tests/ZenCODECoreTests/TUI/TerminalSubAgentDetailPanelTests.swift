@@ -18,7 +18,38 @@ struct TerminalSubAgentDetailPanelTests {
     }
 
     private func entries(_ count: Int) -> [TerminalSubAgentDetailPanel.ChoiceEntry] {
-        (0..<count).map { .init(agentID: "id-\($0)", title: "agent-\($0)") }
+        (0..<count).map { .init(id: "id-\($0)", title: "agent-\($0)") }
+    }
+
+    /// One entry per element of `detailCounts`: `agent-i`, with
+    /// `detailCounts[i]` detail rows `detail-i-j`.
+    private func blockEntries(_ detailCounts: [Int]) -> [TerminalSubAgentDetailPanel.ChoiceEntry] {
+        detailCounts.enumerated().map { index, count in
+            .init(
+                id: "id-\(index)",
+                title: "agent-\(index)",
+                details: (0..<count).map { "detail-\(index)-\($0)" }
+            )
+        }
+    }
+
+    /// The plain rows the list draws for `entries[range]`, one block after
+    /// the other: the title behind `▸ ` or two spaces, the details behind
+    /// `┃   ` or four spaces.
+    private func blockRows(
+        _ entries: [TerminalSubAgentDetailPanel.ChoiceEntry],
+        _ range: ClosedRange<Int>,
+        focusedIndex: Int
+    ) -> [String] {
+        range.flatMap { index in
+            let isFocused = index == focusedIndex
+            return [(isFocused ? "▸ " : "  ") + entries[index].title]
+                + entries[index].details.map { (isFocused ? "┃   " : "    ") + $0 }
+        }
+    }
+
+    private func plainBottomBorder(columns: Int) -> String {
+        "╰" + String(repeating: "─", count: columns - 2) + "╯"
     }
 
     private func plain(_ lines: [String]) -> [String] {
@@ -183,6 +214,7 @@ struct TerminalSubAgentDetailPanelTests {
     @Test(arguments: [0, 1, 2, 3, 4, 5, 6, 9, 24], [5, 6, 13, 40, 120])
     func frameLinesFillExactlyTheRequestedRowsAndColumns(rows: Int, columns: Int) {
         let longRow = TerminalStyle.Accent.primary + String(repeating: "wide 👥 text ", count: 20) + TerminalStyle.reset
+        let wideEntry = TerminalSubAgentDetailPanel.ChoiceEntry(id: "wide", title: longRow, details: [longRow, longRow])
         var scrolled = TerminalSubAgentDetailPanel(headerRows: numberedRows(4, prefix: "h"))
         scrolled.replace(headerRows: numberedRows(4, prefix: "h"), bodyRows: numberedRows(60) + [longRow], frameRows: rows)
         scrolled.apply(.pageUp, frameRows: rows)
@@ -195,13 +227,40 @@ struct TerminalSubAgentDetailPanelTests {
             TerminalSubAgentDetailPanel(
                 mode: .choosing(entries: entries(30), focusedIndex: 17),
                 headerRows: ["Choose a sub-agent"]
-            )
+            ),
+            TerminalSubAgentDetailPanel(
+                mode: .choosing(entries: blockEntries([2, 0, 1, 2, 2, 0, 1]) + [wideEntry], focusedIndex: 7)
+            ),
+            TerminalSubAgentDetailPanel(mode: .choosing(entries: [wideEntry], focusedIndex: 0))
         ]
         for panel in panels {
             let lines = panel.frameLines(rows: rows, columns: columns)
             #expect(lines.count == rows)
             #expect(lines.allSatisfy { TerminalANSIText.visibleWidth($0) == columns })
         }
+    }
+
+    @Test func theTopBorderCarriesTheTitleOfThePanel() {
+        func top(_ title: String, columns: Int) -> String {
+            "╭─" + title + String(repeating: "─", count: columns - 3 - TerminalANSIText.visibleWidth(title)) + "╮"
+        }
+        let subAgent = TerminalSubAgentDetailPanel(bodyRows: numberedRows(1))
+        #expect(subAgent.title == TerminalSubAgentDetailPanel.subAgentTitle)
+        #expect(plain(subAgent.frameLines(rows: 4, columns: 30)).first == top(" 👥 Sub-agent ", columns: 30))
+
+        let artifacts = TerminalSubAgentDetailPanel(
+            mode: .choosing(entries: entries(2), focusedIndex: 0),
+            title: " 🪬 Artifacts ",
+            bodyRows: numberedRows(1)
+        )
+        let lines = plain(artifacts.frameLines(rows: 6, columns: 30))
+        #expect(lines.first == top(" 🪬 Artifacts ", columns: 30))
+        // Only the label changes: the list is drawn as in the sub-agent panel.
+        var sameList = artifacts
+        sameList.title = TerminalSubAgentDetailPanel.subAgentTitle
+        #expect(Array(lines.dropFirst()) == Array(plain(sameList.frameLines(rows: 6, columns: 30)).dropFirst()))
+        // A label too wide for the frame leaves the plain rule.
+        #expect(plain(artifacts.frameLines(rows: 3, columns: 12)).first == "╭" + String(repeating: "─", count: 10) + "╮")
     }
 
     @Test func tinyFramesDrawOnlyTheBorders() {
@@ -306,9 +365,10 @@ struct TerminalSubAgentDetailPanelTests {
             panel.apply(.focusNext, frameRows: 7)
         }
         var lines = panel.frameLines(rows: 7, columns: 30)
-        #expect(bodyContents(lines).contains("▸ agent-15"))
+        #expect(bodyContents(lines) == ["  agent-13", "  agent-14", "▸ agent-15", "  agent-16", "  agent-17"])
         #expect(lines.contains { $0.contains(TerminalStyle.Accent.primary + "▸ agent-15") })
-        #expect(TerminalANSIText.stripANSI(lines[6]).hasSuffix("─ rows 14–18/20 ─╯"))
+        // The list's indicator counts entries, not rows.
+        #expect(TerminalANSIText.stripANSI(lines[6]).hasSuffix("─ 14–18/20 ─╯"))
 
         for _ in 0..<4 {
             panel.apply(.focusNext, frameRows: 7)
@@ -319,5 +379,123 @@ struct TerminalSubAgentDetailPanelTests {
         panel.apply(.focusNext, frameRows: 7)
         lines = panel.frameLines(rows: 7, columns: 30)
         #expect(bodyContents(lines).first == "▸ agent-0")
+        #expect(TerminalANSIText.stripANSI(lines[6]).hasSuffix("─ 1–5/20 ─╯"))
+    }
+
+    // MARK: - Multi-row entries
+
+    @Test func entriesAreBlocksOneBlankRowApartWhenTheWholeListFits() {
+        var panel = TerminalSubAgentDetailPanel(mode: .choosing(entries: blockEntries([2, 1, 0]), focusedIndex: 0))
+        // 3 + 2 + 1 rows and the two blank rows between them fill a body of 8.
+        #expect(panel.bodyCapacity(frameRows: 10) == 8)
+        var lines = panel.frameLines(rows: 10, columns: 40)
+        #expect(bodyContents(lines) == [
+            "▸ agent-0", "┃   detail-0-0", "┃   detail-0-1", "",
+            "  agent-1", "    detail-1-0", "",
+            "  agent-2"
+        ])
+        // The focused block stands out on every row, the others carry no accent.
+        let accent = TerminalStyle.Accent.primary, reset = TerminalStyle.reset
+        #expect(lines[1].contains(accent + "▸ agent-0" + reset))
+        #expect(lines[2].contains(accent + "┃" + reset + "   detail-0-0"))
+        #expect(lines[3].contains(accent + "┃" + reset + "   detail-0-1"))
+        #expect(lines[4...8].allSatisfy { !$0.contains(accent) })
+        // Every entry is shown: no indicator.
+        #expect(plain(lines).last == plainBottomBorder(columns: 40))
+
+        panel.apply(.focusNext, frameRows: 10)
+        lines = panel.frameLines(rows: 10, columns: 40)
+        #expect(bodyContents(lines) == [
+            "  agent-0", "    detail-0-0", "    detail-0-1", "",
+            "▸ agent-1", "┃   detail-1-0", "",
+            "  agent-2"
+        ])
+        #expect(lines[5].contains(accent + "▸ agent-1" + reset))
+        #expect(lines[6].contains(accent + "┃" + reset + "   detail-1-0"))
+    }
+
+    @Test func theBlankRowsAreOmittedWhenTheyDoNotFit() {
+        let entries = blockEntries([1, 1, 1])
+        let panel = TerminalSubAgentDetailPanel(mode: .choosing(entries: entries, focusedIndex: 2))
+        // The 6 rows of the entries fit a body of 7, their 2 blank rows do not.
+        let lines = panel.frameLines(rows: 9, columns: 40)
+        #expect(bodyContents(lines) == blockRows(entries, 0...2, focusedIndex: 2) + [""])
+        #expect(plain(lines).last == plainBottomBorder(columns: 40))
+
+        // One more row fits the blank rows too.
+        #expect(bodyContents(panel.frameLines(rows: 10, columns: 40)) == [
+            "  agent-0", "    detail-0-0", "",
+            "  agent-1", "    detail-1-0", "",
+            "▸ agent-2", "┃   detail-2-0"
+        ])
+    }
+
+    @Test func theWindowShowsOnlyWholeEntriesAroundTheFocus() {
+        // Blocks of 3, 1, 3, 1 and 3 rows in a body of 7.
+        let entries = blockEntries([2, 0, 2, 0, 2])
+        var panel = TerminalSubAgentDetailPanel(mode: .choosing(entries: entries, focusedIndex: 2))
+        #expect(panel.bodyCapacity(frameRows: 9) == 7)
+        var lines = panel.frameLines(rows: 9, columns: 40)
+        #expect(bodyContents(lines) == [
+            "  agent-1", "▸ agent-2", "┃   detail-2-0", "┃   detail-2-1", "  agent-3", "", ""
+        ])
+        #expect(plain(lines).last?.hasSuffix("─ 2–4/5 ─╯") == true)
+
+        // Whatever the focus, the window is a run of whole blocks around it,
+        // and the indicator names exactly those entries, 1-based.
+        let expectedRanges: [ClosedRange<Int>] = [0...2, 0...2, 1...3, 2...4, 2...4]
+        for focus in entries.indices {
+            panel.mode = .choosing(entries: entries, focusedIndex: focus)
+            lines = panel.frameLines(rows: 9, columns: 40)
+            let range = expectedRanges[focus]
+            let shown = blockRows(entries, range, focusedIndex: focus)
+            #expect(bodyContents(lines) == shown + Array(repeating: "", count: 7 - shown.count))
+            #expect(plain(lines).last?.hasSuffix("─ \(range.lowerBound + 1)–\(range.upperBound + 1)/5 ─╯") == true)
+        }
+    }
+
+    @Test func aBodyShorterThanTheFocusedEntryShowsItsFirstRows() {
+        let panel = TerminalSubAgentDetailPanel(mode: .choosing(entries: blockEntries([0, 3, 0]), focusedIndex: 1))
+        var lines = panel.frameLines(rows: 4, columns: 30)
+        #expect(bodyContents(lines) == ["▸ agent-1", "┃   detail-1-0"])
+        #expect(plain(lines).last?.hasSuffix("─ 2–2/3 ─╯") == true)
+        lines = panel.frameLines(rows: 3, columns: 30)
+        #expect(bodyContents(lines) == ["▸ agent-1"])
+        // A body exactly as tall as the focused block shows that block alone.
+        lines = panel.frameLines(rows: 6, columns: 30)
+        #expect(bodyContents(lines) == ["▸ agent-1", "┃   detail-1-0", "┃   detail-1-1", "┃   detail-1-2"])
+        #expect(plain(lines).last?.hasSuffix("─ 2–2/3 ─╯") == true)
+        // A single entry cut by the body has nothing else to count.
+        let single = TerminalSubAgentDetailPanel(mode: .choosing(entries: blockEntries([3]), focusedIndex: 0))
+        #expect(plain(single.frameLines(rows: 4, columns: 30)).last == plainBottomBorder(columns: 30))
+    }
+
+    @Test(arguments: [5, 8, 12, 20, 40])
+    func everyListRowIsTruncatedToTheFrameWidth(columns: Int) {
+        let muted = TerminalStyle.Text.muted, reset = TerminalStyle.reset
+        let role = muted + "role:" + reset + " " + String(repeating: "Reviews the change ", count: 6)
+        let entries: [TerminalSubAgentDetailPanel.ChoiceEntry] = [
+            .init(
+                id: "agent-1",
+                title: "worker " + muted + "agent-with-a-rather-long-identifier" + reset,
+                details: [role, muted + "agent:" + reset + " Developer · " + muted + "model:" + reset + " GPT-5"]
+            ),
+            .init(id: "agent-2", title: "reviewer", details: [role])
+        ]
+        let panel = TerminalSubAgentDetailPanel(mode: .choosing(entries: entries, focusedIndex: 0))
+        let lines = panel.frameLines(rows: 12, columns: columns)
+        #expect(lines.count == 12)
+        #expect(lines.allSatisfy { TerminalANSIText.visibleWidth($0) == columns })
+        let rows = bodyContents(lines)
+        #expect(rows.allSatisfy { TerminalANSIText.visibleWidth($0) <= columns - 4 })
+        if columns >= 40 {
+            // A cut row keeps its marker and its indentation.
+            #expect(rows[0].hasPrefix("▸ worker agent-with"))
+            #expect(rows[1].hasPrefix("┃   role: Reviews the change"))
+            #expect(rows[1].hasSuffix("..."))
+            #expect(rows[2] == "┃   agent: Developer · model: GPT-5")
+            #expect(rows[5].hasPrefix("    role: Reviews the change"))
+            #expect(rows[5].hasSuffix("..."))
+        }
     }
 }
