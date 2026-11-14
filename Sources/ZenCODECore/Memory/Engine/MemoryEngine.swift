@@ -28,10 +28,6 @@ actor MemoryEngine {
     /// Graph before the first pending intent; seeds a transactional persistence
     /// with no durable file yet (the live graph would replay that intent twice).
     var pendingRecallBaseGraph: MemoryGraph?
-    /// Local state not yet across a persistence boundary: `insert(persist: false)`
-    /// has no replayable intent, but the next transaction must still commit it.
-    /// Cleared only after the complete live graph is saved.
-    var needsSave: Bool
 
     private static let defaultSemanticFailureReporter = MemoryEmbeddingFallback.defaultReporter
 
@@ -44,7 +40,6 @@ actor MemoryEngine {
         selector: any MemorySelector = TopScoreMemorySelector(),
         contextFormatter: any MemoryContextFormatter = BulletMemoryContextFormatter(),
         configuration: MemoryEngineConfiguration = .init(),
-        needsSave: Bool = false,
         semanticFailureReporter: @escaping @Sendable (String) -> Void = MemoryEngine.defaultSemanticFailureReporter
     ) {
         self.graph = graph
@@ -55,7 +50,6 @@ actor MemoryEngine {
         self.selector = selector
         self.contextFormatter = contextFormatter
         self.configuration = configuration
-        self.needsSave = needsSave
         self.semanticFailureReporter = semanticFailureReporter
     }
 
@@ -66,8 +60,6 @@ actor MemoryEngine {
     /// the write lock and replays pending recall maintenance onto the *copy*
     /// only; nothing is persisted and live state is untouched.
     ///
-    /// - A dirty engine (deferred `insert(persist: false)`) serves its local graph,
-    ///   since reloading would discard that insert.
     /// - A non-transactional persistence has no reload boundary; the local graph
     ///   already contains every pending overlay.
     /// - An ordinary reload failure falls back to the local graph; cancellation and
@@ -75,8 +67,7 @@ actor MemoryEngine {
     func freshSnapshotForReadOnly() async throws -> MemoryGraph {
         try await withWriteLock { () -> MemoryGraph in
             try Task.checkCancellation()
-            guard !needsSave,
-                  let reloadPersistence = persistence as? any MemoryReadOnlyReloadPersistence
+            guard let reloadPersistence = persistence as? any MemoryReadOnlyReloadPersistence
             else { return graph }
             do {
                 var fresh = try await reloadPersistence.reloadReadOnly()
@@ -119,15 +110,6 @@ actor MemoryEngine {
             // `defer` still releases the lock when this throws.
             try Task.checkCancellation()
             let pending = pendingRecallMaintenance
-            // A transactional store reloads its file first, which would discard a
-            // preceding `insert(persist: false)`; commit that local snapshot instead.
-            if needsSave {
-                var draft = graph
-                let result = try body(&draft)
-                try await persist(draft)
-                adoptDurable(draft)
-                return result
-            }
             if let transactionalPersistence = persistence as? any MemoryTransactionalPersistence {
                 // Reload inside the persistence lock so the body sees the newest
                 // cross-process graph; replay pending intents exactly once (a
@@ -158,7 +140,6 @@ actor MemoryEngine {
     /// pending state that it supersedes.
     func adoptDurable(_ durable: MemoryGraph) {
         graph = durable
-        needsSave = false
         pendingRecallMaintenance.removeAll()
         pendingRecallBaseGraph = nil
     }
@@ -189,19 +170,6 @@ actor MemoryEngine {
         return try await body()
     }
 
-    public func insert(_ entry: EngineMemoryEntry, persist: Bool = true) async throws {
-        if persist {
-            try await transaction { $0.addMemory(entry) }
-        } else {
-            // Still serialized: an unpersisted insert that landed while another
-            // transaction was saving would be overwritten by that commit.
-            _ = try await withWriteLock {
-                graph.addMemory(entry)
-                needsSave = true
-            }
-        }
-    }
-
     public func forget(id: String) async throws -> EngineMemoryEntry? {
         try await transaction { $0.removeMemory(id: id) }
     }
@@ -228,8 +196,7 @@ actor MemoryEngine {
             // cannot record maintenance for a result never delivered.
             try Task.checkCancellation()
 
-            if let transactionalPersistence = persistence as? any MemoryTransactionalPersistence,
-               !needsSave {
+            if let transactionalPersistence = persistence as? any MemoryTransactionalPersistence {
                 // Everything below builds a *proposal* on private values; engine
                 // state is untouched before the durable decision (see
                 // `adoptMaintenance(after:...)` for the two failure paths).

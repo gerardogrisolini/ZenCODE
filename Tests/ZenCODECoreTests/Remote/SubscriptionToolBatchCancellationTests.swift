@@ -121,7 +121,7 @@ extension RemoteSessionSnapshotTests {
             )
             + chatGPTBatchCancellationFrames(id: "resumed", functionCalls: [], text: "Resumed"))
         let pool = chatGPTBatchCancellationPool(socket)
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionGenerationClient(configuration: remoteStreamingConfiguration(), webSocketPool: pool)
         await client.createSession(id: "batch", cwd: directory.path, allowedToolNames: ["local.append"])
         let credentials: @Sendable () async throws -> CodexAgentCredentials = {
@@ -319,7 +319,7 @@ extension RemoteSessionSnapshotTests {
             )
             + chatGPTBatchCancellationFrames(id: "resumed", functionCalls: [], text: "Resumed"))
         let pool = chatGPTBatchCancellationPool(socket)
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionGenerationClient(
             configuration: batchCancellationLastRoundConfiguration(directory: directory),
             webSocketPool: pool

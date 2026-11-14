@@ -160,8 +160,6 @@ public enum ZenTranscriptText {
             ZenOriginBadge(title: "Terminal", systemImage: "terminal")
         case .acp:
             ZenOriginBadge(title: "ACP", systemImage: "chevron.left.forwardslash.chevron.right")
-        case .headless:
-            ZenOriginBadge(title: "Headless", systemImage: "gearshape")
         case .telegram:
             ZenOriginBadge(title: "Telegram", systemImage: "paperplane")
         case .unknown:

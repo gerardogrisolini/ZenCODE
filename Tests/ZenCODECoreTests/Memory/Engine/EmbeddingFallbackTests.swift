@@ -55,14 +55,12 @@ struct EmbeddingFallbackTests {
     @Test
     func recallFallsBackToBM25WhenEmbeddingFails() async throws {
         let engine = MemoryEngine(embedder: AlwaysFailingEmbeddingProvider())
-        try await engine.insert(
-            EngineMemoryEntry(id: "a", category: .fact, content: "Swift actors protect mutable state"),
-            persist: false
-        )
-        try await engine.insert(
-            EngineMemoryEntry(id: "b", category: .fact, content: "Postgres migrations run at startup"),
-            persist: false
-        )
+        try await engine.transaction {
+            $0.addMemory(EngineMemoryEntry(id: "a", category: .fact, content: "Swift actors protect mutable state"))
+        }
+        try await engine.transaction {
+            $0.addMemory(EngineMemoryEntry(id: "b", category: .fact, content: "Postgres migrations run at startup"))
+        }
 
         // Must not throw: the embedding failure is contained and the retrieval
         // continues with the BM25 results that were already computed.
@@ -80,10 +78,9 @@ struct EmbeddingFallbackTests {
                 messages.withLock { $0.append(message) }
             }
         )
-        try await engine.insert(
-            EngineMemoryEntry(id: "a", category: .fact, content: "Swift actors protect mutable state"),
-            persist: false
-        )
+        try await engine.transaction {
+            $0.addMemory(EngineMemoryEntry(id: "a", category: .fact, content: "Swift actors protect mutable state"))
+        }
 
         // Retrieval still succeeds and returns BM25 hits.
         let results = try await engine.recallDetailed("Swift actors protect").selected
@@ -114,10 +111,9 @@ struct EmbeddingFallbackTests {
     @Test
     func cancelledEmbeddingIsNotDegradedToBM25Fallback() async throws {
         let engine = MemoryEngine(embedder: CancellationSurfacingEmbeddingProvider())
-        try await engine.insert(
-            EngineMemoryEntry(id: "a", category: .fact, content: "Swift actors protect mutable state"),
-            persist: false
-        )
+        try await engine.transaction {
+            $0.addMemory(EngineMemoryEntry(id: "a", category: .fact, content: "Swift actors protect mutable state"))
+        }
 
         let task = Task { try await engine.recallDetailed("Swift actors").selected }
         try await Task.sleep(for: .milliseconds(100))

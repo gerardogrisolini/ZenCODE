@@ -22,7 +22,7 @@ struct MemoryToolSurfaceTests {
     ) async throws -> (text: String, result: [String: JSONValue]) {
         let output = try await MemoryTool.executeAsync(
             ToolRequest(name: name, arguments: arguments),
-            context: MemoryToolContext(workingDirectory: workspace.workspaceURL),
+            context: MemoryToolContext(graphTarget: .workspace(workspace.workspaceURL)),
             memoryService: service
         )
         guard case let .object(result)? = output.rawResult else {

@@ -16,9 +16,9 @@ public enum AgentStandaloneSystemPrompt {
     ///   never get the listing and never touch the filesystem for it. The
     ///   listing is a snapshot of the folders directly inside `cwd`. A `nil`
     ///   value scans `cwd` now, so callers that compose once per session (ACP
-    ///   `newSession`/load/agent mention, `AgentCoreAppSessionFactory`) read it
-    ///   at selection time, while callers that recompose the prompt per turn
-    ///   must pass the snapshot they took at selection time.
+    ///   `newSession`/load/agent mention, through `AgentCoreAppSessionFactory`)
+    ///   read it at selection time, while callers that recompose the prompt per
+    ///   turn must pass the snapshot they took at selection time.
     /// - Parameter listLaunchFolder: Lists the entries of `cwd` when
     ///   `launchFolderProjects` is `nil` and the role delegates by role. The
     ///   default reads the file system; tests inject it to observe the listing.

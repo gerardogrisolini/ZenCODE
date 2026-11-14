@@ -113,23 +113,6 @@ public final class ChatSessionStateReducer: ChatSessionObserver {
         )
     }
 
-    /// A reducer for the session `controller` runs now, with its working
-    /// directory, selection, and saved-session link. It does not attach
-    /// itself: pass it to ``ChatSessionController/addObserver(_:)``.
-    public convenience init(
-        controller: ChatSessionController,
-        defaultOrigin: ChatTurnOrigin,
-        epoch: UInt64 = 0
-    ) {
-        self.init(
-            sessionID: controller.sessionID,
-            workingDirectory: controller.workingDirectory,
-            defaultOrigin: defaultOrigin,
-            state: controller.sessionState,
-            epoch: epoch
-        )
-    }
-
     nonisolated init(
         sessionID: String,
         workingDirectory: URL,

@@ -173,7 +173,7 @@ extension RemoteSessionSnapshotTests {
         let third = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes:
             try chatGPTStreamFailureFrames([chatGPTStreamFailureCompleted(id: "done", text: "Recovered")]))
         let pool = chatGPTStreamFailurePool([first, second, third])
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionGenerationClient(configuration: remoteStreamingConfiguration(), webSocketPool: pool)
         await client.createSession(id: "precedence", cwd: FileManager.default.temporaryDirectory.path, history: chatGPTStreamFailureHistory())
 
@@ -209,7 +209,7 @@ extension RemoteSessionSnapshotTests {
         let second = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes:
             try chatGPTStreamFailureFrames([chatGPTStreamFailureCompleted(id: "second", text: "Two")]))
         let pool = chatGPTStreamFailurePool([first, second])
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionGenerationClient(configuration: remoteStreamingConfiguration(), webSocketPool: pool)
         await client.createSession(id: "replay", cwd: FileManager.default.temporaryDirectory.path)
 
@@ -243,7 +243,7 @@ extension RemoteSessionSnapshotTests {
                 chatGPTStreamFailureErrorEvent(code: "invalid_request_error", message: Self.chatGPTStreamFailureContinuationMessage)
             ]))
         let pool = chatGPTStreamFailurePool([first])
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionGenerationClient(configuration: remoteStreamingConfiguration(), webSocketPool: pool)
         await client.createSession(id: "no-replay", cwd: FileManager.default.temporaryDirectory.path)
 
@@ -260,7 +260,7 @@ extension RemoteSessionSnapshotTests {
         let first = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes: try chatGPTStreamFailureInterruption())
         let second = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes: try chatGPTStreamFailureInterruption())
         let pool = chatGPTStreamFailurePool([first, second])
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionGenerationClient(configuration: remoteStreamingConfiguration(), webSocketPool: pool)
         await client.createSession(id: "interrupted", cwd: FileManager.default.temporaryDirectory.path)
 
@@ -287,7 +287,7 @@ extension RemoteSessionSnapshotTests {
         let third = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes:
             try chatGPTStreamFailureFrames([chatGPTStreamFailureCompleted(id: "final", text: "Done")]))
         let pool = chatGPTStreamFailurePool([first, second, third])
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionGenerationClient(configuration: remoteStreamingConfiguration(), webSocketPool: pool)
         await client.createSession(id: "reset", cwd: directory.path, allowedToolNames: ["local.pwd"])
 
@@ -317,7 +317,7 @@ extension RemoteSessionSnapshotTests {
         let first = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes: try chatGPTStreamFailureContextLimit())
         let second = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes: try chatGPTStreamFailureContextLimit())
         let pool = chatGPTStreamFailurePool([first, second])
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionGenerationClient(configuration: remoteStreamingConfiguration(), webSocketPool: pool)
         await client.createSession(id: "context", cwd: FileManager.default.temporaryDirectory.path, history: chatGPTStreamFailureHistory())
 
@@ -338,7 +338,7 @@ extension RemoteSessionSnapshotTests {
     func chatGPTStreamFailureContextLimitWithoutCompactableHistoryReportsUnavailable() async throws {
         let first = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes: try chatGPTStreamFailureContextLimit())
         let pool = chatGPTStreamFailurePool([first])
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionGenerationClient(configuration: remoteStreamingConfiguration(), webSocketPool: pool)
         await client.createSession(id: "uncompactable", cwd: FileManager.default.temporaryDirectory.path)
 
@@ -360,7 +360,7 @@ extension RemoteSessionSnapshotTests {
                 + [.failure(RemoteTransportError.protocolViolation("fixture"))]
         let first = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes: outcomes)
         let pool = chatGPTStreamFailurePool([first])
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionGenerationClient(configuration: remoteStreamingConfiguration(), webSocketPool: pool)
         await client.createSession(id: "unsafe", cwd: FileManager.default.temporaryDirectory.path, history: chatGPTStreamFailureHistory())
 
@@ -389,7 +389,7 @@ extension RemoteSessionSnapshotTests {
                 chatGPTStreamFailureCompleted(id: "next", text: "Again")
             ]))
         let pool = chatGPTStreamFailurePool([socket])
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         // The reserved output alone exceeds this window, so every request of
         // every round is unsatisfiable.
         let configuration = AgentRuntimeConfiguration(
@@ -433,7 +433,7 @@ extension RemoteSessionSnapshotTests {
         let socket = ChatGPTSubscriptionTestWebSocketTask(receiveOutcomes:
             try chatGPTStreamFailureFrames([chatGPTStreamFailureCompleted(id: "fit", text: "Fit")]))
         let pool = chatGPTStreamFailurePool([socket])
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let configuration = AgentRuntimeConfiguration(
             modelID: "unit-model",
             workingDirectory: URL(fileURLWithPath: "/tmp/project", isDirectory: true),

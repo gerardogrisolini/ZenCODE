@@ -121,26 +121,11 @@ struct TerminalTelegramInputRichBlockListItem: Encodable, Sendable {
     }
 }
 
-struct TerminalTelegramRichMessageButton: Encodable, Sendable {
-    let text: TerminalTelegramRichText
-    let style: String?
-    let url: String?
-    let callbackData: String?
-
-    enum CodingKeys: String, CodingKey {
-        case text, style, url
-        case callbackData = "callback_data"
-    }
-}
-
 indirect enum TerminalTelegramInputRichBlock: Encodable, Sendable {
     case paragraph(TerminalTelegramRichText)
     case heading(size: Int, text: TerminalTelegramRichText)
     case preformatted(text: TerminalTelegramRichText, language: String?)
     case list(ordered: Bool, items: [TerminalTelegramInputRichBlockListItem])
-    case details(summary: TerminalTelegramRichText, blocks: [TerminalTelegramInputRichBlock], isOpen: Bool)
-    case buttons([TerminalTelegramRichMessageButton])
-    case document(media: String, caption: TerminalTelegramRichText?)
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -162,31 +147,13 @@ indirect enum TerminalTelegramInputRichBlock: Encodable, Sendable {
                 TerminalTelegramInputRichBlockListItem(blocks: $0.element.blocks, value: $0.offset + 1, type: "1")
             } : items
             try container.encode(numbered, forKey: .items)
-        case let .details(summary, blocks, isOpen):
-            try container.encode("details", forKey: .type)
-            try container.encode(summary, forKey: .summary)
-            try container.encode(blocks, forKey: .blocks)
-            if isOpen { try container.encode(true, forKey: .isOpen) }
-        case let .buttons(buttons):
-            try container.encode("buttons", forKey: .type)
-            try container.encode(buttons, forKey: .buttons)
-        case let .document(media, caption):
-            try container.encode("document", forKey: .type)
-            try container.encode(TerminalTelegramInputMediaDocument(type: "document", media: media), forKey: .document)
-            if let caption {
-                try container.encode(TerminalTelegramRichBlockCaption(text: caption), forKey: .caption)
-            }
         }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case type, text, size, language, items, summary, blocks, buttons, document, caption
-        case isOpen = "is_open"
+        case type, text, size, language, items
     }
 }
-
-private struct TerminalTelegramInputMediaDocument: Encodable { let type: String; let media: String }
-private struct TerminalTelegramRichBlockCaption: Encodable { let text: TerminalTelegramRichText }
 
 struct TerminalTelegramSendRichMessageRequest: Encodable {
     let chatID: Int64

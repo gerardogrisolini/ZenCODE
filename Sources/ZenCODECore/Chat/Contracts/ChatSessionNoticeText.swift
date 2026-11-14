@@ -43,8 +43,6 @@ public enum ChatSessionNoticeText {
             return selectedAgentText(agent)
         case let .availableAgents(agents, selected, manifestPath):
             return agentListText(agents, selected: selected, manifestPath: manifestPath)
-        case .agentSelectionUsage:
-            return agentSelectionUsage
         case let .projectAgentsAssociated(agents, projectName):
             return projectAgentAssociationText(agents, projectName: projectName)
         case let .projectAgentsSaveFailed(description):

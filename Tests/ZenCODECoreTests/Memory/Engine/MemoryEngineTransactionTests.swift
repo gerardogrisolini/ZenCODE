@@ -199,19 +199,6 @@ private actor ControlledPersistence: MemoryPersistence {
     #expect(committed.memories["b"] != nil)
 }
 
-@Test func transactionPersistsAnInsertDeferredWithPersistFalse() async throws {
-    let persistence = ControlledPersistence()
-    let memory = MemoryEngine(persistence: persistence)
-    let entry = EngineMemoryEntry(id: "deferred", category: .fact, content: "save me later")
-
-    try await memory.insert(entry, persist: false)
-    #expect(await persistence.saveCount == 0)
-
-    try await memory.transaction { _ in }
-    #expect(await persistence.saveCount == 1)
-    #expect(await persistence.lastSaved?.memories[entry.id] == entry)
-}
-
 @Test func noOpTransactionFlushesPendingRecallMaintenanceExactlyOnce() async throws {
     let persistence = ControlledPersistence()
     let memory = MemoryEngine(persistence: persistence)
@@ -358,16 +345,17 @@ private enum RecallCancellationOutcome: Sendable, Equatable {
 
 @Test func cancelledRecallWaitingForTheWriteLockCommitsNoMaintenance() async throws {
     let persistence = GatedPersistence()
-    let memory = MemoryEngine(persistence: persistence)
-    try await memory.insert(
+    // Seed the graph the engine opens with: every save waits for the gate.
+    var seeded = MemoryGraph()
+    seeded.addMemory(
         EngineMemoryEntry(
             id: "a",
             category: .fact,
             content: "actors protect mutable state",
             tags: ["swift"]
-        ),
-        persist: false
+        )
     )
+    let memory = MemoryEngine(graph: seeded, persistence: persistence)
 
     // Occupy the write lock with a save that is held by the gate.
     let holder = Task<Void, Never> {

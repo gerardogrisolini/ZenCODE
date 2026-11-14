@@ -99,40 +99,4 @@ struct MemoryGraphStoreRegistryFlushAllTests {
             #expect(try Data(contentsOf: graphURL) == bytes)
         }
     }
-
-    @Test
-    func deferredInsertACommitBFlushADoesNotOverwriteCommitB() async throws {
-        try await MemoryEmbedding.withProvider(nil) {
-            let directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("memory-deferred-insert-race-\(UUID().uuidString)", isDirectory: true)
-            defer { try? FileManager.default.removeItem(at: directory) }
-            let workspace = directory.appendingPathComponent("workspace", isDirectory: true)
-            try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-            let deferredID = UUID().uuidString
-            let graphURL = directory.appendingPathComponent("memory.graph.json")
-            let engine = MemoryEngine(persistence: JSONMemoryPersistence(url: graphURL))
-            try await engine.insert(
-                EngineMemoryEntry(id: deferredID, category: .fact, content: "deferred insert A"),
-                persist: false
-            )
-            let store = MemoryGraphStore(graphURL: graphURL, engine: engine, embedder: nil)
-            // Deferred engine inserts still require their own durability boundary;
-            // flushing recall maintenance must not persist unrelated local state.
-            let recalledContext = try await store.context(for: "deferred insert A")
-            #expect(recalledContext.contains("deferred insert A"))
-
-            let writerB = try await MemoryEngine.open(persistence: JSONMemoryPersistence(url: graphURL))
-            try await writerB.remember("commit B survives lifecycle flush", id: "commit-b")
-            let bytesAfterB = try Data(contentsOf: graphURL)
-            try await store.flushRecallMaintenance()
-
-            #expect(try Data(contentsOf: graphURL) == bytesAfterB)
-            let durable = try await JSONMemoryPersistence(url: graphURL).reloadReadOnly()
-            #expect(durable.memories["commit-b"] != nil)
-            #expect(durable.memories[deferredID] == nil)
-            #expect(try await store.entries(includeArchived: false, offset: 0, limit: 10, filter: .none).contains {
-                $0.id == deferredID
-            })
-        }
-    }
 }

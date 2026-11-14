@@ -66,7 +66,7 @@ extension RemoteSessionSnapshotTests {
             try subscriptionRecoveryFrames(id: "valid", text: retryText, thought: retryThought, arguments: "{}", completedText: !fallback)
             + subscriptionRecoveryFrames(id: "final", text: "Done", thought: "Next"))
         let pool = subscriptionRecoveryPool([first, second])
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionGenerationClient(configuration: remoteStreamingConfiguration(), webSocketPool: pool)
         await client.createSession(id: "recovery", cwd: FileManager.default.temporaryDirectory.path, allowedToolNames: ["local.pwd"])
         let content = Mutex("")
@@ -119,7 +119,7 @@ extension RemoteSessionSnapshotTests {
             try subscriptionRecoveryFrames(id: "valid", arguments: "{}")
             + subscriptionRecoveryFrames(id: "invalid_second", arguments: "{"))
         let pool = subscriptionRecoveryPool([first, second])
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionGenerationClient(configuration: remoteStreamingConfiguration(), webSocketPool: pool)
         await client.createSession(id: "budget", cwd: directory.path, allowedToolNames: ["local.append", "local.pwd"])
         let calls = Mutex<[String]>([])

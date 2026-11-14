@@ -1060,9 +1060,7 @@ actor TurnActivityTransport: TelegramHTTPTransport {
         Data(#"{"ok":true,"result":{"message_id":\#(id),"chat":{"id":42,"type":"private"},"date":0}}"#.utf8)
     }
 
-    /// The text of a decoded rich block: its runs; for a details block its
-    /// summary and then its blocks, each separated by a blank line, as the
-    /// paragraphs of the Markdown it came from.
+    /// The text of a decoded rich block: the concatenation of its runs.
     private static func text(of block: Any) -> String {
         if let text = block as? String {
             return text
@@ -1071,16 +1069,6 @@ actor TurnActivityTransport: TelegramHTTPTransport {
             return array.map { text(of: $0) }.joined()
         }
         guard let object = block as? [String: Any] else { return "" }
-        var parts: [String] = []
-        if let summary = object["summary"] {
-            parts.append(text(of: summary))
-        }
-        if let text = object["text"] {
-            parts.append(Self.text(of: text))
-        }
-        if let blocks = object["blocks"] as? [Any] {
-            parts.append(contentsOf: blocks.map { text(of: $0) })
-        }
-        return parts.joined(separator: "\n\n")
+        return object["text"].map { text(of: $0) } ?? ""
     }
 }

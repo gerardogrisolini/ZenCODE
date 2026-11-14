@@ -74,12 +74,10 @@ struct ReadOnlySearchTests {
 
     @Test
     func searchReadOnlySucceedsEvenWhenPersistenceAlwaysFails() async throws {
-        let engine = MemoryEngine(persistence: AlwaysFailingPersistence())
-        // Seed without persistence so the failing save is not triggered by setup.
-        try await engine.insert(
-            EngineMemoryEntry(id: "entry", category: .fact, content: "database migrations at startup"),
-            persist: false
-        )
+        // Seed the graph the engine opens with, so setup never saves.
+        var seeded = MemoryGraph()
+        seeded.addMemory(EngineMemoryEntry(id: "entry", category: .fact, content: "database migrations at startup"))
+        let engine = MemoryEngine(graph: seeded, persistence: AlwaysFailingPersistence())
         // Must not throw — the read-only path never calls save.
         let results = try await engine.searchReadOnlyDetailed(
             "database migrations",

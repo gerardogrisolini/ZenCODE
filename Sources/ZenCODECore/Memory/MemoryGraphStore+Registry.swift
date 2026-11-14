@@ -5,6 +5,7 @@
 //  Created by Gerardo Grisolini on 30/05/26.
 //
 
+import Dispatch
 import Foundation
 
 // MARK: - Identifiers
@@ -40,6 +41,9 @@ enum MemorySource {
 actor MemoryGraphStoreRegistry {
     static let shared = MemoryGraphStoreRegistry()
 
+    /// Executor of the cold-open task (see `MemoryGraphStoreOpenTaskExecutor`).
+    private static let openTaskExecutor: any TaskExecutor = MemoryGraphStoreOpenTaskExecutor()
+
     private var stores: [URL: Task<MemoryGraphStore, Error>] = [:]
 
     func store(
@@ -49,7 +53,7 @@ actor MemoryGraphStoreRegistry {
             return try await pending.value
         }
 
-        let task = Task(executorPreference: MemoryLegacyBridge.taskExecutor) {
+        let task = Task(executorPreference: Self.openTaskExecutor) {
             try await MemoryGraphStore.open(
                 graphURL: graphURL
             )
@@ -81,8 +85,7 @@ actor MemoryGraphStoreRegistry {
     /// Flushes every open store, attempting all before throwing the first error,
     /// so one unwritable graph never hides the flush of the others. A durability
     /// barrier for automatic-recall maintenance, which deliberately stays in
-    /// memory below its checkpoint threshold; idempotent, and it ignores unrelated
-    /// dirty state such as deferred inserts.
+    /// memory below its checkpoint threshold; idempotent.
     func flushAll() async throws {
         // Snapshot first: awaiting a store inside the loop would re-enter this
         // actor and could observe a dictionary mutated by `store(graphURL:)`.
@@ -97,6 +100,29 @@ actor MemoryGraphStoreRegistry {
         }
         if let firstError {
             throw firstError
+        }
+    }
+}
+
+/// Executor of the registry's cold-open task.
+///
+/// Opening a store does synchronous file-system work on the opening task: the
+/// graph file's existence check and the settings read that selects the
+/// embedding provider. The task therefore runs on a dedicated dispatch queue,
+/// not on Swift's cooperative pool. It is a `Task` rather than
+/// `Task.detached`, so it still inherits the caller's task-local
+/// support-directory and embedding overrides.
+private final class MemoryGraphStoreOpenTaskExecutor: TaskExecutor {
+    private let queue = DispatchQueue(
+        label: "zencode.memory.store-open",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+
+    func enqueue(_ job: consuming ExecutorJob) {
+        let unownedJob = UnownedJob(job)
+        queue.async { [self] in
+            unownedJob.runSynchronously(on: asUnownedTaskExecutor())
         }
     }
 }

@@ -46,11 +46,6 @@ public struct ChatModelCatalog: Sendable {
         AgentModelCatalogPresentation.sorted(availableModels())
     }
 
-    /// The available models grouped by provider, in presentation order.
-    public func providerGroups() -> [AgentModelProviderGroup] {
-        Self.providerGroups(availableModels())
-    }
-
     /// `models` grouped by provider, groups and models in presentation order.
     public static func providerGroups(
         _ models: [AgentSettingsModelManifest]

@@ -991,13 +991,13 @@ struct RemoteTransportCoreTests {
                 "response.completed"
             ])
         } catch {
-            pool.closeAll()
+            await pool.shutdown()
             await transport.shutdownIgnoringError()
             await server.shutdown()
             throw error
         }
 
-        pool.closeAll()
+        await pool.shutdown()
         try await transport.shutdown()
         await server.shutdown()
     }
@@ -1074,13 +1074,13 @@ struct RemoteTransportCoreTests {
             #expect(retrySleepAttempts.withLock { $0 } == [0])
             #expect(pool.usesHTTPFallback(scopeID: sessionID))
         } catch {
-            pool.closeAll()
+            await pool.shutdown()
             await transport.shutdownIgnoringError()
             await server.shutdown()
             throw error
         }
 
-        pool.closeAll()
+        await pool.shutdown()
         try await transport.shutdown()
         await server.shutdown()
     }
@@ -1161,13 +1161,13 @@ struct RemoteTransportCoreTests {
                     == Array(0..<ChatGPTSubscriptionResponsesClient.maxRetries)
             )
         } catch {
-            pool.closeAll()
+            await pool.shutdown()
             await transport.shutdownIgnoringError()
             await server.shutdown()
             throw error
         }
 
-        pool.closeAll()
+        await pool.shutdown()
         try await transport.shutdown()
         await server.shutdown()
     }
@@ -1242,7 +1242,7 @@ struct RemoteTransportCoreTests {
                 guard let error = failure.underlying
                     as? ChatGPTSubscriptionResponsesClient.RetryableBackendFailure else {
                     Issue.record("Expected a wrapped canonical backend error.")
-                    pool.closeAll()
+                    await pool.shutdown()
                     await transport.shutdownIgnoringError()
                     await server.shutdown()
                     return
@@ -1253,13 +1253,13 @@ struct RemoteTransportCoreTests {
             #expect(requestCount.withLock { $0 } == 1)
             #expect(retrySleepAttempts.withLock { $0 }.isEmpty)
         } catch {
-            pool.closeAll()
+            await pool.shutdown()
             await transport.shutdownIgnoringError()
             await server.shutdown()
             throw error
         }
 
-        pool.closeAll()
+        await pool.shutdown()
         try await transport.shutdown()
         await server.shutdown()
     }
@@ -1317,7 +1317,7 @@ struct RemoteTransportCoreTests {
             } catch let error as ChatGPTSubscriptionGenerationError {
                 guard case let .responseFailed(output) = error else {
                     Issue.record("Expected callback responseFailed, got \(error).")
-                    pool.closeAll()
+                    await pool.shutdown()
                     await transport.shutdownIgnoringError()
                     await server.shutdown()
                     return
@@ -1328,13 +1328,13 @@ struct RemoteTransportCoreTests {
             #expect(requestCount.withLock { $0 } == 1)
             #expect(retrySleepAttempts.withLock { $0 }.isEmpty)
         } catch {
-            pool.closeAll()
+            await pool.shutdown()
             await transport.shutdownIgnoringError()
             await server.shutdown()
             throw error
         }
 
-        pool.closeAll()
+        await pool.shutdown()
         try await transport.shutdown()
         await server.shutdown()
     }
@@ -1431,13 +1431,13 @@ struct RemoteTransportCoreTests {
             }
             #expect(rejected)
         } catch {
-            pool.closeAll()
+            await pool.shutdown()
             await transport.shutdownIgnoringError()
             await server.shutdown()
             throw error
         }
 
-        pool.closeAll()
+        await pool.shutdown()
         try await transport.shutdown()
         await server.shutdown()
     }
@@ -1523,13 +1523,13 @@ struct RemoteTransportCoreTests {
             #expect(pool.isHTTPFallbackScopeClosed(scopeID: scopeID))
         } catch {
             streamTask.cancel()
-            pool.closeAll()
+            await pool.shutdown()
             await transport.shutdownIgnoringError()
             await server.shutdown()
             throw error
         }
 
-        pool.closeAll()
+        await pool.shutdown()
         try await transport.shutdown()
         await server.shutdown()
     }
@@ -1601,13 +1601,13 @@ struct RemoteTransportCoreTests {
             #expect(pool.isHTTPFallbackScopeClosed(scopeID: scopeID))
         } catch {
             streamTask.cancel()
-            pool.closeAll()
+            await pool.shutdown()
             await transport.shutdownIgnoringError()
             await server.shutdown()
             throw error
         }
 
-        pool.closeAll()
+        await pool.shutdown()
         try await transport.shutdown()
         await server.shutdown()
     }

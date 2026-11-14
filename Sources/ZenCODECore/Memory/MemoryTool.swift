@@ -9,9 +9,6 @@ import Foundation
 import ToolCore
 
 public struct MemoryToolContext: Sendable {
-    /// The workspace root of a `.workspace` target; `nil` for the global graph
-    /// or when no workspace is available.
-    public let workingDirectory: URL?
     /// The graph every memory tool addresses; `nil` when none is available, in
     /// which case the tools fail with `scopeUnavailable`.
     public let graphTarget: MemoryGraphTarget?
@@ -19,26 +16,10 @@ public struct MemoryToolContext: Sendable {
     public let currentTimeZone: TimeZone
 
     public init(
-        workingDirectory: URL? = nil,
-        currentDate: Date = Date(),
-        currentTimeZone: TimeZone = .current
-    ) {
-        self.workingDirectory = workingDirectory
-        self.graphTarget = workingDirectory.map { .workspace($0.standardizedFileURL) }
-        self.currentDate = currentDate
-        self.currentTimeZone = currentTimeZone
-    }
-
-    public init(
         graphTarget: MemoryGraphTarget?,
         currentDate: Date = Date(),
         currentTimeZone: TimeZone = .current
     ) {
-        if case .workspace(let workspaceRootURL)? = graphTarget {
-            self.workingDirectory = workspaceRootURL
-        } else {
-            self.workingDirectory = nil
-        }
         self.graphTarget = graphTarget
         self.currentDate = currentDate
         self.currentTimeZone = currentTimeZone
@@ -55,15 +36,8 @@ public enum MemoryTool {
         toolDescriptors.contains { $0.name == toolName }
     }
 
-    /// Modern, async memory-tool entry point.
-    ///
-    /// Renamed from `execute` so it does not collide with the 1.1.x
-    /// synchronous `execute` wrapper (see ``MemoryLegacyCompatibility``).
-    /// Swift always prefers the `async` overload inside an `async` context,
-    /// so a same-named pair would force every legacy `try MemoryTool.execute(…)`
-    /// call site to add `await` — breaking source compatibility.  Splitting the
-    /// name keeps `execute` unambiguously synchronous and `executeAsync`
-    /// unambiguously the tool-layer entry point.
+    /// Memory-tool entry point: runs one `memory.*` request against the graph
+    /// its context addresses.
     public static func executeAsync(
         _ request: ToolRequest,
         context: MemoryToolContext,

@@ -235,21 +235,6 @@ public actor ChatToolConsentAuthorizer {
         )?.isApproved == true
     }
 
-    /// Imports an "always" decision made on another consent surface into this
-    /// authorizer. This keeps later turns consistent even if the other surface
-    /// (for example Telegram) is disabled after the decision.
-    public func recordAlwaysDecision(for request: AgentToolAuthorizationRequest) {
-        guard Self.gatedToolNames.contains(request.toolName) else {
-            return
-        }
-        let cacheKey = Self.permissionCacheKeyValue(for: request)
-        alwaysAllowedKeys.insert(cacheKey)
-        remember(cacheKey: cacheKey, for: Self.ownerSessionID(for: request))
-        if request.toolName == "local.exec" {
-            LocalExecPermissionAuthorizer.persistAllowedCommand(request.command)
-        }
-    }
-
     // MARK: - Cache lifecycle
 
     /// Drops the in-memory decisions owned by one session and invalidates its

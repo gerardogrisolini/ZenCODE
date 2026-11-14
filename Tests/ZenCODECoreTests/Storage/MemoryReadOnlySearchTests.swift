@@ -79,15 +79,14 @@ struct MemoryReadOnlySearchStoreTests {
 
     @Test
     func storeSearchSucceedsWhenPersistenceAlwaysFails() async throws {
-        let engine = MemoryEngine(persistence: AlwaysFailingPersistence())
+        // Seed the graph the engine opens with, so setup never saves.
+        var seeded = MemoryGraph()
+        seeded.addMemory(EngineMemoryEntry(id: "entry", category: .fact, content: "database migrations"))
+        let engine = MemoryEngine(graph: seeded, persistence: AlwaysFailingPersistence())
         let store = MemoryGraphStore(
             graphURL: URL(fileURLWithPath: "/dev/null/graph.json"),
             engine: engine,
             embedder: nil
-        )
-        try await engine.insert(
-            EngineMemoryEntry(id: "entry", category: .fact, content: "database migrations"),
-            persist: false
         )
         // Must not throw — read-only path never calls save.
         let results = try await store.search(query: "database", includeArchived: false, limit: 10)

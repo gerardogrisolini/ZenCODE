@@ -3,13 +3,12 @@
 //  ZenCODECoreTests
 //
 //  Covers the request-assembly invariants of the automatic memory flow:
-//  history purity, prompt-cache-key stability, the zero-regression (nil/blank)
-//  contract, multimodal preservation, the every-round rebuild-from-fresh-
-//  original rationale, and the task-local wiring. These are pure unit tests over
+//  history purity, the zero-regression (nil/blank) contract, multimodal
+//  preservation, the every-round rebuild-from-fresh-original rationale, and the
+//  task-local wiring. These are pure unit tests over
 //  `RemoteGenerationClient.applyingCurrentTurnMemory(to:block:)` — the single
-//  shared helper where recalled memory enters a provider request — plus the
-//  cache-key computation in `AgentCoreAppSessionFactory`. No graph, no env, no
-//  network.
+//  shared helper where recalled memory enters a provider request. No graph, no
+//  env, no network.
 //
 //  The same helper also carries the per-turn instruction
 //  (`AgentTurnInstructionContext`), appended after the memory block; the
@@ -18,7 +17,6 @@
 //
 
 import Foundation
-import ToolCore
 @testable import ZenCODECore
 import Testing
 
@@ -172,45 +170,6 @@ struct MemoryTurnInjectionTests {
         // real transcript.
         let finalSnapshot = try jsonSnapshot(sessionMessages)
         #expect(String(data: finalSnapshot, encoding: .utf8)?.contains("project-memory") == false)
-    }
-
-    // MARK: - Invariant 2: the session cache key is identical with and without a
-    // memory block. The block travels out-of-band (a task-local read inside the
-    // generation clients) precisely so it never participates in cache identity.
-
-    @Test
-    func sessionCacheKeyIsIdenticalWithAndWithoutMemoryBlock() throws {
-        let supportDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("zencode-memory-cache-key-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: supportDirectory) }
-
-        try AppStorageDirectory.withSupportDirectoryURL(supportDirectory) {
-            try AgentSettingsManifestStore.save(AgentSettingsManifest(models: []))
-            try AgentProfileStore.save(AgentProfileStore.defaultProfiles())
-
-            let request = AgentCoreAppSessionRequest(
-                sessionID: "memory-cache-session",
-                workingDirectory: URL(fileURLWithPath: "/tmp/zencode-memory-cache-key"),
-                cacheKey: "shared-cache-seed",
-                history: [AgentRuntimeMessage(role: .user, content: "question")],
-                allowedToolNames: ["local.readFile"]
-            )
-
-            let keyWithoutBlock = try AgentCoreAppSessionFactory.makeConfiguration(request: request).cacheKey
-
-            // The block is bound for the duration of the second computation only.
-            // If it ever leaked into the system prompt, cache seed, tool set, or
-            // any other identity input, the two keys would diverge.
-            let keyWithBlock = try MemoryTurnContext.$currentTurnMemoryBlock.withValue(
-                "<project-memory>\nthis must not rotate the cache key\n</project-memory>"
-            ) {
-                try AgentCoreAppSessionFactory.makeConfiguration(request: request).cacheKey
-            }
-
-            #expect(keyWithoutBlock?.nilIfBlank != nil)
-            #expect(keyWithoutBlock == keyWithBlock)
-        }
     }
 
     // MARK: - Per-turn instruction (`AgentTurnInstructionContext`): same channel

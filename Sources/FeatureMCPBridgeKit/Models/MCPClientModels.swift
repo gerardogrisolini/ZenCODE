@@ -14,11 +14,6 @@ public nonisolated struct MCPNotification<Params: Encodable>: Encodable {
     public let params: Params
 }
 
-public nonisolated struct MCPNotificationWithoutParams: Encodable {
-    public let jsonrpc: String
-    public let method: String
-}
-
 public nonisolated struct MCPInitializeParams: Encodable, Sendable {
     public let protocolVersion: String
     public let capabilities: MCPClientCapabilities

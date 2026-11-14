@@ -28,14 +28,8 @@ public final class MemoryService: @unchecked Sendable {
         NotificationCenter.default.post(name: entriesDidChangeNotification, object: nil)
     }
 
-    public static func toolUsagePromptSection() -> String {
-        toolUsagePromptSection(readOnly: false)
-    }
-
-    /// Contextual memory-tool guidance for a constrained tool surface.
-    /// This intentionally remains internal: callers keep the established public
-    /// no-argument prompt API while session composition can avoid suggesting
-    /// unavailable mutations to read-only agents.
+    /// Memory-tool guidance for the session's tool surface: a read-only surface
+    /// gets guidance that does not suggest unavailable mutations.
     static func toolUsagePromptSection(readOnly: Bool) -> String {
         if readOnly {
             return """
@@ -169,16 +163,6 @@ public final class MemoryService: @unchecked Sendable {
 
     public func entry(
         id: String,
-        workspaceRootURL: URL?
-    ) async throws -> MemoryEntry? {
-        try await entry(
-            id: id,
-            target: workspaceRootURL.map(MemoryGraphTarget.workspace)
-        )
-    }
-
-    public func entry(
-        id: String,
         target: MemoryGraphTarget?
     ) async throws -> MemoryEntry? {
         try await store(for: target)
@@ -213,8 +197,8 @@ public final class MemoryService: @unchecked Sendable {
     /// claiming every call wrote something.
     ///
     /// `generatedTimestamp` must stay `false` for every caller that did not
-    /// itself prepend the `Timestamp:` annotation: the public 1.1.x entry point
-    /// below therefore keeps a literal duplicate check.
+    /// itself prepend the `Timestamp:` annotation: the public `writeEntry`
+    /// therefore keeps a literal duplicate check.
     func writeEntryOutcome(
         content: String,
         workspaceRootURL: URL?,

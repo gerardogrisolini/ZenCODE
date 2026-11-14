@@ -49,8 +49,7 @@ whether valid, malformed or unreadable, is completely ignored: it is not
 read, parsed, imported, embedded, rewritten or deleted. Its contents cannot
 influence memory reads, searches or automatic recall. Previously persisted
 JSON graph entries remain available; JSON version compatibility is unchanged.
-The file-specific template, filename constant and document errors are removed;
-the deprecated synchronous APIs that operate on the graph remain supported.
+The file-specific template, filename constant and document errors are removed.
 
 The persistence layer keeps the last decoded graph together with the identity
 of the files it was read from — the JSON and, when it exists, the vectors
@@ -198,29 +197,19 @@ an old copy put back by hand) uses its inline vectors and ignores the file.
 ZenCODECore exposes its own public DTOs (`MemoryEntry`, `MemoryScope`,
 `MemoryCategory`) declared under `Models`; the internal `ZenMemory`
 engine implementation stays behind the facade (internal aliases bridge the two).
-The facade API is async first: `MemoryService`'s
-primary methods (`readEntries`, `searchEntries`, `entry`, `writeEntry`,
-`updateEntry`, `archiveEntry`, `setArchived`, `deleteEntry`) are `async throws`
-and keyed by `workspaceRootURL:`. The modern tool entry point is
-`MemoryTool.executeAsync(_:context:memoryService:)`; it was renamed from
-`execute` so the legacy synchronous `execute` — the exact 1.1.x spelling — is
-the only `execute` overload and `try MemoryTool.execute(…)` compiles unchanged
-from both sync and async call sites. The pre-graph 1.1.x synchronous surface
-survives as deprecated wrappers (`MemoryLegacyCompatibility.swift`) that keep
-the old `scope:` / `workingDirectory:` labels and block the calling thread
-through a deadlock-safe bridge (from both sync and async call sites) with
-read/mutation-split timeout semantics: a
-legacy read uses a bounded wait (60 s) and may be abandoned on timeout — a
-late read result is harmless because reads have no durable side-effect — while
-a legacy mutation never reports "abandoned": if the bounded wait expires the
-bridge keeps waiting for the definitive outcome without cancelling, so a commit
-is never reported as abandoned. Moving to the async API means renaming the
-labels to `workspaceRootURL:` and adding `try await`. The legacy nil-directory semantics
-are preserved on the wrappers: reads return `[]` (the 1.1.x behaviour), while
-mutations throw `scopeUnavailable`; the modern async API is uniformly throwing —
-a nil `workspaceRootURL` fails with `scopeUnavailable` for reads and mutations
-alike. `scope` is accepted on the wrappers for source compatibility and only
-`.project` is backed by a per-workspace graph. Retrieval
+The facade API is async: `MemoryService`'s methods (`readEntries`,
+`searchEntries`, `writeEntry`, `updateEntry`, `archiveEntry`, `setArchived`,
+`deleteEntry`) are `async throws` and keyed by `workspaceRootURL:`; `entry`,
+`readEntries`, `searchEntries`, `updateEntry`, `setArchived` and `deleteEntry`
+also take a `target:` (`MemoryGraphTarget`), which can address the global graph.
+A nil workspace or target fails with `scopeUnavailable` for reads and mutations
+alike. The tool entry point is
+`MemoryTool.executeAsync(_:context:memoryService:)`, whose `MemoryToolContext`
+names the graph with `graphTarget:`. The synchronous surface deprecated since
+1.1.x — the `scope:` / `workingDirectory:` wrappers that blocked the calling
+thread, the synchronous `MemoryTool.execute` and
+`MemoryEntry.normalizedContent(_:)` — no longer exists: callers use the async
+methods with `try await` and `MemoryContent.normalized(_:)`. Retrieval
 is BM25-first: `ZenMemory.recall` always runs lexical retrieval through the
 pluggable `MemoryIndex` protocol (default `BM25MemoryIndex`; the engine ranks
 all the queries of one retrieval through the batch `search(queries:…)`
@@ -543,7 +532,8 @@ overhead on top of the budgeted payload.
 The main model owns durable memory explicitly through the seven `memory.*`
 tools — read-only `memory.read`, `memory.search`, `memory.get`; mutating
 `memory.write`, `memory.update`, `memory.archive`, `memory.restore` — guided by
-`MemoryService.toolUsagePromptSection()` (search before writing, update
+the memory section of the system prompt
+(`MemoryService.toolUsagePromptSection(readOnly:)`: search before writing, update
 instead of duplicating, decide at the end of a turn whether to create, update or
 archive, prefer fresh evidence over memory) and by the tool descriptions, which
 carry each tool's own contract (`memory.update` keeps the id, the creation date

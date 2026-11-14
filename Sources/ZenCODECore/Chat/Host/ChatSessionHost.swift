@@ -120,35 +120,6 @@ public final class ChatSessionHost {
         }
     }
 
-    /// A host with a runner built by
-    /// ``ChatSessionRuntimeFactory/makeSessionRunner(toolAuthorizationHandler:featureRuntime:mcpRuntime:backendFactory:)``
-    /// and the environment of `configuration`.
-    public nonisolated convenience init(
-        configuration: AgentConfiguration,
-        toolAuthorizationHandler: AgentToolAuthorizationHandler?,
-        featureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
-        mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
-        backendFactory: AgentRuntimeBackendFactory? = ChatSessionRuntimeFactory.productionBackendFactory,
-        userHomeDirectoryURL: URL? = nil,
-        sleepAssertionReason: String = "ZenCODE chat session active"
-    ) {
-        let runner = ChatSessionRuntimeFactory.makeSessionRunner(
-            toolAuthorizationHandler: toolAuthorizationHandler,
-            featureRuntime: featureRuntime,
-            mcpRuntime: mcpRuntime,
-            backendFactory: backendFactory
-        )
-        self.init(
-            runner: runner,
-            environment: ChatSessionEnvironment(
-                configuration: configuration,
-                featureRuntime: featureRuntime,
-                userHomeDirectoryURL: userHomeDirectoryURL
-            ),
-            sleepAssertionReason: sleepAssertionReason
-        )
-    }
-
     // MARK: - Slots
 
     /// Opens a slot without a session. Throws `.shutDown` after

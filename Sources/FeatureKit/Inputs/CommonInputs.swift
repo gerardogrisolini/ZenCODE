@@ -23,17 +23,11 @@ public func firstNonBlank(_ values: [String?]) -> String? {
     return nil
 }
 
-/// Resolves the working directory from `workingDirectory` or `path`.
+/// Input exposing the `workingDirectory` and `path` aliases of a working
+/// directory; `workingDirectory` takes precedence when both are given.
 public protocol WorkingDirectoryInput {
     var path: String? { get }
     var workingDirectory: String? { get }
-}
-
-public extension WorkingDirectoryInput {
-    /// Returns the first non-blank value from `workingDirectory`, `path`.
-    func resolvedWorkingDirectory() -> String? {
-        firstNonBlank(workingDirectory, path)
-    }
 }
 
 /// A JSON Schema node. `indirect` so arrays and objects can nest.
@@ -103,11 +97,6 @@ public struct SchemaProperty: Sendable {
 /// non-empty, matching the shape tool consumers already expect.
 public func buildInputSchema(_ properties: [SchemaProperty], required: [String] = []) -> String {
     renderSchemaNode(.object(properties: properties, required: required, description: nil))
-}
-
-/// Convenience overload accepting the properties as a variadic list.
-public func buildInputSchema(required: [String] = [], _ properties: SchemaProperty...) -> String {
-    buildInputSchema(properties, required: required)
 }
 
 private func renderSchemaNode(_ node: SchemaNode) -> String {

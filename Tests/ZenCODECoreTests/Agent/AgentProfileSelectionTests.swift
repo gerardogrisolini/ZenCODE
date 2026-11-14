@@ -403,10 +403,8 @@ extension AgentConfigurationTests {
         let requestedToolNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
             .union(["external.inspect", rawCompatibilityAlias])
 
-        let allowedToolNames = AgentCoreAppSessionFactory.resolvedAllowedToolNames(
-            selectedToolKeys: nil,
-            explicitAllowedToolNames: requestedToolNames,
-            selectedAgent: profile
+        let allowedToolNames = AgentSessionComposition.allowedToolNamesIncludingIntrinsicSkillTools(
+            profile.resolvedAllowedToolNames(requestedToolNames)
         )
 
         let expectedToolNames = Set(DirectToolCatalog.coreReadDescriptors.map(\.name))

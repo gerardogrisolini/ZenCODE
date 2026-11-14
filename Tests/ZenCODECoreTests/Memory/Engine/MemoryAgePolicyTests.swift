@@ -70,25 +70,27 @@ struct MemoryAgePolicyTests {
         let now = Date()
         let engine = MemoryEngine(selector: ScoreThresholdMemorySelector())
         // Two query terms matched, written 150 days ago.
-        try await engine.insert(
-            EngineMemoryEntry(
-                id: "old-relevant",
-                category: .fact,
-                content: "transport architecture decision for the swift server",
-                createdAt: Self.days(150, before: now)
-            ),
-            persist: false
-        )
+        try await engine.transaction {
+            $0.addMemory(
+                EngineMemoryEntry(
+                    id: "old-relevant",
+                    category: .fact,
+                    content: "transport architecture decision for the swift server",
+                    createdAt: Self.days(150, before: now)
+                )
+            )
+        }
         // One query term matched, written today.
-        try await engine.insert(
-            EngineMemoryEntry(
-                id: "fresh-weak",
-                category: .fact,
-                content: "transport notes",
-                createdAt: now
-            ),
-            persist: false
-        )
+        try await engine.transaction {
+            $0.addMemory(
+                EngineMemoryEntry(
+                    id: "fresh-weak",
+                    category: .fact,
+                    content: "transport notes",
+                    createdAt: now
+                )
+            )
+        }
 
         let result = try await engine.searchReadOnlyDetailed(
             "transport architecture",
@@ -110,29 +112,31 @@ struct MemoryAgePolicyTests {
             selector: ScoreThresholdMemorySelector()
         )
         // Leads both the lexical and the semantic list, 100 days old.
-        try await engine.insert(
-            EngineMemoryEntry(
-                id: "leader",
-                category: .fact,
-                content: "alpha alpha alpha alignment",
-                createdAt: Self.days(100, before: now),
-                embedding: [1, 0, 0],
-                embeddingModel: "topic-embedding"
-            ),
-            persist: false
-        )
+        try await engine.transaction {
+            $0.addMemory(
+                EngineMemoryEntry(
+                    id: "leader",
+                    category: .fact,
+                    content: "alpha alpha alpha alignment",
+                    createdAt: Self.days(100, before: now),
+                    embedding: [1, 0, 0],
+                    embeddingModel: "topic-embedding"
+                )
+            )
+        }
         // Fresh, present in both lists but behind the leader on relevance.
-        try await engine.insert(
-            EngineMemoryEntry(
-                id: "runner-up",
-                category: .fact,
-                content: "alpha alignment with beta details and gamma notes",
-                createdAt: now,
-                embedding: [1, 1, 1],
-                embeddingModel: "topic-embedding"
-            ),
-            persist: false
-        )
+        try await engine.transaction {
+            $0.addMemory(
+                EngineMemoryEntry(
+                    id: "runner-up",
+                    category: .fact,
+                    content: "alpha alignment with beta details and gamma notes",
+                    createdAt: now,
+                    embedding: [1, 1, 1],
+                    embeddingModel: "topic-embedding"
+                )
+            )
+        }
 
         let result = try await engine.searchReadOnlyDetailed(
             "alpha alignment",

@@ -189,7 +189,7 @@ struct TurnMemoryPrefixStabilityTests {
                 }
             }
         )
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionGenerationClient(
             configuration: configuration(modelID: "unit-model"),
             webSocketPool: pool

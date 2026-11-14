@@ -301,7 +301,7 @@ struct XcodeFeatureCharacterizationTests {
             tools: [listedTool]
         ))
         let invokeData = try FeatureProcessProtocol.renderJSON(
-            FeatureInvocationResponse<String>(output: "ok")
+            FeatureInvocationResponse<String>(ok: true, output: "ok", error: nil)
         )
         let list = try #require(
             JSONSerialization.jsonObject(with: listData) as? [String: Any]

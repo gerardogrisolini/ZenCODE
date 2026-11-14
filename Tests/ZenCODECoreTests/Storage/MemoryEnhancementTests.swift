@@ -75,7 +75,7 @@ struct MemoryEnhancementTests {
                     ]
                 ),
                 context: MemoryToolContext(
-                    workingDirectory: workspace.workspaceURL,
+                    graphTarget: .workspace(workspace.workspaceURL),
                     currentDate: updateDate,
                     currentTimeZone: timeZone
                 ),
@@ -112,7 +112,7 @@ struct MemoryEnhancementTests {
             _ = try await MemoryTool.executeAsync(
                 ToolRequest(name: "memory.write", arguments: ["content": .string(body)]),
                 context: MemoryToolContext(
-                    workingDirectory: workspace.workspaceURL,
+                    graphTarget: .workspace(workspace.workspaceURL),
                     currentDate: Date(timeIntervalSince1970: 1_700_000_000),
                     currentTimeZone: timeZone
                 ),
@@ -133,7 +133,7 @@ struct MemoryEnhancementTests {
             _ = try await MemoryTool.executeAsync(
                 ToolRequest(name: "memory.write", arguments: ["content": .string(body)]),
                 context: MemoryToolContext(
-                    workingDirectory: workspace.workspaceURL,
+                    graphTarget: .workspace(workspace.workspaceURL),
                     currentDate: Date(timeIntervalSince1970: 1_800_000_000),
                     currentTimeZone: timeZone
                 ),
@@ -205,7 +205,7 @@ struct MemoryEnhancementTests {
                     name: "memory.read",
                     arguments: ["detail": .string("index")]
                 ),
-                context: MemoryToolContext(workingDirectory: workspace.workspaceURL),
+                context: MemoryToolContext(graphTarget: .workspace(workspace.workspaceURL)),
                 memoryService: service
             )
             guard case let .object(result)? = output.rawResult,
@@ -239,7 +239,7 @@ struct MemoryEnhancementTests {
 
             let output = try await MemoryTool.executeAsync(
                 ToolRequest(name: "memory.read", arguments: [:]),
-                context: MemoryToolContext(workingDirectory: workspace.workspaceURL),
+                context: MemoryToolContext(graphTarget: .workspace(workspace.workspaceURL)),
                 memoryService: service
             )
             guard case let .object(result)? = output.rawResult,

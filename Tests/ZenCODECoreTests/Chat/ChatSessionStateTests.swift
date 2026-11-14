@@ -24,7 +24,12 @@ struct ChatSessionStateTests {
     func sequencesStrictlyIncreaseAcrossTurnsNoticesAndSessions() async throws {
         try await withChatHarness { harness in
             let controller = harness.controller
-            let reducer = ChatSessionStateReducer(controller: controller, defaultOrigin: .local)
+            let reducer = ChatSessionStateReducer(
+                sessionID: controller.sessionID,
+                workingDirectory: controller.workingDirectory,
+                defaultOrigin: .local,
+                state: controller.sessionState
+            )
             controller.addObserver(reducer)
             try await harness.startSession()
 
@@ -77,7 +82,12 @@ struct ChatSessionStateTests {
     func theLiveLogOfATerminalSessionEqualsTheLogRebuiltFromItsSavedTranscript() async throws {
         try await withChatHarness { harness in
             let controller = harness.controller
-            let reducer = ChatSessionStateReducer(controller: controller, defaultOrigin: .local)
+            let reducer = ChatSessionStateReducer(
+                sessionID: controller.sessionID,
+                workingDirectory: controller.workingDirectory,
+                defaultOrigin: .local,
+                state: controller.sessionState
+            )
             controller.addObserver(reducer)
             try await harness.startSession()
 
@@ -129,7 +139,12 @@ struct ChatSessionStateTests {
     func theLiveLogOfAnACPSessionEqualsTheLogRebuiltFromTheRuntimeTranscript() async throws {
         try await withChatHarness(retainsTranscript: false) { harness in
             let controller = harness.controller
-            let reducer = ChatSessionStateReducer(controller: controller, defaultOrigin: .acp)
+            let reducer = ChatSessionStateReducer(
+                sessionID: controller.sessionID,
+                workingDirectory: controller.workingDirectory,
+                defaultOrigin: .acp,
+                state: controller.sessionState
+            )
             controller.addObserver(reducer)
             try await harness.startSession()
             let sessionID = controller.sessionID
@@ -274,7 +289,12 @@ struct ChatSessionStateTests {
     func transcriptActivityNoticesAndArtifactsAreProjectionsOfTheLog() async throws {
         try await withChatHarness { harness in
             let controller = harness.controller
-            let reducer = ChatSessionStateReducer(controller: controller, defaultOrigin: .local)
+            let reducer = ChatSessionStateReducer(
+                sessionID: controller.sessionID,
+                workingDirectory: controller.workingDirectory,
+                defaultOrigin: .local,
+                state: controller.sessionState
+            )
             controller.addObserver(reducer)
             try await harness.startSession()
 

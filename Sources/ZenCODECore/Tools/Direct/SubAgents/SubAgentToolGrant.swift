@@ -66,7 +66,7 @@ enum SubAgentToolGrant {
         // Prompt-skill tools are intrinsic and always-on: every
         // delegated sub-agent must be able to discover and read
         // selected prompt-skill guidance, mirroring the top-level
-        // session allowlist resolved by AgentCoreAppSessionFactory.
+        // session allowlists of the terminal chat and the ACP bridge.
         childAllowedToolNames?.formUnion(PromptSkillToolProvider.toolNames)
         if let explicitChildAllowedToolNames = childAllowedToolNames {
             childAllowedToolNames = profile.resolvedAllowedToolNames(

@@ -178,7 +178,7 @@ struct MemoryServiceTests {
                     ]
                 ),
                 context: MemoryToolContext(
-                    workingDirectory: workspace.workspaceURL,
+                    graphTarget: .workspace(workspace.workspaceURL),
                     currentDate: date,
                     currentTimeZone: timeZone
                 ),
@@ -213,7 +213,7 @@ struct MemoryServiceTests {
             let first = try await MemoryTool.executeAsync(
                 ToolRequest(name: "memory.write", arguments: ["content": .string(content)]),
                 context: MemoryToolContext(
-                    workingDirectory: workspace.workspaceURL,
+                    graphTarget: .workspace(workspace.workspaceURL),
                     currentDate: Date(timeIntervalSince1970: 1_700_000_000),
                     currentTimeZone: firstZone
                 ),
@@ -222,7 +222,7 @@ struct MemoryServiceTests {
             let second = try await MemoryTool.executeAsync(
                 ToolRequest(name: "memory.write", arguments: ["content": .string(content)]),
                 context: MemoryToolContext(
-                    workingDirectory: workspace.workspaceURL,
+                    graphTarget: .workspace(workspace.workspaceURL),
                     // A later minute and a separate context/time zone must not
                     // make Timestamp metadata defeat duplicate detection.
                     currentDate: Date(timeIntervalSince1970: 1_700_003_660),
@@ -275,7 +275,7 @@ struct MemoryServiceTests {
                     arguments: ["content": .string("Timestamp: sprint kickoff\n\(body)")]
                 ),
                 context: MemoryToolContext(
-                    workingDirectory: workspace.workspaceURL,
+                    graphTarget: .workspace(workspace.workspaceURL),
                     currentDate: Date(timeIntervalSince1970: 1_700_000_000),
                     currentTimeZone: TimeZone(identifier: "Europe/Rome")!
                 ),
@@ -284,7 +284,7 @@ struct MemoryServiceTests {
             let autoStamped = try await MemoryTool.executeAsync(
                 ToolRequest(name: "memory.write", arguments: ["content": .string(body)]),
                 context: MemoryToolContext(
-                    workingDirectory: workspace.workspaceURL,
+                    graphTarget: .workspace(workspace.workspaceURL),
                     currentDate: Date(timeIntervalSince1970: 1_700_003_660),
                     currentTimeZone: TimeZone(identifier: "Europe/Rome")!
                 ),
@@ -348,7 +348,7 @@ struct MemoryServiceTests {
                     name: "memory.search",
                     arguments: ["query": .string("architecture")]
                 ),
-                context: MemoryToolContext(workingDirectory: workspace.workspaceURL),
+                context: MemoryToolContext(graphTarget: .workspace(workspace.workspaceURL)),
                 memoryService: service
             )
             guard case let .object(result)? = output.rawResult,
@@ -634,7 +634,7 @@ struct MemoryServiceTests {
             let read = try #require(
                 try await service.entry(
                     id: entry.id.uuidString,
-                    workspaceRootURL: workspace.workspaceURL
+                    target: .workspace(workspace.workspaceURL)
                 )
             )
             #expect(read.category == .preference)

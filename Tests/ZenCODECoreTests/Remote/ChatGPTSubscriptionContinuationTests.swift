@@ -671,10 +671,11 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionWebSocketPoolReopensExpiredIdleSocketWithCurrentRequest() throws {
+    func chatGPTSubscriptionWebSocketPoolReopensExpiredIdleSocketWithCurrentRequest() async throws {
         let harness = ChatGPTSubscriptionWebSocketPoolHarness(
             maximumConnectionAge: .seconds(10)
         )
+        defer { await harness.pool.shutdown() }
         let oldRequest = harness.request(authorization: "Bearer stale")
         let firstLease = try harness.acquire(
             sessionID: "session-age-boundary",
@@ -844,7 +845,7 @@ extension RemoteSessionSnapshotTests {
                 pendingTasks.withLock { $0.removeFirst() }
             }
         )
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionResponsesClient(
             credentials: chatGPTSubscriptionTestCredentials(),
             baseURL: URL(string: "https://example.invalid/backend-api")!,
@@ -910,7 +911,7 @@ extension RemoteSessionSnapshotTests {
                 return pendingWebSocketTasks.withLock { $0.removeFirst() }
             }
         )
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionResponsesClient(
             credentials: chatGPTSubscriptionTestCredentials(),
             baseURL: URL(string: "https://example.invalid/backend-api")!,
@@ -1013,8 +1014,6 @@ extension RemoteSessionSnapshotTests {
 
         pool.closeSession(sessionID: "transport-session-a")
         #expect(pool.usesHTTPFallback(scopeID: "logical-session"))
-        pool.closeAll()
-        #expect(pool.usesHTTPFallback(scopeID: "logical-session"))
     }
 
     @Test
@@ -1037,7 +1036,7 @@ extension RemoteSessionSnapshotTests {
                 return task
             }
         )
-        defer { pool.closeAll() }
+        defer { await pool.shutdown() }
         let client = ChatGPTSubscriptionResponsesClient(
             credentials: chatGPTSubscriptionTestCredentials(),
             baseURL: URL(string: "https://example.invalid/backend-api")!,
@@ -1459,10 +1458,6 @@ private final class ChatGPTSubscriptionWebSocketPoolHarness: @unchecked Sendable
                 )
             }
         )
-    }
-
-    deinit {
-        pool.closeAll()
     }
 
     func request(authorization: String? = nil) -> RemoteWebSocketRequest {

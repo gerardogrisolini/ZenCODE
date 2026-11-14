@@ -45,12 +45,11 @@ Compose a session in this order.
    process, over the session runner
    (`ChatSessionHost(runner:environment:sleepAssertionReason:)`, with the
    runner from `ChatSessionRuntimeFactory.makeSessionRunner(...)`, the
-   low-level construction point of the runtime), or let it build the runner
-   (`ChatSessionHost(configuration:toolAuthorizationHandler:...)`). One host
-   per process: it owns the runner, the Telegram router and poller the
-   Telegram channel of every slot shares (two hosts on one bot would run two
-   long polls, which Telegram refuses with HTTP 409), the sleep assertion, and
-   the epochs of every session.
+   low-level construction point of the runtime). One host per process: it
+   owns the runner, the Telegram router and poller the Telegram channel of
+   every slot shares (two hosts on one bot would run two long polls, which
+   Telegram refuses with HTTP 409), the sleep assertion, and the epochs of
+   every session.
 5. Open a *slot* for each place the app runs sessions in (a window) with a
    `ChatSlotDescriptor`: the host, the consent authorizer, the presenter, the
    hooks, and the commands of the window, which the slot keeps across its
@@ -642,9 +641,7 @@ controller initializer with the reducer as presenter, or
 `controller.addObserver(reducer)` next to a presenter of the app's own: the
 reducer is a `ChatSessionObserver`, a presenter that sees every event of the
 controller before the channel's presenter, whatever channel drives the slot,
-and `removeObserver(_:)` detaches it (the convenience
-`ChatSessionStateReducer(controller:defaultOrigin:)` reads the session, the
-working directory, and the selection from the controller).
+and `removeObserver(_:)` detaches it.
 
 The reducer and the host are isolated to `ChatSessionActor`. Each call of
 `snapshots()` returns a new stream that starts with the current snapshot and
@@ -1092,7 +1089,7 @@ switch.
   `availableAgents()` returns `hostedAgentProfiles` instead of `agents.json`.
   Keep `cacheAgentProfiles` at its default `true`, which sets
   `hostedAgentProfiles`. No model or thinking choice is written to the
-  settings (`ChatSessionEnvironment.persistsSelections` is `false`).
+  settings.
 - **No `local.exec`.** Leave the `shell` tool group (`local.exec` and
   `exec.job`) out of the tools of the hosted agent profiles and out of
   `selectTools(keys:)`.

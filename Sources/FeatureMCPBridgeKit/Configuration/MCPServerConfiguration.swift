@@ -83,11 +83,6 @@ public nonisolated struct MCPServerConfiguration: Hashable, Sendable {
         self.httpAuthentication = httpAuthentication
         self.preferredProtocolVersion = preferredProtocolVersion
     }
-
-    public var usesHTTPTransport: Bool {
-        endpointURL != nil
-    }
-
 }
 
 public nonisolated enum MCPClientError: LocalizedError, Sendable {

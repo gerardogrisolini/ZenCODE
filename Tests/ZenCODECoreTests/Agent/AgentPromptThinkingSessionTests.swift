@@ -196,8 +196,8 @@ extension AgentConfigurationTests {
             agentThinkingSelection: .low,
             manifest: manifest
         )
-        let appSessionThinkingSelection = AgentCoreAppSessionFactory.resolvedThinkingSelection(
-            nil,
+        let settingsStoreThinkingSelection = AgentSettingsStore.thinkingSelection(
+            requestedSelection: nil,
             explicitModelID: nil,
             agentModelID: "remote-community/qwen3",
             agentThinkingSelection: .low,
@@ -205,7 +205,7 @@ extension AgentConfigurationTests {
         )
 
         #expect(chatThinkingSelection == .low)
-        #expect(appSessionThinkingSelection == .low)
+        #expect(settingsStoreThinkingSelection == .low)
     }
 
     @Test

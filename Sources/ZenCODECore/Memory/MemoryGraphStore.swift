@@ -187,8 +187,7 @@ actor MemoryGraphStore {
         )
     }
 
-    /// Flushes only automatic-recall maintenance. In particular this must not
-    /// persist a deferred insert represented by `needsSave`.
+    /// Flushes only automatic-recall maintenance.
     func flushRecallMaintenance() async throws {
         try await engine.flushRecallMaintenance()
     }

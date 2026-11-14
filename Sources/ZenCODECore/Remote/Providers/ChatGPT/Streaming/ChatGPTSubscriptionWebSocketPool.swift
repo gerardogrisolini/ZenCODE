@@ -56,15 +56,9 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         /// A closed incarnation is fenced permanently; its generation-qualified
         /// scope ID is never reused by a later logical session incarnation.
         var closedHTTPFallbackScopeIDs: Set<String> = []
-        /// `closeAll()` leaves the pool reusable. Its epoch fences an opener
-        /// against a teardown that races its pending-owner creation.
-        var httpStreamEpoch: UInt64 = 0
-        /// Unlike `closeAll()`, shutdown is terminal: no opener may be
-        /// constructed or promoted after this bit is set.
+        /// Shutdown is terminal: no opener may be constructed or promoted
+        /// after this bit is set.
         var isTerminallyShutdown = false
-        /// Every `closeAll()` contributes its cancelled openers to this chain.
-        /// A later terminal shutdown awaits it before closing an owned transport.
-        var httpStreamDrainTask: Task<Void, Never>?
         /// The single terminal operation shared by all concurrent callers.
         /// Its body captures the pool weakly, so storing it in `State` cannot
         /// form a permanent pool -> state -> task -> pool cycle.
@@ -457,7 +451,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         await beforeHTTPStreamRegistration()
 
         let didRegister = state.withLock { state -> Bool in
-            // `closeAll()` and `closeHTTPFallbackScope` remove a pending token
+            // `shutdown()` and `closeHTTPFallbackScope` remove a pending token
             // before cancelling its opener. The opener may nevertheless win its
             // cancellation race and return a response. Only the still-pending
             // owner is allowed to promote that response to an active stream;
@@ -565,39 +559,9 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         }
     }
 
-    public func closeAll() {
-        let retired = state.withLock {
-            state -> ([Entry], [TransientEntry], RetiredHTTPStreams) in
-            let entries = Array(state.entries.values)
-            let transientEntries = Array(state.transientEntries.values)
-            let httpStreams = retireHTTPStreams(in: &state)
-            let precedingDrain = state.httpStreamDrainTask
-            state.httpStreamDrainTask = Task {
-                if let precedingDrain {
-                    await precedingDrain.value
-                }
-                await Self.drain(httpStreams)
-            }
-            state.entries.removeAll()
-            state.transientEntries.removeAll()
-            return (entries, transientEntries, httpStreams)
-        }
-
-        // Cancellation deliberately happens after relinquishing the mutex but
-        // before returning. The chained task only drains; deferring cancellation
-        // to it lets a closeAll caller race a terminal transport shutdown.
-        Self.cancel(retired.2)
-        for entry in retired.0 {
-            dispose(entry)
-        }
-        for entry in retired.1 {
-            closeWebSocketTask(entry.task)
-        }
-    }
-
     /// Terminal lifecycle operation for a pool that owns its default NIO
-    /// transport. `closeAll()` remains reusable; after `shutdown()` the pool
-    /// must not be used to acquire another connection.
+    /// transport. After `shutdown()` the pool must not be used to acquire
+    /// another connection.
     public func shutdown() async {
         let shutdown = state.withLock {
             state -> (Task<Void, Never>, RetiredHTTPStreams?, OneShotGate?) in
@@ -606,26 +570,21 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                 return (shutdownTask, nil, nil)
             }
 
-            // The terminal bit, epoch increment, and retirement of every HTTP
-            // owner are one linearization point. Do not await while this mutex
-            // is held: cancellation/draining can re-enter transport code.
+            // The terminal bit and the retirement of every HTTP owner are one
+            // linearization point. Do not await while this mutex is held:
+            // cancellation/draining can re-enter transport code.
             state.isTerminallyShutdown = true
             let entries = Array(state.entries.values)
             let transientEntries = Array(state.transientEntries.values)
             let httpStreams = retireHTTPStreams(in: &state)
-            let precedingDrain = state.httpStreamDrainTask
             state.entries.removeAll()
             state.transientEntries.removeAll()
             state.httpFallbackScopeIDs.removeAll()
             state.closedHTTPFallbackScopeIDs.removeAll()
 
-            let currentDrain = Task {
-                if let precedingDrain {
-                    await precedingDrain.value
-                }
+            let httpStreamDrain = Task {
                 await Self.drain(httpStreams)
             }
-            state.httpStreamDrainTask = currentDrain
 
             // Keep this task independent from the pool. In particular, the
             // task is retained by `State`, so capturing `self` here would keep
@@ -643,9 +602,9 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                 for entry in transientEntries {
                     closeWebSocketTask(entry.task)
                 }
-                // The current drain includes every preceding closeAll drain,
-                // so coalesced shutdown callers all observe the same boundary.
-                await currentDrain.value
+                // Coalesced shutdown callers all await this task, so they
+                // observe the same drain boundary.
+                await httpStreamDrain.value
                 if let ownedTransport {
                     await beforeOwnedTransportShutdown()
                     try? await ownedTransport.shutdown()
@@ -654,9 +613,8 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
             state.shutdownTask = task
             return (task, httpStreams, terminalGate)
         }
-        // As with closeAll, cancellation must not wait for the drain chain:
-        // an earlier closeAll drain can be blocked by an opener that ignores
-        // cancellation until its deterministic completion gate is released.
+        // Cancel before awaiting the drain: the drain awaits every retired
+        // opener, which may not finish until it observes this cancellation.
         if let retired = shutdown.1 {
             Self.cancel(retired)
             // `shutdownTask` is already visible to coalescing callers, but it
@@ -672,7 +630,6 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
             pendingTasks: state.pendingHTTPStreams.values.map(\.task),
             bodies: state.activeHTTPStreams.values.map(\.body)
         )
-        state.httpStreamEpoch &+= 1
         state.pendingHTTPStreams.removeAll()
         state.activeHTTPStreams.removeAll()
         return retired

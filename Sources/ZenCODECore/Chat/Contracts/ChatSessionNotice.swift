@@ -78,8 +78,6 @@ public enum ChatSessionNotice: Sendable, Equatable {
     /// (`ChatSessionController.runAgentsCommand(line:)`). `manifestPath` is
     /// where the profiles are read from.
     case availableAgents(agents: [AgentProfile], selected: AgentProfile?, manifestPath: String)
-    /// The `/agents` usage line.
-    case agentSelectionUsage
     /// The agents associated with the project were saved, or none remain
     /// (`ChatSessionController.chooseProjectAgents()`, after `presentProjectAgentMenu`).
     case projectAgentsAssociated(agents: [AgentProfile], projectName: String)
@@ -519,7 +517,6 @@ public enum ChatSessionNotice: Sendable, Equatable {
              .thinkingUnchanged,
              .selectedAgent,
              .availableAgents,
-             .agentSelectionUsage,
              .projectAgentsAssociated,
              .agentSwitched,
              .activeTools,

@@ -21,8 +21,6 @@ public enum ChatTurnOrigin: Sendable, Equatable, Hashable {
     case app
     /// An ACP client, such as an editor.
     case acp
-    /// A headless run (`zen -p`, `--jsonl`).
-    case headless
     /// A linked Telegram chat.
     case telegram
     /// The origin is not known: the turn was rebuilt from a saved transcript,

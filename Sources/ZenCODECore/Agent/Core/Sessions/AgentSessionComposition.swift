@@ -8,9 +8,9 @@
 import Foundation
 import ToolCore
 
-/// Non-mutating helpers shared by every entry point that builds an
-/// ``AgentCoreSessionConfiguration``: the app session factory and the
-/// interactive terminal chat.
+/// Non-mutating helpers shared by every entry point that composes an
+/// ``AgentCoreSessionConfiguration``: the ACP bridge (through
+/// ``AgentCoreAppSessionFactory``) and the interactive terminal chat.
 ///
 /// Nothing here reads or mutates the session task graph. `SessionTaskOrchestrator`
 /// remains its only mutable owner, and `AgentCoreSessionRunner` remains the
@@ -72,8 +72,8 @@ public enum AgentSessionComposition {
 
     // MARK: - System prompt
 
-    /// Produces the stable standalone instruction prefix shared by the app
-    /// factory and the terminal chat, independently from context that can
+    /// Produces the stable standalone instruction prefix shared by the ACP
+    /// bridge and the terminal chat, independently from context that can
     /// change while the session is alive.
     ///
     /// - Parameters:

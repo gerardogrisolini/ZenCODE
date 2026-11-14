@@ -35,7 +35,7 @@ struct ChatGPTSubscriptionWebSocketPoolHTTPTeardownTests {
             #expect(!pool.hasPendingHTTPStream(scopeID: scopeID))
             #expect(!pool.hasActiveHTTPStream(scopeID: scopeID))
         } catch {
-            pool.closeAll()
+            await pool.shutdown()
             await server.shutdown()
             throw error
         }
@@ -43,8 +43,8 @@ struct ChatGPTSubscriptionWebSocketPoolHTTPTeardownTests {
         await server.shutdown()
     }
 
-    @Test("closeAll fences an HTTP opener that completed before active registration")
-    func closeAllFencesCompletedHTTPOpener() async throws {
+    @Test("shutdown fences an HTTP opener that completed before active registration")
+    func shutdownFencesCompletedHTTPOpener() async throws {
         let registrationGate = HTTPRegistrationGate()
         let server = try await HTTPTeardownTestServer.start { context in
             var headers = HTTPHeaders()
@@ -80,19 +80,18 @@ struct ChatGPTSubscriptionWebSocketPoolHTTPTeardownTests {
         await registrationGate.waitUntilArrived()
         #expect(pool.hasPendingHTTPStream(scopeID: scopeID))
 
-        pool.closeAll()
+        await pool.shutdown()
         await registrationGate.release()
 
         switch await opening.value {
         case .success:
-            Issue.record("A stream opened before closeAll was registered after teardown.")
+            Issue.record("A stream opened before shutdown was registered after teardown.")
         case let .failure(error):
             #expect(error is CancellationError)
         }
         #expect(!pool.hasPendingHTTPStream(scopeID: scopeID))
         #expect(!pool.hasActiveHTTPStream(scopeID: scopeID))
 
-        pool.closeAll()
         try await transport.shutdown()
         await server.shutdown()
     }

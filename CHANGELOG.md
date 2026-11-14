@@ -77,6 +77,47 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Removed
 
+- **Breaking:** the public API of `Sources/ZenCODECore/Chat` that no package of
+  the repository used is removed, as an announced exception to its semantic
+  versioning (see "Announced migration: unused Chat API" in the Compatibility
+  Contract of `Docs/architecture.md`):
+  `ChatSessionHost.init(configuration:toolAuthorizationHandler:featureRuntime:mcpRuntime:backendFactory:userHomeDirectoryURL:sleepAssertionReason:)`
+  (build the runner with
+  `ChatSessionRuntimeFactory.makeSessionRunner(toolAuthorizationHandler:featureRuntime:mcpRuntime:backendFactory:)`
+  and pass it, with a
+  `ChatSessionEnvironment(configuration:featureRuntime:userHomeDirectoryURL:)`,
+  to `ChatSessionHost(runner:environment:sleepAssertionReason:)`);
+  `ChatSessionStateReducer.init(controller:defaultOrigin:epoch:)` (use
+  `init(sessionID:workingDirectory:defaultOrigin:state:epoch:)` with the
+  controller's `sessionID`, its `workingDirectory` and a `ChatSessionState` of
+  its `selection` and `savedSessionState`);
+  `ChatToolConsentAuthorizer.recordAlwaysDecision(for:)`, with no replacement;
+  `ChatModelCatalog.providerGroups()` (use the static `providerGroups(_:)`
+  with `availableModels()`); `ChatSessionEnvironment.persistsSelections` (a
+  selection is persisted exactly when `hostedModels` is `nil`); and the enum
+  cases `ChatSessionNotice.agentSelectionUsage` and `ChatTurnOrigin.headless`,
+  which no operation and no turn used any more, with no replacement. A
+  `switch` over `ChatSessionNotice` or `ChatTurnOrigin` that has a case for
+  them no longer compiles: drop it. This changes source compatibility only:
+  the output of `zen` and the ACP wire are unchanged.
+- **Breaking:** public symbols of the library modules `FeatureKit` and
+  `FeatureMCPBridgeKit` that no feature package of the repository used are
+  removed, so an external feature package that used them must adapt.
+  `FeatureKit`: the variadic overload `buildInputSchema(required:_:)` (use
+  `buildInputSchema(_:required:)` with an array of `SchemaProperty`);
+  `WorkingDirectoryInput.resolvedWorkingDirectory()` (use
+  `firstNonBlank(input.workingDirectory, input.path)`);
+  `FeatureInvocationResponse.init(output:)` (use
+  `FeatureInvocationResponse(ok: true, output: value, error: nil)`); and
+  `FeatureManagedProcess` with `FeatureManagedProcessOutput`,
+  `FeatureManagedProcessExit` and `FeatureManagedProcessError`, the owner of a
+  resident child process, with no direct replacement (`FeatureProcessRunner`
+  runs one-shot processes and `FeaturePersistentProcess` drives children that
+  speak the JSON-lines protocol). `FeatureMCPBridgeKit`:
+  `MCPServerConfiguration.usesHTTPTransport` (use `endpointURL != nil`) and
+  `MCPNotificationWithoutParams` (use `MCPNotification<Params>`). Tool names,
+  feature IDs, JSON envelopes, wire and persisted formats, and `--list-tools`
+  output are unchanged.
 - **ZenCODECore API:** unused `public` symbols without callers in ZenCODE, its
   macOS app, or its feature packages are removed:
   - `TerminalChat` forwarders that `ChatSessionController` superseded:
@@ -195,7 +236,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
     `appProvidedPromptSections(…)`);
     `AgentCoreAppSessionFactory.resolvedSystemPrompt(…)` and
     `memoryToolEnabled(_:)`, and the ignored `selectedSkillNames:` parameter of
-    `resolvedPromptSections(…)`; `AgentStandaloneSystemPrompt.prompt(cwd:…)`
+    `resolvedPromptSections(…)`; `AgentCoreAppSessionRequest` and
+    `AgentCoreAppSessionFactory.makeConfiguration(request:)` (compose a session
+    configuration with `AgentCoreSessionConfigurationBuilder`, as the chat
+    does; `resolvedPromptSections(…)` is the only member of the factory left),
+    and with them the cache key format `app-session-cache-v2:<hash>:<hash>`,
+    which only that method produced and no code read;
+    `AgentStandaloneSystemPrompt.prompt(cwd:…)`
     (use `promptSections(…)` and `combinedPrompt`);
     `SystemPromptBuilder.prompt(_:)` with `SystemPromptRequest`,
     `standalonePrompt(cwd:…)`,
@@ -231,9 +278,35 @@ Release tags follow the strict `vX.Y.Z` contract described in
   - Memory and thinking: `MemoryService.restoreEntry(id:workspaceRootURL:)` (use
     `setArchived(false, …)`), `graphURL(workspaceRootURL:)` and
     `graphURL(target:)`; `MemoryEntryFilter.isEmpty` and the public
-    `matches(_:)` over a `MemoryEntry`; `ThinkingSelection.displayTitle` and
-    `menuTitle`;
+    `matches(_:)` over a `MemoryEntry`;
+    `MemoryService.entry(id:workspaceRootURL:)` (use `entry(id:target:)`) and
+    `MemoryService.toolUsagePromptSection()`;
+    `MemoryToolContext.init(workingDirectory:currentDate:currentTimeZone:)` and
+    `MemoryToolContext.workingDirectory` (use
+    `init(graphTarget:currentDate:currentTimeZone:)`);
+    `ThinkingSelection.displayTitle` and `menuTitle`;
     `ThinkingBoundarySpacingNormalizer.normalized(_:startsInThinking:)`.
+  - The synchronous memory API deprecated since 1.1.x no longer exists: the
+    blocking `MemoryService` wrappers
+    `readEntries(scope:workingDirectory:includeArchived:limit:)`,
+    `readEntries(scope:workspaceRootURL:includeArchived:limit:)`,
+    `searchEntries(query:scope:workingDirectory:includeArchived:limit:)`,
+    `searchEntries(query:scope:workspaceRootURL:includeArchived:limit:)`,
+    `writeEntry(content:scope:workingDirectory:)`,
+    `writeEntry(content:scope:workspaceRootURL:)`,
+    `updateEntry(id:content:scope:workspaceRootURL:updatedAt:timeZone:)`,
+    `replaceEntry(id:content:scope:workspaceRootURL:)`,
+    `archiveEntry(id:scope:workingDirectory:)`,
+    `archiveEntry(id:scope:workspaceRootURL:)`,
+    `setArchived(_:id:scope:workspaceRootURL:)` and
+    `deleteEntry(id:scope:workspaceRootURL:)`, the synchronous
+    `MemoryTool.execute(_:context:memoryService:)`,
+    `MemoryEntry.normalizedContent(_:)` and `MemoryLegacyBridgeError` are
+    removed. Use the async `MemoryService` methods with `workspaceRootURL:` and
+    `try await` (`readEntries`, `searchEntries`, `writeEntry`, `updateEntry`,
+    which also replaces `replaceEntry`, `archiveEntry`, `setArchived` and
+    `deleteEntry`), `MemoryTool.executeAsync(_:context:memoryService:)` and
+    `MemoryContent.normalized(_:)`.
   - Remote providers and catalogs:
     `RemoteGenerationClient.chatCompletionsWireHistoryMessages(from:requiresReasoningContentPlaceholder:)`
     (use `chatCompletionsWireHistoryMessages(from:replayPolicy:)`) and the
@@ -253,7 +326,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
     `AnthropicSubscriptionAuthService.removeCredentials()`,
     `AnthropicSubscriptionSignInSession.waitForCredentials()` and `cancel()`,
     `ChatGPTSubscriptionSignInSession.waitForCredentials()` and
-    `submitAuthorizationInput(_:)`; the typealiases `MCPClient`,
+    `submitAuthorizationInput(_:)`;
+    `ChatGPTSubscriptionWebSocketPool.closeAll()` (use `shutdown()`, which is
+    terminal and closes the transport only when the pool built it: a closed
+    pool is not reused, build a new one); the typealiases `MCPClient`,
     `MCPErrorResponse` and `MCPRemoteTool` (use the types of
     `FeatureMCPBridgeKit`).
   - DS4: the typealiases `DS4InstalledModel` and `DS4InstallationReport`;
@@ -431,8 +507,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
     final-response branch of the sub-agent overview in
     `TerminalSubAgentOverviewLayout`, which production always disabled (complete
     answers still appear through `markdownResponses(_:)`).
-  - Memory engine: `MemoryEngine.save()`, `recall(_:scope:)` and
-    `searchReadOnly(_:scope:)`; `EngineMemoryScope.includesProject` and
+  - Memory engine: `MemoryEngine.save()`, `insert(_:persist:)` (with the
+    `needsSave` flag, always false without it, and the branches that tested
+    it), `recall(_:scope:)` and `searchReadOnly(_:scope:)`;
+    `EngineMemoryScope.includesProject` and
     `includesGlobal`; `EngineMemoryEntry.reinforce(sessionID:messageIndex:)`,
     `touch()` and `supersede(with:)`; `MemoryGraph.memoryCount`, `nodeCount`,
     `edgeCount`, `updateMemory(_:)`, `addTag(_:to:)`, `addCluster(_:)` and
@@ -452,7 +530,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
     `ChatGPTSubscriptionGenerationClient.sessionID(from:)` and
     `SessionIdentity.storageKey`,
     `ChatGPTSubscriptionWebSocketPool.clearHTTPFallback(scopeID:)`,
-    `serverMaximumConnectionAge` and the `acquire(sessionID:request:)` overload
+    `serverMaximumConnectionAge`, its `httpStreamDrainTask` and
+    `httpStreamEpoch` state and the `acquire(sessionID:request:)` overload
     without a scope, `RemoteModelCatalogClient.modelsRequest(apiKey:)` and
     `contextLength(fromText:)`; `DS4EngineABI.ToolSyntax` (it duplicated
     `DS4ToolSyntax`), `DS4EngineRegistry.shutdown()` with its epoch,
@@ -491,6 +570,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
     `VoiceKeywordCollector.hasPendingText`, the `VoiceModeController.speak(_:)`
     extension, `VoiceAudioDevice.pendingPlaybackBuffers` and
     `SherpaOnnxAudioDecoder.available(for:searchDirectories:fileManager:)`.
+  - Session factory: the internal
+    `AgentCoreAppSessionFactory.resolvedAllowedToolNames(selectedToolKeys:explicitAllowedToolNames:selectedAgent:)`
+    and
+    `resolvedThinkingSelection(_:explicitModelID:agentModelID:agentThinkingSelection:manifest:)`,
+    a forwarder to `AgentSettingsStore.thinkingSelection(…)`, and the private
+    helpers `resolvedAgentConfiguration(for:)`,
+    `intrinsicAllowedToolNames(for:)`, `scopedCacheKey(…)`,
+    `cacheKeyBaseHash(from:)` and `stableHash(_:)` that served them.
   - Setup, configuration and support: `SetupSection.ds4`,
     `AgentBindingPresets.init(providers:)`,
     `AgentProfileBindingReconciler.reconcileStoredAgents(with:fileManager:)`,
@@ -515,8 +602,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
     `TerminalTelegramRichMessageRenderer` (with `renderButton(_:)` and
     `maximumCallbackBytes`), `TerminalTelegramRichMessageError` and the two
     plain-text fallbacks that handled it, `PresentationDocument.init(blocks:)`
-    and `PresentationText.init(_:)`. Production only ever sent Markdown, so
-    replies on Telegram look the same.
+    and `PresentationText.init(_:)`. The wire types behind those blocks are
+    gone too: the `details`, `buttons` and `document` cases of
+    `TerminalTelegramInputRichBlock` with their keys,
+    `TerminalTelegramRichMessageButton`, `TerminalTelegramInputMediaDocument`
+    and `TerminalTelegramRichBlockCaption`. Production only ever sent
+    Markdown, so replies on Telegram look the same and what ZenCODE sends to
+    Telegram does not change.
   - `TerminalTelegramRouteRuntimeState`, the per-route runtime state of the
     Telegram channel: nothing ever filled it, and its teardown did nothing. The
     lifecycle gate of `TerminalTelegramControlService`, which was only written
@@ -565,17 +657,20 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `ZenSharedChatReader.selectedMessage`, `ZenVoiceDictationDraft.isActive` and
   `ZenWindowTab.agentID`, together with two cache `removeAll()` methods. The app
   looks and behaves the same.
-- Feature packages: no `public` symbol of `ToolCore`, `FeatureKit`,
-  `FeatureMCPBridgeKit`, `LocalToolsSupport` or of a feature changes. Unused
-  internal code is removed from BrowserTools, WebTools, MacOS, FeatureKit,
-  FeatureMCPBridgeKit and LocalToolsSupport (for example the synchronous
+- Feature packages: apart from the symbols of the **Breaking** entry on
+  `FeatureKit` and `FeatureMCPBridgeKit` above, no `public` symbol of
+  `ToolCore`, `FeatureKit`, `FeatureMCPBridgeKit`, `LocalToolsSupport` or of a
+  feature changes. Unused internal code is removed from BrowserTools,
+  WebTools, MacOS, FeatureKit, FeatureMCPBridgeKit and LocalToolsSupport (for
+  example the synchronous
   `BrowserNetworkRequestPolicy.validateRequestURL(_:)`,
   `WebHTMLNode.attribute(_:)` and `MCPClient.serverError(_:requestMethod:)`).
   Tool names, descriptors and `--list-tools` output are unchanged.
 - Tests that only verified removed code are deleted (for example those of the
-  memory extractor and LLM models, of `streamPrompt(…)` and of the Telegram
-  rich-message buttons and documents); the others now go through the production
-  API instead of the removed forwarders and helpers.
+  memory extractor and LLM models, of `streamPrompt(…)`, of the synchronous
+  memory API, of `FeatureManagedProcess`, of the `app-session-cache-v2` cache
+  key and of the Telegram rich-message buttons and documents); the others now
+  go through the production API instead of the removed forwarders and helpers.
 
 ### Fixed
 

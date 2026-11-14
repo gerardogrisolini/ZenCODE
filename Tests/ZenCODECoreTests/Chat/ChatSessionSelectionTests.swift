@@ -961,7 +961,6 @@ struct ChatSessionSelectionTextTests {
             .thinkingNotSupported(model: Fixtures.alpha),
             .thinkingUnchanged,
             .selectedAgent(nil),
-            .agentSelectionUsage,
             .agentSwitched(Fixtures.reviewer),
             .toolSelectionUsage,
             .skillSelectionUsage,

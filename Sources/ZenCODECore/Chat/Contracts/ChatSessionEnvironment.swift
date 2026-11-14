@@ -48,13 +48,6 @@ public struct ChatSessionEnvironment: Sendable {
     /// the system prompt.
     public let worktree: AgentWorktree?
 
-    /// Whether model and thinking choices become the persisted defaults.
-    /// A host that supplies its own models owns that choice, so nothing is
-    /// written to the user's settings.
-    public var persistsSelections: Bool {
-        hostedModels == nil
-    }
-
     public init(
         configuration: AgentConfiguration,
         featureRuntime: SwiftFeatureRuntime?,

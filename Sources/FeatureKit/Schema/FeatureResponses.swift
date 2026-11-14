@@ -58,10 +58,6 @@ public struct FeatureInvocationResponse<Output: Encodable & Sendable>: Encodable
     public let output: Output?
     public let error: String?
 
-    public init(output: Output) {
-        self.init(ok: true, output: output, error: nil)
-    }
-
     public init(ok: Bool, output: Output?, error: String?) {
         self.ok = ok
         self.output = output

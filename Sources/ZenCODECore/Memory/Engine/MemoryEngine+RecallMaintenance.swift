@@ -177,10 +177,6 @@ extension MemoryEngine {
     /// no file yet `pendingRecallBaseGraph` avoids a cold-start double replay. A
     /// failed checkpoint leaves the intents retryable.
     func flushPendingRecallMaintenanceLocked() async throws {
-        // A deferred insert is a local durability boundary: reloading and
-        // replaying maintenance here would discard that snapshot before an
-        // explicit save or transaction commits it.
-        guard !needsSave else { return }
         guard !pendingRecallMaintenance.isEmpty else { return }
         try await commitRecallMaintenance(
             draftGraph: graph,
