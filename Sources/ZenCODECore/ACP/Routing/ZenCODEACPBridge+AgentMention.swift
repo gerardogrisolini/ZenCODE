@@ -46,14 +46,17 @@ extension ZenCODEACPBridge {
     }
 
     /// Resolves the agent for a session. An explicit `agentId`/`agentName` in
-    /// `params` selects any profile. Without one, a launch-time default
+    /// `params` selects any profile. Without one, `savedAgentID`, the agent of
+    /// the record a restored session was saved with, is kept while a profile
+    /// with that id still exists. Otherwise a launch-time default
     /// developer is re-resolved for the session's `workingDirectory` so each
     /// project gets its own default; an agent requested at launch
     /// (`--agent`) is kept as is. A failure to read the project's selection
     /// never breaks session creation: the launch agent is used instead.
     func resolvedACPAgentProfile(
         from params: [String: Any],
-        workingDirectory: URL
+        workingDirectory: URL,
+        savedAgentID: String? = nil
     ) throws -> AgentProfile? {
         let rawAgentReference = (params["agentId"] as? String)?.nilIfBlank
             ?? (params["agentID"] as? String)?.nilIfBlank
@@ -61,6 +64,10 @@ extension ZenCODEACPBridge {
             ?? (params["agentName"] as? String)?.nilIfBlank
             ?? (params["agent_name"] as? String)?.nilIfBlank
         guard let rawAgentReference else {
+            if let savedAgentID,
+               let savedAgent = (try? availableACPAgentProfiles())?.first(where: { $0.id == savedAgentID }) {
+                return savedAgent
+            }
             if configuration.requestedAgentName != nil || configuration.selectedAgent == nil {
                 return configuration.selectedAgent
             }

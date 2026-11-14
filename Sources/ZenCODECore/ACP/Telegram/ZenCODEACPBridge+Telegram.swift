@@ -18,7 +18,9 @@ import ToolCore
 /// the client gave it, its grant) plus the tools of the turn's purpose, with
 /// the agent's skills selected and with the text file system the client
 /// serves, as a prompt typed in the editor does: a file the turn writes goes
-/// to the editor's buffer, not past it to the disk.
+/// to the editor's buffer, not past it to the disk. Once the turn ran, however
+/// it ended, the session's conversation is saved, as the editor's turns save
+/// theirs (``ZenCODEACPBridge/saveSessionHistoryAfterTurn(of:)``).
 ///
 /// One object serves every slot of the bridge: it finds the session by the
 /// controller it is asked for, which is the live incarnation's. The bridge
@@ -76,13 +78,23 @@ final class ACPSessionChannelHooks: ChatSessionChannelHooks {
         }
         // The editor's order: inside the client's file system, the agent's
         // skills are selected, then the turn starts.
-        return try await ClientTextFileSystem.$current.withValue(environment.clientFiles) {
-            await bridge.applySelectedAgentSkills(
-                sessionID: environment.sessionID,
-                selectedAgent: environment.selectedAgent
-            )
-            return try await body()
+        let result: ChatTurnResult
+        do {
+            result = try await ClientTextFileSystem.$current.withValue(environment.clientFiles) {
+                await bridge.applySelectedAgentSkills(
+                    sessionID: environment.sessionID,
+                    selectedAgent: environment.selectedAgent
+                )
+                return try await body()
+            }
+        } catch {
+            // The turn ran, however it ended: its history is kept, as the
+            // editor's turns keep theirs on every exit.
+            await bridge.saveSessionHistoryAfterTurn(of: controller)
+            throw error
         }
+        await bridge.saveSessionHistoryAfterTurn(of: controller)
+        return result
     }
 }
 

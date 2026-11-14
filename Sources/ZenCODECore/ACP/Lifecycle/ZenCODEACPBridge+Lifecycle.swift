@@ -705,11 +705,19 @@ extension ZenCODEACPBridge {
             applyLaunchDirectoryFallback: false
         )
         try ensureLifecycleOperationLive(operation)
+        // The conversation the agent kept for this session, unless the client
+        // sends its own history, which wins. Read before the agent is
+        // resolved: the agent decides the tool grant and the MCP servers that
+        // are installed. The read does not suspend.
+        let savedSession = Self.runtimeHistory(from: params["history"]).isEmpty
+            ? savedACPSession(id: sessionID, workingDirectory: workingDirectory)
+            : nil
         // Resolved before the incarnation opens, as `session/new` does: the
         // agent's tool grant tells which MCP servers its features replace.
         let selectedAgent = try resolvedACPAgentProfile(
             from: params,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            savedAgentID: savedSession?.agentID
         )
         let requestedAllowedToolNames = await requestedSessionAllowedToolNames(
             from: params,
@@ -729,7 +737,8 @@ extension ZenCODEACPBridge {
                 params: params,
                 workingDirectory: workingDirectory,
                 acpMCPDescriptors: acpMCPDescriptors,
-                selectedAgent: selectedAgent
+                selectedAgent: selectedAgent,
+                savedSession: savedSession
             )
             try ensureLifecycleOperationLive(operation)
             // Past the last fence the session entry, the runner session, the
@@ -858,8 +867,40 @@ extension ZenCODEACPBridge {
         acpMCPDescriptors: [DirectToolDescriptor],
         selectedAgent: AgentProfile? = nil
     ) async -> AgentCoreSessionConfiguration {
+        await restoredACPClientSessionConfiguration(
+            sessionID: sessionID,
+            params: params,
+            workingDirectory: workingDirectory,
+            acpMCPDescriptors: acpMCPDescriptors,
+            selectedAgent: selectedAgent,
+            savedSession: nil
+        )
+    }
+
+    /// The configuration of a restored session that is not live. Its history
+    /// is the client's `history`, else the one of `savedSession`, the record
+    /// the agent kept for it (`nil` when the client sent a history). What the
+    /// client asks for wins over the record, and the record over the
+    /// defaults: the model is the client's `modelId`, else the record's while
+    /// the catalog still offers it, else the default; the thinking level is
+    /// the client's, else the record's when the chosen model offers it, else
+    /// the resolved default; `preserveThinking` is the client's, else the
+    /// record's, else `false`. The system prompt, the dynamic context, the
+    /// tool grant, and the cache key are composed as for any restore.
+    func restoredACPClientSessionConfiguration(
+        sessionID: String,
+        params: [String: Any],
+        workingDirectory: URL,
+        acpMCPDescriptors: [DirectToolDescriptor],
+        selectedAgent: AgentProfile?,
+        savedSession: ACPSavedSession?
+    ) async -> AgentCoreSessionConfiguration {
         let requestedModelID = Self.modelID(from: params)
+        let savedModelID = requestedModelID == nil
+            ? savedSession?.modelID.flatMap { modelCatalog.containsModel(withID: $0) ? $0 : nil }
+            : nil
         let modelID = requestedModelID
+            ?? savedModelID
             ?? defaultSessionModelID()
         let requestedAllowedToolNames = Self.allowedToolNames(from: params)
             ?? selectedAgent?.allowedToolNames()
@@ -879,9 +920,16 @@ extension ZenCODEACPBridge {
             selectedAgent: selectedAgent
         )
         let requestedThinkingSelection = Self.thinkingSelection(from: params["thinkingSelection"])
-        let thinkingSelection = modelCatalog.resolvedThinkingSelection(
+        let savedThinkingSelection = requestedThinkingSelection == nil
+            ? savedSession?.thinkingSelection.flatMap {
+                modelCatalog.validatedThinkingSelection($0, forModelID: modelID)
+            }
+            : nil
+        // A model restored from the record stands where the client's model
+        // would: the default level is resolved for it.
+        let thinkingSelection = savedThinkingSelection ?? modelCatalog.resolvedThinkingSelection(
             requested: requestedThinkingSelection,
-            explicitModelID: requestedModelID ?? configuration.modelID,
+            explicitModelID: requestedModelID ?? savedModelID ?? configuration.modelID,
             agentModelID: selectedAgent?.modelID,
             agentThinkingSelection: selectedAgent?.thinkingSelection,
             selectedModelID: modelID
@@ -890,7 +938,12 @@ extension ZenCODEACPBridge {
             ?? (params["cacheKey"] as? String)
         let preserveThinking = (params["preserveThinking"] as? Bool)
             ?? (params["preserve_thinking"] as? Bool)
+            ?? savedSession?.preserveThinking
             ?? false
+        let clientHistory = Self.runtimeHistory(from: params["history"])
+        let history = clientHistory.isEmpty
+            ? savedSession?.history ?? []
+            : clientHistory
 
         return AgentCoreSessionConfiguration(
             sessionID: sessionID,
@@ -902,7 +955,7 @@ extension ZenCODEACPBridge {
             systemPrompt: promptSections.systemPrompt,
             dynamicContext: promptSections.dynamicContext,
             cacheKey: cacheKey,
-            history: Self.runtimeHistory(from: params["history"]),
+            history: history,
             allowedToolNames: allowedToolNames,
             maxToolRounds: configuration.maxToolRounds,
             maxOutputTokens: configuration.maxOutputTokens,

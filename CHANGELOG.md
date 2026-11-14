@@ -23,6 +23,23 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- In ACP clients such as Xcode, a conversation reopened after `zen --acp`
+  was restarted keeps its history. A client reopens a conversation with
+  `session/load` (or `session/resume`) and only its `sessionId`, `cwd`, and
+  `mcpServers`, as ACP specifies, so keeping the conversation is up to the
+  agent; `zen` kept it only in memory, opened an empty session with the same
+  id, and answered with success, so the next prompt reached the model without
+  the earlier turns. The conversation of every ACP session is now saved at the
+  end of each turn, including the turns the linked Telegram chat runs, under
+  `~/.zencode/acp-sessions/<project key>/`, one private file per session
+  named by a hash of its id. `session/load` of a session the process no longer
+  holds replays it to the client and restores it, with the session's model,
+  agent, and thinking level while they are still available; `session/resume`
+  restores it without replaying it. A `history` or a model, agent, or thinking
+  level that the client sends still wins. ACP sessions do not appear in
+  `/sessions`, a session without turns saves nothing, `session/close` deletes
+  nothing, and a session id that was never saved still opens an empty
+  session.
 - In ACP clients such as Xcode, a session whose agent has the Xcode tools
   enabled no longer asks for the Xcode MCP consent twice when its first prompt
   is sent. Xcode passes its own `xcode-tools` MCP server to every session, and

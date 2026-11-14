@@ -103,7 +103,10 @@ associated developer, the global default applies: the system Developer when
 present, otherwise the first developer profile in `agents.json` order. The
 project is the launch directory; ACP resolves it again for the working
 directory (`cwd`) of every `session/new` and `session/load`. `--agent`, and an
-ACP `agentId`/`agentName`, still select any profile. Setup adds the system
+ACP `agentId`/`agentName`, still select any profile. An ACP session that
+`session/load` or `session/resume` restores from its saved conversation (see
+[Session History](zen.md#session-history)) keeps the agent it was saved with,
+while that profile exists, unless the client names one. Setup adds the system
 Developer only when no profile has the `developer` role, and the global default
 developer cannot be deleted in setup.
 

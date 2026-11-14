@@ -236,6 +236,7 @@ Creates files under `~/.zencode/`:
 - `memory/` — project memory graphs: one `memory.graph.json` per project with its binary vectors file `memory.graph.json.vectors`, under the project key (see below), plus `global/` for the global graph used by `organizer` sessions.
 - `projects/` — per-project agent associations (`agents.json`, see `/agents`), under the project key.
 - `sessions/` — saved session snapshots grouped by project key.
+- `acp-sessions/` — the conversations of the ACP sessions (`zen --acp`), one private file per session named by a hash of its id, grouped by project key, so a client can reopen a conversation after the agent restarted (see [Session History](#session-history)). They are not listed by `/sessions`.
 - `task-graphs/` — atomic project/session task checkpoints, including explicitly saved plans, grouped by project key.
 - `worktrees/` — the Git worktrees of `zen --worktree NAME`, at `worktrees/<project key>/<NAME>/<repository folder name>`. See [Git Worktrees](#git-worktrees).
 - `features/` — generated Builder packages and installed optional feature packages.
@@ -247,7 +248,8 @@ Creates files under `~/.zencode/`:
 ## Project Key
 
 Project memory (`memory/`), the project agents chosen with `/agents`
-(`projects/`), saved sessions (`sessions/`), and task graphs and saved plans
+(`projects/`), saved sessions (`sessions/`), the conversations of the ACP
+sessions (`acp-sessions/`), and task graphs and saved plans
 (`task-graphs/`) are stored per project under a **project key** derived from the
 project name — the name of the working directory folder, trimmed and compared
 case-sensitively — not from its full path:
@@ -1810,6 +1812,44 @@ token environment variables still apply. After a `session/new` reply, the client
 may be asked through `session/request_permission` whether to resume the task
 graphs that earlier sessions left incomplete (see [Recovering Incomplete Tasks at
 Startup](#recovering-incomplete-tasks-at-startup)).
+
+### Session History
+
+ZenCODE keeps the conversation of every ACP session, so a client that reopens
+a conversation after the agent restarted finds it again. As ACP specifies, a
+client reopens a conversation with `session/load` or `session/resume` and
+sends only its `sessionId`, `cwd`, and `mcpServers`: keeping the conversation
+is up to the agent.
+
+- **Saving.** At the end of every turn the session's history is saved, with
+  the session's model, agent, thinking level, and `preserveThinking`, under
+  `~/.zencode/acp-sessions/<project key>/` (see [Project Key](#project-key)),
+  in one private file per session (mode `0600`) named by the SHA-256 hash of
+  the session id. The turns the linked Telegram chat runs on the session are
+  saved too. The system prompt, the session context, the tools, and the cache
+  key are not saved: they are composed again when the session is restored. A
+  session without turns saves nothing, a save that fails is only logged and
+  never changes a reply or a turn, and nothing is deleted by `session/close`
+  or expires.
+- **Restoring.** `session/load` or `session/resume` of a session that the
+  running process no longer holds, with no `history` from the client, restores
+  the saved conversation of that id in the project of `cwd`. `session/load`
+  replays it to the client before its reply (the prompts as
+  `user_message_chunk`, the responses as `agent_thought_chunk` and
+  `agent_message_chunk`); `session/resume` does not replay it. In both cases
+  the next prompt reaches the model with the earlier turns.
+- **What the client sends wins.** A non-empty `history` from the client
+  replaces the saved conversation. The model is the client's `modelId`, else
+  the saved one while it is still configured, else the default; the agent is
+  the client's `agentId`, else the saved one while the profile still exists,
+  else the project's default; the thinking level is the client's, else the
+  saved one when the model offers it, else the default; `preserveThinking` is
+  the client's, else the saved one.
+- **Nothing saved.** A session id without a saved conversation, or whose file
+  cannot be read, still opens an empty session and the request succeeds, as
+  before. A session that the process still holds is replayed from memory.
+
+ACP sessions are not saved sessions: they do not appear in `/sessions`.
 
 ### Authentication Methods
 

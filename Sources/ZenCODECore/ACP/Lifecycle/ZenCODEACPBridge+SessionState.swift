@@ -306,7 +306,7 @@ extension ZenCODEACPBridge {
         // be built again (its features discovering their tools, and asking
         // for their consent, again) for an id that no longer names the
         // session's provider and may resolve to another provider's model.
-        updateLiveSession(id: sessionID, epoch: epoch) { live in
+        let didRefresh = updateLiveSession(id: sessionID, epoch: epoch) { live in
             live = sessionState(
                 configuration: AgentCoreSessionConfiguration(
                     sessionID: snapshot.sessionID,
@@ -331,6 +331,16 @@ extension ZenCODEACPBridge {
                 ),
                 selectedAgent: session.selectedAgent,
                 inheriting: live
+            )
+        }
+        // The live session now holds the turn's history: so does its record,
+        // for a `session/load` after the process restarted. Saved in the same
+        // step, under the same fences, only when the refresh took place.
+        if didRefresh, let refreshed = liveSession(id: sessionID, epoch: epoch) {
+            saveSessionHistory(
+                sessionID: sessionID,
+                configuration: refreshed.configuration,
+                history: snapshot.history
             )
         }
     }
