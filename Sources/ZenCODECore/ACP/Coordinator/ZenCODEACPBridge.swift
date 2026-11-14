@@ -57,6 +57,10 @@ public actor ZenCODEACPBridge {
         /// and a release touch only the task of their own prompt.
         public var activePromptTask: Task<PromptCompletion, Error>?
         var activePromptTaskID: UUID? = nil
+        /// The saved session this incarnation is saved as, once it was saved
+        /// or when it was restored from one (see
+        /// `ZenCODEACPBridge+SessionPersistence.swift`).
+        var savedSessionLink: ACPSavedSessionLink? = nil
         /// The session's shared chat controller: it runs the prompt turns and
         /// owns the `/plan` and `/goal` command state of this incarnation. A
         /// same-epoch reconstruction keeps it; a new epoch gets a fresh one
@@ -632,6 +636,10 @@ public actor ZenCODEACPBridge {
                 try await cancel(id: id, params: params)
             case "session/close":
                 try await close(id: id, params: params)
+            case "session/delete":
+                try await deleteSession(id: id, params: params)
+            case "session/list":
+                try await listSessions(id: id, params: params)
             case "session/load":
                 try await loadSession(id: id, params: params)
             case "session/resume":

@@ -712,6 +712,49 @@ extension ZenCODEACPBridge {
         guard let sessionID = Self.sessionID(from: params) else {
             throw ACPError.invalidParams("session/close requires params.sessionId.")
         }
+        await closeACPSession(sessionID: sessionID)
+        // `closeACPSession` suspends: a shutdown landing there already failed all
+        // pending requests, so do not write a late reply.
+        try ensureNotShutDown()
+        await writer.sendResultIfRequest(id: id, result: .object([:]))
+    }
+
+    /// `session/delete`: ends the session as `session/close` does when the
+    /// bridge runs it (``closeACPSession(sessionID:)``, the same path), then
+    /// deletes, in every project, the saved sessions of its id that ACP saved
+    /// by itself (``deleteAutosavedSessions(sessionID:)``). A session id that
+    /// is unknown, already deleted, or has nothing saved answers `{}` too; a
+    /// saved session that cannot be removed answers with the error. The saved
+    /// sessions of the id that the user saved with `/sessions` stay.
+    func deleteSession(id: JSONValue?, params: [String: Any]) async throws {
+        try ensureNotShutDown()
+        guard let sessionID = Self.sessionID(from: params) else {
+            throw ACPError.invalidParams("session/delete requires params.sessionId.")
+        }
+        // The entry is dropped before the files: no save of this incarnation
+        // can write its file again once they are gone.
+        if sessions[sessionID] != nil {
+            await closeACPSession(sessionID: sessionID)
+        }
+        var deletionError: Error?
+        do {
+            try await deleteAutosavedSessions(sessionID: sessionID)
+        } catch {
+            deletionError = error
+        }
+        try ensureNotShutDown()
+        if let deletionError {
+            throw deletionError
+        }
+        await writer.sendResultIfRequest(id: id, result: .object([:]))
+    }
+
+    /// Ends the session `sessionID` for `session/close` and
+    /// `session/delete`, up to their reply: the live incarnation, if any, is
+    /// dropped before any suspension and retired in the host, its prompts and
+    /// lifecycle operations are cancelled and drained, its MCP servers
+    /// released, and its slot closed with its runner session.
+    func closeACPSession(sessionID: String) async {
         // Drop the session before any suspension so a prompt finishing
         // concurrently cannot restore it through refreshSessionStateIfAvailable.
         // In the same step the host retires the incarnation: its controller is
@@ -778,9 +821,5 @@ extension ZenCODEACPBridge {
            resurrected.epoch == closedSession?.epoch {
             sessions.removeValue(forKey: sessionID)
         }
-        // `closeSession` suspends: a shutdown landing there already failed all
-        // pending requests, so do not write a late reply.
-        try ensureNotShutDown()
-        await writer.sendResultIfRequest(id: id, result: .object([:]))
     }
 }

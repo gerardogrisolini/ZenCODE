@@ -235,8 +235,7 @@ Creates files under `~/.zencode/`:
   separate from an optional project `AGENTS.md` in the working directory.
 - `memory/` — project memory graphs: one `memory.graph.json` per project with its binary vectors file `memory.graph.json.vectors`, under the project key (see below), plus `global/` for the global graph used by `organizer` sessions.
 - `projects/` — per-project agent associations (`agents.json`, see `/agents`), under the project key.
-- `sessions/` — saved session snapshots grouped by project key.
-- `acp-sessions/` — the conversations of the ACP sessions (`zen --acp`), one private file per session named by a hash of its id, grouped by project key, so a client can reopen a conversation after the agent restarted (see [Session History](#session-history)). They are not listed by `/sessions`.
+- `sessions/` — saved session snapshots grouped by project key, including the conversations the ACP sessions save by themselves (see [Session History](#session-history)).
 - `task-graphs/` — atomic project/session task checkpoints, including explicitly saved plans, grouped by project key.
 - `worktrees/` — the Git worktrees of `zen --worktree NAME`, at `worktrees/<project key>/<NAME>/<repository folder name>`. See [Git Worktrees](#git-worktrees).
 - `features/` — generated Builder packages and installed optional feature packages.
@@ -248,8 +247,7 @@ Creates files under `~/.zencode/`:
 ## Project Key
 
 Project memory (`memory/`), the project agents chosen with `/agents`
-(`projects/`), saved sessions (`sessions/`), the conversations of the ACP
-sessions (`acp-sessions/`), and task graphs and saved plans
+(`projects/`), saved sessions (`sessions/`), and task graphs and saved plans
 (`task-graphs/`) are stored per project under a **project key** derived from the
 project name — the name of the working directory folder, trimmed and compared
 case-sensitively — not from its full path:
@@ -1732,6 +1730,11 @@ zen --skills "review,swift"
 /sessions new                    # fresh, unsaved session
 ```
 
+The list also holds the conversations of the ACP sessions (`zen --acp`), which
+save themselves at the end of every turn (see [Session History](#session-history)):
+they load and delete like any other saved session, and `/sessions save` of a
+loaded one makes it a session saved by you.
+
 ### Checkpoint Trees
 
 Every saved session stores its conversation as a **tree of entries** alongside the flat message history. The initial history is a linear tree: every message is an entry. Entries are linked to their parent via an entry ID, so you can branch from any point and explore alternatives without losing the original path.
@@ -1755,7 +1758,7 @@ To split a conversation into a separate file, restore to the desired point and t
 
 ### Session Format
 
-Version 4 snapshots embed the checkpoint tree alongside the task graph and active plan, and may also carry the queued plans of a plan sequence as an optional ordered list (sessions saved without it still load). Sessions saved before v4 are not loadable. Remote sessions save the local transcript with replay metadata. Subscription sessions persist continuation metadata for efficient resume.
+Version 4 snapshots embed the checkpoint tree alongside the task graph and active plan, and may also carry the queued plans of a plan sequence as an optional ordered list and, for a session that ACP saved by itself, an optional marker that says so (sessions saved without them still load). Sessions saved before v4 are not loadable. Remote sessions save the local transcript with replay metadata. Subscription sessions persist continuation metadata for efficient resume.
 
 ## Memory and Project Context
 
@@ -1815,41 +1818,85 @@ Startup](#recovering-incomplete-tasks-at-startup)).
 
 ### Session History
 
-ZenCODE keeps the conversation of every ACP session, so a client that reopens
-a conversation after the agent restarted finds it again. As ACP specifies, a
-client reopens a conversation with `session/load` or `session/resume` and
-sends only its `sessionId`, `cwd`, and `mcpServers`: keeping the conversation
-is up to the agent.
+ZenCODE keeps the conversation of every ACP session as a saved session of its
+project, so a client that reopens a conversation after the agent restarted
+finds it again, and `/sessions` lists it. As ACP specifies, a client reopens a
+conversation with `session/load` or `session/resume` and sends only its
+`sessionId`, `cwd`, and `mcpServers`: keeping the conversation is up to the
+agent.
 
-- **Saving.** At the end of every turn the session's history is saved, with
-  the session's model, agent, thinking level, and `preserveThinking`, under
-  `~/.zencode/acp-sessions/<project key>/` (see [Project Key](#project-key)),
-  in one private file per session (mode `0600`) named by the SHA-256 hash of
-  the session id. The turns the linked Telegram chat runs on the session are
-  saved too. The system prompt, the session context, the tools, and the cache
-  key are not saved: they are composed again when the session is restored. A
-  session without turns saves nothing, a save that fails is only logged and
-  never changes a reply or a turn, and nothing is deleted by `session/close`
-  or expires.
+- **Saving.** At the end of every turn the session is saved, with its model,
+  agent, thinking level, and the tools and skills of its agent, under
+  `~/.zencode/sessions/<project key>/` (see [Project Key](#project-key)) like
+  any saved session, marked as saved by ACP. The turns the linked Telegram
+  chat runs on the session are saved too. A session without turns saves
+  nothing, a save that fails is only logged and never changes a reply or a
+  turn, nothing expires, and the saved-session index `sessions.json`, which
+  records the sessions you save, is not changed.
+- **Name.** The first save names the session after its first prompt, as
+  `/sessions save` does, or after its id when the prompt has no text. When
+  another session already has a saved session with that name, ` (2)`, ` (3)`,
+  … is added: a save never overwrites the saved session of another session.
+  The name stays the same for every later turn, after a restart too.
+- **`/sessions`.** The terminal, the Telegram menu, and the other channels
+  list, load, and delete these sessions like the ones you save. Loading one
+  gives its conversation, model, thinking level, agent, and the agent's tools
+  and skills. `/sessions save` of a loaded one saves it as a session of yours,
+  no longer marked as saved by ACP, and `/sessions <name>` saves a copy of
+  yours under another name. A session of yours stays as you saved it unless
+  an ACP client goes on with the same conversation: its next turn saves the
+  conversation again under the name the ACP session has, marked as saved by
+  ACP.
 - **Restoring.** `session/load` or `session/resume` of a session that the
   running process no longer holds, with no `history` from the client, restores
-  the saved conversation of that id in the project of `cwd`. `session/load`
-  replays it to the client before its reply (the prompts as
-  `user_message_chunk`, the responses as `agent_thought_chunk` and
-  `agent_message_chunk`); `session/resume` does not replay it. In both cases
-  the next prompt reaches the model with the earlier turns.
+  the saved session of that id in the project of `cwd`: the one ACP saved,
+  else the most recently saved one. `session/load` replays it to the client
+  before its reply (the prompts as `user_message_chunk`, the responses as
+  `agent_thought_chunk` and `agent_message_chunk`); `session/resume` does not
+  replay it. In both cases the next prompt reaches the model with the earlier
+  turns, and the next saves update the same saved session. The system prompt,
+  the session context, the tools, and the MCP servers are composed again, not
+  read from the file.
 - **What the client sends wins.** A non-empty `history` from the client
   replaces the saved conversation. The model is the client's `modelId`, else
   the saved one while it is still configured, else the default; the agent is
   the client's `agentId`, else the saved one while the profile still exists,
   else the project's default; the thinking level is the client's, else the
   saved one when the model offers it, else the default; `preserveThinking` is
-  the client's, else the saved one.
-- **Nothing saved.** A session id without a saved conversation, or whose file
+  the client's, else off.
+- **Nothing saved.** A session id without a saved session, or whose file
   cannot be read, still opens an empty session and the request succeeds, as
   before. A session that the process still holds is replayed from memory.
-
-ACP sessions are not saved sessions: they do not appear in `/sessions`.
+- **Listing.** `initialize` declares `close`, `delete`, `list`, and `resume` in
+  `sessionCapabilities`. `session/list` lists the sessions that ACP saved by
+  itself, the ones `session/delete` deletes: one entry per session id, from
+  the most recent of its saved sessions, with its `sessionId`, its `cwd` (the
+  working directory it was saved in), its name as `title`, and the time it was
+  last saved as `updatedAt` (ISO 8601). The most recently saved session comes
+  first, and sessions saved at the same moment come in the order of their id.
+  With `cwd`, an absolute path, only the sessions saved in exactly that
+  directory are listed: `cwd` is resolved as `session/new` and `session/load`
+  resolve it, symbolic links included, and every entry carries the `cwd` the
+  client sent, so `session/load` with it finds the session. Another folder
+  with the same name, which shares the project's saved sessions, is not
+  listed. Without `cwd` every project is listed, each entry with the
+  directory it was saved in. A page holds 50 sessions; while more remain, the
+  reply has `nextCursor`, an opaque token the client sends back as `cursor`
+  for the next page. A `cwd` that is not an absolute path, or a `cursor` that
+  no reply gave, answers `-32602`. The sessions you saved with `/sessions`
+  and a session without turns are not listed, and listing only reads the
+  saved sessions: it restores, opens, and changes nothing. A session deleted
+  with `session/delete` or from `/sessions` is no longer listed.
+- **Deleting.** `session/delete` with the session's `sessionId` closes the
+  session as `session/close` does, if the agent still runs it, then deletes
+  the saved sessions that ACP saved for that id, in every project, each with
+  its DS4 checkpoint and its entry in `sessions.json`, and answers `{}`.
+  Deleting a session that does not exist or was already deleted also answers
+  `{}`; a saved session that cannot be removed answers with an error.
+  A saved session you saved with `/sessions` under the same id stays.
+  Deleting the session from `/sessions` works too, but a session the agent
+  still runs is saved again by its next turn. `session/close` deletes
+  nothing. After a deletion, `session/load` of the id opens an empty session.
 
 ### Authentication Methods
 
@@ -1888,6 +1935,9 @@ stream, and stdout still contains only JSON-RPC messages:
   ```text
   Authentication required: ZenCODE is not configured. Use the "Set up ZenCODE" terminal authentication method, or run `zen --setup` in a terminal.
   ```
+
+- `session/list` and `session/delete` respond as usual: they only read and
+  delete the saved sessions (see [Session History](#session-history)).
 
 The configuration is not reloaded while the agent runs. After setup, the client
 must restart the agent; the `zencode-setup` flow does this by itself. If setup

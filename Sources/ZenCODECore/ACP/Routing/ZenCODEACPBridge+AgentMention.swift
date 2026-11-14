@@ -46,9 +46,10 @@ extension ZenCODEACPBridge {
     }
 
     /// Resolves the agent for a session. An explicit `agentId`/`agentName` in
-    /// `params` selects any profile. Without one, `savedAgentID`, the agent of
-    /// the record a restored session was saved with, is kept while a profile
-    /// with that id still exists. Otherwise a launch-time default
+    /// `params` selects any profile. Without one, the agent a restored
+    /// session was saved with is kept while its profile still exists, found
+    /// by `savedAgentID` and then by `savedAgentName`, as a saved session
+    /// loaded from `/sessions` finds it. Otherwise a launch-time default
     /// developer is re-resolved for the session's `workingDirectory` so each
     /// project gets its own default; an agent requested at launch
     /// (`--agent`) is kept as is. A failure to read the project's selection
@@ -56,7 +57,8 @@ extension ZenCODEACPBridge {
     func resolvedACPAgentProfile(
         from params: [String: Any],
         workingDirectory: URL,
-        savedAgentID: String? = nil
+        savedAgentID: String? = nil,
+        savedAgentName: String? = nil
     ) throws -> AgentProfile? {
         let rawAgentReference = (params["agentId"] as? String)?.nilIfBlank
             ?? (params["agentID"] as? String)?.nilIfBlank
@@ -64,8 +66,7 @@ extension ZenCODEACPBridge {
             ?? (params["agentName"] as? String)?.nilIfBlank
             ?? (params["agent_name"] as? String)?.nilIfBlank
         guard let rawAgentReference else {
-            if let savedAgentID,
-               let savedAgent = (try? availableACPAgentProfiles())?.first(where: { $0.id == savedAgentID }) {
+            if let savedAgent = savedACPAgentProfile(id: savedAgentID, name: savedAgentName) {
                 return savedAgent
             }
             if configuration.requestedAgentName != nil || configuration.selectedAgent == nil {
@@ -84,6 +85,26 @@ extension ZenCODEACPBridge {
             throw ACPError.invalidParams("Unknown agent: \(rawAgentReference).")
         }
         return agent
+    }
+
+    /// The profile of the agent a saved session was saved with: by `id`, then
+    /// by `name` (``ChatSessionController/agentSelectionKey(_:)``), as
+    /// ``ChatSessionController/restoredAgent(for:)`` finds it; `nil` when the
+    /// session was saved without one, the profile no longer exists, or the
+    /// profiles cannot be read.
+    private func savedACPAgentProfile(id: String?, name: String?) -> AgentProfile? {
+        guard id != nil || name != nil,
+              let agents = try? availableACPAgentProfiles() else {
+            return nil
+        }
+        if let id, let agent = agents.first(where: { $0.id == id }) {
+            return agent
+        }
+        if let name {
+            let key = ChatSessionController.agentSelectionKey(name)
+            return agents.first { ChatSessionController.agentSelectionKey($0.name) == key }
+        }
+        return nil
     }
 
     func acpSessionConfiguration(

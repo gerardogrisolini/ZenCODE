@@ -164,6 +164,7 @@ extension ZenCODEACPBridge {
             activeWorkflowPromptID: live.activeWorkflowPromptID,
             activePromptTask: live.activePromptTask,
             activePromptTaskID: live.activePromptTaskID,
+            savedSessionLink: live.savedSessionLink,
             controller: live.controller
         )
     }
@@ -333,15 +334,12 @@ extension ZenCODEACPBridge {
                 inheriting: live
             )
         }
-        // The live session now holds the turn's history: so does its record,
-        // for a `session/load` after the process restarted. Saved in the same
-        // step, under the same fences, only when the refresh took place.
-        if didRefresh, let refreshed = liveSession(id: sessionID, epoch: epoch) {
-            saveSessionHistory(
-                sessionID: sessionID,
-                configuration: refreshed.configuration,
-                history: snapshot.history
-            )
+        // The live session now holds the turn's history: so does its saved
+        // session, for `/sessions` and for a `session/load` after the process
+        // restarted. Saved only when the refresh took place, for the same
+        // incarnation.
+        if didRefresh {
+            await saveSession(sessionID: sessionID, epoch: epoch, snapshot: snapshot)
         }
     }
 

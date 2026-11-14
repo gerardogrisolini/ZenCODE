@@ -20,6 +20,25 @@ Release tags follow the strict `vX.Y.Z` contract described in
   a saved one, whose prompts keep the block they were sent with. `memory` is
   now a keyword of `/sessions`, so `/sessions memory` no longer saves a session
   with that name.
+- ACP clients can delete a conversation with `session/delete`, which
+  `initialize` now declares in `sessionCapabilities` next to `close` and
+  `resume`. The session is closed as `session/close` closes it, if the agent
+  still runs it, and the saved sessions that ACP saved for its id are deleted
+  from every project, each with its DS4 checkpoint and its entry in
+  `sessions.json`; a saved session the user saved with `/sessions` under the
+  same id stays. Deleting a session that does not exist, or was already
+  deleted, succeeds; a saved session that cannot be removed fails the request.
+- ACP clients can list the conversations they can reopen with `session/list`,
+  which `initialize` now declares in `sessionCapabilities` too. It lists the
+  sessions that ACP saved by itself, the ones `session/delete` deletes, so a
+  deleted session is no longer listed: one entry per session id, the most
+  recently saved first, with its `sessionId`, its `cwd`, the name of its saved
+  session as `title`, and the time it was last saved as `updatedAt`. A `cwd`
+  lists only the sessions saved in exactly that working directory, resolved as
+  `session/new` and `session/load` resolve it; without it every project is
+  listed. A page holds 50 sessions, and `nextCursor` leads to the next one.
+  The sessions saved with `/sessions` and a session without turns are not
+  listed, and listing restores or changes nothing.
 
 ### Fixed
 
@@ -30,16 +49,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
   agent; `zen` kept it only in memory, opened an empty session with the same
   id, and answered with success, so the next prompt reached the model without
   the earlier turns. The conversation of every ACP session is now saved at the
-  end of each turn, including the turns the linked Telegram chat runs, under
-  `~/.zencode/acp-sessions/<project key>/`, one private file per session
-  named by a hash of its id. `session/load` of a session the process no longer
-  holds replays it to the client and restores it, with the session's model,
-  agent, and thinking level while they are still available; `session/resume`
-  restores it without replaying it. A `history` or a model, agent, or thinking
-  level that the client sends still wins. ACP sessions do not appear in
-  `/sessions`, a session without turns saves nothing, `session/close` deletes
-  nothing, and a session id that was never saved still opens an empty
-  session.
+  end of each turn, including the turns the linked Telegram chat runs, as a
+  saved session of its project, named after its first prompt (with ` (2)`,
+  ` (3)`, … when another session already has that name) and marked as saved by
+  ACP: `/sessions` lists it, loads it, and deletes it like any other saved
+  session. `session/load` of a session the process no longer holds finds it
+  by the session's id, replays it to the client, and restores it, with the
+  session's model, agent, and thinking level while they are still available;
+  `session/resume` restores it without replaying it. A `history` or a model,
+  agent, or thinking level that the client sends still wins. A session
+  without turns saves nothing, `session/close` deletes nothing, and a session
+  id that has no saved session still opens an empty session.
 - In ACP clients such as Xcode, a session whose agent has the Xcode tools
   enabled no longer asks for the Xcode MCP consent twice when its first prompt
   is sent. Xcode passes its own `xcode-tools` MCP server to every session, and

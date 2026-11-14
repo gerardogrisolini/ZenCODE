@@ -50,6 +50,9 @@ public struct TerminalSavedSessionContextWindow: Codable, Equatable, Sendable {
 
 public struct TerminalSavedSession: Codable, Equatable, Sendable {
     public static let currentVersion = 5
+    /// ``autosaveChannel`` of a session the ACP bridge (`zen --acp`) saved by
+    /// itself at the end of a turn.
+    public static let acpAutosaveChannel = "acp"
 
     public let version: Int
     public let name: String
@@ -83,6 +86,12 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
     public let taskGraph: TaskGraphSnapshot?
     /// Session checkpoint tree (v4+).
     public let checkpointTree: SessionCheckpointTree
+    /// The channel that saved the session by itself, without a command
+    /// (``acpAutosaveChannel``); `nil` for a session saved with `/sessions`.
+    /// Sessions saved without it decode to `nil`, and the writer omits the key
+    /// when it is `nil`, so existing files and the sessions saved with a
+    /// command encode identically (no new key, no version bump).
+    public let autosaveChannel: String?
 
     public init(
         version: Int = Self.currentVersion,
@@ -106,7 +115,8 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         activePlan: TerminalSessionPlan? = nil,
         queuedPlans: [TerminalSessionPlan]? = nil,
         taskGraph: TaskGraphSnapshot? = nil,
-        checkpointTree: SessionCheckpointTree
+        checkpointTree: SessionCheckpointTree,
+        autosaveChannel: String? = nil
     ) {
         self.version = version
         self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -132,6 +142,7 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         self.queuedPlans = queuedPlans
         self.taskGraph = taskGraph
         self.checkpointTree = checkpointTree
+        self.autosaveChannel = autosaveChannel?.nilIfBlank
     }
 
     /// Decodes exactly what the synthesized conformance would, except that
@@ -167,6 +178,7 @@ public struct TerminalSavedSession: Codable, Equatable, Sendable {
         self.queuedPlans = try container.decodeIfPresent([TerminalSessionPlan].self, forKey: .queuedPlans)
         self.taskGraph = try container.decodeIfPresent(TaskGraphSnapshot.self, forKey: .taskGraph)
         self.checkpointTree = try container.decode(SessionCheckpointTree.self, forKey: .checkpointTree)
+        self.autosaveChannel = try container.decodeIfPresent(String.self, forKey: .autosaveChannel)
     }
 
     public var displayHistory: [AgentRuntimeMessage] {
@@ -360,6 +372,17 @@ public enum TerminalSessionStore {
             fileManager: fileManager,
             supportDirectoryURL: supportDirectoryURL
         )
+        return removeEngineCheckpoint(at: checkpointURL, fileManager: fileManager)
+    }
+
+    /// Removes the engine checkpoint at `checkpointURL`, if any, as
+    /// ``deleteEngineCheckpoint(name:workingDirectory:fileManager:supportDirectoryURL:)``
+    /// does.
+    @discardableResult
+    private static func removeEngineCheckpoint(
+        at checkpointURL: URL,
+        fileManager: FileManager
+    ) -> Bool {
         guard fileManager.fileExists(atPath: checkpointURL.path) else {
             return false
         }
@@ -394,10 +417,22 @@ public enum TerminalSessionStore {
         fileManager: FileManager = .default,
         supportDirectoryURL: URL? = nil
     ) -> URL {
+        sessionsRootDirectoryURL(
+            fileManager: fileManager,
+            supportDirectoryURL: supportDirectoryURL
+        )
+        .appendingPathComponent(projectKey(for: workingDirectory), isDirectory: true)
+    }
+
+    /// The `sessions` directory of the support directory, which holds one
+    /// directory per project key.
+    static func sessionsRootDirectoryURL(
+        fileManager: FileManager = .default,
+        supportDirectoryURL: URL? = nil
+    ) -> URL {
         (supportDirectoryURL?.standardizedFileURL
             ?? AppStorageDirectory.appSupportDirectoryURL(fileManager: fileManager))
             .appendingPathComponent("sessions", isDirectory: true)
-            .appendingPathComponent(projectKey(for: workingDirectory), isDirectory: true)
     }
 
     public static func filename(for name: String) -> String {
@@ -527,6 +562,229 @@ public enum TerminalSessionStore {
         guard session.workingDirectoryPath.nilIfBlank != nil else {
             throw TerminalSessionStoreError.emptyWorkingDirectory
         }
+    }
+}
+
+// MARK: - Lookup by session id
+
+/// What a saved session file says about itself before its conversation: which
+/// session it is, where and when it was saved, and whether a channel saved it
+/// by itself (``TerminalSavedSession/autosaveChannel``). Decoded without the
+/// history, the transcript, the plans, the task graph, or the checkpoint tree.
+struct TerminalSavedSessionHeader: Decodable, Equatable, Sendable {
+    let version: Int
+    let name: String
+    let sessionID: String
+    let workingDirectoryPath: String
+    let createdAt: Date
+    let savedAt: Date
+    let autosaveChannel: String?
+}
+
+/// A saved session file and its header.
+struct TerminalSavedSessionFile: Equatable, Sendable {
+    let url: URL
+    let header: TerminalSavedSessionHeader
+}
+
+/// The saved sessions are indexed by name; a channel that knows a session
+/// only by its id (an ACP client) finds and lists them here. These reads
+/// decode only the header of every file (``TerminalSavedSessionHeader``),
+/// rename, migrate, and harden nothing, and skip the files a listing would not
+/// read as sessions (hidden and temporary files, DS4 checkpoints and their
+/// temporary files, directories) and every file that cannot be read as a
+/// session of the current version, without failing.
+extension TerminalSessionStore {
+    /// The saved session files of `directoryURL`, one project's directory,
+    /// with their headers, in no particular order; empty when the directory
+    /// does not exist or cannot be listed.
+    static func savedSessionFiles(
+        in directoryURL: URL,
+        fileManager: FileManager = .default
+    ) -> [TerminalSavedSessionFile] {
+        guard let fileURLs = try? fileManager.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: nil
+        ) else {
+            return []
+        }
+        let decoder = PropertyListDecoder()
+        return fileURLs.compactMap { url in
+            guard !isEngineCheckpointArtifact(url), !isHiddenOrTemporaryFile(url) else {
+                return nil
+            }
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                  !isDirectory.boolValue,
+                  // Mapped, not copied: only the header of every file is read.
+                  let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+                  let header = try? decoder.decode(TerminalSavedSessionHeader.self, from: data),
+                  header.version == TerminalSavedSession.currentVersion,
+                  header.name.nilIfBlank != nil,
+                  header.sessionID.nilIfBlank != nil,
+                  header.workingDirectoryPath.nilIfBlank != nil else {
+                return nil
+            }
+            return TerminalSavedSessionFile(url: url, header: header)
+        }
+    }
+
+    /// The saved session of the session `sessionID` that a channel restoring
+    /// it starts from, in the project of `workingDirectory` and among the
+    /// sessions a listing of that project shows: the one saved by
+    /// `preferredAutosaveChannel` when there is one, else the most recently
+    /// saved, loaded in full. A file that cannot be loaded gives way to the
+    /// next one; `nil` when none is left.
+    static func savedSession(
+        sessionID rawSessionID: String,
+        workingDirectory: URL,
+        preferringAutosaveChannel preferredAutosaveChannel: String,
+        fileManager: FileManager = .default,
+        supportDirectoryURL: URL? = nil
+    ) -> TerminalSavedSession? {
+        let sessionID = rawSessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let projectName = ProjectStorageKey.projectName(for: workingDirectory)
+        let candidates = savedSessionFiles(
+            in: sessionsDirectoryURL(
+                for: workingDirectory,
+                fileManager: fileManager,
+                supportDirectoryURL: supportDirectoryURL
+            ),
+            fileManager: fileManager
+        )
+        .filter {
+            $0.header.sessionID == sessionID
+                && ProjectStorageKey.projectName(forPath: $0.header.workingDirectoryPath) == projectName
+        }
+        .sorted { lhs, rhs in
+            let lhsPreferred = lhs.header.autosaveChannel == preferredAutosaveChannel
+            let rhsPreferred = rhs.header.autosaveChannel == preferredAutosaveChannel
+            if lhsPreferred != rhsPreferred {
+                return lhsPreferred
+            }
+            if lhs.header.savedAt != rhs.header.savedAt {
+                return lhs.header.savedAt > rhs.header.savedAt
+            }
+            return lhs.header.name.localizedStandardCompare(rhs.header.name) == .orderedAscending
+        }
+        for candidate in candidates {
+            do {
+                let session = try load(from: candidate.url)
+                if session.sessionID == sessionID {
+                    return session
+                }
+            } catch {
+                ZenLogger.warning(
+                    .sessionService,
+                    "Failed to load saved session \(candidate.url.lastPathComponent): \(error.localizedDescription)"
+                )
+            }
+        }
+        return nil
+    }
+
+    /// The saved session files of the session `sessionID` that
+    /// `autosaveChannel` saved by itself, in every project.
+    static func autosavedSessionFiles(
+        sessionID rawSessionID: String,
+        autosaveChannel: String,
+        fileManager: FileManager = .default,
+        supportDirectoryURL: URL? = nil
+    ) -> [TerminalSavedSessionFile] {
+        let sessionID = rawSessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return projectDirectoryURLs(fileManager: fileManager, supportDirectoryURL: supportDirectoryURL)
+            .flatMap { savedSessionFiles(in: $0, fileManager: fileManager) }
+            .filter {
+                $0.header.sessionID == sessionID && $0.header.autosaveChannel == autosaveChannel
+            }
+    }
+
+    /// The saved session files that `autosaveChannel` saved by itself, in no
+    /// particular order. With `workingDirectory`, only those of its project
+    /// saved in exactly that working directory: the standardized paths are
+    /// compared, so another folder with the same name, whose sessions share
+    /// the project's directory, is not included. With `nil`, those of every
+    /// project, each one only in the directory of its own project, where a
+    /// lookup of its working directory finds it.
+    static func autosavedSessionFiles(
+        autosaveChannel: String,
+        workingDirectory: URL?,
+        fileManager: FileManager = .default,
+        supportDirectoryURL: URL? = nil
+    ) -> [TerminalSavedSessionFile] {
+        guard let workingDirectory else {
+            return projectDirectoryURLs(fileManager: fileManager, supportDirectoryURL: supportDirectoryURL)
+                .flatMap { directoryURL in
+                    savedSessionFiles(in: directoryURL, fileManager: fileManager).filter {
+                        $0.header.autosaveChannel == autosaveChannel
+                            && projectKey(for: URL(fileURLWithPath: $0.header.workingDirectoryPath))
+                                == directoryURL.lastPathComponent
+                    }
+                }
+        }
+        let workingDirectoryPath = normalizedWorkingDirectoryPath(workingDirectory)
+        return savedSessionFiles(
+            in: sessionsDirectoryURL(
+                for: workingDirectory,
+                fileManager: fileManager,
+                supportDirectoryURL: supportDirectoryURL
+            ),
+            fileManager: fileManager
+        )
+        .filter {
+            $0.header.autosaveChannel == autosaveChannel
+                && normalizedWorkingDirectoryPath(URL(fileURLWithPath: $0.header.workingDirectoryPath))
+                    == workingDirectoryPath
+        }
+    }
+
+    /// The directory of every project under ``sessionsRootDirectoryURL(fileManager:supportDirectoryURL:)``,
+    /// sorted by name, without hidden entries and files; empty when the
+    /// `sessions` directory does not exist or cannot be listed.
+    private static func projectDirectoryURLs(
+        fileManager: FileManager,
+        supportDirectoryURL: URL?
+    ) -> [URL] {
+        let rootURL = sessionsRootDirectoryURL(
+            fileManager: fileManager,
+            supportDirectoryURL: supportDirectoryURL
+        )
+        guard let projectURLs = try? fileManager.contentsOfDirectory(
+            at: rootURL,
+            includingPropertiesForKeys: nil
+        ) else {
+            return []
+        }
+        return projectURLs
+            .filter { url in
+                var isDirectory: ObjCBool = false
+                return !url.lastPathComponent.hasPrefix(".")
+                    && fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory)
+                    && isDirectory.boolValue
+            }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    /// Deletes the saved session `file` with its engine checkpoint, as
+    /// ``delete(name:workingDirectory:fileManager:supportDirectoryURL:)``
+    /// does: the checkpoint first, best effort, then the session file, whose
+    /// removal throws. Returns whether the session file was there.
+    @discardableResult
+    static func deleteSavedSessionFile(
+        _ file: TerminalSavedSessionFile,
+        fileManager: FileManager = .default
+    ) throws -> Bool {
+        let checkpointURL = file.url
+            .deletingLastPathComponent()
+            .appendingPathComponent(filename(for: file.header.name))
+            .deletingPathExtension()
+            .appendingPathExtension(engineCheckpointFileExtension)
+        removeEngineCheckpoint(at: checkpointURL, fileManager: fileManager)
+        guard fileManager.fileExists(atPath: file.url.path) else {
+            return false
+        }
+        try fileManager.removeItem(at: file.url)
+        return true
     }
 }
 
