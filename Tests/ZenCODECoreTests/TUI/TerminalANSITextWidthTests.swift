@@ -38,6 +38,23 @@ struct TerminalANSITextWidthTests {
         #expect(TerminalANSIText.visibleWidth(text) == width)
     }
 
+    /// Printable ASCII takes a one-byte fast path. ASCII controls and clusters
+    /// that only start with an ASCII scalar keep the full measurement.
+    @Test
+    func printableASCIIIsOneCellAndItsNeighboursKeepTheFullMeasurement() {
+        for value in UInt8(0x20)...0x7E {
+            let character = Character(Unicode.Scalar(value))
+            #expect(TerminalANSIText.visibleWidth(of: character) == 1, "U+00\(String(value, radix: 16))")
+        }
+        let neighbours: [(Character, Int)] = [
+            ("\u{0}", 0), ("\u{1F}", 1), ("\u{7F}", 1), ("\r\n", 1),
+            ("#\u{FE0F}\u{20E3}", 2), ("e\u{301}", 1), ("\u{80}", 1), ("é", 1),
+        ]
+        for (character, width) in neighbours {
+            #expect(TerminalANSIText.visibleWidth(of: character) == width)
+        }
+    }
+
     // MARK: - Grapheme-safe truncation
 
     /// Truncation keeps or drops whole graphemes (ZWJ family, skin tone, flag),

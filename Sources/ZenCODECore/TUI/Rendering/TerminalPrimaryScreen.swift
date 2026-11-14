@@ -46,7 +46,12 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
     private var footerRows = 0
     private var footer = ""
     private var reservedRows = 0
-    private var modals: [(id: UUID, value: Presentation?)] = []
+    private var modals: [(id: UUID, value: Presentation?)] = [] { didSet { modalsRevision &+= 1 } }
+    /// Bumped by every mutation of `modals`: identifies the presentation a
+    /// memoized modal sequence was drawn from without comparing its contents.
+    private var modalsRevision: UInt64 = 0
+    /// Last `modalSequence()` output with the inputs it was drawn from.
+    private var modalMemo: (key: ModalKey, sequence: String)?
     private var revision: UInt64 = 0
     private var installed = false
     private var standalone = false
@@ -534,12 +539,37 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
         guard let presentation = modals.last?.value else { return 0 }
         switch presentation {
         case .menu:
-            return min(max(0, geometry.rows - footerRows - 2), modalLines().count + 2)
+            return menuRowCount(lineCount: modalLines().count)
         case let .dialog(dialog):
             return dialogLines(dialog).count
         }
     }
+    /// Rows a menu frame takes for `lineCount` content lines, borders
+    /// included, within the rows the footer leaves.
+    private func menuRowCount(lineCount: Int) -> Int {
+        min(max(0, geometry.rows - footerRows - 2), lineCount + 2)
+    }
+    /// Every input of `modalSequence()`. The frame style is static and every
+    /// layout helper is pure, so equal keys always draw the same bytes. The
+    /// presentation is identified by `modalsRevision` rather than compared:
+    /// `String ==` is canonical equivalence, so "é" would match "e\u{301}"
+    /// and reuse the bytes drawn for another presentation.
+    private struct ModalKey: Equatable {
+        let modalsRevision: UInt64
+        let geometry: Geometry
+        let footerRows: Int
+        let chromeTop: Int
+    }
+    /// Every write repaints the modal area. It is redrawn only when an input
+    /// differs from the memoized key, so no mutation has to invalidate it.
     private func modalSequence() -> String {
+        let key = ModalKey(modalsRevision: modalsRevision, geometry: geometry, footerRows: footerRows, chromeTop: chromeTop)
+        if let modalMemo, modalMemo.key == key { return modalMemo.sequence }
+        let sequence = drawnModalSequence()
+        modalMemo = (key, sequence)
+        return sequence
+    }
+    private func drawnModalSequence() -> String {
         guard let presentation = modals.last?.value else { return "" }
         switch presentation {
         case .menu:
@@ -554,9 +584,10 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
         let width = max(1, geometry.columns - 4)
         let border = TerminalStyle.Chrome.border, reset = TerminalStyle.reset
         let rule = String(repeating: "─", count: max(0, geometry.columns - 2))
+        let lines = modalLines()
         let box = [border + "╭" + rule + "╮" + reset]
-            + modalLines().map { border + "│" + reset + " " + TerminalCheckboxMenu.padded(TerminalCheckboxMenu.fitLine($0, width: width), width: width) + " " + border + "│" + reset }
+            + lines.map { border + "│" + reset + " " + TerminalCheckboxMenu.padded(TerminalCheckboxMenu.fitLine($0, width: width), width: width) + " " + border + "│" + reset }
             + [border + "╰" + rule + "╯" + reset]
-        return Array(box.suffix(modalRowCount())).enumerated().map { cup(chromeTop + $0.offset) + "\u{1B}[2K" + $0.element }.joined()
+        return Array(box.suffix(menuRowCount(lineCount: lines.count))).enumerated().map { cup(chromeTop + $0.offset) + "\u{1B}[2K" + $0.element }.joined()
     }
 }

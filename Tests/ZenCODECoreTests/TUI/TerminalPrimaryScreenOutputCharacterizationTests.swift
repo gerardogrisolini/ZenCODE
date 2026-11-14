@@ -18,6 +18,15 @@ import Testing
         #expect(Self.fnv1a(bytes) == hash)
     }
 
+    /// Captured on the code that recomputed the modal area on every write:
+    /// never regenerate it for the memoized modal sequence.
+    @Test func modalBytesMatchThePerWriteRecomputationCapture() async {
+        await Task.yield()
+        let bytes = Self.modalOutput(seed: 7)
+        #expect(bytes.utf8.count == 196_871)
+        #expect(Self.fnv1a(bytes) == UInt64(8_340_741_919_495_088_603))
+    }
+
     private static let fragments: [String] = [
         "a", "Z", " ", "hello", "x", "-", "#", "~", "😀", "👍", "👍🏽", "🎉", "⏳", "⌚",
         "中", "漢字", "こ", "Ａ", "한", "e\u{301}", "\u{301}", "a\u{300}\u{302}", "👩‍💻", "👨‍👩‍👧", "\u{200D}",
@@ -30,6 +39,7 @@ import Testing
     ]
     private static let columnChoices = [1, 2, 3, 4, 5, 7, 10, 16, 33, 80]
     private static let footer = "\u{1B}[23;1H\u{1B}[2KPROMPT| 界🙂\u{1B}[24;1H\u{1B}[2KSTATUS| ready"
+    private static let otherFooter = "\u{1B}[22;1H\u{1B}[2KPROMPT| draft\u{1B}[23;1H\u{1B}[2KMODE| plan\u{1B}[24;1H\u{1B}[2KSTATUS| busy"
 
     /// The stream of `seed`: chunks, interleaved resizes and footer commits.
     private static func output(seed: UInt64) -> String {
@@ -68,6 +78,108 @@ import Testing
             }
             screen.append(chunk)
         }
+        return writes.withLock { $0.joined() }
+    }
+
+    /// Menus and dialogs kept open across modal updates, stacking, footer
+    /// commits and resizes, with writes after every change. It stays
+    /// synchronous: a changed geometry is committed only once the screen is
+    /// standalone, so no cursor position report is ever requested.
+    private static func modalOutput(seed: UInt64) -> String {
+        let writes = Mutex<[String]>([])
+        let screen = TerminalPrimaryScreen(
+            reports: TerminalCursorReport(), resizeGeneration: { 0 },
+            output: { text in writes.withLock { $0.append(text) } }
+        )
+        var random = SplitMix64(state: seed)
+        func write(_ count: Int = 3) {
+            for _ in 0..<count {
+                var chunk = ""
+                for _ in 0..<(1 + random.below(8)) { chunk += random.element(fragments) }
+                screen.append(chunk)
+            }
+        }
+        func items(_ count: Int) -> [TerminalCheckboxMenu.RenderedMenuLine] {
+            (0..<count).map { .init(text: "\($0 == 0 ? "›" : " ") [ ] item \($0) 界🙂", itemIndex: $0) }
+        }
+        let geometry = TerminalPrimaryScreen.Geometry(rows: 24, columns: 60)
+        screen.commitFooter(geometry: geometry, reservedRows: 2, sequence: footer)
+        write()
+
+        // One menu, unchanged across writes, then each kind of update.
+        let first = screen.beginModal()
+        write()
+        var menu = TerminalPrimaryScreen.Modal(
+            title: "\u{1B}[1mMODELS\u{1B}[0m", help: ["↑/↓ move · Enter select", "Esc cancel"],
+            lines: items(5) + [.init(text: String(repeating: "long 中 ", count: 20), itemIndex: 5)],
+            focusedIndex: 1
+        )
+        screen.updateModal(first, value: menu); write(6)
+        screen.updateModal(first, value: menu); write()
+        menu.lines[2] = .init(text: "  [x] renamed 2", itemIndex: 2)
+        screen.updateModal(first, value: menu); write()
+        menu.focusedIndex = 4
+        screen.updateModal(first, value: menu); write()
+        menu.lines = items(30); menu.focusedIndex = 20
+        screen.updateModal(first, value: menu); write()
+        menu.focusedIndex = 3
+        screen.updateModal(first, value: menu); write()
+        menu.lines = items(3)
+        screen.updateModal(first, value: menu); write()
+
+        // Text input with a cursor, then a header taller than its share.
+        var input = TerminalPrimaryScreen.Modal(
+            title: "RENAME", help: ["Enter confirm · Esc cancel"],
+            lines: [.init(text: "Name: ", itemIndex: 0)], focusedIndex: 0,
+            input: String(repeating: "draft 界 value ", count: 9), inputCursor: 17
+        )
+        screen.updateModal(first, value: input); write()
+        input.inputCursor = 90
+        screen.updateModal(first, value: input); write()
+        input.inputCursor = nil
+        screen.updateModal(first, value: input); write()
+        var table = TerminalPrimaryScreen.Modal(
+            title: "BINDINGS", help: ["↑/↓ move · Tab table"], lines: items(14), focusedIndex: 0,
+            header: (0..<30).map { "HEADER_\($0) │ value" }, headerScrollOffset: 7
+        )
+        screen.updateModal(first, value: table); write()
+        table.headerScrollOffset = 12; table.headerFocused = true
+        screen.updateModal(first, value: table); write()
+
+        // The same modal becomes a dialog.
+        let card = (0..<6).map { "│ consent line \($0) 🙂" }.joined(separator: "\n")
+        screen.updateDialog(first, value: TerminalDialogPresentation(prompt: "\n" + card + "\n")); write()
+        screen.updateDialog(first, value: TerminalDialogPresentation(prompt: card + "\n│ [y] allow  [n] deny")); write()
+
+        // Stacked modals: the top one is drawn until it ends.
+        let second = screen.beginModal()
+        write()
+        screen.updateModal(second, value: menu); write()
+        screen.endModal(second); write()
+        screen.endModal(first); write()
+
+        // Canonically equal but byte-distinct titles: each must be drawn with
+        // its own bytes, also when the top one ends.
+        let composed = screen.beginModal()
+        screen.updateModal(composed, value: .init(title: "caf\u{E9}", help: [], lines: items(2), focusedIndex: 0)); write()
+        let decomposed = screen.beginModal()
+        screen.updateModal(decomposed, value: .init(title: "cafe\u{301}", help: [], lines: items(2), focusedIndex: 0)); write()
+        screen.endModal(decomposed); write()
+        screen.endModal(composed); write()
+
+        // Footer commits and resizes under an open menu, then a dialog.
+        let third = screen.beginModal()
+        screen.updateModal(third, value: table); write()
+        screen.commitFooter(geometry: geometry, reservedRows: 3, sequence: footer); write()
+        screen.commitFooter(geometry: geometry, reservedRows: 3, sequence: otherFooter); write()
+        screen.resizeStandalone(.init(rows: 20, columns: 44)); write()
+        screen.commitFooter(geometry: .init(rows: 30, columns: 80), reservedRows: 2, sequence: footer); write()
+        screen.commitFooter(geometry: .init(rows: 30, columns: 33), reservedRows: 2, sequence: footer); write()
+        screen.commitFooter(geometry: .init(rows: 12, columns: 33), reservedRows: 2, sequence: footer); write()
+        screen.updateDialog(third, value: TerminalDialogPresentation(prompt: card + "\n" + card)); write()
+        screen.resizeStandalone(.init(rows: 8, columns: 20)); write()
+        screen.commitFooter(geometry: .init(rows: 8, columns: 20), reservedRows: 1, sequence: otherFooter); write()
+        screen.endModal(third); write()
         return writes.withLock { $0.joined() }
     }
 

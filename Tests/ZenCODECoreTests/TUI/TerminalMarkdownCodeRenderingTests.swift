@@ -559,4 +559,35 @@ struct TerminalMarkdownCodeRenderingTests {
         // The blank source row owes its margin to the visible cell it carries.
         #expect(rows[2] == " " + codeStyle + " " + Self.erase + Self.reset)
     }
+
+    // Every keyword below belongs to its language profile and is absent from the
+    // generic one, so a language that falls back to `.generic` (or lands on the
+    // wrong profile) renders the bare word instead of a highlighted keyword.
+    @Test(arguments: [
+        ("swift", "guard"),
+        ("javascript", "instanceof"),
+        ("typescript", "instanceof"),
+        ("python", "lambda"),
+        ("shell", "esac"),
+        ("rust", "impl"),
+        ("go", "chan"),
+        ("c", "typedef"),
+        ("cpp", "typedef"),
+        ("objc", "typedef"),
+        ("java", "sealed"),
+        ("kotlin", "sealed"),
+        ("csharp", "sealed"),
+        ("php", "foreach"),
+        ("ruby", "elsif"),
+        ("sql", "SELECT"),
+        ("docker", "ENTRYPOINT"),
+    ])
+    func everyProfileLanguageHighlightsItsOwnKeyword(language: String, keyword: String) {
+        let palette = TerminalMarkdownPalette.dark
+
+        #expect(
+            TerminalCodeBlockRenderer.renderLine(keyword, language: language, palette: palette)
+                == "\(palette.syntaxKeyword)\(keyword)\(TerminalStyle.reset)"
+        )
+    }
 }

@@ -197,7 +197,8 @@ enum TerminalCodeBlockRenderer {
             )
         }
         let safeLine = terminalSafeSourceLine(line)
-        switch normalizedLanguage(language) {
+        let normalized = normalizedLanguage(language)
+        switch normalized {
         case "css":
             return renderCSSLine(safeLine, palette: palette)
         case "html", "xml":
@@ -205,14 +206,14 @@ enum TerminalCodeBlockRenderer {
         case "json", "jsonc", "toml", "yaml":
             return renderDataLine(
                 safeLine,
-                language: normalizedLanguage(language),
+                language: normalized,
                 palette: palette,
                 syntaxColors: dataSyntaxColors
             )
         default:
             return renderProfileLine(
                 safeLine,
-                profile: profile(for: normalizedLanguage(language)),
+                profile: profile(for: normalized),
                 palette: palette
             )
         }

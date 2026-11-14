@@ -34,6 +34,14 @@ enum TerminalANSIText {
     /// ``visibleWidth(_:)``. Exposed so width-aware callers (truncation,
     /// fitting) can measure per-character without materializing a `String`.
     static func visibleWidth(of character: Character) -> Int {
+        // Printable ASCII is the bulk of what is measured and matches none of
+        // the rules below. Only a one-byte cluster qualifies: one that merely
+        // starts with ASCII (a keycap such as `#` + VS16 + U+20E3, a letter
+        // with a combining mark, CR-LF) is longer and takes the full path.
+        let utf8 = character.utf8
+        if utf8.count == 1, let byte = utf8.first, (0x20...0x7E).contains(byte) {
+            return 1
+        }
         let scalars = character.unicodeScalars
         guard let first = scalars.first else {
             return 0
