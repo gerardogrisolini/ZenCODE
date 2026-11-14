@@ -120,35 +120,21 @@ extension AgentConfigurationTests {
             "feature.task.update",
         ]))
 
-        let standalonePrompt = SystemPromptBuilder.standalonePrompt(
+        let standalonePrompt = SystemPromptBuilder.standalonePromptSections(
             cwd: "/tmp/project",
             agentsSection: nil,
             memorySection: nil,
-            memoryToolEnabled: false,
             allowedToolNames: taskTools
-        )
+        ).combinedPrompt
         #expect(standalonePrompt.contains("Task workflow policy:"))
 
-        let providedPrompt = AgentCoreAppSessionFactory.resolvedSystemPrompt(
+        let providedPrompt = AgentCoreAppSessionFactory.resolvedPromptSections(
             providedSystemPrompt: "Client instructions.",
             cwd: "/tmp/project",
             selectedAgent: nil,
             allowedToolNames: taskTools
-        )
+        ).combinedPrompt
         #expect(providedPrompt.contains("Task workflow policy:"))
-
-        let restoredPrompt = try #require(
-            SystemPromptBuilder.appendingTaskOrchestrationSection(
-                to: "Saved instructions.",
-                allowedToolNames: taskTools
-            )
-        )
-        #expect(restoredPrompt.contains("Saved instructions."))
-        #expect(restoredPrompt.contains("Task workflow policy:"))
-        #expect(SystemPromptBuilder.appendingTaskOrchestrationSection(
-            to: restoredPrompt,
-            allowedToolNames: taskTools
-        ) == restoredPrompt)
     }
 
     @Test
@@ -236,7 +222,8 @@ extension AgentConfigurationTests {
         )
         let terminal = TerminalChat(
             configuration: configuration,
-            stdinIsTerminal: false
+            stdinIsTerminal: false,
+            telegramTransportFactory: nil
         )
         terminal.chatSession.cacheKey = "terminal:/tmp/ZenCODE-cache-project:session:plan"
 

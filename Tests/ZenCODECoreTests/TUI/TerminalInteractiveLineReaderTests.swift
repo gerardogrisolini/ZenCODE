@@ -311,7 +311,10 @@ struct TerminalInteractiveLineReaderTests {
 
         func decode(_ bytes: [UInt8]) -> TerminalInteractiveLineReader.Key? {
             pipe.fileHandleForWriting.write(Data(bytes))
-            return reader.readKey(pollTimeoutMilliseconds: 500)
+            guard case let .key(key) = reader.readKeyResult(pollTimeoutMilliseconds: 500) else {
+                return nil
+            }
+            return key
         }
 
         // macOS terminals configured with Option as Meta prefix the plain
@@ -344,7 +347,10 @@ struct TerminalInteractiveLineReaderTests {
 
         func decode(_ bytes: [UInt8]) -> TerminalInteractiveLineReader.Key? {
             pipe.fileHandleForWriting.write(Data(bytes))
-            return reader.readKey(pollTimeoutMilliseconds: 500)
+            guard case let .key(key) = reader.readKeyResult(pollTimeoutMilliseconds: 500) else {
+                return nil
+            }
+            return key
         }
 
         #expect(decode(Array("\u{1B}[5~".utf8)) == .pageUp)
@@ -387,15 +393,15 @@ struct TerminalInteractiveLineReaderTests {
         pipe.fileHandleForWriting.write(
             Data([0x1B, 0x5D] + Array("0;title\nsecond line".utf8) + [0x07, 0x78])
         )
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .unknown)
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .character("x"))
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.unknown))
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.character("x")))
 
         // ST (`ESC \\`) is the other common OSC terminator.
         pipe.fileHandleForWriting.write(
             Data([0x1B, 0x5D] + Array("8;;https://example.com\nlabel".utf8) + [0x1B, 0x5C, 0x79])
         )
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .unknown)
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .character("y"))
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.unknown))
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.character("y")))
 
         pipe.fileHandleForWriting.closeFile()
     }
@@ -414,12 +420,12 @@ struct TerminalInteractiveLineReaderTests {
         pipe.fileHandleForWriting.write(
             Data([0x1B, 0x3F] + Array("vendor line one\nvendor line two\nvendor line three\n".utf8))
         )
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .unknown)
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.unknown))
 
         // Write after the drain has returned to prove no payload byte remains
         // queued as draft input.
         pipe.fileHandleForWriting.write(Data([0x78]))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .character("x"))
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.character("x")))
 
         pipe.fileHandleForWriting.closeFile()
     }

@@ -38,7 +38,7 @@ struct DataManagementSetupTests {
         defer { try? fileManager.removeItem(at: archiveURL) }
 
         try AppStorageDirectory.withSupportDirectoryURL(supportURL) {
-            let exported = try SupportDirectoryArchive.export(
+            let exported = try SupportDirectoryArchive.exportReplacingExisting(
                 from: AppStorageDirectory.appSupportDirectoryURL(),
                 to: archiveURL
             )

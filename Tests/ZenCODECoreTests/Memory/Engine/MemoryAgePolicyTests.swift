@@ -90,7 +90,11 @@ struct MemoryAgePolicyTests {
             persist: false
         )
 
-        let result = try await engine.searchReadOnlyDetailed("transport architecture")
+        let result = try await engine.searchReadOnlyDetailed(
+            "transport architecture",
+            scope: .all,
+            graph: engine.freshSnapshotForReadOnly()
+        )
         #expect(result.candidates.first?.memory.id == "old-relevant")
     }
 
@@ -130,7 +134,11 @@ struct MemoryAgePolicyTests {
             persist: false
         )
 
-        let result = try await engine.searchReadOnlyDetailed("alpha alignment")
+        let result = try await engine.searchReadOnlyDetailed(
+            "alpha alignment",
+            scope: .all,
+            graph: engine.freshSnapshotForReadOnly()
+        )
         #expect(result.candidates.map(\.memory.id).prefix(2) == ["leader", "runner-up"])
     }
 }

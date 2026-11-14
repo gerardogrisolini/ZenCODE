@@ -17,7 +17,7 @@ extension ZenDoctor {
         var checks: [ZenDoctorCheck] = []
 
         // Resolve the logger configuration directly from the environment rather
-        // than consulting ZenLogger.isEnabled. Resolution is pure (the system
+        // than through the process-wide logger state. Resolution is pure (the system
         // log is opened lazily by the platform), so the doctor stays read-only
         // even when logging is enabled, without ever touching stdout.
         if let configuration = ZenLogger.previewConfiguration(environment: environment) {

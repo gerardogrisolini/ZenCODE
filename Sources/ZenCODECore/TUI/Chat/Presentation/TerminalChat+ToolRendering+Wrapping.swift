@@ -102,19 +102,6 @@ extension TerminalChat {
         }
     }
 
-    nonisolated static func safelyWrappedDetailedToolLines(
-        _ lines: [String],
-        contentInsetWidth: Int = 0,
-        columnWidth: Int? = nil
-    ) -> [String] {
-        safelyWrappedDetailedToolRows(
-            lines.map(DetailedToolRow.text),
-            contentInsetWidth: contentInsetWidth,
-            columnWidth: columnWidth
-        )
-        .map(\.plainText)
-    }
-
     nonisolated static func wrappedDetailedToolTextLines(
         _ line: String,
         width: Int

@@ -56,7 +56,8 @@ struct ChatSessionSavedSessionTests {
                     workingDirectory: workspace
                 ),
                 stdinIsTerminal: false,
-                sessionRunner: runner
+                sessionRunner: runner,
+                telegramTransportFactory: nil
             )
         }
     }
@@ -84,7 +85,7 @@ struct ChatSessionSavedSessionTests {
             let chat = try environment.chat(runner: runner)
             try await chat.createCurrentSession(discoverExternalTools: false)
             _ = try await chat.preloadCurrentModel(emitStatus: false)
-            await chat.saveCurrentSession(named: "indexed")
+            await chat.writeSessionNotices(chat.chatSession.saveSessionCommand(named: "indexed").notices)
             #expect(SavedSessionsStore().sessions().map(\.sessionName) == ["indexed"])
 
             let outcome = try await chat.chatSession.deleteSavedSessions(names: ["indexed"])

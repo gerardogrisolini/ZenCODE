@@ -6,14 +6,8 @@
 //
 
 import Foundation
-import Synchronization
 import ToolCore
 
-private final class TerminalTelegramLifecycleGate: Sendable {
-    private let active = Mutex(false)
-    func setActive(_ value: Bool) { active.withLock { $0 = value } }
-    var isActive: Bool { active.withLock { $0 } }
-}
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -130,7 +124,6 @@ public actor TerminalTelegramControlService {
     /// service instance. See ``TerminalTelegramRateGovernor``.
     let rateGovernor = TerminalTelegramRateGovernor()
     private let dispatcher: TerminalTelegramBotDispatcher
-    private let lifecycleGate: TerminalTelegramLifecycleGate
     /// Lifecycle-safe presence lease manager for `sendChatAction`.
     lazy var presenceLeaseManager = TerminalTelegramPresenceLeaseManager(
         sendAction: { [weak self] scope in
@@ -142,17 +135,6 @@ public actor TerminalTelegramControlService {
     /// Selective, bounded receiver for inbound documents/photos. Owns the
     /// 0600 temporaries and their deterministic cleanup.
     let inboundAttachments = TerminalTelegramInboundAttachmentStore()
-
-    /// A service on the production transport with a dispatcher of its own.
-    /// Two services created this way for the same bot poll it twice, which
-    /// the Bot API refuses (HTTP 409): services that share a bot must share
-    /// one dispatcher, as the Telegram channels of a ``ChatSessionHost`` do.
-    public init() {
-        self.init(
-            transportFactory: { NIOTelegramHTTPTransport() },
-            dispatcher: TerminalTelegramBotDispatcher()
-        )
-    }
 
     /// A service on `transportFactory`, subscribed through `dispatcher`.
     ///
@@ -167,8 +149,6 @@ public actor TerminalTelegramControlService {
     ) {
         self.transportFactory = transportFactory
         self.dispatcher = dispatcher
-        let lifecycleGate = TerminalTelegramLifecycleGate()
-        self.lifecycleGate = lifecycleGate
         let mailbox = TerminalTelegramMailbox<TerminalTelegramIncomingMessage>(
             capacity: Self.incomingMessageBufferLimit
         )
@@ -263,7 +243,6 @@ public actor TerminalTelegramControlService {
             botID: bot.id
         )
         pollFailureNotified = false
-        lifecycleGate.setActive(true)
         let pollGeneration = generation
         let subscription = try await dispatcher.subscribe(
             botID: bot.id, client: client,
@@ -297,7 +276,6 @@ public actor TerminalTelegramControlService {
         // cannot reactivate polling or mutate state.
         pollingGeneration += 1
         pollFailureNotified = false
-        lifecycleGate.setActive(false)
         await stopPolling()
         let menuTask = commandMenuTask
         commandMenuTask = nil
@@ -338,13 +316,6 @@ public actor TerminalTelegramControlService {
                 await self?.finishCommandMenu(generation: generation, error: error)
             }
         }
-    }
-
-    /// Returns once the in-flight command-menu publication (if any) has
-    /// recorded its outcome. Lets tests observe `commandMenuError`
-    /// deterministically.
-    func waitForCommandMenuPublication() async {
-        await commandMenuTask?.value
     }
 
     private func finishCommandMenu(generation: Int, error: Error?) {

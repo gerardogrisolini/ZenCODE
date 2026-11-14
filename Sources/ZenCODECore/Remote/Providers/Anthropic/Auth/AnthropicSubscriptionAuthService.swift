@@ -115,10 +115,6 @@ public final class AnthropicSubscriptionSignInSession: Sendable {
         self.state = state
     }
 
-    public func waitForCredentials() async throws -> AnthropicSubscriptionCredentials {
-        try await waitForCredentials(persist: true)
-    }
-
     func waitForCredentials(
         persist: Bool
     ) async throws -> AnthropicSubscriptionCredentials {
@@ -137,13 +133,6 @@ public final class AnthropicSubscriptionSignInSession: Sendable {
     public func submitAuthorizationInput(_ input: String) throws {
         let result = try authorizationResult(fromAuthorizationInput: input)
         complete(.success(result))
-    }
-
-    public func cancel() {
-        Task(name: "Anthropic authorization background task") {
-            let continuation = await authorizationState.cancel()
-            continuation?.resume(throwing: AnthropicSubscriptionAuthError.callbackCancelled)
-        }
     }
 
     private func waitForAuthorizationResult() async throws -> AnthropicSubscriptionAuthorizationResult {
@@ -274,16 +263,6 @@ private actor AnthropicSubscriptionSignInAuthorizationState {
         }
     }
 
-    func cancel() -> CheckedContinuation<AnthropicSubscriptionAuthorizationResult, Error>? {
-        guard !isCancelled else {
-            return nil
-        }
-        isCancelled = true
-        let continuation = waitContinuation
-        waitContinuation = nil
-        return continuation
-    }
-
     func complete(
         _ result: Result<AnthropicSubscriptionAuthorizationResult, Error>
     ) -> CheckedContinuation<AnthropicSubscriptionAuthorizationResult, Error>? {
@@ -312,20 +291,6 @@ public enum AnthropicSubscriptionAuthService {
 
     private static let redirectURI = "https://platform.claude.com/oauth/code/callback"
     private static let scope = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
-
-    public static func signIn() async throws -> AnthropicSubscriptionCredentials {
-        let session = try await startSignIn()
-
-        print("Open this URL to connect Claude Subscription:")
-        print(session.authorizationURL.absoluteString)
-        _ = await openAuthorizationURL(session.authorizationURL)
-        print("After authorizing Claude, paste the authorization code shown in the browser.")
-        if let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !input.isEmpty {
-            try session.submitAuthorizationInput(input)
-        }
-        return try await session.waitForCredentials()
-    }
 
     public static func openAuthorizationURL(_ url: URL) async -> Bool {
         await SubscriptionBrowserLauncher.open(url)
@@ -424,10 +389,6 @@ public enum AnthropicSubscriptionAuthService {
 
     public static func saveCredentials(_ credentials: AnthropicSubscriptionCredentials) throws {
         try AgentSettingsManifestStore.saveAnthropicSubscriptionCredentials(credentials)
-    }
-
-    public static func removeCredentials() {
-        try? AgentSettingsManifestStore.saveAnthropicSubscriptionCredentials(nil)
     }
 
     private static func authorizationFlow() throws -> (

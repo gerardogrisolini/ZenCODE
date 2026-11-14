@@ -50,32 +50,11 @@ public enum ZenLogLevel: Int, Comparable, Sendable, CaseIterable {
 }
 
 public enum ZenLogCategory: String, Sendable {
-    case assistantBackend = "AssistantBackendService"
-    case applicationDelegate = "ZenCODEApplicationDelegate"
-    case cloudChatWorker = "CloudChatWorker"
-    case cloudKit = "ZenCODECloudKit"
-    case contentViewModel = "ContentViewModel"
-    case installedModelCatalog = "InstalledModelCatalogService"
     case memory = "MemoryService"
-    case viewActions = "ViewActions"
-    case remoteModelCatalogClient = "RemoteModelCatalogClient"
-    case remoteNotification = "ZenCODERemoteNotification"
-    case remotePrompt = "RemotePrompt"
     case sessionService = "SessionService"
-    case bashToolExecutor = "BashToolExecutor"
-    case mcpClient = "MCPClient"
-    case taskListSync = "TaskListSync"
-    case taskExecutionCoordinator = "TaskExecutionCoordinator"
-    case taskExecutionEngine = "TaskExecutionEngineSupport"
     case taskLifecycle = "TaskLifecycleService"
-    case toolBackendResolver = "ToolBackendResolver"
-    case toolDescriptor = "ToolDescriptor"
     case turnFileChangeTracker = "TurnFileChangeTracker"
-    case turnGeneration = "TurnGenerationService"
-    case userInput = "UserInputService"
-    case viewModel = "ViewModel"
     case viewModelRuntime = "ViewModelRuntimeService"
-    case conversationHistory = "ConversationHistorySupport"
     case diagnostics = "Diagnostics"
 }
 
@@ -199,62 +178,24 @@ public enum ZenLogger {
         return "[\(category.rawValue)][\(level.label)] \(body)"
     }
 
-    /// Whether the diagnostic logger is currently emitting output.
-    public static var isEnabled: Bool {
-        resolvedConfiguration() != nil
-    }
-
-    /// A human-readable, secret-free description of where diagnostics are
-    /// written, or `nil` when logging is disabled. Used by `zen --doctor`.
-    public static var destinationDescription: String? {
-        resolvedConfiguration()?.destinationDescription
-    }
-
-    /// The active minimum level, or `nil` when logging is disabled.
-    public static var activeLevel: ZenLogLevel? {
-        resolvedConfiguration()?.minimumLevel
-    }
-
     /// Resolves the current diagnostic destination without writing anything.
-    /// This is intentionally separate from ``isEnabled`` so inspection commands
-    /// such as `zen --doctor` remain read-only. Resolution is pure: no support
-    /// directory, file, or system-log handle is created here.
+    /// This is intentionally separate from the process-wide logger state, so
+    /// inspection commands such as `zen --doctor` remain read-only. Resolution
+    /// is pure: no support directory, file, or system-log handle is created
+    /// here.
     public static func previewConfiguration(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> ZenLoggerConfiguration? {
         ZenLoggerConfiguration.resolve(environment: environment)
     }
 
-    /// Resolves the current diagnostic destination using the historical
-    /// directory-taking API.
-    ///
-    /// `supportDirectory` is accepted for source compatibility but ignored:
-    /// diagnostics now resolve exclusively to the system log and never create
-    /// an application support directory. The parameter intentionally has no
-    /// default value so this overload cannot be ambiguous with
-    /// ``previewConfiguration(environment:)``.
-    public static func previewConfiguration(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        supportDirectory: URL?
-    ) -> ZenLoggerConfiguration? {
-        ZenLoggerConfiguration.resolve(environment: environment)
-    }
-
     /// Overrides the resolved configuration. Passing `nil` clears any override
-    /// and restores resolution from the process environment; use ``disable()``
-    /// to force diagnostics off regardless of the environment. Primarily for
+    /// and restores resolution from the process environment. Primarily for
     /// tests and explicit hosts.
     public static func configure(_ configuration: ZenLoggerConfiguration?) {
         ZenLogConfigurationStore.shared.configure(
             configuration.map(ZenLogOverride.configuration) ?? .environment
         )
-    }
-
-    /// Forces diagnostics off for the current process, ignoring `ZENCODE_LOG`.
-    /// Distinct from ``configure(_:)`` with `nil`, which restores environment
-    /// resolution instead of disabling.
-    public static func disable() {
-        ZenLogConfigurationStore.shared.configure(.disabled)
     }
 
     static func resolvedConfiguration() -> ZenLoggerConfiguration? {
@@ -360,19 +301,13 @@ public struct ZenLoggerConfiguration: Sendable, Equatable {
     }
 }
 
-/// Unambiguous override state for the process-wide diagnostic configuration.
-///
-/// A three-case enum instead of a nested optional: `Optional<Optional<_>>`
-/// made "no override" and "explicitly disabled" visually interchangeable and
-/// silently turned ``ZenLogger/configure(_:)`` with `nil` into a permanent
-/// disable instead of the documented environment restore.
+/// Override state for the process-wide diagnostic configuration.
+/// ``ZenLogger/configure(_:)`` with `nil` sets ``environment``.
 enum ZenLogOverride: Sendable, Equatable {
     /// No override: resolve from the environment.
     case environment
     /// Explicitly enabled with a fixed configuration.
     case configuration(ZenLoggerConfiguration)
-    /// Explicitly disabled, whatever the environment says.
-    case disabled
 }
 
 /// Process-wide resolved diagnostic configuration. Thread-safe and lazily
@@ -390,8 +325,8 @@ final class ZenLogConfigurationStore: Sendable {
     private let state: Mutex<Resolution>
     private let override: Mutex<ZenLogOverride>
     /// Environment seam: the shared store reads the process environment, while
-    /// tests inject a fixed environment to prove restore-versus-disable
-    /// behaviour deterministically and without mutating the process.
+    /// tests inject a fixed environment to prove the environment restore
+    /// deterministically and without mutating the process.
     private let environmentProvider: @Sendable () -> [String: String]
 
     init(
@@ -434,8 +369,6 @@ final class ZenLogConfigurationStore: Sendable {
             )
         case let .configuration(configuration):
             return configuration
-        case .disabled:
-            return nil
         }
     }
 }

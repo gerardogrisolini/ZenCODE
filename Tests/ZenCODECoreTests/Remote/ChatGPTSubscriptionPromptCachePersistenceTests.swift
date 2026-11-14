@@ -44,7 +44,6 @@ struct ChatGPTSubscriptionPromptCachePersistenceTests {
         )
         let promptCacheKey = UUID().uuidString
         let legacyStorageKey = legacyStorageKey(for: identity)
-        #expect(legacyStorageKey != identity.storageKey)
         userDefaults.set(
             [legacyStorageKey: promptCacheKey],
             forKey: ChatGPTSubscriptionGenerationClient.promptCacheKeyStoreUserDefaultsKey
@@ -271,8 +270,8 @@ struct ChatGPTSubscriptionPromptCachePersistenceTests {
     }
 
     /// Reproduces the reversible Base64 JSON format written before the digest
-    /// migration without calling the new `storageKey` encoder. The deliberately
-    /// non-sorted field order makes this a genuine legacy fixture.
+    /// migration. The deliberately non-sorted field order makes this a genuine
+    /// legacy fixture.
     private func legacyStorageKey(
         for identity: ChatGPTSubscriptionGenerationClient.SessionIdentity
     ) -> String {

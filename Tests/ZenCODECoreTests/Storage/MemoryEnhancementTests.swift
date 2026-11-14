@@ -428,11 +428,11 @@ struct MemoryEnhancementTests {
             let reopened = try await MemoryGraphStore.open(
                 graphURL: graphURL
             )
-            let all = try await reopened.entries(includeArchived: true, limit: 100)
+            let all = try await reopened.entries(includeArchived: true, offset: 0, limit: 100, filter: .none)
 
             #expect(all.count == 2)
             #expect(all.contains { $0.id == first.id.uuidString })
-            #expect(all.contains { $0.isArchived && $0.id == second.id.uuidString })
+            #expect(all.contains { !$0.active && $0.id == second.id.uuidString })
             #expect(Set(all.flatMap(\.tags)) == ["persistence"])
         }
     }

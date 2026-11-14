@@ -69,24 +69,60 @@ struct LocalMCPTransportPolicyTests {
     }
 
     @Test
-    func standardPolicyLeavesServerErrorsGeneric() async {
+    func standardPolicyLeavesServerErrorsGeneric() async throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mcp-server-error-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+
+        let executableURL = rootURL.appendingPathComponent("mcp-fixture")
+        try """
+        #!/bin/sh
+        while IFS= read -r line; do
+          id=$(printf '%s\n' "$line" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\\([^,}]*\\).*/\\1/p')
+          case "$line" in
+            *notifications/initialized*)
+              ;;
+            *initialize*)
+              printf '%s\n' '{"jsonrpc":"2.0","id":'"$id"',"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"fixture","version":"1"}}}'
+              ;;
+            *tools*list*)
+              printf '%s\n' '{"jsonrpc":"2.0","id":'"$id"',"error":{"code":-32000,"message":"Internal error"}}'
+              ;;
+          esac
+        done
+        """.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+
         let client = MCPClient(
             configuration: MCPServerConfiguration(
-                executablePath: "/usr/bin/false",
+                executablePath: executableURL.path,
                 arguments: [],
                 environment: [:]
             )
         )
-        let response = MCPErrorResponse(code: -32000, message: "Internal error")
-
-        let error = await client.serverError(response, requestMethod: "tools/list")
-
-        guard case let .serverError(code, message) = error else {
-            Issue.record("The standard MCP policy unexpectedly classified a server error.")
-            return
+        do {
+            try await client.connect()
+            do {
+                _ = try await client.listTools()
+                Issue.record("Expected the MCP server error to fail tools/list.")
+            } catch let error as MCPClientError {
+                guard case let .serverError(code, message) = error else {
+                    Issue.record("The standard MCP policy unexpectedly classified a server error.")
+                    await client.disconnect()
+                    return
+                }
+                #expect(code == -32000)
+                #expect(message == "Internal error")
+            }
+        } catch {
+            await client.disconnect()
+            throw error
         }
-        #expect(code == -32000)
-        #expect(message == "Internal error")
+        await client.disconnect()
     }
 
     @Test

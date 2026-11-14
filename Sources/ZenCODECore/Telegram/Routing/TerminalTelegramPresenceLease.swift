@@ -78,16 +78,6 @@ public actor TerminalTelegramPresenceLeaseManager {
         currentFence = nil
     }
 
-    /// Whether the lease is still the current one.
-    public func isActive(_ lease: Lease) -> Bool {
-        current == lease
-    }
-
-    /// The lease currently held, if any.
-    public var heldLease: Lease? {
-        current
-    }
-
     func currentFence(for scope: TerminalTelegramPresenceScope) -> TerminalTelegramWireFence? {
         guard current?.scope == scope else { return nil }
         return currentFence

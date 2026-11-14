@@ -108,7 +108,8 @@ struct AgentProfileBindingReconcilerTests {
 
             let result = try ZenFileService.ensureRequiredFiles(
                 settingsManifest: AgentSettingsManifest(models: [retained]),
-                overwriteSettings: true
+                overwriteSettings: true,
+                stagedAgentProfiles: nil
             )
             let storedAgents = try AgentProfileStore.loadRequired()
             let stored = try #require(storedAgents.first)
@@ -346,7 +347,8 @@ struct AgentProfileBindingReconcilerTests {
             #expect(throws: AgentProfileStoreError.self) {
                 try ZenFileService.ensureRequiredFiles(
                     settingsManifest: AgentSettingsManifest(models: [replacement]),
-                    overwriteSettings: true
+                    overwriteSettings: true,
+                    stagedAgentProfiles: nil
                 )
             }
 

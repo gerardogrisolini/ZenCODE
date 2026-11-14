@@ -60,22 +60,6 @@ struct SubscriptionAuthFlowTests {
         }
     }
 
-    @Test
-    func chatGPTManualCodeCompletesDegradedSession() async throws {
-        try await withCallbackPortBlocker { didBlock in
-            #expect(didBlock)
-            let session = try await ChatGPTSubscriptionAuthService.startSignIn { _ in "" }
-            #expect(!session.isCallbackServerAvailable)
-
-            let components = try #require(URLComponents(url: session.authorizationURL, resolvingAgainstBaseURL: false))
-            let state = try #require(components.queryItems?.first(where: { $0.name == "state" })?.value)
-
-            // The manual path must remain able to deliver the authorization code
-            // even when the callback listener never started.
-            try session.submitAuthorizationInput("authorization-code#\(state)")
-        }
-    }
-
     /// Binds the callback port (1455) with a POSIX socket while `body` runs so
     /// sign-in cannot start its own callback server, then releases the port.
     /// The boolean reports whether the port could actually be blocked.
@@ -139,7 +123,7 @@ struct SubscriptionAuthFlowTests {
             """.utf8
         )
 
-        let deviceCode = try ChatGPTSubscriptionAuthService.testDecodeDeviceCodeResponse(data)
+        let deviceCode = try ChatGPTSubscriptionAuthService.decodedDeviceCode(from: data)
 
         #expect(deviceCode.deviceAuthID == "deviceauth_test")
         #expect(deviceCode.userCode == "X7T6-6XKDP")

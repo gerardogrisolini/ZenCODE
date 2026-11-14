@@ -580,13 +580,13 @@ struct ACPSessionLifecycleConcurrencyTests {
             workingDirectory: "/tmp"
         )))
         #expect(
-            await bridge.permissionBroker.cachedDecisionCount(sessionID: sessionID) == 1
+            await bridge.permissionBroker.consentAuthorizer.cachedDecisionCount(sessionID: sessionID) == 1
         )
 
         try await bridge.close(id: nil, params: ["sessionId": sessionID])
 
         #expect(
-            await bridge.permissionBroker.cachedDecisionCount(sessionID: sessionID) == 0
+            await bridge.permissionBroker.consentAuthorizer.cachedDecisionCount(sessionID: sessionID) == 0
         )
     }
 

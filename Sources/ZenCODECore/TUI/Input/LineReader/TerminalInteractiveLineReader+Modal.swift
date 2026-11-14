@@ -10,7 +10,7 @@ import Foundation
 extension TerminalInteractiveLineReader {
     /// Direct prompts share the same reducer as the fallback reader but publish
     /// a bounded surface instead of echoing bytes into the transcript/footer.
-    func readCompositedLine(prompt: String, shouldCancel: (@Sendable () -> Bool)?) -> String? {
+    func readCompositedLine(prompt: String, shouldCancel: @escaping @Sendable () -> Bool) -> String? {
         let modal = TerminalModalSession()
         defer { modal.close() }
         var editor = TerminalPromptEditor()
@@ -19,7 +19,7 @@ extension TerminalInteractiveLineReader {
                 modal.update(.init(title: "", help: [],
                     lines: [.init(text: prompt, itemIndex: 0)], focusedIndex: 0,
                     input: String(editor.buffer), inputCursor: editor.cursorIndex))
-                if modal.isCancelled || shouldCancel?() == true { return nil }
+                if modal.isCancelled || shouldCancel() { return nil }
                 let key: Key
                 switch readKeyResult(pollTimeoutMilliseconds: Self.cancellationPollTimeout) {
                 case let .key(value): key = value

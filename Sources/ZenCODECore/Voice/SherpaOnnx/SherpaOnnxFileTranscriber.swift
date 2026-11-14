@@ -66,16 +66,6 @@ struct SherpaOnnxAudioDecoder: Sendable, Equatable {
         }
     }
 
-    /// `opusdec` when it is installed and `audio` is Ogg Opus, else `ffmpeg`;
-    /// `nil` when neither is installed.
-    static func available(
-        for audio: AgentVoiceAudioInput,
-        searchDirectories: [String] = Self.searchDirectories,
-        fileManager: FileManager = .default
-    ) -> SherpaOnnxAudioDecoder? {
-        candidates(for: audio, searchDirectories: searchDirectories, fileManager: fileManager).first
-    }
-
     func arguments(input: URL, output: URL) -> [String] {
         switch kind {
         case .opusdec:

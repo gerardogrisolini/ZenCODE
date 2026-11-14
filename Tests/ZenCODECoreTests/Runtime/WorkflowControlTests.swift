@@ -38,7 +38,7 @@ struct WorkflowControlTests {
         var projection = WorkflowCommandRuntimeState(goal: graph.workflow?.originalGoal ?? "", graphID: graph.id)
         let didProjectQuestion = projection.recordCoordinatorOutput("A summary after tools", graph: graph)
         #expect(didProjectQuestion)
-        #expect(projection.pendingCoordinatorMessage == question)
+        #expect(projection.pendingSignal?.transcriptMessage == question)
         graph = try await owner.updateWorkflow(
             sessionID: "root", graphID: graph.id, state: .blocked,
             message: "Credentials are unavailable; supply access before continuing.", expectedRevision: graph.revision

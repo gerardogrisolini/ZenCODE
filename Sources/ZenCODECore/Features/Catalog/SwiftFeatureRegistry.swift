@@ -102,9 +102,9 @@ public enum SwiftFeatureRegistry {
     /// Every feature package installed under `searchRoots`, sorted by id.
     ///
     /// A package whose id belongs to a retired optional feature (see
-    /// `SwiftBundledFeatureCatalog.retiredFeatureIDs`) is skipped here, at the
-    /// single point shared by every discovery path, so it is never loaded,
-    /// listed, or run. Its folder is left on disk untouched.
+    /// `SwiftBundledFeatureCatalog.retiredFeatureCoreGroupKeys`) is skipped
+    /// here, at the single point shared by every discovery path, so it is
+    /// never loaded, listed, or run. Its folder is left on disk untouched.
     public static func discoverFeatureRecords(
         searchRoots: [URL]? = nil,
         fileManager: FileManager = .default

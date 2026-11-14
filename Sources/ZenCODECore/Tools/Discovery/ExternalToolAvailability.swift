@@ -13,28 +13,4 @@ public enum ExternalToolAvailability {
     ) -> Set<String>? {
         return allowedToolNames
     }
-
-    public static func resolvedAllowedToolNames(
-        _ allowedToolNames: Set<String>,
-        unavailableToolPrefixes: Set<String>
-    ) -> Set<String> {
-        guard !allowedToolNames.isEmpty,
-              !unavailableToolPrefixes.isEmpty else {
-            return allowedToolNames
-        }
-
-        return Set(
-            allowedToolNames.filter { allowedToolName in
-                !unavailableToolPrefixes.contains { prefix in
-                    allowedToolName == prefix || allowedToolName.hasPrefix(prefix)
-                }
-            }
-        )
-    }
-
-    public static func discoverableToolPrefixes(
-        _ toolPrefixes: Set<String>
-    ) -> Set<String> {
-        toolPrefixes
-    }
 }

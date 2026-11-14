@@ -491,7 +491,7 @@ struct AgentProviderKeyMigrationTests {
             supportDirectoryURL: root,
             warningSink: { warnings.append($0) }
         )
-        #expect(report.didMigrate)
+        #expect(!report.migratedFilenames.isEmpty)
         #expect(report.migratedFilenames == ["settings.json", "agents.json"])
         #expect(warnings.isEmpty)
 
@@ -516,7 +516,7 @@ struct AgentProviderKeyMigrationTests {
 
         // A second run finds current files and touches nothing.
         let second = try AgentProviderKeyMigration.migrateIfNeeded(supportDirectoryURL: root)
-        #expect(!second.didMigrate)
+        #expect(second.migratedFilenames.isEmpty)
         #expect(try Data(contentsOf: settingsURL) == migratedSettings)
         #expect(try Data(contentsOf: agentsURL) == migratedAgents)
     }

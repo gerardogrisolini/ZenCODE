@@ -73,7 +73,7 @@ struct DirectToolExecutorLocalIOTests {
                 await recorder.authorize(request)
             },
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in TestAgentRuntimeBackend() }
         )
 
         let output = await executor.deniedLocalExecOutputIfNeeded(
@@ -101,7 +101,7 @@ struct DirectToolExecutorLocalIOTests {
                 await recorder.authorize(request)
             },
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in TestAgentRuntimeBackend() }
         )
         let command = (1...10).map { "tool\($0) --flag" }.joined(separator: " | ")
 
@@ -129,7 +129,7 @@ struct DirectToolExecutorLocalIOTests {
         let executor = DirectToolExecutor(
             authorizationHandler: { _ in false },
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in TestAgentRuntimeBackend() }
         )
 
         let result = await executor.execute(
@@ -157,7 +157,7 @@ struct DirectToolExecutorLocalIOTests {
         let executor = DirectToolExecutor(
             authorizationHandler: { _ in false },
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in TestAgentRuntimeBackend() }
         )
         let workingDirectory = URL(fileURLWithPath: "/tmp")
         let calls = [
@@ -199,7 +199,7 @@ struct DirectToolExecutorLocalIOTests {
                 await recorder.authorize(request)
             },
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in TestAgentRuntimeBackend() }
         )
         _ = await executor.deniedLocalExecOutputIfNeeded(
             sessionID: "session-id",
@@ -636,7 +636,7 @@ struct DirectToolExecutorAuthorizationTests {
                     )
                 ]
             ),
-            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in TestAgentRuntimeBackend() }
         )
 
         let result = await executor.execute(
@@ -677,7 +677,7 @@ struct DirectToolExecutorAuthorizationTests {
         let executor = DirectToolExecutor(
             mcpRuntime: mcpRuntime,
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in TestAgentRuntimeBackend() }
         )
 
         let result = await executor.execute(
@@ -699,7 +699,7 @@ struct DirectToolExecutorAuthorizationTests {
     private func makeExecutor() -> DirectToolExecutor {
         DirectToolExecutor(
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { TestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in TestAgentRuntimeBackend() }
         )
     }
 

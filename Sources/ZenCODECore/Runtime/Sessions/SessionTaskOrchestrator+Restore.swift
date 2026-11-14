@@ -39,17 +39,6 @@ extension SessionTaskOrchestrator {
         return graph
     }
 
-    public func restoreCheckpoint(
-        _ checkpoint: SessionTaskGraphCheckpoint,
-        interruptActiveAttempts: Bool = true
-    ) throws {
-        try restoreCheckpoint(
-            checkpoint,
-            interruptActiveAttempts: interruptActiveAttempts,
-            persist: true
-        )
-    }
-
     func restoreCheckpoint(
         _ checkpoint: SessionTaskGraphCheckpoint,
         interruptActiveAttempts: Bool,

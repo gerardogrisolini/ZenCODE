@@ -385,7 +385,7 @@ struct TerminalChatLiveArtifactTests {
             } else {
                 await target.writeAssistantContent(opening)
             }
-            await target.flushOutput()
+            await target.flushChatOutput()
         }
         let beforeArtifact = await renderer.capturedWriteEvents().count
         await terminal.chatSession.presentSubAgentToolEvent(

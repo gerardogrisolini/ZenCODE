@@ -127,20 +127,6 @@ extension SwiftFeatureRuntime {
         return feature.isRelevant(allowedToolNames: allowedToolNames)
     }
 
-    public func canExecute(toolName: String) -> Bool {
-        features.contains { $0.contains(toolName: toolName) }
-    }
-
-    public func executeIfAvailable(
-        toolCall: DirectAgentToolCall,
-        workingDirectory: URL
-    ) async throws -> String? {
-        try await executeResultIfAvailable(
-            toolCall: toolCall,
-            workingDirectory: workingDirectory
-        )?.output
-    }
-
     func executeResultIfAvailable(
         toolCall: DirectAgentToolCall,
         workingDirectory: URL

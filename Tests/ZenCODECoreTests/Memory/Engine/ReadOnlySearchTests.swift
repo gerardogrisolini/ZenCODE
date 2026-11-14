@@ -2,9 +2,11 @@
 //  ReadOnlySearchTests.swift
 //  ZenCODECoreTests (memory engine)
 //
-//  Verifies the read-only search path: `searchReadOnly` performs the same
-//  retrieval as `recall` but applies no maintenance and never touches
-//  persistence, while `recall` keeps its transactional maintenance.
+//  Verifies the read-only search path of `memory.search` (a fresh read-only
+//  snapshot searched with `searchReadOnlyDetailed(_:scope:graph:limit:)`): it
+//  performs the same retrieval as `recallDetailed` but applies no maintenance
+//  and never touches persistence, while recall keeps its transactional
+//  maintenance.
 //
 
 import Foundation
@@ -39,10 +41,14 @@ struct ReadOnlySearchTests {
         try await engine.remember("Swift actors isolate mutable state", tags: ["swift"])
         try await engine.remember("Database migrations run at startup", tags: ["database"])
 
-        // searchReadOnly first: it does not mutate, so recall sees the same graph
-        // and must select the same entries.
-        let readOnly = try await engine.searchReadOnly("actors mutable state")
-        let recalled = try await engine.recall("actors mutable state")
+        // The read-only search first: it does not mutate, so recall sees the
+        // same graph and must select the same entries.
+        let readOnly = try await engine.searchReadOnlyDetailed(
+            "actors mutable state",
+            scope: .all,
+            graph: engine.freshSnapshotForReadOnly()
+        ).selected
+        let recalled = try await engine.recallDetailed("actors mutable state").selected
 
         let readOnlyContents = readOnly.map(\.memory.content)
         let recalledContents = recalled.map(\.memory.content)
@@ -56,7 +62,11 @@ struct ReadOnlySearchTests {
         try await engine.remember("Swift structured concurrency guide", tags: ["swift"])
 
         let before = await engine.snapshot().edges
-        _ = try await engine.searchReadOnly("Swift concurrency actors")
+        _ = try await engine.searchReadOnlyDetailed(
+            "Swift concurrency actors",
+            scope: .all,
+            graph: engine.freshSnapshotForReadOnly()
+        )
         let after = await engine.snapshot().edges
 
         #expect(after == before)
@@ -71,7 +81,11 @@ struct ReadOnlySearchTests {
             persist: false
         )
         // Must not throw — the read-only path never calls save.
-        let results = try await engine.searchReadOnly("database migrations")
+        let results = try await engine.searchReadOnlyDetailed(
+            "database migrations",
+            scope: .all,
+            graph: engine.freshSnapshotForReadOnly()
+        ).selected
         #expect(!results.isEmpty)
     }
 
@@ -86,16 +100,16 @@ struct ReadOnlySearchTests {
         try await engine.remember("Swift structured concurrency guide", tags: ["swift"])
         let savesAfterSetup = await persistence.saved.count
 
-        _ = try await engine.recall("Swift actors concurrency")
-        _ = try await engine.recall("Swift actors concurrency")
+        _ = try await engine.recallDetailed("Swift actors concurrency")
+        _ = try await engine.recallDetailed("Swift actors concurrency")
         #expect(await persistence.saved.count == savesAfterSetup)
 
         // The third derived maintenance record triggers one checkpoint, rather
         // than encoding the complete graph after each useful recall.
-        _ = try await engine.recall("Swift actors concurrency")
+        _ = try await engine.recallDetailed("Swift actors concurrency")
         #expect(await persistence.saved.count == savesAfterSetup + 1)
 
-        _ = try await engine.recall("Swift actors concurrency")
+        _ = try await engine.recallDetailed("Swift actors concurrency")
         let beforeExplicitWrite = await persistence.saved.count
         try await engine.remember("An explicit durable fact", tags: ["swift"])
         // The explicit write commits itself and the pending recall in one save.

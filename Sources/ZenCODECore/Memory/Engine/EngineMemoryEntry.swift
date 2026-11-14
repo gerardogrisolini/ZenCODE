@@ -14,9 +14,6 @@ enum EngineMemoryScope: String, Codable, Sendable, CaseIterable {
     case project
     case global
     case all
-
-    public var includesProject: Bool { self == .project || self == .all }
-    public var includesGlobal: Bool { self == .global || self == .all }
 }
 
 enum EngineMemoryCategory: Hashable, Sendable {
@@ -71,12 +68,6 @@ struct Reinforcement: Codable, Sendable, Equatable {
     public var sessionID: String
     public var messageIndex: Int
     public var timestamp: Date
-
-    public init(sessionID: String, messageIndex: Int, timestamp: Date = Date()) {
-        self.sessionID = sessionID
-        self.messageIndex = messageIndex
-        self.timestamp = timestamp
-    }
 }
 
 struct EngineMemoryEntry: Codable, Sendable, Identifiable, Equatable {
@@ -189,24 +180,6 @@ struct EngineMemoryEntry: Codable, Sendable, Identifiable, Equatable {
 
     public mutating func decayConfidence(by amount: Float) {
         confidence = max(confidence - amount, 0)
-    }
-
-    /// Counts an access without changing the content timestamp.
-    public mutating func touch() {
-        accessCount &+= 1
-    }
-
-    public mutating func reinforce(sessionID: String, messageIndex: Int) {
-        strength &+= 1
-        updatedAt = Date()
-        reinforcements.append(
-            Reinforcement(sessionID: sessionID, messageIndex: messageIndex)
-        )
-    }
-
-    public mutating func supersede(with newID: String) {
-        active = false
-        supersededBy = newID
     }
 
     public mutating func setEmbedding(_ values: [Float]?, model: String?) {

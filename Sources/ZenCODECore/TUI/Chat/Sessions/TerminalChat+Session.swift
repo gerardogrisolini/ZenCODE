@@ -44,31 +44,6 @@ extension TerminalChat {
         )
     }
 
-    public func currentSystemPrompt(allowedToolNames: Set<String>) -> String {
-        chatSession.currentSystemPrompt(
-            allowedToolNames: allowedToolNames,
-            responseLanguageSection: responseLanguageSystemPromptSection()
-        )
-    }
-
-    public func currentPromptSections(
-        allowedToolNames: Set<String>
-    ) -> SystemPromptSections {
-        chatSession.currentPromptSections(
-            allowedToolNames: allowedToolNames,
-            responseLanguageSection: responseLanguageSystemPromptSection()
-        )
-    }
-
-    /// See ``ChatSessionController/launchFolderProjectsForSelectedAgent()``.
-    func launchFolderProjectsForSelectedAgent() -> LaunchFolderProjects? {
-        chatSession.launchFolderProjectsForSelectedAgent()
-    }
-
-    func systemPromptWithActivePlanProgress(_ baseSystemPrompt: String?) -> String? {
-        chatSession.systemPromptWithActivePlanProgress(baseSystemPrompt)
-    }
-
     public func refreshInitialStatusBarContextWindow() async {
         _ = await statusBar.update(agentName: selectedAgent?.displayName)
         await refreshStatusBarThinkingSelection()
@@ -152,15 +127,5 @@ extension TerminalChat {
     /// Adapter of ``ChatSessionController/ensureWorkspaceAccess()``.
     public func ensureWorkspaceAccessIfNeeded() async {
         await chatSession.ensureWorkspaceAccess()
-    }
-
-    public nonisolated static func toolSelectionChangedMessage(
-        previousAllowedToolNames: Set<String>,
-        currentAllowedToolNames: Set<String>
-    ) -> AgentRuntimeMessage {
-        ChatSessionController.toolSelectionChangedMessage(
-            previousAllowedToolNames: previousAllowedToolNames,
-            currentAllowedToolNames: currentAllowedToolNames
-        )
     }
 }

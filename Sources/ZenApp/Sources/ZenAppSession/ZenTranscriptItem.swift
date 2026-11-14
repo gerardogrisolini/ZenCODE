@@ -98,16 +98,6 @@ public struct ZenLocalTranscriptItem: Identifiable, Equatable, Sendable {
         self.content = content
     }
 
-    /// A row anchored after the last entry of `snapshot`'s log.
-    public init(id: UUID = UUID(), anchoredIn snapshot: ChatSessionSnapshot, content: ZenTranscriptItem.Content) {
-        self.init(
-            id: id,
-            epoch: snapshot.epoch,
-            anchorSequence: Self.anchorSequence(in: snapshot),
-            content: content
-        )
-    }
-
     /// The last sequence of `snapshot`'s log, or the one before its first
     /// retained sequence when the log is empty.
     public static func anchorSequence(in snapshot: ChatSessionSnapshot) -> Int {

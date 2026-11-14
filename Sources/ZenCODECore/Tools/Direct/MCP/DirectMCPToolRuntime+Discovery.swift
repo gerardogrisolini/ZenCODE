@@ -40,9 +40,6 @@ extension DirectMCPToolRuntime {
         guard !allowedToolNames.isEmpty else {
             return false
         }
-        if Self.discoveryServerFamilies(allowedToolNames: allowedToolNames).contains(server.family) {
-            return true
-        }
         return server.descriptors.contains { descriptor in
             Self.toolName(descriptor.name, isAllowedBy: allowedToolNames)
         }

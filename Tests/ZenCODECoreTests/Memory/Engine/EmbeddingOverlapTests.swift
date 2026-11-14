@@ -72,7 +72,7 @@ struct EmbeddingOverlapTests {
             embedder: SignallingEmbeddingProvider(requested: embeddingRequested)
         )
 
-        let results = try await engine.recall("Swift actors")
+        let results = try await engine.recallDetailed("Swift actors").selected
 
         #expect(sawEmbeddingRequest.isSet)
         #expect(results.contains { $0.memory.id == "a" })

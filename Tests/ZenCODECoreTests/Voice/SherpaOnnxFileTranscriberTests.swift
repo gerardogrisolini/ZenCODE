@@ -62,7 +62,7 @@ struct SherpaOnnxFileTranscriberTests {
         let search = [directory.path]
         let voiceNote = Self.audio(named: "voice.oga")
 
-        #expect(SherpaOnnxAudioDecoder.available(for: voiceNote, searchDirectories: search)
+        #expect(SherpaOnnxAudioDecoder.candidates(for: voiceNote, searchDirectories: search).first
             == SherpaOnnxAudioDecoder(kind: .opusdec, executable: opusdec))
         // Every installed decoder is a candidate, in order of preference.
         #expect(SherpaOnnxAudioDecoder.candidates(for: voiceNote, searchDirectories: search)
@@ -72,19 +72,19 @@ struct SherpaOnnxFileTranscriberTests {
             ])
         // A content type is enough to recognize Ogg Opus.
         let typed = Self.audio(named: "file_7", contentType: "audio/ogg")
-        #expect(SherpaOnnxAudioDecoder.available(for: typed, searchDirectories: search)?.kind == .opusdec)
+        #expect(SherpaOnnxAudioDecoder.candidates(for: typed, searchDirectories: search).first?.kind == .opusdec)
         // opusdec decodes only Ogg Opus.
         let mp3 = Self.audio(named: "voice.mp3", contentType: "audio/mpeg")
-        #expect(SherpaOnnxAudioDecoder.available(for: mp3, searchDirectories: search)?.kind == .ffmpeg)
+        #expect(SherpaOnnxAudioDecoder.candidates(for: mp3, searchDirectories: search).first?.kind == .ffmpeg)
         #expect(SherpaOnnxAudioDecoder.candidates(for: mp3, searchDirectories: search).map(\.kind) == [.ffmpeg])
 
         try FileManager.default.removeItem(at: opusdec)
-        #expect(SherpaOnnxAudioDecoder.available(for: voiceNote, searchDirectories: search)
+        #expect(SherpaOnnxAudioDecoder.candidates(for: voiceNote, searchDirectories: search).first
             == SherpaOnnxAudioDecoder(kind: .ffmpeg, executable: ffmpeg))
         #expect(SherpaOnnxAudioDecoder.candidates(for: voiceNote, searchDirectories: search).map(\.kind) == [.ffmpeg])
 
         try FileManager.default.removeItem(at: ffmpeg)
-        #expect(SherpaOnnxAudioDecoder.available(for: voiceNote, searchDirectories: search) == nil)
+        #expect(SherpaOnnxAudioDecoder.candidates(for: voiceNote, searchDirectories: search).first == nil)
         #expect(SherpaOnnxAudioDecoder.candidates(for: voiceNote, searchDirectories: search).isEmpty)
         #expect(SherpaOnnxAudioDecoder.searchDirectories == ["/usr/bin", "/bin", "/usr/local/bin"])
     }

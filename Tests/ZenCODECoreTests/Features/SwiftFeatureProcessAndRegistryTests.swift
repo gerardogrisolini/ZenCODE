@@ -261,7 +261,7 @@ extension SwiftFeatureRuntimeTests {
         let descriptors = await runtime.descriptors(allowedToolNames: ["fixture."])
         #expect(descriptors.map(\.name) == ["fixture.echo"])
 
-        let first = try #require(await runtime.executeIfAvailable(
+        let first = try #require(await runtime.executeResultIfAvailable(
             toolCall: DirectAgentToolCall(
                 id: UUID().uuidString,
                 name: "fixture.echo",
@@ -269,8 +269,8 @@ extension SwiftFeatureRuntimeTests {
                 argumentsJSON: "{}"
             ),
             workingDirectory: fixture.directoryURL
-        ))
-        let second = try #require(await runtime.executeIfAvailable(
+        )?.output)
+        let second = try #require(await runtime.executeResultIfAvailable(
             toolCall: DirectAgentToolCall(
                 id: UUID().uuidString,
                 name: "fixture.echo",
@@ -278,7 +278,7 @@ extension SwiftFeatureRuntimeTests {
                 argumentsJSON: "{}"
             ),
             workingDirectory: fixture.directoryURL
-        ))
+        )?.output)
         #expect(first == "served")
         #expect(second == "served")
 
@@ -396,7 +396,7 @@ extension SwiftFeatureRuntimeTests {
         _ = await runtime.descriptors(allowedToolNames: ["fixture."])
 
         do {
-            _ = try await runtime.executeIfAvailable(
+            _ = try await runtime.executeResultIfAvailable(
                 toolCall: DirectAgentToolCall(
                     id: UUID().uuidString,
                     name: "fixture.echo",
@@ -404,7 +404,7 @@ extension SwiftFeatureRuntimeTests {
                     argumentsJSON: "{}"
                 ),
                 workingDirectory: fixture.directoryURL
-            )
+            )?.output
             Issue.record("The first invocation should observe the fixture child exit.")
         } catch {
             // A request whose child dies has no exactly-once guarantee, so it is
@@ -412,7 +412,7 @@ extension SwiftFeatureRuntimeTests {
             // a clean process.
         }
 
-        let output = try #require(await runtime.executeIfAvailable(
+        let output = try #require(await runtime.executeResultIfAvailable(
             toolCall: DirectAgentToolCall(
                 id: UUID().uuidString,
                 name: "fixture.echo",
@@ -420,7 +420,7 @@ extension SwiftFeatureRuntimeTests {
                 argumentsJSON: "{}"
             ),
             workingDirectory: fixture.directoryURL
-        ))
+        )?.output)
         #expect(output == "served")
         #expect(try fixture.processRecords().filter { $0.hasPrefix("serve:") }.count == 2)
         await runtime.shutdown()

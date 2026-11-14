@@ -13,11 +13,7 @@ import Foundation
 import Synchronization
 
 extension TerminalChat {
-    static let voiceOffMessage = VoiceModeSession.offMessage
     static let voiceRequiresInteractiveTerminalMessage = "ZenCODE: /voice is available only in the interactive terminal.\n"
-    /// Sent to the model with every prompt while voice mode listens (see
-    /// ``voiceTurnInstruction()``).
-    static let voiceTurnInstruction = VoiceModeSession.turnInstructionText
 
     /// The controller of the voice session; settable by tests, which install
     /// a controller without starting it.
@@ -31,13 +27,6 @@ extension TerminalChat {
     var voiceEventQueue: TerminalChatEventQueue? {
         get { voiceModeHost.eventQueue }
         set { voiceModeHost.eventQueue = newValue }
-    }
-
-    /// How long a spoken question waits for its answer. Mutable so tests can
-    /// shorten it.
-    var voiceDialogueAnswerTimeout: Duration {
-        get { voiceSession.answerTimeout }
-        set { voiceSession.answerTimeout = newValue }
     }
 
     /// `/voice [on|off|pause|resume]`. Voice mode is independent of the active
@@ -98,10 +87,6 @@ extension TerminalChat {
     /// workflow question and queues while a turn runs. Text that would read
     /// as a slash command is always sent as a plain prompt (see
     /// ``VoiceModeDictatedInput``).
-    nonisolated static func dictatedPromptEvent(for utterance: String) -> TerminalChatRuntimeEvent {
-        dictatedPromptEvent(for: VoiceModeDictatedInput(utterance: utterance))
-    }
-
     nonisolated static func dictatedPromptEvent(for input: VoiceModeDictatedInput) -> TerminalChatRuntimeEvent {
         switch input {
         case let .plainPrompt(prompt):

@@ -143,12 +143,9 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     static let defaultConnectionReadinessPingTimeoutNanoseconds: UInt64 =
         10 * 1_000_000_000
 
-    /// The server rejects a Responses WebSocket after 60 minutes of absolute
-    /// connection lifetime.
-    static let serverMaximumConnectionAge: Duration = .seconds(60 * 60)
-
-    /// Retire an idle connection before the server's 60-minute limit so the
-    /// next acquire builds a fresh upgrade request with current credentials.
+    /// Retire an idle connection before the server's 60-minute limit on the
+    /// absolute lifetime of a Responses WebSocket, so the next acquire builds
+    /// a fresh upgrade request with current credentials.
     static let defaultMaximumConnectionAge: Duration = .seconds(55 * 60)
 
     let heartbeatIntervalNanoseconds: UInt64
@@ -258,28 +255,6 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         }
     }
 
-    func acquire(
-        sessionID: String,
-        request: RemoteWebSocketRequest
-    ) -> ChatGPTSubscriptionResponsesClient.WebSocketLease {
-        guard case let .acquired(lease) = acquire(
-            sessionID: sessionID,
-            request: request,
-            fallbackScopeID: nil
-        ) else {
-            preconditionFailure("An unscoped WebSocket acquire cannot be rerouted")
-        }
-        return lease
-    }
-
-    func acquire(
-        sessionID: String,
-        request: RemoteWebSocketRequest,
-        fallbackScopeID: String
-    ) -> ScopedWebSocketAcquireResult {
-        acquire(sessionID: sessionID, request: request, fallbackScopeID: Optional(fallbackScopeID))
-    }
-
     private static func acquired(
         _ sessionID: String,
         _ task: any ChatGPTSubscriptionWebSocketTask,
@@ -305,17 +280,15 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     func acquire(
         sessionID: String,
         request: RemoteWebSocketRequest,
-        fallbackScopeID: String?
+        fallbackScopeID: String
     ) -> ScopedWebSocketAcquireResult {
         reapInvalidOrExpiredIdleEntries()
         let decision = state.withLock { state -> AcquireDecision in
-            if let fallbackScopeID {
-                if state.closedHTTPFallbackScopeIDs.contains(fallbackScopeID) {
-                    return .closed
-                }
-                if state.httpFallbackScopeIDs.contains(fallbackScopeID) {
-                    return .useHTTPFallback
-                }
+            if state.closedHTTPFallbackScopeIDs.contains(fallbackScopeID) {
+                return .closed
+            }
+            if state.httpFallbackScopeIDs.contains(fallbackScopeID) {
+                return .useHTTPFallback
             }
 
             let now = monotonicClock()
@@ -540,12 +513,6 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                 return false
             }
             return state.httpFallbackScopeIDs.insert(scopeID).inserted
-        }
-    }
-
-    func clearHTTPFallback(scopeID: String) {
-        _ = state.withLock {
-            $0.httpFallbackScopeIDs.remove(scopeID)
         }
     }
 

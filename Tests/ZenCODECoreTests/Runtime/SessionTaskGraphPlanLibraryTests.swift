@@ -608,12 +608,13 @@ struct SessionTaskGraphPlanLibraryTests {
         let librarySessionID = SessionTaskOrchestrator.savedPlanLibrarySessionID(
             for: working
         )
-        try store.save(
+        try store.compareAndSwap(
             SessionTaskGraphCheckpoint(
                 sessionID: librarySessionID,
                 currentGraphID: nil,
                 graphs: [libraryGraph, libraryGraph]
             ),
+            replacing: nil,
             workingDirectory: working
         )
 

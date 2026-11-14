@@ -87,18 +87,6 @@ public enum TaskStatus: String, Codable, Equatable, Sendable, CaseIterable {
     case failed
     case cancelled
 
-    public init(normalizing rawValue: String?) {
-        switch Self.normalized(rawValue) {
-        case "in_progress", "inprogress", "active", "running": self = .inProgress
-        case "awaiting_validation", "awaitingvalidation", "validation", "needs_validation": self = .awaitingValidation
-        case "completed", "complete", "done", "success", "succeeded": self = .completed
-        case "blocked", "blocker": self = .blocked
-        case "failed", "failure", "error": self = .failed
-        case "cancelled", "canceled", "cancel": self = .cancelled
-        default: self = .pending
-        }
-    }
-
     public var isTerminal: Bool {
         switch self {
         case .completed, .failed, .cancelled: true
@@ -108,14 +96,6 @@ public enum TaskStatus: String, Codable, Equatable, Sendable, CaseIterable {
 
     public var preventsDependentExecution: Bool {
         self == .failed || self == .cancelled
-    }
-
-    private static func normalized(_ value: String?) -> String {
-        (value ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "-", with: "_")
-            .replacingOccurrences(of: " ", with: "_")
     }
 }
 

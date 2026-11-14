@@ -176,7 +176,7 @@ struct MemoryAutomationFlowTests {
             await scopedEnv([MemoryAutomationSettings.environmentAutoRecallKey: "0"]) {
                 let block = await MemoryTurnCoordinator.shared.memoryBlock(
                     sessionID: "disabled-\(UUID().uuidString)",
-                    workspaceRootURL: workspace.workspaceURL,
+                    graphTarget: .workspace(workspace.workspaceURL),
                     prompt: "anything"
                 )
                 #expect(block == nil)
@@ -220,7 +220,7 @@ struct MemoryAutomationFlowTests {
                     let started = ContinuousClock.now
                     let block = await MemoryTurnCoordinator.shared.memoryBlock(
                         sessionID: "slow-semantic-\(UUID().uuidString)",
-                        workspaceRootURL: workspace.workspaceURL,
+                        graphTarget: .workspace(workspace.workspaceURL),
                         prompt: "how do I calibrate the frobnicator"
                     )
                     let elapsed = started.duration(to: ContinuousClock.now)
@@ -256,7 +256,7 @@ struct MemoryAutomationFlowTests {
             let started = ContinuousClock.now
             let block = await MemoryTurnCoordinator.shared.memoryBlock(
                 sessionID: "corrupt-\(UUID().uuidString)",
-                workspaceRootURL: workspace.workspaceURL,
+                graphTarget: .workspace(workspace.workspaceURL),
                 prompt: "anything"
             )
             let elapsed = started.duration(to: ContinuousClock.now)
@@ -270,8 +270,8 @@ struct MemoryAutomationFlowTests {
 
     // MARK: - Invariant 3: cross-session isolation. Two sessions sharing one
     // workspace graph each receive only their own prompt's recalled memory. The
-    // design rejected `submitContext`/`takePending` precisely because the
-    // engine's single `pending` slot would drain one session's context into
+    // design rejected prefetching recall into one slot of the shared engine
+    // precisely because that slot would drain one session's context into
     // another's; the inline `context(for:)` path keeps every retrieval bound to
     // the prompt that asked for it.
 
@@ -465,14 +465,14 @@ struct MemoryAutomationFlowTests {
             for _ in 0..<3 {
                 _ = await MemoryTurnCoordinator.shared.memoryBlock(
                     sessionID: sessionID,
-                    workspaceRootURL: workspace.workspaceURL,
+                    graphTarget: .workspace(workspace.workspaceURL),
                     prompt: "anything"
                 )
             }
             #expect(
                 await MemoryTurnCoordinator.shared.isRecallPaused(
                     sessionID: sessionID,
-                    workspaceRootURL: workspace.workspaceURL
+                    graphTarget: .workspace(workspace.workspaceURL)
                 )
             )
 
@@ -482,7 +482,7 @@ struct MemoryAutomationFlowTests {
             #expect(
                 !(await MemoryTurnCoordinator.shared.isRecallPaused(
                     sessionID: sessionID,
-                    workspaceRootURL: workspace.workspaceURL
+                    graphTarget: .workspace(workspace.workspaceURL)
                 ))
             )
         }
@@ -533,7 +533,7 @@ struct MemoryAutomationFlowTests {
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
             toolExecutionContext: ToolExecutionContext(profileRole: profileRole),
-            subAgentBackendFactory: { MemoryObservingBackend() }
+            subAgentContextualBackendFactory: { _ in MemoryObservingBackend() }
         )
         let write = await executor.execute(
             sessionID: "root",

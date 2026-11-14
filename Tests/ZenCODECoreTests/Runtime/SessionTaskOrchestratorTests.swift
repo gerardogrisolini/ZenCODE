@@ -800,7 +800,6 @@ struct SessionTaskOrchestratorTests {
         )
 
         #expect(try await orchestrator.graphSnapshot(sessionID: "delegated")?.id == "graph")
-        #expect(try await orchestrator.checkpoint(sessionID: "delegated")?.sessionID == "root")
         await #expect(throws: SessionTaskOrchestratorError.self) {
             try await orchestrator.clearTaskGraphs(sessionID: "delegated")
         }

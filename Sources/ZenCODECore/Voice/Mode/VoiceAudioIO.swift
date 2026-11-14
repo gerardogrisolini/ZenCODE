@@ -63,7 +63,6 @@ final class VoiceAudioDevice: @unchecked Sendable {
     private var onSamples: (@Sendable ([Float]) -> Void)?
     private var isCapturePaused = false
     private var playbackGeneration: UInt64 = 0
-    private var pendingPlaybackBuffers = 0
     private var isRunning = false
     private var isVoiceProcessingActive = false
 
@@ -208,20 +207,13 @@ final class VoiceAudioDevice: @unchecked Sendable {
                 channel.update(from: base, count: samples.count)
             }
         }
-        let generation = lock.withLock {
-            pendingPlaybackBuffers += 1
-            return playbackGeneration
-        }
+        let generation = lock.withLock { playbackGeneration }
         player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             guard let self else {
                 return
             }
             let isCurrent = self.lock.withLock {
-                guard generation == self.playbackGeneration else {
-                    return false
-                }
-                self.pendingPlaybackBuffers = max(0, self.pendingPlaybackBuffers - 1)
-                return true
+                generation == self.playbackGeneration
             }
             if isCurrent {
                 completion?()
@@ -233,16 +225,11 @@ final class VoiceAudioDevice: @unchecked Sendable {
         return true
     }
 
-    var hasPendingPlayback: Bool {
-        lock.withLock { pendingPlaybackBuffers > 0 }
-    }
-
     /// Drops every scheduled buffer. Late completions of dropped buffers are
     /// fenced by the playback generation and never reported.
     func interruptPlayback() {
         lock.withLock {
             playbackGeneration &+= 1
-            pendingPlaybackBuffers = 0
         }
         guard isRunning else {
             return
@@ -254,7 +241,6 @@ final class VoiceAudioDevice: @unchecked Sendable {
     func stop() {
         lock.withLock {
             playbackGeneration &+= 1
-            pendingPlaybackBuffers = 0
             converter = nil
             onSamples = nil
         }

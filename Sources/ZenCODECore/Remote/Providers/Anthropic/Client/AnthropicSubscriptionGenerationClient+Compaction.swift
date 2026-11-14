@@ -228,21 +228,6 @@ extension AnthropicSubscriptionGenerationClient {
         )
     }
 
-    static func compactedMessagesForContextLimitRetry(
-        _ messages: [[String: Any]],
-        maxTokens: Int?,
-        maxOutputTokens: Int? = nil,
-        overhead: SubscriptionCompactionSupport.RequestOverhead = .none
-    ) -> AgentConversationCompactionResult {
-        SubscriptionCompactionSupport.compactedMessagesForContextLimitRetry(
-            messages,
-            maxTokens: maxTokens,
-            maxOutputTokens: maxOutputTokens,
-            reserveTokenCount: compactionReserveTokenCount,
-            overhead: overhead
-        )
-    }
-
     static func compactionDiagnostic(
         from result: AgentConversationCompactionResult
     ) -> String {

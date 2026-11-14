@@ -18,10 +18,10 @@ import ToolCore
 /// one sent without recalled memory.
 ///
 /// Retrieval is performed inline for the prompt being sent. It is deliberately
-/// not prefetched through `MemoryEngine.submitContext(_:)` / `takePending()`: that
-/// pending queue is shared by sessions using the same workspace store, while
-/// inline `context(for:)` keeps each result bound to the prompt that requested
-/// it and avoids an empty first turn.
+/// not prefetched one turn ahead: a prefetched result would be shared by the
+/// sessions using the same workspace store, while inline `context(for:)` keeps
+/// each result bound to the prompt that requested it and avoids an empty first
+/// turn.
 actor MemoryTurnCoordinator {
     static let shared = MemoryTurnCoordinator()
 
@@ -74,21 +74,8 @@ actor MemoryTurnCoordinator {
 
     // MARK: - Recall
 
-    /// Resolves the memory block for one turn, or `nil` when there is nothing
-    /// safe and timely to inject.
-    func memoryBlock(
-        sessionID: String,
-        workspaceRootURL: URL,
-        prompt: String
-    ) async -> String? {
-        await memoryBlock(
-            sessionID: sessionID,
-            graphTarget: .workspace(workspaceRootURL),
-            prompt: prompt
-        )
-    }
-
-    /// `memoryBlock` against the graph addressed by `graphTarget`.
+    /// Resolves the memory block for one turn against the graph addressed by
+    /// `graphTarget`, or `nil` when there is nothing safe and timely to inject.
     func memoryBlock(
         sessionID: String,
         graphTarget: MemoryGraphTarget,
@@ -155,10 +142,6 @@ actor MemoryTurnCoordinator {
 
     /// Whether recall is currently paused for a session. Diagnostics and tests
     /// only; the recall path reads its state directly.
-    func isRecallPaused(sessionID: String, workspaceRootURL: URL) -> Bool {
-        isRecallPaused(sessionID: sessionID, graphTarget: .workspace(workspaceRootURL))
-    }
-
     func isRecallPaused(sessionID: String, graphTarget: MemoryGraphTarget) -> Bool {
         let key = Key(
             graphPath: MemoryGraphLocation.graphURL(for: graphTarget).path,

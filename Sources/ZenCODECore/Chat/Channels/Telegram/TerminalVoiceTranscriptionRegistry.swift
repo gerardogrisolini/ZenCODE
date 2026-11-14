@@ -18,9 +18,9 @@ import Synchronization
 /// notes in a burst.
 ///
 /// The registry gives those tasks an owner: the interactive runtime loop holds
-/// it, `cancelAll()` runs at teardown, finished tasks are evicted, and
-/// ``maximumConcurrentTranscriptions`` bounds how many may run at once so a
-/// burst is rejected with a user-visible message instead of piling up.
+/// it, ``cancelAllAndWait(shuttingDown:)`` runs at teardown, finished tasks are
+/// evicted, and ``maximumConcurrentTranscriptions`` bounds how many may run at
+/// once so a burst is rejected with a user-visible message instead of piling up.
 final class TerminalVoiceTranscriptionRegistry: Sendable {
     /// Upper bound on concurrent remote transcriptions.
     static let maximumConcurrentTranscriptions = 3
@@ -98,19 +98,6 @@ final class TerminalVoiceTranscriptionRegistry: Sendable {
         for task in tasks {
             await task.value
         }
-    }
-
-    /// Source-compatible synchronous cancellation request. Runtime teardown uses
-    /// `cancelAllAndWait` so it also observes task cleanup.
-    func cancelAll() {
-        let tasks = state.withLock { state -> [Task<Void, Never>] in
-            state.isAccepting = false
-            state.isShutDown = true
-            let tasks = Array(state.tasks.values)
-            state.tasks.removeAll()
-            return tasks
-        }
-        for task in tasks { task.cancel() }
     }
 
     /// Re-opens admission after `/telegram on`; teardown remains irreversible.

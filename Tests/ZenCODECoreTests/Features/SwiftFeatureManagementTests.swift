@@ -167,7 +167,7 @@ extension SwiftFeatureRuntimeTests {
         #expect(presentation.title == "Echo")
         #expect(presentation.target?.keyPaths == ["text"])
 
-        let output = try await runtime.executeIfAvailable(
+        let output = try await runtime.executeResultIfAvailable(
             toolCall: DirectAgentToolCall(
                 id: "example-echo",
                 name: "example.echo",
@@ -175,7 +175,7 @@ extension SwiftFeatureRuntimeTests {
                 argumentsJSON: #"{"text":"ciao"}"#
             ),
             workingDirectory: rootURL
-        )
+        )?.output
         #expect(output == "ciao")
     }
 
@@ -500,7 +500,7 @@ extension SwiftFeatureRuntimeTests {
         )
         #expect(descriptors.contains { $0.name == "installed.echo" })
 
-        let output = try await runtime.executeIfAvailable(
+        let output = try await runtime.executeResultIfAvailable(
             toolCall: DirectAgentToolCall(
                 id: "feature-install-invoke",
                 name: "installed.echo",
@@ -508,7 +508,7 @@ extension SwiftFeatureRuntimeTests {
                 argumentsJSON: #"{"text":"installato"}"#
             ),
             workingDirectory: rootURL
-        )
+        )?.output
         #expect(output == "installato")
     }
 
@@ -661,7 +661,7 @@ extension SwiftFeatureRuntimeTests {
         )
         #expect(enabledDescriptors.map(\.name).contains("generated.echo"))
 
-        let output = try await runtime.executeIfAvailable(
+        let output = try await runtime.executeResultIfAvailable(
             toolCall: DirectAgentToolCall(
                 id: "generated-call",
                 name: "generated.echo",
@@ -669,7 +669,7 @@ extension SwiftFeatureRuntimeTests {
                 argumentsJSON: "{}"
             ),
             workingDirectory: rootURL
-        )
+        )?.output
         #expect(output == "generated-output")
 
         _ = try await runtime.executeManagementTool(

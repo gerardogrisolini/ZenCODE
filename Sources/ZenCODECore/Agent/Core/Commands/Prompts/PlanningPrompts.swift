@@ -54,10 +54,6 @@ extension PlanningCommandKernel {
         plan, and translating dependencies only to IDs of the same plan.
         """
 
-    static func planStartPrompt(goal: String, planner: AgentProfile) -> String {
-        planStartPrompt(goal: goal, planners: [planner])
-    }
-
     /// With several Planner candidates the model may delegate to any of them.
     static func planStartPrompt(goal: String, planners: [AgentProfile]) -> String {
         """
@@ -94,13 +90,6 @@ extension PlanningCommandKernel {
         enforced by the Planner id and output revision for this turn.
         - Do not edit any files yourself in this planning turn.
         """
-    }
-
-    static func planContinuationPrompt(
-        state: PlanningCommandRuntimeState,
-        planner: AgentProfile
-    ) -> String {
-        planContinuationPrompt(state: state, planners: [planner])
     }
 
     static func planContinuationPrompt(

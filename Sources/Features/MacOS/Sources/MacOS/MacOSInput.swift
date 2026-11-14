@@ -4,10 +4,6 @@ import Foundation
 struct StringList: Decodable, Sendable {
     let values: [String]
 
-    init(_ values: [String]) {
-        self.values = values
-    }
-
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         if let single = try? container.decode(String.self) {

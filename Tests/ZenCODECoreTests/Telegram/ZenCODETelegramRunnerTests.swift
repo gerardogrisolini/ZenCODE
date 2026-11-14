@@ -387,7 +387,7 @@ struct ZenCODETelegramRunnerTests {
                 execution: TaskExecutionSpec(executor: .coordinator)
             )
         }
-        try #require(environment.taskGraphStore).save(
+        try #require(environment.taskGraphStore).compareAndSwap(
             SessionTaskGraphCheckpoint(
                 sessionID: "old-session",
                 currentGraphID: "old-work",
@@ -396,6 +396,7 @@ struct ZenCODETelegramRunnerTests {
                     createdAt: date, updatedAt: date
                 )]
             ),
+            replacing: nil,
             workingDirectory: environment.workspace
         )
     }

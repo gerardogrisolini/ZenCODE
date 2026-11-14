@@ -219,10 +219,6 @@ extension RemoteGenerationClient {
             .lowercased() == "assistant" ? "output_text" : "input_text"
     }
 
-    public static func responseFunctionCallPayload(from toolCall: [String: Any]) -> [String: Any]? {
-        try? responseFunctionCallPayload(from: toolCall, validate: false)
-    }
-
     static func responseFunctionCallPayload(
         from toolCall: [String: Any],
         validate: Bool

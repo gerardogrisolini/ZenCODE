@@ -124,12 +124,6 @@ struct TurnFileChangeNetPeekTests {
         )?.number == 2)
         #expect(await history.snapshot().map(\.number) == [1, 2])
         #expect(await history.append(summary: summary, sessionID: "session", workingDirectory: directory)?.number == 3)
-
-        // A reset fences the pending tokens.
-        let stale = try #require(await history.beginTurn(sessionID: "session"))
-        #expect(await history.pendingTurnNumber(stale) == 4)
-        await history.reset(for: "session")
-        #expect(await history.pendingTurnNumber(stale) == nil)
     }
 
     // MARK: - Support

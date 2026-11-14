@@ -57,10 +57,6 @@ struct DS4SessionPool<Handle> {
         entries.sorted { $0.value.lastUse < $1.value.lastUse }.map(\.key)
     }
 
-    func contains(_ sessionID: String) -> Bool {
-        entries[sessionID] != nil
-    }
-
     /// Handle of a live session without touching its recency.
     func peekHandle(for sessionID: String) -> Handle? {
         entries[sessionID]?.handle
@@ -129,10 +125,6 @@ struct DS4SessionPool<Handle> {
         if pinnedSessionID == sessionID {
             pinnedSessionID = nil
         }
-    }
-
-    func settings(for sessionID: String) -> DS4SessionSettings {
-        settings[sessionID] ?? DS4SessionSettings()
     }
 
     mutating func updateSettings(for sessionID: String, _ update: (inout DS4SessionSettings) -> Void) {

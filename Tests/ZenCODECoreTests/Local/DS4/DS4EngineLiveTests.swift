@@ -188,7 +188,7 @@ struct DS4EngineLiveTests {
         #expect(restoredPrefill != nil)
         #expect(restoredPrefill.map { !$0.hasPrefix("DS4 prefill: 0 cached") } ?? false)
         await restored.shutdown()
-        await registry.shutdown()
+        _ = await registry.closeIfIdle()
     }
 
     /// `(cached, suffix)` of a `DS4 prefill: N cached, M tokens to evaluate` diagnostic.

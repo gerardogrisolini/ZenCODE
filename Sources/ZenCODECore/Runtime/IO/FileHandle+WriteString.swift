@@ -48,10 +48,6 @@ enum TerminalOutputSynchronization {
             else { output?.write(Data(string.utf8)) }
         }
     }
-
-    static func writeOverlay(_ string: String, output: FileHandle?, sink: (@Sendable (String) -> Void)?) {
-        write(string, output: output, sink: sink)
-    }
 }
 
 extension FileHandle {

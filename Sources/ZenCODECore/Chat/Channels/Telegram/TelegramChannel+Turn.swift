@@ -432,15 +432,14 @@ extension TelegramChannel {
 
     /// A route revoked, rebound, or closed while the turn that came from it
     /// was generating: the turn is stopped, its reporting ends, the route's
-    /// runtime state and its pending command replies are torn down, and,
-    /// when `lease` is the link's active route, it is forgotten and the
-    /// shared-chat relay unbound. Calling it again changes nothing.
+    /// pending command replies are torn down, and, when `lease` is the link's
+    /// active route, it is forgotten and the shared-chat relay unbound.
+    /// Calling it again changes nothing.
     func routeWasInvalidated(_ lease: TerminalTelegramRouteLease) async {
         if activeTurnLease == lease {
             await stopActiveTurn()
         }
         await endTurnReporting()
-        await routeRuntimeState.teardown(lease: lease)
         commandReplyBindings = commandReplyBindings.filter {
             $0.value.lease != lease
         }

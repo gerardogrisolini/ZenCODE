@@ -60,20 +60,4 @@ public enum DirectToolError: LocalizedError {
             return message
         }
     }
-
-    /// A stable, machine-readable category for structured logging and telemetry.
-    public var category: String {
-        switch self {
-        case .unknownTool: return "unknownTool"
-        case .missingArgument: return "missingArgument"
-        case .permissionDenied: return "permissionDenied"
-        case .timedOut: return "timedOut"
-        case .processFailed: return "processFailed"
-        case .invalidResponse: return "invalidResponse"
-        case .toolFailed: return "toolFailed"
-        case .invalidInput: return "invalidInput"
-        case .notFound: return "notFound"
-        case .persistenceFailed: return "persistenceFailed"
-        }
-    }
 }

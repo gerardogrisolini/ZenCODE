@@ -166,29 +166,6 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
         )
     }
 
-    public func wireToolCall(from toolCall: DirectAgentToolCall) -> DirectAgentToolCall {
-        let wireName = bindingForLocalToolName(toolCall.name)?.wireName
-            ?? sanitizedRemoteToolWireName(for: toolCall.name)
-        guard wireName != toolCall.name else {
-            return toolCall
-        }
-
-        return DirectAgentToolCall(
-            id: toolCall.id,
-            name: wireName,
-            argumentsObject: toolCall.argumentsObject,
-            argumentsJSON: toolCall.argumentsJSON,
-            descriptorTitle: toolCall.descriptorTitle,
-            presentation: toolCall.presentation
-        )
-    }
-
-    public func binding(forToolName toolName: String) -> Binding? {
-        bindingForLocalToolName(toolName)
-            ?? bindingForWireToolName(toolName)
-            ?? bindingForCompatibilityName(toolName)
-    }
-
     private func bindingForIncomingToolName(_ toolName: String) -> Binding? {
         // A response name is interpreted in the namespace advertised to the
         // model first. This matters when one tool's canonical name is another

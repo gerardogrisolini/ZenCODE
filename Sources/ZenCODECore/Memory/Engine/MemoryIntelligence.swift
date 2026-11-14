@@ -46,7 +46,6 @@ protocol MemoryQueryAnalyzer: Sendable {
 }
 
 /// Zero-cost default analyzer. It treats the current prompt as the retrieval query.
-/// Replace it with an LLM-backed analyzer when semantic query rewriting is useful.
 struct DirectMemoryQueryAnalyzer: MemoryQueryAnalyzer {
     public init() {}
 
@@ -86,43 +85,6 @@ struct TopScoreMemorySelector: MemorySelector {
             .prefix(limit)
             .map { $0 }
     }
-}
-
-struct MemoryDraft: Codable, Sendable, Equatable {
-    public var content: String
-    public var category: EngineMemoryCategory
-    public var tags: [String]
-    public var source: String?
-    public var trust: TrustLevel
-    public var scope: EngineMemoryScope
-    public var confidence: Float
-
-    public init(
-        content: String,
-        category: EngineMemoryCategory = .fact,
-        tags: [String] = [],
-        source: String? = nil,
-        trust: TrustLevel = .medium,
-        scope: EngineMemoryScope = .project,
-        confidence: Float = 1
-    ) {
-        self.content = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.category = category
-        self.tags = tags
-        self.source = source
-        self.trust = trust
-        self.scope = scope
-        self.confidence = min(max(confidence, 0), 1)
-    }
-}
-
-protocol MemoryExtractor: Sendable {
-    func extract(from context: String) async throws -> [MemoryDraft]
-}
-
-struct NoopMemoryExtractor: MemoryExtractor {
-    public init() {}
-    public func extract(from context: String) async throws -> [MemoryDraft] { [] }
 }
 
 struct MemoryRecallResult: Sendable, Equatable {
@@ -175,7 +137,3 @@ struct BulletMemoryContextFormatter: MemoryContextFormatter {
         return ([heading + ":"] + entries).joined(separator: "\n")
     }
 }
-
-//private extension String {
-//    var nilIfEmpty: String? { isEmpty ? nil : self }
-//}

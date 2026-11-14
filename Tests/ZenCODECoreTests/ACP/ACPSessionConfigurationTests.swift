@@ -214,7 +214,8 @@ extension ACPCompatibilityTests {
 
         let configuration = try #require(await bridge.sessionConfigurationsForTesting().first)
         let allowedToolNames = try #require(configuration.allowedToolNames)
-        let mutatingCoreNames = Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
+        let mutatingCoreNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
+            .subtracting(DirectToolCatalog.coreReadDescriptors.map(\.name))
 
         #expect(allowedToolNames.isDisjoint(with: mutatingCoreNames))
         #expect(allowedToolNames.contains("local.readFile"))
@@ -272,7 +273,8 @@ extension ACPCompatibilityTests {
 
         let configuration = try #require(await bridge.sessionConfigurationsForTesting().first)
         let allowedToolNames = try #require(configuration.allowedToolNames)
-        let mutatingCoreNames = Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
+        let mutatingCoreNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
+            .subtracting(DirectToolCatalog.coreReadDescriptors.map(\.name))
 
         #expect(allowedToolNames.isDisjoint(with: mutatingCoreNames))
         #expect(allowedToolNames.contains("local.readFile"))

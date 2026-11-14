@@ -229,7 +229,6 @@ struct ToolAllowlistCharacterizationTests {
             cwd: "/tmp/workspace",
             agentsSection: nil,
             memorySection: nil,
-            memoryToolEnabled: false,
             allowedToolNames: allowed
         )
         #expect(sections.dynamicContext.contains("Task workflow policy:") == row.taskWorkflow)

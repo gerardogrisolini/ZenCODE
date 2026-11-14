@@ -33,18 +33,18 @@ struct TerminalSharedChatSafetyTests {
     @Test
     func reservedMentionsRemainUsableWhileTheirTextIsTerminalSanitized() {
         #expect(
-            TerminalChat.sharedChatMentionRoute(from: "@all report\u{2028}status")
-                == TerminalChat.SharedChatMentionRoute(
+            TerminalChat.parseSharedChatMention(from: "@all report\u{2028}status")
+                == .route(TerminalChat.SharedChatMentionRoute(
                     destination: .all,
                     text: "report<LS>status"
-                )
+                ))
         )
         #expect(
-            TerminalChat.sharedChatMentionRoute(from: "@coordinator check\u{202E}identity")
-                == TerminalChat.SharedChatMentionRoute(
+            TerminalChat.parseSharedChatMention(from: "@coordinator check\u{202E}identity")
+                == .route(TerminalChat.SharedChatMentionRoute(
                     destination: .coordinator,
                     text: "check<U+202E>identity"
-                )
+                ))
         )
     }
 

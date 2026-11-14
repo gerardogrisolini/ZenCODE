@@ -22,13 +22,6 @@ struct TerminalTelegramPermissionCommand: Sendable, Equatable {
 enum TerminalTelegramPermissionMessageResult: Sendable, Equatable {
     case notHandled
     case handled(reply: String?)
-
-    var isHandled: Bool {
-        if case .handled = self {
-            return true
-        }
-        return false
-    }
 }
 
 /// Outcome of a remote authorization request.
@@ -46,15 +39,6 @@ enum TerminalTelegramPermissionOutcome: Sendable, Equatable {
     /// The request could not be delivered to Telegram, so nobody could answer it.
     case undeliverable
     case cancelled
-
-    var isApproved: Bool {
-        switch self {
-        case .notRequired, .allowedOnce, .allowedAlways:
-            return true
-        case .denied, .timedOut, .undeliverable, .cancelled:
-            return false
-        }
-    }
 }
 
 private enum TerminalTelegramPermissionResolution: Sendable, Equatable {

@@ -132,11 +132,6 @@ enum LocalFileEditSupport {
             .replacingOccurrences(of: "\n", with: separator)
     }
 
-    static func logicalLines(in contents: String) -> [String] {
-        adaptingLineEndings(in: contents, to: "\n")
-            .components(separatedBy: "\n")
-    }
-
     private static func lineNumber(at index: String.Index, in contents: String) -> Int {
         1 + logicalLineBreakCount(in: String(contents[..<index]))
     }

@@ -153,9 +153,7 @@ struct RemoteModelCatalogClientTests {
         let turboThinking = RemoteModelCatalogClient.thinkingSupport(
             fromModelMetadata: [
                 "reasoning": ["mandatory": false, "default_enabled": true] as [String: Any]
-            ],
-            baseURL: "https://openrouter.ai/api/v1",
-            modelID: "z-ai/glm-5-turbo"
+            ]
         )
         let glm52Thinking = RemoteModelCatalogClient.thinkingSupport(
             fromModelMetadata: [
@@ -165,9 +163,7 @@ struct RemoteModelCatalogClientTests {
                     "supported_efforts": ["xhigh", "high"],
                     "default_effort": "high"
                 ] as [String: Any]
-            ],
-            baseURL: "https://openrouter.ai/api/v1",
-            modelID: "z-ai/glm-5.2"
+            ]
         )
         let catalog = [
             OpenRouterModelInfo(id: "z-ai/glm-5-turbo", name: "GLM 5 Turbo", contextLength: 202_752, pricing: nil, thinkingSupport: turboThinking),
@@ -201,9 +197,7 @@ struct RemoteModelCatalogClientTests {
                     "available_selections": ["off", "low", "medium", "high"],
                     "default_selection": "medium"
                 ]
-            ],
-            baseURL: "https://api.us-west-2.modal.direct/v1",
-            modelID: "remote-community/qwen3-test"
+            ]
         )
 
         #expect(support?.supportsThinking == true)
@@ -239,9 +233,7 @@ struct RemoteModelCatalogClientTests {
                     "supported_efforts": ["max", "high", "low"],
                     "default_effort": "high"
                 ] as [String: Any]
-            ],
-            baseURL: "https://openrouter.ai/api/v1",
-            modelID: "deepseek/deepseek-v4-pro"
+            ]
         )
 
         guard let thinkingSupport = support else {
@@ -255,18 +247,16 @@ struct RemoteModelCatalogClientTests {
     }
 
     @Test(arguments: [
-        ("https://integrate.api.nvidia.com/v1", "nvidia/llama-3.3-nemotron-super-49b-v1"),
-        ("https://integrate.api.nvidia.com/v1", "meta/llama-3.3-70b-instruct"),
-        ("https://api.us-west-2.modal.direct/v1", "zai-org/GLM-5.1-FP8"),
-        ("https://openrouter.ai/api/v1", "meta-llama/llama-3.3-70b-instruct")
+        "nvidia/llama-3.3-nemotron-super-49b-v1",
+        "meta/llama-3.3-70b-instruct",
+        "zai-org/GLM-5.1-FP8",
+        "meta-llama/llama-3.3-70b-instruct"
     ])
-    func modelWithoutReasoningDataHasNoThinkingSupport(baseURL: String, modelID: String) {
+    func modelWithoutReasoningDataHasNoThinkingSupport(modelID: String) {
         let support = RemoteModelCatalogClient.thinkingSupport(
             fromModelMetadata: [
                 "id": modelID
-            ],
-            baseURL: baseURL,
-            modelID: modelID
+            ]
         )
 
         #expect(support == nil)

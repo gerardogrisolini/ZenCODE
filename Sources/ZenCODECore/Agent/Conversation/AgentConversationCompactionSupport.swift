@@ -18,18 +18,6 @@ public enum AgentConversationCompactionSupport {
     static let historicalLinePrefix = "> "
     static let priorMemoryLabel = "Prior memory:"
 
-    public static func compactedMessagesIfNeeded(
-        _ messages: [AgentRuntimeMessage],
-        maxTokens: Int?,
-        force: Bool = false
-    ) -> AgentConversationCompactionResult {
-        compactedMessagesIfNeeded(
-            messages,
-            budget: AgentConversationCompactionBudget(contextWindowTokens: maxTokens),
-            force: force
-        )
-    }
-
     /// Compacts against a budget that already accounts for reserved output and
     /// provider overhead. A result is only reported as compacted when the
     /// prompt materially shrank, which avoids destructive one-token rewrites
@@ -166,23 +154,6 @@ public enum AgentConversationCompactionSupport {
         let characterCount = messages.reduce(0) { $0 + estimatedCharacterCount(for: $1) }
         guard characterCount > 0 else { return 0 }
         return max(Int((Double(characterCount) / 4.0).rounded(.up)), 1)
-    }
-
-    /// Builds a memory summary that fits `maxCharacters` exactly.
-    ///
-    /// The limit is honoured as given. `minimumSummaryCharacters` is a
-    /// historical reference value rather than a sizing floor, so both this
-    /// public API and the compaction search may produce smaller summaries.
-    public static func conversationMemorySummary(
-        priorSummary: String?,
-        olderMessages: [AgentRuntimeMessage],
-        maxCharacters: Int
-    ) -> String {
-        conversationMemorySummary(
-            priorSummary: priorSummary,
-            entries: olderMessages.flatMap(summaryEntries(for:)),
-            maxCharacters: maxCharacters
-        )
     }
 
     public static func systemPromptWithoutCompactionSummary(

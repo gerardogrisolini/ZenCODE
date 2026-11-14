@@ -45,13 +45,6 @@ extension ChatSessionController {
         )
     }
 
-    /// The project's agent menu: every available profile, the ones
-    /// associated with the project selected, and the active one marked
-    /// current.
-    func projectAgentChoices() throws -> ChatChoiceList {
-        projectAgentMenu(agents: try availableAgents()).choices
-    }
-
     private struct ProjectAgentMenu {
         let choices: ChatChoiceList
         let projectName: String

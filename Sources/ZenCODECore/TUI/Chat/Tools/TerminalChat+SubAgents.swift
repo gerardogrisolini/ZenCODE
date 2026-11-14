@@ -93,7 +93,6 @@ extension TerminalChat {
         let text = TerminalSubAgentOverviewLayout.render(
             snapshots,
             modelTitleResolver: resolver,
-            includesFinalResponses: false,
             toolPresentationsByAgentID: toolPresentations.presentationsByAgentID,
             rowBudget: TerminalSubAgentOverviewLayout.overviewRowBudget(
                 forInPlaceRows: maximumInPlaceRows
@@ -114,18 +113,6 @@ extension TerminalChat {
             // snapshots (see ``ChatSubAgentOverview/currentBatchID``).
             overviewBatchID: overview.currentBatchID,
             maximumInPlaceRows: maximumInPlaceRows
-        )
-    }
-
-    public nonisolated static func renderSubAgentOverview(
-        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
-        modelTitleResolver: (String) -> String = { $0 }
-    ) -> String {
-        TerminalSubAgentOverviewLayout.render(
-            snapshots,
-            modelTitleResolver: modelTitleResolver,
-            includesFinalResponses: true,
-            toolPresentationsByAgentID: [:]
         )
     }
 

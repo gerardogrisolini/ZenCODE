@@ -148,7 +148,7 @@ struct DirectToolDesktopGatingTests {
                 return false
             },
             swiftFeatureRuntime: runtime,
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
 
         let denied = await executor.execute(

@@ -9,12 +9,6 @@ import FeatureMCPBridgeKit
 import Foundation
 import ToolCore
 
-private struct DirectToolPayloadInput {
-    let name: String
-    let description: String
-    let parameters: Any
-}
-
 public actor DirectToolExecutor {
     public static let defaultModelOutputLimit = 12_000
 
@@ -103,31 +97,6 @@ public actor DirectToolExecutor {
             sharedChat: sharedChat,
             sharedChatSenderID: sharedChatSenderID,
             sharedChatRootSessionID: sharedChatRootSessionID,
-            toolExecutionContext: toolExecutionContext
-        )
-    }
-
-    public init(
-        outputLimit: Int = 48_000,
-        authorizationHandler: AgentToolAuthorizationHandler? = nil,
-        mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
-        swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
-        preferredWorkspaceRootURL: URL? = nil,
-        borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
-        toolExecutionContext: ToolExecutionContext = ToolExecutionContext(),
-        subAgentBackendFactory: @escaping DirectSubAgentBackendFactory
-    ) {
-        self.init(
-            outputLimit: outputLimit,
-            authorizationHandler: authorizationHandler,
-            mcpRuntime: mcpRuntime,
-            swiftFeatureRuntime: swiftFeatureRuntime,
-            preferredWorkspaceRootURL: preferredWorkspaceRootURL,
-            borrowedSubAgentToolExecutor: borrowedSubAgentToolExecutor,
-            subAgentContextualBackendFactory: { _ in subAgentBackendFactory() },
-            subAgentProfileResolver: DirectSubAgentRuntime.liveProfileResolver,
-            subAgentModelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
-            coordinatesLiveManifestReads: true,
             toolExecutionContext: toolExecutionContext
         )
     }
@@ -470,64 +439,6 @@ public actor DirectToolExecutor {
         )
     }
 
-    public func chatCompletionToolPayloads(
-        sessionID: String,
-        allowedToolNames: Set<String>? = nil
-    ) async -> [[String: Any]] {
-        let inputs = await toolPayloadInputs(
-            sessionID: sessionID,
-            allowedToolNames: allowedToolNames
-        )
-        return inputs.map { input in
-            [
-                "type": "function",
-                "function": [
-                    "name": input.name,
-                    "description": input.description,
-                    "parameters": input.parameters
-                ]
-            ]
-        }
-    }
-
-    public func responsesToolPayloads(
-        sessionID: String,
-        allowedToolNames: Set<String>? = nil
-    ) async -> [[String: Any]] {
-        let inputs = await toolPayloadInputs(
-            sessionID: sessionID,
-            allowedToolNames: allowedToolNames
-        )
-        return inputs.map { input in
-            [
-                "type": "function",
-                "name": input.name,
-                "description": input.description,
-                "parameters": input.parameters
-            ]
-        }
-    }
-
-    private func toolPayloadInputs(
-        sessionID: String,
-        allowedToolNames: Set<String>?
-    ) async -> [DirectToolPayloadInput] {
-        let descriptors = await descriptors(
-            allowedToolNames: allowedToolNames,
-            sessionID: sessionID
-        )
-        return descriptors.compactMap { descriptor in
-            guard let parameters = descriptor.schemaObject else {
-                return nil
-            }
-            return DirectToolPayloadInput(
-                name: descriptor.name,
-                description: descriptor.description,
-                parameters: parameters
-            )
-        }
-    }
-
     public func execute(
         sessionID: String?,
         toolCall: DirectAgentToolCall,
@@ -797,11 +708,6 @@ public actor DirectToolExecutor {
             return false
         }
         return isAllowed(canonicalName, allowedToolNames: allowedToolNames)
-    }
-
-    public static func isSubAgentCoordinationToolName(_ toolName: String) -> Bool {
-        DirectSubAgentRuntime.isSubAgentToolName(toolName)
-            || DirectTodoTaskRuntime.isTodoOrTaskToolName(toolName)
     }
 }
 

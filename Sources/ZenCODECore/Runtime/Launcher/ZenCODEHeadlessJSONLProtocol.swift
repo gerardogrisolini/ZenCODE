@@ -16,7 +16,6 @@ import ToolCore
 /// never cross this boundary.
 public enum ZenCODEHeadlessJSONLProtocol {
     public static let schemaVersion = 1
-    public static let version = schemaVersion
 
     /// The closed set of public error categories. Machine consumers match on
     /// these stable identifiers; the raw error is never exposed verbatim.
@@ -228,13 +227,6 @@ public enum ZenCODEHeadlessJSONLProtocol {
         publicError(for: error)
     }
 
-    /// Compatibility helper for callers that need to serialize an error
-    /// before a runner/writer exists. It creates a fresh run identifier only
-    /// when one was not supplied by the caller.
-    public static func error(_ error: Error, runID: String = UUID().uuidString) -> JSONValue {
-        self.error(runID: runID, error)
-    }
-
     /// Writes one framed record (payload and terminating LF) as a single
     /// serialized write. It is used at CLI boundaries before a live writer
     /// exists; stdout receives a complete JSON Lines record, never a payload
@@ -274,17 +266,6 @@ public enum ZenCODEHeadlessJSONLProtocol {
     /// The exact bytes `writeFramedError(_:runID:to:)` writes.
     static func framedErrorData(_ error: Error, runID: String = UUID().uuidString) -> Data? {
         framedRecordData(Self.error(runID: runID, error))
-    }
-
-    /// The closed category set as raw strings, for validation and tests.
-    public static let errorCategories = ErrorCategory.allCases.map(\.rawValue)
-
-    public static func category(for error: Error) -> String {
-        publicError(for: error).category.rawValue
-    }
-
-    public static func message(for error: Error) -> String {
-        publicError(for: error).publicMessage
     }
 
     /// Converts a protocol object to compact UTF-8. The writer adds the LF
@@ -328,8 +309,6 @@ public enum ZenCODEHeadlessJSONLProtocol {
         return .object(object)
     }
 }
-
-public typealias HeadlessJSONLProtocol = ZenCODEHeadlessJSONLProtocol
 
 /// Actor-isolated, ordered writer for headless JSON Lines records.
 ///
@@ -397,10 +376,6 @@ public actor ZenCODEHeadlessJSONLWriter {
         }
     }
 
-    public func write(_ event: DirectAgentEvent) {
-        write(event: event)
-    }
-
     /// Emits the final text and successful completion marker. The runner calls
     /// this only after checking that the response text is not empty.
     public func write(result response: DirectAgentResponse) {
@@ -412,10 +387,6 @@ public actor ZenCODEHeadlessJSONLWriter {
         ))
         write(record: ZenCODEHeadlessJSONLProtocol.runCompleted(runID: runID))
         terminalRecordWritten = true
-    }
-
-    public func write(response: DirectAgentResponse) {
-        write(result: response)
     }
 
     public func write(error: Error) {
@@ -461,5 +432,3 @@ public actor ZenCODEHeadlessJSONLWriter {
         sink(data)
     }
 }
-
-public typealias HeadlessJSONLWriter = ZenCODEHeadlessJSONLWriter

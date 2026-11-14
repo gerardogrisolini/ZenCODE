@@ -30,13 +30,6 @@ extension PlanningCommandKernel {
         )
     }
 
-    static func planFromLatestAssistantMessage(
-        in messages: [AgentRuntimeMessage],
-        createdAt: Date = Date()
-    ) -> TerminalSessionPlan? {
-        plansFromLatestAssistantMessage(in: messages, createdAt: createdAt).first
-    }
-
     /// Promotes the latest assistant answer to one plan per plan section: a
     /// multi-plan Planner output yields its plans in sequence order, each with
     /// its own points, text, and heading-prefixed goal; any other answer yields

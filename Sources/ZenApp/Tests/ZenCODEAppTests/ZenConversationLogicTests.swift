@@ -397,7 +397,6 @@ struct ZenEscapeRoutingTests {
     @Test("Esc without a request stops the turn")
     func noRequestStops() {
         #expect(ZenEscapeAction(pendingRequestID: nil, kind: nil) == .stop)
-        #expect(ZenEscapeAction(pendingRequest: nil) == .stop)
     }
 
     @Test("Esc with a request that is not a consent stops the turn")

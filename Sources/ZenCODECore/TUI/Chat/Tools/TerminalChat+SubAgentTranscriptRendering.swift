@@ -83,7 +83,6 @@ extension TerminalChat {
                     modelTitleResolver: modelTitleResolver,
                     toolPresentation: nil,
                     density: .full,
-                    includesFinalResponse: false,
                     includesActivity: false
                 ),
                 columns: width,

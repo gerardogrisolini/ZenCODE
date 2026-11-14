@@ -86,7 +86,7 @@ struct AgentDelegationRoutingTests {
 
         let resolved = AgentDelegationCatalog.resolvedBindings(
             for: profile,
-            models: [Self.betaModel]
+            snapshot: .available(models: [Self.betaModel])
         )
 
         #expect(resolved.isCatalogAvailable)
@@ -111,7 +111,7 @@ struct AgentDelegationRoutingTests {
             SystemPromptBuilder.delegatableAgentsSection(
                 agents: [profile],
                 allowedToolNames: nil,
-                models: [Self.betaModel]
+                snapshot: .available(models: [Self.betaModel])
             )
         )
 
@@ -134,7 +134,7 @@ struct AgentDelegationRoutingTests {
             SystemPromptBuilder.delegatableAgentsSection(
                 agents: [Self.profile(bindings: [])],
                 allowedToolNames: nil,
-                models: [Self.betaModel]
+                snapshot: .available(models: [Self.betaModel])
             )
         )
 
@@ -326,12 +326,11 @@ struct AgentDelegationRoutingTests {
             bindings: [AgentModelBinding(id: "beta", modelID: Self.betaModelID, capability: 7)]
         )
 
-        let resolved = AgentDelegationCatalog.resolvedBindings(for: profile, models: models)
+        let resolved = AgentDelegationCatalog.resolvedBindings(for: profile, snapshot: .available(models: models))
         let binding = try #require(resolved.bindings.first)
 
         #expect(binding.canonicalModelID == Self.betaModelID)
         #expect(binding.providerModelID == Self.sharedSlug)
-        #expect(binding.providerID == Self.betaProviderID)
         #expect(binding.providerTitle == "Beta")
         #expect(binding.routingBinding.modelID == Self.betaModelID)
     }
@@ -344,7 +343,7 @@ struct AgentDelegationRoutingTests {
 
         let resolved = AgentDelegationCatalog.resolvedBindings(
             for: profile,
-            models: [Self.alphaModel, Self.betaModel]
+            snapshot: .available(models: [Self.alphaModel, Self.betaModel])
         )
 
         #expect(resolved.bindings.isEmpty)
@@ -408,7 +407,7 @@ struct AgentDelegationRoutingTests {
         )
         let resolved = AgentDelegationCatalog.resolvedBindings(
             for: profile,
-            models: [Self.alphaModel, betaAliasModel]
+            snapshot: .available(models: [Self.alphaModel, betaAliasModel])
         )
 
         if case let .ambiguous(candidates) = resolved.selection(for: "alias-model") {
@@ -446,7 +445,7 @@ struct AgentDelegationRoutingTests {
             SystemPromptBuilder.delegatableAgentsSection(
                 agents: [profile],
                 allowedToolNames: nil,
-                models: models
+                snapshot: .available(models: models)
             )
         )
         #expect(section.contains("binding:listed"))
@@ -499,7 +498,7 @@ struct AgentDelegationRoutingTests {
         #expect(
             AgentDelegationCatalog.roster(
                 agents: duplicateNameProfiles,
-                models: [Self.alphaModel, Self.betaModel]
+                snapshot: .available(models: [Self.alphaModel, Self.betaModel])
             ).isEmpty
         )
 

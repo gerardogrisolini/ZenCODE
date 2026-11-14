@@ -59,15 +59,17 @@ struct ZenCommandSuggestionsTests {
     }
 
     @Test("completion adds a space to commands that need an argument")
-    func completion() {
-        #expect(ZenCommandSuggestions.completion(for: commands[0]) == "/help")
-        #expect(ZenCommandSuggestions.completion(for: commands[3]) == "/save ")
+    func completion() throws {
+        let help = try #require(ZenCommandSuggestions.accept(commands[0], in: "/he", submitting: false))
+        let save = try #require(ZenCommandSuggestions.accept(commands[3], in: "/sa", submitting: false))
+        #expect(help.draft == "/help")
+        #expect(save.draft == "/save ")
         // Return sends a complete command, and only completes one that needs
         // an argument (TerminalPromptEditor.acceptSuggestion).
-        #expect(ZenCommandSuggestions.submitsOnReturn(commands[0]))
-        #expect(!ZenCommandSuggestions.submitsOnReturn(commands[3]))
+        #expect(ZenCommandSuggestions.accept(commands[0], in: "/he", submitting: true)?.submits == true)
+        #expect(ZenCommandSuggestions.accept(commands[3], in: "/sa", submitting: true)?.submits == false)
         // The completed argument form no longer matches, so the list closes.
-        #expect(names(ZenCommandSuggestions.completion(for: commands[3])).isEmpty)
+        #expect(names(save.draft).isEmpty)
     }
 }
 

@@ -51,7 +51,7 @@ extension SwiftFeatureRuntimeTests {
         )
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: runtime,
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
         let toolCall = DirectAgentToolCall(
             id: "feature-call-1",
@@ -127,7 +127,7 @@ extension SwiftFeatureRuntimeTests {
         )
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: runtime,
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
 
         let result = await executor.execute(
@@ -207,7 +207,7 @@ extension SwiftFeatureRuntimeTests {
         )
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: runtime,
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
 
         let result = await executor.execute(
@@ -284,7 +284,7 @@ extension SwiftFeatureRuntimeTests {
         )
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: runtime,
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
 
         let descriptors = await executor.descriptors(
@@ -324,7 +324,7 @@ extension SwiftFeatureRuntimeTests {
     func directToolExecutorCapsModelFacingToolOutput() async throws {
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
         let output = String(repeating: "a", count: DirectToolExecutor.defaultModelOutputLimit + 100)
 
@@ -349,7 +349,7 @@ extension SwiftFeatureRuntimeTests {
         )
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
         await executor.updateToolProviders([
             AgentToolProvider(
@@ -422,7 +422,7 @@ extension SwiftFeatureRuntimeTests {
         )
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: runtime,
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
         let toolCall = DirectAgentToolCall(
             id: "local-exec-call-1",
@@ -487,7 +487,7 @@ extension SwiftFeatureRuntimeTests {
                 return false
             },
             swiftFeatureRuntime: runtime,
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
         let toolCall = DirectAgentToolCall(
             id: "git-commit-call-1",

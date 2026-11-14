@@ -96,20 +96,4 @@ extension TerminalChat {
             )
         }
     }
-
-    nonisolated static func taskGraphOverviewSignature(_ graph: TaskGraphSnapshot) -> String {
-        ChatTaskGraphOverview.signature(for: graph)
-    }
-
-    // MARK: - /tasks
-
-    /// `/tasks` and its actions, run by the shared controller (see
-    /// ``ChatSessionController/runTasksCommand(line:)``).
-    func handleTasksCommand(_ command: String) async {
-        await writeSessionNotices(await chatSession.runTasksCommand(line: command).notices)
-    }
-
-    nonisolated static func taskDetailMarkdown(_ view: TaskRecordView) -> String {
-        ChatSessionNoticeText.taskDetailMarkdown(view)
-    }
 }

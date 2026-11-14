@@ -79,12 +79,13 @@ struct SessionTaskGraphResumeTests {
             createdAt: now,
             updatedAt: now
         )
-        try store.save(
+        try store.compareAndSwap(
             SessionTaskGraphCheckpoint(
                 sessionID: "active-session",
                 currentGraphID: "active-graph",
                 graphs: [activeGraph]
             ),
+            replacing: nil,
             workingDirectory: working
         )
 
@@ -97,12 +98,13 @@ struct SessionTaskGraphResumeTests {
             createdAt: now,
             updatedAt: now
         )
-        try store.save(
+        try store.compareAndSwap(
             SessionTaskGraphCheckpoint(
                 sessionID: "done-session",
                 currentGraphID: "done-graph",
                 graphs: [completedGraph]
             ),
+            replacing: nil,
             workingDirectory: working
         )
 
@@ -193,12 +195,13 @@ struct SessionTaskGraphResumeTests {
             tasks: [TaskRecord(id: "plan-malformed-1", title: "First", order: 1)],
             savedPlan: TaskGraphSavedPlan(plan: malformedPlan)
         )
-        try store.save(
+        try store.compareAndSwap(
             SessionTaskGraphCheckpoint(
                 sessionID: librarySessionID,
                 currentGraphID: nil,
                 graphs: [graph]
             ),
+            replacing: nil,
             workingDirectory: working
         )
 
@@ -245,12 +248,13 @@ struct SessionTaskGraphResumeTests {
             state: .completed,
             tasks: [TaskRecord(id: "done", title: "Done", order: 1, status: .completed)]
         )
-        try store.save(
+        try store.compareAndSwap(
             SessionTaskGraphCheckpoint(
                 sessionID: "legacy-terminal",
                 currentGraphID: terminal.id,
                 graphs: [terminal]
             ),
+            replacing: nil,
             workingDirectory: working
         )
 
@@ -277,12 +281,13 @@ struct SessionTaskGraphResumeTests {
             state: .active,
             tasks: [TaskRecord(id: "pending", title: "Pending", order: 1)]
         )
-        try store.save(
+        try store.compareAndSwap(
             SessionTaskGraphCheckpoint(
                 sessionID: "legacy-mixed",
                 currentGraphID: terminal.id,
                 graphs: [terminal, resumable]
             ),
+            replacing: nil,
             workingDirectory: working
         )
 
@@ -314,7 +319,7 @@ struct SessionTaskGraphResumeTests {
             graphs: [terminal],
             savedAt: Date(timeIntervalSince1970: 123)
         )
-        try store.save(checkpoint, workingDirectory: working)
+        try store.compareAndSwap(checkpoint, replacing: nil, workingDirectory: working)
 
         let reader = SessionTaskOrchestrator(store: store)
         #expect(await reader.resumableTaskGraphCheckpoints(workingDirectory: working).isEmpty)
@@ -343,7 +348,7 @@ struct SessionTaskGraphResumeTests {
             currentGraphID: terminal.id,
             graphs: [terminal]
         )
-        try store.save(stale, workingDirectory: working)
+        try store.compareAndSwap(stale, replacing: nil, workingDirectory: working)
         let newerGraph = TaskGraphSnapshot(
             id: "new-work",
             source: .manual,
@@ -356,7 +361,7 @@ struct SessionTaskGraphResumeTests {
             graphs: [newerGraph]
         )
         // Simulate another runtime publishing after the scanner loaded `stale`.
-        try store.save(newer, workingDirectory: working)
+        try store.compareAndSwap(newer, replacing: stale, workingDirectory: working)
 
         let reader = SessionTaskOrchestrator(store: store)
         await reader.pruneLegacyCheckpoint(
@@ -464,12 +469,13 @@ struct SessionTaskGraphResumeTests {
             createdAt: now,
             updatedAt: now.addingTimeInterval(1)
         )
-        try store.save(
+        try store.compareAndSwap(
             SessionTaskGraphCheckpoint(
                 sessionID: "previous-session",
                 currentGraphID: previouslyCurrent.id,
                 graphs: [previouslyCurrent, selected]
             ),
+            replacing: nil,
             workingDirectory: working
         )
 
@@ -528,12 +534,13 @@ struct SessionTaskGraphResumeTests {
             createdAt: now,
             updatedAt: now
         )
-        try store.save(
+        try store.compareAndSwap(
             SessionTaskGraphCheckpoint(
                 sessionID: "previous-session",
                 currentGraphID: "keep",
                 graphs: [obsoleteGraph, keepGraph]
             ),
+            replacing: nil,
             workingDirectory: working
         )
 
@@ -605,12 +612,13 @@ struct SessionTaskGraphResumeTests {
             createdAt: now,
             updatedAt: now
         )
-        try store.save(
+        try store.compareAndSwap(
             SessionTaskGraphCheckpoint(
                 sessionID: "previous-session",
                 currentGraphID: chosen.id,
                 graphs: includesOtherGraph ? [chosen, other] : [chosen]
             ),
+            replacing: nil,
             workingDirectory: working
         )
     }

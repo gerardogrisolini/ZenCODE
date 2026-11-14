@@ -11,10 +11,6 @@ import ToolCore
 public enum AgentModelProviderKind: Codable, Sendable {
     case remoteAPI
 
-    public var displayTitle: String {
-        "remote"
-    }
-
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         let rawValue = try container.decode(String.self)
@@ -327,10 +323,6 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
         try container.encodeIfPresent(ds4Runtime, forKey: .ds4Runtime)
     }
 
-    public var runtime: AgentDS4RuntimeConfiguration? {
-        ds4Runtime
-    }
-
     /// Rebuilds the provider with a different model while retaining all
     /// protocol, authentication and DS4 metadata.
     public func withModelID(_ modelID: String) -> AgentRemoteProvider {
@@ -609,10 +601,6 @@ public struct AgentModelSelection: Sendable {
         self.thinkingOptions = thinkingOptions
         self.thinkingSelection = thinkingSelection
         self.ds4Runtime = ds4Runtime ?? remoteProvider?.ds4Runtime
-    }
-
-    public var runtime: AgentDS4RuntimeConfiguration? {
-        ds4Runtime
     }
 }
 

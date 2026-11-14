@@ -114,23 +114,6 @@ extension ZenCODEACPBridge {
         return .object(data)
     }
 
-    public static func toolCallProgressUpdate(
-        for toolCall: DirectAgentToolCall,
-        workingDirectory: URL? = nil
-    ) -> [String: Any] {
-        var update = toolCallCommonFields(for: toolCall, workingDirectory: workingDirectory)
-        update["sessionUpdate"] = "tool_call_update"
-        update["status"] = "in_progress"
-        return update
-    }
-
-    public static func toolCallProgressJSONUpdate(
-        for toolCall: DirectAgentToolCall,
-        workingDirectory: URL? = nil
-    ) -> JSONValue {
-        JSONValue.acpValue(from: toolCallProgressUpdate(for: toolCall, workingDirectory: workingDirectory))
-    }
-
     /// The `tool_call_update` that completes a call. When the result carries
     /// the time the tool executor measured (``DirectAgentToolResult/elapsed``),
     /// its `title` ends with it (``toolTitle(_:elapsed:)``); nothing else of
@@ -249,22 +232,8 @@ extension ZenCODEACPBridge {
     }
 
 
-    // Kept as forwarding APIs for ACP clients that previously used these helpers.
     public static func toolTitle(for toolCall: DirectAgentToolCall) -> String {
         ToolCallPresentation.toolTitle(for: toolCall)
-    }
-
-    public static func toolKind(
-        for toolCall: DirectAgentToolCall,
-        workingDirectory: URL? = nil
-    ) -> String {
-        acpToolKind(
-            ToolCallPresentation.toolKind(for: toolCall),
-            hasFileLocations: !toolLocations(
-                for: toolCall,
-                workingDirectory: workingDirectory
-            ).isEmpty
-        )
     }
 
     /// ACP v1 defines a closed tool-kind set: `read`, `edit`, `delete`, `move`,
@@ -296,10 +265,6 @@ extension ZenCODEACPBridge {
         }
     }
 
-    public static func toolIcon(for toolName: String) -> String {
-        ToolCallPresentation.toolIcon(for: toolName)
-    }
-
     public static func toolLocations(
         for toolCall: DirectAgentToolCall,
         workingDirectory: URL? = nil
@@ -308,26 +273,5 @@ extension ZenCODEACPBridge {
             for: toolCall,
             workingDirectory: workingDirectory
         )
-    }
-
-    public static func displayToolTarget(for toolCall: DirectAgentToolCall) -> String? {
-        ToolCallPresentation.displayToolTarget(for: toolCall)
-    }
-
-    public static func patchDisplayTarget(from arguments: [String: Any]) -> String? {
-        ToolCallPresentation.patchDisplayTarget(from: arguments)
-    }
-
-    public static func compactJSONString(from value: Any) -> String? {
-        JSONValue(jsonObject: value).compactString(sortedKeys: true)
-    }
-
-    public static func isAppSuppressedDiagnostic(_ message: String) -> Bool {
-        isMetricsDiagnostic(message)
-            || message.hasPrefix("Remote request:")
-    }
-
-    public static func isMetricsDiagnostic(_ message: String) -> Bool {
-        message.hasPrefix("Generation done:")
     }
 }

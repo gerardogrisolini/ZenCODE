@@ -179,8 +179,8 @@ struct ProjectStorageKeyTests {
         let other = try sandbox.folder("new/app")
         #expect(try TerminalSessionStore.savedSessions(for: other, supportDirectoryURL: sandbox.support).isEmpty)
         #expect(
-            TerminalChat.savedSessionCacheKey(name: "x", workingDirectory: original)
-                == TerminalChat.savedSessionCacheKey(name: "x", workingDirectory: moved)
+            ChatSessionController.savedSessionCacheKey(name: "x", workingDirectory: original)
+                == ChatSessionController.savedSessionCacheKey(name: "x", workingDirectory: moved)
         )
     }
 
@@ -219,7 +219,7 @@ struct ProjectStorageKeyTests {
             graphs: [],
             savedAt: Date(timeIntervalSince1970: 50)
         )
-        try store.save(chat, workingDirectory: original)
+        try store.compareAndSwap(chat, replacing: nil, workingDirectory: original)
 
         let moved = try sandbox.folder("App", create: false)
         try FileManager.default.moveItem(at: original, to: moved)

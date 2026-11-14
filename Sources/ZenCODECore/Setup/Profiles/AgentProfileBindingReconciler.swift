@@ -46,31 +46,4 @@ enum AgentProfileBindingReconciler {
             )
         }
     }
-
-    /// Missing profiles are left for the caller that owns profile creation;
-    /// invalid profiles propagate their load error and are never overwritten.
-    @discardableResult
-    static func reconcileStoredAgents(
-        with manifest: AgentSettingsManifest,
-        fileManager: FileManager = .default
-    ) throws -> Bool {
-        let agentsURL = AgentProfileStore.agentsManifestURL(fileManager: fileManager)
-        guard fileManager.fileExists(atPath: agentsURL.path) else {
-            return false
-        }
-
-        let existingAgents = try AgentProfileStore.loadRequired(fileManager: fileManager)
-        let updatedAgents = reconciledAgents(
-            existingAgents,
-            models: manifest.models
-        )
-        guard updatedAgents != existingAgents else {
-            return false
-        }
-
-        // AgentProfileStore.save preserves the manifest's private permissions
-        // and performs an atomic SensitiveFilePermissions write.
-        try AgentProfileStore.save(updatedAgents, fileManager: fileManager)
-        return true
-    }
 }

@@ -31,7 +31,6 @@ final class TerminalResizeCoordinator: @unchecked Sendable {
     private struct State: @unchecked Sendable {
         var generation: UInt64 = 0
         var physicalGeneration: UInt64 = 0
-        var publishedReservedRows: Int?
         var source: SourceBox?
         var observers: [UUID: @Sendable () -> Void] = [:]
     }
@@ -93,31 +92,13 @@ final class TerminalResizeCoordinator: @unchecked Sendable {
 
     func physicalGeneration() -> UInt64 { state.withLock { $0.physicalGeneration } }
 
-    /// Requests observers to repaint after an overlay restores the primary
-    /// screen. Unlike SIGWINCH this does not install or emit a signal; it only
-    /// advances the generation and invokes the currently subscribed observers.
-    func requestRefresh() {
-        let observers = state.withLock { state -> [@Sendable () -> Void] in
-            state.generation &+= 1
-            return Array(state.observers.values)
-        }
-        observers.forEach { $0() }
-    }
-
-    /// Returns the latest status-bar reservation when one is available, while
-    /// preserving the caller's initial reservation for standalone overlays.
-    func reservedBottomRows(fallback: Int) -> Int {
-        state.withLock { $0.publishedReservedRows ?? max(0, fallback) }
-    }
-
     /// Called by the status bar after it has committed the new terminal
     /// geometry. Publishing a layout advances the same generation so an open
     /// blocking overlay repaints once more after the status-bar reservation is
     /// current, without causing another SIGWINCH scheduling cycle.
-    func publishLayout(reservedBottomRows: Int?) {
+    func publishLayout() {
         state.withLock { state in
             state.generation &+= 1
-            state.publishedReservedRows = reservedBottomRows.map { max(0, $0) }
         }
     }
 

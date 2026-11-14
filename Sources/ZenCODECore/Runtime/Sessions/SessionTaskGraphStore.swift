@@ -49,32 +49,6 @@ public struct SessionTaskGraphStore: Sendable {
         self.maximumSnapshotBytes = max(1, maximumSnapshotBytes)
     }
 
-    public func save(
-        _ checkpoint: SessionTaskGraphCheckpoint,
-        workingDirectory: URL,
-        fileManager: FileManager = .default
-    ) throws {
-        guard checkpoint.schemaVersion == SessionTaskGraphCheckpoint.currentSchemaVersion else {
-            throw SessionTaskGraphStoreError.unsupportedSchema(checkpoint.schemaVersion)
-        }
-
-        let encoder = PropertyListEncoder()
-        encoder.outputFormat = .binary
-        let data = try encoder.encode(checkpoint)
-        guard data.count <= maximumSnapshotBytes else {
-            throw SessionTaskGraphStoreError.snapshotTooLarge(data.count)
-        }
-
-        let fileURL = checkpointFileURL(
-            sessionID: checkpoint.sessionID,
-            workingDirectory: workingDirectory,
-            fileManager: fileManager
-        )
-        try withLock(for: fileURL, exclusive: true, fileManager: fileManager) {
-            try SensitiveFilePermissions.write(data, to: fileURL, fileManager: fileManager)
-        }
-    }
-
     /// Atomically replaces `expected` with `checkpoint` under the checkpoint's
     /// cross-process lock. A mismatch fails closed instead of allowing a stale
     /// orchestrator instance to erase a newer graph update.

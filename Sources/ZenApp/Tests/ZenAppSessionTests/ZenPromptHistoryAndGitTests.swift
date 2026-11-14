@@ -62,7 +62,8 @@ struct ZenGitStatusTests {
         let output = "3\t1\tSources/a.swift\n-\t-\tAssets/logo.png\n10\t0\tREADME.md\nmalformed line\n\n"
         let summary = ZenGitStatus.numstatSummary(from: output)
         #expect(summary == TerminalGitStatusSummary(changedFileCount: 3, additions: 13, deletions: 1))
-        #expect(ZenGitStatus.numstatSummary(from: "") == .zero)
+        #expect(ZenGitStatus.numstatSummary(from: "")
+            == TerminalGitStatusSummary(changedFileCount: 0, additions: 0, deletions: 0))
         // A path with a tab stays one file (maxSplits 2).
         #expect(ZenGitStatus.numstatSummary(from: "1\t2\tweird\tname").changedFileCount == 1)
     }
@@ -100,7 +101,8 @@ struct ZenGitStatusTests {
             "-c", "user.name=ZenCODE", "-c", "user.email=zen@example.invalid",
             "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init",
         ], in: root))
-        #expect(await ZenGitStatus.summary(in: root, timeout: 10) == .zero)
+        #expect(await ZenGitStatus.summary(in: root, timeout: 10)
+            == TerminalGitStatusSummary(changedFileCount: 0, additions: 0, deletions: 0))
 
         try "one\ntwo\nthree\n".write(to: root.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
         try "new\n".write(to: root.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)

@@ -32,10 +32,6 @@ public enum ZenCODECommandLineArgumentSanitizer {
         return result
     }
 
-    public static func containsCocoaLaunchArguments(_ arguments: [String]) -> Bool {
-        arguments.dropFirst().contains(where: isCocoaLaunchArgument(_:))
-    }
-
     private static func isCocoaLaunchArgument(_ argument: String) -> Bool {
         argument == "-NSDocumentRevisionsDebugMode"
             || argument == "-ApplePersistenceIgnoreState"

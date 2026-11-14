@@ -571,7 +571,7 @@ struct WebBoundedLoaderTests {
         let result = try await awaitResult(of: box)
         #expect(String(decoding: result.data, as: UTF8.self) == "hello")
         #expect(!result.wasTruncated)
-        #expect(result.expectedContentLength == 5)
+        #expect(result.response.expectedContentLength == 5)
     }
 
     @Test
@@ -597,7 +597,7 @@ struct WebBoundedLoaderTests {
         let result = try await awaitResult(of: box)
         #expect(String(decoding: result.data, as: UTF8.self) == "0123456789")
         #expect(result.wasTruncated)
-        #expect(result.expectedContentLength == 5000)
+        #expect(result.response.expectedContentLength == 5000)
         delegate.urlSession(session, task: task, didCompleteWithError: URLError(.cancelled))
     }
 
@@ -905,6 +905,34 @@ struct WebSearchParsingTests {
     }
 }
 
+/// Offline helpers to check the production rule list without WebKit.
+extension WebContentBlockerRules {
+    /// Offline evaluation of the same patterns with ICU semantics (a superset
+    /// of the WebKit grammar): true when at least one rule would block
+    /// `serializedURL`.
+    static func blocks(_ serializedURL: String) -> Bool {
+        let range = NSRange(serializedURL.startIndex..<serializedURL.endIndex, in: serializedURL)
+        return blockedURLPatterns.contains { pattern in
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                return false
+            }
+            return regex.firstMatch(in: serializedURL, options: [], range: range) != nil
+        }
+    }
+
+    /// True when a pattern uses only the constructs WebKit's `url-filter`
+    /// parser accepts, so a future edit cannot silently break the compilation
+    /// of the rule list at runtime.
+    static func usesSupportedSyntax(_ pattern: String) -> Bool {
+        if pattern.contains("|") || pattern.contains("{") || pattern.contains("(?") { return false }
+        if pattern.contains("\\d") || pattern.contains("\\w") || pattern.contains("\\s") || pattern.contains("\\b") { return false }
+        // `^` is only valid as the first character or as a class negation.
+        let outsideClasses = pattern.replacingOccurrences(of: #"\[[^\]]*\]"#, with: "", options: .regularExpression)
+        if outsideClasses.dropFirst().contains("^") || outsideClasses.dropLast().contains("$") { return false }
+        return pattern.unicodeScalars.allSatisfy(\.isASCII)
+    }
+}
+
 @Suite
 struct WebContentBlockerRulesTests {
     @Test
@@ -986,6 +1014,13 @@ struct WebContentBlockerRulesTests {
 }
 
 #if canImport(WebKit)
+extension WebKitPageRenderer.NavigationDecision {
+    var isAllowed: Bool {
+        if case .allow = self { return true }
+        return false
+    }
+}
+
 @Suite
 struct WebKitNavigationDecisionTests {
     let policy = WebNetworkRequestPolicy(

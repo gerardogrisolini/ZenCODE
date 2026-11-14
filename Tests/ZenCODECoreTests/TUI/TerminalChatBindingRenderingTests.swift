@@ -126,7 +126,7 @@ struct TerminalChatBindingRenderingTests {
         )
         let minimal = AgentProfile(id: "minimal", name: "Minimal", role: .generic)
 
-        let rendered = TerminalChat.renderAgentModelBindings(
+        let rendered = TerminalChat.renderAgentModelBindingsTable(
             agents: [developer, minimal],
             selectedAgent: developer
         )

@@ -461,12 +461,6 @@ actor TerminalTelegramTurnProgressReporter {
         await waitForWireQuiescence?(wireFence)
     }
 
-    /// Teardown barrier. Unlike turn-to-turn `retire()`, stop must not return
-    /// while a reporter send admitted by the retired lifecycle is still alive.
-    func shutdown() async {
-        await revokeAndWait()
-    }
-
     private func rotateDraftStreamer() async {
         let previous = draftStreamer
         if let previous { await previous.finish() }

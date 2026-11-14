@@ -17,27 +17,27 @@ struct PlanCommandTests {
         let planIDs = ["plan-aaaa1111", "plan-aaaa2222", "plan-bbbb3333"]
 
         #expect(
-            TerminalChat.savedPlanDeletionTarget("ALL", in: planIDs)
+            PlanningCommandKernel.savedPlanDeletionTarget("ALL", in: planIDs)
                 == .ids(planIDs)
         )
         #expect(
-            TerminalChat.savedPlanDeletionTarget("plan-bbbb3333", in: planIDs)
+            PlanningCommandKernel.savedPlanDeletionTarget("plan-bbbb3333", in: planIDs)
                 == .ids(["plan-bbbb3333"])
         )
         #expect(
-            TerminalChat.savedPlanDeletionTarget("plan-bbbb", in: planIDs)
+            PlanningCommandKernel.savedPlanDeletionTarget("plan-bbbb", in: planIDs)
                 == .ids(["plan-bbbb3333"])
         )
         #expect(
-            TerminalChat.savedPlanDeletionTarget("plan-aaaa", in: planIDs)
+            PlanningCommandKernel.savedPlanDeletionTarget("plan-aaaa", in: planIDs)
                 == .ambiguous(matches: ["plan-aaaa1111", "plan-aaaa2222"])
         )
         #expect(
-            TerminalChat.savedPlanDeletionTarget("plan-zzzz", in: planIDs)
+            PlanningCommandKernel.savedPlanDeletionTarget("plan-zzzz", in: planIDs)
                 == .notFound
         )
         #expect(
-            TerminalChat.savedPlanDeletionTarget("   ", in: planIDs)
+            PlanningCommandKernel.savedPlanDeletionTarget("   ", in: planIDs)
                 == .notFound
         )
     }
@@ -163,11 +163,12 @@ struct PlanCommandTests {
         )
         let terminal = TerminalChat(
             configuration: configuration,
-            stdinIsTerminal: false
+            stdinIsTerminal: false,
+            telegramTransportFactory: nil
         )
         terminal.selectedToolKeys.insert("sub-agents")
 
-        let action = await terminal.handlePlanCommand("/plan")
+        let action = await terminal.terminalAction(presenting: terminal.chatSession.runPlanCommand(line: "/plan"))
 
         switch action {
         case .continueChat:
@@ -200,14 +201,15 @@ struct PlanCommandTests {
         let source = TerminalChat(
             configuration: configuration,
             stdinIsTerminal: false,
-            sessionRunner: AgentCoreSessionRunner(taskGraphStore: store)
+            sessionRunner: AgentCoreSessionRunner(taskGraphStore: store),
+            telegramTransportFactory: nil
         )
         try await source.sessionRunner.taskOrchestrator.registerSession(
             id: source.sessionID,
             workingDirectory: workingDirectory
         )
         let createdAt = Date(timeIntervalSince1970: 100)
-        source.activePlan = TerminalSessionPlan(
+        source.chatSession.activePlan = TerminalSessionPlan(
             id: "plan-handoff",
             originalGoal: "Carry the plan into another session",
             consolidatedText: "1. Inspect\n2. Implement",
@@ -230,7 +232,7 @@ struct PlanCommandTests {
             ]
         )
 
-        #expect(isContinueChat(await source.handlePlanCommand("/plan save")))
+        #expect(isContinueChat(await source.terminalAction(presenting: source.chatSession.runPlanCommand(line: "/plan save"))))
 
         let storedPlans = await source.sessionRunner.savedTaskPlans(
             workingDirectory: workingDirectory
@@ -242,8 +244,8 @@ struct PlanCommandTests {
         #expect(stored.graph.state == .draft)
         #expect(stored.graph.tasks.map(\.title) == ["Inspect", "Implement"])
         #expect(stored.graph.tasks[1].dependsOn == ["plan-handoff-1"])
-        #expect(stored.snapshot.plan.id == source.activePlan?.id)
-        #expect(stored.snapshot.plan.consolidatedText == source.activePlan?.consolidatedText)
+        #expect(stored.snapshot.plan.id == source.chatSession.activePlan?.id)
+        #expect(stored.snapshot.plan.consolidatedText == source.chatSession.activePlan?.consolidatedText)
         #expect(stored.snapshot.plan.isApproved == false)
         #expect(stored.snapshot.plan.points.map(\.status) == [.pending, .pending])
         #expect(await source.sessionRunner.resumableTaskGraphCheckpoints(
@@ -251,12 +253,12 @@ struct PlanCommandTests {
         ).isEmpty)
 
         let sourceSessionID = source.sessionID
-        await source.startNewSession()
+        await source.writeSessionNotices(source.chatSession.newSessionCommand().notices)
         #expect(source.sessionID != sourceSessionID)
-        #expect(source.activePlan == nil)
-        #expect(isContinueChat(await source.handlePlanCommand("/plan load")))
+        #expect(source.chatSession.activePlan == nil)
+        #expect(isContinueChat(await source.terminalAction(presenting: source.chatSession.runPlanCommand(line: "/plan load"))))
 
-        let loaded = try #require(source.activePlan)
+        let loaded = try #require(source.chatSession.activePlan)
         #expect(loaded.id == "plan-handoff")
         #expect(loaded.originalGoal == "Carry the plan into another session")
         #expect(loaded.consolidatedText == "1. Inspect\n2. Implement")
@@ -281,11 +283,12 @@ struct PlanCommandTests {
         )
         let terminal = TerminalChat(
             configuration: configuration,
-            stdinIsTerminal: false
+            stdinIsTerminal: false,
+            telegramTransportFactory: nil
         )
         terminal.selectedToolKeys.insert("sub-agents")
 
-        let action = await terminal.handlePlanCommand("/plan fix the planner command")
+        let action = await terminal.terminalAction(presenting: terminal.chatSession.runPlanCommand(line: "/plan fix the planner command"))
 
         switch action {
         case let .runHiddenPrompt(prompt, purpose):
@@ -736,7 +739,7 @@ struct PlanCommandTests {
         ]
 
         let plan = try #require(
-            PlanningCommandKernel.planFromLatestAssistantMessage(in: messages)
+            PlanningCommandKernel.plansFromLatestAssistantMessage(in: messages).first
         )
         #expect(plan.originalGoal == "Ship the shared routing")
         #expect(plan.consolidatedText == Self.structuredThreePointPlannerFinalText)
@@ -765,7 +768,7 @@ struct PlanCommandTests {
     @Test
     func newPlanReplacesOnlyTheDiscussionAndClearCancelsIt() async throws {
         let terminal = try makeTerminal()
-        terminal.activePlan = TerminalSessionPlan(
+        terminal.chatSession.activePlan = TerminalSessionPlan(
             id: "plan-existing",
             originalGoal: "existing goal",
             consolidatedText: "Existing completed draft"
@@ -779,11 +782,11 @@ struct PlanCommandTests {
         terminal.chatSession.planBrainstorming = discussion
 
         let oldCollectionID = discussion.collectionID
-        guard case .runHiddenPrompt = await terminal.handlePlanCommand("/plan new goal") else {
+        guard case .runHiddenPrompt = await terminal.terminalAction(presenting: terminal.chatSession.runPlanCommand(line: "/plan new goal")) else {
             Issue.record("A new /plan goal should start a fresh hidden turn")
             return
         }
-        #expect(terminal.activePlan?.id == "plan-existing")
+        #expect(terminal.chatSession.activePlan?.id == "plan-existing")
         #expect(terminal.chatSession.planBrainstorming?.goal == "new goal")
         #expect(terminal.chatSession.planBrainstorming?.collectionID != oldCollectionID)
 
@@ -794,15 +797,15 @@ struct PlanCommandTests {
         )
         #expect(terminal.chatSession.planBrainstorming?.goal == "new goal")
 
-        terminal.activePlan = nil
-        #expect(isContinueChat(await terminal.handlePlanCommand("/plan clear")))
+        terminal.chatSession.activePlan = nil
+        #expect(isContinueChat(await terminal.terminalAction(presenting: terminal.chatSession.runPlanCommand(line: "/plan clear"))))
         #expect(terminal.chatSession.planBrainstorming == nil)
     }
 
     @Test
     func successfulTodoWritesSynchronizeApprovedPlanAndDetectCompletion() throws {
         let terminal = try makeTerminal()
-        terminal.activePlan = TerminalSessionPlan(
+        terminal.chatSession.activePlan = TerminalSessionPlan(
             originalGoal: "Implement status tracking",
             consolidatedText: "Two steps",
             isApproved: true,
@@ -816,23 +819,23 @@ struct PlanCommandTests {
             summary: "updated"
         )
 
-        #expect(!terminal.synchronizeActivePlanStatus(
+        #expect(!terminal.chatSession.synchronizeActivePlanStatus(
             from: todoWriteCall(items: [
                 ("plan-1", "Implement command", "in_progress")
             ]),
             result: result
         ))
-        #expect(terminal.activePlan?.points.map(\.status) == [.inProgress, .pending])
+        #expect(terminal.chatSession.activePlan?.points.map(\.status) == [.inProgress, .pending])
 
-        #expect(terminal.synchronizeActivePlanStatus(
+        #expect(terminal.chatSession.synchronizeActivePlanStatus(
             from: todoWriteCall(items: [
                 ("plan-1", "Implement command", "completed"),
                 ("plan-2", "Run tests", "completed"),
             ]),
             result: result
         ))
-        #expect(terminal.activePlan?.isCompleted == true)
-        #expect(TerminalChat.planStatusTable(for: try #require(terminal.activePlan))
+        #expect(terminal.chatSession.activePlan?.isCompleted == true)
+        #expect(TerminalChat.planStatusTable(for: try #require(terminal.chatSession.activePlan))
             .contains("**Overall status:** `completed`"))
     }
 
@@ -840,17 +843,17 @@ struct PlanCommandTests {
     func approveRequiresACompletedPlanAndClearRemovesIt() async throws {
         let terminal = try makeTerminal()
 
-        #expect(isContinueChat(await terminal.handlePlanCommand("/plan approve")))
-        #expect(terminal.activePlan == nil)
+        #expect(isContinueChat(await terminal.terminalAction(presenting: terminal.chatSession.runPlanCommand(line: "/plan approve"))))
+        #expect(terminal.chatSession.activePlan == nil)
 
-        terminal.activePlan = TerminalSessionPlan(
+        terminal.chatSession.activePlan = TerminalSessionPlan(
             originalGoal: "goal",
             consolidatedText: "plan"
         )
-        #expect(isContinueChat(await terminal.handlePlanCommand("/plan approve")))
+        #expect(isContinueChat(await terminal.terminalAction(presenting: terminal.chatSession.runPlanCommand(line: "/plan approve"))))
         let approvalAction = await terminal.submittedLineAction("Ship the planned work")
-        #expect(terminal.activePlan?.isApproved == true)
-        #expect(terminal.activePlan?.originalGoal == "Ship the planned work")
+        #expect(terminal.chatSession.activePlan?.isApproved == true)
+        #expect(terminal.chatSession.activePlan?.originalGoal == "Ship the planned work")
         guard case let .runHiddenPrompt(prompt, purpose) = approvalAction else {
             Issue.record("/plan approve should start implementation immediately")
             return
@@ -859,9 +862,9 @@ struct PlanCommandTests {
         #expect(prompt.contains("Goal: Ship the planned work"))
         #expect(prompt.contains("Approved plan:\nplan"))
 
-        #expect(isContinueChat(await terminal.handlePlanCommand("/plan clear")))
-        #expect(terminal.activePlan == nil)
-        #expect(isContinueChat(await terminal.handlePlanCommand("/plan clear")))
+        #expect(isContinueChat(await terminal.terminalAction(presenting: terminal.chatSession.runPlanCommand(line: "/plan clear"))))
+        #expect(terminal.chatSession.activePlan == nil)
+        #expect(isContinueChat(await terminal.terminalAction(presenting: terminal.chatSession.runPlanCommand(line: "/plan clear"))))
     }
 
     @Test
@@ -871,11 +874,11 @@ struct PlanCommandTests {
             stopReason: "end_turn",
             modelID: "default-model"
         )
-        let response = TerminalChat.plannerAuthoredPlanResponse(
+        let response = PlanningCommandKernel.plannerResponse(
             parentResponse: parentResponse,
             snapshots: [
                 subAgentSnapshot(
-                    name: TerminalChat.planAuthorAgentName,
+                    name: PlanningCommandKernel.planAuthorAgentName,
                     role: "Planner",
                     status: .running,
                     pending: true,
@@ -886,8 +889,10 @@ struct PlanCommandTests {
                     role: "Developer",
                     latestOutput: "Default fallback plan"
                 ),
-            ]
-        )
+            ],
+            baseline: PlannerTurnBaseline(state: nil, snapshots: [], rootSessionID: nil),
+            rootSessionID: nil
+        )?.response
 
         #expect(response == nil)
     }
@@ -910,19 +915,20 @@ struct PlanCommandTests {
             ),
         ]
 
-        #expect(try await terminal.recordStructuredPlanIfNeeded(
+        let plan = try #require(try ChatSessionController.structuredPlan(
             responseText: "1. Implement model\n2. Run validation",
-            purpose: .plan(originalGoal: "Ship graph"),
+            originalGoal: "Ship graph",
             points: points
         ))
+        terminal.chatSession.stateStore.withLock { $0.commandState.activePlan = plan }
         // The task graph is NOT created during plan definition, only at approval.
         #expect(try await terminal.sessionRunner.taskGraphSnapshot(
             sessionID: terminal.sessionID,
             graphID: "plan-graph"
         ) == nil)
-        #expect(terminal.activePlan?.id == "plan-graph")
+        #expect(terminal.chatSession.activePlan?.id == "plan-graph")
 
-        #expect(isContinueChat(await terminal.handlePlanCommand("/plan approve")))
+        #expect(isContinueChat(await terminal.terminalAction(presenting: terminal.chatSession.runPlanCommand(line: "/plan approve"))))
         let approval = await terminal.submittedLineAction("Ship graph execution")
         guard case .runHiddenPrompt = approval else {
             Issue.record("Approval should create and activate the task graph")
@@ -947,8 +953,8 @@ struct PlanCommandTests {
             output: "done",
             requiresValidation: false
         )
-        _ = await terminal.handlePlanCommand("/plan status")
-        #expect(terminal.activePlan?.points.map(\.status) == [.completed, .pending])
+        _ = await terminal.terminalAction(presenting: terminal.chatSession.runPlanCommand(line: "/plan status"))
+        #expect(terminal.chatSession.activePlan?.points.map(\.status) == [.completed, .pending])
         #expect(try await terminal.sessionRunner.taskOrchestrator.task(
             sessionID: terminal.sessionID,
             taskID: "plan-graph-2"
@@ -964,7 +970,7 @@ struct PlanCommandTests {
                 isDirectory: true
             )
         )
-        let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false)
+        let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false, telegramTransportFactory: nil)
         terminal.selectedToolKeys.insert("sub-agents")
         return terminal
     }
@@ -1040,9 +1046,9 @@ struct PlanCommandTests {
 
         #expect(await collector.validFinalPlanPoints() == nil)
         let resolved = try #require(
-            await collector.finalPlanPoints(
+            await collector.finalPlanSections(
                 forFinalText: Self.structuredPlannerFinalText
-            )
+            )?.flatMap(\.points)
         )
         #expect(resolved.count == 2)
         #expect(resolved.allSatisfy({ $0.hasExplicitDependencies }))
@@ -1054,9 +1060,9 @@ struct PlanCommandTests {
         ))
         // The derived registration is stable and visible to later readers.
         #expect(await collector.snapshot() == resolved)
-        #expect(await collector.finalPlanPoints(
+        #expect(await collector.finalPlanSections(
             forFinalText: Self.structuredPlannerFinalText
-        ) == resolved)
+        )?.flatMap(\.points) == resolved)
     }
 
     private static let twoPlanPlannerFinalText = """
@@ -1137,9 +1143,9 @@ struct PlanCommandTests {
         #expect(await derivedCollector.finalPlanSections(
             forFinalText: Self.twoPlanPlannerFinalText
         ) == derived)
-        #expect(await derivedCollector.finalPlanPoints(
+        #expect(await derivedCollector.finalPlanSections(
             forFinalText: Self.twoPlanPlannerFinalText
-        ) == derived.flatMap(\.points))
+        )?.flatMap(\.points) == derived.flatMap(\.points))
 
         let registeredCollector = PlanningPointCollector()
         await registeredCollector.recordTodoWrite(
@@ -1153,9 +1159,9 @@ struct PlanCommandTests {
             ["plan-alpha-1", "plan-alpha-2"],
             ["plan-beta-1"],
         ])
-        #expect(await registeredCollector.finalPlanPoints(
+        #expect(await registeredCollector.finalPlanSections(
             forFinalText: Self.twoPlanPlannerFinalText
-        ) == Self.twoPlanRegisteredPoints)
+        )?.flatMap(\.points) == Self.twoPlanRegisteredPoints)
 
         // A registration that does not split by plan is never replaced by a
         // derived fallback.
@@ -1197,9 +1203,5 @@ struct PlanCommandTests {
         #expect(Set(plans.map(\.id)).count == 2)
         #expect(plans.allSatisfy { $0.createdAt == createdAt && !$0.isApproved })
         #expect(plans[1].points.first?.dependsOn == [])
-
-        let first = try #require(PlanningCommandKernel.planFromLatestAssistantMessage(in: messages))
-        #expect(first.originalGoal == plans[0].originalGoal)
-        #expect(first.consolidatedText == plans[0].consolidatedText)
     }
 }

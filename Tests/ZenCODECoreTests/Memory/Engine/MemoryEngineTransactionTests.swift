@@ -121,7 +121,7 @@ private actor ControlledPersistence: MemoryPersistence {
     // Automatic recall maintenance is visible immediately, but the default
     // checkpoint threshold leaves it pending instead of saving on every recall.
     await persistence.setFailing(true)
-    _ = try await memory.recall("actors")
+    _ = try await memory.recallDetailed("actors")
     let visible = await memory.snapshot()
     #expect(visible.metadata.retrievalCount == before.metadata.retrievalCount &+ 1)
     let beforeEntry = try #require(before.memories["a"])
@@ -161,7 +161,7 @@ private actor ControlledPersistence: MemoryPersistence {
 
     await persistence.setFailing(true)
     await #expect(throws: MemoryPersistenceFailure.self) {
-        _ = try await memory.recall("actors")
+        _ = try await memory.recallDetailed("actors")
     }
 
     // The automatic checkpoint failed after maintenance became visible. The
@@ -186,7 +186,7 @@ private actor ControlledPersistence: MemoryPersistence {
     let memory = MemoryEngine(persistence: persistence)
     _ = try await memory.remember("actors protect mutable state", tags: ["swift"], id: "a")
 
-    _ = try await memory.recall("actors")
+    _ = try await memory.recallDetailed("actors")
     #expect(await memory.snapshot().metadata.retrievalCount == 1)
 
     // The explicit write is an immediate durability boundary. Its save must
@@ -199,26 +199,7 @@ private actor ControlledPersistence: MemoryPersistence {
     #expect(committed.memories["b"] != nil)
 }
 
-@Test func saveFlushesPendingRecallMaintenanceExactlyOnce() async throws {
-    let persistence = ControlledPersistence()
-    let memory = MemoryEngine(persistence: persistence)
-    _ = try await memory.remember("actors protect mutable state", tags: ["swift"], id: "a")
-
-    _ = try await memory.recall("actors")
-    let visible = await memory.snapshot()
-
-    // `save()` is also a durability boundary and must consume the pending
-    // intent. A later flush must therefore be a no-op, not a replay.
-    try await memory.save()
-    let saved = try #require(await persistence.lastSaved)
-    #expect(saved.metadata.retrievalCount == visible.metadata.retrievalCount)
-    #expect(saved.memories["a"]?.accessCount == visible.memories["a"]?.accessCount)
-    let savesAfterSave = await persistence.saveCount
-    try await memory.flushRecallMaintenance()
-    #expect(await persistence.saveCount == savesAfterSave)
-}
-
-@Test func savePersistsAnInsertDeferredWithPersistFalse() async throws {
+@Test func transactionPersistsAnInsertDeferredWithPersistFalse() async throws {
     let persistence = ControlledPersistence()
     let memory = MemoryEngine(persistence: persistence)
     let entry = EngineMemoryEntry(id: "deferred", category: .fact, content: "save me later")
@@ -226,7 +207,7 @@ private actor ControlledPersistence: MemoryPersistence {
     try await memory.insert(entry, persist: false)
     #expect(await persistence.saveCount == 0)
 
-    try await memory.save()
+    try await memory.transaction { _ in }
     #expect(await persistence.saveCount == 1)
     #expect(await persistence.lastSaved?.memories[entry.id] == entry)
 }
@@ -236,7 +217,7 @@ private actor ControlledPersistence: MemoryPersistence {
     let memory = MemoryEngine(persistence: persistence)
     _ = try await memory.remember("actors protect mutable state", tags: ["swift"], id: "a")
 
-    _ = try await memory.recall("actors")
+    _ = try await memory.recallDetailed("actors")
     let visible = await memory.snapshot()
     let savesBeforeTransaction = await persistence.saveCount
 
@@ -273,7 +254,7 @@ private actor ControlledPersistence: MemoryPersistence {
     let memory = MemoryEngine(graph: initial, persistence: persistence)
     #expect(!FileManager.default.fileExists(atPath: file.path))
 
-    _ = try await memory.recall("actors")
+    _ = try await memory.recallDetailed("actors")
     let visible = await memory.snapshot()
     #expect(visible.metadata.retrievalCount == 1)
     #expect(visible.memories["a"]?.accessCount == 1)
@@ -369,36 +350,6 @@ private actor ControlledPersistence: MemoryPersistence {
     #expect(await persistence.saveCount == 0)
 }
 
-// MARK: - Batch learn
-
-private struct StubExtractor: MemoryExtractor {
-    let drafts: [MemoryDraft]
-    func extract(from context: String) async throws -> [MemoryDraft] { drafts }
-}
-
-@Test func learnStoresTheWholeBatchOrNothing() async throws {
-    let persistence = ControlledPersistence(failing: true)
-    let memory = MemoryEngine(
-        persistence: persistence,
-        extractor: StubExtractor(drafts: [
-            MemoryDraft(content: "first extracted fact"),
-            MemoryDraft(content: "second extracted fact")
-        ])
-    )
-
-    await #expect(throws: MemoryPersistenceFailure.self) {
-        _ = try await memory.learn(from: "conversation")
-    }
-    #expect(await memory.snapshot().memories.isEmpty)
-
-    await persistence.setFailing(false)
-    let stored = try await memory.learn(from: "conversation")
-    #expect(stored.count == 2)
-    #expect(await memory.snapshot().memories.count == 2)
-    // One transaction for the batch, not one save per draft.
-    #expect(await persistence.saveCount == 2)
-}
-
 private enum RecallCancellationOutcome: Sendable, Equatable {
     case succeeded
     case cancelled
@@ -431,7 +382,7 @@ private enum RecallCancellationOutcome: Sendable, Equatable {
     // before revalidation or maintenance can touch the graph.
     let queued = Task<RecallCancellationOutcome, Never> {
         do {
-            _ = try await memory.recall("actors")
+            _ = try await memory.recallDetailed("actors")
             return .succeeded
         } catch is CancellationError {
             return .cancelled

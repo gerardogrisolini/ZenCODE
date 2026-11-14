@@ -126,10 +126,6 @@ public actor TerminalTelegramPairingService {
     /// Grants issued by this pairing session; consumed atomically by payload.
     private let grantStore = TerminalTelegramPairingGrantStore()
 
-    public init(botToken: String) {
-        client = TerminalTelegramAPIClient(token: botToken)
-    }
-
     init(botToken: String, transport: any TelegramHTTPTransport) {
         client = TerminalTelegramAPIClient(token: botToken, transport: transport)
     }
@@ -143,18 +139,13 @@ public actor TerminalTelegramPairingService {
         )
     }
 
-    /// Issues one single-use pairing grant and returns the payload to embed in
-    /// the deep link (and to show for manual fallback). The terminal shows:
+    /// Issues one single-use pairing grant and returns its payload together
+    /// with the deep link for `botUsername` (`nil` without a username). The
+    /// terminal shows:
     ///   https://t.me/<bot>?start=<payload>
     /// and Telegram delivers `/start <payload>` back to the bot. The payload is
     /// also shown as a manual code, so a client that cannot open links still
     /// pairs by sending it as a plain message.
-    public func issuePairingGrant() async -> String {
-        await grantStore.issueGrant()
-    }
-
-    /// Convenience for setup: issue a grant and build the deep link for the
-    /// paired bot username in one call.
     public func issuePairingDeepLink(botUsername: String?) async -> (
         payload: String, deepLink: String?
     ) {

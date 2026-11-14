@@ -47,23 +47,4 @@ public enum ChatCompletionsStreamParser {
         }
         return events.isEmpty ? [.ignored] : events
     }
-
-    /// Builds the `tools` payload array for the `/chat/completions` endpoint.
-    public static func toolPayloads(
-        from descriptors: [DirectToolDescriptor]
-    ) -> [[String: Any]] {
-        descriptors.compactMap { descriptor in
-            guard let schema = descriptor.schemaObject else {
-                return nil
-            }
-            return [
-                "type": "function",
-                "function": [
-                    "name": descriptor.name,
-                    "description": descriptor.description,
-                    "parameters": schema
-                ]
-            ]
-        }
-    }
 }

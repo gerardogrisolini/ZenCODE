@@ -56,7 +56,9 @@ struct RemoteGenerationMetricsTests {
         #expect(metrics?.clearsPromptMetrics == true)
         #expect(metrics?.replacesPreviousMetrics == true)
         #expect(
-            metrics.flatMap(TerminalStatusBar.generationTokenCountsFragment) == "c:4.1k p:200 g:25"
+            metrics
+                .flatMap(TerminalStatusBar.styledGenerationTokenCountsFragment)
+                .map(TerminalANSIText.stripANSI) == "c:4.1k p:200 g:25"
         )
         #expect(summary?.contains("Rounds: 2") == true)
         #expect(summary?.contains("Output: 75 tokens") == true)
@@ -93,7 +95,8 @@ struct RemoteGenerationMetricsTests {
         #expect(metrics.cachedPromptTokenCount == 20_000)
         #expect(metrics.completionTokenCount == 3_000)
         #expect(
-            TerminalStatusBar.generationTokenCountsFragment(metrics)
+            TerminalStatusBar.styledGenerationTokenCountsFragment(metrics)
+                .map(TerminalANSIText.stripANSI)
                 == "c:20k p:5.0k g:3.0k"
         )
     }
@@ -115,10 +118,11 @@ struct RemoteGenerationMetricsTests {
             maxOutputTokens: maxOutputTokens,
             force: true
         )
-        let retry = AnthropicSubscriptionGenerationClient.compactedMessagesForContextLimitRetry(
+        let retry = SubscriptionCompactionSupport.compactedMessagesForContextLimitRetry(
             messages,
             maxTokens: maxTokens,
             maxOutputTokens: maxOutputTokens,
+            reserveTokenCount: AnthropicSubscriptionGenerationClient.compactionReserveTokenCount,
             overhead: SubscriptionCompactionSupport.RequestOverhead(
                 staticOverheadTokens: 40_000,
                 conversationInflationFactor: 1.0

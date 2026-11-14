@@ -27,14 +27,6 @@ public nonisolated struct MemoryEntryFilter: Sendable, Equatable {
 
     public static let none = MemoryEntryFilter()
 
-    public var isEmpty: Bool {
-        tags.isEmpty && category == nil
-    }
-
-    public func matches(_ entry: MemoryEntry) -> Bool {
-        matches(tags: entry.tags, category: entry.category)
-    }
-
     func matches(tags entryTags: [String], category entryCategory: MemoryCategory) -> Bool {
         if let category, category != entryCategory {
             return false

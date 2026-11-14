@@ -534,7 +534,7 @@ extension RemoteSessionSnapshotTests {
                 content: "First answer",
                 providerResponseID: "resp_before_tools"
             ),
-            TerminalChat.toolSelectionChangedMessage(
+            ChatSessionController.toolSelectionChangedMessage(
                 previousAllowedToolNames: ["local.exec"],
                 currentAllowedToolNames: []
             )
@@ -671,19 +671,19 @@ extension RemoteSessionSnapshotTests {
     }
 
     @Test
-    func chatGPTSubscriptionWebSocketPoolReopensExpiredIdleSocketWithCurrentRequest() {
+    func chatGPTSubscriptionWebSocketPoolReopensExpiredIdleSocketWithCurrentRequest() throws {
         let harness = ChatGPTSubscriptionWebSocketPoolHarness(
             maximumConnectionAge: .seconds(10)
         )
         let oldRequest = harness.request(authorization: "Bearer stale")
-        let firstLease = harness.pool.acquire(
+        let firstLease = try harness.acquire(
             sessionID: "session-age-boundary",
             request: oldRequest
         )
         harness.pool.release(firstLease, keepAlive: true)
 
         harness.advance(by: .seconds(9))
-        let underBoundaryLease = harness.pool.acquire(
+        let underBoundaryLease = try harness.acquire(
             sessionID: "session-age-boundary",
             request: harness.request(authorization: "Bearer ignored")
         )
@@ -693,7 +693,7 @@ extension RemoteSessionSnapshotTests {
 
         harness.advance(by: .seconds(1))
         let currentRequest = harness.request(authorization: "Bearer current")
-        let renewedLease = harness.pool.acquire(
+        let renewedLease = try harness.acquire(
             sessionID: "session-age-boundary",
             request: currentRequest
         )
@@ -1015,8 +1015,6 @@ extension RemoteSessionSnapshotTests {
         #expect(pool.usesHTTPFallback(scopeID: "logical-session"))
         pool.closeAll()
         #expect(pool.usesHTTPFallback(scopeID: "logical-session"))
-        pool.clearHTTPFallback(scopeID: "logical-session")
-        #expect(!pool.usesHTTPFallback(scopeID: "logical-session"))
     }
 
     @Test
@@ -1163,16 +1161,33 @@ extension RemoteSessionSnapshotTests {
                 JSONSerialization.jsonObject(with: Data(event.utf8)) as? [String: Any]
             )
         }
-        let result = try await ChatGPTSubscriptionGenerationClient.testIngestStreamObjects(objects)
+        let accumulator = ChatGPTSubscriptionGenerationClient.StreamAccumulator()
+        var streamedContentText = ""
+        var streamedThoughtText = ""
+        for object in objects {
+            for event in try await accumulator.ingest(
+                ChatGPTSubscriptionGenerationClient.StreamAccumulatorObject(object)
+            ) {
+                switch event {
+                case let .content(delta):
+                    streamedContentText.append(delta)
+                case let .thought(delta):
+                    streamedThoughtText.append(delta)
+                default:
+                    break
+                }
+            }
+        }
+        let result = try await accumulator.result()
 
         if let text = testCase.text {
             #expect(result.text == text)
         }
         if let contentText = testCase.contentText {
-            #expect(result.contentText == contentText)
+            #expect(streamedContentText == contentText)
         }
         if let thoughtText = testCase.thoughtText {
-            #expect(result.thoughtText == thoughtText)
+            #expect(streamedThoughtText == thoughtText)
         }
         if let reasoningText = testCase.reasoningText {
             #expect(result.reasoningText == reasoningText)
@@ -1461,6 +1476,23 @@ private final class ChatGPTSubscriptionWebSocketPoolHarness: @unchecked Sendable
             url: URL(string: "wss://example.invalid/responses")!,
             headers: headers
         )
+    }
+
+    /// A lease from the production acquire path, under a fallback scope that
+    /// never routes to HTTP.
+    func acquire(
+        sessionID: String,
+        request: RemoteWebSocketRequest
+    ) throws -> ChatGPTSubscriptionResponsesClient.WebSocketLease {
+        struct NotAcquired: Error {}
+        guard case let .acquired(lease) = pool.acquire(
+            sessionID: sessionID,
+            request: request,
+            fallbackScopeID: sessionID
+        ) else {
+            throw NotAcquired()
+        }
+        return lease
     }
 
     func advance(by duration: Duration) {

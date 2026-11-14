@@ -176,7 +176,7 @@ import Testing
 
     @Test func executorDeniesEvenForgedCallBeforeFilesystemSideEffects() async throws {
         let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let executor = DirectToolExecutor(subAgentBackendFactory: { MemoryProposalMockBackend() })
+        let executor = DirectToolExecutor(subAgentContextualBackendFactory: { _ in MemoryProposalMockBackend() })
         let call = try toolCall(id: UUID().uuidString, name: "local.writeFile",
             args: ["path": path.path, "content": "must not exist"])
         let result = await MemoryConsolidationContext.$isIsolated.withValue(true) {

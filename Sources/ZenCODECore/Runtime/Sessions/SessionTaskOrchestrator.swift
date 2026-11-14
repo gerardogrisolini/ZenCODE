@@ -269,7 +269,6 @@ public actor SessionTaskOrchestrator {
     func reserveTasklessDelegations(
         sessionID rawSessionID: String,
         count: Int,
-        retainingReservationIDs: Set<UUID> = [],
         requiresExclusiveAccess: Bool
     ) throws -> [UUID] {
         let sessionID = try requireRootAccess(rawSessionID)
@@ -278,15 +277,11 @@ public actor SessionTaskOrchestrator {
             .first(where: { $0.state == .active })?.id {
             throw SessionTaskOrchestratorError.tasklessDelegationRequiresTaskID(activeGraphID)
         }
-        guard retainingReservationIDs.isSubset(of: existingReservations) else {
-            throw SessionTaskOrchestratorError.tasklessDelegationConflict
-        }
         guard count >= 0 else {
             throw SessionTaskOrchestratorError.invalidSnapshot("Taskless delegation reservation count cannot be negative.")
         }
         if requiresExclusiveAccess {
-            guard existingReservations == retainingReservationIDs,
-                  retainingReservationIDs.count + count == 1 else {
+            guard existingReservations.isEmpty, count == 1 else {
                 throw SessionTaskOrchestratorError.tasklessDelegationConflict
             }
         }
@@ -317,14 +312,6 @@ public actor SessionTaskOrchestrator {
 
     public func registeredSessionIDs() -> [String] {
         Array(Set(sessionStates.keys).union(workingDirectories.keys)).sorted()
-    }
-
-    public func checkpoint(sessionID rawSessionID: String) throws -> SessionTaskGraphCheckpoint? {
-        let sessionID = try resolvedRootSessionID(rawSessionID)
-        guard let state = sessionStates[sessionID] else {
-            return nil
-        }
-        return checkpoint(sessionID: sessionID, state: state)
     }
 
     @discardableResult

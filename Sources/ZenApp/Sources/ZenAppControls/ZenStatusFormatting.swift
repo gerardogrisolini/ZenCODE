@@ -145,11 +145,6 @@ public struct ZenStatusFragment: Equatable, Sendable, Identifiable {
 
     public var id: Kind { kind }
 
-    /// The fragment's text without styles.
-    public var text: String {
-        runs.map(\.text).joined()
-    }
-
     public init(
         kind: Kind,
         runs: [ZenStatusRun],
@@ -229,10 +224,6 @@ public enum ZenStatusFormatting {
 
     /// `"N files +A -D"` (`TerminalStatusBar.gitStatusFragment` without its
     /// escapes).
-    public static func gitStatusText(_ summary: TerminalGitStatusSummary) -> String {
-        gitStatusRuns(summary).map(\.text).joined()
-    }
-
     static func gitStatusRuns(_ summary: TerminalGitStatusSummary) -> [ZenStatusRun] {
         [
             ZenStatusRun("\(summary.changedFileCount)", style: .fileCount),
@@ -305,13 +296,7 @@ public enum ZenStatusFormatting {
 
     /// `"c:<cached> p:<prompt> g:<generated>"` with only the known counters;
     /// `nil` when none is known
-    /// (`TerminalStatusBar.generationTokenCountsFragment`).
-    public static func generationTokenCountsText(
-        _ metrics: DirectAgentGenerationMetrics
-    ) -> String? {
-        generationTokenCountsRuns(metrics).map { $0.map(\.text).joined() }
-    }
-
+    /// (`TerminalStatusBar.styledGenerationTokenCountsFragment`).
     static func generationTokenCountsRuns(
         _ metrics: DirectAgentGenerationMetrics
     ) -> [ZenStatusRun]? {
@@ -330,14 +315,10 @@ public enum ZenStatusFormatting {
     // MARK: - Throughput
 
     /// The throughput label, a single one with the `tok/s` unit at the end
-    /// (`TerminalStatusBar.generationThroughputFragment`). While the prompt is
+    /// (`TerminalStatusBar.styledGenerationThroughputFragment`). While the prompt is
     /// evaluated it shows the progress and the prefill rate once measurable
     /// (`p:1.2k/8.0k 512.0 tok/s`, `p:0/8.0k`); otherwise the known speeds
     /// (`p:512.0 g:42.1 tok/s`). `nil` without anything usable.
-    public static func throughputText(_ metrics: DirectAgentGenerationMetrics) -> String? {
-        throughputRuns(metrics).map { $0.map(\.text).joined() }
-    }
-
     static func throughputRuns(_ metrics: DirectAgentGenerationMetrics) -> [ZenStatusRun]? {
         guard let throughput = metrics.throughput else {
             return nil
@@ -378,13 +359,7 @@ public enum ZenStatusFormatting {
     // MARK: - Subscription usage
 
     /// `"d:<daily> w:<weekly>"` with only the known windows; `nil` without
-    /// values (`TerminalStatusBar.subscriptionUsageFragment`).
-    public static func subscriptionUsageText(
-        _ status: DirectAgentSubscriptionUsageStatus
-    ) -> String? {
-        subscriptionUsageRuns(status).map { $0.map(\.text).joined() }
-    }
-
+    /// values (`TerminalStatusBar.styledSubscriptionUsageFragment`).
     static func subscriptionUsageRuns(
         _ status: DirectAgentSubscriptionUsageStatus
     ) -> [ZenStatusRun]? {
@@ -530,19 +505,6 @@ public enum ZenStatusFormatting {
             fragments.append(ZenStatusFragment(kind: .gitStatus, runs: gitStatusRuns(gitStatus)))
         }
         return fragments
-    }
-
-    /// The plain status line: the terminal UI's status text without its
-    /// spinner frame, fragments joined by `" · "`. The app's voice indicator,
-    /// a symbol without text, is left out too.
-    public static func statusText(
-        for state: ZenStatusBarState,
-        now: Date = Date()
-    ) -> String {
-        fragments(for: state, now: now)
-            .filter { $0.kind != .activity && $0.kind != .voice }
-            .map(\.text)
-            .joined(separator: separator)
     }
 
     /// The context-window fill fraction, clamped to 0...1.

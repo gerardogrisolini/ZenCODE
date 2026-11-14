@@ -73,7 +73,7 @@ struct ACPResumeTaskGraphOfferTests {
                     execution: TaskExecutionSpec(executor: .coordinator)
                 )
             }
-            try store.save(
+            try store.compareAndSwap(
                 SessionTaskGraphCheckpoint(
                     sessionID: sessionID,
                     currentGraphID: "old-work",
@@ -83,6 +83,7 @@ struct ACPResumeTaskGraphOfferTests {
                         updatedAt: ACPResumeTaskGraphOfferTests.seededDate
                     )]
                 ),
+                replacing: nil,
                 workingDirectory: workspace
             )
         }

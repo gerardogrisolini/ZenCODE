@@ -327,20 +327,10 @@ extension RemoteGenerationClient {
     /// matching the DeepSeek thinking-mode tool-call replay contract; the CoT
     /// of previous rounds must not be re-sent.
     ///
-    /// When `requiresReasoningContentPlaceholder` is true (DeepSeek), assistant
+    /// With `.currentToolRound(requiresPlaceholder: true)` (DeepSeek), assistant
     /// messages whose reasoning is dropped keep an empty `reasoning_content`
     /// field: the DeepSeek thinking mode rejects replayed assistant messages
     /// that omit the field entirely.
-    public static func chatCompletionsWireHistoryMessages(
-        from messages: [[String: Any]],
-        requiresReasoningContentPlaceholder: Bool = false
-    ) -> [[String: Any]] {
-        chatCompletionsWireHistoryMessages(
-            from: messages,
-            replayPolicy: .currentToolRound(requiresPlaceholder: requiresReasoningContentPlaceholder)
-        )
-    }
-
     public static func chatCompletionsWireHistoryMessages(
         from messages: [[String: Any]],
         replayPolicy: AgentChatCompletionsReplayPolicy

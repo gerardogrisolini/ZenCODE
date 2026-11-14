@@ -122,7 +122,7 @@ extension TerminalStatusBar {
                   refreshTerminalGeometryLocked(state: &state, geometry: geometry)
             else {
                 state.isResizePending = false
-                TerminalResizeCoordinator.shared.publishLayout(reservedBottomRows: nil)
+                TerminalResizeCoordinator.shared.publishLayout()
                 return
             }
             state.isResizePending = false
@@ -139,9 +139,7 @@ extension TerminalStatusBar {
                     collapseHandler = sharedChatReaderCollapseHandler
                 }
             }
-            TerminalResizeCoordinator.shared.publishLayout(
-                reservedBottomRows: reservedBottomRowsLocked(state: &state)
-            )
+            TerminalResizeCoordinator.shared.publishLayout()
             renderLocked(state: &state)
         }
         if let collapsedObservationID {

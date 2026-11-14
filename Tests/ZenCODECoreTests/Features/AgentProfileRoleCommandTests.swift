@@ -46,7 +46,8 @@ struct AgentProfileRoleCommandTests {
                     availableAgents: agents,
                     workingDirectory: workspace
                 ),
-                stdinIsTerminal: false
+                stdinIsTerminal: false,
+                telegramTransportFactory: nil
             )
             terminal.selectedToolKeys.insert("sub-agents")
             try await body(terminal, workspace)
@@ -55,7 +56,7 @@ struct AgentProfileRoleCommandTests {
 
     @ChatSessionActor
     private static func approvePlan(on terminal: TerminalChat) {
-        terminal.activePlan = TerminalSessionPlan(
+        terminal.chatSession.activePlan = TerminalSessionPlan(
             originalGoal: "goal",
             consolidatedText: "plan",
             isApproved: true
@@ -79,8 +80,8 @@ struct AgentProfileRoleCommandTests {
         try await Self.withProject(selecting: [Roles.developer]) { terminal, _ in
             Self.approvePlan(on: terminal)
 
-            #expect(Self.isContinueChat(await terminal.handleReviewCommand("/review")))
-            #expect(Self.isContinueChat(await terminal.handlePlanCommand("/plan ship roles")))
+            #expect(Self.isContinueChat(await terminal.terminalAction(presenting: terminal.chatSession.runReviewCommand(line: "/review"))))
+            #expect(Self.isContinueChat(await terminal.terminalAction(presenting: terminal.chatSession.runPlanCommand(line: "/plan ship roles"))))
             #expect(terminal.chatSession.planBrainstorming == nil)
         }
     }
@@ -90,7 +91,7 @@ struct AgentProfileRoleCommandTests {
         try await Self.withProject(selecting: [Roles.developer, Roles.customReviewer]) { terminal, _ in
             Self.approvePlan(on: terminal)
 
-            let prompt = try #require(Self.hiddenPrompt(await terminal.handleReviewCommand("/review")))
+            let prompt = try #require(Self.hiddenPrompt(await terminal.terminalAction(presenting: terminal.chatSession.runReviewCommand(line: "/review"))))
             #expect(prompt.contains("role \"Reviewer\" and profile \"\(Roles.customReviewer.id)\";"))
             #expect(!prompt.contains("profile \"reviewer\""))
             #expect(!prompt.contains("any of them is acceptable"))

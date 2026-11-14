@@ -24,7 +24,7 @@ struct TerminalVoiceTurnInstructionTests {
         #expect(await chat.voiceTurnInstruction() == nil)
 
         _ = await voice.setPaused(false)
-        #expect(await chat.voiceTurnInstruction() == TerminalChat.voiceTurnInstruction)
+        #expect(await chat.voiceTurnInstruction() == VoiceModeSession.turnInstructionText)
     }
 
     @Test
@@ -48,7 +48,8 @@ struct TerminalVoiceTurnInstructionTests {
                 availableModels: [],
                 workingDirectory: FileManager.default.temporaryDirectory
             ),
-            stdinIsTerminal: false
+            stdinIsTerminal: false,
+            telegramTransportFactory: nil
         )
     }
 }

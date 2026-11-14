@@ -292,9 +292,4 @@ final class ZenMarkdownStreamAnchors: Sendable {
             anchors.removeAll { $0.length <= length && $0.isPrefix(of: markdown) }
         }
     }
-
-    /// Removes every anchor.
-    func removeAll() {
-        anchors.withLock { $0.removeAll() }
-    }
 }

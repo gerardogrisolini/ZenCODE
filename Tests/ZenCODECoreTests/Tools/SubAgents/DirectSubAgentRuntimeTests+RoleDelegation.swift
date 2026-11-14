@@ -111,7 +111,7 @@ extension DirectSubAgentRuntimeTests {
                 let context = try #require(recorder.contexts.first)
                 #expect(context.profile == testCase.profile)
                 #expect(context.modelBinding?.id == testCase.binding)
-                #expect(context.capability == testCase.capability)
+                #expect(context.modelBinding?.capability == testCase.capability)
                 #expect(context.modelSelection != nil)
                 #expect(output.contains(
                     "Resolved profileRole \"developer\" for agent \"worker\" "

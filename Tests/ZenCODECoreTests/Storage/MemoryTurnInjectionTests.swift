@@ -288,7 +288,10 @@ struct MemoryTurnInjectionTests {
         // a chat-completions payload carries it. The history holds the text
         // of each turn beside the prompt, never in its content, and a session
         // created again from that history records it again.
-        let wire = RemoteGenerationClient.chatCompletionsWireHistoryMessages(from: sessionMessages)
+        let wire = RemoteGenerationClient.chatCompletionsWireHistoryMessages(
+            from: sessionMessages,
+            replayPolicy: .currentToolRound(requiresPlaceholder: false)
+        )
         for message in secondRequest + wire {
             #expect(message[RemoteGenerationClient.turnAdditionKey] == nil)
         }

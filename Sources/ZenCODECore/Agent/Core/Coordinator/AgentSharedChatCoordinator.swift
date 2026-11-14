@@ -223,14 +223,6 @@ public actor AgentSharedChatCoordinator {
         }
     }
 
-    /// Backend reset in one step, for callers that rebuild the source before
-    /// returning. Prefer ``beginReset(roomID:)``/``endReset(_:)`` when the
-    /// rebuild suspends: they keep the room fenced *across* the rebuild.
-    public func reset(roomID rawRoomID: String) {
-        guard let token = beginReset(roomID: rawRoomID) else { return }
-        endReset(token)
-    }
-
     /// Opens a backend reset: the transient bus is about to be rebuilt
     /// underneath this room.
     ///

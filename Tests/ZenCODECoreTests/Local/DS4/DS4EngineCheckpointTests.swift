@@ -76,7 +76,7 @@ struct DS4EngineCheckpointTests {
         #expect(harness.mock.calls.contains(.releaseSession("session")))
 
         await client.shutdown()
-        await harness.registry.shutdown()
+        _ = await harness.registry.closeIfIdle()
         #expect(harness.mock.checkpointCalls.isEmpty)
         #expect(ds4CheckpointFiles(in: harness.base).isEmpty)
     }

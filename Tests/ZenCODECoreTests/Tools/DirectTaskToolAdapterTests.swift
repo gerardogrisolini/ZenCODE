@@ -366,7 +366,10 @@ struct DirectTaskToolAdapterTests {
         }
 
         let subAgentRuntime = DirectSubAgentRuntime(
-            contextualBackendFactory: DirectSubAgentRuntime.unavailableContextualBackendFactory
+            contextualBackendFactory: DirectSubAgentRuntime.unavailableContextualBackendFactory,
+            profileResolver: DirectSubAgentRuntime.liveProfileResolver,
+            modelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
+            coordinatesLiveManifestReads: true
         )
         await subAgentRuntime.installTaskOrchestrator(orchestrator)
         await #expect(throws: SessionTaskOrchestratorError.self) {
@@ -743,22 +746,21 @@ private struct ToolPayloadPropertySets: Sendable {
 }
 
 private extension DirectToolExecutor {
-    /// Keeps the non-Sendable `[String: Any]` wire payload inside the actor and
-    /// transfers only its Sendable property-name projection to the test.
+    /// Builds the wire payloads through the production `RemoteToolWireCatalog`
+    /// path, keeping the non-Sendable `[String: Any]` payloads inside the actor
+    /// and transferring only their Sendable property-name projection to the test.
     func taskUpdatePayloadPropertiesForTesting(
         sessionID: String
     ) async throws -> ToolPayloadPropertySets {
-        let responses = await responsesToolPayloads(
-            sessionID: sessionID,
-            allowedToolNames: ["tasks.update"]
-        )
-        let chatCompletions = await chatCompletionToolPayloads(
-            sessionID: sessionID,
-            allowedToolNames: ["tasks.update"]
+        let catalog = RemoteToolWireCatalog(
+            descriptors: await descriptors(
+                allowedToolNames: ["tasks.update"],
+                sessionID: sessionID
+            )
         )
         return try ToolPayloadPropertySets(
-            responses: payloadProperties(responses, chatCompletions: false),
-            chatCompletions: payloadProperties(chatCompletions, chatCompletions: true)
+            responses: payloadProperties(catalog.responsesToolPayloads, chatCompletions: false),
+            chatCompletions: payloadProperties(catalog.chatCompletionToolPayloads, chatCompletions: true)
         )
     }
 

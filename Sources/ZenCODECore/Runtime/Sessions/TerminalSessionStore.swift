@@ -194,7 +194,7 @@ public enum TerminalSessionStore {
     public static let fileExtension = "session"
     /// Extension of the optional engine checkpoint (DS4 KV cache) stored next
     /// to a `.session` file. It is written only by an explicit session save
-    /// (`TerminalChat.saveCurrentSession`) and removed together with the session.
+    /// (`ChatSessionController.saveSession(…)`) and removed together with the session.
     public static let engineCheckpointFileExtension = "ds4kv"
 
     public static func save(

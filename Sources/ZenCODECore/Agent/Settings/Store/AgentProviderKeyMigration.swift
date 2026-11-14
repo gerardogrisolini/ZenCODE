@@ -57,8 +57,6 @@ public enum AgentProviderKeyMigration {
         /// Human-readable warnings, such as dropped duplicate providers.
         public let warnings: [String]
 
-        public var didMigrate: Bool { !migratedFilenames.isEmpty }
-
         static let unchanged = Report(migratedFilenames: [], warnings: [])
     }
 

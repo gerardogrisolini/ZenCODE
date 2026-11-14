@@ -214,10 +214,6 @@ struct MemoryGraph: Codable, Sendable, Equatable {
         try c.encode(metadata, forKey: .metadata)
     }
 
-    public var memoryCount: Int { memories.count }
-    public var nodeCount: Int { memories.count + tags.count + clusters.count }
-    public var edgeCount: Int { edges.values.reduce(0) { $0 + $1.count } }
-
     @discardableResult
     public mutating func addMemory(_ input: EngineMemoryEntry) -> String {
         var entry = input
@@ -259,33 +255,6 @@ struct MemoryGraph: Codable, Sendable, Equatable {
         return entry
     }
 
-    public mutating func updateMemory(_ entry: EngineMemoryEntry) {
-        _ = addMemory(entry)
-    }
-
-    public mutating func addTag(_ tag: String, to memoryID: String) {
-        guard var memory = memories[memoryID], !memory.tags.contains(tag) else { return }
-        memory.tags.append(tag)
-        memory.refreshSearchText()
-        memories[memoryID] = memory
-        ensureTag(tag)
-        let tagID = "tag:\(tag)"
-        addEdge(from: memoryID, to: tagID, kind: .hasTag)
-        tags[tagID]?.count &+= 1
-    }
-
-    public mutating func addCluster(_ cluster: ClusterEntry) {
-        clusters[cluster.id] = cluster
-    }
-
-    public mutating func assign(memoryID: String, toCluster clusterID: String) {
-        let normalized = clusterID.hasPrefix("cluster:") ? clusterID : "cluster:\(clusterID)"
-        guard memories[memoryID] != nil, clusters[normalized] != nil else { return }
-        addEdge(from: memoryID, to: normalized, kind: .inCluster)
-        clusters[normalized]?.memberCount &+= 1
-        clusters[normalized]?.updatedAt = Date()
-    }
-
     public mutating func addEdge(from: String, to: String, kind: EdgeKind) {
         if edges[from]?.contains(where: { $0.target == to && $0.kind == kind }) == true { return }
         addEdgeInternal(from: from, to: to, kind: kind)
@@ -300,36 +269,6 @@ struct MemoryGraph: Codable, Sendable, Equatable {
 
     public func outgoingEdges(from id: String) -> [MemoryEdge] { edges[id] ?? [] }
     public func incomingNodes(to id: String) -> [String] { reverseEdges[id] ?? [] }
-
-    /// Creates a `relatesTo` edge between two memories and records link
-    /// discovery.
-    ///
-    /// The guard makes this a **no-op when either endpoint no longer exists or
-    /// has been deactivated** (archived/superseded). Co-relevance links are
-    /// discovered during retrieval maintenance, which runs after the selector
-    /// `await`; a concurrent `forget` or archive can remove or deactivate one of
-    /// the endpoints in that window. Without the guard the edge — and its
-    /// reverse-edge — would dangle forever. Tag and cluster edges are created
-    /// through ``addEdge(from:to:kind:)`` and ``assign(memoryID:toCluster:)``,
-    /// which are unaffected.
-    public mutating func linkMemories(from: String, to: String, weight: Float) {
-        guard let source = memories[from], source.active,
-              let target = memories[to], target.active else { return }
-        addEdge(from: from, to: to, kind: .relatesTo(weight: min(max(weight, 0), 1)))
-        metadata.linkDiscoveryCount &+= 1
-    }
-
-    public mutating func supersede(newerID: String, olderID: String) {
-        guard memories[newerID] != nil, var older = memories[olderID] else { return }
-        addEdge(from: newerID, to: olderID, kind: .supersedes)
-        older.supersede(with: newerID)
-        memories[olderID] = older
-    }
-
-    public mutating func markContradiction(_ firstID: String, _ secondID: String) {
-        addEdge(from: firstID, to: secondID, kind: .contradicts)
-        addEdge(from: secondID, to: firstID, kind: .contradicts)
-    }
 
     public mutating func cascadeRetrieve(
         seeds: [ScoredMemoryID],

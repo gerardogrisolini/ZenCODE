@@ -56,14 +56,14 @@ public enum ChatSessionNotice: Sendable, Equatable {
     /// A model was selected without asking: the only configured model, or the
     /// one chosen at startup (`handleMissingInitialModelSelectionIfNeeded`).
     case modelSelected(AgentSettingsModelManifest, thinking: AgentThinkingSelection?)
-    /// The model menu was cancelled (`selectModelInteractively`).
+    /// The model menu was cancelled (`ChatSessionController.runModelsCommand(line:)`).
     case modelUnchanged
-    /// `/think` found no current model (`selectThinkingInteractively`).
+    /// `/think` found no current model (`ChatSessionController.runThinkCommand(line:)`).
     case noCurrentModel
     /// The current model has no configurable thinking
-    /// (`selectThinkingInteractively`).
+    /// (`ChatSessionController.runThinkCommand(line:)`).
     case thinkingNotSupported(model: AgentSettingsModelManifest)
-    /// The thinking menu was cancelled (`selectThinkingInteractively`).
+    /// The thinking menu was cancelled (`ChatSessionController.runThinkCommand(line:)`).
     case thinkingUnchanged
     /// `/think` with arguments: the level is chosen from the menu
     /// (`submittedLineAction`). Failure channel.
@@ -72,15 +72,16 @@ public enum ChatSessionNotice: Sendable, Equatable {
     // MARK: - Agents
 
     /// `Selected agent: <name>`, or `unavailable` without one
-    /// (`printAgentSelectionStatus`).
+    /// (`ChatSessionController.runAgentsCommand(line:)`).
     case selectedAgent(AgentProfile?)
     /// The agent list, or the missing-manifest message when `agents` is empty
-    /// (`renderAgentList`). `manifestPath` is where the profiles are read from.
+    /// (`ChatSessionController.runAgentsCommand(line:)`). `manifestPath` is
+    /// where the profiles are read from.
     case availableAgents(agents: [AgentProfile], selected: AgentProfile?, manifestPath: String)
-    /// The `/agents` usage line (`renderAgentSelectionUsage`).
+    /// The `/agents` usage line.
     case agentSelectionUsage
     /// The agents associated with the project were saved, or none remain
-    /// (`renderProjectAgentAssociation`, after `presentProjectAgentMenu`).
+    /// (`ChatSessionController.chooseProjectAgents()`, after `presentProjectAgentMenu`).
     case projectAgentsAssociated(agents: [AgentProfile], projectName: String)
     /// The project's agent association could not be saved
     /// (`presentProjectAgentMenu`). Failure channel.
@@ -136,32 +137,32 @@ public enum ChatSessionNotice: Sendable, Equatable {
 
     /// A fresh unsaved session began (`startNewSession`).
     case sessionStarted
-    /// The project has no saved session (`handleSavedSessionList`,
-    /// `handleSavedSessionDelete`).
+    /// The project has no saved session (`ChatSessionController.savedSessionListCommand()`,
+    /// `ChatSessionController.savedSessionDeleteCommand()`).
     case noSavedSessions
     /// The `/sessions` usage block, which has no trailing newline
-    /// (`renderSessionSelectionUsage`).
+    /// (`ChatSessionController.chooseSavedSession()`).
     case sessionSelectionUsage
     /// The saved sessions of the project, the active one flagged
-    /// (`renderSavedSessionList`).
+    /// (`ChatSessionController.chooseSavedSession()`).
     case savedSessions([ChatSavedSessionSummary], activeName: String?)
-    /// A saved session was deleted (`handleSavedSessionDelete`).
+    /// A saved session was deleted (`ChatSessionController.savedSessionDeleteCommand()`).
     case sessionDeleted(name: String)
     /// The saved session to delete no longer exists
-    /// (`handleSavedSessionDelete`). Failure channel.
+    /// (`ChatSessionController.savedSessionDeleteCommand()`). Failure channel.
     case savedSessionNotFound(name: String)
     /// `/sessions save` has no active name and no prompt to derive one from
     /// (`saveActiveSession`). Failure channel.
     case nothingToSave
     /// The runtime holds no snapshot of the active session
-    /// (`saveCurrentSession`). Failure channel.
+    /// (`ChatSessionController.saveSessionCommand(named:)`). Failure channel.
     case sessionUnavailableToSave
-    /// The session was saved (`saveCurrentSession`).
+    /// The session was saved (`ChatSessionController.saveSessionCommand(named:)`).
     case sessionSaved(name: String, messageCount: Int)
-    /// Compaction found nothing to compact (`compactCurrentSession`).
+    /// Compaction found nothing to compact (`ChatSessionController.compactSessionCommand()`).
     case nothingToCompact
     /// The context was compacted; token counts are estimates
-    /// (`compactCurrentSession`).
+    /// (`ChatSessionController.compactSessionCommand()`).
     case sessionCompacted(originalTokenCount: Int, tokenCount: Int, keptRecentMessageCount: Int)
     /// `/sessions memory`: the project-memory block the last prompt of the
     /// session was sent with, as it was sent (`sessionMemoryCommand`). The
@@ -179,13 +180,13 @@ public enum ChatSessionNotice: Sendable, Equatable {
     // MARK: - Checkpoints
 
     /// `/sessions restore` without a saved session to restore from
-    /// (`handleRestoreCommand`). Failure channel.
+    /// (`ChatSessionController.restoreCheckpointCommand(entrySpecifier:)`). Failure channel.
     case noActiveSavedSession
     /// The active saved session is not in the project's store
-    /// (`handleRestoreCommand`). Failure channel.
+    /// (`ChatSessionController.restoreCheckpointCommand(entrySpecifier:)`). Failure channel.
     case activeSavedSessionNotFound(name: String)
     /// The entry the operator typed is not in the checkpoint tree
-    /// (`handleRestoreCommand`). Failure channel.
+    /// (`ChatSessionController.restoreCheckpointCommand(entrySpecifier:)`). Failure channel.
     case checkpointEntryUnknown(specifier: String)
     /// The resolved entry is not in the saved session's checkpoint tree
     /// (`restoreFromCheckpoint`). Failure channel.
@@ -219,21 +220,23 @@ public enum ChatSessionNotice: Sendable, Equatable {
     // MARK: - Commands that need sub-agents
 
     /// `/plan` or `/review` found the sub-agents tool group off
-    /// (`handlePlanCommand`, `handleReviewCommand`). `command` is the typed
+    /// (`ChatSessionController.runPlanCommand(line:)`,
+    /// `ChatSessionController.runReviewCommand(line:)`). `command` is the typed
     /// command with its slash (`/plan`, `/review`). Failure channel.
     case subAgentToolsRequired(command: String)
     /// No profile visible to the project has the role the command delegates to
-    /// (`handlePlanCommand`, `handlePlanBrainstormingReply`,
-    /// `handleReviewCommand`). Failure channel.
+    /// (`ChatSessionController.runPlanCommand(line:)`,
+    /// `ChatSessionController.planBrainstormingReplyAction(for:)`,
+    /// `ChatSessionController.runReviewCommand(line:)`). Failure channel.
     case agentRoleUnavailable(AgentProfileRole)
 
     // MARK: - /plan
 
-    /// `/plan` without a goal (`handlePlanCommand`). Failure channel.
+    /// `/plan` without a goal (`ChatSessionController.runPlanCommand(line:)`). Failure channel.
     case planMissingGoal
     /// A Planner clarification or the Goal request of `/plan approve` is open,
     /// so the plan cannot be approved, saved, or loaded
-    /// (`handlePlanCommand`). Failure channel.
+    /// (`ChatSessionController.runPlanCommand(line:)`). Failure channel.
     case planDiscussionBlocksMutation
     /// `/plan save` found no plan to save (`saveReusablePlan`). Failure channel.
     case planUnavailableForSaving
@@ -276,23 +279,24 @@ public enum ChatSessionNotice: Sendable, Equatable {
     /// the line that says the session's active plan stays.
     case savedPlansDeleted(planIDs: [String], activePlanAffected: Bool)
     /// `/plan status` while a Planner clarification is open
-    /// (`handlePlanCommand`).
+    /// (`ChatSessionController.runPlanCommand(line:)`).
     case planClarificationActive(goal: String)
     /// `/plan status` while the Goal request of `/plan approve` is open
-    /// (`handlePlanCommand`).
+    /// (`ChatSessionController.runPlanCommand(line:)`).
     case planAwaitingApprovalGoal
-    /// `/plan status` without a plan or a discussion (`handlePlanCommand`).
+    /// `/plan status` without a plan or a discussion
+    /// (`ChatSessionController.runPlanCommand(line:)`).
     case noActivePlan
     /// `/plan status` with the plan's items and, when the plan has one, its
-    /// task graph (`handlePlanCommand`). The plan is the projection of the
-    /// graph's progress onto the active plan, which the terminal also keeps as
-    /// the active plan. Markdown channel.
+    /// task graph (`ChatSessionController.runPlanCommand(line:)`). The plan is
+    /// the projection of the graph's progress onto the active plan, which the
+    /// terminal also keeps as the active plan. Markdown channel.
     case planStatus(TerminalSessionPlan, graph: TaskGraphSnapshot?)
     /// `/plan status` with the plans queued after the active plan, in
     /// sequence order (`planStatus`). Markdown channel.
     case queuedPlans([TerminalSessionPlan])
-    /// There is no completed plan to approve (`handlePlanCommand`,
-    /// `handlePlanApprovalGoalReply`). Failure channel.
+    /// There is no completed plan to approve (`ChatSessionController.runPlanCommand(line:)`,
+    /// `ChatSessionController.planApprovalGoalReplyAction(for:)`). Failure channel.
     case planUnavailableForApproval
     /// The Goal of `/plan approve` arrived but the plan it was requested for
     /// is no longer the active plan, and the request stays open. Only the
@@ -307,53 +311,54 @@ public enum ChatSessionNotice: Sendable, Equatable {
     /// channel.
     case runtimeSessionUnavailable
     /// `/plan approve` asks for the Goal the plan represents
-    /// (`handlePlanCommand`).
+    /// (`ChatSessionController.runPlanCommand(line:)`).
     case planApprovalGoalPrompt
     /// The plan was approved and its task graph activated; implementation
     /// starts (`approveActivePlan`).
     case planApproved
     /// `/plan clear` dropped an unfinished discussion and no plan
-    /// (`handlePlanCommand`).
+    /// (`ChatSessionController.runPlanCommand(line:)`).
     case planDiscussionCleared
     /// `/plan clear` found neither a plan nor a discussion
-    /// (`handlePlanCommand`).
+    /// (`ChatSessionController.runPlanCommand(line:)`).
     case noPlanToClear
     /// `/plan clear` dropped the active plan and archived its task graph
-    /// (`handlePlanCommand`).
+    /// (`ChatSessionController.runPlanCommand(line:)`).
     case activePlanCleared
 
     // MARK: - /goal and /review
 
-    /// `/goal` without a goal (`handleWorkflowCommand`). Failure channel.
+    /// `/goal` without a goal (`ChatSessionController.runGoalCommand(line:)`). Failure channel.
     case workflowMissingGoal
     /// `/goal` while a plan or a planning discussion is open
-    /// (`handleWorkflowCommand`). Failure channel.
+    /// (`ChatSessionController.runGoalCommand(line:)`). Failure channel.
     case workflowBlockedByPlan
     /// `/goal` while a goal workflow graph is still open
-    /// (`handleWorkflowCommand`). Failure channel.
+    /// (`ChatSessionController.runGoalCommand(line:)`). Failure channel.
     case workflowAlreadyActive(graphID: String, pendingTaskCount: Int)
     /// `/review` found no file change, plan, or task graph to review
-    /// (`handleReviewCommand`).
+    /// (`ChatSessionController.runReviewCommand(line:)`).
     case noChangesToReview
 
     // MARK: - /tasks
 
     /// `/tasks <action>` that needs a task id got none (`TerminalTaskCommandError`,
-    /// thrown by `handleTasksCommand`). Failure channel.
+    /// thrown by `ChatSessionController.runTasksCommand(line:)`). Failure channel.
     case taskIDRequired(action: String)
     /// `/tasks` with an action it does not know (`TerminalTaskCommandError`,
-    /// thrown by `handleTasksCommand`). Failure channel.
+    /// thrown by `ChatSessionController.runTasksCommand(line:)`). Failure channel.
     case unknownTasksAction(action: String)
     /// The session has no task graph (`renderCurrentTaskGraph`).
     case noTaskGraph
     /// `/tasks show`: one task with its dependencies, attempts, and evidence
     /// (`taskDetailMarkdown`). Markdown channel.
     case taskDetail(TaskRecordView)
-    /// A task was queued again (`handleTasksCommand`).
+    /// A task was queued again (`ChatSessionController.runTasksCommand(line:)`).
     case taskRetried(taskID: String)
-    /// A task was cancelled (`handleTasksCommand`).
+    /// A task was cancelled (`ChatSessionController.runTasksCommand(line:)`).
     case taskCancelled(taskID: String)
-    /// The task graphs of the session were cleared (`handleTasksCommand`).
+    /// The task graphs of the session were cleared
+    /// (`ChatSessionController.runTasksCommand(line:)`).
     case taskGraphsCleared
 
     // MARK: - Task graphs from previous sessions
@@ -593,17 +598,17 @@ public enum ChatSessionNotice: Sendable, Equatable {
 /// follows as a separate notice.
 public enum ChatInteractiveOperation: Sendable, Equatable {
     /// `/models`: the model list, then `Model selection requires an interactive
-    /// terminal.` (`selectModelInteractively`).
+    /// terminal.` (`ChatSessionController.runModelsCommand(line:)`).
     case modelSelection(models: [AgentSettingsModelManifest], selectedModelID: String?)
     /// `/think`: the thinking levels of `model`, then `Thinking selection
-    /// requires an interactive terminal.` (`selectThinkingInteractively`).
+    /// requires an interactive terminal.` (`ChatSessionController.runThinkCommand(line:)`).
     case thinkingSelection(
         model: AgentSettingsModelManifest,
         options: [AgentThinkingSelection],
         selected: AgentThinkingSelection?
     )
     /// `/agents`: the selected agent, the agent list, then the usage line
-    /// (`handleAgentsCommand`).
+    /// (`ChatSessionController.runAgentsCommand(line:)`).
     case agentSelection(agents: [AgentProfile], selected: AgentProfile?, manifestPath: String)
     /// `/tools`: the active tools, then the usage line (`handleToolsCommand`).
     case toolSelection(ChatActiveToolsSummary)
@@ -614,10 +619,10 @@ public enum ChatInteractiveOperation: Sendable, Equatable {
     /// terminal.` on the failure channel (`uninstallSkillsInteractively`).
     case skillUninstall
     /// `/sessions`: the saved sessions, then the usage block
-    /// (`handleSavedSessionList`).
+    /// (`ChatSessionController.savedSessionListCommand()`).
     case savedSessionSelection([ChatSavedSessionSummary], activeName: String?)
     /// `/sessions delete`: the saved sessions, then the usage block
-    /// (`handleSavedSessionDelete`).
+    /// (`ChatSessionController.savedSessionDeleteCommand()`).
     case savedSessionDeletion([ChatSavedSessionSummary], activeName: String?)
     /// `/open` without an argument: the files and URLs of the conversation,
     /// then `Selecting an item to open requires an interactive terminal.`

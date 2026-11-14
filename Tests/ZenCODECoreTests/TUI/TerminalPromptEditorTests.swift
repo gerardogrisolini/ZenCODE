@@ -255,7 +255,7 @@ struct TerminalPromptEditorTests {
     @Test
     func sharedChatMentionCompletionIsLimitedToTheLeadingToken() {
         let participantID = "agent-1"
-        let mention = "@\(TerminalChat.sharedChatMentionHandle(forParticipantID: participantID))"
+        let mention = "@\(SharedChatMentionParser.mentionHandle(forParticipantID: participantID))"
         let suggestion = TerminalCommandSuggestion(
             command: "\(mention) ",
             summary: "message active agent"
@@ -286,9 +286,9 @@ struct TerminalPromptEditorTests {
             ).isEmpty
         )
         #expect(
-            TerminalChat.sharedChatMentionRoute(
+            TerminalChat.parseSharedChatMention(
                 from: "Please ask \(mention) to review this"
-            ) == nil
+            ) == .none
         )
 
         // Moving the cursor to a later mention in a leading-mention draft is
@@ -581,28 +581,28 @@ struct TerminalPromptEditorTests {
             let resolved = handle.flatMap { handleMap[$0] }
             #expect(resolved == participant.id)
             #expect(
-                TerminalChat.sharedChatMentionRoute(
+                TerminalChat.parseSharedChatMention(
                     from: "@\(handle ?? "x") inspect the work",
                     readableHandles: handleMap
-                ) == TerminalChat.SharedChatMentionRoute(
+                ) == .route(TerminalChat.SharedChatMentionRoute(
                     destination: .direct([participant.id]),
                     text: "inspect the work"
-                )
+                ))
             )
         }
-        #expect(TerminalChat.sharedChatMentionRoute(
+        #expect(TerminalChat.parseSharedChatMention(
             from: "@all report status",
             readableHandles: handleMap
-        ) == TerminalChat.SharedChatMentionRoute(destination: .all, text: "report status"))
-        #expect(TerminalChat.sharedChatMentionRoute(
+        ) == .route(TerminalChat.SharedChatMentionRoute(destination: .all, text: "report status")))
+        #expect(TerminalChat.parseSharedChatMention(
             from: "@COORDINATOR report status",
             readableHandles: handleMap
-        ) == TerminalChat.SharedChatMentionRoute(destination: .coordinator, text: "report status"))
+        ) == .route(TerminalChat.SharedChatMentionRoute(destination: .coordinator, text: "report status")))
         // A raw display name is not a handle: only catalogue handles route.
-        #expect(TerminalChat.sharedChatMentionRoute(
+        #expect(TerminalChat.parseSharedChatMention(
             from: "@Planning Agent ambiguous",
             readableHandles: handleMap
-        ) == nil)
+        ) == .none)
         #expect(TerminalChat.parseSharedChatMention(from: "@all", readableHandles: handleMap)
             == .missingText(destination: .all))
         #expect(TerminalChat.parseSharedChatMention(
@@ -622,15 +622,15 @@ struct TerminalPromptEditorTests {
         // Hidden backward compatibility: the legacy @agent-Base64 spelling
         // still resolves to the same stable id, even though it is never offered
         // by the autocomplete list.
-        let compatHandle = TerminalChat.sharedChatMentionHandle(forParticipantID: participants[0].id)
+        let compatHandle = SharedChatMentionParser.mentionHandle(forParticipantID: participants[0].id)
         #expect(
-            TerminalChat.sharedChatMentionRoute(
+            TerminalChat.parseSharedChatMention(
                 from: "@\(compatHandle) legacy routing",
                 readableHandles: [:]
-            ) == TerminalChat.SharedChatMentionRoute(
+            ) == .route(TerminalChat.SharedChatMentionRoute(
                 destination: .direct([participants[0].id]),
                 text: "legacy routing"
-            )
+            ))
         )
 
         // Aliases are never recycled: a second participant with the same name
@@ -673,38 +673,38 @@ struct TerminalPromptEditorTests {
 
         // The parser routes the suffixed handles to the right agent ids…
         #expect(
-            TerminalChat.sharedChatMentionRoute(
+            TerminalChat.parseSharedChatMention(
                 from: "@all-2 inspect the diff",
                 readableHandles: handleMap
-            ) == TerminalChat.SharedChatMentionRoute(
+            ) == .route(TerminalChat.SharedChatMentionRoute(
                 destination: .direct(["all-id"]),
                 text: "inspect the diff"
-            )
+            ))
         )
         #expect(
-            TerminalChat.sharedChatMentionRoute(
+            TerminalChat.parseSharedChatMention(
                 from: "@coordinator-2 inspect the diff",
                 readableHandles: handleMap
-            ) == TerminalChat.SharedChatMentionRoute(
+            ) == .route(TerminalChat.SharedChatMentionRoute(
                 destination: .direct(["coord-id"]),
                 text: "inspect the diff"
-            )
+            ))
         )
         // …while the unsuffixed spellings keep their broadcast meaning.
         #expect(
-            TerminalChat.sharedChatMentionRoute(
+            TerminalChat.parseSharedChatMention(
                 from: "@all inspect the diff",
                 readableHandles: handleMap
-            ) == TerminalChat.SharedChatMentionRoute(destination: .all, text: "inspect the diff")
+            ) == .route(TerminalChat.SharedChatMentionRoute(destination: .all, text: "inspect the diff"))
         )
         #expect(
-            TerminalChat.sharedChatMentionRoute(
+            TerminalChat.parseSharedChatMention(
                 from: "@coordinator inspect the diff",
                 readableHandles: handleMap
-            ) == TerminalChat.SharedChatMentionRoute(
+            ) == .route(TerminalChat.SharedChatMentionRoute(
                 destination: .coordinator,
                 text: "inspect the diff"
-            )
+            ))
         )
     }
 }

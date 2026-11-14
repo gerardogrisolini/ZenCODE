@@ -17,14 +17,6 @@ public enum ZenWindowTab: Hashable, Sendable {
     /// The read-only transcript of the sub-agent with this id.
     case subAgent(String)
 
-    /// The sub-agent of the tab; `nil` for ``chat``.
-    public var agentID: String? {
-        if case let .subAgent(agentID) = self {
-            return agentID
-        }
-        return nil
-    }
-
     /// The tabs of a window whose sub-agent tabs are `agentIDs`, in the order
     /// they were opened: ``chat`` first.
     public static func tabs(subAgentIDs agentIDs: [String]) -> [ZenWindowTab] {

@@ -54,9 +54,9 @@ struct ZenDiagnosticsTests {
         ZenLogger.error(.diagnostics, "Authorization: Bearer token-value-12345 api_key=\(secret)")
         ZenLogger.debug(.memory, "diagnostic body")
 
-        #expect(ZenLogger.isEnabled)
-        #expect(ZenLogger.activeLevel == .debug)
-        #expect(ZenLogger.destinationDescription == "system log")
+        #expect(ZenLogger.resolvedConfiguration() != nil)
+        #expect(ZenLogger.resolvedConfiguration()?.minimumLevel == .debug)
+        #expect(ZenLogger.resolvedConfiguration()?.destinationDescription == "system log")
         // The system-log backend owns storage: no application-owned log
         // directory or file may be created anywhere under the isolated root.
         #expect(try contentsOfDirectory(root).isEmpty)
@@ -106,10 +106,9 @@ struct ZenDiagnosticsTests {
     /// The shared store reads the real process environment, where `ZENCODE_LOG`
     /// is unset, so "restore the environment" and "stay disabled" would look
     /// identical. A store built on an injected environment separates them:
-    /// clearing the override must re-enable from the environment, while an
-    /// explicit disable must win over the very same environment.
+    /// clearing the override must re-enable from the environment.
     @Test
-    func clearingTheOverrideRestoresTheEnvironmentWhileDisableWins() {
+    func clearingTheOverrideRestoresTheEnvironment() {
         let store = ZenLogConfigurationStore(
             environmentProvider: { ["ZENCODE_LOG": "debug"] }
         )
@@ -124,14 +123,6 @@ struct ZenDiagnosticsTests {
         #expect(store.resolvedConfiguration()?.minimumLevel == .error)
 
         // Restore: the injected environment enables debug again.
-        store.configure(.environment)
-        #expect(store.resolvedConfiguration()?.minimumLevel == .debug)
-
-        // Disable: unambiguously off despite the enabling environment.
-        store.configure(.disabled)
-        #expect(store.resolvedConfiguration() == nil)
-
-        // And restoring once more re-enables, proving disable is not sticky.
         store.configure(.environment)
         #expect(store.resolvedConfiguration()?.minimumLevel == .debug)
     }

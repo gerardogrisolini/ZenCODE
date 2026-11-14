@@ -218,12 +218,6 @@ extension TelegramChannel {
         return true
     }
 
-    /// Whether a question waits for the next message of the chat, or a menu
-    /// for a tap.
-    var hasPendingReader: Bool {
-        pendingLineReader != nil || pendingAttachmentReader != nil || pendingChoiceReader != nil
-    }
-
     /// Refuses the readers still waiting, the menu waiting for a tap
     /// included: the channel stops reading the chat.
     func cancelPendingReaders() {

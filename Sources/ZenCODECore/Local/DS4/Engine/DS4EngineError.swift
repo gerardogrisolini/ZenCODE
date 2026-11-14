@@ -81,21 +81,6 @@ enum DS4EngineError: LocalizedError, Sendable, Equatable {
         }
     }
 
-    /// True when the library itself cannot be used and must be (re)built.
-    var isLibraryUnavailable: Bool {
-        buildHint != nil
-    }
-
-    /// Manual build command for library-level failures.
-    var buildHint: String? {
-        switch self {
-        case .libraryUnavailable(_, let hint), .abiMismatch(_, _, let hint), .missingSymbol(_, let hint):
-            hint
-        default:
-            nil
-        }
-    }
-
     static let instanceLockedSuggestion = "another DS4 process is using this model"
 
     var errorDescription: String? {

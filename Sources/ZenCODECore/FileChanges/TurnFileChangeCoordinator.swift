@@ -13,10 +13,6 @@ public actor TurnFileChangeCoordinator {
     private var latestSummary: TurnFileChangeSummary?
     private var didPublishSummary = false
 
-    public init(workspacePath: String?) {
-        tracker = TurnFileChangeTracker(workspacePath: workspacePath)
-    }
-
     public init(baseDirectoryURL: URL) {
         tracker = TurnFileChangeTracker(baseDirectoryURL: baseDirectoryURL)
     }

@@ -15,9 +15,6 @@ public typealias ToolExecutionOutput = ToolCore.ToolExecutionOutput
 public typealias SubAgentToolRequestCompatibility = ToolCore.SubAgentToolRequestCompatibility
 public typealias DeveloperToolEnvironment = ToolCore.DeveloperToolEnvironment
 
-public typealias MCPClient = FeatureMCPBridgeKit.MCPClient
 public typealias MCPClientError = FeatureMCPBridgeKit.MCPClientError
-public typealias MCPErrorResponse = FeatureMCPBridgeKit.MCPErrorResponse
-public typealias MCPRemoteTool = FeatureMCPBridgeKit.MCPRemoteTool
 public typealias MCPServerConfiguration = FeatureMCPBridgeKit.MCPServerConfiguration
 public typealias RemoteMCPToolExecutor = FeatureMCPBridgeKit.RemoteMCPToolExecutor

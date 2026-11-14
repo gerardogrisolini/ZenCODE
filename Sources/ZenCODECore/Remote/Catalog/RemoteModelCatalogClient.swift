@@ -49,45 +49,11 @@ public final class RemoteModelCatalogClient {
         }
     }
 
-    public func fetchModelMetadata(
-        baseURL: String,
-        modelID: String,
-        apiKey: String?
-    ) async throws -> OpenRouterModelMetadata? {
-        let normalizedModelID = AgentRemoteProvider.normalizedModelID(modelID).lowercased()
-        guard !normalizedModelID.isEmpty else {
-            return nil
-        }
-
-        return try await fetchModels(
-            apiKey: Self.openRouterAPIKey(
-                providerBaseURL: baseURL,
-                apiKey: apiKey
-            )
-        ).first {
-            AgentRemoteProvider.normalizedModelID($0.id).lowercased() == normalizedModelID
-        }.map { model in
-            OpenRouterModelMetadata(
-                id: model.id,
-                contextLength: model.contextLength,
-                thinkingSupport: model.thinkingSupport,
-                generationParameterOverrides: model.generationParameterOverrides
-            )
-        }
-    }
-
     static func openRouterAPIKey(
         providerBaseURL: String,
         apiKey: String?
     ) -> String? {
         AgentRemoteProvider.isOpenRouterBaseURL(providerBaseURL) ? apiKey : nil
-    }
-
-    func modelsRequest(apiKey: String?) throws -> RemoteHTTPStreamingRequest {
-        try modelsRequest(
-            baseURL: Self.openRouterCatalogBaseURL,
-            apiKey: apiKey
-        )
     }
 
     func modelsRequest(
@@ -109,32 +75,11 @@ public final class RemoteModelCatalogClient {
     }
 
     static func thinkingSupport(
-        fromModelMetadata metadata: [String: Any],
-        baseURL _: String,
-        modelID _: String
+        fromModelMetadata metadata: [String: Any]
     ) -> ModelThinkingSupport? {
         ModelThinkingSupport.fromModelMetadata(
             metadata.removingSparseIdentifierKeys()
         )
-    }
-}
-
-public struct OpenRouterModelMetadata: Equatable, Sendable {
-    public let id: String
-    public let contextLength: Int?
-    public let thinkingSupport: ModelThinkingSupport?
-    public let generationParameterOverrides: AgentGenerationParameterOverrides?
-
-    public init(
-        id: String,
-        contextLength: Int?,
-        thinkingSupport: ModelThinkingSupport?,
-        generationParameterOverrides: AgentGenerationParameterOverrides? = nil
-    ) {
-        self.id = id
-        self.contextLength = contextLength
-        self.thinkingSupport = thinkingSupport
-        self.generationParameterOverrides = generationParameterOverrides
     }
 }
 
@@ -213,11 +158,7 @@ extension RemoteModelCatalogClient {
 
         let metadata = modelMetadata(from: entry)
         var overrides = generationParameterOverrides(from: entry.values)
-        var thinkingSupport = Self.thinkingSupport(
-            fromModelMetadata: metadata,
-            baseURL: baseURL,
-            modelID: id
-        )
+        var thinkingSupport = Self.thinkingSupport(fromModelMetadata: metadata)
         // The Anthropic API advertises the wire thinking mode per model:
         // adaptive-only models reject the manual `enabled` budget with HTTP 400.
         if isAnthropicAPIBaseURL(baseURL), metadata["capabilities"] is [String: Any] {

@@ -53,7 +53,6 @@ public actor SharedChatMentionCatalog {
     /// `@coordinator` always keep their reserved meaning.
     static let sessionReservedHandles: Set<String> = ["all", "coordinator"]
 
-    private var handleToParticipantID: [String: String] = [:]
     private var participantIDToHandle: [String: String] = [:]
     /// Every handle ever assigned in this session, even after its owner left,
     /// plus the session-reserved broadcast destinations. Reserved so aliases
@@ -69,21 +68,13 @@ public actor SharedChatMentionCatalog {
     /// keeps its existing handle.
     func handle(for participant: AgentSharedChat.Participant) -> String {
         if let existing = participantIDToHandle[participant.id] {
-            handleToParticipantID[existing] = participant.id
             return existing
         }
         let base = Self.sanitizedBaseHandle(from: participant.name)
         let handle = Self.uniqueHandle(base: base, reserved: reservedHandles)
         reservedHandles.insert(handle)
         participantIDToHandle[participant.id] = handle
-        handleToParticipantID[handle] = participant.id
         return handle
-    }
-
-    /// Resolves a readable handle back to its stable participant id, or nil if
-    /// no live mapping exists.
-    func participantID(forHandle handle: String) -> String? {
-        handleToParticipantID[handle]
     }
 
     /// Builds a handle → participant-id map for a batch of participants,
@@ -97,14 +88,9 @@ public actor SharedChatMentionCatalog {
         let activeParticipants = participants.filter {
             $0.kind == .agent && $0.isActive
         }
-        let activeParticipantIDs = Set(activeParticipants.map(\.id))
 
         // Historical assignments stay reserved so an alias never changes owner,
-        // but only the current roster may remain routable.
-        handleToParticipantID = handleToParticipantID.filter {
-            activeParticipantIDs.contains($0.value)
-        }
-
+        // but only the current roster is routable.
         var map: [String: String] = [:]
         for participant in activeParticipants {
             let handle = self.handle(for: participant)
@@ -119,7 +105,6 @@ public actor SharedChatMentionCatalog {
     /// to the session itself, not to a particular roster, so `@all` and
     /// `@coordinator` can never be captured by a future agent.
     func reset() {
-        handleToParticipantID.removeAll()
         participantIDToHandle.removeAll()
         reservedHandles = Self.sessionReservedHandles
     }

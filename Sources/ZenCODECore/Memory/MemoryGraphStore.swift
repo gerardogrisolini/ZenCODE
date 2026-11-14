@@ -65,10 +65,6 @@ actor MemoryGraphStore {
             embedder: embedder,
             persistence: persistence,
             selector: ScoreThresholdMemorySelector(),
-            // Product recall is intentionally dependency-free. `learn(from:)`
-            // remains an internal engine seam, but opening a product store never
-            // installs a network-backed extractor or makes a generation request.
-            extractor: NoopMemoryExtractor(),
             semanticFailureReporter: semanticFailureReporter
         )
         return MemoryGraphStore(
@@ -84,10 +80,6 @@ actor MemoryGraphStore {
     // Store-level reads use one coherent snapshot per request: the engine
     // reloads the durable graph under its write lock, overlays local pending
     // recall maintenance onto the copy, and never persists.
-
-    func entries(includeArchived: Bool, limit: Int) async throws -> [GraphEntry] {
-        try await entries(includeArchived: includeArchived, offset: 0, limit: limit, filter: .none)
-    }
 
     /// Journal page: newest first, after `offset` matching entries.
     func entries(
@@ -167,11 +159,11 @@ actor MemoryGraphStore {
     /// Runs the engine's full analyze → retrieve → select → format pipeline and
     /// returns the ready-to-inject memory block (empty when nothing was selected).
     ///
-    /// Deliberately NOT `MemoryEngine.submitContext(_:)` / `takePending()`:
-    /// `MemoryEngine.pending` is one unkeyed slot and `MemoryGraphStoreRegistry`
-    /// shares one engine per workspace across every session, sub-agent and tool
-    /// call, so overlapping turns would hand one session another's memories.
-    /// This per-call path keeps each retrieval bound to the prompt that asked.
+    /// Retrieval is never prefetched into a shared slot:
+    /// `MemoryGraphStoreRegistry` shares one engine per workspace across every
+    /// session, sub-agent and tool call, so overlapping turns would hand one
+    /// session another's memories. This per-call path keeps each retrieval
+    /// bound to the prompt that asked.
     func context(
         for prompt: String,
         scope: GraphScope = .all
@@ -195,78 +187,6 @@ actor MemoryGraphStore {
         )
     }
 
-    /// Runs the engine's extractor over `context` and stores what it returns.
-    /// Product stores use `NoopMemoryExtractor`, so this is a no-op there; it
-    /// remains for tests that inject a deterministic extractor.
-    ///
-    /// Deliberately NOT `MemoryEngine.learn(from:)`: the engine mints
-    /// library-shaped ids (`mem_<millis>_<uuid>`) while every ZenCODE maintenance
-    /// path goes through `MemoryIdentifier.validated` (canonical UUIDs only), so
-    /// `memory.update`/`memory.archive` could not touch such entries; and `write`'s
-    /// normalization and duplicate rule must apply to injected drafts too.
-    ///
-    /// The batch is one engine transaction, so the duplicate check also covers
-    /// repeats within a batch and a failing save stores none of it.
-    @discardableResult
-    func learn(from context: String) async throws -> [GraphEntry] {
-        let drafts = try await engine.extract(from: context)
-        var prepared: [GraphEntry] = []
-        prepared.reserveCapacity(drafts.count)
-        for draft in drafts {
-            let normalizedContent = MemoryContent.normalized(draft.content)
-            guard !normalizedContent.isEmpty else { continue }
-            let embedded = try await MemoryEmbeddingFallback.embed(
-                normalizedContent,
-                with: embedder,
-                operation: "learn",
-                reporter: semanticFailureReporter
-            )
-            var entry = GraphEntry(
-                id: MemoryIdentifier.makeNew(),
-                category: draft.category,
-                content: normalizedContent,
-                tags: draft.tags,
-                source: draft.source ?? MemorySource.learn,
-                trust: draft.trust,
-                scope: draft.scope,
-                embedding: embedded.values,
-                embeddingModel: embedded.model,
-                confidence: draft.confidence
-            )
-            entry.refreshSearchText()
-            prepared.append(entry)
-        }
-        guard !prepared.isEmpty else {
-            return []
-        }
-
-        let batch = prepared
-        // Re-check cancellation just before the atomic transaction to keep the
-        // all-or-nothing contract.
-        try Task.checkCancellation()
-        return try await engine.transaction { graph in
-            var stored: [GraphEntry] = []
-            for entry in batch {
-                // Extracted drafts carry no generated annotation, so their
-                // content is compared exactly as authored.
-                guard Self.activeDuplicate(
-                    matching: .literal(entry.content),
-                    in: graph
-                ) == nil else {
-                    continue
-                }
-                graph.addMemory(entry)
-                stored.append(entry)
-            }
-            return stored
-        }
-    }
-
-    /// Flushes the in-memory graph to disk (an explicit checkpoint after direct writes).
-    func saveGraph() async throws {
-        try await engine.save()
-    }
-
     /// Flushes only automatic-recall maintenance. In particular this must not
     /// persist a deferred insert represented by `needsSave`.
     func flushRecallMaintenance() async throws {
@@ -274,28 +194,6 @@ actor MemoryGraphStore {
     }
 
     // MARK: - Mutations
-
-    /// Appends a new entry, or returns the existing active entry with the same
-    /// content. The duplicate check and insertion share one engine transaction:
-    /// each `await` on the engine lets another call re-enter, so a separate
-    /// snapshot-decide-write would let concurrent writes both insert.
-    /// - Parameter generatedTimestamp: `true` only when the caller prepended the
-    ///   `Timestamp:` annotation itself; the sole case where that line is ignored
-    ///   for duplicate detection.
-    func write(
-        content: String,
-        category: GraphCategory,
-        tags: [String],
-        generatedTimestamp: Bool = false
-    ) async throws -> (entry: GraphEntry, created: Bool) {
-        let outcome = try await writeDetailed(
-            content: content,
-            category: category,
-            tags: tags,
-            generatedTimestamp: generatedTimestamp
-        )
-        return (outcome.entry, outcome.created)
-    }
 
     /// Result of a write: the stored entry, whether it was created, the
     /// active entries that lexically overlap it and, for tags the entry
@@ -327,11 +225,17 @@ actor MemoryGraphStore {
         let existing: [Existing]
     }
 
-    /// Writes like ``write(content:category:tags:generatedTimestamp:)`` and,
-    /// for a created entry, reports the active entries it overlaps so the
+    /// Appends a new entry, or returns the existing active entry with the same
+    /// content. The duplicate check and insertion share one engine transaction:
+    /// each `await` on the engine lets another call re-enter, so a separate
+    /// snapshot-decide-write would let concurrent writes both insert. For a
+    /// created entry it also reports the active entries it overlaps so the
     /// caller can consolidate instead of keeping two notes on one fact. The
     /// write itself is never blocked: judging whether the overlap is the same
     /// fact remains the caller's call.
+    /// - Parameter generatedTimestamp: `true` only when the caller prepended the
+    ///   `Timestamp:` annotation itself; the sole case where that line is ignored
+    ///   for duplicate detection.
     func writeDetailed(
         content: String,
         category: GraphCategory,
@@ -627,18 +531,6 @@ actor MemoryGraphStore {
 
     // MARK: - Cleanup
 
-    /// The JSON copy taken before a cleanup changes the graph, next to the
-    /// graph so it stays on the same volume and under the same owner-only
-    /// directory. The engine never loads it.
-    nonisolated var backupURL: URL {
-        JSONMemoryPersistence.backupURLs(forGraphAt: graphURL).graph
-    }
-
-    /// The vectors-file copy taken with ``backupURL``.
-    nonisolated var vectorsBackupURL: URL {
-        JSONMemoryPersistence.backupURLs(forGraphAt: graphURL).vectors
-    }
-
     /// What ``cleanup(_:now:)`` would change right now. Reads one coherent
     /// snapshot and mutates nothing: no save, no backup.
     func cleanupPreview(
@@ -660,8 +552,9 @@ actor MemoryGraphStore {
     /// The plan is recomputed on the graph the transaction reloads under the
     /// file lock, so the report can differ from an earlier preview when another
     /// process wrote in between. A plan that changes nothing leaves the graph
-    /// file and the backup alone. Otherwise the pre-cleanup graph is first
-    /// written to ``backupURL`` and ``vectorsBackupURL`` (replacing any
+    /// file and the backup alone. Otherwise the pre-cleanup graph and its
+    /// vectors file are first copied next to the graph
+    /// (`JSONMemoryPersistence.backupURLs(forGraphAt:)`, replacing any
     /// previous copy) inside the same transaction: a failing backup throws
     /// before anything is saved.
     @discardableResult

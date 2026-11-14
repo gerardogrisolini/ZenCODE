@@ -253,7 +253,7 @@ struct BrowserAddressDecisionMatrixTests {
         ("localhost", "93.184.216.34", true, "allowed"),
         ("localhost", "0:0:0:0:0:0:0:1", true, "restricted"),
     ])
-    func requestDecisionsAreStable(host: String, address: String, allowsLoopback: Bool, expected: String) {
+    func requestDecisionsAreStable(host: String, address: String, allowsLoopback: Bool, expected: String) async {
         let policy = BrowserNetworkRequestPolicy(
             urlPolicy: BrowserURLPolicy(environment: [:]),
             resolver: StaticBrowserHostResolver(addressesByHost: [host: [address]]),
@@ -261,7 +261,7 @@ struct BrowserAddressDecisionMatrixTests {
         )
         let decision: String
         do {
-            try policy.validateRequestURL("https://\(host)/")
+            try await policy.validateRequestURLOffloaded("https://\(host)/")
             decision = "allowed"
         } catch let error as BrowserURLPolicyError {
             if case .restrictedHost = error { decision = "restricted" } else { decision = "url:\(error)" }

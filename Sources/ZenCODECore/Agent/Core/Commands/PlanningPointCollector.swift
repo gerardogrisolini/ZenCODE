@@ -34,15 +34,10 @@ actor PlanningPointCollector {
         return points
     }
 
-    /// Resolves the final structured plan points for a Planner turn, shared by
-    /// the terminal TUI and the ACP bridge so both surfaces behave identically.
-    /// The points of every plan section are flattened in order.
-    func finalPlanPoints(forFinalText text: String) -> [TerminalSessionPlanPoint]? {
-        finalPlanSections(forFinalText: text)?.flatMap(\.points)
-    }
-
-    /// Resolves the final plan sections for a Planner turn: one section per
-    /// `Piano N/M` plan, or one heading-less section for a single plan.
+    /// Resolves the final plan sections for a Planner turn, shared by the
+    /// terminal TUI and the ACP bridge so both surfaces behave identically:
+    /// one section per `Piano N/M` plan, or one heading-less section for a
+    /// single plan.
     ///
     /// Registered points (a single valid `todo.write`) keep priority and are
     /// still required to be coherent with the final text, section by section.

@@ -49,14 +49,6 @@ extension TerminalChat {
             }
     }
 
-    /// Hidden backward-compatibility handle: the legacy `@agent-Base64` spelling
-    /// is still accepted by the parser but never offered by the autocomplete
-    /// list. It encodes the stable participant identifier reversibly (see
-    /// ``SharedChatMentionParser/mentionHandle(forParticipantID:)``).
-    nonisolated static func sharedChatMentionHandle(forParticipantID participantID: String) -> String {
-        SharedChatMentionParser.mentionHandle(forParticipantID: participantID)
-    }
-
     func refreshSharedChatPanelSuggestions() async {
         await interactiveReader.setPanelCommandSuggestions(
             await panelSuggestionsForCurrentAgent()
@@ -104,22 +96,6 @@ extension TerminalChat {
         readableHandles: [String: String] = [:]
     ) -> SharedChatMentionParse {
         SharedChatMentionParser.parse(from: rawInput, readableHandles: readableHandles)
-    }
-
-    /// Compatibility convenience for callers interested only in a complete
-    /// route. Input handling must use ``parseSharedChatMention(from:readableHandles:)``
-    /// so it can diagnose a recognised mention without text.
-    nonisolated static func sharedChatMentionRoute(
-        from rawInput: String,
-        readableHandles: [String: String] = [:]
-    ) -> SharedChatMentionRoute? {
-        guard case let .route(route) = parseSharedChatMention(
-            from: rawInput,
-            readableHandles: readableHandles
-        ) else {
-            return nil
-        }
-        return route
     }
 
     /// The shared-chat actor accepts legacy display names as direct identifiers.

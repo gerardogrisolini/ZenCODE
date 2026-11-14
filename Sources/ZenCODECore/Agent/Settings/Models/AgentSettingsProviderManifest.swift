@@ -118,10 +118,6 @@ public struct AgentSettingsProviderManifest: Codable, Hashable, Sendable {
         try container.encodeIfPresent(ds4Runtime, forKey: .ds4Runtime)
     }
 
-    public var runtime: AgentDS4RuntimeConfiguration? {
-        ds4Runtime
-    }
-
     public var displayTitle: String {
         AgentRemoteProvider.normalizedName(name)
     }

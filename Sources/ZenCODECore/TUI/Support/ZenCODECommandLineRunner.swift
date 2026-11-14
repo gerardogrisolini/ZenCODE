@@ -38,14 +38,6 @@ public enum ZenCODECommandLineRunner {
         }
         return !hasMetaCommand
     }
-    public static func main(
-        backendFactory: AgentRuntimeBackendFactory? = nil
-    ) async {
-        await main(
-            arguments: CommandLine.arguments,
-            backendFactory: backendFactory
-        )
-    }
 
     public static func main(
         arguments rawArguments: [String],
@@ -68,7 +60,7 @@ public enum ZenCODECommandLineRunner {
             // `--worktree NAME` creates (or reuses) the worktree before the
             // configuration is read, and its directory becomes the last
             // `--working-directory`. The syntax is checked first, so invalid
-            // arguments never create a worktree: `main(backendFactory:)` is
+            // arguments never create a worktree: this entry point can be
             // reached without the executable's own validation.
             try AgentConfiguration.validateArguments(sanitizedArguments)
             let configurationArguments = try await AgentWorktreeManager.rewritingArguments(
@@ -317,56 +309,5 @@ public enum ZenCODECommandLineRunner {
             writeStandardError: { data in fallbackOutput.standardError.write(data) }
         )
         return succeeded
-    }
-
-    public static func shouldRunAsCommandLine(
-        arguments: [String] = CommandLine.arguments
-    ) -> Bool {
-        guard let executablePath = arguments.first else {
-            return false
-        }
-        let sanitizedArguments = ZenCODECommandLineArgumentSanitizer.sanitized(arguments)
-
-        let executableURL = URL(fileURLWithPath: executablePath)
-            .standardizedFileURL
-        guard executableURL.lastPathComponent == "ZenCODE" else {
-            return false
-        }
-
-        if sanitizedArguments.dropFirst().contains(where: isCommandLineOption(_:)) {
-            return true
-        }
-
-        if !executableURL.path.contains(".app/Contents/MacOS/") {
-            return true
-        }
-
-        if sanitizedArguments.count == 1,
-           ZenCODECommandLineArgumentSanitizer.containsCocoaLaunchArguments(arguments) {
-            return false
-        }
-
-        return isatty(STDIN_FILENO) == 1
-    }
-
-    private static func isCommandLineOption(_ argument: String) -> Bool {
-        argument == "-h"
-            || argument == "--help"
-            || argument == "--version"
-            || argument == "--doctor"
-            || argument == "--model"
-            || argument == "--agent"
-            || argument == "--acp"
-            || argument == "--tui"
-            || argument == "--telegram"
-            || argument == "-p"
-            || argument == "-f"
-            || argument == "--prompt"
-            || argument == "--jsonl"
-            || argument == "--working-directory"
-            || argument == "--worktree"
-            || argument == "--skills"
-            || argument == "--max-tool-rounds"
-            || argument == "--max-output-tokens"
     }
 }

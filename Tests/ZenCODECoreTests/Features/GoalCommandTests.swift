@@ -13,7 +13,7 @@ struct GoalCommandTests {
     @Test(arguments: [false, true])
     func goalCommandCreatesAnActivePersistentGraphBeforePrompting(subAgentsEnabled: Bool) async throws {
         let terminal = try makeTerminal(subAgentsEnabled: subAgentsEnabled)
-        #expect(terminal.isSubAgentToolEnabled == subAgentsEnabled)
+        #expect(terminal.chatSession.isSubAgentToolEnabled == subAgentsEnabled)
 
         let action = await terminal.submittedLineAction("/goal Ship delegated work")
         guard case let .runHiddenPrompt(prompt, purpose) = action else {
@@ -54,7 +54,7 @@ struct GoalCommandTests {
             consolidatedText: "Keep this plan intact.",
             createdAt: Date(timeIntervalSince1970: 1)
         )
-        terminal.activePlan = plan
+        terminal.chatSession.activePlan = plan
 
         let action = await terminal.submittedLineAction("/goal Start another workflow")
 
@@ -62,9 +62,9 @@ struct GoalCommandTests {
             Issue.record("/goal must stop when an active plan exists")
             return
         }
-        #expect(terminal.activePlan == plan)
-        #expect(TerminalChat.workflowActivePlanMessage.contains("active plan"))
-        #expect(TerminalChat.workflowActivePlanMessage.contains("/plan clear"))
+        #expect(terminal.chatSession.activePlan == plan)
+        #expect(ChatSessionNoticeText.workflowActivePlanMessage.contains("active plan"))
+        #expect(ChatSessionNoticeText.workflowActivePlanMessage.contains("/plan clear"))
         #expect(try await terminal.sessionRunner.taskGraphSnapshot(
             sessionID: terminal.sessionID
         ) == nil)
@@ -96,7 +96,7 @@ struct GoalCommandTests {
             state: .awaitingUser, message: "Which compatibility behavior should I keep?",
             expectedRevision: graph.revision
         )
-        await terminal.recordWorkflowTurnOutcome(
+        await terminal.chatSession.recordWorkflowTurnOutcome(
             graphID: graph.id,
             coordinatorMessage: "Which compatibility behavior should I keep?"
         )
@@ -156,7 +156,7 @@ struct GoalCommandTests {
         let terminal = try makeTerminal(subAgentsEnabled: subAgentsEnabled)
         _ = await terminal.submittedLineAction("/goal Complete the entire approved change")
         let initial = try #require(try await terminal.sessionRunner.taskGraphSnapshot(sessionID: terminal.sessionID))
-        await terminal.recordWorkflowTurnOutcome(graphID: initial.id, coordinatorMessage: "Workflow question\nHeading alone")
+        await terminal.chatSession.recordWorkflowTurnOutcome(graphID: initial.id, coordinatorMessage: "Workflow question\nHeading alone")
         #expect(terminal.chatSession.activeWorkflow?.isAwaitingReply == false)
         let blocked = try await terminal.sessionRunner.taskOrchestrator.updateWorkflow(
             sessionID: terminal.sessionID, graphID: initial.id, state: .blocked,
@@ -165,7 +165,7 @@ struct GoalCommandTests {
         #expect(PlanningCommandKernel.workflowTurnDisposition(
             graph: blocked, expectedGraphID: initial.id, coordinatorMessage: "Cannot proceed."
         ) == .blocked)
-        await terminal.recordWorkflowTurnOutcome(graphID: initial.id, coordinatorMessage: "Cannot proceed.")
+        await terminal.chatSession.recordWorkflowTurnOutcome(graphID: initial.id, coordinatorMessage: "Cannot proceed.")
         #expect(terminal.chatSession.activeWorkflow?.pendingSignal == .blocked("External service is unavailable; restore access."))
 
         // Reconstruct the frontend projection exactly as startup recovery does.
@@ -213,17 +213,16 @@ struct GoalCommandTests {
             message: "Provide saved-session access", expectedRevision: graph.revision
         )
         let history = [AgentRuntimeMessage(role: .user, content: "/goal Preserve the full saved objective")]
-        let snapshot = AgentRuntimeSessionSnapshot(
-            sessionID: sessionID, workingDirectoryPath: workspace.path,
-            systemPrompt: "Test", cacheKey: nil, history: history,
-            allowedToolNames: nil, thinkingSelection: nil, preserveThinking: false
-        )
-        _ = try await runner.saveSession(
-            id: sessionID, named: "workflow", fallbackSnapshot: snapshot,
-            fallbackCreatedAt: Date(), modelID: "test-model", agentID: nil, agentName: nil,
-            selectedTools: ["sub-agents"], selectedSkillNames: [], thinkingSelection: nil,
-            contextWindow: nil, transcriptHistory: history,
-            checkpointTree: SessionCheckpointTree.fromLinearHistory(history, sessionID: sessionID),
+        _ = try TerminalSessionStore.save(
+            TerminalSavedSession(
+                name: "workflow", sessionID: sessionID, cacheKey: nil,
+                workingDirectoryPath: workspace.path, createdAt: Date(), savedAt: Date(),
+                modelID: "test-model", agentID: nil, agentName: nil, selectedTools: ["sub-agents"],
+                selectedSkillNames: [], thinkingSelection: nil, systemPrompt: "Test", history: history,
+                transcriptHistory: history,
+                taskGraph: try await runner.taskGraphSnapshot(sessionID: sessionID),
+                checkpointTree: SessionCheckpointTree.fromLinearHistory(history, sessionID: sessionID)
+            ),
             supportDirectoryURL: support
         )
         let saved = try TerminalSessionStore.load(name: "workflow", workingDirectory: workspace, supportDirectoryURL: support)
@@ -237,10 +236,11 @@ struct GoalCommandTests {
                 hostedModelID: "test-model", availableAgents: AgentProfileStore.defaultProfiles(),
                 availableModels: [AgentSettingsModelManifest(id: "test-model", kind: .remoteAPI, modelID: "local/test-model")],
                 workingDirectory: workspace
-            ), stdinIsTerminal: false, sessionRunner: restoredRunner
+            ), stdinIsTerminal: false, sessionRunner: restoredRunner,
+            telegramTransportFactory: nil
         )
-        try await terminal.loadSavedSession(saved)
-        #expect(terminal.chatSession.activeWorkflow?.pendingCoordinatorMessage == "Provide saved-session access")
+        try await terminal.writeSessionNotices(terminal.chatSession.loadSavedSession(saved, checkpointEntryID: nil).notices)
+        #expect(terminal.chatSession.activeWorkflow?.pendingSignal?.transcriptMessage == "Provide saved-session access")
         #expect(terminal.chatSession.activeWorkflow?.goal == "Preserve the full saved objective")
         guard case let .runHiddenPrompt(prompt, purpose) = await terminal.submittedLineAction("Saved access supplied") else {
             Issue.record("La risposta dopo loadSavedSession deve riprendere il workflow salvato")
@@ -267,7 +267,7 @@ struct GoalCommandTests {
             _ = try TerminalSessionStore.save(other, supportDirectoryURL: support)
             terminal.chatSession.activeWorkflow = WorkflowCommandRuntimeState(goal: "Stale", graphID: graph.id)
             let loaded = try TerminalSessionStore.load(name: other.name, workingDirectory: workspace, supportDirectoryURL: support)
-            try await terminal.loadSavedSession(loaded)
+            try await terminal.writeSessionNotices(terminal.chatSession.loadSavedSession(loaded, checkpointEntryID: nil).notices)
             #expect(terminal.chatSession.activeWorkflow == nil)
             guard case .runPrompt = await terminal.submittedLineAction("Ordinary chat") else {
                 Issue.record("Un caricamento non-workflow non deve conservare la proiezione precedente")
@@ -293,7 +293,8 @@ struct GoalCommandTests {
                 hostedModelID: "test-model", availableAgents: AgentProfileStore.defaultProfiles(),
                 availableModels: [AgentSettingsModelManifest(id: "test-model", kind: .remoteAPI, modelID: "local/test-model")],
                 workingDirectory: workspace
-            ), stdinIsTerminal: false, sessionRunner: runner
+            ), stdinIsTerminal: false, sessionRunner: runner,
+            telegramTransportFactory: nil
         )
         terminal.selectedToolKeys.insert("sub-agents")
         guard case let .runHiddenPrompt(prompt, purpose) = await terminal.submittedLineAction("/goal Keep interrupted objective") else {
@@ -330,7 +331,7 @@ struct GoalCommandTests {
         #expect(graph.workflow?.state == state)
         #expect(terminal.chatSession.activeWorkflow?.isAwaitingReply == true)
         if state != .running {
-            #expect(terminal.chatSession.activeWorkflow?.pendingCoordinatorMessage == "Persisted pause before interruption")
+            #expect(terminal.chatSession.activeWorkflow?.pendingSignal?.transcriptMessage == "Persisted pause before interruption")
         }
         guard case let .runHiddenPrompt(_, resumedPurpose) = await terminal.submittedLineAction("Retry interrupted turn") else {
             Issue.record("La generazione fallita deve lasciare un percorso di recovery")
@@ -349,7 +350,7 @@ struct GoalCommandTests {
                 isDirectory: true
             )
         )
-        let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false)
+        let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false, telegramTransportFactory: nil)
         if subAgentsEnabled {
             terminal.selectedToolKeys.insert("sub-agents")
         } else {

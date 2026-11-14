@@ -72,29 +72,29 @@ struct ZenStatusFormattingTests {
     @Test("generation token counts are compact and optional")
     func generationTokenCounts() {
         #expect(
-            ZenStatusFormatting.generationTokenCountsText(
+            plainText(ZenStatusFormatting.generationTokenCountsRuns(
                 DirectAgentGenerationMetrics(promptTokenCount: 120, cachedPromptTokenCount: 800, completionTokenCount: 32)
-            ) == "c:800 p:120 g:32"
+            )) == "c:800 p:120 g:32"
         )
         #expect(
-            ZenStatusFormatting.generationTokenCountsText(
+            plainText(ZenStatusFormatting.generationTokenCountsRuns(
                 DirectAgentGenerationMetrics(promptTokenCount: 15_000, completionTokenCount: 20_000)
-            ) == "p:15k g:20k"
+            )) == "p:15k g:20k"
         )
         #expect(
-            ZenStatusFormatting.generationTokenCountsText(
+            plainText(ZenStatusFormatting.generationTokenCountsRuns(
                 DirectAgentGenerationMetrics(promptTokenCount: nil, completionTokenCount: nil)
-            ) == nil
+            )) == nil
         )
         #expect(
-            ZenStatusFormatting.generationTokenCountsText(
+            plainText(ZenStatusFormatting.generationTokenCountsRuns(
                 DirectAgentGenerationMetrics(promptTokenCount: 15_000, cachedPromptTokenCount: 0, completionTokenCount: 2_000)
-            ) == "c:0 p:15k g:2.0k"
+            )) == "c:0 p:15k g:2.0k"
         )
         #expect(
-            ZenStatusFormatting.generationTokenCountsText(
+            plainText(ZenStatusFormatting.generationTokenCountsRuns(
                 DirectAgentGenerationMetrics(promptTokenCount: 200, cachedPromptTokenCount: 4_100, completionTokenCount: 25)
-            ) == "c:4.1k p:200 g:25"
+            )) == "c:4.1k p:200 g:25"
         )
     }
 
@@ -131,11 +131,11 @@ struct ZenStatusFormattingTests {
             )
         }
 
-        #expect(ZenStatusFormatting.throughputText(metrics(processed: 1_200, target: 8_000, rate: 512)) == "p:1.2k/8.0k 512.0 tok/s")
-        #expect(ZenStatusFormatting.throughputText(metrics(processed: 0, target: 8_000, rate: nil)) == "p:0/8.0k")
-        #expect(ZenStatusFormatting.throughputText(metrics(processed: 800, target: 25_000, rate: 64.26)) == "p:800/25k 64.3 tok/s")
-        #expect(ZenStatusFormatting.throughputText(metrics(processed: 10, target: 100, rate: .infinity)) == "p:10/100")
-        #expect(ZenStatusFormatting.throughputText(metrics(processed: 10, target: 100, rate: -3)) == "p:10/100")
+        #expect(plainText(ZenStatusFormatting.throughputRuns(metrics(processed: 1_200, target: 8_000, rate: 512))) == "p:1.2k/8.0k 512.0 tok/s")
+        #expect(plainText(ZenStatusFormatting.throughputRuns(metrics(processed: 0, target: 8_000, rate: nil))) == "p:0/8.0k")
+        #expect(plainText(ZenStatusFormatting.throughputRuns(metrics(processed: 800, target: 25_000, rate: 64.26))) == "p:800/25k 64.3 tok/s")
+        #expect(plainText(ZenStatusFormatting.throughputRuns(metrics(processed: 10, target: 100, rate: .infinity))) == "p:10/100")
+        #expect(plainText(ZenStatusFormatting.throughputRuns(metrics(processed: 10, target: 100, rate: -3))) == "p:10/100")
     }
 
     @Test("live prefill progress ignores the generation rate")
@@ -151,13 +151,13 @@ struct ZenStatusFormattingTests {
                 targetTokens: 8_000
             )
         )
-        #expect(ZenStatusFormatting.throughputText(metrics) == "p:1.2k/8.0k 512.0 tok/s")
+        #expect(plainText(ZenStatusFormatting.throughputRuns(metrics)) == "p:1.2k/8.0k 512.0 tok/s")
     }
 
     @Test("the throughput shows both speeds in one label")
     func throughputBothSpeeds() {
         func fragment(prefill: Double?, generation: Double?) -> String? {
-            ZenStatusFormatting.throughputText(
+            plainText(ZenStatusFormatting.throughputRuns(
                 DirectAgentGenerationMetrics(
                     promptTokenCount: nil,
                     completionTokenCount: nil,
@@ -167,7 +167,7 @@ struct ZenStatusFormattingTests {
                         generationTokensPerSecond: generation
                     )
                 )
-            )
+            ))
         }
 
         #expect(fragment(prefill: 512, generation: 42.1) == "p:512.0 g:42.1 tok/s")
@@ -184,13 +184,13 @@ struct ZenStatusFormattingTests {
     @Test("the generation rate has one decimal")
     func throughputGenerationRate() {
         func fragment(_ rate: Double?) -> String? {
-            ZenStatusFormatting.throughputText(
+            plainText(ZenStatusFormatting.throughputRuns(
                 DirectAgentGenerationMetrics(
                     promptTokenCount: nil,
                     completionTokenCount: nil,
                     throughput: DirectAgentGenerationThroughput(phase: .generation, generationTokensPerSecond: rate)
                 )
-            )
+            ))
         }
 
         #expect(fragment(41.23) == "g:41.2 tok/s")
@@ -208,7 +208,7 @@ struct ZenStatusFormattingTests {
     @Test("no throughput without a throughput")
     func throughputAbsent() {
         let metrics = DirectAgentGenerationMetrics(promptTokenCount: 120, cachedPromptTokenCount: 800, completionTokenCount: 32)
-        #expect(ZenStatusFormatting.throughputText(metrics) == nil)
+        #expect(ZenStatusFormatting.throughputRuns(metrics) == nil)
     }
 
     @Test("throughput labels are muted, values and unit plain")
@@ -251,10 +251,10 @@ struct ZenStatusFormattingTests {
         let both = DirectAgentSubscriptionUsageStatus(provider: "ChatGPT", dailyUsedPercent: 10, weeklyUsedPercent: 42)
         let none = DirectAgentSubscriptionUsageStatus(provider: "ChatGPT", dailyUsedPercent: nil, weeklyUsedPercent: nil)
 
-        #expect(ZenStatusFormatting.subscriptionUsageText(weeklyOnly) == "w:42%")
-        #expect(ZenStatusFormatting.subscriptionUsageText(dailyOnly) == "d:10%")
-        #expect(ZenStatusFormatting.subscriptionUsageText(both) == "d:10% w:42%")
-        #expect(ZenStatusFormatting.subscriptionUsageText(none) == nil)
+        #expect(plainText(ZenStatusFormatting.subscriptionUsageRuns(weeklyOnly)) == "w:42%")
+        #expect(plainText(ZenStatusFormatting.subscriptionUsageRuns(dailyOnly)) == "d:10%")
+        #expect(plainText(ZenStatusFormatting.subscriptionUsageRuns(both)) == "d:10% w:42%")
+        #expect(ZenStatusFormatting.subscriptionUsageRuns(none) == nil)
         #expect(ZenStatusFormatting.subscriptionUsageRuns(both) == [
             ZenStatusRun("d:", style: .label),
             ZenStatusRun("10%"),
@@ -294,7 +294,7 @@ struct ZenStatusFormattingTests {
     @Test("the git fragment shows the diff summary with its colors")
     func gitStatus() {
         let summary = TerminalGitStatusSummary(changedFileCount: 3, additions: 12, deletions: 4)
-        #expect(ZenStatusFormatting.gitStatusText(summary) == "3 files +12 -4")
+        #expect(plainText(ZenStatusFormatting.gitStatusRuns(summary)) == "3 files +12 -4")
         #expect(ZenStatusFormatting.gitStatusRuns(summary) == [
             ZenStatusRun("3", style: .fileCount),
             ZenStatusRun(" files "),
@@ -315,7 +315,7 @@ struct ZenStatusFormattingTests {
                 responseDurationSeconds: 12
             )
         )
-        #expect(ZenStatusFormatting.statusText(for: state).contains("35.0k/-- · 0:00:12 · p:15k g:20k"))
+        #expect(statusLineText(for: state).contains("35.0k/-- · 0:00:12 · p:15k g:20k"))
     }
 
     @Test("the status line places the throughput right after the token counts")
@@ -335,7 +335,7 @@ struct ZenStatusFormattingTests {
             subscriptionUsage: DirectAgentSubscriptionUsageStatus(provider: "test", dailyUsedPercent: 12, weeklyUsedPercent: nil)
         )
         #expect(
-            ZenStatusFormatting.statusText(for: state)
+            statusLineText(for: state)
                 .contains("0:00:12 · c:800 p:120 g:32 · p:512.0 g:41.2 tok/s · d:12%")
         )
     }
@@ -371,7 +371,7 @@ struct ZenStatusFormattingTests {
         ])
         // The live elapsed time wins over the last response duration.
         #expect(
-            ZenStatusFormatting.statusText(for: state, now: now)
+            statusLineText(for: state, now: now)
                 == "Qwen3-Coder · Medium · 32.0k/128.0k · 0:01:05 · p:120 g:32 · g:30.0 tok/s · d:5.0% w:50% · 2 files +7 -1"
         )
         #expect(fragments.first { $0.kind == .contextWindow }?.gaugeFraction == 0.25)
@@ -403,7 +403,7 @@ struct ZenStatusFormattingTests {
         #expect(ZenStatusFormatting.fullAccessAccessibilityLabel == "Full access")
         // The terminal's text without its escapes: the dot, then the rest.
         state.isGenerating = false
-        #expect(ZenStatusFormatting.statusText(for: state) == "● · Qwen3-Coder · 1 files +2 -0")
+        #expect(statusLineText(for: state) == "● · Qwen3-Coder · 1 files +2 -0")
         // Alone, with nothing else to show.
         #expect(
             ZenStatusFormatting.fragments(for: ZenStatusBarState(localExecAccessMode: .fullAccess)).map(\.kind)
@@ -415,7 +415,7 @@ struct ZenStatusFormattingTests {
     func defaultModeHasNoDot() {
         let state = ZenStatusBarState(modelID: "gpt-5", localExecAccessMode: .standard)
         #expect(ZenStatusFormatting.fragments(for: state).map(\.kind) == [.model])
-        #expect(ZenStatusFormatting.statusText(for: state) == "gpt-5")
+        #expect(statusLineText(for: state) == "gpt-5")
         #expect(ZenStatusBarState().localExecAccessMode == .standard)
     }
 
@@ -471,7 +471,7 @@ struct ZenStatusFormattingTests {
         #expect(fragments.allSatisfy { $0.kind == .voice || $0.voiceIndicator == nil })
         // The plain line leaves the symbol out, like the spinner.
         state.isGenerating = false
-        #expect(ZenStatusFormatting.statusText(for: state) == "● · Qwen3-Coder")
+        #expect(statusLineText(for: state) == "● · Qwen3-Coder")
         // In the default mode it comes first; alone, with nothing else to show.
         state.localExecAccessMode = .standard
         #expect(ZenStatusFormatting.fragments(for: state).map(\.kind) == [.voice, .model])
@@ -502,9 +502,9 @@ struct ZenStatusFormattingTests {
     @Test("the plain status line shows the agent before the model and the thinking")
     func agentInStatusText() {
         var state = ZenStatusBarState(modelID: "mlx/Qwen3-Coder", agentName: "Developer")
-        #expect(ZenStatusFormatting.statusText(for: state) == "Developer · Qwen3-Coder")
+        #expect(statusLineText(for: state) == "Developer · Qwen3-Coder")
         state.thinking = .high
-        #expect(ZenStatusFormatting.statusText(for: state) == "Developer · Qwen3-Coder · High")
+        #expect(statusLineText(for: state) == "Developer · Qwen3-Coder · High")
     }
 
     @Test("an agent without a model shows alone, and the spinner still needs a model")
@@ -513,7 +513,7 @@ struct ZenStatusFormattingTests {
         let fragments = ZenStatusFormatting.fragments(for: state)
         #expect(fragments.map(\.kind) == [.agent])
         #expect(!fragments.contains { $0.kind == .activity })
-        #expect(ZenStatusFormatting.statusText(for: state) == "Developer")
+        #expect(statusLineText(for: state) == "Developer")
     }
 
     @Test("the agent name is trimmed and a blank name is no agent")
@@ -536,7 +536,7 @@ struct ZenStatusFormattingTests {
             isGenerating: true,
             metrics: DirectAgentGenerationMetrics(promptTokenCount: nil, completionTokenCount: nil, responseDurationSeconds: 4)
         )
-        #expect(ZenStatusFormatting.statusText(for: state) == "0:00:04")
+        #expect(statusLineText(for: state) == "0:00:04")
     }
 
     @Test("an empty state has no fragment")
@@ -560,4 +560,22 @@ struct ZenStatusFormattingTests {
         #expect(ZenStatusFormatting.abbreviatedPath("/Users/meme", homeDirectory: "/Users/me") == "/Users/meme")
         #expect(ZenStatusFormatting.abbreviatedPath("/tmp", homeDirectory: "") == "/tmp")
     }
+}
+
+// MARK: - Helpers
+
+/// The text of `runs` without their styles, as the status bar draws it.
+private func plainText(_ runs: [ZenStatusRun]?) -> String? {
+    runs.map { $0.map(\.text).joined() }
+}
+
+/// The status line as text, like the terminal's without its escapes and
+/// spinner frame: the text of every fragment that has one, joined by the
+/// separator the status bar draws. The spinner and the voice indicator, which
+/// the bar draws without text, are left out.
+private func statusLineText(for state: ZenStatusBarState, now: Date = Date()) -> String {
+    ZenStatusFormatting.fragments(for: state, now: now)
+        .filter { !$0.runs.isEmpty }
+        .map { $0.runs.map(\.text).joined() }
+        .joined(separator: ZenStatusFormatting.separator)
 }

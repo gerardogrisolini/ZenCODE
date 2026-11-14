@@ -12,22 +12,6 @@ import Foundation
 import ToolCore
 
 extension PlanningCommandKernel {
-    static func reviewDelegationPrompt(
-        scope: String,
-        reviewer: AgentProfile,
-        changeSummary: TurnFileChangeSummary?,
-        approvedPlan: TerminalSessionPlan? = nil,
-        taskGraph: TaskGraphSnapshot? = nil
-    ) -> String {
-        reviewDelegationPrompt(
-            scope: scope,
-            reviewers: [reviewer],
-            changeSummary: changeSummary,
-            approvedPlan: approvedPlan,
-            taskGraph: taskGraph
-        )
-    }
-
     /// With several Reviewer candidates the model may delegate to any of them.
     static func reviewDelegationPrompt(
         scope: String,

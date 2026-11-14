@@ -37,7 +37,7 @@ struct TerminalModifierKeyStateTests {
         let reader = Self.makeReader(pipe: pipe, isShiftPressed: { true })
 
         pipe.fileHandleForWriting.write(Data([0x0D]))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .newline)
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.newline))
 
         pipe.fileHandleForWriting.closeFile()
     }
@@ -51,7 +51,7 @@ struct TerminalModifierKeyStateTests {
 
         // CSI-u Enter without modifiers: `ESC [ 13 u`.
         pipe.fileHandleForWriting.write(Data([0x1B, 0x5B, 0x31, 0x33, 0x75]))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .enter)
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.enter))
 
         pipe.fileHandleForWriting.closeFile()
     }
@@ -66,11 +66,11 @@ struct TerminalModifierKeyStateTests {
         })
 
         pipe.fileHandleForWriting.write(Data([0x61]))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .character("a"))
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.character("a")))
         #expect(probeCount.withLock { $0 } == 0)
 
         pipe.fileHandleForWriting.write(Data([0x0D]))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .enter)
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.enter))
         #expect(probeCount.withLock { $0 } == 1)
 
         pipe.fileHandleForWriting.closeFile()
@@ -82,11 +82,11 @@ struct TerminalModifierKeyStateTests {
         let reader = Self.makeReader(pipe: pipe, isOptionPressed: { true })
 
         pipe.fileHandleForWriting.write(Data([0x7F]))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .clearDraft)
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.clearDraft))
 
         // "Delete sends Ctrl-H" turns the same key into BS.
         pipe.fileHandleForWriting.write(Data([0x08]))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .clearDraft)
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.clearDraft))
 
         pipe.fileHandleForWriting.closeFile()
     }
@@ -104,22 +104,22 @@ struct TerminalModifierKeyStateTests {
         })
 
         pipe.fileHandleForWriting.write(Data([0x61]))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .character("a"))
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.character("a")))
 
         pipe.fileHandleForWriting.write(Data([0x0D]))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .enter)
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.enter))
 
         // CSI 3~ is the forward Delete key, not Backspace.
         pipe.fileHandleForWriting.write(Data([0x1B, 0x5B, 0x33, 0x7E]))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .delete)
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.delete))
         #expect(probeCount.withLock { $0 } == 0)
 
         pipe.fileHandleForWriting.write(Data([0x7F]))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .clearDraft)
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.clearDraft))
         #expect(probeCount.withLock { $0 } == 1)
 
         pipe.fileHandleForWriting.write(Data("\u{2264}".utf8))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .bufferStart)
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.bufferStart))
         #expect(probeCount.withLock { $0 } == 2)
 
         pipe.fileHandleForWriting.closeFile()
@@ -139,12 +139,12 @@ struct TerminalModifierKeyStateTests {
             ("\u{2265}", .bufferEnd),
         ] {
             pipe.fileHandleForWriting.write(Data(character.utf8))
-            #expect(reader.readKey(pollTimeoutMilliseconds: 500) == key)
+            #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(key))
         }
 
         // Spanish Option+</> types `[`/`{`, which stay ordinary characters.
         pipe.fileHandleForWriting.write(Data("[".utf8))
-        #expect(reader.readKey(pollTimeoutMilliseconds: 500) == .character("["))
+        #expect(reader.readKeyResult(pollTimeoutMilliseconds: 500) == .key(.character("[")))
 
         pipe.fileHandleForWriting.closeFile()
     }

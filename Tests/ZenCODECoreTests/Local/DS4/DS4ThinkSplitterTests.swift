@@ -9,18 +9,18 @@ import Foundation
 import Testing
 @testable import ZenCODECore
 
-private func render(_ parts: [DS4ThinkSplitter.Part]) -> (content: String, thought: String) {
-    var content = ""
-    var thought = ""
-    for part in parts {
-        switch part {
-        case let .content(text):
-            content += text
-        case let .thought(text):
-            thought += text
+/// Concatenates the text events of each channel; consumed tags carry no text.
+private func render(_ events: [DS4ThinkSplitter.Event]) -> (content: String, thought: String) {
+    var content: [UInt8] = []
+    var thought: [UInt8] = []
+    for case let .text(isThought, bytes) in events {
+        if isThought {
+            thought += bytes
+        } else {
+            content += bytes
         }
     }
-    return (content, thought)
+    return (String(decoding: content, as: UTF8.self), String(decoding: thought, as: UTF8.self))
 }
 
 /// One streamed input and the content/thought it must produce.
@@ -76,12 +76,12 @@ struct DS4ThinkSplitterTests {
     @Test(arguments: splitterCases)
     func splitsStreamedTextIntoContentAndThought(_ testCase: DS4ThinkSplitterCase) {
         var splitter = DS4ThinkSplitter(startsInThinking: testCase.startsInThinking)
-        var parts: [DS4ThinkSplitter.Part] = []
+        var events: [DS4ThinkSplitter.Event] = []
         for chunk in testCase.chunks {
-            parts += splitter.consume(chunk)
+            events += splitter.consumeBytes(chunk.utf8)
         }
-        parts += splitter.finish()
-        let result = render(parts)
+        events += splitter.finishBytes()
+        let result = render(events)
         #expect(result.content == testCase.content)
         if let thought = testCase.thought {
             #expect(result.thought == thought)
@@ -95,7 +95,7 @@ struct DS4ThinkSplitterTests {
             openTags: ["<think>", "<|channel>thought"],
             closeTags: ["</think>", "<channel|>"]
         )
-        let result = render(splitter.consume("a<|channel>thoughtreasoning<channel|>b") + splitter.finish())
+        let result = render(splitter.consumeBytes("a<|channel>thoughtreasoning<channel|>b".utf8) + splitter.finishBytes())
         #expect(result.content == "ab")
         #expect(result.thought == "reasoning")
     }

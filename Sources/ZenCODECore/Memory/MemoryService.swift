@@ -68,16 +68,6 @@ public final class MemoryService: @unchecked Sendable {
         "\(MemoryTimestampFormatting.string(from: date, timeZone: timeZone)) \(timeZone.identifier)"
     }
 
-    /// Absolute path of the graph backing a workspace.
-    public func graphURL(workspaceRootURL: URL) -> URL {
-        graphURL(target: .workspace(workspaceRootURL))
-    }
-
-    /// Absolute path of the graph backing `target`.
-    public func graphURL(target: MemoryGraphTarget) -> URL {
-        MemoryGraphLocation.graphURL(for: target, fileManager: fileManager)
-    }
-
     // MARK: - Reads
 
     public func readEntries(
@@ -320,15 +310,6 @@ public final class MemoryService: @unchecked Sendable {
         workspaceRootURL: URL?
     ) async throws -> MemoryEntry {
         try await setArchived(true, id: id, workspaceRootURL: workspaceRootURL)
-    }
-
-    /// Brings an archived entry back into retrieval and recall.
-    @discardableResult
-    public func restoreEntry(
-        id: String,
-        workspaceRootURL: URL?
-    ) async throws -> MemoryEntry {
-        try await setArchived(false, id: id, workspaceRootURL: workspaceRootURL)
     }
 
     @discardableResult

@@ -186,10 +186,6 @@ extension DirectSubAgentRuntime {
             modelBinding?.modelID ?? requestedModelID
         }
 
-        public var thinkingSelection: AgentThinkingSelection? {
-            modelBinding?.thinkingSelection
-        }
-
         public var capability: Int? {
             modelBinding?.capability
         }
@@ -245,12 +241,6 @@ extension DirectSubAgentRuntime {
             self.workingDirectory = workingDirectory?.nilIfBlank
             self.profileRole = profileRole
             self.complexity = complexity
-        }
-
-        public func applying(
-            modelBinding: AgentModelBinding?
-        ) -> RequestedAgentPayload {
-            applying(modelBinding: modelBinding, modelSelection: nil)
         }
 
         func applying(
@@ -394,10 +384,6 @@ extension DirectSubAgentRuntime {
 
         public var thinkingSelection: AgentThinkingSelection? {
             modelBinding?.thinkingSelection
-        }
-
-        public var capability: Int? {
-            modelBinding?.capability
         }
     }
 }

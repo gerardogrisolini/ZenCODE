@@ -18,7 +18,7 @@ import ZenCODECore
 /// `Message.id`, the oldest evicted first. Only the messages of the
 /// coordinator and of the agents can be unread: the operator's own messages
 /// stay in the history, already known to the human who wrote them. The
-/// reader shows one message at a time (``selectedMessage``): opening it
+/// reader shows one message at a time (``selectedMessageID``): opening it
 /// selects the first unread message, else the newest, and reads it; selecting
 /// an unread message reads every message up to it; moving back never makes a
 /// message unread again.
@@ -60,11 +60,6 @@ public struct ZenSharedChatReader: Sendable, Equatable {
     public var selectedIndex: Int? {
         guard let selectedMessageID else { return nil }
         return messages.firstIndex { $0.id == selectedMessageID }
-    }
-
-    /// The message the open reader shows.
-    public var selectedMessage: AgentSharedChat.Message? {
-        selectedIndex.map { messages[$0] }
     }
 
     /// The panel shows: the reader is open, or there are unread messages.

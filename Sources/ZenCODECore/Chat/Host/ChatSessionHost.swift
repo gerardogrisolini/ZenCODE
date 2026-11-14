@@ -240,10 +240,6 @@ public final class ChatSessionHost {
         return token
     }
 
-    func removeIncarnationObserver(_ token: UUID, from slotID: ChatSlotID) {
-        slots[slotID]?.incarnationObservers.removeValue(forKey: token)
-    }
-
     /// A stream of the incarnations of `slotID`: the current one at once
     /// (`nil` between sessions), then each new one. Like a reducer's
     /// snapshots, a slow consumer skips to the newest. The stream ends when

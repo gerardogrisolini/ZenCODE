@@ -8,43 +8,6 @@
 import Foundation
 import ToolCore
 
-public struct SystemPromptRequest: Sendable {
-    public let baseSection: String
-    public let workingDirectoryPath: String?
-    public let preferredLanguageSection: String?
-    public let taskContextSection: String?
-    public let workflowSection: String?
-    public let agentsSection: String?
-    public let memorySection: String?
-    public let figmaSection: String?
-    public let turnClosingInstruction: String
-    public let selectedSkillSection: String?
-
-    public init(
-        baseSection: String,
-        workingDirectoryPath: String? = nil,
-        preferredLanguageSection: String? = nil,
-        taskContextSection: String? = nil,
-        workflowSection: String? = nil,
-        agentsSection: String? = nil,
-        memorySection: String? = nil,
-        figmaSection: String? = nil,
-        turnClosingInstruction: String,
-        selectedSkillSection: String? = nil
-    ) {
-        self.baseSection = baseSection
-        self.workingDirectoryPath = workingDirectoryPath
-        self.preferredLanguageSection = preferredLanguageSection
-        self.taskContextSection = taskContextSection
-        self.workflowSection = workflowSection
-        self.agentsSection = agentsSection
-        self.memorySection = memorySection
-        self.figmaSection = figmaSection
-        self.turnClosingInstruction = turnClosingInstruction
-        self.selectedSkillSection = selectedSkillSection
-    }
-}
-
 /// The cacheable system instruction prefix and the mutable context that must
 /// instead travel as the first user message of a session.
 public struct SystemPromptSections: Sendable, Equatable {
@@ -64,7 +27,7 @@ public struct SystemPromptSections: Sendable, Equatable {
 }
 
 public enum SystemPromptBuilder {
-    public static func defaultAgentInstructions(memoryToolEnabled: Bool = true) -> String {
+    public static func defaultAgentInstructions() -> String {
         joined([
             standaloneStaticPrompt(),
             taskOrchestrationSection(allowedToolNames: nil),
@@ -72,57 +35,15 @@ public enum SystemPromptBuilder {
         ])
     }
 
-    public static func prompt(_ request: SystemPromptRequest) -> String {
-        joined([
-            request.baseSection,
-            request.workingDirectoryPath.map(workingDirectorySection(path:)),
-            request.taskContextSection,
-            request.workflowSection,
-            request.agentsSection,
-            request.memorySection,
-            request.figmaSection,
-            request.selectedSkillSection,
-            request.preferredLanguageSection,
-            turnClosingSection(instruction: request.turnClosingInstruction)
-        ])
-    }
-
-    public static func standalonePrompt(
-        cwd: String,
-        agentsSection: String?,
-        memorySection: String?,
-        memoryToolEnabled: Bool,
-        allowedToolNames: Set<String>? = nil,
-        selectedSkillSection: String? = nil,
-        responseLanguageSection: String? = nil,
-        delegatesByRole: Bool = false
-    ) -> String {
-        let sections = standalonePromptSections(
-            cwd: cwd,
-            agentsSection: agentsSection,
-            memorySection: memorySection,
-            memoryToolEnabled: memoryToolEnabled,
-            allowedToolNames: allowedToolNames,
-            selectedSkillSection: selectedSkillSection,
-            responseLanguageSection: responseLanguageSection,
-            delegatesByRole: delegatesByRole
-        )
-        // Source-compatible combined form for callers that still ask for one
-        // prompt string. Keep it byte-for-byte aligned with the sections used
-        // by runtime sessions.
-        return sections.combinedPrompt
-    }
-
     /// Splits the standard standalone prompt into its stable system prefix and
-    /// session-specific context. `memoryToolEnabled` is retained for source
-    /// compatibility; memory availability belongs to dynamic context only.
+    /// session-specific context. Memory availability belongs to dynamic
+    /// context only, through `memorySection`.
     /// `worktreeSection` (see ``worktreeSection(name:path:)``) follows the
     /// working-directory section when the session works in a worktree.
     public static func standalonePromptSections(
         cwd: String,
         agentsSection: String?,
         memorySection: String?,
-        memoryToolEnabled _: Bool,
         allowedToolNames: Set<String>? = nil,
         selectedSkillSection: String? = nil,
         responseLanguageSection: String? = nil,
@@ -296,31 +217,6 @@ public enum SystemPromptBuilder {
         }
     }
 
-    /// Source-compatible overload backed by the authoritative live catalog.
-    public static func delegatableAgentsSection(
-        agents: [AgentProfile],
-        allowedToolNames: Set<String>?
-    ) -> String? {
-        delegatableAgentsSection(
-            agents: agents,
-            allowedToolNames: allowedToolNames,
-            snapshot: AgentDelegationCatalog.liveSnapshot()
-        )
-    }
-
-    /// Deterministic overload used by tests and callers that already own models.
-    public static func delegatableAgentsSection(
-        agents: [AgentProfile],
-        allowedToolNames: Set<String>?,
-        models: [AgentSettingsModelManifest]
-    ) -> String? {
-        delegatableAgentsSection(
-            agents: agents,
-            allowedToolNames: allowedToolNames,
-            snapshot: .available(models: models)
-        )
-    }
-
     /// Generates the exact provider-safe roster accepted by `agent.create`.
     public static func delegatableAgentsSection(
         agents: [AgentProfile],
@@ -469,21 +365,6 @@ public enum SystemPromptBuilder {
             .compactMap(\.nilIfBlank)
             .first
             ?? "No role constraints declared."
-    }
-
-    /// Adds the workflow policy to an existing prompt exactly once. This keeps
-    /// restored or caller-provided system prompts current without discarding
-    /// their original instructions.
-    public static func appendingTaskOrchestrationSection(
-        to prompt: String?,
-        allowedToolNames: Set<String>?
-    ) -> String? {
-        guard let normalizedPrompt = prompt?.nilIfBlank,
-              let section = taskOrchestrationSection(allowedToolNames: allowedToolNames),
-              !normalizedPrompt.contains("Task workflow policy:") else {
-            return prompt
-        }
-        return normalizedPrompt + "\n\n" + section
     }
 
     /// Stable, selection-independent instruction that advertises the skill

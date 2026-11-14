@@ -113,10 +113,6 @@ public final class TerminalChat {
         get { chatSession.pendingAttachments }
         set { chatSession.pendingAttachments = newValue }
     }
-    public var activePlan: TerminalSessionPlan? {
-        get { chatSession.activePlan }
-        set { chatSession.activePlan = newValue }
-    }
     /// The terminal side of voice mode (see ``TerminalVoiceModeHost``): the
     /// texts, the prompt draft, and the FIFO of the interactive panel loop.
     lazy var voiceModeHost: TerminalVoiceModeHost = {
@@ -200,46 +196,14 @@ public final class TerminalChat {
     var activeCronRun: (number: Int, task: Task<Void, Never>)?
     public let statusBar: TerminalStatusBar
 
-    public convenience init(
-        configuration: AgentConfiguration,
-        stdinIsTerminal: Bool,
-        sessionRunner: AgentCoreSessionRunner? = nil,
-        permissionAuthorizer: LocalExecPermissionAuthorizer? = nil
-    ) {
-        self.init(
-            configuration: configuration,
-            stdinIsTerminal: stdinIsTerminal,
-            sessionRunner: sessionRunner,
-            sessionHost: nil,
-            permissionAuthorizer: permissionAuthorizer,
-            telegramTransportFactory: nil
-        )
-    }
-
-    /// A terminal chat in a slot of `sessionHost`, whose runner is the
-    /// terminal's: the composition root that owns the host shuts it down
-    /// with the runner (``ChatSessionHost/shutdown()``).
-    /// The host's environment must be the one of `configuration`
-    /// (``makeSessionHost(configuration:sessionRunner:)``).
-    public convenience init(
-        configuration: AgentConfiguration,
-        stdinIsTerminal: Bool,
-        sessionHost: ChatSessionHost,
-        permissionAuthorizer: LocalExecPermissionAuthorizer? = nil
-    ) {
-        self.init(
-            configuration: configuration,
-            stdinIsTerminal: stdinIsTerminal,
-            sessionRunner: nil,
-            sessionHost: sessionHost,
-            permissionAuthorizer: permissionAuthorizer,
-            telegramTransportFactory: nil
-        )
-    }
-
-    /// Internal seams for deterministic transport and terminal-output tests;
-    /// production keeps the real transport and render coordinator. The host
-    /// wins over the runner; without both, a runner is created.
+    /// A terminal chat in a slot of `sessionHost` when one is given, whose
+    /// runner is the terminal's: the composition root that owns the host
+    /// shuts it down with the runner (``ChatSessionHost/shutdown()``), and the
+    /// host's environment must be the one of `configuration`
+    /// (``makeSessionHost(configuration:sessionRunner:)``). The host wins over
+    /// the runner; without both, a runner is created. The transport factory
+    /// and the render coordinator are seams for deterministic transport and
+    /// terminal-output tests; production keeps the real ones.
     init(
         configuration: AgentConfiguration,
         stdinIsTerminal: Bool,

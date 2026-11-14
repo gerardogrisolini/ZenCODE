@@ -4,8 +4,8 @@ import Foundation
 
 /// Cross-platform agent memory engine.
 ///
-/// The default path is dependency-free lexical retrieval. Query analysis, semantic embeddings,
-/// LLM-based selection, extraction and persistent indexes are all optional, pluggable layers.
+/// The default path is dependency-free lexical retrieval. Query analysis, selection,
+/// semantic embeddings and persistent indexes are optional, pluggable layers.
 actor MemoryEngine {
     var graph: MemoryGraph
     let embedder: (any EmbeddingProvider)?
@@ -13,11 +13,8 @@ actor MemoryEngine {
     let persistence: (any MemoryPersistence)?
     let queryAnalyzer: any MemoryQueryAnalyzer
     let selector: any MemorySelector
-    private let extractor: any MemoryExtractor
     let contextFormatter: any MemoryContextFormatter
     var configuration: MemoryEngineConfiguration
-    private var pending: [MemoryCandidate] = []
-    private var backgroundTasks: [UUID: Task<Void, Never>] = [:]
     /// Visible-diagnostic sink for semantic embedding failures; defaults to one
     /// redacted ERROR line (see ``MemorySemanticFallbackDiagnostics``). Tests inject
     /// a recorder instead of touching process-global output.
@@ -32,8 +29,8 @@ actor MemoryEngine {
     /// with no durable file yet (the live graph would replay that intent twice).
     var pendingRecallBaseGraph: MemoryGraph?
     /// Local state not yet across a persistence boundary: `insert(persist: false)`
-    /// has no replayable intent, but `save()` must still commit it. Cleared only
-    /// after the complete live graph is saved.
+    /// has no replayable intent, but the next transaction must still commit it.
+    /// Cleared only after the complete live graph is saved.
     var needsSave: Bool
 
     private static let defaultSemanticFailureReporter = MemoryEmbeddingFallback.defaultReporter
@@ -45,7 +42,6 @@ actor MemoryEngine {
         persistence: (any MemoryPersistence)? = nil,
         queryAnalyzer: any MemoryQueryAnalyzer = DirectMemoryQueryAnalyzer(),
         selector: any MemorySelector = TopScoreMemorySelector(),
-        extractor: any MemoryExtractor = NoopMemoryExtractor(),
         contextFormatter: any MemoryContextFormatter = BulletMemoryContextFormatter(),
         configuration: MemoryEngineConfiguration = .init(),
         needsSave: Bool = false,
@@ -57,37 +53,10 @@ actor MemoryEngine {
         self.persistence = persistence
         self.queryAnalyzer = queryAnalyzer
         self.selector = selector
-        self.extractor = extractor
         self.contextFormatter = contextFormatter
         self.configuration = configuration
         self.needsSave = needsSave
         self.semanticFailureReporter = semanticFailureReporter
-    }
-
-    public static func open(
-        persistence: any MemoryPersistence,
-        lexicalIndex: any MemoryIndex = BM25MemoryIndex(),
-        embedder: (any EmbeddingProvider)? = nil,
-        queryAnalyzer: any MemoryQueryAnalyzer = DirectMemoryQueryAnalyzer(),
-        selector: any MemorySelector = TopScoreMemorySelector(),
-        extractor: any MemoryExtractor = NoopMemoryExtractor(),
-        contextFormatter: any MemoryContextFormatter = BulletMemoryContextFormatter(),
-        configuration: MemoryEngineConfiguration = .init(),
-        semanticFailureReporter: @escaping @Sendable (String) -> Void = MemoryEngine.defaultSemanticFailureReporter
-    ) async throws -> MemoryEngine {
-        let graph = try await persistence.load()
-        return MemoryEngine(
-            graph: graph,
-            lexicalIndex: lexicalIndex,
-            embedder: embedder,
-            persistence: persistence,
-            queryAnalyzer: queryAnalyzer,
-            selector: selector,
-            extractor: extractor,
-            contextFormatter: contextFormatter,
-            configuration: configuration,
-            semanticFailureReporter: semanticFailureReporter
-        )
     }
 
     public func snapshot() -> MemoryGraph { graph }
@@ -220,86 +189,6 @@ actor MemoryEngine {
         return try await body()
     }
 
-    @discardableResult
-    public func remember(
-        _ content: String,
-        category: EngineMemoryCategory = .fact,
-        tags: [String] = [],
-        source: String? = nil,
-        trust: TrustLevel = .medium,
-        scope: EngineMemoryScope = .project,
-        confidence: Float = 1,
-        id: String? = nil
-    ) async throws -> EngineMemoryEntry {
-        let stored = try await embeddedEntry(
-            content, operation: "write", id: id, category: category, tags: tags,
-            source: source, trust: trust, scope: scope, confidence: confidence
-        )
-        // The embedding is computed above, outside the lock: only the graph
-        // mutation itself has to be serialized.
-        try await transaction { $0.addMemory(stored) }
-        return stored
-    }
-
-    private func embeddedEntry(
-        _ content: String,
-        operation: String,
-        id: String?,
-        category: EngineMemoryCategory,
-        tags: [String],
-        source: String?,
-        trust: TrustLevel,
-        scope: EngineMemoryScope,
-        confidence: Float
-    ) async throws -> EngineMemoryEntry {
-        let embedded = try await MemoryEmbeddingFallback.embed(
-            content,
-            with: embedder,
-            operation: operation,
-            reporter: semanticFailureReporter
-        )
-        var entry = EngineMemoryEntry(
-            id: id,
-            category: category,
-            content: content,
-            tags: tags,
-            source: source,
-            trust: trust,
-            scope: scope,
-            embedding: embedded.values,
-            embeddingModel: embedded.model,
-            confidence: confidence
-        )
-        entry.refreshSearchText()
-        return entry
-    }
-
-    /// Runs the configured extractor and stores the memories it returns in one
-    /// transaction (a failing save leaves none of them). A no-op with the default
-    /// `NoopMemoryExtractor`.
-    @discardableResult
-    public func learn(from context: String) async throws -> [EngineMemoryEntry] {
-        let drafts = try await extractor.extract(from: context)
-        var prepared: [EngineMemoryEntry] = []
-        for draft in drafts where !draft.content.isEmpty {
-            prepared.append(try await embeddedEntry(
-                draft.content, operation: "learn", id: nil, category: draft.category,
-                tags: draft.tags, source: draft.source, trust: draft.trust,
-                scope: draft.scope, confidence: draft.confidence
-            ))
-        }
-        guard !prepared.isEmpty else { return [] }
-        let batch = prepared
-        try await transaction { graph in
-            for entry in batch { graph.addMemory(entry) }
-        }
-        return batch
-    }
-
-    public func extract(from context: String) async throws -> [MemoryDraft] {
-        try await extractor.extract(from: context)
-    }
-
     public func insert(_ entry: EngineMemoryEntry, persist: Bool = true) async throws {
         if persist {
             try await transaction { $0.addMemory(entry) }
@@ -322,7 +211,7 @@ actor MemoryEngine {
     /// maintenance to the live graph and queues the intent for a durable
     /// checkpoint (``flushRecallMaintenance()`` or the checkpoint threshold). For
     /// a lookup that must never mutate or fail on save use
-    /// ``searchReadOnlyDetailed(_:scope:)``.
+    /// ``searchReadOnlyDetailed(_:scope:graph:limit:)``.
     public func recallDetailed(
         _ prompt: String,
         scope: EngineMemoryScope = .all
@@ -439,68 +328,11 @@ actor MemoryEngine {
         )
     }
 
-    public func recall(_ query: String, scope: EngineMemoryScope = .all) async throws -> [MemoryCandidate] {
-        try await recallDetailed(query, scope: scope).selected
-    }
-
     /// Returns the exact memory block that can be injected into a model prompt.
     /// An empty string means the analyzer/selector found nothing worth injecting.
     public func context(for prompt: String, scope: EngineMemoryScope = .all) async throws -> String {
         let result = try await recallDetailed(prompt, scope: scope)
         return contextFormatter.format(result.selected)
-    }
-
-    /// Starts the complete analyze -> retrieve -> select pipeline in a background task and exposes
-    /// its selected memories to the next agent turn.
-    public func submitContext(_ context: String, scope: EngineMemoryScope = .all) {
-        let token = UUID()
-        let task = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let result = try await self.recall(context, scope: scope)
-                await self.storePending(result)
-            } catch {
-                // Memory lookup should never break the host agent's current turn.
-            }
-            await self.finishBackgroundTask(token)
-        }
-        backgroundTasks[token] = task
-    }
-
-    public func takePending() -> [MemoryCandidate] {
-        defer { pending.removeAll(keepingCapacity: true) }
-        return pending
-    }
-
-    public func waitForBackgroundTasks() async {
-        let tasks = Array(backgroundTasks.values)
-        for task in tasks { await task.value }
-    }
-
-    /// Persists the current graph and treats the call as a durability
-    /// boundary for any automatic-recall maintenance accumulated in memory.
-    /// A failed save leaves those intents queued so a later save/flush can
-    /// retry them.
-    public func save() async throws {
-        try await withWriteLock {
-            // Do not materialize a pristine graph. Conversely, a dirty local
-            // graph cannot go through a transactional reload: that would lose
-            // deferred inserts before they reach disk.
-            if needsSave {
-                try await persist(graph)
-                adoptDurable(graph)
-            } else if !pendingRecallMaintenance.isEmpty {
-                try await flushPendingRecallMaintenanceLocked()
-            }
-        }
-    }
-
-    private func storePending(_ result: [MemoryCandidate]) {
-        pending = result
-    }
-
-    private func finishBackgroundTask(_ token: UUID) {
-        backgroundTasks[token] = nil
     }
 
     func persist(_ graph: MemoryGraph) async throws {

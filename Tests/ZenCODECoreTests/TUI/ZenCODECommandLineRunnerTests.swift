@@ -12,21 +12,6 @@ import ToolCore
 @Suite
 struct ZenCODECommandLineRunnerTests {
     @Test
-    func recognizedCommandLineOptionsStillRouteToTheCommandLine() {
-        let bundleExecutable = "/Applications/ZenCODE.app/Contents/MacOS/ZenCODE"
-        for option in [
-            "--version", "--doctor", "--acp", "--tui", "--telegram", "-p", "-f", "--prompt", "--jsonl",
-            "--model", "--max-tool-rounds", "--worktree"
-        ] {
-            #expect(
-                ZenCODECommandLineRunner.shouldRunAsCommandLine(
-                    arguments: [bundleExecutable, option]
-                )
-            )
-        }
-    }
-
-    @Test
     func headlessArgumentRequiresAValueAndRejectsACP() {
         #expect(throws: AgentConfigurationError.self) {
             try AgentConfiguration.validateArguments(["zen", "-p"])
@@ -798,7 +783,7 @@ struct ZenCODECommandLineRunnerTests {
 
     @Test
     func jsonlErrorsUseOnlyClosedCategoriesAndRedactedMessages() throws {
-        #expect(Set(ZenCODEHeadlessJSONLProtocol.errorCategories) == [
+        #expect(Set(ZenCODEHeadlessJSONLProtocol.ErrorCategory.allCases.map(\.rawValue)) == [
             "configuration", "provider", "runtime"
         ])
 

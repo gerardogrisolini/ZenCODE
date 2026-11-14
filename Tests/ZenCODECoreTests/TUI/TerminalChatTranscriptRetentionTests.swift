@@ -20,7 +20,7 @@ struct TerminalChatTranscriptRetentionTests {
         }
         let maximumBytes = 4_096
 
-        let bounded = TerminalChat.boundedActiveSessionTranscript(
+        let bounded = ChatSessionController.boundedTranscript(
             messages,
             maximumBytes: maximumBytes
         )
@@ -31,7 +31,7 @@ struct TerminalChatTranscriptRetentionTests {
         #expect(bounded.count < messages.count)
         #expect(bounded.last?.content == messages.last?.content)
         #expect(
-            TerminalChat.transcriptRetainedByteCount(bounded) <= maximumBytes
+            ChatSessionController.transcriptRetainedByteCount(bounded) <= maximumBytes
         )
     }
 
@@ -53,7 +53,7 @@ struct TerminalChatTranscriptRetentionTests {
         ]
         let maximumBytes = 1_024
 
-        let bounded = TerminalChat.boundedActiveSessionTranscript(
+        let bounded = ChatSessionController.boundedTranscript(
             messages,
             maximumBytes: maximumBytes
         )
@@ -62,7 +62,7 @@ struct TerminalChatTranscriptRetentionTests {
         #expect(bounded.first?.role == .system)
         #expect(bounded.first?.attachments.isEmpty == true)
         #expect(
-            TerminalChat.transcriptRetainedByteCount(bounded) <= maximumBytes
+            ChatSessionController.transcriptRetainedByteCount(bounded) <= maximumBytes
         )
     }
 
@@ -74,11 +74,11 @@ struct TerminalChatTranscriptRetentionTests {
                 content: "block-\(index)-" + String(repeating: "z", count: 300)
             )
         }
-        let first = TerminalChat.boundedActiveSessionTranscript(
+        let first = ChatSessionController.boundedTranscript(
             messages,
             maximumBytes: 3_000
         )
-        let second = TerminalChat.boundedActiveSessionTranscript(
+        let second = ChatSessionController.boundedTranscript(
             first + messages,
             maximumBytes: 3_000
         )
@@ -88,6 +88,6 @@ struct TerminalChatTranscriptRetentionTests {
                 $0.role == .system && $0.content.contains("transcript omitted")
             }.count == 1
         )
-        #expect(TerminalChat.transcriptRetainedByteCount(second) <= 3_000)
+        #expect(ChatSessionController.transcriptRetainedByteCount(second) <= 3_000)
     }
 }

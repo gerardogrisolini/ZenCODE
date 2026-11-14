@@ -24,14 +24,6 @@ enum TerminalTelegramUpdateOffsetStore {
 
     private static let filename = "telegram-updates.json"
 
-    static func load(
-        botID: Int64,
-        from url: URL = defaultURL(),
-        fileManager: FileManager = .default
-    ) -> Int? {
-        try? loadRequired(botID: botID, from: url, fileManager: fileManager)
-    }
-
     static func loadRequired(
         botID: Int64,
         from url: URL = defaultURL(),

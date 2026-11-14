@@ -13,18 +13,10 @@ public enum AgentConversationCompactionPolicy {
     /// what the next turns can grow into. Model output and provider overhead are
     /// subtracted up front by `AgentConversationCompactionBudget.promptTokenBudget`.
     public static let targetFraction = 0.50
-    /// Recent-window size always attempted before falling back to a smaller one.
-    public static let defaultRecentMessageCount = 12
     public static let minimumRecentMessageCount = 4
     public static let maximumSummaryCharacters = 24_000
-    /// Historical reference size for summaries; not a floor.
-    public static let minimumSummaryCharacters = 800
     /// Share of the target budget the conversation memory summary may use.
     public static let summaryBudgetFraction = 0.30
-    /// Share of the summary budget reserved for memory inherited from a previous
-    /// compaction. Budget the new facts cannot use is handed back to it.
-    public static let priorMemoryBudgetFraction = 0.5
-    public static let minimumPriorMemoryCharacters = 1_200
     /// Smallest useful budget for a single summarised message.
     public static let minimumSummaryEntryCharacters = 120
     /// Above this per-entry budget the summariser keeps both the head and the
@@ -75,22 +67,12 @@ public enum AgentConversationCompactionPolicy {
     }
 
     /// Character budget granted to the memory summary for a target token budget.
-    /// It may be below the historical reference size: a floor could make a feasible prompt impossible.
+    /// No floor is applied: a floor could make a feasible prompt impossible.
     public static func summaryCharacterBudget(forTargetTokenCount targetTokenCount: Int) -> Int {
         let characters = Int(
             (Double(max(targetTokenCount, 0)) * 4.0 * summaryBudgetFraction).rounded(.down)
         )
         return min(max(characters, 0), maximumSummaryCharacters)
-    }
-
-    /// Character budget granted to memory inherited from a previous compaction.
-    public static func priorMemoryCharacterBudget(
-        forSummaryCharacters summaryCharacters: Int
-    ) -> Int {
-        max(
-            minimumPriorMemoryCharacters,
-            Int(Double(max(summaryCharacters, 0)) * priorMemoryBudgetFraction)
-        )
     }
 
     public static func shouldCompactHistory(

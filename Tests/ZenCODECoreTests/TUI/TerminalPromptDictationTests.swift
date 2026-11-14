@@ -52,7 +52,7 @@ struct TerminalPromptDictationTests {
         #expect(dictation.show(id: 1, text: "", in: &editor))
         #expect(String(editor.buffer) == "Cerca")
         #expect(editor.cursorIndex == 5)
-        #expect(!dictation.isActive)
+        #expect(dictation.active == nil)
         #expect(!dictation.show(id: 1, text: "", in: &editor))
         // Removing a preview does not end the dictation: it shows again.
         #expect(dictation.show(id: 1, text: "di nuovo", in: &editor))
@@ -68,7 +68,7 @@ struct TerminalPromptDictationTests {
         #expect(dictation.take(id: 1, text: "il file", from: &editor) == "Cerca il file")
         #expect(editor.buffer.isEmpty)
         #expect(editor.cursorIndex == 0)
-        #expect(!dictation.isActive)
+        #expect(dictation.active == nil)
         #expect(dictation.endedThrough == 1)
         // Late previews and sends of a sent dictation are ignored.
         #expect(!dictation.show(id: 1, text: "il file", in: &editor))

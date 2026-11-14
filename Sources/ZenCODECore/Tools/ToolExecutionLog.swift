@@ -97,7 +97,6 @@ struct ToolExecutionLogEntry: Codable, Sendable, Equatable {
 enum ToolExecutionLog {
     static let subsystem = SystemLogEmitter.subsystem
     static let category = "tool-execution"
-    static let linuxTag = SystemLogEmitter.linuxTag
 
     static func record(
         context: ToolExecutionContext,

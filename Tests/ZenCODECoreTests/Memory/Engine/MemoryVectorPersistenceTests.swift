@@ -485,7 +485,7 @@ private struct InjectedFailure: Error {}
         #expect(written.embedding?.count == 6)
         try await expectStored(written)
         try await Self.expectCoherent(store.engine, file: file)
-        let other = try await store.write(content: "Summary: another entry", category: .fact, tags: ["o"]).entry
+        let other = try await store.writeDetailed(content: "Summary: another entry", category: .fact, tags: ["o"]).entry
 
         // update
         let updated = try await store.update(

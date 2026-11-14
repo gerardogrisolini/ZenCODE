@@ -302,11 +302,12 @@ extension TerminalChatRenderingTests {
 
     @Test
     func detailedToolWrappingCapsWideGlyphAfterHangingIndent() {
-        let rows = TerminalChat.safelyWrappedDetailedToolLines(
-            ["    a😀"],
+        let rows = TerminalChat.safelyWrappedDetailedToolRows(
+            [.text("    a😀")],
             contentInsetWidth: 0,
             columnWidth: 6
         )
+        .map(\.plainText)
 
         #expect(rows == ["    a", "   😀"])
         #expect(rows.allSatisfy { TerminalTextMetrics.displayWidth($0) <= 5 })

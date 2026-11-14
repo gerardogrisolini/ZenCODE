@@ -65,20 +65,8 @@ public actor DirectTodoRuntime {
 
     private var sessions: [String: SessionState] = [:]
 
-    /// Sendable value projection of one session's todo storage.
-    public func todosSnapshot(sessionID: String? = nil) -> [Todo] {
-        sessions[sessionID?.nilIfBlank ?? "default"]?.todos ?? []
-    }
-
     public static func isTodoToolName(_ rawName: String) -> Bool {
         SubAgentToolRequestCompatibility.canonicalToolName(for: rawName)?.hasPrefix("todo.") == true
-    }
-
-    public static func isTodoOrTaskToolName(_ rawName: String) -> Bool {
-        guard let canonicalName = SubAgentToolRequestCompatibility.canonicalToolName(for: rawName) else {
-            return false
-        }
-        return canonicalName.hasPrefix("todo.") || canonicalName.hasPrefix("tasks.")
     }
 
     public func execute(

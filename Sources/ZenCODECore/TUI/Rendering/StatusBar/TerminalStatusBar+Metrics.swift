@@ -116,23 +116,9 @@ extension TerminalStatusBar {
         return "\(value)"
     }
 
-    static func generationTokenCountsFragment(
-        _ metrics: DirectAgentGenerationMetrics
-    ) -> String? {
-        let fragments = [
-            metrics.cachedPromptTokenCount.map { "c:\(tokenCountText($0))" },
-            metrics.promptTokenCount.map { "p:\(tokenCountText($0))" },
-            metrics.completionTokenCount.map { "g:\(tokenCountText($0))" }
-        ].compactMap(\.self)
-
-        guard !fragments.isEmpty else {
-            return nil
-        }
-        return fragments.joined(separator: " ")
-    }
-
-    /// Status-bar presentation of the token counters: the `c:` / `p:` / `g:`
-    /// labels are muted so only their values keep the default foreground.
+    /// Status-bar presentation of the token counters (`c:<cached> p:<prompt>
+    /// g:<generated>`, only the known ones): the `c:` / `p:` / `g:` labels are
+    /// muted so only their values keep the default foreground.
     static func styledGenerationTokenCountsFragment(
         _ metrics: DirectAgentGenerationMetrics
     ) -> String? {
@@ -148,28 +134,21 @@ extension TerminalStatusBar {
         return fragments.joined(separator: " ")
     }
 
-    /// Plain throughput label, a single one with the `tok/s` unit at the end.
-    /// While the prompt is evaluated it shows the progress relative to the sync
-    /// and the prefill rate once measurable (`p:1.2k/8.0k 512.0 tok/s`, `p:0/8.0k`
-    /// before the first measure). Otherwise it shows the speeds that are known:
-    /// `p:512.0 g:42.1 tok/s`, `p:512.0 tok/s` or `g:42.1 tok/s`. `nil` without a
-    /// throughput or with nothing usable to show.
-    static func generationThroughputFragment(
-        _ metrics: DirectAgentGenerationMetrics
-    ) -> String? {
-        generationThroughputText(metrics) { $0 }
-    }
-
-    /// Status-bar presentation of the throughput label: `p:` / `g:` are muted
-    /// so only the values and the unit keep the default foreground.
+    /// Status-bar throughput label, a single one with the `tok/s` unit at the
+    /// end. While the prompt is evaluated it shows the progress relative to the
+    /// sync and the prefill rate once measurable (`p:1.2k/8.0k 512.0 tok/s`,
+    /// `p:0/8.0k` before the first measure). Otherwise it shows the speeds that
+    /// are known: `p:512.0 g:42.1 tok/s`, `p:512.0 tok/s` or `g:42.1 tok/s`.
+    /// `nil` without a throughput or with nothing usable to show. `p:` / `g:`
+    /// are muted so only the values and the unit keep the default foreground.
     static func styledGenerationThroughputFragment(
         _ metrics: DirectAgentGenerationMetrics
     ) -> String? {
         generationThroughputText(metrics, styleLabel: mutedLabel)
     }
 
-    /// The single implementation behind the plain and the styled label:
-    /// `styleLabel` decorates the `p:` / `g:` prefixes only.
+    /// The implementation behind the styled label: `styleLabel` decorates the
+    /// `p:` / `g:` prefixes only.
     private static func generationThroughputText(
         _ metrics: DirectAgentGenerationMetrics,
         styleLabel: (String) -> String
@@ -210,21 +189,10 @@ extension TerminalStatusBar {
         return String(format: "%.1f", value)
     }
 
-    static func subscriptionUsageFragment(
-        _ status: DirectAgentSubscriptionUsageStatus
-    ) -> String? {
-        guard status.hasValues else {
-            return nil
-        }
-        let fragments = [
-            status.dailyUsedPercent.map { "d:\(usagePercentText($0))" },
-            status.weeklyUsedPercent.map { "w:\(usagePercentText($0))" }
-        ].compactMap(\.self)
-        return fragments.joined(separator: " ")
-    }
-
-    /// Status-bar presentation of the subscription usage counters: the `d:` /
-    /// `w:` labels are muted so their values keep the default foreground.
+    /// Status-bar presentation of the subscription usage counters
+    /// (`d:<daily> w:<weekly>`, only the known windows; `nil` without values):
+    /// the `d:` / `w:` labels are muted so their values keep the default
+    /// foreground.
     static func styledSubscriptionUsageFragment(
         _ status: DirectAgentSubscriptionUsageStatus
     ) -> String? {

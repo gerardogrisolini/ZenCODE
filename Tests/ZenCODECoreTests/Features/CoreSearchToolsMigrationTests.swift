@@ -38,8 +38,6 @@ struct CoreSearchToolsMigrationTests {
         #expect(Self.searchToolNames.isSubset(of: names(DirectToolCatalog.coreLocalFileAndTextDescriptors)))
         #expect(Self.searchToolNames.isSubset(of: names(DirectToolCatalog.coreReadDescriptors)))
         #expect(Self.searchToolNames.isSubset(of: names(DirectToolCatalog.coreReadLocalFileAndTextDescriptors)))
-        #expect(Self.searchToolNames.isDisjoint(with: names(DirectToolCatalog.coreMutatingDescriptors)))
-        #expect(Self.searchToolNames.isDisjoint(with: names(DirectToolCatalog.coreMutatingLocalFileAndTextDescriptors)))
         for name in Self.searchToolNames {
             // Core local tools are executed in-process and are not opaque
             // mutations for the operation file-change evidence.
@@ -47,7 +45,7 @@ struct CoreSearchToolsMigrationTests {
         }
         #expect(SwiftFeatureRuntime.bundledFeatureDefinition(id: Self.retiredFeatureID) == nil)
         #expect(ZenBundledFeatureCatalog.feature(id: Self.retiredFeatureID) == nil)
-        #expect(SwiftBundledFeatureCatalog.retiredFeatureIDs == [Self.retiredFeatureID])
+        #expect(Set(SwiftBundledFeatureCatalog.retiredFeatureCoreGroupKeys.keys) == [Self.retiredFeatureID])
     }
 
     // MARK: - /tools selection
@@ -267,7 +265,7 @@ struct CoreSearchToolsMigrationTests {
             )
             #expect(list.contains("control-fixture"))
             #expect(!list.contains(Self.retiredFeatureID))
-            #expect(!(await runtime.canExecute(toolName: "search.glob")))
+            #expect(!(await runtime.featureToolIsAllowed(toolName: "search.glob", allowedToolNames: nil)))
 
             // Management by id never reaches (nor modifies) the copy.
             for (name, expectedError) in [
@@ -295,7 +293,7 @@ struct CoreSearchToolsMigrationTests {
             )
             let executor = DirectToolExecutor(
                 swiftFeatureRuntime: runtime,
-                subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+                subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
             )
             let result = await executor.execute(
                 sessionID: "core-search-installed-copy",

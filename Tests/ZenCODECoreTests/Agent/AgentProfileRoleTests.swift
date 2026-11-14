@@ -219,10 +219,6 @@ struct AgentProfileRoleTests {
 
         #expect(!AgentProfileStore.isPlannerAgent(namedPlanner))
         #expect(!AgentProfileStore.isPlannerAgent(plannerIDWithAnotherRole))
-        #expect(AgentProfileStore.isReviewerAgent(plannerIDWithAnotherRole))
-        #expect(AgentProfileStore.isReviewerAgent(Roles.customReviewer))
-        #expect(TerminalChat.isReviewerProfile(Roles.customReviewer))
-        #expect(!TerminalChat.isReviewerProfile(namedPlanner))
         #expect(AgentProfileStore.isPlannerAgent(Roles.pluto))
         #expect(AgentProfileStore.isBuilderAgent(AgentProfile(id: "forge", name: "Forge", role: .builder)))
         #expect(!AgentProfileStore.isBuilderAgent(AgentProfile(id: "builder", name: "Builder", role: .generic)))
@@ -245,7 +241,6 @@ struct AgentProfileRoleTests {
         #expect(!AgentProfileRole.generic.delegatesByRole)
         #expect(!AgentProfileStore.isPlannerAgent(generic))
         #expect(!AgentProfileStore.isBuilderAgent(generic))
-        #expect(!AgentProfileStore.isReviewerAgent(generic))
         #expect(coreNames.contains("local.writeFile"))
         #expect(generic.resolvedAllowedToolNames(coreNames) == coreNames)
     }

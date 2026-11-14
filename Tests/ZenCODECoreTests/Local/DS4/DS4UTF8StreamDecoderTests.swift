@@ -19,8 +19,8 @@ struct DS4UTF8StreamDecoderTests {
         let bytes = Array(text.utf8)
         for split in 0...bytes.count {
             var decoder = DS4UTF8StreamDecoder()
-            let first = decoder.consume(Array(bytes[..<split]))
-            let second = decoder.consume(Array(bytes[split...]))
+            let first = Array(bytes[..<split]).withUnsafeBufferPointer { decoder.consume($0) }
+            let second = Array(bytes[split...]).withUnsafeBufferPointer { decoder.consume($0) }
             let tail = decoder.finish()
             #expect(first + second + tail == text, "split at \(split)")
             #expect(!(first + second).contains("\u{FFFD}"), "split at \(split)")
@@ -32,7 +32,8 @@ struct DS4UTF8StreamDecoderTests {
     func finishFlushesIncompleteScalarWithReplacement() {
         var decoder = DS4UTF8StreamDecoder()
         let bytes = Array("a🙂".utf8)
-        #expect(decoder.consume(Array(bytes.dropLast())) == "a")
+        let consumed = Array(bytes.dropLast()).withUnsafeBufferPointer { decoder.consume($0) }
+        #expect(consumed == "a")
         #expect(decoder.hasPendingBytes)
         #expect(decoder.finish() == "\u{FFFD}")
         #expect(!decoder.hasPendingBytes)
@@ -43,8 +44,9 @@ struct DS4UTF8StreamDecoderTests {
         var decoder = DS4UTF8StreamDecoder()
         // A stray continuation byte can never start a scalar: once more than
         // 3 bytes are held the decoder gives up buffering and replaces it.
-        #expect(decoder.consume([0x80, 0x41]) == "")
-        let flushed = decoder.consume([0x42, 0x43])
+        let held = [UInt8]([0x80, 0x41]).withUnsafeBufferPointer { decoder.consume($0) }
+        #expect(held == "")
+        let flushed = [UInt8]([0x42, 0x43]).withUnsafeBufferPointer { decoder.consume($0) }
         #expect(flushed == "\u{FFFD}ABC")
         #expect(!decoder.hasPendingBytes)
     }

@@ -22,9 +22,6 @@ public struct DS4InstalledArtifact: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-/// Compatibility spelling for callers that call discovered GGUFs models.
-public typealias DS4InstalledModel = DS4InstalledArtifact
-
 public struct DS4InstallationSnapshot: Codable, Equatable, Hashable, Sendable {
     public let rootDirectory: String
     public let artifacts: [DS4InstalledArtifact]
@@ -41,27 +38,6 @@ public struct DS4InstallationSnapshot: Codable, Equatable, Hashable, Sendable {
         self.artifacts = artifacts
         self.scannedDirectories = scannedDirectories
         self.diagnostics = diagnostics
-    }
-
-    public var totalDiskBytes: UInt64 {
-        artifacts.reduce(0) { partial, artifact in
-            let (sum, overflow) = partial.addingReportingOverflow(artifact.diskBytes)
-            return overflow ? UInt64.max : sum
-        }
-    }
-
-    public func contains(relativePath: String) -> Bool {
-        let normalized = relativePath
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "\\", with: "/")
-        return artifacts.contains { $0.relativePath == normalized }
-    }
-
-    public func artifact(relativePath: String) -> DS4InstalledArtifact? {
-        let normalized = relativePath
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "\\", with: "/")
-        return artifacts.first { $0.relativePath == normalized }
     }
 }
 
@@ -183,15 +159,6 @@ public struct DS4InstallationScanner: @unchecked Sendable {
         )
     }
 
-    public func scan(rootDirectory: URL) throws -> DS4InstallationSnapshot {
-        try scan(rootDirectory: rootDirectory.path)
-    }
-
-    /// Compatibility spelling for callers that pass a manifest root.
-    public func scan(_ manifest: AgentDS4RuntimeManifest) throws -> DS4InstallationSnapshot {
-        try scan(rootDirectory: manifest.rootDirectory)
-    }
-
     private func isSymbolicLink(_ url: URL) -> Bool {
         guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
               let type = attributes[.type] as? FileAttributeType else {
@@ -208,6 +175,3 @@ public struct DS4InstallationScanner: @unchecked Sendable {
         return String(path.dropFirst(prefix.count)).replacingOccurrences(of: "\\", with: "/")
     }
 }
-
-/// Compatibility spelling for a scanner result.
-public typealias DS4InstallationReport = DS4InstallationSnapshot

@@ -141,7 +141,7 @@ extension ACPStandardPresentationTests {
             "result": .object(["optionId": .string("allow_always")])
         ]))
         #expect(await authorization.value == false)
-        #expect(await broker.cachedDecisionCount(sessionID: "root") == 0)
+        #expect(await broker.consentAuthorizer.cachedDecisionCount(sessionID: "root") == 0)
         continuation.finish()
     }
 }
@@ -171,13 +171,13 @@ extension ACPStandardPresentationTests {
             "jsonrpc": .string("2.0"), "id": old.objectValue!["id"]!,
             "result": .object(["optionId": .string("allow_always")])
         ]))
-        #expect(await broker.cachedDecisionCount(sessionID: "root") == 0)
+        #expect(await broker.consentAuthorizer.cachedDecisionCount(sessionID: "root") == 0)
         await broker.handleResponse(.object([
             "jsonrpc": .string("2.0"), "id": current.objectValue!["id"]!,
             "result": .object(["optionId": .string("allow_unoffered")])
         ]))
         #expect(await second.value == false)
-        #expect(await broker.cachedDecisionCount(sessionID: "root") == 0)
+        #expect(await broker.consentAuthorizer.cachedDecisionCount(sessionID: "root") == 0)
         continuation.finish()
     }
 }

@@ -61,14 +61,14 @@ struct DictationVoiceModeTests {
         #expect(collector.peek("vai", awaitingShortAnswer: false).sends)
         #expect(collector.receive("vai", awaitingShortAnswer: false) == .send(""))
         #expect(collector.receive("Apri il progetto", awaitingShortAnswer: false) == .collected)
-        #expect(collector.hasPendingText)
+        #expect(!collector.pending.isEmpty)
         #expect(collector.pending == "Apri il progetto")
         #expect(!collector.peek("e poi", awaitingShortAnswer: false).sends)
         #expect(collector.peek("e compila, vai", awaitingShortAnswer: false) == .send("Apri il progetto e compila"))
         // Peeking changed nothing.
-        #expect(collector.hasPendingText)
+        #expect(!collector.pending.isEmpty)
         #expect(collector.receive("e compila, vai", awaitingShortAnswer: false) == .send("Apri il progetto e compila"))
-        #expect(!collector.hasPendingText)
+        #expect(collector.pending.isEmpty)
 
         // A bare yes or no is sent alone at once only while one is awaited
         // and nothing is collected; otherwise it is ordinary text.
@@ -79,7 +79,7 @@ struct DictationVoiceModeTests {
         #expect(collector.receive("no", awaitingShortAnswer: true) == .collected)
         #expect(collector.receive("vai", awaitingShortAnswer: true) == .send("sì no"))
         collector.reset()
-        #expect(!collector.hasPendingText)
+        #expect(collector.pending.isEmpty)
         #expect(collector.receive("sì, ma prima vai", awaitingShortAnswer: true) == .send("sì, ma prima"))
     }
 
@@ -230,13 +230,17 @@ struct DictationVoiceModeTests {
 
     @Test
     func dictatedUtterancesAreHandledLikeTypedLines() {
-        guard case let .input(.submitted(line)) = TerminalChat.dictatedPromptEvent(for: "Che tempo fa domani?") else {
+        guard case let .input(.submitted(line)) = TerminalChat.dictatedPromptEvent(
+            for: VoiceModeDictatedInput(utterance: "Che tempo fa domani?")
+        ) else {
             Issue.record("A dictated utterance must be submitted as a typed line.")
             return
         }
         #expect(line == "Che tempo fa domani?")
 
-        guard case let .voicePromptCompleted(result) = TerminalChat.dictatedPromptEvent(for: "/exit") else {
+        guard case let .voicePromptCompleted(result) = TerminalChat.dictatedPromptEvent(
+            for: VoiceModeDictatedInput(utterance: "/exit")
+        ) else {
             Issue.record("A dictated slash-like utterance must never run as a command.")
             return
         }
@@ -267,7 +271,7 @@ struct DictationVoiceModeTests {
         #expect(controller.languageCode == "it")
         #expect(await controller.isSpeaking == false)
         #expect(await controller.speak("Nuovo messaggio.", rendering: .plainText) == false)
-        #expect(await controller.speak("**Ciao**") == false)
+        #expect(await controller.speak("**Ciao**", rendering: .answer) == false)
         #expect(await controller.isActive)
         await controller.setPaused(true)
         #expect(await controller.speak("Nuovo messaggio.", rendering: .plainText) == false)

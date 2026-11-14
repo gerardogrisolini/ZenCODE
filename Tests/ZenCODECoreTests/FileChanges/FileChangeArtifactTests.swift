@@ -108,10 +108,6 @@ struct FileChangeArtifactTests {
         #expect(first?.number == 1)
         #expect(second?.number == 2)
         #expect((await history.snapshot()).count == 2)
-
-        await history.reset(for: "session-2")
-        #expect((await history.snapshot()).isEmpty)
-        #expect(await history.append(summary: summary, sessionID: "session-1", workingDirectory: directory) == nil)
     }
 
     @Test
@@ -152,7 +148,7 @@ struct FileChangeArtifactTests {
     }
 
     @Test
-    func revertedLiveTurnsLeaveStableNumberGapsAndResetFencesOldTokens() async throws {
+    func revertedLiveTurnsLeaveStableNumberGaps() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let history = SessionFileArtifactHistory(sessionID: "session")
@@ -164,11 +160,6 @@ struct FileChangeArtifactTests {
         #expect(await history.snapshot().isEmpty)
         let summary = TurnFileChangeSummary(entries: [addedEntry("file.txt")])
         #expect(await history.append(summary: summary, sessionID: "session", workingDirectory: directory)?.number == 2)
-        let staleID = try #require(await history.beginTurn(sessionID: "session"))
-        await history.reset(for: "session")
-        #expect(await history.recordLive([change], agentID: nil, callID: "call", turnID: staleID, workingDirectory: directory) == nil)
-        #expect(await history.finishTurn(staleID, summary: summary, matchingLivePaths: [], workingDirectory: directory) == nil)
-        #expect(await history.append(summary: summary, sessionID: "session", workingDirectory: directory)?.number == 1)
     }
 
     private func addedEntry(_ path: String) -> TurnFileChangeSummary.Entry {

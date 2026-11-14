@@ -61,26 +61,6 @@ final class WebHTMLNode {
         return false
     }
 
-    /// Raw text of a text node, `nil` for every other kind.
-    var text: String? {
-        if case .text(let value) = kind {
-            return value
-        }
-        return nil
-    }
-
-    func attribute(_ name: String) -> String? {
-        if let value = attributes[name] {
-            return value
-        }
-        let lowered = name.lowercased()
-        return lowered == name ? nil : attributes[lowered]
-    }
-
-    var id: String? {
-        attributes["id"]
-    }
-
     var classList: [String] {
         guard let value = attributes["class"] else { return [] }
         return value

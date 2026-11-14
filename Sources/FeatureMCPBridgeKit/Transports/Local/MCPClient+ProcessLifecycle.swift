@@ -10,15 +10,6 @@ import FeatureKit
 /// once, then clear writer/reader/handle state deterministically before the exit
 /// is classified and pending requests are failed.
 extension MCPClient {
-    func handleProcessTermination(_ terminatedProcess: Process) {
-        guard let activeConnectionID else {
-            return
-        }
-        Task(name: "MCP local process termination forwarding") { [weak self] in
-            await self?.handleProcessTermination(terminatedProcess, connectionID: activeConnectionID)
-        }
-    }
-
     func handleProcessTermination(_ terminatedProcess: Process, connectionID: UUID) async {
         guard activeConnectionID == connectionID,
               process === terminatedProcess else {

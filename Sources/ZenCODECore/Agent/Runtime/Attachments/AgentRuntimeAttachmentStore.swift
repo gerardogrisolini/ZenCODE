@@ -210,24 +210,3 @@ public enum AgentRuntimeAttachmentStore {
     }
 
 }
-
-public extension AgentRuntimeAttachment {
-    init?(
-        kindRawValue: String,
-        fileURL: URL? = nil,
-        data: Data? = nil,
-        contentType: String? = nil,
-        originalFilename: String
-    ) {
-        guard let kind = Kind(rawValue: kindRawValue) else {
-            return nil
-        }
-        self.init(
-            kind: kind,
-            fileURL: fileURL,
-            data: data,
-            contentType: contentType,
-            originalFilename: originalFilename
-        )
-    }
-}

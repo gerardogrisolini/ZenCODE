@@ -52,7 +52,7 @@ struct TerminalVoiceTranscriptionRegistryTests {
         }
         registry.register(task, for: slot)
 
-        registry.cancelAll()
+        await registry.cancelAllAndWait(shuttingDown: true)
         await task.value
 
         #expect(didFinish.withLock { $0 })

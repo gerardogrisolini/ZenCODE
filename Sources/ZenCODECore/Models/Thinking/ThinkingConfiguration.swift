@@ -23,52 +23,6 @@ public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identi
     public var isEnabled: Bool {
         self != .off
     }
-
-    public var displayTitle: String {
-        switch self {
-        case .off:
-            "Off"
-        case .enabled:
-            "On"
-        case .minimal:
-            "Minimal"
-        case .low:
-            "Low"
-        case .medium:
-            "Medium"
-        case .high:
-            "High"
-        case .xhigh:
-            "XHigh"
-        case .max:
-            "Max"
-        case .ultra:
-            "Ultra"
-        }
-    }
-
-    public var menuTitle: String {
-        switch self {
-        case .off:
-            "Thinking off"
-        case .enabled:
-            "Thinking on"
-        case .minimal:
-            "Minimal thinking"
-        case .low:
-            "Low thinking"
-        case .medium:
-            "Medium thinking"
-        case .high:
-            "High thinking"
-        case .xhigh:
-            "XHigh thinking"
-        case .max:
-            "Max thinking"
-        case .ultra:
-            "Ultra thinking"
-        }
-    }
 }
 
 public nonisolated struct ModelThinkingSupport: Codable, Hashable, Sendable {

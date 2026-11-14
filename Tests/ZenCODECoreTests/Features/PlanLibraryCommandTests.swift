@@ -96,7 +96,8 @@ struct PlanLibraryCommandTests {
         let terminal = TerminalChat(
             configuration: configuration,
             stdinIsTerminal: false,
-            sessionRunner: runner
+            sessionRunner: runner,
+            telegramTransportFactory: nil
         )
         terminal.selectedToolKeys.insert("sub-agents")
         return terminal
@@ -135,8 +136,8 @@ struct PlanLibraryCommandTests {
             workingDirectory: working,
             supportDirectory: support
         )
-        #expect(isContinueChat(await terminal.handlePlanCommand("/plan LIST")))
-        #expect(isContinueChat(await terminal.handlePlanCommand("/plan DELETE all")))
+        #expect(isContinueChat(await terminal.terminalAction(presenting: terminal.chatSession.runPlanCommand(line: "/plan LIST"))))
+        #expect(isContinueChat(await terminal.terminalAction(presenting: terminal.chatSession.runPlanCommand(line: "/plan DELETE all"))))
 
         // The deletion is durable on disk, not just in the chat process.
         let store = SessionTaskGraphStore(supportDirectoryURL: support)

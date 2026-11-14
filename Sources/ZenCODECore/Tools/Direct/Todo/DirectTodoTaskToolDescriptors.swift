@@ -76,13 +76,6 @@ extension DirectTodoRuntime {
         taskUpdateDescriptor
     ]
 
-    static let mutatingToolDescriptors: [DirectToolDescriptor] = [
-        todoWriteDescriptor,
-        taskCreateDescriptor,
-        taskRetryDescriptor,
-        taskCancelDescriptor
-    ]
-
     static let toolDescriptors: [DirectToolDescriptor] = [
         todoReadDescriptor,
         todoWriteDescriptor,

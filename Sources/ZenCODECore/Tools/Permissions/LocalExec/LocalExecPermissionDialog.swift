@@ -113,14 +113,6 @@ final class TerminalConsentHost: ChatInteractionHost {
 }
 
 extension LocalExecPermissionAuthorizer {
-    /// Runs the terminal consent dialog directly, without the shared cache and
-    /// queue. Kept for focused prompt/retry coverage.
-    func presentDialog(
-        for request: AgentToolAuthorizationRequest
-    ) async -> PermissionDecision? {
-        await terminalHost.presentDialog(for: request)
-    }
-
     /// Reads a single key from the terminal on a non-cooperative thread, so the
     /// authorizer actor (and its cooperative executor) is not blocked while the
     /// operator decides.

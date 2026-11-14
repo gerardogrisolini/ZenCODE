@@ -95,14 +95,11 @@ extension AgentSharedChatCoordinator {
         /// re-publishes the roster even when its signature did not change.
         var needsParticipantsReemit = false
         var triggerReofferCount = 0
-        var droppedEventCount = 0
         /// Message IDs enqueued or delivered to each observer, per observer so a
         /// new subscriber's replay never decides what an older one has seen.
         /// Intersected with the bounded transcript after every poll; an evicted
         /// `.messages` event removes only its own IDs (see ``recordYieldResult``).
         var enqueuedMessageIDsBySubscriber: [UUID: Set<UUID>] = [:]
-
-        var turnsInFlight: Int { activeTurns.count }
 
         var isBusy: Bool {
             !activeTurns.isEmpty || !busyObservers.isEmpty || claim != nil

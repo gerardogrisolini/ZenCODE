@@ -65,7 +65,7 @@ struct DirectToolExecutorKnownDescriptorsTests {
         )
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: runtime,
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
         func featureToolNames(discoversFeatureTools: Bool) async -> [String] {
             await executor.descriptors(discoversFeatureTools: discoversFeatureTools)

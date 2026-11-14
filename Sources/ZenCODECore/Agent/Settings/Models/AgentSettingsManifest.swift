@@ -203,21 +203,6 @@ public struct AgentSettingsManifest: Codable, Equatable, Sendable {
         }
     }
 
-    public var isEmpty: Bool {
-        providers.isEmpty
-            && models.isEmpty
-            && selectedModelID == nil
-            && selectedThinkingSelection == nil
-            && telegram == nil
-            && voice == nil
-            && remoteAPIKeysByProviderID.isEmpty
-            && localExecAllowedCommands.isEmpty
-            && chatGPTSubscriptionCredentials == nil
-            && anthropicSubscriptionCredentials == nil
-            && responseLanguage == nil
-            && memoryEmbedding == nil
-    }
-
     /// The API key stored for `providerID` (a stable provider key), or `nil`.
     public func apiKey(providerID: String) -> String? {
         guard let key = AgentRemoteProvider.normalizedProviderID(providerID) else {

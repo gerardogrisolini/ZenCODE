@@ -97,6 +97,255 @@ Release tags follow the strict `vX.Y.Z` contract described in
     `undoLatestChanges()`: `/undo` reverts through
     `TurnFileChangeUndoService.undoLatest(summary:baseDirectoryURL:)`, which is
     unchanged.
+  - More `TerminalChat` adapters that `ChatSessionController` and the session
+    host superseded: agent selection (`handleAgentsCommand(_:)`,
+    `applyAgentSelection(_:)`, `applyAgentProfile(_:)`, `agentSelectionItems()`,
+    `agentSelectionDetail(_:)`, `agentSelectionKey(_:)`,
+    `parseAgentSelection(_:availableAgents:)`, `printAgentSelectionStatus()`,
+    `renderAgentList(agents:)`, `renderSelectedAgent(_:)`,
+    `renderAgentSelectionUsage()`,
+    `renderAgentModelBindings(agents:selectedAgent:)`,
+    `renderProjectAgentAssociation(associated:projectName:)`,
+    `projectAgentMenuHelpLines`,
+    `projectAgentMenuInitialAssociation(_:savedSelection:)`,
+    `projectDisplayName(_:)`), model and thinking menus
+    (`selectModelInteractively()`, `selectThinkingInteractively()`,
+    `selectableModelManifests()`, `selectedAgentModelBinding(for:)`,
+    `promptForModelSelection(models:message:)`,
+    `promptForThinkingSelection(model:)`, `renderModelList(models:message:)`,
+    `renderThinkingList(model:options:selected:)`, `modelSelectionItems(_:)`,
+    `thinkingSelectionItems(_:)`, `modelThinkingSuffix(_:)`,
+    `modelThinkingDetail(_:)`, `thinkingSuffix(_:)`), saved sessions and
+    checkpoints (`handleSessionsCommand(_:)`, `handleSavedSessionList()`,
+    `handleSavedSessionDelete()`, `startNewSession()`, `saveActiveSession()`,
+    `saveCurrentSession(named:)`, `compactCurrentSession()`,
+    `recordSavedSessionIndex(_:)`, `renderSavedSessionList(_:)`,
+    `savedSessionSelectionItems(_:)`, `savedSessionDetail(_:)`,
+    `savedSessionDisplayHistory(_:)`,
+    `savedSessionCacheKey(name:workingDirectory:)`, `savedSessionTimestamp(_:)`,
+    `savedSessionTokenCountText(_:)`, `renderSessionSelectionUsage()`,
+    `restoreFromCheckpoint(_:entryID:)`, `restoredAgent(for:)`,
+    `loadSavedSession(_:)`, `loadSavedSession(_:checkpointEntryID:)`), and
+    prompt and rendering helpers (`activePlan`,
+    `currentSystemPrompt(allowedToolNames:)`,
+    `currentPromptSections(allowedToolNames:)`,
+    `selectedToolSelectionNames(_:)`,
+    `toolSelectionChangedMessage(previousAllowedToolNames:currentAllowedToolNames:)`,
+    `toolCompletionSummary(toolCall:result:)`,
+    `terminalColumnCount(forceRefresh:)`, `renderActiveTools(_:)` (the
+    `renderActiveTools(_:items:selectedKeys:)` overload remains) and
+    `renderSubAgentOverview(_:modelTitleResolver:)`). The two public
+    initializers,
+    `init(configuration:stdinIsTerminal:sessionHost:permissionAuthorizer:)` and
+    `init(configuration:stdinIsTerminal:sessionRunner:permissionAuthorizer:)`,
+    are internal now: start the chat with
+    `AgentRuntimeLauncher.runTerminalChat(…)`.
+  - Terminal and process helpers:
+    `TerminalCheckboxMenu.promptLineOffActor(title:prompt:defaultValue:allowEmpty:help:reservedBottomRows:)`,
+    `TerminalInteractiveLineReader.readLine(prompt:)`,
+    `TerminalGitStatusSummary.zero` and `adding(_:)`,
+    `ZenCODECommandLineRunner.shouldRunAsCommandLine(arguments:)` and
+    `main(backendFactory:)` (`main(arguments:backendFactory:)` remains),
+    `ZenCODECommandLineArgumentSanitizer.containsCocoaLaunchArguments(_:)`, and
+    `StdioLineReader.readLine()` and `drainBufferedLines(waitMilliseconds:)`.
+  - Session runner:
+    `AgentCoreSessionRunner.streamPrompt(_:configuration:attachments:authorizeTool:onToolWillExecute:borrowedSubAgentToolExecutor:toolProviders:)`,
+    `cancelActivePrompt()`, `isAvailable`, `resolveSharedChatMentionHandle(_:)`,
+    `resumeTaskGraph(_:workingDirectory:)` (it stays on
+    `SessionTaskOrchestrator`), `taskGraphSnapshots(sessionID:)` (use
+    `SessionTaskOrchestrator.graphSnapshots(sessionID:)`), the
+    `AsyncThrowingStream` variant `preloadModel(configuration:)`
+    (`preloadModel(configuration:onEvent:)` remains), the
+    `replaceSessionHistory(id:history:)` overload without a session generation,
+    `saveSession(id:named:…)` and `savedSessions(for:supportDirectoryURL:)` (use
+    `TerminalSessionStore`, or `ChatSessionController` to save a session), and
+    the `AgentCoreSessionRunnerError` enum (`cannotCompactDuringActivePrompt`,
+    `missingSessionSnapshot`). `AgentCoreBackend.activeToolDescriptors()` (use
+    `activeToolDescriptors(sessionID:)`) and the public
+    `AgentCoreBackend.init(configuration:mcpRuntime:swiftFeatureRuntime:backendFactory:)`:
+    the backend can only be created inside the module.
+    `AgentSharedChatCoordinator.reset(roomID:)`,
+    `AgentSharedChat.maximumParticipantNameUTF8Length` (names stay limited to
+    `maximumParticipantNameLength` Unicode scalars),
+    `AgentEngineCheckpointSaveOutcome.wroteCheckpoint` and
+    `AgentRuntimeAttachment.init?(kindRawValue:fileURL:data:contentType:originalFilename:)`.
+  - Task graphs, checkpoints and file changes:
+    `SessionTaskGraphStore.save(_:workingDirectory:fileManager:)` (use
+    `compareAndSwap(_:replacing:workingDirectory:fileManager:)`),
+    `SessionTaskOrchestrator.recordAttemptProgress(sessionID:graphID:taskID:attemptID:output:)`
+    and the public `checkpoint(sessionID:)` and
+    `restoreCheckpoint(_:interruptActiveAttempts:)`,
+    `TaskStatus.init(normalizing:)`, `SessionCheckpointTree.activePath`,
+    `SessionCheckpointEntry.message`, `SessionFileArtifactHistory.reset(for:)`,
+    `TurnFileChangeCoordinator.init(workspacePath:)` and
+    `TurnFileChangeTracker.init(workspacePath:)` (use
+    `init(baseDirectoryURL:)`), `TurnFileChangeSummary.decode(from:)` and
+    `encodedString()`.
+  - Compaction, prompts and configuration:
+    `AgentConversationCompactionPolicy.defaultRecentMessageCount`,
+    `minimumSummaryCharacters`, `priorMemoryBudgetFraction`,
+    `minimumPriorMemoryCharacters` and
+    `priorMemoryCharacterBudget(forSummaryCharacters:)`;
+    `AgentConversationCompactionSupport.compactedMessagesIfNeeded(_:maxTokens:force:)`
+    (use `compactedMessagesIfNeeded(_:budget:force:)` with
+    `AgentConversationCompactionBudget(contextWindowTokens:)`) and
+    `conversationMemorySummary(priorSummary:olderMessages:maxCharacters:)`;
+    `AgentSessionComposition.standardSystemPrompt(…)` and
+    `appProvidedSystemPrompt(…)` (use `standardPromptSections(…)` and
+    `appProvidedPromptSections(…)`);
+    `AgentCoreAppSessionFactory.resolvedSystemPrompt(…)` and
+    `memoryToolEnabled(_:)`, and the ignored `selectedSkillNames:` parameter of
+    `resolvedPromptSections(…)`; `AgentStandaloneSystemPrompt.prompt(cwd:…)`
+    (use `promptSections(…)` and `combinedPrompt`);
+    `SystemPromptBuilder.prompt(_:)` with `SystemPromptRequest`,
+    `standalonePrompt(cwd:…)`,
+    `appendingTaskOrchestrationSection(to:allowedToolNames:)` and the two
+    `delegatableAgentsSection` overloads without a `snapshot:` argument;
+    `SystemPromptBuilder.defaultAgentInstructions(memoryToolEnabled:)`, now
+    `defaultAgentInstructions()`, and the ignored `memoryToolEnabled:` argument
+    of `standalonePromptSections(…)`;
+    `AgentProfile.promptSection(memoryToolEnabled:)` (the `promptSection`
+    property remains); `AgentConfiguration.runtimeConfiguration`, already
+    deprecated.
+  - Settings, profiles and delegation: `AgentProfile.capability`,
+    `defaultModelID` and `modelProvider` (use `defaultModelBinding`, `modelID`
+    and `thinkingSelection`), `AgentProfileStore.isReviewerAgent(_:)`; the
+    typealiases `AgentDS4Backend`, `AgentDS4PathGuardError` and
+    `AgentDS4RuntimeManifestError`, `AgentDS4RuntimeManifest.Backend` and
+    `resolveModelURL(fileManager:)` (`resolvedModelURL(fileManager:)` remains);
+    `AgentPermissionsManifest.appendingLocalExecAllowedCommand(_:)` and
+    `AgentPermissionsManifestStore.save(_:to:)`;
+    `AgentModelProviderKind.displayTitle`, the `runtime` alias of `ds4Runtime`
+    on `AgentRemoteProvider`, `AgentModelSelection`,
+    `AgentSettingsModelManifest` and `AgentSettingsProviderManifest`,
+    `AgentSettingsManifest.isEmpty` and
+    `AgentProviderKeyMigration.Report.didMigrate`;
+    `AgentDelegationCatalog.liveModels()` (use `liveSnapshot()`),
+    `canonicalModelID(forReference:providerHint:models:)`,
+    `roster(agents:models:)` and `resolvedBindings(for:models:)` (use the
+    `snapshot:` variants with `.available(models:)`),
+    `AgentDelegationCatalogSnapshot.isAvailable`,
+    `ResolvedAgentModelBinding.providerID` and
+    `ProjectAgentSelectionStore.isAssociated(_:workspaceRootURL:fileManager:)`
+    (use `isAssociated(_:selection:)`).
+  - Memory and thinking: `MemoryService.restoreEntry(id:workspaceRootURL:)` (use
+    `setArchived(false, …)`), `graphURL(workspaceRootURL:)` and
+    `graphURL(target:)`; `MemoryEntryFilter.isEmpty` and the public
+    `matches(_:)` over a `MemoryEntry`; `ThinkingSelection.displayTitle` and
+    `menuTitle`;
+    `ThinkingBoundarySpacingNormalizer.normalized(_:startsInThinking:)`.
+  - Remote providers and catalogs:
+    `RemoteGenerationClient.chatCompletionsWireHistoryMessages(from:requiresReasoningContentPlaceholder:)`
+    (use `chatCompletionsWireHistoryMessages(from:replayPolicy:)`) and the
+    public `responseFunctionCallPayload(from:)` overload;
+    `RemoteModelCatalogClient.fetchModelMetadata(baseURL:modelID:apiKey:)` with
+    `OpenRouterModelMetadata`;
+    `ChatCompletionsStreamParser.toolPayloads(from:)`,
+    `ResponsesStreamParser.toolPayloads(from:)`,
+    `RemoteToolWireCatalog.binding(forToolName:)` and `wireToolCall(from:)` (the
+    wire payloads come from `RemoteToolWireCatalog`);
+    `AnthropicSubscriptionGenerationClient.isAvailable`,
+    `ChatGPTSubscriptionGenerationClient.isAvailable` and
+    `testIngestStreamObjects(_:)` (debug builds only); the console sign-in flows
+    `AnthropicSubscriptionAuthService.signIn()` and
+    `ChatGPTSubscriptionAuthService.signIn()` (the setup uses `startSignIn`),
+    `ChatGPTSubscriptionAuthService.signInWithDeviceCode(notifyUser:)`,
+    `AnthropicSubscriptionAuthService.removeCredentials()`,
+    `AnthropicSubscriptionSignInSession.waitForCredentials()` and `cancel()`,
+    `ChatGPTSubscriptionSignInSession.waitForCredentials()` and
+    `submitAuthorizationInput(_:)`; the typealiases `MCPClient`,
+    `MCPErrorResponse` and `MCPRemoteTool` (use the types of
+    `FeatureMCPBridgeKit`).
+  - DS4: the typealiases `DS4InstalledModel` and `DS4InstallationReport`;
+    `DS4InstallationSnapshot.totalDiskBytes`, `contains(relativePath:)` and
+    `artifact(relativePath:)`; `DS4InstallationScanner.scan(rootDirectory:)`
+    taking a `URL` and `scan(_:)` taking an `AgentDS4RuntimeManifest` (use
+    `scan(rootDirectory:)` with a `String` path); `DS4ModelCatalog.entry(id:)`.
+  - Tools, sub-agents and features:
+    `DirectToolExecutor.isSubAgentCoordinationToolName(_:)`,
+    `chatCompletionToolPayloads(sessionID:allowedToolNames:)`,
+    `responsesToolPayloads(sessionID:allowedToolNames:)` and the initializer
+    taking `subAgentBackendFactory:` (use `subAgentContextualBackendFactory:`);
+    `DirectAgentToolCall.init(validating:name:argumentsObject:argumentsJSON:descriptorTitle:presentation:)`,
+    `DirectAgentToolCallError` and `DirectToolError.category`;
+    `DirectTodoRuntime.todosSnapshot(sessionID:)` and
+    `isTodoOrTaskToolName(_:)`;
+    `DirectMCPToolRuntime.discoverDescriptors(allowedToolNames:preferredWorkspaceRootURL:)`
+    and `discoveryFamilies(allowedToolNames:)`;
+    `ExternalToolAvailability.discoverableToolPrefixes(_:)` and the
+    `resolvedAllowedToolNames(_:unavailableToolPrefixes:)` overload;
+    `DirectToolCatalog.coreMutatingDescriptors`,
+    `coreMutatingLocalFileAndTextDescriptors`, `coreMutatingMemoryDescriptors`,
+    `coreMutatingTodoTaskDescriptors` and `coreMutatingSubAgentDescriptors` (the
+    mutating core tools are `coreDescriptors` minus `coreReadDescriptors`);
+    `DirectSubAgentRuntime.messageAgents(arguments:parentAllowedToolNames:)`,
+    `defaultProfileResolver(for:)` (use `liveProfileResolver(for:)`),
+    `recordCompletion(_:agentID:)`, `firstArray(_:in:)`,
+    `resolvingModelBinding(for:profile:)` (use the `snapshot:` overload), the
+    initializers `init(backendFactory:)`,
+    `init(backendFactory:profileResolver:modelCatalogProvider:profileCatalogProvider:)`,
+    `init(contextualBackendFactory:)`,
+    `init(contextualBackendFactory:profileResolver:parentProfileID:parentProfileName:)`
+    and
+    `init(contextualBackendFactory:profileResolver:modelCatalogProvider:profileCatalogProvider:parentProfileID:parentProfileName:)`
+    (`init(backendFactory:profileResolver:)` remains),
+    `BackendContext.capability` (use `modelBinding?.capability`) and
+    `RequestedAgentPayload.thinkingSelection` and `applying(modelBinding:)`;
+    `SwiftFeatureRecord.isAdopted`, `SwiftFeaturePromotionReport.promotedPath`,
+    `SwiftFeatureGeneratedManifest.promotable` (use `promotionReady`) and
+    `SwiftFeatureRuntime.executeIfAvailable(toolCall:workingDirectory:)` and
+    `canExecute(toolName:)`.
+  - Telegram: `TerminalTelegramRouteRuntimeState` with its `ReplyTarget`;
+    `TerminalTelegramControlService.init()` (the type has no public initializer
+    left), `pendingConsentArtifact(offerID:chatID:)`,
+    `inboundAttachmentFilenames(chatID:)` and
+    `discardInboundAttachment(filename:chatID:)`;
+    `TerminalTelegramPairingService.init(botToken:)` and `issuePairingGrant()`
+    (use `issuePairingDeepLink(botUsername:)`);
+    `TerminalTelegramRemoteCommand.init?(text:)` (use
+    `invocation(text:)?.command`); `TerminalTelegramCommandRegistry.resolve(_:)`
+    (use `resolveInvocation(_:)`) and `recognizedFormsByCommand`;
+    `TerminalTelegramCommandSpecification.allForms`;
+    `TerminalTelegramWireFence.validate(chatID:)` (use
+    `validate(chatID:topicID:)`); `TerminalTelegramSessionRouter.delete(_:)`;
+    `TerminalTelegramControlError.retryAfter` (the value stays in the
+    `apiFailure` case);
+    `TerminalTelegramInboundAttachmentGate.allowedImageMIMETypes`; and
+    `TerminalTelegramPresenceLeaseManager.heldLease` and `isActive(_:)`.
+  - Diagnostics and support: `ZenLogger.activeLevel`, `isEnabled`,
+    `destinationDescription`, `disable()` and the
+    `previewConfiguration(environment:supportDirectory:)` overload
+    (`previewConfiguration(environment:)` remains); 21 `ZenLogCategory` cases
+    that nothing logged under (`assistantBackend`, `applicationDelegate`,
+    `cloudChatWorker`, `cloudKit`, `contentViewModel`, `installedModelCatalog`,
+    `viewActions`, `remoteModelCatalogClient`, `remoteNotification`,
+    `remotePrompt`, `bashToolExecutor`, `mcpClient`, `taskListSync`,
+    `taskExecutionCoordinator`, `taskExecutionEngine`, `toolBackendResolver`,
+    `toolDescriptor`, `turnGeneration`, `userInput`, `viewModel`,
+    `conversationHistory`; `memory`, `sessionService`, `taskLifecycle`,
+    `turnFileChangeTracker`, `viewModelRuntime` and `diagnostics` remain, and
+    the `diagnostics-<name>` system-log categories do not change);
+    `ZenDoctorReport.hasWarning`, `ZenDoctorStatus.label`,
+    `SetupStatus.message`; `ZenFileService.saveSettings(_:fileManager:)` and the
+    public
+    `ensureRequiredFiles(settingsManifest:overwriteSettings:fileManager:)`.
+  - ACP, headless JSONL and setup: `ZenCODEACPBridge.SessionOperationState`,
+    `restoredACPClientSessionConfiguration(sessionID:params:workingDirectory:acpMCPDescriptors:selectedAgent:)`,
+    `sessionConfiguration(from:allowedToolNames:)`,
+    `toolCallProgressUpdate(for:workingDirectory:)`,
+    `toolCallProgressJSONUpdate(for:workingDirectory:)`,
+    `isAppSuppressedDiagnostic(_:)`, `isMetricsDiagnostic(_:)`,
+    `toolKind(for:workingDirectory:)`, `toolIcon(for:)`,
+    `displayToolTarget(for:)`, `patchDisplayTarget(from:)` and
+    `compactJSONString(from:)` (the presentation functions remain on
+    `ToolCallPresentation`); the typealiases `HeadlessJSONLProtocol` and
+    `HeadlessJSONLWriter`; `ZenCODEHeadlessJSONLProtocol.version` (an alias of
+    `schemaVersion`), `errorCategories` (use `ErrorCategory.allCases`),
+    `error(_:runID:)` (use `error(runID:_:)`), `category(for:)` and
+    `message(for:)` (use `publicError(for:)`), and
+    `ZenCODEHeadlessJSONLWriter.write(_:)` and `write(response:)` (use
+    `write(event:)` and `write(result:)`), with the JSONL format unchanged;
+    `ZenCODEAgentProfileSetupRunner.configureInteractively()`.
 - Internal code that nothing reached any more, and helpers only tests used:
   the `TerminalChat` forwarders `activeSessionTranscriptRetainedByteCount`,
   `launchFolderProjectsCache` (with its `LaunchFolderProjectsCache` alias),
@@ -116,6 +365,217 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `renderFileArtifacts(_:includeHistoryHeadings:diffPresentation:)`; and
   `TerminalInteractiveLineReader.setPanelOverlay(_:isProcessing:)`, since a
   panel override is always set with its key routing.
+- More internal code that nothing reached any more, and helpers only tests used:
+  - Session runner and shared chat: the prompt registry of
+    `AgentCoreSessionRunner` (`AgentCorePromptTaskRegistry`, its registration
+    gate and `AgentCorePromptOutcomeTracker`), always empty in production, with
+    the waits and cancellations built on it (`waitForPromptTasks(for:)`,
+    `cancelAllPromptTasksAndWait()`, `clearActivePromptTask(id:)`) and
+    `normalizedSavedSessionName(_:)`; the `AgentSharedChatCoordinator`
+    inspection helpers `turnsInFlight(roomID:)`,
+    `isAwaitingSourceRebuild(roomID:)`, `droppedEventCount(roomID:)`,
+    `activeAutoTriggerID(roomID:)`, `activeAutoTriggerMessageCount(roomID:)`,
+    `hasConsumedClaim(roomID:)` and `busyObserverCount(roomID:)`, with the
+    write-only `Room.droppedEventCount`.
+  - Chat controller, host and channels:
+    `ChatSessionController.installSkillCommand(from:)`, `projectAgentChoices()`,
+    `taskGraphObserverTask` and
+    `currentSystemPrompt(allowedToolNames:responseLanguageSection:)`,
+    `ChatSessionHost.removeIncarnationObserver(_:from:)`,
+    `ChatSlotInteractionHost.activeHostGeneration`,
+    `ChatSlotPresenter.isTurnOpen`, and `TelegramChannel.hasPendingReader` and
+    `incarnationObserverToken`.
+  - Planning, review and goal: the single-profile overloads
+    `PlanningCommandKernel.planStartPrompt(goal:planner:)`,
+    `planContinuationPrompt(state:planner:)` and
+    `reviewDelegationPrompt(scope:reviewer:…)`,
+    `planFromLatestAssistantMessage(in:createdAt:)`,
+    `PlanningPointCollector.finalPlanPoints(forFinalText:)`, and
+    `WorkflowCommandRuntimeState.disarm()` and `pendingCoordinatorMessage`.
+  - `TerminalChat` command handlers and forwarders that
+    `ChatSessionController.handleCommandLine(_:context:)` replaced:
+    `handlePlanCommand(_:)`, `handleWorkflowCommand(_:)`,
+    `handleReviewCommand(_:)`, `handleTasksCommand(_:)`,
+    `handleRestoreCommand(_:)`, `handlePlanApprovalGoalReply(_:)`,
+    `handlePlanBrainstormingReply(_:)`, `handleWorkflowContinuationReply(_:)`,
+    `recordPlanIfNeeded(responseText:purpose:createdAt:points:)`,
+    `recordWorkflowTurnOutcome(graphID:coordinatorMessage:)`,
+    `synchronizeActivePlanStatus(from:result:)`, `isSubAgentToolEnabled`,
+    `launchFolderProjectsForSelectedAgent()`, `plannerProfilesForDelegation()`,
+    `reviewerProfilesForDelegation()`, `planID(from:)`,
+    `savedPlanDeletionTarget(_:in:)`, `taskGraphOverviewSignature(_:)`,
+    `savedSessionCommandAction(rawArguments:)`, `derivedSessionName(…)`,
+    `boundedActiveSessionTranscript(_:maximumBytes:)`,
+    `sharedChatMentionRoute(from:readableHandles:)`, the fixed texts of those
+    commands (`planMissingGoalMessage`, `workflowResumeMarker`,
+    `planDeleteUsageMessage` and similar) and the plan, workflow and review
+    prompt builders. The files `TerminalChat+Review.swift`,
+    `TerminalChat+Checkpoints.swift`, `TerminalChat+SessionUtilities.swift` and
+    `TerminalChat+TranscriptRetention.swift` are gone.
+  - Terminal rendering and input: `TerminalCheckboxMenu.renderMenuSequence(…)`,
+    `renderFrameSequence(…)`, `clearFrameSequence(…)`, `RenderedFrame`,
+    `readInputLine(rawInput:)`, `readKey(rawInput:)` and
+    `readByte(rawInput:shouldCancel:)`;
+    `TerminalInteractiveLineReader.readKey(pollTimeoutMilliseconds:)`,
+    `homeCursorIndex(in:cursorIndex:)`, `endCursorIndex(in:cursorIndex:)` and
+    `matchingPanelCommandSuggestions(text:cursorIndex:suggestions:)`; the plain
+    `TerminalStatusBar.generationTokenCountsFragment(_:)`,
+    `generationThroughputFragment(_:)` and `subscriptionUsageFragment(_:)` (the
+    styled variants the bar draws remain) and `renderStatusOverlay()`;
+    `TerminalResizeCoordinator.requestRefresh()` and
+    `reservedBottomRows(fallback:)`; the `TerminalChatTextFormatting` adapter
+    overloads; `ToolSnippetRenderer.numberedCodeSnippetLines(_:indentation:)`;
+    `TerminalPressAndHold.supportedBases`, `TerminalPromptDictation.isActive`,
+    `TerminalStyle.FileChange.hunk` and
+    `TerminalOutputSynchronization.writeOverlay(_:output:sink:)`; and the
+    final-response branch of the sub-agent overview in
+    `TerminalSubAgentOverviewLayout`, which production always disabled (complete
+    answers still appear through `markdownResponses(_:)`).
+  - Memory engine: `MemoryEngine.save()`, `recall(_:scope:)` and
+    `searchReadOnly(_:scope:)`; `EngineMemoryScope.includesProject` and
+    `includesGlobal`; `EngineMemoryEntry.reinforce(sessionID:messageIndex:)`,
+    `touch()` and `supersede(with:)`; `MemoryGraph.memoryCount`, `nodeCount`,
+    `edgeCount`, `updateMemory(_:)`, `addTag(_:to:)`, `addCluster(_:)` and
+    `markContradiction(_:_:)`; `MemoryCleanupPolicy.hasActiveRule`;
+    `MemoryGraphStore.saveGraph()`, `backupURL`, `vectorsBackupURL`,
+    `entries(includeArchived:limit:)` and
+    `write(content:category:tags:generatedTimestamp:)`;
+    `GraphEntry.presentationTitle`, `isArchived` and `normalizedContent(_:)`;
+    `MemoryEntryMetadata.timestampDate`; the workspace-URL forms of
+    `MemoryTurnCoordinator.memoryBlock(sessionID:workspaceRootURL:prompt:)` and
+    `isRecallPaused(sessionID:workspaceRootURL:)`; and
+    `Reinforcement.init(sessionID:messageIndex:timestamp:)`.
+  - Remote providers and DS4:
+    `AnthropicSubscriptionGenerationClient.compactedMessagesForContextLimitRetry(_:maxTokens:maxOutputTokens:overhead:)`,
+    `ChatGPTSubscriptionAuthService.testDecodeDeviceCodeResponse(_:)` and
+    `issuer`, `ChatGPTSubscriptionCallbackServer.submitAuthorizationInput(_:)`,
+    `ChatGPTSubscriptionGenerationClient.sessionID(from:)` and
+    `SessionIdentity.storageKey`,
+    `ChatGPTSubscriptionWebSocketPool.clearHTTPFallback(scopeID:)`,
+    `serverMaximumConnectionAge` and the `acquire(sessionID:request:)` overload
+    without a scope, `RemoteModelCatalogClient.modelsRequest(apiKey:)` and
+    `contextLength(fromText:)`; `DS4EngineABI.ToolSyntax` (it duplicated
+    `DS4ToolSyntax`), `DS4EngineRegistry.shutdown()` with its epoch,
+    `DS4SessionPool.contains(_:)` and `settings(for:)`, the string API of
+    `DS4ThinkSplitter`, `DS4ToolCallStreamParser.feed(_:)`, `currentToolName`
+    and `currentParameterName`, `DS4GeneratedOutputParser.isInsideToolCall`,
+    `DS4EngineError.isLibraryUnavailable` and `buildHint`,
+    `DS4EngineLibraryLocator.expectedURL(manifest:supportDirectory:)`,
+    `DS4PreparedRound.operations` and `DS4ToolCallReplay.init(_:)`.
+  - Tools and sub-agents: `DirectMCPToolRuntime.discoverIfNeeded(…)` (its body
+    was empty), `discoveryServerFamilies(allowedToolNames:)` and the `figma`
+    server family, which nothing registered;
+    `DirectSubAgentRuntime.adoptOverviewWave(_:for:)` and the
+    `mutatingToolDescriptors` lists of the todo and sub-agent runtimes;
+    `DirectToolExecutor.toolPayloadInputs(sessionID:allowedToolNames:)` with
+    `DirectToolPayloadInput`; the `startedAt`, `finishedAt` and
+    `workingDirectory` fields of an `exec` job;
+    `SharedChatMentionCatalog.participantID(forHandle:)` and
+    `handleToParticipantID`;
+    `LocalExecPermissionAuthorizer.presentDialog(for:)`;
+    `ToolExecutionLog.linuxTag`; and
+    `SwiftBundledFeatureCatalog.retiredFeatureIDs`.
+  - Telegram and voice:
+    `TerminalTelegramControlService.sendMessageDraft(_:to:draftID:fence:)` and
+    `waitForCommandMenuPublication()`,
+    `TerminalTelegramEditableMessageLedger.currentMessageID()`,
+    `TerminalTelegramInboundAttachmentStore.storedCount(chatID:)` and
+    `discard(filename:chatID:)`,
+    `TerminalTelegramPermissionMessageResult.isHandled`,
+    `TerminalTelegramPermissionOutcome.isApproved`,
+    `TerminalTelegramPollBackoff.redactToken(in:)`,
+    `TerminalTelegramSharedChatRelay.waitUntilProducerIsBlocked()`,
+    `TerminalTelegramTurnProgressReporter.shutdown()`,
+    `TerminalTelegramUpdateOffsetStore.load(botID:from:fileManager:)` and
+    `TerminalVoiceTranscriptionRegistry.cancelAll()`;
+    `VoiceKeywordCollector.hasPendingText`, the `VoiceModeController.speak(_:)`
+    extension, `VoiceAudioDevice.pendingPlaybackBuffers` and
+    `SherpaOnnxAudioDecoder.available(for:searchDirectories:fileManager:)`.
+  - Setup, configuration and support: `SetupSection.ds4`,
+    `AgentBindingPresets.init(providers:)`,
+    `AgentProfileBindingReconciler.reconcileStoredAgents(with:fileManager:)`,
+    the `AgentConfiguration` conformance to
+    `AgentRuntimeConfigurationProjecting`,
+    `SupportDirectoryArchive.export(from:to:fileManager:)` (callers use
+    `exportReplacingExisting(from:to:)`) with its `archiveExists` and
+    `missingSourceDirectory` errors, `ZenLogOverride.disabled`,
+    `ACPPermissionBroker.cachedDecisionCount(sessionID:)` and its other
+    permission-cache forwarders, `ZenCODEACPBridge.arrayValue(from:keys:)` and
+    `TaskStatus.normalized(_:)`. `DeterministicHashEmbeddingProvider`,
+    `MemoryEngine.open(…)` and `remember(…)`,
+    `AgentPermissionsManifestStore.save(_:to:)`,
+    `ZenCODEACPBridge.installSession(configuration:selectedAgent:)` and the v3
+    encoder of `EmbeddingWireCoding` live in the test targets now.
+- Capabilities removed because production never used them; what the user sees
+  does not change unless stated:
+  - Telegram rich messages no longer have blocks for buttons, details and
+    documents: `PresentationBlock.details`, `.buttons` and `.document`,
+    `PresentationButton` (with its callback and URL actions and its styles),
+    `PresentationDocumentReference`, the matching branches of
+    `TerminalTelegramRichMessageRenderer` (with `renderButton(_:)` and
+    `maximumCallbackBytes`), `TerminalTelegramRichMessageError` and the two
+    plain-text fallbacks that handled it, `PresentationDocument.init(blocks:)`
+    and `PresentationText.init(_:)`. Production only ever sent Markdown, so
+    replies on Telegram look the same.
+  - `TerminalTelegramRouteRuntimeState`, the per-route runtime state of the
+    Telegram channel: nothing ever filled it, and its teardown did nothing. The
+    lifecycle gate of `TerminalTelegramControlService`, which was only written
+    and never read, is gone too.
+  - The memory engine's recall pipeline one turn ahead:
+    `MemoryEngine.submitContext(_:scope:)`, `takePending()`,
+    `waitForBackgroundTasks()` and the pending store behind them. Production
+    never used it: recall is retrieved per prompt, so a result is never handed
+    to a session other than the one whose prompt asked for it, and recall is
+    unchanged.
+  - The memory engine no longer has an extraction layer or LLM-backed models:
+    `learn(from:)` and `extract(from:)` (also on `MemoryGraphStore`),
+    `MemoryExtractor`, `NoopMemoryExtractor`, `MemoryDraft`,
+    `LLMMemoryExtractor`, `LLMMemoryQueryAnalyzer`, `LLMMemorySelector`,
+    `MemoryLanguageModel`, `OpenAICompatibleChatModel`,
+    `OpenAICompatibleChatError`, `MemoryIntelligenceError` and `MemoryJSON`. No
+    setting, manifest or string selected them at runtime; the analyzer, selector
+    and formatter layers stay, and memories are still written and recalled as
+    before.
+  - `AgentCoreSessionRunner.streamPrompt(…)`, the prompt entry point that
+    returned an event stream, and the per-session cancellation of the prompts it
+    started (`cancelActivePrompt()`,
+    `AgentCoreSessionRunnerError.cannotCompactDuringActivePrompt`, the prompt
+    registry). No production code called it, so prompts and their cancellation
+    behave as before.
+  - The ACP helpers `toolCallProgressUpdate(for:workingDirectory:)` and
+    `toolCallProgressJSONUpdate(for:workingDirectory:)`: no client ever received
+    what they built, so the wire format is unchanged.
+  - Setup sections carry no aliases any more (`SetupSection.matches(_:)` and the
+    `Descriptor.aliases` lists): no production path chose a section by alias.
+  - `DirectSubAgentRuntime.messageAgents(arguments:parentAllowedToolNames:)`,
+    the old implementation of the `agent.message` tool: the tool already goes
+    through the shared chat, so it behaves as before.
+  - `subscriptionUsage(fromHeaders:)` and `rateLimitsObject(fromHeaders:)`, the
+    `x-codex-*` response-header readers of the ChatGPT subscription client:
+    only tests used them, since production reads the usage from the inline
+    `codex.rate_limits` event.
+- macOS app: `public` helpers shared between its modules that nothing called are
+  removed, such as the plain-text status wrappers of `ZenStatusFormatting`
+  (`gitStatusText(_:)`, `throughputText(_:)`, `statusText(for:now:)` and others,
+  with `ZenStatusFragment.text`),
+  `View.zenGlassCard(tint:cornerRadius:padding:)`, `ZenPalette.menuBorder`,
+  `ZenFileChangeFormatting.summaryHeaderText(_:)`,
+  `ZenCommandSuggestions.completion(for:)`,
+  `ZenMentionSuggestions.startsMention(_:)`,
+  `ZenSharedChatReader.selectedMessage`, `ZenVoiceDictationDraft.isActive` and
+  `ZenWindowTab.agentID`, together with two cache `removeAll()` methods. The app
+  looks and behaves the same.
+- Feature packages: no `public` symbol of `ToolCore`, `FeatureKit`,
+  `FeatureMCPBridgeKit`, `LocalToolsSupport` or of a feature changes. Unused
+  internal code is removed from BrowserTools, WebTools, MacOS, FeatureKit,
+  FeatureMCPBridgeKit and LocalToolsSupport (for example the synchronous
+  `BrowserNetworkRequestPolicy.validateRequestURL(_:)`,
+  `WebHTMLNode.attribute(_:)` and `MCPClient.serverError(_:requestMethod:)`).
+  Tool names, descriptors and `--list-tools` output are unchanged.
+- Tests that only verified removed code are deleted (for example those of the
+  memory extractor and LLM models, of `streamPrompt(…)` and of the Telegram
+  rich-message buttons and documents); the others now go through the production
+  API instead of the removed forwarders and helpers.
 
 ### Fixed
 

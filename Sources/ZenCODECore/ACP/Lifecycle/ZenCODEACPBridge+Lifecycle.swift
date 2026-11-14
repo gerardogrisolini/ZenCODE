@@ -874,23 +874,6 @@ extension ZenCODEACPBridge {
         )
     }
 
-    public func restoredACPClientSessionConfiguration(
-        sessionID: String,
-        params: [String: Any],
-        workingDirectory: URL,
-        acpMCPDescriptors: [DirectToolDescriptor],
-        selectedAgent: AgentProfile? = nil
-    ) async -> AgentCoreSessionConfiguration {
-        await restoredACPClientSessionConfiguration(
-            sessionID: sessionID,
-            params: params,
-            workingDirectory: workingDirectory,
-            acpMCPDescriptors: acpMCPDescriptors,
-            selectedAgent: selectedAgent,
-            savedSession: nil
-        )
-    }
-
     /// The configuration of a restored session that is not live. Its history
     /// is the client's `history`, else the one of `savedSession`, the saved
     /// session of its id (`nil` when the client sent a history), without the

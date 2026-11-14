@@ -82,23 +82,6 @@ struct SubscriptionUsageParsingTests {
     }
 
     @Test
-    func chatGPTParsesUsageFromCodexResponseHeaders() throws {
-        let headers = RemoteHTTPHeaders([
-            RemoteHTTPHeader(name: "x-codex-primary-used-percent", value: "4.0"),
-            RemoteHTTPHeader(name: "x-codex-primary-window-minutes", value: "300"),
-            RemoteHTTPHeader(name: "x-codex-secondary-used-percent", value: "1.0"),
-            RemoteHTTPHeader(name: "x-codex-secondary-window-minutes", value: "10080")
-        ])
-
-        let usage = try #require(
-            ChatGPTSubscriptionGenerationClient.subscriptionUsage(fromHeaders: headers)
-        )
-        #expect(usage.provider == "ChatGPT")
-        #expect(usage.dailyUsedPercent == 4.0)
-        #expect(usage.weeklyUsedPercent == 1.0)
-    }
-
-    @Test
     func anthropicParsesUtilizationHeadersAsPercentages() throws {
         let headers = RemoteHTTPHeaders([
             RemoteHTTPHeader(

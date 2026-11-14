@@ -44,22 +44,4 @@ public actor ACPPermissionBroker {
     public func removeAllCachedDecisions() async {
         await consentAuthorizer.removeAllCachedDecisions()
     }
-
-    func cachedDecisionCount(sessionID: String) async -> Int {
-        await consentAuthorizer.cachedDecisionCount(sessionID: sessionID)
-    }
-
-    static func permissionCacheKeyValue(for request: AgentToolAuthorizationRequest) -> String {
-        ChatToolConsentAuthorizer.permissionCacheKeyValue(for: request)
-    }
-
-    static func permissionCacheCommandIdentity(
-        for request: AgentToolAuthorizationRequest
-    ) -> String {
-        ChatToolConsentAuthorizer.permissionCacheCommandIdentity(for: request)
-    }
-
-    static func permissionOptionID(from result: JSONValue?) -> String? {
-        ACPConsentHost.permissionOptionID(from: result)
-    }
 }

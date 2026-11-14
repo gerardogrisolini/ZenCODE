@@ -179,7 +179,7 @@ struct ZenWindowResumeTaskGraphTests {
                 updatedAt: updatedAt
             )
         }
-        try store.save(
+        try store.compareAndSwap(
             SessionTaskGraphCheckpoint(
                 sessionID: "old-session",
                 currentGraphID: "old-work",
@@ -194,6 +194,7 @@ struct ZenWindowResumeTaskGraphTests {
                     ),
                 ]
             ),
+            replacing: nil,
             workingDirectory: workspace
         )
     }

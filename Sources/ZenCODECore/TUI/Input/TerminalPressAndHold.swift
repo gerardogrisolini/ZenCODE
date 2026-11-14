@@ -92,8 +92,4 @@ enum TerminalPressAndHold {
     static func variants(for base: Character) -> [Character]? {
         variantCatalogue[base]
     }
-
-    static var supportedBases: [Character] {
-        Array(variantCatalogue.keys)
-    }
 }

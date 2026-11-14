@@ -131,7 +131,6 @@ struct VoiceModeSessionTests {
 
         await session.handleCommand("/voice on")
         #expect(await session.turnInstruction() == VoiceModeSession.turnInstructionText)
-        #expect(VoiceModeSession.turnInstructionText == TerminalChat.voiceTurnInstruction)
 
         await session.handleCommand("/voice pause")
         #expect(await session.turnInstruction() == nil)

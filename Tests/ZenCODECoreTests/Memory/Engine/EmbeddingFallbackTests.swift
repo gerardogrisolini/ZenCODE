@@ -66,7 +66,7 @@ struct EmbeddingFallbackTests {
 
         // Must not throw: the embedding failure is contained and the retrieval
         // continues with the BM25 results that were already computed.
-        let results = try await engine.recall("Swift actors")
+        let results = try await engine.recallDetailed("Swift actors").selected
         #expect(!results.isEmpty)
         #expect(results.contains { $0.memory.content.contains("actors") })
     }
@@ -86,7 +86,7 @@ struct EmbeddingFallbackTests {
         )
 
         // Retrieval still succeeds and returns BM25 hits.
-        let results = try await engine.recall("Swift actors protect")
+        let results = try await engine.recallDetailed("Swift actors protect").selected
         #expect(!results.isEmpty)
 
         // Exactly one aggregated diagnostic was emitted through the reporter,
@@ -119,7 +119,7 @@ struct EmbeddingFallbackTests {
             persist: false
         )
 
-        let task = Task { try await engine.recall("Swift actors") }
+        let task = Task { try await engine.recallDetailed("Swift actors").selected }
         try await Task.sleep(for: .milliseconds(100))
         task.cancel()
 
@@ -152,7 +152,7 @@ struct EmbeddingFallbackTests {
             }
         )
 
-        let written = try await store.write(
+        let written = try await store.writeDetailed(
             content: "Summary: lexical fallback keeps the durable text.",
             category: .fact,
             tags: ["fallback"]

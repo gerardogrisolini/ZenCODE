@@ -159,7 +159,6 @@ enum TerminalSubAgentOverviewLayout {
     static func render(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
         modelTitleResolver: (String) -> String,
-        includesFinalResponses: Bool,
         toolPresentationsByAgentID: [
             String: TerminalChatRenderCoordinator.SubAgentToolPresentation
         ],
@@ -181,7 +180,6 @@ enum TerminalSubAgentOverviewLayout {
                 overviewLines(
                     snapshots,
                     modelTitleResolver: modelTitleResolver,
-                    includesFinalResponses: includesFinalResponses,
                     toolPresentationsByAgentID: toolPresentationsByAgentID,
                     density: density
                 )
@@ -200,7 +198,6 @@ enum TerminalSubAgentOverviewLayout {
     private static func overviewLines(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
         modelTitleResolver: (String) -> String,
-        includesFinalResponses: Bool,
         toolPresentationsByAgentID: [
             String: TerminalChatRenderCoordinator.SubAgentToolPresentation
         ],
@@ -221,7 +218,6 @@ enum TerminalSubAgentOverviewLayout {
                         in: toolPresentationsByAgentID
                     ),
                     density: density,
-                    includesFinalResponse: includesFinalResponses,
                     includesActivity: true
                 )
             )
@@ -233,15 +229,13 @@ enum TerminalSubAgentOverviewLayout {
     /// The lines of one agent's entry at `density`, without the separator
     /// that precedes it in the overview: the status header, the metadata the
     /// density keeps, the current activity when `includesActivity` is `true`,
-    /// and the detail (the latest error, or the final response when
-    /// `includesFinalResponse` is `true`). The inline density folds the whole
+    /// and the latest error. The inline density folds the whole
     /// entry, activity fragment included, into a single row.
     static func entryLines(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
         modelTitleResolver: (String) -> String,
         toolPresentation: TerminalChatRenderCoordinator.SubAgentToolPresentation?,
         density: Density,
-        includesFinalResponse: Bool,
         includesActivity: Bool
     ) -> [Line] {
         if density == .inline {
@@ -305,11 +299,7 @@ enum TerminalSubAgentOverviewLayout {
                 )
             )
         }
-        if let detail = detailLine(
-            snapshot,
-            includesFinalResponse: includesFinalResponse,
-            density: density
-        ) {
+        if let detail = detailLine(snapshot, density: density) {
             lines.append(detail)
         }
         return lines
@@ -662,20 +652,12 @@ enum TerminalSubAgentOverviewLayout {
 
     private static func detailLine(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
-        includesFinalResponse: Bool,
         density: Density = .full
     ) -> Line? {
-        if let latestError = snapshot.latestError?.nilIfBlank {
-            return entryLine("❌ \(InlineTextTruncation.inlineText(latestError))", density: density)
-        }
-
-        guard includesFinalResponse,
-              !snapshot.pending,
-              let latestOutput = snapshot.latestContentPreview?.nilIfBlank
-                ?? snapshot.latestOutput?.nilIfBlank else {
+        guard let latestError = snapshot.latestError?.nilIfBlank else {
             return nil
         }
-        return entryLine("✅ \(InlineTextTruncation.inlineText(latestOutput))", density: density)
+        return entryLine("❌ \(InlineTextTruncation.inlineText(latestError))", density: density)
     }
 
     // MARK: - Responses

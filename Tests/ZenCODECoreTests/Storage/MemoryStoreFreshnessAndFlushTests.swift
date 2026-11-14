@@ -38,7 +38,7 @@ struct MemoryStoreFreshnessTests {
             let store = MemoryGraphStore(graphURL: file, engine: reader, embedder: nil)
             try await writer.remember("reader fact committed later", id: "later")
 
-            let entries = try await store.entries(includeArchived: false, limit: 50)
+            let entries = try await store.entries(includeArchived: false, offset: 0, limit: 50, filter: .none)
             #expect(Set(entries.map(\.id)) == ["writer", "later"])
             #expect(try await store.entry(id: "later")?.content == "reader fact committed later")
             let hits = try await store.search(query: "reader fact", includeArchived: false, limit: 10)
@@ -52,7 +52,7 @@ struct MemoryStoreFreshnessTests {
         seeded.addMemory(EngineMemoryEntry(id: "local", category: .fact, content: "local fact survives"))
         let cleanEngine = MemoryEngine(graph: seeded, persistence: FailingReloadPersistence())
         let store = MemoryGraphStore(graphURL: URL(fileURLWithPath: "/unused"), engine: cleanEngine, embedder: nil)
-        #expect(try await store.entries(includeArchived: false, limit: 10).map(\.id) == ["local"])
+        #expect(try await store.entries(includeArchived: false, offset: 0, limit: 10, filter: .none).map(\.id) == ["local"])
     }
 
     @Test
@@ -68,7 +68,7 @@ struct MemoryStoreFreshnessTests {
         try "{\"graph_version\":999999}".write(to: file, atomically: true, encoding: .utf8)
 
         await #expect(throws: MemoryPersistenceError.unsupportedGraphVersion(999999)) {
-            _ = try await store.entries(includeArchived: false, limit: 10)
+            _ = try await store.entries(includeArchived: false, offset: 0, limit: 10, filter: .none)
         }
     }
 }
@@ -130,7 +130,7 @@ struct MemoryGraphStoreRegistryFlushAllTests {
             let durable = try await JSONMemoryPersistence(url: graphURL).reloadReadOnly()
             #expect(durable.memories["commit-b"] != nil)
             #expect(durable.memories[deferredID] == nil)
-            #expect(try await store.entries(includeArchived: false, limit: 10).contains {
+            #expect(try await store.entries(includeArchived: false, offset: 0, limit: 10, filter: .none).contains {
                 $0.id == deferredID
             })
         }

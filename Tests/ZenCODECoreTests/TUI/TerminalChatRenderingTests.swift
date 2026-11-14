@@ -41,51 +41,51 @@ struct TerminalChatRenderingTests {
 
     @Test
     func chatLineInsetIsAppliedOnlyAtLineStarts() {
-        var isAtLineStart = true
+        var state = TerminalChatTextFormatting.ChatLineInsetState(isAtLineStart: true)
         #expect(
             TerminalChatTextFormatting.chatLineInsetApplied(
                 to: "ciao\nmondo",
                 prefix: " ",
-                isAtLineStart: &isAtLineStart
+                state: &state
             ) == " ciao\n mondo"
         )
-        #expect(isAtLineStart == false)
+        #expect(state.isAtLineStart == false)
 
         #expect(
             TerminalChatTextFormatting.chatLineInsetApplied(
                 to: "!",
                 prefix: " ",
-                isAtLineStart: &isAtLineStart
+                state: &state
             ) == "!"
         )
-        #expect(isAtLineStart == false)
+        #expect(state.isAtLineStart == false)
 
         #expect(
             TerminalChatTextFormatting.chatLineInsetApplied(
                 to: "\nOK",
                 prefix: " ",
-                isAtLineStart: &isAtLineStart
+                state: &state
             ) == "\n OK"
         )
     }
 
     @Test
     func chatSpacingNormalizationLimitsVisibleBlankRowsAcrossWrites() {
-        var trailingNewlineCount = 0
+        var state = TerminalChatTextFormatting.ChatSpacingState()
 
         let first = TerminalChatTextFormatting.chatSpacingNormalized(
             "Thinking\n\n",
-            trailingNewlineCount: &trailingNewlineCount
+            state: &state
         )
         let second = TerminalChatTextFormatting.chatSpacingNormalized(
             "\n🛠️  Read\n\n\nNext",
-            trailingNewlineCount: &trailingNewlineCount
+            state: &state
         )
 
         #expect(first == "Thinking\n\n")
         #expect(second == "🛠️  Read\n\nNext")
         #expect(!("\(first)\(second)".contains("\n\n\n")))
-        #expect(trailingNewlineCount == 0)
+        #expect(state.trailingNewlineCount == 0)
     }
 
     @Test
@@ -283,19 +283,19 @@ struct TerminalChatRenderingTests {
 
     @Test
     func toolOutputSpacingLeavesABlankRowAfterUnterminatedAssistantContent() {
-        var trailingNewlineCount = 0
-        TerminalChatTextFormatting.updateTrailingNewlineCount(
+        var state = TerminalChatTextFormatting.ChatSpacingState()
+        TerminalChatTextFormatting.updateChatSpacingState(
             afterPreserving: "Risposta del modello.",
-            trailingNewlineCount: &trailingNewlineCount
+            state: &state
         )
 
         let separator = TerminalChatTextFormatting.chatSpacingNormalized(
             "\n\n",
-            trailingNewlineCount: &trailingNewlineCount
+            state: &state
         )
 
         #expect("Risposta del modello.\(separator)🛠️ tool" == "Risposta del modello.\n\n🛠️ tool")
-        #expect(trailingNewlineCount == 2)
+        #expect(state.trailingNewlineCount == 2)
     }
 
     @Test
@@ -815,7 +815,8 @@ struct TerminalChatRenderingTests {
             )
 
         #expect(
-            TerminalStatusBar.generationTokenCountsFragment(metrics) == "c:800 p:120 g:32"
+            TerminalStatusBar.styledGenerationTokenCountsFragment(metrics)
+                .map(TerminalANSIText.stripANSI) == "c:800 p:120 g:32"
         )
     }
 
@@ -912,30 +913,30 @@ struct TerminalChatRenderingTests {
         }
 
         #expect(
-            TerminalStatusBar.generationThroughputFragment(
+            TerminalStatusBar.styledGenerationThroughputFragment(
                 metrics(processed: 1_200, target: 8_000, rate: 512)
-            ) == "p:1.2k/8.0k 512.0 tok/s"
+            ).map(TerminalANSIText.stripANSI) == "p:1.2k/8.0k 512.0 tok/s"
         )
         #expect(
-            TerminalStatusBar.generationThroughputFragment(
+            TerminalStatusBar.styledGenerationThroughputFragment(
                 metrics(processed: 0, target: 8_000, rate: nil)
-            ) == "p:0/8.0k"
+            ).map(TerminalANSIText.stripANSI) == "p:0/8.0k"
         )
         #expect(
-            TerminalStatusBar.generationThroughputFragment(
+            TerminalStatusBar.styledGenerationThroughputFragment(
                 metrics(processed: 800, target: 25_000, rate: 64.26)
-            ) == "p:800/25k 64.3 tok/s"
+            ).map(TerminalANSIText.stripANSI) == "p:800/25k 64.3 tok/s"
         )
         // An unusable rate is dropped, the progress stays.
         #expect(
-            TerminalStatusBar.generationThroughputFragment(
+            TerminalStatusBar.styledGenerationThroughputFragment(
                 metrics(processed: 10, target: 100, rate: .infinity)
-            ) == "p:10/100"
+            ).map(TerminalANSIText.stripANSI) == "p:10/100"
         )
         #expect(
-            TerminalStatusBar.generationThroughputFragment(
+            TerminalStatusBar.styledGenerationThroughputFragment(
                 metrics(processed: 10, target: 100, rate: -3)
-            ) == "p:10/100"
+            ).map(TerminalANSIText.stripANSI) == "p:10/100"
         )
     }
 
@@ -1445,7 +1446,11 @@ struct TerminalChatRenderingTests {
             updatedAt: Date()
         )
 
-        let rendered = TerminalChat.renderSubAgentOverview([snapshot])
+        let rendered = TerminalSubAgentOverviewLayout.render(
+            [snapshot],
+            modelTitleResolver: { $0 },
+            toolPresentationsByAgentID: [:]
+        )
         let visibleLines = rendered
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { ansiStripped(String($0)) }
@@ -1498,7 +1503,11 @@ struct TerminalChatRenderingTests {
             )
         ]
 
-        let visibleLines = ansiStripped(TerminalChat.renderSubAgentOverview(snapshots))
+        let visibleLines = ansiStripped(TerminalSubAgentOverviewLayout.render(
+            snapshots,
+            modelTitleResolver: { $0 },
+            toolPresentationsByAgentID: [:]
+        ))
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
         let summaryIndex = visibleLines.firstIndex { $0.contains("3 total") }
@@ -1546,7 +1555,11 @@ struct TerminalChatRenderingTests {
             updatedAt: Date()
         )
 
-        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+        let rendered = ansiStripped(TerminalSubAgentOverviewLayout.render(
+            [snapshot],
+            modelTitleResolver: { $0 },
+            toolPresentationsByAgentID: [:]
+        ))
 
         #expect(rendered.contains("model: gpt-5"))
         #expect(rendered.contains("💬 reading project files"))
@@ -1572,7 +1585,11 @@ struct TerminalChatRenderingTests {
             updatedAt: Date()
         )
 
-        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+        let rendered = ansiStripped(TerminalSubAgentOverviewLayout.render(
+            [snapshot],
+            modelTitleResolver: { $0 },
+            toolPresentationsByAgentID: [:]
+        ))
         let lines = rendered.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
         #expect(rendered.contains("agent: Developer"))
@@ -1661,7 +1678,11 @@ struct TerminalChatRenderingTests {
             id == "gpt-5" ? "GPT-5 Turbo" : id
         }
         let rendered = ansiStripped(
-            TerminalChat.renderSubAgentOverview([snapshot], modelTitleResolver: resolver)
+            TerminalSubAgentOverviewLayout.render(
+                [snapshot],
+                modelTitleResolver: resolver,
+                toolPresentationsByAgentID: [:]
+            )
         )
 
         #expect(rendered.contains("model: GPT-5 Turbo"))
@@ -1692,7 +1713,11 @@ struct TerminalChatRenderingTests {
             }
         }
         let rendered = ansiStripped(
-            TerminalChat.renderSubAgentOverview([snapshot], modelTitleResolver: resolver)
+            TerminalSubAgentOverviewLayout.render(
+                [snapshot],
+                modelTitleResolver: resolver,
+                toolPresentationsByAgentID: [:]
+            )
         )
 
         #expect(rendered.contains("model: GPT-5.6 Terra"))
@@ -1719,7 +1744,11 @@ struct TerminalChatRenderingTests {
             TerminalChat.resolvedSubAgentModelTitle(for: $0)
         }
         let rendered = ansiStripped(
-            TerminalChat.renderSubAgentOverview([snapshot], modelTitleResolver: resolver)
+            TerminalSubAgentOverviewLayout.render(
+                [snapshot],
+                modelTitleResolver: resolver,
+                toolPresentationsByAgentID: [:]
+            )
         )
 
         #expect(rendered.contains("model: glm-5.2"))
@@ -1756,7 +1785,11 @@ struct TerminalChatRenderingTests {
             updatedAt: Date()
         )
 
-        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+        let rendered = ansiStripped(TerminalSubAgentOverviewLayout.render(
+            [snapshot],
+            modelTitleResolver: { $0 },
+            toolPresentationsByAgentID: [:]
+        ))
 
         #expect(rendered.components(separatedBy: "🤔 thinking…").count - 1 == 1)
         #expect(!rendered.contains("private reasoning delta"))
@@ -1786,7 +1819,11 @@ struct TerminalChatRenderingTests {
             updatedAt: Date()
         )
 
-        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
+        let rendered = ansiStripped(TerminalSubAgentOverviewLayout.render(
+            [snapshot],
+            modelTitleResolver: { $0 },
+            toolPresentationsByAgentID: [:]
+        ))
 
         #expect(target == "needle")
         #expect(rendered.contains("🛠️  \(toolCall.name) needle"))
@@ -1823,7 +1860,6 @@ struct TerminalChatRenderingTests {
                 TerminalSubAgentOverviewLayout.render(
                     snapshots,
                     modelTitleResolver: { $0 },
-                    includesFinalResponses: false,
                     toolPresentationsByAgentID: [:],
                     rowBudget: rowBudget
                 )
@@ -1871,27 +1907,6 @@ struct TerminalChatRenderingTests {
         for index in 0..<agentCount {
             #expect(inline[sectionRows + index].contains("scout-\(index + 1)"))
         }
-    }
-
-    @Test
-    func subAgentOverviewPrintsOnlyTheCompleteFinalContentBlock() {
-        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
-            id: "agent_final",
-            name: "researcher",
-            role: "researcher",
-            status: .idle,
-            pending: false,
-            latestContentPreview: "Final answer in one complete block.",
-            latestOutput: "Earlier tool commentary. Final answer in one complete block.",
-            latestError: nil,
-            createdAt: Date(),
-            updatedAt: Date()
-        )
-
-        let rendered = ansiStripped(TerminalChat.renderSubAgentOverview([snapshot]))
-
-        #expect(rendered.contains("✅ Final answer in one complete block."))
-        #expect(!rendered.contains("Earlier tool commentary"))
     }
 
     @Test
@@ -1967,7 +1982,8 @@ struct TerminalChatRenderingTests {
         return TerminalChat(
             configuration: configuration,
             stdinIsTerminal: false,
-            sessionRunner: sessionRunner
+            sessionRunner: sessionRunner,
+            telegramTransportFactory: nil
         )
     }
 }

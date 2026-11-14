@@ -191,15 +191,12 @@ public actor DirectExecJobRuntime {
     private final class Job {
         let id: String
         let command: String
-        let workingDirectory: String
-        let startedAt = Date()
         let process: Process
         let exitMonitor: FeatureProcessExitMonitor
         let outputReaders: [DirectExecJobOutputReader]
         let transcript: DirectExecJobTranscript
         var status: JobStatus = .running
         var exitCode: Int32?
-        var finishedAt: Date?
         var killRequested = false
         var killReason: String?
         var timeoutTask: Task<Void, Never>?
@@ -213,7 +210,6 @@ public actor DirectExecJobRuntime {
         init(
             id: String,
             command: String,
-            workingDirectory: String,
             process: Process,
             exitMonitor: FeatureProcessExitMonitor,
             outputReaders: [DirectExecJobOutputReader],
@@ -221,7 +217,6 @@ public actor DirectExecJobRuntime {
         ) {
             self.id = id
             self.command = command
-            self.workingDirectory = workingDirectory
             self.process = process
             self.exitMonitor = exitMonitor
             self.outputReaders = outputReaders
@@ -305,7 +300,6 @@ public actor DirectExecJobRuntime {
         let job = Job(
             id: jobID,
             command: command,
-            workingDirectory: workingDirectory.path,
             process: process,
             exitMonitor: exitMonitor,
             outputReaders: outputReaders,
@@ -514,7 +508,6 @@ public actor DirectExecJobRuntime {
         job.outputReaders.forEach { $0.finish() }
         job.status = job.killRequested ? .killed : .exited
         job.exitCode = exitCode
-        job.finishedAt = Date()
         job.process.terminationHandler = nil
         job.timeoutTask?.cancel()
         job.timeoutTask = nil

@@ -41,24 +41,6 @@ struct BrowserNetworkObservation: Sendable {
         self.bodyCandidates = bodyCandidates
     }
 
-    /// Preserves the original observation initializer for callers that do not
-    /// need the additive filtering, summary, or body-capture metadata.
-    init(entries: [BrowserNetworkEntry], truncated: Bool) {
-        self.init(
-            entries: entries,
-            truncated: truncated,
-            captureTruncated: truncated,
-            totalCapturedEntries: entries.count,
-            totalMatchingEntries: entries.count,
-            summary: BrowserNetworkSummary.make(
-                capturedEntryCount: entries.count,
-                matchingEntries: entries,
-                returnedEntryCount: entries.count,
-                redirectCount: 0
-            )
-        )
-    }
-
     func capturingBodies(from responseBodyFetcher: any BrowserNetworkResponseBodyFetching) async -> Self {
         guard !bodyCandidates.isEmpty else { return withoutBodyCandidates() }
         let bodies = await BrowserNetworkBodyCapture.capture(from: responseBodyFetcher, candidates: bodyCandidates)

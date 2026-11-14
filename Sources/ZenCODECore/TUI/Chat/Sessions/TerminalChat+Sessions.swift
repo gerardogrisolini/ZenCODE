@@ -9,91 +9,16 @@ import Foundation
 import ToolCore
 
 extension TerminalChat {
-    /// `/sessions`: adapter of ``ChatSessionController/runSessionsCommand(line:)``.
-    public func handleSessionsCommand(_ command: String) async {
-        await writeSessionNotices(await chatSession.runSessionsCommand(line: command).notices)
-    }
-
-    /// Resets the runtime conversation and starts a fresh, unsaved session.
-    /// Replaces the former `/clear` command. Adapter of
-    /// ``ChatSessionController/newSessionCommand()``, which in the terminal's
-    /// slot starts a new incarnation through the host
-    /// (``ChatSessionHost/newSession(in:sessionID:)``, with an id of the
-    /// slot's `terminal` prefix, the format of ``newTerminalSessionID()``): a
-    /// new controller from the launch profile, so the model, thinking level,
-    /// agent, tools, and skills chosen before are not kept. The terminal's
-    /// steps around the new session run in ``incarnationDidChange(reason:)``:
-    /// ``ChatIncarnationChange/newSessionWillStart`` on the controller being
-    /// replaced, ``ChatIncarnationChange/newSessionDidStart`` on the new one.
-    public func startNewSession() async {
-        await writeSessionNotices(await chatSession.newSessionCommand().notices)
-    }
-
-    /// `/sessions`: adapter of ``ChatSessionController/savedSessionListCommand()``.
-    public func handleSavedSessionList() async {
-        await writeSessionNotices(await chatSession.savedSessionListCommand().notices)
-    }
-
-    /// `/sessions delete`: adapter of
-    /// ``ChatSessionController/savedSessionDeleteCommand()``.
-    public func handleSavedSessionDelete() async {
-        await writeSessionNotices(await chatSession.savedSessionDeleteCommand().notices)
-    }
-
-    /// `/sessions save`: adapter of
-    /// ``ChatSessionController/saveActiveSessionCommand()``, with the context
-    /// window of the status bar (``commandContextWindow()``).
-    public func saveActiveSession() async {
-        await writeSessionNotices(await chatSession.saveActiveSessionCommand().notices)
-    }
-
-    /// `/sessions <name>`: adapter of
-    /// ``ChatSessionController/saveSessionCommand(named:)``, with the context
-    /// window of the status bar (``commandContextWindow()``).
-    public func saveCurrentSession(named rawName: String) async {
-        await writeSessionNotices(await chatSession.saveSessionCommand(named: rawName).notices)
-    }
-
-    /// `/sessions compact`: adapter of
-    /// ``ChatSessionController/compactSessionCommand()``; the status bar
-    /// bounds the compaction and shows its result
-    /// (``ChatIncarnationChange/sessionDidCompact(contextWindow:)``).
-    public func compactCurrentSession() async {
-        await writeSessionNotices(await chatSession.compactSessionCommand().notices)
-    }
-
-    /// See ``ChatSessionController/recordSavedSessionIndex(_:)``.
-    public func recordSavedSessionIndex(_ savedSession: TerminalSavedSession) {
-        chatSession.recordSavedSessionIndex(savedSession)
-    }
-
-    public func loadSavedSession(_ savedSession: TerminalSavedSession) async throws {
-        try await loadSavedSession(savedSession, checkpointEntryID: nil)
-    }
-
-    /// Loads a saved session, optionally restoring from a specific checkpoint
-    /// entry in the tree.  When `checkpointEntryID` is provided the message
-    /// history is rebuilt from the root-to-entry path and a new branch is
-    /// started from that entry. Adapter of
-    /// ``ChatSessionController/loadSavedSession(_:checkpointEntryID:)``, which
-    /// in the terminal's slot loads the session into a new incarnation
-    /// through the host (``ChatSessionHost/loadSavedSession(in:name:checkpointEntryID:)``):
-    /// a new controller from the launch profile with the selection saved in
-    /// the session. The terminal's own steps run in the `savedSession…` steps
-    /// of ``incarnationDidChange(reason:)``: the first on the controller being
-    /// replaced, the others on the new one, in the order they always ran.
-    public func loadSavedSession(
-        _ savedSession: TerminalSavedSession,
-        checkpointEntryID: String?
-    ) async throws {
-        let outcome = try await chatSession.loadSavedSession(
-            savedSession,
-            checkpointEntryID: checkpointEntryID
-        )
-        await writeSessionNotices(outcome.notices)
-    }
-
     // MARK: - Saved-session load steps
+
+    // A saved session is loaded by
+    // `ChatSessionController.loadSavedSession(_:checkpointEntryID:)`, which in
+    // the terminal's slot loads the session into a new incarnation through the
+    // host (`ChatSessionHost.loadSavedSession(in:name:checkpointEntryID:)`): a
+    // new controller from the launch profile with the selection saved in the
+    // session. The terminal's own steps below run in the `savedSession…` steps
+    // of `incarnationDidChange(reason:)`: the first on the controller being
+    // replaced, the others on the new one, in the order they always ran.
 
     /// ``ChatIncarnationChange/savedSessionWillLoad``, before the active
     /// session is discarded: the task-graph observer stops and the response
@@ -335,60 +260,5 @@ extension TerminalChat {
             .map(String.init)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nilIfBlank ?? "restored tool output"
-    }
-
-    /// See ``ChatSessionController/savedSessionDisplayHistory(_:)``.
-    public nonisolated static func savedSessionDisplayHistory(
-        _ savedSession: TerminalSavedSession
-    ) -> [AgentRuntimeMessage] {
-        ChatSessionController.savedSessionDisplayHistory(savedSession)
-    }
-
-    public func renderSavedSessionList(_ sessions: [TerminalSavedSession]) async {
-        await writeSessionNotice(
-            .savedSessions(
-                sessions.map(ChatSavedSessionSummary.init),
-                activeName: activeSavedSessionName
-            )
-        )
-    }
-
-    public func savedSessionSelectionItems(
-        _ sessions: [TerminalSavedSession]
-    ) -> [TerminalCheckboxMenuItem<String>] {
-        TerminalInteractionHost.menuItems(
-            ChatSessionController.savedSessionChoiceItems(sessions)
-        )
-    }
-
-    public func savedSessionDetail(_ session: TerminalSavedSession) -> String {
-        ChatSessionNoticeText.savedSessionDetail(ChatSavedSessionSummary(session))
-    }
-
-    /// See ``ChatSessionController/restoredAgent(for:)``.
-    public func restoredAgent(
-        for savedSession: TerminalSavedSession
-    ) throws -> AgentProfile? {
-        try chatSession.restoredAgent(for: savedSession)
-    }
-
-    public nonisolated static func renderSessionSelectionUsage() -> String {
-        ChatSessionNoticeText.text(for: .sessionSelectionUsage)
-    }
-
-    // MARK: - Checkpoint tree operations
-
-    /// Restores the session from a specific checkpoint entry, branching from
-    /// that point.  Subsequent messages will form a new branch in the tree.
-    /// Adapter of ``ChatSessionController/restoreFromCheckpoint(_:entryID:)``.
-    public func restoreFromCheckpoint(
-        _ savedSession: TerminalSavedSession,
-        entryID: String
-    ) async throws {
-        let outcome = try await chatSession.restoreFromCheckpoint(
-            savedSession,
-            entryID: entryID
-        )
-        await writeSessionNotices(outcome.notices)
     }
 }

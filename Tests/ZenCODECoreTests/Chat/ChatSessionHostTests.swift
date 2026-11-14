@@ -426,7 +426,7 @@ struct ChatSessionHostTests {
             let reopened = try await host.newSession(in: first, sessionID: "first-again")
             #expect(observed == [nil, "first-again"])
             #expect(host.incarnation(in: first)?.epoch == reopened.epoch)
-            host.removeIncarnationObserver(token, from: first)
+            host.slots[first]?.incarnationObservers.removeValue(forKey: token)
 
             // Shutdown: every slot ends, the fence latches, and a second call
             // changes nothing.

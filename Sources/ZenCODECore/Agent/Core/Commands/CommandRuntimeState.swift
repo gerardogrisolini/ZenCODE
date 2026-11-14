@@ -113,12 +113,6 @@ struct WorkflowCommandRuntimeState: Sendable, Equatable {
         pendingSignal != nil
     }
 
-    /// The message shown to the coordinator as "what you asked last", derived
-    /// from the armed signal.
-    var pendingCoordinatorMessage: String? {
-        pendingSignal?.transcriptMessage
-    }
-
     /// Projects authoritative persisted state. Only legacy checkpoints without
     /// workflow metadata retain the old heading protocol until their first resume.
     @discardableResult
@@ -155,10 +149,6 @@ struct WorkflowCommandRuntimeState: Sendable, Equatable {
         pendingSignal = .recoverableFailure(
             reason.nilIfBlank ?? PlanningCommandKernel.workflowUnknownFailureReason
         )
-    }
-
-    mutating func disarm() {
-        pendingSignal = nil
     }
 
     mutating func recordReply(_ reply: String) -> Bool {

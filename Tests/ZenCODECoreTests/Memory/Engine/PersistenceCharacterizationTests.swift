@@ -211,7 +211,7 @@ import Testing
 
         try await MemoryEmbedding.withProvider(nil) {
             let store = try await MemoryGraphStore.open(graphURL: file)
-            #expect(try await store.entries(includeArchived: true, limit: 10).count == 2)
+            #expect(try await store.entries(includeArchived: true, offset: 0, limit: 10, filter: .none).count == 2)
             #expect(try await store.search(query: "swift linux", includeArchived: false, limit: 5).isEmpty == false)
             #expect(try await store.entry(id: "mem_vec")?.embedding == Self.fixtureVector)
         }
@@ -282,7 +282,7 @@ import Testing
 
     /// Through the engine: a no-op transaction and an explicit save with nothing
     /// pending keep every file identical.
-    @Test func engineNoOpTransactionAndSaveNeverTouchTheDisk() async throws {
+    @Test func engineNoOpTransactionNeverTouchesTheDisk() async throws {
         let directory = try Self.makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("memory.graph.json")
@@ -298,7 +298,6 @@ import Testing
             let entry = try #require(graph.memories["mem_vec"])
             graph.memories["mem_vec"]?.setEmbedding(entry.embedding, model: entry.embeddingModel)
         }
-        try await engine.save()
 
         #expect(count == 2)
         #expect(try DirectorySnapshot(directory) == before)

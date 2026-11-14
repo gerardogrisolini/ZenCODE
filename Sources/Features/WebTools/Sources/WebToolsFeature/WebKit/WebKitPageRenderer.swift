@@ -367,11 +367,6 @@ final class WebKitPageRenderer: NSObject, WKNavigationDelegate {
         case allow
         case cancelMainFrame(any Error)
         case cancelSubframe
-
-        var isAllowed: Bool {
-            if case .allow = self { return true }
-            return false
-        }
     }
 
     nonisolated static func decide(

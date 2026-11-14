@@ -248,6 +248,32 @@ extension ZenCODEACPBridge {
     func selectedAgentIDForTesting(sessionID: String) -> String? {
         sessions[sessionID]?.selectedAgent?.id
     }
+
+    /// Runs a new incarnation of `configuration.sessionID` in the host and
+    /// publishes its ACP state: what `session/new` and `session/load` do
+    /// between their fences, in one step, for the tests that install a
+    /// session directly. The runner session is not created. An entry of an
+    /// earlier incarnation with the same id is replaced and its slot closed,
+    /// as a close followed by a load of the same id would leave it.
+    func installSession(
+        configuration: AgentCoreSessionConfiguration,
+        selectedAgent: AgentProfile? = nil
+    ) async throws -> SessionState {
+        if let replaced = sessions.removeValue(forKey: configuration.sessionID) {
+            await host.closeSlot(replaced.slotID, runtimeSession: .keep)
+        }
+        let incarnation = try await openACPSession(
+            sessionID: configuration.sessionID,
+            cwd: configuration.workingDirectory.path
+        )
+        let state = sessionState(
+            configuration: configuration,
+            selectedAgent: selectedAgent,
+            incarnation: incarnation
+        )
+        sessions[configuration.sessionID] = state
+        return state
+    }
 }
 
 

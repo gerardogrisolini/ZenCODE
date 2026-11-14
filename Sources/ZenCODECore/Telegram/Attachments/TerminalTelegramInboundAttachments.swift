@@ -69,13 +69,6 @@ public enum TerminalTelegramInboundAttachmentGate {
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/vnd.oasis.opendocument.text",
     ]
-    /// Images (photos are always JPEG on Telegram; documents may carry them).
-    public static let allowedImageMIMETypes: Set<String> = [
-        "image/jpeg",
-        "image/png",
-        "image/webp",
-        "image/gif",
-    ]
     /// Bot API download budget for bots.
     public static let maximumDownloadBytes = 20 * 1_024 * 1_024
     /// Filename characters that never survive sanitization.
@@ -289,16 +282,6 @@ public actor TerminalTelegramInboundAttachmentStore {
         return record
     }
 
-    /// Removes one stored attachment. Idempotent.
-    func discard(filename: String, chatID: Int64) {
-        guard var chatAttachments = stored[chatID],
-              let record = chatAttachments.removeValue(forKey: filename) else {
-            return
-        }
-        try? fileManager.removeItem(at: record.url)
-        stored[chatID] = chatAttachments.isEmpty ? nil : chatAttachments
-    }
-
     /// Deterministic teardown: removes every stored temporary for a chat
     /// (or every chat when `chatID` is nil) and returns how many files were
     /// deleted. Called on `stop()`, unbind and session teardown.
@@ -318,11 +301,7 @@ public actor TerminalTelegramInboundAttachmentStore {
         return removed
     }
 
-    /// Number of received-but-unconsumed temporaries for a chat.
-    func storedCount(chatID: Int64) -> Int {
-        stored[chatID]?.count ?? 0
-    }
-
+    /// Names of the received-but-unconsumed temporaries for a chat, sorted.
     func storedFilenames(chatID: Int64) -> [String] {
         Array((stored[chatID]?.keys ?? [:].keys)).sorted()
     }

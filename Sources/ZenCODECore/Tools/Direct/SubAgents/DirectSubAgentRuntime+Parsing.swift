@@ -33,14 +33,6 @@ private struct RequestedAgentPayloadSignature: Equatable {
 }
 
 extension DirectSubAgentRuntime {
-    public static func defaultProfileResolver(
-        for payload: RequestedAgentPayload
-    ) -> AgentProfile? {
-        let agents = (try? AgentProfileStore.loadRequired())
-            ?? AgentProfileStore.defaultProfiles()
-        return agentProfile(matching: payload, in: agents)
-    }
-
     /// Production resolver. Missing or invalid persisted profiles fail closed;
     /// the prompt builder applies the same rule and therefore exposes the same
     /// profile set the runtime accepts.
@@ -73,20 +65,6 @@ extension DirectSubAgentRuntime {
             modelSelection: payload.modelSelection,
             modelID: payload.requestedModelID,
             swiftFeatureRuntime: nil
-        )
-    }
-
-    /// Source-compatible entry point that resolves against the authoritative
-    /// live snapshot. Production batch creation passes its already captured
-    /// snapshot to the overload in `DirectSubAgentRuntime+ModelRouting`.
-    public static func resolvingModelBinding(
-        for payload: RequestedAgentPayload,
-        profile: AgentProfile
-    ) throws -> RequestedAgentPayload {
-        try resolvingModelBinding(
-            for: payload,
-            profile: profile,
-            snapshot: AgentDelegationCatalog.liveSnapshot()
         )
     }
 
@@ -485,13 +463,6 @@ extension DirectSubAgentRuntime {
             }
         }
         return nil
-    }
-
-    public static func firstArray(
-        _ keys: [String],
-        in arguments: [String: JSONValue]
-    ) -> [JSONValue]? {
-        DirectArgumentValues.firstArray(keys, in: arguments)
     }
 
     public static func firstStringList(

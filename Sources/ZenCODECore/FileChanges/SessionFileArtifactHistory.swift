@@ -38,19 +38,13 @@ public actor SessionFileArtifactHistory {
         self.sessionID = sessionID
     }
 
-    public func reset(for sessionID: String) {
-        self.sessionID = sessionID
-        nextTurnNumber = 1
-        turns.removeAll(keepingCapacity: false)
-        pendingTurns.removeAll(keepingCapacity: false)
-    }
-
     private func reserveNumber() -> UInt64 {
         defer { nextTurnNumber += 1 }
         return nextTurnNumber
     }
 
-    /// Tokens are invalid after reset, even when the session ID is reused.
+    /// Opens a pending turn and returns its token; `nil` when `sessionID` is
+    /// not the session of this history.
     func beginTurn(sessionID: String) -> UUID? {
         guard self.sessionID == nil || self.sessionID == sessionID else { return nil }
         self.sessionID = sessionID

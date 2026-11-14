@@ -131,7 +131,7 @@ struct MemoryCleanupTests {
     @Test
     func staleRuleSkipsRecalledAndSupersededEntries() throws {
         var recalled = Self.entry("recalled", daysAgo: 1_000)
-        recalled.touch()
+        recalled.accessCount &+= 1
         var superseded = Self.entry("superseded", daysAgo: 1_000)
         superseded.supersededBy = "other"
         let original = Self.graph([
@@ -217,10 +217,12 @@ struct MemoryCleanupTests {
         ])
         original.tags["tag:orphan"] = TagEntry(name: "orphan")
         original.tags["tag:used"]?.count = 9
-        original.addCluster(ClusterEntry(id: "kept"))
+        let kept = ClusterEntry(id: "kept")
+        original.clusters[kept.id] = kept
         original.assign(memoryID: "a", toCluster: "kept")
         original.clusters["cluster:kept"]?.memberCount = 7
-        original.addCluster(ClusterEntry(id: "empty"))
+        let empty = ClusterEntry(id: "empty")
+        original.clusters[empty.id] = empty
         // An edge into the orphan tag from a memory that does not carry it.
         original.addEdge(from: "a", to: "tag:orphan", kind: .hasTag)
 

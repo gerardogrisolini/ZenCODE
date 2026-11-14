@@ -176,38 +176,32 @@ enum SetupSection: Equatable, Hashable {
     case dataManagement
     case finish, cancel
 
-    /// Short compatibility spelling used by callers that refer to the local
-    /// runtime simply as "DS4".
-    static var ds4: SetupSection { .ds4Runtime }
-
     private struct Descriptor {
         let title: String
         let category: SetupSectionCategory
         let requiresConfiguredModels: Bool
-        let aliases: Set<String>
     }
 
     private static let descriptors: [SetupSection: Descriptor] = [
-        .providersAndModels: .init(title: "Providers and models", category: .required, requiresConfiguredModels: false, aliases: ["providers", "provider", "models", "model", "providers and models", "providers/models", "remote"]),
-        .telegram: .init(title: "Telegram remote control", category: .optional, requiresConfiguredModels: true, aliases: ["telegram", "remote control", "bot"]),
-        .features: .init(title: "Features", category: .recommended, requiresConfiguredModels: false, aliases: ["features", "feature", "tools", "swift features", "enable features", "disable features"]),
-        .agents: .init(title: "Agents", category: .required, requiresConfiguredModels: false, aliases: ["agents", "agent", "profiles", "agent profiles"]),
-        .agentModels: .init(title: "Agent model bindings", category: .recommended, requiresConfiguredModels: true, aliases: ["agent models", "agent model bindings", "agent bindings", "agent capability", "models", "capability", "agent models & capability"]),
-        .responseLanguage: .init(title: "Response language", category: .recommended, requiresConfiguredModels: false, aliases: ["language", "response language", "locale", "response_language"]),
-        .memoryEmbedding: .init(title: "Memory embeddings", category: .recommended, requiresConfiguredModels: false, aliases: ["memory embeddings", "memory embedding", "embeddings", "embedding", "bm25"]),
-        .ds4Runtime: .init(title: "DS4 local runtime (in-process engine)", category: .optional, requiresConfiguredModels: false, aliases: ["ds4", "ds4 runtime", "ds4 setup", "local ds4", "local runtime", "ds4 engine", "in-process engine"]),
-        .voiceMode: .init(title: "Voice mode", category: .optional, requiresConfiguredModels: false, aliases: ["voice", "voice mode", "speech", "dictation", "sherpa", "sherpa-onnx"]),
-        .scheduledPrompts: .init(title: "Scheduled prompts (ZenCRON)", category: .optional, requiresConfiguredModels: false, aliases: ["scheduled prompts", "scheduled", "cron", "zencron", "crontab"]),
-        .dataManagement: .init(title: "Data management", category: .optional, requiresConfiguredModels: false, aliases: ["data", "data management", "backup", "backups", "export", "import", "transfer", "manage data"]),
-        .finish: .init(title: "Finish setup", category: .finish, requiresConfiguredModels: false, aliases: ["finish", "done", "exit", "quit", "end", "stop"]),
-        .cancel: .init(title: "Cancel without saving", category: .finish, requiresConfiguredModels: false, aliases: ["cancel", "abort", "discard", "quit without saving"])
+        .providersAndModels: .init(title: "Providers and models", category: .required, requiresConfiguredModels: false),
+        .telegram: .init(title: "Telegram remote control", category: .optional, requiresConfiguredModels: true),
+        .features: .init(title: "Features", category: .recommended, requiresConfiguredModels: false),
+        .agents: .init(title: "Agents", category: .required, requiresConfiguredModels: false),
+        .agentModels: .init(title: "Agent model bindings", category: .recommended, requiresConfiguredModels: true),
+        .responseLanguage: .init(title: "Response language", category: .recommended, requiresConfiguredModels: false),
+        .memoryEmbedding: .init(title: "Memory embeddings", category: .recommended, requiresConfiguredModels: false),
+        .ds4Runtime: .init(title: "DS4 local runtime (in-process engine)", category: .optional, requiresConfiguredModels: false),
+        .voiceMode: .init(title: "Voice mode", category: .optional, requiresConfiguredModels: false),
+        .scheduledPrompts: .init(title: "Scheduled prompts (ZenCRON)", category: .optional, requiresConfiguredModels: false),
+        .dataManagement: .init(title: "Data management", category: .optional, requiresConfiguredModels: false),
+        .finish: .init(title: "Finish setup", category: .finish, requiresConfiguredModels: false),
+        .cancel: .init(title: "Cancel without saving", category: .finish, requiresConfiguredModels: false)
     ]
 
     private var descriptor: Descriptor { Self.descriptors[self]! }
     var title: String { descriptor.title }
     var category: SetupSectionCategory { descriptor.category }
     var requiresConfiguredModels: Bool { descriptor.requiresConfiguredModels }
-    func matches(_ value: String) -> Bool { descriptor.aliases.contains(value) }
 
     /// Whether the section only stages its changes in the setup session, so
     /// that an error inside it discards all of them. Features and Scheduled

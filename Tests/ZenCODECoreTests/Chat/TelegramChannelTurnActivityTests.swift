@@ -586,12 +586,12 @@ struct TelegramChannelTurnActivityTests {
             // the binding: awaiting it awaits both.
             await channel.taskGraphObservationTask?.value
             #expect(Self.observesTheTaskGraph(channel, of: second))
-            #expect(first.taskGraphObserverTask == nil)
+            #expect(first.taskGraphObserver.observerTask == nil)
 
             _ = await slot.host.deactivateTelegram(in: slot.id)
             #expect(channel.taskGraphObservationTask == nil)
             #expect(channel.taskGraphObservedController == nil)
-            #expect(second.taskGraphObserverTask == nil)
+            #expect(second.taskGraphObserver.observerTask == nil)
         }
     }
 
@@ -602,7 +602,7 @@ struct TelegramChannelTurnActivityTests {
     private static func observesTheTaskGraph(
         _ channel: TelegramChannel, of controller: ChatSessionController
     ) -> Bool {
-        channel.taskGraphObservedController === controller && controller.taskGraphObserverTask != nil
+        channel.taskGraphObservedController === controller && controller.taskGraphObserver.observerTask != nil
     }
 
     @ChatSessionActor

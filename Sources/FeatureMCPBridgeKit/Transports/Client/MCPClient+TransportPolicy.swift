@@ -31,19 +31,6 @@ extension MCPClient {
         )
     }
 
-    /// Wraps classified `.serverError` policy logic in one place so the bridge
-    /// and its tests share an identical classification path. Production routing
-    /// inlines `classifiedPolicyError` with this kind; direct calls serve
-    /// focused policy classification tests.
-    func serverError(_ error: MCPErrorResponse, requestMethod: String?) -> MCPClientError {
-        classifiedPolicyError(
-            kind: .serverError,
-            message: error.message,
-            requestMethod: requestMethod,
-            errorCode: error.code
-        ) ?? .serverError(code: error.code, message: error.message)
-    }
-
     func exitError(for process: Process) -> MCPClientError {
         let stderrMessage = currentStderrMessage()
         if let policyError = classifiedPolicyError(

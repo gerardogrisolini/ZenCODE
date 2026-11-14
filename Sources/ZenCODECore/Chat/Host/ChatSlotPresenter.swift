@@ -91,11 +91,6 @@ final class ChatSlotPresenter: ChatSessionPresenter {
         return activePresenter
     }
 
-    /// `true` between the start and the finish of a turn.
-    var isTurnOpen: Bool {
-        openTurnRequest != nil
-    }
-
     /// The turn in progress as a moved turn, for the channel it moves onto;
     /// `nil` when no turn runs.
     var movedTurn: ChatMovedTurn? {

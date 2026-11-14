@@ -130,16 +130,6 @@ extension ChatSessionController {
             ?? allowedToolNames
     }
 
-    func currentSystemPrompt(
-        allowedToolNames: Set<String>,
-        responseLanguageSection: String?
-    ) -> String {
-        currentPromptSections(
-            allowedToolNames: allowedToolNames,
-            responseLanguageSection: responseLanguageSection
-        ).combinedPrompt
-    }
-
     func currentPromptSections(
         allowedToolNames: Set<String>,
         responseLanguageSection: String?

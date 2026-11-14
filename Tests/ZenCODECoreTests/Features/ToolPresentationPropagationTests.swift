@@ -114,7 +114,7 @@ struct ToolPresentationPropagationTests {
         )
 
         let descriptors = await runtime.descriptors()
-        let output = try await runtime.executeIfAvailable(
+        let output = try await runtime.executeResultIfAvailable(
             toolCall: DirectAgentToolCall(
                 id: "feature-collision",
                 name: "feature.collision",
@@ -122,7 +122,7 @@ struct ToolPresentationPropagationTests {
                 argumentsJSON: "{}"
             ),
             workingDirectory: rootURL
-        )
+        )?.output
 
         #expect(descriptors.count == 1)
         #expect(descriptors.first?.presentation == firstDefinition)
@@ -178,7 +178,7 @@ struct ToolPresentationPropagationTests {
         )
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: featureRuntime,
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
         await executor.updateToolProviders([provider], sessionID: "collision-session")
 

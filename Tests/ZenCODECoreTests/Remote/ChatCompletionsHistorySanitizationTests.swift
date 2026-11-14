@@ -30,7 +30,8 @@ struct ChatCompletionsHistorySanitizationTests {
         ]
 
         let sanitized = RemoteGenerationClient.chatCompletionsWireHistoryMessages(
-            from: messages
+            from: messages,
+            replayPolicy: .currentToolRound(requiresPlaceholder: false)
         )
 
         #expect(sanitized.count == 4)
@@ -69,7 +70,8 @@ struct ChatCompletionsHistorySanitizationTests {
         ]
 
         let sanitized = RemoteGenerationClient.chatCompletionsWireHistoryMessages(
-            from: messages
+            from: messages,
+            replayPolicy: .currentToolRound(requiresPlaceholder: false)
         )
 
         #expect(sanitized.count == 4)
@@ -107,7 +109,8 @@ struct ChatCompletionsHistorySanitizationTests {
         ]
 
         let sanitized = RemoteGenerationClient.chatCompletionsWireHistoryMessages(
-            from: messages
+            from: messages,
+            replayPolicy: .currentToolRound(requiresPlaceholder: false)
         )
 
         let assistant = sanitized[2]
@@ -130,7 +133,7 @@ struct ChatCompletionsHistorySanitizationTests {
 
         let sanitized = RemoteGenerationClient.chatCompletionsWireHistoryMessages(
             from: messages,
-            requiresReasoningContentPlaceholder: true
+            replayPolicy: .currentToolRound(requiresPlaceholder: true)
         )
 
         let assistant = sanitized[2]
@@ -188,7 +191,8 @@ struct ChatCompletionsHistorySanitizationTests {
         ]
 
         let sanitized = RemoteGenerationClient.chatCompletionsWireHistoryMessages(
-            from: messages
+            from: messages,
+            replayPolicy: .currentToolRound(requiresPlaceholder: false)
         )
 
         #expect(sanitized.count == 2)

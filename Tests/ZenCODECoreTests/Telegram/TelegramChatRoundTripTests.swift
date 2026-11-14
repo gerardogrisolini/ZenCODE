@@ -29,7 +29,8 @@ struct TelegramChatRoundTripTests {
                     isDirectory: true
                 )
             ),
-            stdinIsTerminal: false
+            stdinIsTerminal: false,
+            telegramTransportFactory: nil
         )
         terminal.telegramChannel.linkedChatID = linkedChatID
         terminal.telegramChannel.controlState = TerminalTelegramControlState(
@@ -152,7 +153,8 @@ struct TelegramChatRoundTripTests {
                 workingDirectory: FileManager.default.temporaryDirectory
             ),
             stdinIsTerminal: false,
-            sessionRunner: runner
+            sessionRunner: runner,
+            telegramTransportFactory: nil
         )
         terminal.sessionID = sessionID
         let channel = terminal.telegramChannel
@@ -247,7 +249,8 @@ struct TelegramChatRoundTripTests {
                 workingDirectory: FileManager.default.temporaryDirectory
             ),
             stdinIsTerminal: false,
-            sessionRunner: runner
+            sessionRunner: runner,
+            telegramTransportFactory: nil
         )
         terminal.telegramChannel.linkedChatID = 42
         terminal.telegramChannel.controlState = TerminalTelegramControlState(
@@ -314,7 +317,8 @@ struct TelegramChatRoundTripTests {
                 workingDirectory: FileManager.default.temporaryDirectory
             ),
             stdinIsTerminal: false,
-            sessionRunner: runner
+            sessionRunner: runner,
+            telegramTransportFactory: nil
         )
         terminal.telegramChannel.linkedChatID = 42
         terminal.telegramChannel.controlState = TerminalTelegramControlState(

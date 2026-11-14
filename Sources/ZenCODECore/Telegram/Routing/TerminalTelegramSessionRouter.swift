@@ -135,10 +135,6 @@ public final class TerminalTelegramWireFence: Sendable {
         try await validateLease(lease)
         guard isCurrent.withLock({ $0 }), !Task.isCancelled else { throw CancellationError() }
     }
-
-    public func validate(chatID: Int64) async throws {
-        try await validate(chatID: chatID, topicID: lease.effectiveMessageThreadID)
-    }
 }
 
 public enum TerminalTelegramRouteDenial: Error, Equatable, Sendable {
@@ -151,7 +147,7 @@ public enum TerminalTelegramRouteDenial: Error, Equatable, Sendable {
 /// Actor-serialized authority for one globally paired private chat owner and
 /// that owner's personal session routes.
 ///
-/// Every mutation (`create`, `rebind`, `close`, `delete`, `prune`) builds a
+/// Every mutation (`create`, `rebind`, `close`, `prune`) builds a
 /// draft, persists it exactly once and publishes it only after the save
 /// succeeds; a mutation that changes nothing does not persist.
 public actor TerminalTelegramSessionRouter {
@@ -272,13 +268,6 @@ public actor TerminalTelegramSessionRouter {
         try mutate(lease) { route in
             AgentTelegramRouteManifest(topicID: route.topicID, roomID: route.roomID,
                 lifecycle: .closed, generation: route.generation + 1)
-        }
-    }
-
-    public func delete(_ lease: TerminalTelegramRouteLease) throws {
-        try mutate(lease) { route in
-            AgentTelegramRouteManifest(topicID: route.topicID, roomID: route.roomID,
-                lifecycle: .deleted, generation: route.generation + 1)
         }
     }
 

@@ -153,27 +153,6 @@ enum TerminalChatTextFormatting {
         return flushed
     }
 
-    static func removingLeadingLineBreaks(_ text: String) -> String {
-        guard let firstContentIndex = text.firstIndex(where: { character in
-            !character.unicodeScalars.allSatisfy(CharacterSet.newlines.contains)
-        }) else {
-            return ""
-        }
-        return String(text[firstContentIndex...])
-    }
-
-    static func chatSpacingNormalized(
-        _ text: String,
-        trailingNewlineCount: inout Int
-    ) -> String {
-        var state = ChatSpacingState(
-            trailingNewlineCount: trailingNewlineCount
-        )
-        let normalized = chatSpacingNormalized(text, state: &state)
-        trailingNewlineCount = state.trailingNewlineCount
-        return normalized
-    }
-
     static func chatSpacingNormalized(
         _ text: String,
         state: inout ChatSpacingState
@@ -256,17 +235,6 @@ enum TerminalChatTextFormatting {
         return output
     }
 
-    static func updateTrailingNewlineCount(
-        afterPreserving text: String,
-        trailingNewlineCount: inout Int
-    ) {
-        var state = ChatSpacingState(
-            trailingNewlineCount: trailingNewlineCount
-        )
-        updateChatSpacingState(afterPreserving: text, state: &state)
-        trailingNewlineCount = state.trailingNewlineCount
-    }
-
     static func updateChatSpacingState(
         afterPreserving text: String,
         state: inout ChatSpacingState
@@ -280,17 +248,6 @@ enum TerminalChatTextFormatting {
             return
         }
         _ = chatSpacingNormalized(visibleText, state: &state)
-    }
-
-    static func chatLineInsetApplied(
-        to text: String,
-        prefix: String,
-        isAtLineStart: inout Bool
-    ) -> String {
-        var state = ChatLineInsetState(isAtLineStart: isAtLineStart)
-        let rendered = chatLineInsetApplied(to: text, prefix: prefix, state: &state)
-        isAtLineStart = state.isAtLineStart
-        return rendered
     }
 
     static func chatLineInsetApplied(

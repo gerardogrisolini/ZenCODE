@@ -349,7 +349,8 @@ extension DirectSubAgentRuntimeTests {
 
         let session = try #require(await backend.createdSessions().first)
         let allowedToolNames = try #require(session.allowedToolNames)
-        let mutatingCoreNames = Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
+        let mutatingCoreNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
+            .subtracting(DirectToolCatalog.coreReadDescriptors.map(\.name))
             .subtracting(["agent.message"])
 
         #expect(allowedToolNames.isDisjoint(with: mutatingCoreNames))

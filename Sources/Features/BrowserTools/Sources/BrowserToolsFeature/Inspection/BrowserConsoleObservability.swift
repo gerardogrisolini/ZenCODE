@@ -58,7 +58,6 @@ struct BrowserConsoleSelection: Sendable {
 }
 
 enum BrowserConsoleCapture {
-    static let maximumEntries = 500
     static let maximumReturnedEntries = 100
     private static let maximumEntryBytes = 4_000
 

@@ -19,9 +19,6 @@ public enum AgentDS4RuntimeBackend: String, Codable, CaseIterable, Hashable, Sen
     case cpu
 }
 
-/// Compatibility spelling for callers that refer to the backend simply as DS4.
-public typealias AgentDS4Backend = AgentDS4RuntimeBackend
-
 /// Errors raised while canonicalizing or resolving persisted DS4 paths.
 public enum AgentDS4PathValidationError: LocalizedError, Equatable, Sendable {
     case emptyRootDirectory
@@ -70,10 +67,6 @@ public enum AgentDS4PathValidationError: LocalizedError, Equatable, Sendable {
     }
 }
 
-/// Compatibility spelling used by callers that expose the guard as a
-/// validation service.
-public typealias AgentDS4PathGuardError = AgentDS4PathValidationError
-
 public enum AgentDS4RuntimeConfigurationError: LocalizedError, Equatable, Sendable {
     case invalidContextWindow(Int)
     case invalidPower(Int)
@@ -115,9 +108,6 @@ public enum AgentDS4RuntimeConfigurationError: LocalizedError, Equatable, Sendab
         }
     }
 }
-
-/// Compatibility spelling for configuration validation errors.
-public typealias AgentDS4RuntimeManifestError = AgentDS4RuntimeConfigurationError
 
 public enum AgentDS4PathGuard {
     /// Returns an absolute, lexically standardized root path. Existing
@@ -347,8 +337,6 @@ public struct AgentDS4RuntimeTuning: Codable, Equatable, Hashable, Sendable {
 /// every key introduced after the first release is optional when decoding, and
 /// the retired `batchedSessions` key is ignored.
 public struct AgentDS4RuntimeManifest: Codable, Equatable, Hashable, Sendable {
-    public typealias Backend = AgentDS4RuntimeBackend
-
     /// Default number of sessions the engine keeps (`session_count`).
     public static let defaultEngineSessions = 2
     public static let engineSessionsRange = 1...8
@@ -670,13 +658,6 @@ public struct AgentDS4RuntimeManifest: Codable, Equatable, Hashable, Sendable {
             throw AgentDS4PathValidationError.emptyModelRelativePath
         }
         return modelURL
-    }
-
-    /// Alias useful to runtime adapters that use an imperative verb.
-    public func resolveModelURL(
-        fileManager: FileManager = .default
-    ) throws -> URL? {
-        try resolvedModelURL(fileManager: fileManager)
     }
 
     /// Resolves the vision projector with the same rigor as the model: it must

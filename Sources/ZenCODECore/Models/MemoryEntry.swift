@@ -211,26 +211,3 @@ extension MemoryEntry {
         try c.encodeIfPresent(embeddingModel, forKey: .embeddingModel)
     }
 }
-
-// MARK: - Engine-type conveniences (internal)
-//
-// Journal-shaped presentation helpers for the engine type, used by the graph
-// adapter and migration code. Extending through the `GraphEntry` alias works
-// because it resolves to the engine's `MemoryEntry` struct.
-
-extension GraphEntry {
-    static func normalizedContent(_ content: String) -> String {
-        MemoryContent.normalized(content)
-    }
-
-    /// ZenCODE archives entries by deactivating the graph node.
-    var isArchived: Bool { !active }
-
-    var presentationTitle: String {
-        let firstLine = MemoryEntryMetadata.titleLine(of: content) ?? "Memory"
-        guard firstLine.count > 80 else {
-            return firstLine.isEmpty ? "Memory" : firstLine
-        }
-        return String(firstLine.prefix(77)).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
-    }
-}

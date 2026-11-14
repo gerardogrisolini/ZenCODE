@@ -401,7 +401,7 @@ struct ACPTelegramChannelTests {
     ) -> Bool {
         channel.runsTaskGraphObserver
             && channel.taskGraphObservedController === controller
-            && controller.taskGraphObserverTask != nil
+            && controller.taskGraphObserver.observerTask != nil
     }
 
     /// Waits for the work `channel` queued on its task-graph observer (the
@@ -419,7 +419,7 @@ struct ACPTelegramChannelTests {
     ) -> Bool {
         channel.taskGraphObservationTask == nil
             && channel.taskGraphObservedController == nil
-            && controller.taskGraphObserverTask == nil
+            && controller.taskGraphObserver.observerTask == nil
     }
 
     /// Whether `controller`'s observer has no debounced publication waiting.
@@ -568,7 +568,7 @@ extension ChatSessionHost {
                 nil
             }
         } ?? []
-        return (slot.slotPresenter.isTurnOpen, slot.slotPresenter.movedTurn, transcript)
+        return (slot.slotPresenter.openTurnRequest != nil, slot.slotPresenter.movedTurn, transcript)
     }
 }
 

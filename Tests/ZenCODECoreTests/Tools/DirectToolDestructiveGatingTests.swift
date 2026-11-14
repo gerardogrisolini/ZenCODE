@@ -106,7 +106,7 @@ struct DirectToolDestructiveGatingTests {
         let executor = DirectToolExecutor(
             authorizationHandler: { _ in false },
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
         let result = await executor.execute(
             sessionID: "gating-tests",
@@ -136,7 +136,7 @@ struct DirectToolDestructiveGatingTests {
                 return true
             },
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
         let result = await executor.execute(
             sessionID: "gating-tests",
@@ -183,7 +183,7 @@ struct DirectToolDestructiveGatingTests {
                 return false
             },
             swiftFeatureRuntime: runtime,
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
 
         for call in [

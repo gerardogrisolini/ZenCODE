@@ -14,12 +14,6 @@ import Dispatch
 import Foundation
 
 public struct TerminalGitStatusSummary: Equatable, Sendable {
-    public static let zero = TerminalGitStatusSummary(
-        changedFileCount: 0,
-        additions: 0,
-        deletions: 0
-    )
-
     public let changedFileCount: Int
     public let additions: Int
     public let deletions: Int
@@ -28,14 +22,6 @@ public struct TerminalGitStatusSummary: Equatable, Sendable {
         self.changedFileCount = changedFileCount
         self.additions = additions
         self.deletions = deletions
-    }
-
-    public func adding(_ other: TerminalGitStatusSummary) -> TerminalGitStatusSummary {
-        TerminalGitStatusSummary(
-            changedFileCount: changedFileCount + other.changedFileCount,
-            additions: additions + other.additions,
-            deletions: deletions + other.deletions
-        )
     }
 }
 
@@ -159,9 +145,7 @@ public actor TerminalStatusBar {
             if let output { primaryScreen.activate(fileDescriptor: output.fileDescriptor) }
             writeLocked("\u{1B}[?25l")
             startResizeSignalSourceLocked(state: &state)
-            TerminalResizeCoordinator.shared.publishLayout(
-                reservedBottomRows: reservedBottomRowsLocked(state: &state)
-            )
+            TerminalResizeCoordinator.shared.publishLayout()
             if state.isProcessing {
                 startSpinnerTaskLocked(state: &state)
             }
@@ -178,7 +162,7 @@ public actor TerminalStatusBar {
             stopSpinnerTaskLocked(state: &state)
             stopResizeSignalSourceLocked(state: &state)
             primaryScreen.stop()
-            TerminalResizeCoordinator.shared.publishLayout(reservedBottomRows: nil)
+            TerminalResizeCoordinator.shared.publishLayout()
             state.lastStatusRender = nil
             state.isStarted = false
         }
@@ -610,18 +594,6 @@ public actor TerminalStatusBar {
             return nil
         }
         return max(0, state.row - reservedBottomRowsLocked(state: &state))
-    }
-
-    /// Renders the status-only overlay using the actor's current state. Exposed
-    /// for testing the render cache (identical renders must be suppressed).
-    func renderStatusOverlay() {
-        renderStatusLocked(state: &state)
-    }
-
-    /// Renders the full overlay (input panel + status) using the actor's current
-    /// state. Exposed for testing cache invalidation on full renders.
-    func renderOverlay() {
-        renderLocked(state: &state)
     }
 
 }

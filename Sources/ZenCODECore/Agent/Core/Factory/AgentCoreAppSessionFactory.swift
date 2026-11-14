@@ -80,8 +80,7 @@ public enum AgentCoreAppSessionFactory {
             providedSystemPrompt: request.systemPrompt,
             cwd: request.workingDirectory.path,
             selectedAgent: agentConfiguration.selectedAgent,
-            allowedToolNames: allowedToolNames,
-            selectedSkillNames: request.selectedSkillNames
+            allowedToolNames: allowedToolNames
         )
         let thinkingSelection = resolvedThinkingSelection(
             request.thinkingSelection,
@@ -120,31 +119,12 @@ public enum AgentCoreAppSessionFactory {
         .makeConfiguration()
     }
 
-    public static func resolvedSystemPrompt(
-        providedSystemPrompt: String?,
-        cwd: String,
-        selectedAgent: AgentProfile?,
-        allowedToolNames: Set<String>?,
-        selectedSkillNames: Set<String> = []
-    ) -> String {
-        resolvedPromptSections(
-            providedSystemPrompt: providedSystemPrompt,
-            cwd: cwd,
-            selectedAgent: selectedAgent,
-            allowedToolNames: allowedToolNames,
-            selectedSkillNames: selectedSkillNames
-        )
-        .combinedPrompt
-    }
-
     public static func resolvedPromptSections(
         providedSystemPrompt: String?,
         cwd: String,
         selectedAgent: AgentProfile?,
-        allowedToolNames: Set<String>?,
-        selectedSkillNames: Set<String> = []
+        allowedToolNames: Set<String>?
     ) -> SystemPromptSections {
-        _ = selectedSkillNames
         if let providedSystemPrompt = providedSystemPrompt?.nilIfBlank {
             return AgentSessionComposition.appProvidedPromptSections(
                 providedSystemPrompt,
@@ -159,10 +139,6 @@ public enum AgentCoreAppSessionFactory {
             allowedToolNames: allowedToolNames,
             selectedAgent: selectedAgent
         )
-    }
-
-    public static func memoryToolEnabled(_ allowedToolNames: Set<String>?) -> Bool {
-        AgentSessionComposition.memoryToolEnabled(allowedToolNames)
     }
 
     private static func resolvedAgentConfiguration(

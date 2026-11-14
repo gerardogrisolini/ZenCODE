@@ -438,7 +438,10 @@ struct RemoteGenerationClientDS4EngineTests {
         #expect(!historyJSON.contains(DS4MessageKeys.prefix))
         #expect(!historyJSON.contains("41-2-mock-ds4"))
 
-        let wire = RemoteGenerationClient.chatCompletionsWireHistoryMessages(from: messages)
+        let wire = RemoteGenerationClient.chatCompletionsWireHistoryMessages(
+            from: messages,
+            replayPolicy: .currentToolRound(requiresPlaceholder: false)
+        )
         #expect(wire.allSatisfy { message in !message.keys.contains(where: DS4MessageKeys.isPrivate) })
         #expect(wire.count == messages.count)
         #expect(DS4MessageKeys.isPrivate(DS4MessageKeys.rawTokens))

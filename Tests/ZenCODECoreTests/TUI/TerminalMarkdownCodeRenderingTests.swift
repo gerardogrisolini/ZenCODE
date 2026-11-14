@@ -33,12 +33,12 @@ struct TerminalMarkdownCodeRenderingTests {
             rendered,
             with: prefix
         )
-        var isAtLineStart = true
+        var insetState = TerminalChatTextFormatting.ChatLineInsetState(isAtLineStart: true)
         let chatInsetRows = TerminalANSIText.stripANSI(
             TerminalChatTextFormatting.chatLineInsetApplied(
                 to: nested,
                 prefix: TerminalChatTextFormatting.chatLineInsetPrefix,
-                isAtLineStart: &isAtLineStart
+                state: &insetState
             )
         )
             .split(separator: "\n", omittingEmptySubsequences: true)
@@ -72,12 +72,12 @@ struct TerminalMarkdownCodeRenderingTests {
             rendered,
             with: prefix
         )
-        var isAtLineStart = true
+        var insetState = TerminalChatTextFormatting.ChatLineInsetState(isAtLineStart: true)
         let chatInsetRows = TerminalANSIText.stripANSI(
             TerminalChatTextFormatting.chatLineInsetApplied(
                 to: nested,
                 prefix: TerminalChatTextFormatting.chatLineInsetPrefix,
-                isAtLineStart: &isAtLineStart
+                state: &insetState
             )
         )
             .split(separator: "\n", omittingEmptySubsequences: true)

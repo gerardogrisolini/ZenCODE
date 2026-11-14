@@ -196,10 +196,6 @@ struct DS4ToolCallReplay: Sendable, Equatable, Hashable {
         self.name = name
         self.argumentsJSON = argumentsJSON
     }
-
-    init(_ call: DirectAgentToolCall) {
-        self.init(name: call.name, argumentsJSON: call.argumentsJSON)
-    }
 }
 
 /// Malformed tool-call output. `detail` follows the ds4-agent diagnostics

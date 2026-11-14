@@ -49,10 +49,6 @@ enum ZenEscapeAction: Equatable {
         }
     }
 
-    init(pendingRequest: ChatPendingRequest?) {
-        self.init(pendingRequestID: pendingRequest?.id, kind: pendingRequest?.kind)
-    }
-
     /// The action of Esc in `selectedTab`: in the conversation, the one of
     /// the request the window waits for; in a sub-agent tab, ``consume``.
     init(selectedTab: ZenWindowTab, pendingRequestID: UUID?, kind: ChatPendingRequest.Kind?) {

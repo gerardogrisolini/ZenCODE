@@ -29,11 +29,6 @@ public enum AgentEngineCheckpointSaveOutcome: Sendable, Equatable {
     case skippedNoLiveState
     /// The backend has no in-process engine; nothing to save, nothing to say.
     case notApplicable
-
-    /// Whether a checkpoint file exists after the call because of it.
-    public var wroteCheckpoint: Bool {
-        self == .saved
-    }
 }
 
 /// Result of `AgentRuntimeBackend.restoreEngineCheckpoint(sessionID:from:onEvent:)`.

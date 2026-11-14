@@ -69,9 +69,9 @@ struct StdioLineReaderTests {
         Self.writeText("first\r\nsecond\n", to: pipe.write)
         close(pipe.write)
 
-        #expect(reader.readLine() == "first")
-        #expect(reader.readLine() == "second")
-        #expect(reader.readLine() == nil)
+        #expect(reader.readLine(shouldCancel: { false }) == "first")
+        #expect(reader.readLine(shouldCancel: { false }) == "second")
+        #expect(reader.readLine(shouldCancel: { false }) == nil)
     }
 
     @Test
@@ -85,7 +85,7 @@ struct StdioLineReaderTests {
         close(pipe.write)
 
         let started = Date()
-        #expect(reader.readLine() == nil)
+        #expect(reader.readLine(shouldCancel: { false }) == nil)
         #expect(reader.hasReachedEndOfInput)
         // A hang-up is reported instantly; a spin would still return nil but
         // only after burning CPU, so bound the wall time as a smoke check.

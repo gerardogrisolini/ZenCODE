@@ -104,28 +104,6 @@ struct DS4CheckpointTrailer: Codable, Equatable, Sendable {
                 && hintsNote == nil
         }
 
-        init(
-            rawAssistant: String? = nil,
-            rawTokens: [Int32]? = nil,
-            rawTokensModel: String? = nil,
-            thinkMode: Int? = nil,
-            toolCallReplays: [Replay]? = nil,
-            toolObservation: String? = nil,
-            userContent: String? = nil,
-            systemReminder: Bool? = nil,
-            hintsNote: String? = nil
-        ) {
-            self.rawAssistant = rawAssistant
-            self.rawTokens = rawTokens
-            self.rawTokensModel = rawTokensModel
-            self.thinkMode = thinkMode
-            self.toolCallReplays = toolCallReplays
-            self.toolObservation = toolObservation
-            self.userContent = userContent
-            self.systemReminder = systemReminder
-            self.hintsNote = hintsNote
-        }
-
         /// The private keys of `message`.
         init(message: [String: Any]) {
             rawAssistant = message[DS4MessageKeys.rawAssistant] as? String

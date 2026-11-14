@@ -499,7 +499,7 @@ struct ACPCommandRoutingTests {
             "sessionId": sessionID,
             "prompt": "/goal validate shared workflow routing",
         ])
-        let workflowGraphs = try await bridge.sessionRunner.taskGraphSnapshots(
+        let workflowGraphs = try await bridge.sessionRunner.taskOrchestrator.graphSnapshots(
             sessionID: sessionID
         ).filter { graph in
             if case .workflow = graph.source { return true }
@@ -658,7 +658,7 @@ struct ACPCommandRoutingTests {
         let recovery = try #require(await bridge.workflowStateForTesting(sessionID: sessionID))
         #expect(recovery.graphID == graphID)
         #expect(recovery.isAwaitingReply)
-        #expect(recovery.pendingCoordinatorMessage?.contains("the turn was cancelled") == true)
+        #expect(recovery.pendingSignal?.transcriptMessage.contains("the turn was cancelled") == true)
     }
 
     @Test(arguments: [false, true], [TaskGraphWorkflowState.running, .awaitingUser, .blocked])

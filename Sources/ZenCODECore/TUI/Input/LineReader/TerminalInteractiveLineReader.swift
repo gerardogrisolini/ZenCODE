@@ -170,17 +170,6 @@ public final class TerminalInteractiveLineReader: Sendable {
             get { editor.suggestionIndex }
             set { editor.suggestionIndex = newValue }
         }
-
-        // Read-only projections kept so lifecycle tests keep observing the
-        // panel by its former field names. Every transition goes through
-        // `panelLifecycle`.
-        var panelTransitionWaiters: [PanelWaiter] {
-            panelLifecycle.transitionWaiters
-        }
-
-        var panelReadToken: TerminalBlockingReadToken? {
-            panelLifecycle.readToken
-        }
     }
 
     let rawInput: TerminalRawInput
@@ -305,11 +294,7 @@ public final class TerminalInteractiveLineReader: Sendable {
         }
     }
 
-    public func readLine(prompt: String) -> String? {
-        readLineInternal(prompt: prompt, shouldCancel: nil)
-    }
-
-    /// Cancellation-aware variant used by the async bridges.
+    /// Cancellation-aware line read used by the async bridges.
     ///
     /// A blocking `read` cannot observe `Task.isCancelled` (it runs off the
     /// cooperative pool), so the caller supplies a token that is polled between
@@ -318,13 +303,6 @@ public final class TerminalInteractiveLineReader: Sendable {
     func readLine(
         prompt: String,
         shouldCancel: @escaping @Sendable () -> Bool
-    ) -> String? {
-        readLineInternal(prompt: prompt, shouldCancel: shouldCancel)
-    }
-
-    private func readLineInternal(
-        prompt: String,
-        shouldCancel: (@Sendable () -> Bool)?
     ) -> String? {
         if TerminalPrimaryScreen.active != nil {
             return readCompositedLine(prompt: prompt, shouldCancel: shouldCancel)
@@ -368,16 +346,12 @@ public final class TerminalInteractiveLineReader: Sendable {
             }
 
             while true {
-                if shouldCancel?() == true {
+                if shouldCancel() {
                     AgentOutput.standardError.writeString("\n")
                     return nil
                 }
                 let key: Key
-                switch readKeyResult(
-                    pollTimeoutMilliseconds: shouldCancel == nil
-                        ? nil
-                        : Self.cancellationPollTimeout
-                ) {
+                switch readKeyResult(pollTimeoutMilliseconds: Self.cancellationPollTimeout) {
                 case let .key(value):
                     key = value
                 case .pickerEscape:

@@ -498,7 +498,7 @@ struct ChatSessionControllerTests {
             #expect(result.finalAssistantBlock == question)
             let workflow = try #require(harness.controller.commandState.activeWorkflow)
             #expect(workflow.isAwaitingReply)
-            #expect(workflow.pendingCoordinatorMessage == question)
+            #expect(workflow.pendingSignal?.transcriptMessage == question)
         }
     }
 
@@ -767,7 +767,7 @@ struct ChatSessionControllerTests {
                 .turnWillFinish,
             ])
             let workflow = try #require(controller.commandState.activeWorkflow)
-            #expect(workflow.pendingCoordinatorMessage
+            #expect(workflow.pendingSignal?.transcriptMessage
                 == PlanningCommandKernel.workflowRecoverySignalMessage(reason: "the turn was cancelled"))
             #expect(try await harness.runtime.taskOrchestrator.graphSnapshot(
                 sessionID: harness.sessionID,

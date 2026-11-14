@@ -33,13 +33,12 @@ struct DS4InstallationScannerTests {
             withDestinationURL: outsideModel
         )
 
-        let snapshot = try DS4InstallationScanner(fileManager: fileManager).scan(rootDirectory: root)
+        let snapshot = try DS4InstallationScanner(fileManager: fileManager).scan(rootDirectory: root.path)
 
         #expect(snapshot.artifacts.map(\.relativePath) == ["gguf/model.gguf", "root.gguf"])
         #expect(snapshot.artifacts.map(\.diskBytes) == [11, 7])
-        #expect(snapshot.totalDiskBytes == 18)
-        #expect(snapshot.contains(relativePath: "gguf/model.gguf"))
-        #expect(!snapshot.contains(relativePath: "nested/hidden.gguf"))
+        #expect(snapshot.artifacts.contains { $0.relativePath == "gguf/model.gguf" })
+        #expect(!snapshot.artifacts.contains { $0.relativePath == "nested/hidden.gguf" })
         #expect(snapshot.diagnostics.contains { $0.contains("symbolic-link") })
     }
 

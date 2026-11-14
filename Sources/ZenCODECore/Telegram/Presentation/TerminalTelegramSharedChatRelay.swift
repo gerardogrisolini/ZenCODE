@@ -756,11 +756,6 @@ actor TerminalTelegramSharedChatRelay {
         }
     }
 
-    /// Returns once at least one producer is parked waiting for capacity.
-    func waitUntilProducerIsBlocked() async {
-        await waitUntilProducersAreBlocked(count: 1)
-    }
-
     /// Number of identities the ledger holds: the cards admitted so far plus
     /// the messages marked present (``markPresent(_:roomID:generation:)``),
     /// within ``maximumLedgerEntries``.

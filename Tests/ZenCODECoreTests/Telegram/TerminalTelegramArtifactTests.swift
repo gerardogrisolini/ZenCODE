@@ -317,7 +317,7 @@ struct TerminalTelegramArtifactTests {
             _ = await stop.value
             #expect(stopped.withLock { $0 })
             #expect(await transport.methods == ["getFile"])
-            #expect(await service.inboundAttachmentFilenames(chatID: 42).isEmpty)
+            #expect(await service.inboundAttachments.storedFilenames(chatID: 42).isEmpty)
         }
     }
 
@@ -409,12 +409,12 @@ struct TerminalTelegramArtifactTests {
             atPath: stored.url.path
         )[.posixPermissions] as? Int
         #expect(permissions == 0o600)
-        #expect(await store.storedCount(chatID: 42) == 1)
+        #expect(await store.storedFilenames(chatID: 42).count == 1)
 
         let removed = await store.cleanup(chatID: 42)
         #expect(removed == 1)
         #expect(!FileManager.default.fileExists(atPath: stored.url.path))
-        #expect(await store.storedCount(chatID: 42) == 0)
+        #expect(await store.storedFilenames(chatID: 42).isEmpty)
         // Idempotent.
         #expect(await store.cleanup(chatID: 42) == 0)
     }

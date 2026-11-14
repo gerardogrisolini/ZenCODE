@@ -53,21 +53,6 @@ public actor AgentCoreBackend {
     /// a DS4 one closes it when no DS4 session is live. Injectable for tests.
     let ds4EngineRegistry: DS4EngineRegistry
 
-    public init(
-        configuration: AgentRuntimeConfiguration,
-        mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
-        swiftFeatureRuntime: SwiftFeatureRuntime = SwiftFeatureRuntime(),
-        backendFactory: AgentRuntimeBackendFactory? = nil
-    ) {
-        self.init(
-            configuration: configuration,
-            mcpRuntime: mcpRuntime,
-            swiftFeatureRuntime: swiftFeatureRuntime,
-            backendFactory: backendFactory,
-            ds4EngineRegistry: .shared
-        )
-    }
-
     init(
         configuration: AgentRuntimeConfiguration,
         mcpRuntime: DirectMCPToolRuntime = DirectMCPToolRuntime(),
@@ -311,10 +296,6 @@ public actor AgentCoreBackend {
     ) async throws -> String {
         let backend = try await resolveBackend(onEvent: onEvent)
         return try await backend.preloadModel(onEvent: onEvent)
-    }
-
-    public func activeToolDescriptors() async -> [DirectToolDescriptor] {
-        await activeToolDescriptors(sessionID: nil)
     }
 
     public func activeToolDescriptors(

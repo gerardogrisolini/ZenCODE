@@ -411,11 +411,6 @@ struct ZenStatusRoleTests {
         #expect(ZenTranscriptStatus.role(for: snapshot(.failed)) == .failure)
         #expect(ZenTranscriptStatus.displayStatus(for: snapshot(.idle, output: "done")) == "completed")
         #expect(ZenTranscriptStatus.displayStatus(for: snapshot(.standby)) == "standby")
-
-        let segments = ZenTranscriptStatus.subAgentSummarySegments([
-            snapshot(.running), snapshot(.idle, output: "done"), snapshot(.failed)
-        ])
-        #expect(segments.map(\.text) == ["3 total", "▸ 1 active", "✓ 1 completed", "✗ 1 failed"])
     }
 
     @Test("token counts and elapsed times are abbreviated")

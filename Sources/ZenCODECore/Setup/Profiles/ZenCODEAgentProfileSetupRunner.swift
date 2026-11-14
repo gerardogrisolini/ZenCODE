@@ -28,13 +28,6 @@ public enum ZenCODEAgentProfileSetupRunner {
         case editInEditor
     }
 
-    public static func configureInteractively() throws {
-        _ = try configureInteractively(
-            currentAgents: nil,
-            persist: true
-        )
-    }
-
     @discardableResult
     static func configureInteractively(
         currentAgents: [AgentProfile]?,

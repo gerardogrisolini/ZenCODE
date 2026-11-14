@@ -421,7 +421,7 @@ struct LocalExecPermissionAuthorizerTests {
         let authorizer = LocalExecPermissionAuthorizer()
         let recorder = FakeConsentReader(answers: ["x", "a"])
         await authorizer.setConsentReader({ prompt in await recorder.next(prompt: prompt) })
-        let decision = await authorizer.presentDialog(for: Self.consentRequest())
+        let decision = await authorizer.terminalHost.presentDialog(for: Self.consentRequest())
         // The unrecognized first key is ignored, the second decides.
         #expect(decision == .allowAlways)
         // Both attempts consumed, and the retry used the retry prompt.
@@ -435,7 +435,7 @@ struct LocalExecPermissionAuthorizerTests {
         let authorizer = LocalExecPermissionAuthorizer()
         let recorder = FakeConsentReader(answers: [nil])
         await authorizer.setConsentReader({ prompt in await recorder.next(prompt: prompt) })
-        let decision = await authorizer.presentDialog(for: Self.consentRequest())
+        let decision = await authorizer.terminalHost.presentDialog(for: Self.consentRequest())
         // EOF yields no consent (fail-closed at the dialog layer).
         #expect(decision == nil)
         let count = await recorder.recordedPrompts().count

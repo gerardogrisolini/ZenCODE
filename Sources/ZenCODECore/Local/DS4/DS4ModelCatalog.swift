@@ -112,11 +112,6 @@ public struct DS4ModelCatalog: Codable, Equatable, Sendable {
         return nil
     }
 
-    public func entry(id: String) -> DS4ModelCatalogEntry? {
-        let normalized = id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return entries.first { $0.id.lowercased() == normalized }
-    }
-
     /// Finds the entry that lists `relativePath` among its artifacts.
     public func entry(forArtifactPath relativePath: String) -> DS4ModelCatalogEntry? {
         let normalized = relativePath

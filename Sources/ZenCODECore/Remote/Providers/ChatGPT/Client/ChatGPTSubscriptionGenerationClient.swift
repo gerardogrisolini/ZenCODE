@@ -13,10 +13,6 @@ import os
 #endif
 
 public actor ChatGPTSubscriptionGenerationClient: DirectToolRuntimeBackend {
-    public static var isAvailable: Bool {
-        (try? ChatGPTSubscriptionAuthService.loadCredentials()) != nil
-    }
-
     struct AgentSession {
         let id: String
         let cwd: String
@@ -43,7 +39,7 @@ public actor ChatGPTSubscriptionGenerationClient: DirectToolRuntimeBackend {
     }
 
     struct SessionIdentity: Codable, Hashable, Sendable {
-        private struct PersistenceRepresentation: Encodable {
+        private struct PersistenceRepresentation {
             let sessionKey: String
             let modelID: String
             let workingDirectory: String
@@ -103,30 +99,15 @@ public actor ChatGPTSubscriptionGenerationClient: DirectToolRuntimeBackend {
             self = value
         }
 
-        var storageKey: String {
-            guard let data = canonicalData else {
-                return [
-                    sessionKey,
-                    modelID,
-                    workingDirectory,
-                    systemPrompt,
-                    toolSelection ?? "tools:any",
-                    appMode ? "app" : "cli",
-                    connectionScopeID ?? "connection:default"
-                ].joined(separator: "\u{1f}")
-            }
-            return data.base64EncodedString()
-        }
-
         /// Compact, privacy-preserving key used only for persistence.
         ///
-        /// `storageKey` remains the reversible compatibility representation of
-        /// the identity, but it embeds the full system prompt and can be tens of
-        /// kilobytes long. Persisting hundreds of those keys in `UserDefaults`
-        /// crosses macOS's 4 MiB preference limit. Hashing a canonical
-        /// fixed-field encoding preserves the exact cache identity while keeping
-        /// every on-disk key a fixed size and avoiding prompt text in the
-        /// preferences plist.
+        /// The reversible Base64 JSON identity read by `init?(storageKey:)` is
+        /// only a legacy format: it embeds the full system prompt and can be
+        /// tens of kilobytes long. Persisting hundreds of those keys in
+        /// `UserDefaults` crosses macOS's 4 MiB preference limit. Hashing a
+        /// canonical fixed-field encoding preserves the exact cache identity
+        /// while keeping every on-disk key a fixed size and avoiding prompt
+        /// text in the preferences plist.
         var promptCachePersistenceKey: String {
             return Self.promptCachePersistenceKeyPrefix
             + promptCacheIdentityData.sha256Hex()
@@ -172,12 +153,6 @@ public actor ChatGPTSubscriptionGenerationClient: DirectToolRuntimeBackend {
             }
             data.append(1)
             append(value, to: &data)
-        }
-
-        private var canonicalData: Data? {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            return try? encoder.encode(PersistenceRepresentation(identity: self))
         }
 
         private static func toolSelectionSignature(_ allowedToolNames: Set<String>?) -> String? {

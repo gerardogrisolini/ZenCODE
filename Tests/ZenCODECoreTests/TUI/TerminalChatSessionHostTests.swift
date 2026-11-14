@@ -207,7 +207,8 @@ struct TerminalChatSessionHostTests {
             let another = TerminalChat(
                 configuration: try environment.configuration(),
                 stdinIsTerminal: false,
-                sessionRunner: environment.makeRunner()
+                sessionRunner: environment.makeRunner(),
+                telegramTransportFactory: nil
             )
             #expect(another.sessionID.hasPrefix("terminal-"))
             #expect(another.sessionID != terminal.sessionID)
@@ -229,7 +230,7 @@ struct TerminalChatSessionHostTests {
             try await terminal.createCurrentSession(discoverExternalTools: false)
             let previous = terminal.chatSession
             let previousSessionID = terminal.sessionID
-            #expect(previous.taskGraphObserverTask != nil)
+            #expect(previous.taskGraphObserver.observerTask != nil)
 
             // The operator changes the selection; the new session starts over.
             terminal.chatSession.selection.modelIDOverride = "other-model"
@@ -237,7 +238,7 @@ struct TerminalChatSessionHostTests {
             terminal.selectedToolKeys = ["local"]
             terminal.chatSession.selection.skillNames = ["skill"]
             terminal.chatSession.history = [AgentRuntimeMessage(role: .user, content: "Before")]
-            await terminal.startNewSession()
+            await terminal.writeSessionNotices(terminal.chatSession.newSessionCommand().notices)
 
             let next = terminal.chatSession
             #expect(next !== previous)
@@ -280,8 +281,8 @@ struct TerminalChatSessionHostTests {
             // The previous controller is fenced: its observer was stopped
             // before the switch, the new one runs, and a graph of the old
             // session publishes nothing through the terminal.
-            #expect(previous.taskGraphObserverTask == nil)
-            #expect(next.taskGraphObserverTask != nil)
+            #expect(previous.taskGraphObserver.observerTask == nil)
+            #expect(next.taskGraphObserver.observerTask != nil)
             let reserved = await terminal.reserveTaskGraphOverviewPublication().revision
             _ = try await terminal.sessionRunner.taskOrchestrator.createGraph(
                 sessionID: previousSessionID,
@@ -295,7 +296,7 @@ struct TerminalChatSessionHostTests {
             )
             try await Task.sleep(for: .milliseconds(500))
             #expect(await terminal.reserveTaskGraphOverviewPublication().revision == reserved + 1)
-            #expect(previous.taskGraphObserverTask == nil)
+            #expect(previous.taskGraphObserver.observerTask == nil)
             // While a graph of the new session is observed.
             let observed = await terminal.reserveTaskGraphOverviewPublication().revision
             _ = try await terminal.sessionRunner.taskOrchestrator.createGraph(
@@ -332,7 +333,7 @@ struct TerminalChatSessionHostTests {
             ]
             let saved = environment.savedSession(name: "kept", sessionID: "terminal-kept", history: history)
 
-            try await terminal.loadSavedSession(saved)
+            try await terminal.writeSessionNotices(terminal.chatSession.loadSavedSession(saved, checkpointEntryID: nil).notices)
 
             let next = terminal.chatSession
             #expect(next !== previous)
@@ -344,8 +345,8 @@ struct TerminalChatSessionHostTests {
             #expect(terminal.chatSession.selection.thinkingOverride == nil)
             #expect(terminal.selectedToolKeys.isEmpty)
             #expect(host.incarnation(in: slot)?.controller === next)
-            #expect(previous.taskGraphObserverTask == nil)
-            #expect(next.taskGraphObserverTask != nil)
+            #expect(previous.taskGraphObserver.observerTask == nil)
+            #expect(next.taskGraphObserver.observerTask != nil)
             #expect(await terminal.sessionRunner.snapshotSession(id: "terminal-kept") != nil)
             #expect(await terminal.sessionRunner.snapshotSession(id: previousSessionID) == nil)
             let text = await Self.capturedText(of: terminal)
@@ -390,7 +391,7 @@ struct TerminalChatSessionHostTests {
 
             // `/sessions new`: the slot's channel keeps its link, and the
             // topic follows the new session, renamed.
-            await terminal.startNewSession()
+            await terminal.writeSessionNotices(terminal.chatSession.newSessionCommand().notices)
             let newSessionID = terminal.sessionID
             #expect(newSessionID != firstSessionID)
             #expect(host.telegramChannel(in: slot) === channel)
@@ -415,7 +416,7 @@ struct TerminalChatSessionHostTests {
                 name: "kept", sessionID: "terminal-kept",
                 history: [AgentRuntimeMessage(role: .user, content: "Saved")]
             )
-            try await terminal.loadSavedSession(saved)
+            try await terminal.writeSessionNotices(terminal.chatSession.loadSavedSession(saved, checkpointEntryID: nil).notices)
             #expect(channel.controller === terminal.chatSession)
             #expect(terminal.sessionID == "terminal-kept")
             #expect(channel.isActive)

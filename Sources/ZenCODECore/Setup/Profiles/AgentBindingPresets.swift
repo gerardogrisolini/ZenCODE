@@ -41,10 +41,6 @@ struct AgentBindingPresets: Equatable, Sendable {
     /// Provider entries in the order their keys appear in the file.
     let providers: [Provider]
 
-    init(providers: [Provider]) {
-        self.providers = providers
-    }
-
     // MARK: - Decoding
 
     private struct VersionProbe: Decodable {

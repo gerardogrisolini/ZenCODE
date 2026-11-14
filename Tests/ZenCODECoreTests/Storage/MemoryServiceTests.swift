@@ -371,7 +371,7 @@ struct MemoryServiceTests {
 
         try await workspace.withIsolatedSupport {
             let service = MemoryService()
-            let globalURL = service.graphURL(target: .global)
+            let globalURL = MemoryGraphLocation.graphURL(for: .global)
             let expectedGlobalURL = workspace.supportDirectoryURL
                 .appendingPathComponent("memory", isDirectory: true)
                 .appendingPathComponent("global", isDirectory: true)
@@ -380,7 +380,7 @@ struct MemoryServiceTests {
             #expect(globalURL == MemoryGraphLocation.globalGraphURL())
             #expect(globalURL != workspace.graphURL())
             #expect(workspace.graphURL().deletingLastPathComponent().lastPathComponent != MemoryGraphLocation.globalDirectoryName)
-            #expect(service.graphURL(target: .workspace(workspace.workspaceURL)) == workspace.graphURL())
+            #expect(MemoryGraphLocation.graphURL(for: .workspace(workspace.workspaceURL)) == workspace.graphURL())
             #expect(!FileManager.default.fileExists(atPath: globalURL.path))
 
             let globalOutcome = try await service.writeEntryOutcome(
@@ -574,7 +574,7 @@ struct MemoryServiceTests {
             await #expect(throws: MemoryServiceError.self) {
                 try await service.readEntries(workspaceRootURL: nil, limit: 10)
             }
-            #expect(!FileManager.default.fileExists(atPath: service.graphURL(target: .global).path))
+            #expect(!FileManager.default.fileExists(atPath: MemoryGraphLocation.graphURL(for: .global).path))
         }
     }
 

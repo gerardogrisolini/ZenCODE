@@ -31,7 +31,7 @@ struct AgentSharedChatCoordinatorConcurrencyTests {
         let subscription = await coordinator.observeSubscription(roomID: room)
 
         await coordinator.poll(roomID: room)
-        let triggerID = try #require(await coordinator.activeAutoTriggerID(roomID: room))
+        let triggerID = try #require(await coordinator.activeAutoTrigger(roomID: room)?.id)
 
         // The operator's prompt reached `sendPrompt` first.
         let operatorTurn = await coordinator.noteTurnStarted(
@@ -47,14 +47,14 @@ struct AgentSharedChatCoordinatorConcurrencyTests {
         #expect(claim == .notAcquired)
         #expect(await coordinator.claimedAutoTriggerOwnerID(roomID: room) == nil)
         // The batch is not consumed by the denied claim.
-        #expect(await coordinator.activeAutoTriggerID(roomID: room) == nil)
+        #expect(await coordinator.activeAutoTrigger(roomID: room)?.id == nil)
         #expect(await coordinator.pendingMessageCount(roomID: room) == 1)
 
         // When the operator turn ends the same batch is offered again.
         await coordinator.noteTurnEnded(operatorTurn)
-        let reofferedID = try #require(await coordinator.activeAutoTriggerID(roomID: room))
+        let reofferedID = try #require(await coordinator.activeAutoTrigger(roomID: room)?.id)
         #expect(reofferedID != triggerID)
-        #expect(await coordinator.activeAutoTriggerMessageCount(roomID: room) == 1)
+        #expect(await coordinator.activeAutoTrigger(roomID: room)?.messages.count == 1)
         #expect(await coordinator.resolveAutoTrigger(
             id: reofferedID,
             observation: subscription,
@@ -76,7 +76,7 @@ struct AgentSharedChatCoordinatorConcurrencyTests {
         let other = await coordinator.observeSubscription(roomID: room)
 
         await coordinator.poll(roomID: room)
-        let triggerID = try #require(await coordinator.activeAutoTriggerID(roomID: room))
+        let triggerID = try #require(await coordinator.activeAutoTrigger(roomID: room)?.id)
 
         await coordinator.setConsumerBusy(true, observation: other)
         #expect(await coordinator.resolveAutoTrigger(
@@ -90,7 +90,7 @@ struct AgentSharedChatCoordinatorConcurrencyTests {
         // The room becomes genuinely idle: the preserved batch is offered again
         // and this time the claim is granted.
         await coordinator.setConsumerBusy(false, observation: other)
-        let reofferedID = try #require(await coordinator.activeAutoTriggerID(roomID: room))
+        let reofferedID = try #require(await coordinator.activeAutoTrigger(roomID: room)?.id)
         #expect(await coordinator.resolveAutoTrigger(
             id: reofferedID,
             observation: claimant,
@@ -127,7 +127,7 @@ struct AgentSharedChatCoordinatorConcurrencyTests {
         // The late drain neither resurrected the room nor parked its batch.
         #expect(await coordinator.isTrackingRoom(roomID: room) == false)
         #expect(await coordinator.pendingMessageCount(roomID: room) == 0)
-        #expect(await coordinator.activeAutoTriggerID(roomID: room) == nil)
+        #expect(await coordinator.activeAutoTrigger(roomID: room)?.id == nil)
         // The subscription is kept alive on purpose: releasing its stream would
         // detach the observer and change what the room does under teardown.
         withExtendedLifetime(observation) {}
@@ -148,7 +148,9 @@ struct AgentSharedChatCoordinatorConcurrencyTests {
         let poll = Task { await coordinator.poll(roomID: room) }
         await source.waitUntilDrainSuspended()
 
-        await coordinator.reset(roomID: room)
+        if let resetToken = await coordinator.beginReset(roomID: room) {
+            await coordinator.endReset(resetToken)
+        }
         await source.releaseDrainGate()
         await poll.value
 
@@ -156,7 +158,7 @@ struct AgentSharedChatCoordinatorConcurrencyTests {
         // drain was accepted into the replacement generation.
         #expect(await coordinator.isTrackingRoom(roomID: room))
         #expect(await coordinator.pendingMessageCount(roomID: room) == 0)
-        #expect(await coordinator.activeAutoTriggerID(roomID: room) == nil)
+        #expect(await coordinator.activeAutoTrigger(roomID: room)?.id == nil)
 
         // New-backend traffic remains functional after the fence.
         await source.enqueue([Self.message("belongs to the rebuilt backend", roomID: room)])
@@ -198,7 +200,7 @@ struct AgentSharedChatCoordinatorConcurrencyTests {
             await coordinator.pendingMessageCount(roomID: room) == 1
         })
         #expect(await coordinator.isTrackingRoom(roomID: room))
-        #expect(await coordinator.activeAutoTriggerID(roomID: room) == nil)
+        #expect(await coordinator.activeAutoTrigger(roomID: room)?.id == nil)
 
         let reattached = await coordinator.observeSubscription(roomID: room)
         #expect(await coordinator.isMonitoring(roomID: room))
@@ -213,7 +215,7 @@ struct AgentSharedChatCoordinatorConcurrencyTests {
         for _ in 0 ..< 3 {
             await coordinator.poll(roomID: room)
         }
-        #expect(await coordinator.activeAutoTriggerID(roomID: room) == trigger.id)
+        #expect(await coordinator.activeAutoTrigger(roomID: room)?.id == trigger.id)
         #expect(await coordinator.retainedMessageCount(roomID: room) == 1)
         #expect(await coordinator.resolveAutoTrigger(
             id: trigger.id,

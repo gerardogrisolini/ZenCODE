@@ -87,21 +87,6 @@ public enum ZenCommandSuggestions {
         }
     }
 
-    /// The draft that accepting the command `descriptor` leaves when the
-    /// draft is the command token alone: the command, followed by a space
-    /// when it requires an argument. Argument suggestions and drafts with
-    /// more text go through ``accept(_:in:cursor:submitting:)``.
-    public static func completion(for descriptor: ChatCommandDescriptor) -> String {
-        descriptor.requiresArgument ? descriptor.command + " " : descriptor.command
-    }
-
-    /// Whether accepting `descriptor` with Return also submits it when the
-    /// draft is the command token alone: a command that needs an argument
-    /// only completes, every other one is sent.
-    public static func submitsOnReturn(_ descriptor: ChatCommandDescriptor) -> Bool {
-        !descriptor.requiresArgument
-    }
-
     /// Accepts `suggestion` for the token under the cursor
     /// (`TerminalPromptEditor.acceptSuggestion`): the token is replaced and
     /// the cursor follows it. A suggestion that requires an argument submits

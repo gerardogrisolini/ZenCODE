@@ -125,29 +125,4 @@ enum WebContentBlockerRules {
         let data = try JSONSerialization.data(withJSONObject: rules, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)
     }
-
-    /// Offline evaluation of the same patterns with ICU semantics (a superset
-    /// of the WebKit grammar), for tests and diagnostics: true when at least
-    /// one rule would block `serializedURL`.
-    static func blocks(_ serializedURL: String) -> Bool {
-        let range = NSRange(serializedURL.startIndex..<serializedURL.endIndex, in: serializedURL)
-        return blockedURLPatterns.contains { pattern in
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-                return false
-            }
-            return regex.firstMatch(in: serializedURL, options: [], range: range) != nil
-        }
-    }
-
-    /// True when a pattern uses only the constructs WebKit's `url-filter`
-    /// parser accepts. Kept next to the rules so a test can prevent a future
-    /// edit from silently breaking compilation at runtime.
-    static func usesSupportedSyntax(_ pattern: String) -> Bool {
-        if pattern.contains("|") || pattern.contains("{") || pattern.contains("(?") { return false }
-        if pattern.contains("\\d") || pattern.contains("\\w") || pattern.contains("\\s") || pattern.contains("\\b") { return false }
-        // `^` is only valid as the first character or as a class negation.
-        let outsideClasses = pattern.replacingOccurrences(of: #"\[[^\]]*\]"#, with: "", options: .regularExpression)
-        if outsideClasses.dropFirst().contains("^") || outsideClasses.dropLast().contains("$") { return false }
-        return pattern.unicodeScalars.allSatisfy(\.isASCII)
-    }
 }

@@ -174,7 +174,7 @@ struct ZenCODESetupGateTests {
     @Test
     func theJSONLErrorFrameCarriesTheConfigurationCategoryAndTheMessage() throws {
         let error = ZenCODESetupRequirement.NotConfiguredError()
-        #expect(ZenCODEHeadlessJSONLProtocol.category(for: error) == "configuration")
+        #expect(ZenCODEHeadlessJSONLProtocol.publicError(for: error).category.rawValue == "configuration")
         #expect(ZenCODEHeadlessJSONLProtocol.PublicErrorMessages.notConfigured
             == ZenCODESetupRequirement.notConfiguredMessage)
 

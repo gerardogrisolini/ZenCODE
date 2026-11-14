@@ -36,10 +36,6 @@ extension TerminalChat {
         await renderCoordinator.writeOutput(text, preservesSpacing: preservesSpacing)
     }
 
-    func flushChatOutput() async {
-        await renderCoordinator.flushOutput()
-    }
-
     func writeChatError(_ text: String, preservesSpacing: Bool = false) async {
         await renderCoordinator.writeError(text, preservesSpacing: preservesSpacing)
     }
@@ -50,12 +46,6 @@ extension TerminalChat {
 
     func writeSystemMessage(_ text: String) async {
         await renderCoordinator.writeSystemMessage(text)
-    }
-
-    /// Writes a block that already carries its own ANSI colors, keeping the
-    /// system-message tint from flattening its palette.
-    func writePreformattedMessage(_ text: String) async {
-        await renderCoordinator.writePreformattedMessage(text)
     }
 
     /// Renders a complete, non-streaming Markdown block through the same

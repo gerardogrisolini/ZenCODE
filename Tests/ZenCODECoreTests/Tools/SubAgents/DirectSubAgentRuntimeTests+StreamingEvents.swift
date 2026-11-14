@@ -18,7 +18,11 @@ extension DirectSubAgentRuntimeTests {
         #expect(waitingSnapshot.currentActivity == nil)
         #expect(waitingSnapshot.currentActivityKind == nil)
         #expect(
-            TerminalChat.renderSubAgentOverview([waitingSnapshot])
+            TerminalSubAgentOverviewLayout.render(
+                [waitingSnapshot],
+                modelTitleResolver: { $0 },
+                toolPresentationsByAgentID: [:]
+            )
                 .contains(TerminalChat.thinkingPlaceholder)
         )
 
@@ -43,7 +47,11 @@ extension DirectSubAgentRuntimeTests {
 
         #expect(latestSnapshot.currentActivity == "Next paragraph continues")
         #expect(latestSnapshot.currentActivityKind == .thinking)
-        let overview = TerminalChat.renderSubAgentOverview([latestSnapshot])
+        let overview = TerminalSubAgentOverviewLayout.render(
+            [latestSnapshot],
+            modelTitleResolver: { $0 },
+            toolPresentationsByAgentID: [:]
+        )
         let overviewRows = TerminalANSIText.stripANSI(overview)
             .components(separatedBy: "\n")
         #expect(overviewRows.contains { $0.contains(TerminalChat.thinkingPlaceholder) })
@@ -233,7 +241,11 @@ extension DirectSubAgentRuntimeTests {
             agentID: agentID
         )
         let snapshot = try #require(await runtime.snapshots().first)
-        let rendered = TerminalChat.renderSubAgentOverview([snapshot])
+        let rendered = TerminalSubAgentOverviewLayout.render(
+            [snapshot],
+            modelTitleResolver: { $0 },
+            toolPresentationsByAgentID: [:]
+        )
         let activityRow = try #require(
             TerminalANSIText.stripANSI(rendered)
                 .components(separatedBy: "\n")

@@ -26,7 +26,6 @@ public actor FeaturePersistentProcess {
     private var inputHandle: FileHandle?
     private var outputHandle: FileHandle?
     private var errorHandle: FileHandle?
-    private var exitMonitor: FeatureProcessExitMonitor?
     private var stdoutReader: Task<Void, Never>?
     private var stderrReader: Task<Void, Never>?
     private var generation: UUID?
@@ -262,7 +261,6 @@ public actor FeaturePersistentProcess {
         self.inputHandle = inputHandle
         self.outputHandle = outputHandle
         self.errorHandle = errorHandle
-        self.exitMonitor = monitor
         self.generation = newGeneration
         self.stdoutBuffer.removeAll(keepingCapacity: true)
         self.stderrTail.removeAll(keepingCapacity: true)
@@ -577,7 +575,6 @@ public actor FeaturePersistentProcess {
         let currentProcess = process
         process = nil
         generation = nil
-        exitMonitor = nil
         let inputHandle = inputHandle
         self.inputHandle = nil
         let outputHandle = outputHandle

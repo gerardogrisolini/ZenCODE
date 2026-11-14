@@ -49,27 +49,12 @@ enum WebToolsSupport {
         return request
     }
 
-    /// Fetches a URL with retry on transient failures (429, 5xx, network
-    /// errors), backing off exponentially before each retry. Policy decisions
-    /// (blocked redirects, oversized bodies) are final and never retried.
-    static func fetchWithRetry(
-        url: URL,
-        session: URLSession,
-        maxBytes: Int,
-        maxAttempts: Int = 3,
-        timeout: TimeInterval = 20
-    ) async throws -> WebBoundedResponse {
-        try await fetchWithRetry(
-            request: makeRequest(url: url, timeout: timeout),
-            session: session,
-            maxBytes: maxBytes,
-            maxAttempts: maxAttempts
-        )
-    }
-
-    /// Retrying fetch for a prepared request (any method and body). On 429 and
-    /// 503 a numeric `Retry-After` header replaces the exponential backoff for
-    /// that attempt (see ``retryAfterDelay(from:)``).
+    /// Fetches a prepared request (any method and body) with retry on transient
+    /// failures (429, 5xx, network errors), backing off exponentially before
+    /// each retry. Policy decisions (blocked redirects, oversized bodies) are
+    /// final and never retried. On 429 and 503 a numeric `Retry-After` header
+    /// replaces the exponential backoff for that attempt (see
+    /// ``retryAfterDelay(from:)``).
     static func fetchWithRetry(
         request: URLRequest,
         session: URLSession,

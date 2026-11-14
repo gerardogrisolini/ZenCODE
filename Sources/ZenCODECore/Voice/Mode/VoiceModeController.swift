@@ -115,14 +115,6 @@ public protocol VoiceModeController: Actor {
     func discardDictation(through id: UInt64) async
 }
 
-extension VoiceModeController {
-    /// Reads a final answer aloud.
-    @discardableResult
-    func speak(_ response: String) async -> Bool {
-        await speak(response, rendering: .answer)
-    }
-}
-
 /// The voice mode options chosen in `zen --setup` > Voice mode, resolved against
 /// the built-in defaults; shared by both platforms.
 struct VoiceModeOptions: Sendable, Equatable {

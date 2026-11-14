@@ -26,7 +26,7 @@ struct ProjectAgentSelectionPromptTests {
         SystemPromptBuilder.delegatableAgentsSection(
             agents: profiles,
             allowedToolNames: allowedToolNames,
-            models: []
+            snapshot: .available(models: [])
         )
     }
 

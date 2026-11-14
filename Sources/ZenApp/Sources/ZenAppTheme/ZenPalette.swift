@@ -82,7 +82,6 @@ public struct ZenPalette: Sendable, Equatable {
 
     /// Mirrors `TerminalStyle.Chrome`; the dimmed frames (SGR 2) become 0.5 opacity.
     public internal(set) var promptBorder: Color = ZenXTerm256.color(208, opacity: 0.5)
-    public internal(set) var menuBorder: Color = ZenXTerm256.color(208, opacity: 0.5)
     public internal(set) var startupLogo: Color = ZenXTerm256.color(130)
     public internal(set) var suggestion: Color = ZenXTerm256.color(8)
 

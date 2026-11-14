@@ -44,7 +44,6 @@ struct PromptSkillToolProviderTests {
             cwd: "/tmp/project",
             agentsSection: nil,
             memorySection: nil,
-            memoryToolEnabled: true,
             responseLanguageSection: SystemPromptBuilder.responseLanguageSection(languageName: "Italian"),
             worktreeSection: SystemPromptBuilder.worktreeSection(name: "feature", path: "/tmp/project")
         ).systemPrompt
@@ -228,7 +227,7 @@ struct PromptSkillToolProviderTests {
     func sessionScopedProvidersDoNotCrossReadSkills() async throws {
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { PromptSkillProviderTestBackend() }
+            subAgentContextualBackendFactory: { _ in PromptSkillProviderTestBackend() }
         )
         let providerA = PromptSkillSessionProvider(skills: [skill(promptBody: "BODY-A")])
         let providerB = PromptSkillSessionProvider(skills: [otherSkill(promptBody: "BODY-B")])

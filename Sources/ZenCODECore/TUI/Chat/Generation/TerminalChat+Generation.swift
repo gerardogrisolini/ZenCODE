@@ -74,56 +74,6 @@ extension TerminalChat {
         )
     }
 
-    /// Records a structured plan (with task points) as the active plan **without**
-    /// creating its task graph. The graph is created exclusively at plan approval
-    /// (see ``handlePlanCommand``) so that changing the plan before approval always
-    /// produces a graph that matches the final approved points.
-    @discardableResult
-    func recordStructuredPlanIfNeeded(
-        responseText: String,
-        purpose: ChatTurnPurpose,
-        createdAt: Date = Date(),
-        points: [TerminalSessionPlanPoint]
-    ) async throws(ChatPlanGenerationError) -> Bool {
-        guard case let .plan(originalGoal) = purpose else {
-            return false
-        }
-        return try chatSession.recordStructuredPlan(
-            responseText: responseText,
-            originalGoal: originalGoal,
-            createdAt: createdAt,
-            points: points
-        )
-    }
-
-    nonisolated static func planID(from points: [TerminalSessionPlanPoint]) -> String {
-        PlanningCommandKernel.planID(from: points)
-    }
-
-    @discardableResult
-    func recordPlanIfNeeded(
-        responseText: String,
-        purpose: ChatTurnPurpose,
-        createdAt: Date = Date(),
-        points: [TerminalSessionPlanPoint] = []
-    ) -> Bool {
-        guard case let .plan(originalGoal) = purpose else {
-            return false
-        }
-        let consolidatedText = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !consolidatedText.isEmpty else {
-            return false
-        }
-        activePlan = TerminalSessionPlan(
-            originalGoal: originalGoal,
-            consolidatedText: consolidatedText,
-            createdAt: createdAt,
-            isApproved: false,
-            points: points
-        )
-        return true
-    }
-
     func finishPromptResult(_ result: TerminalChatGenerationResult) async {
         switch result {
         case let .success(success):

@@ -38,18 +38,4 @@ extension TerminalInteractiveLineReader {
         // Array's copy-on-write storage keeps editor context snapshots cheap.
         state.history.append(trimmedLine)
     }
-
-    /// Line-scoped `Home`/`End` targets, shared with the reducer's geometry so
-    /// both agree on what a logical line is.
-    static func homeCursorIndex(in buffer: [Character], cursorIndex: Int) -> Int {
-        var editor = TerminalPromptEditor()
-        editor.buffer = buffer
-        return editor.lineRange(containing: cursorIndex).lowerBound
-    }
-
-    static func endCursorIndex(in buffer: [Character], cursorIndex: Int) -> Int {
-        var editor = TerminalPromptEditor()
-        editor.buffer = buffer
-        return editor.lineRange(containing: cursorIndex).upperBound
-    }
 }

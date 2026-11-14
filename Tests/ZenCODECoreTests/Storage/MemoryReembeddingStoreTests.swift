@@ -93,7 +93,7 @@ struct MemoryReembeddingStoreTests {
         with provider: (any EmbeddingProvider)?
     ) async throws -> GraphEntry {
         let store = try await open(graphURL, with: provider)
-        return try await store.write(content: content, category: .fact, tags: []).entry
+        return try await store.writeDetailed(content: content, category: .fact, tags: []).entry
     }
 
     private static func options(
@@ -370,7 +370,7 @@ struct MemoryReembeddingStoreTests {
             let decoded = try await JSONMemoryPersistence(url: graphURL).load()
             #expect(decoded.graphVersion == MemoryGraph.currentGraphVersion)
             let reopened = try await Self.open(graphURL, with: provider)
-            #expect(try await reopened.entries(includeArchived: true, limit: 10).count == 6)
+            #expect(try await reopened.entries(includeArchived: true, offset: 0, limit: 10, filter: .none).count == 6)
             #expect(try await reopened.reembeddingPlan()?.isEmpty == true)
         }
     }

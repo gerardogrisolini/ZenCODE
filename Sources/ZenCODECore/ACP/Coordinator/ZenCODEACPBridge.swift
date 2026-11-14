@@ -17,10 +17,6 @@ import ToolCore
 struct ACPShutdownFenceError: Error {}
 
 public actor ZenCODEACPBridge {
-    /// The operation state of a session incarnation, owned by the
-    /// ``ChatSessionHost`` the bridge runs its sessions in.
-    public typealias SessionOperationState = ChatSessionOperationState
-
     /// The ACP side of one session incarnation: the writer-facing state the
     /// bridge keeps next to the incarnation the ``ChatSessionHost`` runs for
     /// it (its controller, its prompt reservation, and its epoch). The
@@ -151,11 +147,10 @@ public actor ZenCODEACPBridge {
     private var nextLifecycleOperationToken: UInt64 = 1
     /// `session/prompt` handlers currently running, by session id. This tracks
     /// the *ACP wrapper* — the task that flushes buffered updates, refreshes
-    /// session state and writes the final `stopReason` reply — which the
-    /// runner's own `promptTaskRegistry` never sees, because that registry
-    /// only covers the backend-side stream tasks. A `session/close` that
-    /// cancelled the backend turn must also wait for this handler to finish,
-    /// or its unwind can reach the wire after the close reply.
+    /// session state and writes the final `stopReason` reply. A
+    /// `session/close` that cancelled the backend turn must also wait for this
+    /// handler to finish, or its unwind can reach the wire after the close
+    /// reply.
     private var promptHandlersInFlight: [String: Set<UUID>] = [:]
 
     /// Returns the in-flight prompt tokens for the current session incarnation.
@@ -275,7 +270,7 @@ public actor ZenCODEACPBridge {
         await host.shutdown()
     }
 
-    /// `true` once `shutdown()` ran; used to fence late session mutations.
+    /// `true` once `shutdown()` ran.
     var isShutDown: Bool {
         didShutDown
     }

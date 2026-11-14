@@ -138,7 +138,7 @@ struct SharedChatEndToEndTests {
     // MARK: - 2. Direct bus message wakes a task-bound standby agent
 
     /// A message delivered through `AgentSharedChat` directly — not through the
-    /// `agent.message` tool (`messageAgents`) — wakes a task-bound agent parked
+    /// `agent.message` tool — wakes a task-bound agent parked
     /// in standby: its registered wake-up callback drains the mailbox and the
     /// work loop sends the shared-chat prompt to the backend as the next turn.
     @Test
@@ -186,8 +186,7 @@ struct SharedChatEndToEndTests {
         #expect(await runtime.snapshots().first { $0.id == agentID }?.status == .standby)
         await backend.waitUntilPromptCount(1)
 
-        // Direct bus delivery, from the coordinator identity: no tool call, no
-        // `messageAgents` bridge.
+        // Direct bus delivery, from the coordinator identity: no tool call.
         let delivery = try await chat.send(
             roomID: root,
             senderID: AgentSharedChat.coordinatorID(for: root),

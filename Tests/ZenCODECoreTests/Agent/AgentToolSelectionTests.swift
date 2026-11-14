@@ -129,7 +129,8 @@ extension AgentConfigurationTests {
         let terminal = TerminalChat(
             configuration: configuration,
             stdinIsTerminal: false,
-            sessionRunner: runner
+            sessionRunner: runner,
+            telegramTransportFactory: nil
         )
         let skill = PromptSkill(
             canonicalName: "release-review",
@@ -157,7 +158,7 @@ extension AgentConfigurationTests {
             await runner.snapshotSession(id: terminal.sessionID)
         )
 
-        _ = await terminal.chatSession.applySkillSelectionCommand(names: [skill.canonicalName])
+        _ = await terminal.chatSession.applySkillSelectionCommand(rawSelection: skill.canonicalName)
         let snapshot = try #require(
             await runner.snapshotSession(id: terminal.sessionID)
         )
@@ -200,7 +201,8 @@ extension AgentConfigurationTests {
         let terminal = TerminalChat(
             configuration: configuration,
             stdinIsTerminal: false,
-            sessionRunner: runner
+            sessionRunner: runner,
+            telegramTransportFactory: nil
         )
         let items = ChatSessionController.toolSelectionItems(featureStatuses: [])
         terminal.selectedToolKeys = try TerminalToolSelectionCatalog.parseSelection(
@@ -263,7 +265,8 @@ extension AgentConfigurationTests {
         let terminal = TerminalChat(
             configuration: configuration,
             stdinIsTerminal: false,
-            sessionRunner: AgentCoreSessionRunner()
+            sessionRunner: AgentCoreSessionRunner(),
+            telegramTransportFactory: nil
         )
         terminal.selectedAgent = profile
         terminal.selectedToolKeys = ["shell", "files", "memory", "sub-agents"]
@@ -271,7 +274,8 @@ extension AgentConfigurationTests {
         let allowedToolNames = await terminal.selectedAllowedToolNames(
             discoverExternalTools: false
         )
-        let mutatingCoreNames = Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
+        let mutatingCoreNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
+            .subtracting(DirectToolCatalog.coreReadDescriptors.map(\.name))
 
         #expect(allowedToolNames.isDisjoint(with: mutatingCoreNames))
         #expect(allowedToolNames.contains("local.readFile"))

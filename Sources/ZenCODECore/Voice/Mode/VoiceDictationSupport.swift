@@ -354,10 +354,6 @@ struct VoiceKeywordCollector: Sendable {
         self.keyword = keyword
     }
 
-    var hasPendingText: Bool {
-        !pending.isEmpty
-    }
-
     /// What `receive` would do with `speech`, without changing anything.
     func peek(_ speech: String, awaitingShortAnswer: Bool) -> Outcome {
         var copy = self

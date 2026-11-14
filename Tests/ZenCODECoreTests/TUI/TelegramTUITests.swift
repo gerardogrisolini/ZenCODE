@@ -189,11 +189,11 @@ struct TelegramTUITests {
 
     @Test
     func telegramStartPayloadIsRemoteCommandNotPrompt() {
-        #expect(TerminalTelegramRemoteCommand(text: "/start") == .start)
-        #expect(TerminalTelegramRemoteCommand(text: "/start 233B0EC4") == .start)
-        #expect(TerminalTelegramRemoteCommand(text: "/start@zencode_bot 233B0EC4") == .start)
-        #expect(TerminalTelegramRemoteCommand(text: "/help") == .help)
-        #expect(TerminalTelegramRemoteCommand(text: "ciao") == nil)
+        #expect(TerminalTelegramRemoteCommand.invocation(text: "/start")?.command == .start)
+        #expect(TerminalTelegramRemoteCommand.invocation(text: "/start 233B0EC4")?.command == .start)
+        #expect(TerminalTelegramRemoteCommand.invocation(text: "/start@zencode_bot 233B0EC4")?.command == .start)
+        #expect(TerminalTelegramRemoteCommand.invocation(text: "/help")?.command == .help)
+        #expect(TerminalTelegramRemoteCommand.invocation(text: "ciao") == nil)
         #expect(TelegramChannel.commandWithoutBotMention("/review@zencode_bot routing") == "/review routing")
         #expect(TelegramChannel.commandWithoutBotMention("person@example.com") == "person@example.com")
     }
@@ -206,7 +206,8 @@ struct TelegramTUITests {
                 availableAgents: AgentProfileStore.defaultProfiles(),
                 workingDirectory: FileManager.default.temporaryDirectory
             ),
-            stdinIsTerminal: false
+            stdinIsTerminal: false,
+            telegramTransportFactory: nil
         )
         terminal.selectedToolKeys.insert("sub-agents")
         terminal.telegramChannel.linkedChatID = 42
@@ -246,7 +247,8 @@ struct TelegramTUITests {
                 availableAgents: AgentProfileStore.defaultProfiles(),
                 workingDirectory: FileManager.default.temporaryDirectory
             ),
-            stdinIsTerminal: false
+            stdinIsTerminal: false,
+            telegramTransportFactory: nil
         )
         let route = AgentTelegramRouteManifest(roomID: terminal.sessionID)
         await terminal.telegramChannel.router.refresh(
@@ -285,7 +287,8 @@ struct TelegramTUITests {
                 availableAgents: AgentProfileStore.defaultProfiles(),
                 workingDirectory: workingDirectory
             ),
-            stdinIsTerminal: false
+            stdinIsTerminal: false,
+            telegramTransportFactory: nil
         )
         terminal.selectedToolKeys.insert("sub-agents")
         let lease = await Self.installTestRoute(on: terminal, roomID: terminal.sessionID)
@@ -386,7 +389,7 @@ struct TelegramTUITests {
                 isDirectory: true
             )
         )
-        let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false)
+        let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false, telegramTransportFactory: nil)
         if subAgentsEnabled {
             terminal.selectedToolKeys.insert("sub-agents")
         } else {
@@ -417,7 +420,7 @@ struct TelegramTUITests {
             sessionID: terminal.sessionID, graphID: graphID, state: .awaitingUser,
             message: "Which surface should I cover first?", expectedRevision: graph.revision
         )
-        await terminal.recordWorkflowTurnOutcome(
+        await terminal.chatSession.recordWorkflowTurnOutcome(
             graphID: graphID,
             coordinatorMessage: "Which surface should I cover first?"
         )
@@ -441,7 +444,7 @@ struct TelegramTUITests {
             sessionID: terminal.sessionID, graphID: graphID, state: .awaitingUser,
             message: "Anything else?", expectedRevision: resumed.revision
         )
-        await terminal.recordWorkflowTurnOutcome(
+        await terminal.chatSession.recordWorkflowTurnOutcome(
             graphID: graphID,
             coordinatorMessage: "Anything else?"
         )
@@ -464,11 +467,11 @@ struct TelegramTUITests {
             availableAgents: AgentProfileStore.defaultProfiles(),
             workingDirectory: FileManager.default.temporaryDirectory
                 .appendingPathComponent("ZenCODE-telegram-plan-\(UUID().uuidString)", isDirectory: true)
-        ), stdinIsTerminal: false)
+        ), stdinIsTerminal: false, telegramTransportFactory: nil)
         let lease = await Self.installTestRoute(on: terminal, roomID: terminal.sessionID)
         terminal.telegramChannel.controlState.isActive = true
         terminal.telegramChannel.controlState.wireLifecycleEpoch = UUID()
-        terminal.activePlan = TerminalSessionPlan(
+        terminal.chatSession.activePlan = TerminalSessionPlan(
             originalGoal: "old planner goal",
             consolidatedText: "Implement the Telegram plan approval flow."
         )
@@ -488,8 +491,8 @@ struct TelegramTUITests {
         }
         #expect(purpose == .normal)
         #expect(prompt.contains("Goal: Keep the approved plan's objective explicit"))
-        #expect(terminal.activePlan?.originalGoal == "Keep the approved plan's objective explicit")
-        #expect(terminal.activePlan?.isApproved == true)
+        #expect(terminal.chatSession.activePlan?.originalGoal == "Keep the approved plan's objective explicit")
+        #expect(terminal.chatSession.activePlan?.isApproved == true)
     }
 
     @Test
@@ -514,7 +517,8 @@ struct TelegramTUITests {
                 availableAgents: AgentProfileStore.defaultProfiles(),
                 workingDirectory: FileManager.default.temporaryDirectory
             ),
-            stdinIsTerminal: false
+            stdinIsTerminal: false,
+            telegramTransportFactory: nil
         )
         let settings = AgentTelegramSettingsManifest(
             enabled: true,
@@ -920,8 +924,8 @@ struct TelegramTUITests {
         try TerminalTelegramUpdateOffsetStore.save(updateID: 40, botID: 100, to: url)
         try TerminalTelegramUpdateOffsetStore.save(updateID: 7, botID: 200, to: url)
 
-        #expect(TerminalTelegramUpdateOffsetStore.load(botID: 100, from: url) == 41)
-        #expect(TerminalTelegramUpdateOffsetStore.load(botID: 200, from: url) == 7)
+        #expect((try? TerminalTelegramUpdateOffsetStore.loadRequired(botID: 100, from: url)) == 41)
+        #expect((try? TerminalTelegramUpdateOffsetStore.loadRequired(botID: 200, from: url)) == 7)
         #if os(macOS) || os(Linux)
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
@@ -977,13 +981,13 @@ struct TelegramTUITests {
         let requestID = try #require(Self.telegramPermissionRequestID(in: message))
 
         let reminder = await broker.handleMessage("queue another prompt", lease: lease)
-        #expect(reminder.isHandled)
+        #expect(reminder != .notHandled)
         if case let .handled(reply) = reminder {
             #expect(reply?.contains("Permission request pending") == true)
         }
 
         let reply = await broker.handleMessage("/allow \(requestID)", lease: lease)
-        #expect(reply.isHandled)
+        #expect(reply != .notHandled)
         if case let .handled(replyText) = reply {
             #expect(replyText?.contains("allowed once") == true)
         }
@@ -1046,7 +1050,6 @@ struct TelegramTUITests {
         }
 
         #expect(outcome == .undeliverable)
-        #expect(!outcome.isApproved)
     }
 
     /// A tool outside the gated set never raises a remote dialogue.
@@ -1067,7 +1070,6 @@ struct TelegramTUITests {
             return true
         }
         #expect(outcome == .notRequired)
-        #expect(outcome.isApproved)
     }
 
     private static func telegramPermissionTestLease() -> TerminalTelegramRouteLease {

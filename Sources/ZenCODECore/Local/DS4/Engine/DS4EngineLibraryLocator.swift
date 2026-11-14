@@ -101,18 +101,6 @@ enum DS4EngineLibraryLocator {
             .appendingPathComponent(DS4EngineABI.libraryFileName, isDirectory: false)
     }
 
-    /// Same as `expectedURL(rootDirectory:backend:supportDirectory:)` for the root and backend of a manifest.
-    static func expectedURL(
-        manifest: AgentDS4RuntimeManifest,
-        supportDirectory: URL = AppStorageDirectory.appSupportDirectoryURL()
-    ) throws -> URL {
-        try expectedURL(
-            rootDirectory: manifest.rootDirectory,
-            backend: manifest.backend,
-            supportDirectory: supportDirectory
-        )
-    }
-
     // MARK: Hash
 
     /// First 16 hex characters of SHA-256(`ds4.h` ∥ embedded shim source ∥ embedded ABI header).

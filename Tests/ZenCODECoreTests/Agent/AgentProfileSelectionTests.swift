@@ -127,7 +127,8 @@ extension AgentConfigurationTests {
         #expect(optionalFeatureKeys.allSatisfy { key in
             !toolSelectionItems.contains { $0.key == key }
         })
-        let mutatingCoreNames = Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
+        let mutatingCoreNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
+            .subtracting(DirectToolCatalog.coreReadDescriptors.map(\.name))
         #expect(
             reviewerProfile.allowedToolNames(
                 featureStatuses: unavailableOptionalFeatureStatuses
@@ -278,9 +279,8 @@ extension AgentConfigurationTests {
         let resolved = profile.resolvedAllowedToolNames(coreNames.union(nonCoreNames))
         let broadGrantResolved = profile.resolvedAllowedToolNames(["local.", "linear."])
         let searchGrantResolved = profile.resolvedAllowedToolNames(["search."])
-        let mutableLocalNames = Set(
-            DirectToolCatalog.coreMutatingLocalFileAndTextDescriptors.map(\.name)
-        )
+        let mutableLocalNames = Set(DirectToolCatalog.coreLocalFileAndTextDescriptors.map(\.name))
+            .subtracting(DirectToolCatalog.coreReadLocalFileAndTextDescriptors.map(\.name))
 
         #expect(searchNames.isSubset(of: coreReadNames))
         #expect(resolved == coreReadNames.union(nonCoreNames))
@@ -456,7 +456,6 @@ struct AgentProfileCapabilityTests {
         {"id":"a","name":"Test","role":"developer","tools":[]}
         """.data(using: .utf8)!
         let profile = try JSONDecoder().decode(AgentProfile.self, from: json)
-        #expect(profile.capability == nil)
         #expect(profile.name == "Test")
     }
 
@@ -489,7 +488,6 @@ struct AgentProfileCapabilityTests {
         #expect(profile.defaultModelBinding?.id == "deep")
         #expect(profile.modelID == "model-deep")
         #expect(profile.thinkingSelection == .high)
-        #expect(profile.capability == 9)
         #expect(profile.modelBinding(matching: "balanced")?.capability == 5)
         #expect(profile.modelBinding(matching: "model-balanced")?.thinkingSelection == .low)
 
@@ -572,7 +570,7 @@ struct DelegatableAgentsSectionTests {
         let section = SystemPromptBuilder.delegatableAgentsSection(
             agents: agents,
             allowedToolNames: nil,
-            models: [Self.model("gpt-4"), Self.model("claude")]
+            snapshot: .available(models: [Self.model("gpt-4"), Self.model("claude")])
         )
         #expect(section != nil)
         #expect(section?.contains("WithModel") == true)
@@ -629,7 +627,7 @@ struct DelegatableAgentsSectionTests {
         let section = SystemPromptBuilder.delegatableAgentsSection(
             agents: agents,
             allowedToolNames: nil,
-            models: [Self.model("opus"), Self.model("mini"), Self.model("sonnet")]
+            snapshot: .available(models: [Self.model("opus"), Self.model("mini"), Self.model("sonnet")])
         )
         let rendered = try #require(section)
         let lowIndex = try #require(rendered.range(of: "pass model: binding:low"))

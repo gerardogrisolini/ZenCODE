@@ -360,18 +360,6 @@ extension ChatSessionController {
         }
     }
 
-    /// The skills `names` (``selectSkills(names:)``), as a channel applies them
-    /// itself.
-    func applySkillSelectionCommand(names: Set<String>) async -> ChatCommandOutcome {
-        await selectionCommandOutcome(await selectSkills(names: names), command: .skills)
-    }
-
-    /// Installs the skill at `source` (``installSkill(from:)``), as a channel
-    /// installs it itself.
-    func installSkillCommand(from source: SkillInstallSource) async -> ChatCommandOutcome {
-        await selectionCommandOutcome(await installSkill(from: source), command: .skills)
-    }
-
     // MARK: - /sessions
 
     /// What `/sessions` does with `rawArguments`: a keyword (`delete`, `new`,

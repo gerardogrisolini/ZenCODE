@@ -243,31 +243,6 @@ struct DS4EngineRegistryTests {
         #expect(engine === factory.engines.first)
     }
 
-    // MARK: Sessions and shutdown
-
-    @Test
-    func shutdownClosesTheEngineAndTheRegistryStaysUsable() async throws {
-        let factory = MockDS4EngineFactory()
-        let registry = DS4EngineRegistry(factory: factory.factory)
-        let configuration = DS4EngineConfiguration.mock()
-        let engine = try await registry.engine(for: configuration)
-        _ = try await turn(engine, sessionID: "s1", prompt: "hi")
-
-        await registry.shutdown()
-
-        let mock = try #require(factory.engines.first)
-        #expect(mock.isClosed)
-        #expect(mock.liveSessionIDs.isEmpty)
-        #expect(await registry.currentIdentity == nil)
-        await #expect(throws: DS4EngineError.engineClosed) {
-            _ = try await engine.tokenCount(of: [.begin])
-        }
-
-        let reopened = try await registry.engine(for: configuration)
-        #expect(reopened !== engine)
-        #expect(factory.openCount == 2)
-    }
-
     // MARK: closeIfIdle
 
     @Test

@@ -188,11 +188,6 @@ struct DS4GeneratedOutputParser: Sendable {
         }
     }
 
-    /// Whether a tool-call block is being parsed.
-    var isInsideToolCall: Bool {
-        toolActive && terminal == nil
-    }
-
     // MARK: - Streaming
 
     mutating func consume(_ chunk: String) -> [DS4ParsedOutputDelta] {

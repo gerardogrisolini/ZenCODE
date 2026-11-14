@@ -69,12 +69,6 @@ public enum ZenMentionSuggestions {
         }
     }
 
-    /// Whether `draft` begins with a mention (after any literal leading
-    /// spaces), whatever the cursor completes.
-    public static func startsMention(_ draft: String) -> Bool {
-        draft.first(where: { $0 != " " }) == "@"
-    }
-
     /// Accepts `suggestion` for the leading mention under the cursor
     /// (`TerminalPromptEditor.acceptSuggestion`): the whole token is replaced
     /// by the suggestion's command (`@handle` and one space) and the cursor

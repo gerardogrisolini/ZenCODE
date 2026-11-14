@@ -68,7 +68,7 @@ struct DS4NativeEngineSessionPoolTests {
 
         #expect(sessions.freed == ["b"])
         #expect(pool.pinnedSessionID == "a")
-        #expect(pool.contains("a"))
+        #expect(pool.peekHandle(for: "a") != nil)
     }
 
     @Test

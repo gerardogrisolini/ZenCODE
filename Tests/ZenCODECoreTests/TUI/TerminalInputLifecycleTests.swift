@@ -89,7 +89,7 @@ struct TerminalInputLifecycleTests {
         // the worker's marker immediately before its raw read instead, so the
         // latency below cannot include dispatch-queue scheduling time.
         await terminalWaitUntil {
-            reader.withPanelLock { $0.panelReadToken?.hasEnteredBlockingRead == true }
+            reader.withPanelLock { $0.panelLifecycle.readToken?.hasEnteredBlockingRead == true }
         }
 
         // `stopPanelInput` cancels this token before awaiting the loop task, so
@@ -97,7 +97,7 @@ struct TerminalInputLifecycleTests {
         let clock = ContinuousClock()
         let start = clock.now
         reader.withPanelLock { state in
-            state.panelReadToken?.cancel()
+            state.panelLifecycle.readToken?.cancel()
         }
         loop.cancel()
         await loop.value
@@ -137,7 +137,7 @@ struct TerminalInputLifecycleTests {
         // The panel is `stopping`, so the start must park instead of claiming
         // the terminal. Its synchronous probe reports exactly that.
         await terminalWaitUntil {
-            reader.withPanelLock { !$0.panelTransitionWaiters.isEmpty }
+            reader.withPanelLock { !$0.panelLifecycle.transitionWaiters.isEmpty }
         }
         #expect(admission.withLock { $0 } == nil)
 
@@ -176,7 +176,7 @@ struct TerminalInputLifecycleTests {
         }
 
         await terminalWaitUntil {
-            reader.withPanelLock { !$0.panelTransitionWaiters.isEmpty }
+            reader.withPanelLock { !$0.panelLifecycle.transitionWaiters.isEmpty }
         }
         #expect(!didStop.isSignalled)
 
@@ -253,16 +253,19 @@ struct TerminalInputLifecycleTests {
         token.cancel()
         // A cancelled menu unwinds like an operator cancel instead of holding
         // the terminal until a key is pressed.
-        #expect(
-            TerminalCheckboxMenu.readByte(
-                rawInput: input.rawInput,
-                shouldCancel: token.isCancelled
-            ) == nil
-        )
+        guard case .end = TerminalCheckboxMenu.readByteEvent(
+            rawInput: input.rawInput,
+            shouldCancel: token.isCancelled,
+            resizeGeneration: nil
+        ) else {
+            Issue.record("A cancelled menu read must report the end of input.")
+            return
+        }
         #expect(
             TerminalCheckboxMenu.readKey(
                 rawInput: input.rawInput,
-                shouldCancel: token.isCancelled
+                shouldCancel: token.isCancelled,
+                resizeGeneration: nil
             ) == nil
         )
     }

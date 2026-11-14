@@ -72,7 +72,6 @@ struct MemoryMarkdownIgnoredTests {
                     let store = try await MemoryGraphStore.open(
                         graphURL: graphURL
                     )
-                    try await store.saveGraph()
                     #expect(try await store.context(for: query).isEmpty)
                 }
 
@@ -96,7 +95,7 @@ struct MemoryMarkdownIgnoredTests {
                 let reopened = try await MemoryGraphStore.open(
                     graphURL: graphURL
                 )
-                let entries = try await reopened.entries(includeArchived: true, limit: 100)
+                let entries = try await reopened.entries(includeArchived: true, offset: 0, limit: 100, filter: .none)
                 #expect(entries.map(\.id) == [written.id.uuidString])
                 #expect(try Data(contentsOf: markdownURL) == originalBytes)
             }
@@ -126,7 +125,7 @@ struct MemoryMarkdownIgnoredTests {
                 let store = try await MemoryGraphStore.open(
                     graphURL: graphURL
                 )
-                #expect(try await store.entries(includeArchived: true, limit: 100).map(\.id) == [id])
+                #expect(try await store.entries(includeArchived: true, offset: 0, limit: 100, filter: .none).map(\.id) == [id])
                 #expect(provider.inputs.isEmpty)
                 #expect(try Data(contentsOf: graphURL) == graphBytes)
                 #expect(try Data(contentsOf: markdownURL) == document)

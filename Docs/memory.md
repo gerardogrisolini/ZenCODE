@@ -254,7 +254,8 @@ whereas applying it after fusion would act on near-flat rank scores and sort
 by age alone — and, after the cascade, only to the graph neighbours that
 inherited a seed's decayed score, so every entry is weighted exactly once.
 `memory.search` is strictly read-only: the
-store's `search` runs the engine's `searchReadOnly` path, which shares the same
+store's `search` runs the engine's `searchReadOnlyDetailed` path over a fresh
+read-only snapshot of the graph, which shares the same
 analyze → retrieve → select pipeline as recall but performs no transactional
 maintenance — it never mutates `retrievalCount`/`confidence`/links and cannot
 fail on a save error — while automatic recall (`context(for:)`) keeps its
@@ -364,10 +365,7 @@ environment only when the manifest field is absent, then BM25. The endpoint
 identifies the embedding model itself: `OpenAICompatibleEmbeddingProvider` derives a stable
 endpoint-hash `modelID` when none is supplied and deliberately omits `model`
 from the request body, so an endpoint-only server chooses; a stored `model` is
-sent in the request body instead. The engine still
-ships `DeterministicHashEmbeddingProvider` (a 128-dimension signed feature-hashing
-bag-of-words encoder, not a semantic model), but it is no longer wired in by
-default. Entries record their `embeddingModel`, so a provider change degrades to
+sent in the request body instead. Entries record their `embeddingModel`, so a provider change degrades to
 lexical retrieval instead of returning wrong matches. Provider resolution sits
 behind a task-local seam (`MemoryEmbedding.withProvider(_:operation:)`). Under
 a test harness the real process environment is never consulted: resolution
@@ -434,13 +432,12 @@ that a missing `<project-memory>` block means either nothing relevant was
 found or recall was unavailable, and to call `memory.search` before concluding
 that no prior context exists.
 
-The engine's N→N+1 `submitContext(_:)` / `takePending()` pipeline is
-deliberately not used. `ZenMemory.pending` is a single unkeyed array on the
-engine actor, while `MemoryGraphStoreRegistry` caches exactly one store — and
-so one engine — per workspace graph URL, shared by every concurrent session,
-sub-agent, and tool call in that workspace. A wholesale drain would hand one
-session the memories retrieved for another's prompt; inline per-prompt
-retrieval keeps every recall bound to the prompt that asked for it.
+Recall is deliberately not prefetched one turn ahead.
+`MemoryGraphStoreRegistry` caches exactly one store — and so one engine — per
+workspace graph URL, shared by every concurrent session, sub-agent, and tool
+call in that workspace, so a result prefetched into the engine could reach a
+session other than the one whose prompt it was retrieved for; inline
+per-prompt retrieval keeps every recall bound to the prompt that asked for it.
 
 The block travels out-of-band through
 `MemoryTurnContext.currentTurnMemoryBlock`, a task-local bound around
@@ -571,11 +568,10 @@ caller carried over. An entry's title is its `Summary`, or else its first line
 that is not a `Timestamp`/`Updated` annotation. `MemoryTurnCoordinator`
 drives recall only, and
 `MemoryTurnCoordinator.discard(sessionID:)` drops only per-session recall health
-state on close/reset/rebuild. The engine's `learn(from:)`, its default
-`NoopMemoryExtractor` (which extracts nothing), and its LLM-backed extractor
-stay unwired internals of `ZenMemory`. Selective product consolidation instead
-uses the runner-owned same-backend path described below; opening a store alone
-still never performs an extraction request.
+state on close/reset/rebuild. The engine has no extraction layer of its own:
+selective product consolidation uses the runner-owned same-backend path
+described below, and opening a store alone never performs an extraction
+request.
 
 ## Memory cleanup
 

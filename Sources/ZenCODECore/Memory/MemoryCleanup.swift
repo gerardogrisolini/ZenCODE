@@ -37,11 +37,6 @@ struct MemoryCleanupPolicy: Sendable, Equatable {
         self.staleInactivityDays = staleInactivityDays.map { max($0, 1) }
         self.graphHygiene = graphHygiene
     }
-
-    /// Whether at least one rule would run.
-    var hasActiveRule: Bool {
-        archivedRetentionDays != nil || staleInactivityDays != nil || graphHygiene
-    }
 }
 
 /// What a cleanup plan changes. Counts and lists describe the plan relative to

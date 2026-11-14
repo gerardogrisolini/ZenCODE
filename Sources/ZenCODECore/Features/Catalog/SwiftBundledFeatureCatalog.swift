@@ -35,10 +35,6 @@ enum SwiftBundledFeatureCatalog {
         "search-tools": "search"
     ]
 
-    static var retiredFeatureIDs: Set<String> {
-        Set(retiredFeatureCoreGroupKeys.keys)
-    }
-
     static func isRetiredFeatureID(_ id: String) -> Bool {
         retiredFeatureCoreGroupKeys[id] != nil
     }

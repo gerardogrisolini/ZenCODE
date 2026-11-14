@@ -249,39 +249,12 @@ enum ToolSnippetRenderer {
     /// coincide with a numbered source line whose literal text is `<empty>`.
     private static let detailedToolEmptyPayloadMarker = "<empty>"
 
-    /// Plain-text projection of the same flush-aligned, numbered source rows.
-    static func numberedCodeSnippetLines(
-        _ text: String,
-        indentation: String = ""
-    ) -> [String] {
-        numberedCodeSnippetRows(text, indentation: indentation).map(\.plainText)
-    }
-
     /// Minimum useful width for each source cell in a side-by-side expanded
     /// diff. With no additional inset and a three-cell divider, the default
     /// content-width threshold is 51 cells (3 + 24 * 2).
     /// At or below a smaller budget the renderer uses stacked unified `-` / `+`
     /// rows rather than squeezing source code into unusably narrow columns.
     static let detailedToolSideBySideDiffMinimumCellWidth = 24
-
-    /// Renders old and new edit payloads side by side when both columns can
-    /// retain useful source context. Narrow terminals receive a unified,
-    /// stacked `-` / `+` view, which the detailed wrapper safely reflows without
-    /// horizontal scrolling.
-    static func numberedDiffSnippetLines(
-        old: String,
-        new: String,
-        contentWidth: Int?,
-        indentation: String = ""
-    ) -> [String] {
-        numberedDiffSnippetRows(
-            old: old,
-            new: new,
-            contentWidth: contentWidth,
-            indentation: indentation
-        )
-        .map(\.plainText)
-    }
 
     /// Builds the narrow presentation from the same LCS row model as the wide
     /// view. Changed source lines become adjacent `-` / `+` rows; unchanged

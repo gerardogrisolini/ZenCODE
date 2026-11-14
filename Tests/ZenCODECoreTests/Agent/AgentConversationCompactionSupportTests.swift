@@ -21,7 +21,7 @@ struct AgentConversationCompactionSupportTests {
 
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             messages,
-            maxTokens: 8_000
+            budget: AgentConversationCompactionBudget(contextWindowTokens: 8_000)
         )
 
         #expect(result.wasCompacted == false)
@@ -51,7 +51,7 @@ struct AgentConversationCompactionSupportTests {
 
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             messages,
-            maxTokens: 1_000,
+            budget: AgentConversationCompactionBudget(contextWindowTokens: 1_000),
             force: true
         )
 
@@ -96,7 +96,7 @@ struct AgentConversationCompactionSupportTests {
 
         let firstCompaction = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             messages,
-            maxTokens: 1_200,
+            budget: AgentConversationCompactionBudget(contextWindowTokens: 1_200),
             force: true
         )
         var resumedMessages = firstCompaction.messages
@@ -105,7 +105,7 @@ struct AgentConversationCompactionSupportTests {
 
         let secondCompaction = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             resumedMessages,
-            maxTokens: 700,
+            budget: AgentConversationCompactionBudget(contextWindowTokens: 700),
             force: true
         )
         let compactedSystemPrompt = secondCompaction.messages.first?.content ?? ""
@@ -152,7 +152,7 @@ struct AgentConversationCompactionSupportTests {
         let originalPromptTokens = pseudoPromptTokenIDs(for: messages)
         let compaction = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             messages,
-            maxTokens: 1_200,
+            budget: AgentConversationCompactionBudget(contextWindowTokens: 1_200),
             force: true
         )
         let compactedPromptTokens = pseudoPromptTokenIDs(for: compaction.messages)
@@ -196,7 +196,7 @@ struct AgentConversationCompactionSupportTests {
         let target = AgentConversationCompactionPolicy.targetTokenCount(for: maxTokens)
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             messages,
-            maxTokens: maxTokens
+            budget: AgentConversationCompactionBudget(contextWindowTokens: maxTokens)
         )
 
         #expect(result.wasCompacted)
@@ -231,7 +231,7 @@ struct AgentConversationCompactionSupportTests {
 
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             messages,
-            maxTokens: 3_000,
+            budget: AgentConversationCompactionBudget(contextWindowTokens: 3_000),
             force: true
         )
 
@@ -290,7 +290,7 @@ struct AgentConversationCompactionSupportTests {
 
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             messages,
-            maxTokens: 1_000,
+            budget: AgentConversationCompactionBudget(contextWindowTokens: 1_000),
             force: true
         )
 

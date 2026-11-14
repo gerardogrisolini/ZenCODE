@@ -72,9 +72,4 @@ final class ZenMarkdownCache<Key: Hashable & Sendable, Value: Sendable>: Sendabl
         insert(computed, for: key)
         return computed
     }
-
-    /// Removes every entry.
-    func removeAll() {
-        storage.withLock { $0.entries.removeAll() }
-    }
 }

@@ -18,12 +18,6 @@ public extension AgentCoreSessionRunner {
         )
     }
 
-    func taskGraphSnapshots(
-        sessionID: String
-    ) async throws -> [TaskGraphSnapshot] {
-        try await taskOrchestrator.graphSnapshots(sessionID: sessionID)
-    }
-
     func resumableTaskGraphCheckpoints(
         workingDirectory: URL
     ) async -> [ResumableTaskGraph] {
@@ -59,17 +53,6 @@ public extension AgentCoreSessionRunner {
     ) async throws {
         try await taskOrchestrator.removeResumableTaskGraphs(
             graphs,
-            workingDirectory: workingDirectory
-        )
-    }
-
-    @discardableResult
-    func resumeTaskGraph(
-        _ graph: ResumableTaskGraph,
-        workingDirectory: URL
-    ) async throws -> TaskGraphSnapshot {
-        try await taskOrchestrator.resumeTaskGraph(
-            graph,
             workingDirectory: workingDirectory
         )
     }

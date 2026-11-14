@@ -26,7 +26,8 @@ struct DirectToolCatalogSchemaTests {
     @Test
     func coreReadAndMutatingDescriptorsPartitionTheClassifiedCoreCatalog() {
         let readNames = Set(DirectToolCatalog.coreReadDescriptors.map(\.name))
-        let mutatingNames = Set(DirectToolCatalog.coreMutatingDescriptors.map(\.name))
+        let coreNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
+        let mutatingNames = coreNames.subtracting(readNames)
         let expectedReadNames: Set<String> = [
             "local.pwd", "local.ls", "local.readFile", "local.readFiles", "local.inspectFile",
             "search.glob", "search.grep", "search.locate",
@@ -46,13 +47,11 @@ struct DirectToolCatalogSchemaTests {
 #if canImport(Darwin) || canImport(Glibc)
         expectedMutatingNames.formUnion(["local.exec", "exec.job"])
 #endif
-        let coreNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
         let unclassifiedNames = Set(DirectToolCatalog.featureDescriptors.map(\.name))
 
         #expect(readNames == expectedReadNames)
         #expect(mutatingNames == expectedMutatingNames)
-        #expect(readNames.isDisjoint(with: mutatingNames))
-        #expect(coreNames == readNames.union(mutatingNames))
+        #expect(readNames.isSubset(of: coreNames))
         #expect(coreNames.isDisjoint(with: unclassifiedNames))
         #expect(
             Set(

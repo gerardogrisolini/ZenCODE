@@ -151,7 +151,7 @@ struct DS4EngineInfo: Sendable, Hashable {
     let modelID: Int32
     let routedQuantBits: Int32
     let hasVision: Bool
-    /// `DS4EngineABI.ToolSyntax` value.
+    /// `engine_tool_syntax` id: the raw value of a `DS4ToolSyntax`.
     let toolSyntaxID: Int32
     /// Effective MTP draft tokens (1 = no speculative decoding).
     let mtpDraftTokens: Int32

@@ -137,18 +137,6 @@ struct ZenMentionMatchingTests {
         #expect(handles("@", in: []).isEmpty)
         #expect(handles("@co", in: []).isEmpty)
     }
-
-    @Test("a draft starts a mention after its literal leading spaces")
-    func startsMention() {
-        #expect(ZenMentionSuggestions.startsMention("@"))
-        #expect(ZenMentionSuggestions.startsMention("@coordinator hello"))
-        #expect(ZenMentionSuggestions.startsMention("  @all"))
-        #expect(!ZenMentionSuggestions.startsMention(""))
-        #expect(!ZenMentionSuggestions.startsMention("   "))
-        #expect(!ZenMentionSuggestions.startsMention("hello @all"))
-        #expect(!ZenMentionSuggestions.startsMention("/help"))
-        #expect(!ZenMentionSuggestions.startsMention("\n@all"))
-    }
 }
 
 @Suite("ZenMentionSuggestions roster refresh")
@@ -258,8 +246,6 @@ struct ZenMentionAcceptanceTests {
         let accepted = accept("coordinator", in: "@co")?.draft ?? ""
         #expect(accepted == "@coordinator ")
         #expect(ZenMentionSuggestions.matches(for: accepted, in: catalogue).isEmpty)
-        // And a mention without text still starts one, so the owner refreshes.
-        #expect(ZenMentionSuggestions.startsMention(accepted))
     }
 }
 

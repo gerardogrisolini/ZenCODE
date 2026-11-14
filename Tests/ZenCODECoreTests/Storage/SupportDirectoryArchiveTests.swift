@@ -95,7 +95,7 @@ struct SupportDirectoryArchiveTests {
         mutate(&files)
         let archiveURL = fileManager.temporaryDirectory
             .appendingPathComponent("\(label)-\(UUID().uuidString).tar.gz")
-        _ = try SupportDirectoryArchive.export(
+        _ = try SupportDirectoryArchive.exportReplacingExisting(
             from: sourceURL,
             to: archiveURL
         )
@@ -185,7 +185,7 @@ struct SupportDirectoryArchiveTests {
         )
         // An archive saved inside the source directory itself.
         let innerArchiveURL = sourceURL.appendingPathComponent("backup.tar.gz")
-        _ = try SupportDirectoryArchive.export(
+        _ = try SupportDirectoryArchive.exportReplacingExisting(
             from: sourceURL,
             to: innerArchiveURL
         )
@@ -236,7 +236,7 @@ struct SupportDirectoryArchiveTests {
         let archiveURL = fileManager.temporaryDirectory
             .appendingPathComponent("feature-build-\(UUID().uuidString).tar.gz")
         defer { try? fileManager.removeItem(at: archiveURL) }
-        let result = try SupportDirectoryArchive.export(from: sourceURL, to: archiveURL)
+        let result = try SupportDirectoryArchive.exportReplacingExisting(from: sourceURL, to: archiveURL)
 
         let paths = Set(try SupportDirectoryArchive.validate(archiveURL: archiveURL).entries.map(\.path))
         #expect(!paths.contains { $0.hasPrefix("features/demo/.build/") })
@@ -514,7 +514,7 @@ struct SupportDirectoryArchiveTests {
         let archiveURL = fileManager.temporaryDirectory
             .appendingPathComponent("symlink-\(UUID().uuidString).tar.gz")
         defer { try? fileManager.removeItem(at: archiveURL) }
-        let result = try SupportDirectoryArchive.export(from: sourceURL, to: archiveURL)
+        let result = try SupportDirectoryArchive.exportReplacingExisting(from: sourceURL, to: archiveURL)
 
         let entries = try SupportDirectoryArchive.validate(archiveURL: archiveURL).entries
         let paths = entries.map(\.path)

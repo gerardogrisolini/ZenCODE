@@ -32,10 +32,6 @@ public struct SwiftFeatureRecord: Sendable {
     public var enabled: Bool {
         manifestEnabled && executableAvailable
     }
-
-    public var isAdopted: Bool {
-        adoptedFrom != nil
-    }
 }
 
 public struct SwiftFeatureStatus: Codable, Sendable {
@@ -277,10 +273,6 @@ public struct SwiftFeaturePromotionReport: Codable, Sendable {
         self.build = build
         self.warnings = warnings
     }
-
-    /// Compatibility alias used by clients that call the destination the
-    /// promoted path.
-    public var promotedPath: String { destinationPath }
 }
 public struct SwiftFeatureEditReport: Codable, Sendable {
     public let ok: Bool

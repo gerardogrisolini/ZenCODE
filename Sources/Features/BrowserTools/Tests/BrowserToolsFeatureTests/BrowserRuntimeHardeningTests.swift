@@ -46,18 +46,18 @@ struct BrowserRuntimeHardeningTests {
     }
 
     @Test
-    func networkRequestPolicyFailsClosedOnEmptyResolverAnswer() {
+    func networkRequestPolicyFailsClosedOnEmptyResolverAnswer() async {
         let policy = BrowserNetworkRequestPolicy(
             urlPolicy: BrowserURLPolicy(environment: [:]),
             resolver: StaticBrowserHostResolver(addressesByHost: ["empty.example": []])
         )
-        #expect(throws: BrowserNetworkGuardError.self) {
-            try policy.validateRequestURL("https://empty.example/app")
+        await #expect(throws: BrowserNetworkGuardError.self) {
+            try await policy.validateRequestURLOffloaded("https://empty.example/app")
         }
     }
 
     @Test
-    func offloadedRequestPolicyMatchesSynchronousDecisions() async throws {
+    func offloadedRequestPolicyEnforcesUrlLoopbackAndResolvedAddressChecks() async throws {
         let resolver = StaticBrowserHostResolver(addressesByHost: [
             "public.example": ["10.0.0.1"],
             "rebound.example": ["127.0.0.1"],

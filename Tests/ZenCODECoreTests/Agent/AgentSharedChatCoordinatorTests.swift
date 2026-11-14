@@ -40,7 +40,7 @@ struct AgentSharedChatCoordinatorTests {
         ))
         #expect(events.contains { $0.renderedMessages?.map(\.text) == ["status ready"] })
         #expect(await coordinator.pendingMessageCount(roomID: room) == 0)
-        #expect(await coordinator.activeAutoTriggerID(roomID: room) == trigger.id)
+        #expect(await coordinator.activeAutoTrigger(roomID: room)?.id == trigger.id)
         await observation.cancel()
     }
 
@@ -311,7 +311,7 @@ struct AgentSharedChatCoordinatorTests {
             resolution: .declined
         )
         #expect(await coordinator.pendingMessageCount(roomID: room) == 1)
-        #expect(await coordinator.activeAutoTriggerID(roomID: room) == nil)
+        #expect(await coordinator.activeAutoTrigger(roomID: room)?.id == nil)
         #expect(await observation.snapshot().compactMap(\.autoTrigger).count == 1)
 
         await coordinator.setConsumerBusy(false, observation: subscription)
@@ -443,7 +443,7 @@ struct AgentSharedChatCoordinatorTests {
             ? firstSubscription.id
             : secondSubscription.id
         #expect(ownerID == expectedOwnerID)
-        #expect(await coordinator.activeAutoTriggerID(roomID: room) == nil)
+        #expect(await coordinator.activeAutoTrigger(roomID: room)?.id == nil)
         await first.cancel()
         await second.cancel()
         await coordinator.stopAll()

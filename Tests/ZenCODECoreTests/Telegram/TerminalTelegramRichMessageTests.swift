@@ -8,52 +8,12 @@ import ToolCore
 struct TerminalTelegramRichMessageTests {
 
     @Test
-    func detailsButtonsAndDocumentUseBotAPI103WireShapes() throws {
-        let document = PresentationDocument(blocks: [
-            .details(
-                summary: PresentationText("More"),
-                blocks: [.paragraph(PresentationText("Visible details"))],
-                isOpen: false
-            ),
-            .buttons([
-                PresentationButton(
-                    label: "Docs", action: .url(try #require(URL(string: "https://example.com"))), style: nil
-                ),
-                PresentationButton(label: "Run", action: .callback("run:1"), style: .primary),
-            ]),
-            .document(
-                PresentationDocumentReference(remoteID: "BAACAgQAAx", filename: "report.pdf"),
-                caption: PresentationText("Report")
-            ),
-        ])
-        let object = try jsonObject(TerminalTelegramRichMessageRenderer.render(document))
-        let blocks = try #require(object["blocks"] as? [[String: Any]])
-        #expect(blocks.map { $0["type"] as? String } == ["details", "buttons", "document"])
-        #expect(blocks[0]["is_open"] == nil)
-        let buttons = try #require(blocks[1]["buttons"] as? [[String: Any]])
-        #expect(buttons[0]["url"] as? String == "https://example.com")
-        #expect(buttons[1]["callback_data"] as? String == "run:1")
-        let media = try #require(blocks[2]["document"] as? [String: Any])
-        #expect(media["type"] as? String == "document")
-        #expect(media["media"] as? String == "BAACAgQAAx")
-    }
-
-    @Test
-    func sanitizerRemovesInvisibleControlsAndRejectsUnsafeActions() throws {
+    func sanitizerRemovesInvisibleControls() throws {
         let document = PresentationDocument(markdown: "ok\u{202E}\u{0000}visible")
         #expect(document.plainText == "okvisible")
         let encoded = try JSONEncoder().encode(TerminalTelegramRichMessageRenderer.render(document))
         #expect(!encoded.contains(0))
         #expect(!String(decoding: encoded, as: UTF8.self).contains("202e"))
-
-        let unsafe = PresentationDocument(blocks: [.buttons([
-            PresentationButton(
-                label: "Open", action: .url(try #require(URL(string: "file:///etc/passwd"))), style: nil
-            ),
-        ])])
-        #expect(throws: TerminalTelegramRichMessageError.invalidButton) {
-            try TerminalTelegramRichMessageRenderer.render(unsafe)
-        }
     }
 
     @Test
@@ -167,10 +127,6 @@ struct TerminalTelegramRichMessageTests {
         #expect(first["parse_mode"] as? String == "Markdown")
         #expect(fallback["parse_mode"] == nil)
         #expect(fallback["text"] as? String == "**bold with <bad> tag**")
-    }
-
-    private func jsonObject(_ value: some Encodable) throws -> [String: Any] {
-        try jsonDictionary(JSONEncoder().encode(value))
     }
 
     private func jsonDictionary(_ data: Data) throws -> [String: Any] {

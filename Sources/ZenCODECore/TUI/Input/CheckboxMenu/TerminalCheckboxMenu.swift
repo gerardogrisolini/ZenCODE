@@ -38,37 +38,6 @@ public struct TerminalCheckboxMenuItem<Value: Hashable> {
 extension TerminalCheckboxMenuItem: Sendable where Value: Sendable {}
 
 public enum TerminalCheckboxMenu {
-    struct RenderedFrame {
-        let row: Int
-        let height: Int
-        /// Terminal height used to calculate `row`. Keeping it with the frame
-        /// lets resize cleanup target the old geometry instead of clamping it
-        /// against the already-shrunk terminal.
-        let terminalRows: Int
-        /// Terminal width used to render the frame. A zero value denotes a frame
-        /// created by an older caller that did not retain width information.
-        let terminalColumns: Int
-        /// Status-bar rows that were reserved when this frame was painted. The
-        /// value is used as a fallback when a resize happens before the status
-        /// bar has published its new layout, so cleanup remains in the
-        /// transcript viewport instead of erasing the bottom overlay.
-        let reservedBottomRows: Int
-
-        init(
-            row: Int,
-            height: Int,
-            terminalRows: Int = 0,
-            terminalColumns: Int = 0,
-            reservedBottomRows: Int = 0
-        ) {
-            self.row = row
-            self.height = height
-            self.terminalRows = terminalRows
-            self.terminalColumns = terminalColumns
-            self.reservedBottomRows = max(0, reservedBottomRows)
-        }
-    }
-
     struct RenderedMenuLine: Equatable, Sendable {
         let text: String
         let itemIndex: Int?
@@ -179,28 +148,6 @@ public enum TerminalCheckboxMenu {
                 selected: initialSelection,
                 focused: initialFocus,
                 helpLines: helpLines,
-                reservedBottomRows: reservedBottomRows,
-                shouldCancel: token.isCancelled
-            )
-        }
-    }
-
-    /// Line-prompt counterpart of ``selectOffActor(title:items:selected:reservedBottomRows:)``.
-    public static func promptLineOffActor(
-        title: String,
-        prompt: String,
-        defaultValue: String? = nil,
-        allowEmpty: Bool = true,
-        help: String? = nil,
-        reservedBottomRows: Int = 0
-    ) async -> String? {
-        await TerminalBlockingRead.run { token in
-            promptLine(
-                title: title,
-                prompt: prompt,
-                defaultValue: defaultValue,
-                allowEmpty: allowEmpty,
-                help: help,
                 reservedBottomRows: reservedBottomRows,
                 shouldCancel: token.isCancelled
             )

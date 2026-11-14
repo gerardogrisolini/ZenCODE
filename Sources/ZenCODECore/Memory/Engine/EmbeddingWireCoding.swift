@@ -9,7 +9,7 @@
 
 import Foundation
 
-/// Encodes an embedding vector for the graph file.
+/// Decodes the embedding vector of an entry in the graph file.
 ///
 /// Graph version 3 stores a vector as one base64 string of its IEEE-754
 /// binary32 components in little-endian byte order. Up to version 2 the vector
@@ -19,26 +19,16 @@ import Foundation
 /// they belong to. The binary form is lossless — the bit pattern of every
 /// component is preserved — roughly four times smaller, and decodes without
 /// number parsing. Decoding accepts both spellings so a file written by any
-/// earlier version keeps loading unchanged; encoding always writes the current
-/// form.
+/// earlier version keeps loading unchanged.
 enum EmbeddingWireCoding {
     /// One IEEE-754 binary32 per component.
     static let bytesPerComponent = MemoryLayout<UInt32>.size
-
-    static func string(from values: [Float]) -> String {
-        data(from: values).base64EncodedString()
-    }
 
     /// `nil` when `string` is not valid base64 or its payload is not a whole
     /// number of components. An empty string is the empty vector.
     static func values(fromBase64 string: String) -> [Float]? {
         guard let data = Data(base64Encoded: string) else { return nil }
         return values(from: data)
-    }
-
-    static func data(from values: [Float]) -> Data {
-        let bits = values.map { $0.bitPattern.littleEndian }
-        return bits.withUnsafeBufferPointer { Data(buffer: $0) }
     }
 
     static func values(from data: Data) -> [Float]? {

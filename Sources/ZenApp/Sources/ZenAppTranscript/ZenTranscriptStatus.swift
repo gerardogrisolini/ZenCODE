@@ -130,32 +130,6 @@ public enum ZenTranscriptStatus {
         }
     }
 
-    /// The summary line of a sub-agent overview, in the terminal's order.
-    public static func subAgentSummarySegments(
-        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
-    ) -> [ZenStatusSegment] {
-        let completed = snapshots.filter {
-            $0.status == .idle && ZenTranscriptText.nonBlank($0.latestOutput) != nil
-        }.count
-        func count(_ status: DirectSubAgentRuntime.Status) -> Int {
-            snapshots.filter { $0.status == status }.count
-        }
-        let counted: [(Int, String, ZenStatusRole?)] = [
-            (snapshots.filter(\.pending).count, "▸ %d active", .active),
-            (completed, "✓ %d completed", .success),
-            (count(.standby), "◇ %d standby", .inactive),
-            (count(.failed), "✗ %d failed", .failure),
-            (count(.closed), "· %d closed", nil)
-        ]
-        return [ZenStatusSegment(text: "\(snapshots.count) total", role: nil)]
-            + counted.filter { $0.0 > 0 }.map { number, format, role in
-                ZenStatusSegment(
-                    text: format.replacingOccurrences(of: "%d", with: String(number)),
-                    role: role
-                )
-            }
-    }
-
     /// A token count as the terminal abbreviates it: `950`, `12.3k`, `1.2m`.
     public static func tokenCountText(_ value: Int) -> String {
         let magnitude = abs(value)

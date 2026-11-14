@@ -140,7 +140,7 @@ struct SherpaVoiceModeControllerTests {
         await controller.start()
         #expect(await waitUntil { await controller.phase == .listening })
 
-        await controller.speak("Una risposta molto lunga")
+        await controller.speak("Una risposta molto lunga", rendering: .answer)
         #expect(await waitUntil { await fixture.events.speaking == [true] })
         #expect(await controller.isSpeaking)
 
@@ -162,7 +162,7 @@ struct SherpaVoiceModeControllerTests {
 
         #expect(await controller.setPaused(true))
         #expect(await controller.setPaused(true) == false)
-        #expect(await controller.speak("Non letto") == false)
+        #expect(await controller.speak("Non letto", rendering: .answer) == false)
         #expect(await controller.speak("Non letto", rendering: .plainText) == false)
         try await Task.sleep(for: .milliseconds(200))
         #expect(fixture.synthesizerCalls.isEmpty)
@@ -225,7 +225,7 @@ struct SherpaVoiceModeControllerTests {
         await controller.start()
         #expect(await waitUntil { await controller.phase == .listening })
 
-        await controller.speak("Ciao")
+        await controller.speak("Ciao", rendering: .answer)
         #expect(await waitUntil { await fixture.events.failures.contains { $0.contains("could not be read aloud: bad model.") } })
         #expect(await waitUntil { await fixture.events.speaking == [true, false] })
         #expect(await waitUntil { fixture.recognizerLaunches == 2 })

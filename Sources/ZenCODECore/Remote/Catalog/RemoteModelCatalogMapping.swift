@@ -146,50 +146,6 @@ func isContextLengthMetadataKey(
     preferredContextLengthMetadataKeys.contains(normalizedMetadataKey(key))
 }
 
-private let contextLengthRegexes: [NSRegularExpression] = [
-    #"(?i)context\s+(?:length|window)[^\n\n\d]{0,40}(\d+(?:\.\d+)?)\s*([km])?\b"#,
-    #"(?i)(\d+(?:\.\d+)?)\s*([km])?\s*(?:-|\s)?token\s+context\b"#,
-    #"(?i)context\s+(?:length|window)[^\n\n\d]{0,40}(\d+)\b"#
-].compactMap { try? NSRegularExpression(pattern: $0) }
-
-func contextLength(
-    fromText text: String
-) -> Int? {
-    let normalizedText = text.replacingOccurrences(of: ",", with: "")
-    for regex in contextLengthRegexes {
-        let range = NSRange(normalizedText.startIndex..<normalizedText.endIndex, in: normalizedText)
-        let matches = regex.matches(in: normalizedText, range: range)
-        for match in matches {
-            guard match.numberOfRanges >= 2,
-                  let numberRange = Range(match.range(at: 1), in: normalizedText),
-                  let number = Double(normalizedText[numberRange]) else {
-                continue
-            }
-            let suffix: String?
-            if match.numberOfRanges >= 3,
-               let suffixRange = Range(match.range(at: 2), in: normalizedText) {
-                suffix = String(normalizedText[suffixRange]).lowercased()
-            } else {
-                suffix = nil
-            }
-            let multiplier: Double
-            switch suffix {
-            case "m":
-                multiplier = 1_000_000
-            case "k":
-                multiplier = 1_024
-            default:
-                multiplier = 1
-            }
-            let integer = Int(number * multiplier)
-            if integer >= 1024 {
-                return integer
-            }
-        }
-    }
-    return nil
-}
-
 func normalizedMetadataKey(
     _ key: String
 ) -> String {

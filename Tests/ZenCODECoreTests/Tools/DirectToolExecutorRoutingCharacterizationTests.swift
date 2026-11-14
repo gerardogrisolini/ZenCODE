@@ -738,7 +738,7 @@ private struct RoutingEnvironment {
                 mcpRuntime: mcpRuntime,
                 swiftFeatureRuntime: SwiftFeatureRuntime(features: features),
                 borrowedSubAgentToolExecutor: borrowed,
-                subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+                subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
             )
             if !fixture.providerTools.isEmpty {
                 await executor.updateToolProviders([

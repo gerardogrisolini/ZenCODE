@@ -76,10 +76,6 @@ struct DS4PreparedRound: Sendable {
     /// Resolves parsed tool calls to their descriptor title and presentation,
     /// like every other provider.
     let toolCatalog: RemoteToolWireCatalog
-
-    var operations: [DS4TranscriptOperation] {
-        transcript.operations
-    }
 }
 
 /// A rendered prompt and its tokenization.

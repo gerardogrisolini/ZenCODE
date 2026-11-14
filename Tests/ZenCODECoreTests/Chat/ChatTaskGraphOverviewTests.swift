@@ -90,7 +90,7 @@ struct ChatTaskGraphOverviewTests {
         #expect(signature == "graph:7:active:"
             + "first:3:in_progress:attempt-1:attempt-1:running|second:1:pending:-:")
         #expect(ChatTaskGraphOverview(graph: graph, tasks: []).signature == signature)
-        #expect(TerminalChat.taskGraphOverviewSignature(graph) == signature)
+        #expect(ChatTaskGraphOverview.signature(for: graph) == signature)
 
         var reordered = graph
         reordered.tasks = [first, second]
@@ -122,10 +122,10 @@ struct ChatTaskGraphOverviewTests {
             let controller = harness.controller
             let gate = DebounceGate()
             controller.taskGraphObserver.sleep = { try await gate.sleep($0) }
-            #expect(controller.taskGraphObserverTask == nil)
+            #expect(controller.taskGraphObserver.observerTask == nil)
 
             await controller.startTaskGraphObserver()
-            #expect(controller.taskGraphObserverTask != nil)
+            #expect(controller.taskGraphObserver.observerTask != nil)
             try await Self.createGraph(in: harness)
 
             // The change is reserved as it arrives; nothing is presented
@@ -146,7 +146,7 @@ struct ChatTaskGraphOverviewTests {
             #expect(ChatTaskGraphObserver.debounceInterval == .milliseconds(150))
 
             await controller.stopTaskGraphObserver()
-            #expect(controller.taskGraphObserverTask == nil)
+            #expect(controller.taskGraphObserver.observerTask == nil)
         }
     }
 
@@ -163,7 +163,7 @@ struct ChatTaskGraphOverviewTests {
             await gate.waitForEntries(1)
 
             await controller.stopTaskGraphObserver()
-            #expect(controller.taskGraphObserverTask == nil)
+            #expect(controller.taskGraphObserver.observerTask == nil)
             #expect(controller.taskGraphObserver.pendingPublication == nil)
 
             // A change after the stop reaches no observer.
@@ -200,7 +200,7 @@ struct ChatTaskGraphOverviewTests {
                 sessionID: observedSessionID,
                 claims: [TaskClaim(taskID: "first", agentID: "worker")]
             )
-            await controller.taskGraphObserverTask?.value
+            await controller.taskGraphObserver.observerTask?.value
             #expect(await harness.presenter.taskGraphReservations.count == 1)
             #expect(await harness.presenter.taskGraphOverviews.isEmpty)
             await controller.stopTaskGraphObserver()

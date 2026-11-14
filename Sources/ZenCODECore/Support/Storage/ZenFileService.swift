@@ -87,20 +87,6 @@ public enum ZenFileService {
     }
 
     @discardableResult
-    public static func ensureRequiredFiles(
-        settingsManifest: AgentSettingsManifest?,
-        overwriteSettings: Bool = false,
-        fileManager: FileManager = .default
-    ) throws -> ZenFileResult {
-        try ensureRequiredFiles(
-            settingsManifest: settingsManifest,
-            overwriteSettings: overwriteSettings,
-            stagedAgentProfiles: nil,
-            fileManager: fileManager
-        )
-    }
-
-    @discardableResult
     static func ensureRequiredFiles(
         settingsManifest: AgentSettingsManifest?,
         overwriteSettings: Bool,
@@ -242,16 +228,6 @@ public enum ZenFileService {
                 preservedFilenames: preservedFilenames
             )
         }
-    }
-
-    public static func saveSettings(
-        _ manifest: AgentSettingsManifest,
-        fileManager: FileManager = .default
-    ) throws {
-        try AgentSettingsManifestStore.save(
-            manifest,
-            to: AgentSettingsManifestStore.settingsURL(fileManager: fileManager)
-        )
     }
 
     public static func supportDirectoryURL(

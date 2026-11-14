@@ -15,13 +15,6 @@ extension TerminalChatRenderCoordinator {
         writeInterleavedMessage { writeRawChatError(text) }
     }
 
-    /// Writes text that already carries its own ANSI styling (bordered cards and
-    /// other pre-rendered blocks) without applying the system-message color,
-    /// which would otherwise override the block's own palette.
-    func writePreformattedMessage(_ text: String) {
-        writeInterleavedMessage { writeRawChatError(text) }
-    }
-
     func writeSubmittedPrompt(_ prompt: String) {
         // The operator has begun a new visible turn, so live progress may again
         // use the terminal. This does not replay summaries withheld below the
@@ -77,10 +70,6 @@ extension TerminalChatRenderCoordinator {
             to: .standardOutput,
             preservesSpacing: preservesSpacing
         ) }
-    }
-
-    func flushOutput() {
-        flushChatOutput()
     }
 
     func writeError(_ text: String, preservesSpacing: Bool = false) {

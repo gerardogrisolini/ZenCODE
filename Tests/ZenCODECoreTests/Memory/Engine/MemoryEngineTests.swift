@@ -44,7 +44,7 @@ import Testing
     #expect(loaded.incomingNodes(to: "tag:swift").contains("a"))
 }
 
-@Test func highLevelRecallAndPendingPipeline() async throws {
+@Test func highLevelRecall() async throws {
     let embedder = DeterministicHashEmbeddingProvider(dimensions: 64)
     var config = MemoryEngineConfiguration()
     config.similarityThreshold = 0
@@ -54,13 +54,8 @@ import Testing
     _ = try await memory.remember("Swift actors protect mutable state", tags: ["swift", "actors"])
     _ = try await memory.remember("Linux is a supported deployment target", tags: ["linux"])
 
-    let direct = try await memory.recall("Swift actors")
+    let direct = try await memory.recallDetailed("Swift actors").selected
     #expect(direct.contains(where: { $0.memory.content.contains("actors") }))
-
-    await memory.submitContext("Swift actors")
-    await memory.waitForBackgroundTasks()
-    let pending = await memory.takePending()
-    #expect(!pending.isEmpty)
 }
 
 @Test func decodesSnakeCaseGraphJSON() async throws {
@@ -122,7 +117,7 @@ import Testing
     _ = try await memory.remember("Use actors for shared mutable state", tags: ["swift", "concurrency"])
     _ = try await memory.remember("Database migrations run at application startup", tags: ["database"])
 
-    let results = try await memory.recall("Swift actors concurrency")
+    let results = try await memory.recallDetailed("Swift actors concurrency").selected
     #expect(results.first?.memory.content.contains("actors") == true)
     let stored = await memory.snapshot().memories.values.first { $0.content.contains("actors") }
     #expect(stored?.embedding == nil)
@@ -143,24 +138,6 @@ private struct IDSelector: MemorySelector {
     ) async throws -> [MemoryCandidate] {
         let byID = Dictionary(uniqueKeysWithValues: candidates.map { ($0.memory.id, $0) })
         return ids.prefix(limit).compactMap { byID[$0] }
-    }
-}
-
-private struct FixedExtractor: MemoryExtractor {
-    let drafts: [MemoryDraft]
-    func extract(from context: String) async throws -> [MemoryDraft] { drafts }
-}
-
-private actor QueuedLanguageModel: MemoryLanguageModel {
-    private var responses: [String]
-
-    init(_ responses: [String]) {
-        self.responses = responses
-    }
-
-    func complete(system: String, user: String) async throws -> String {
-        guard !responses.isEmpty else { return "{}" }
-        return responses.removeFirst()
     }
 }
 
@@ -212,61 +189,4 @@ private actor QueuedLanguageModel: MemoryLanguageModel {
     let context = try await memory.context(for: "How is memory stored?")
     #expect(context.contains("SQLite"))
     #expect(!context.contains("actors"))
-}
-
-@Test func learnUsesConfiguredExtractor() async throws {
-    let extractor = FixedExtractor(
-        drafts: [
-            MemoryDraft(
-                content: "The project uses PostgreSQL in production",
-                category: .fact,
-                tags: ["database", "production"],
-                trust: .high
-            )
-        ]
-    )
-    let memory = MemoryEngine(extractor: extractor)
-    let stored = try await memory.learn(from: "conversation text")
-
-    #expect(stored.count == 1)
-    #expect(stored[0].tags.contains("database"))
-    let recalled = try await memory.recall("PostgreSQL production")
-    #expect(recalled.first?.memory.content.contains("PostgreSQL") == true)
-}
-
-@Test func llmAnalyzerParsesJSONWithoutEmbeddings() async throws {
-    let model = QueuedLanguageModel([
-        #"{"shouldRecall":true,"queries":["deployment operating system","Ubuntu production"],"tags":["deployment"],"entities":["Ubuntu"],"intent":"recall deployment platform"}"#
-    ])
-    let analyzer = LLMMemoryQueryAnalyzer(model: model)
-    let plan = try await analyzer.analyze("Which OS should we deploy to?")
-
-    #expect(plan.shouldRecall)
-    #expect(plan.queries.contains("Ubuntu production"))
-    #expect(plan.entities == ["Ubuntu"])
-}
-
-@Test func llmSelectorUsesOnlyReturnedCandidateIDs() async throws {
-    let model = QueuedLanguageModel([
-        #"{"selected":["b","invented"]}"#
-    ])
-    let selector = LLMMemorySelector(model: model)
-    let a = MemoryCandidate(memory: EngineMemoryEntry(id: "a", category: .fact, content: "A"), score: 0.9)
-    let b = MemoryCandidate(memory: EngineMemoryEntry(id: "b", category: .fact, content: "B"), score: 0.8)
-
-    let selected = try await selector.select(context: "test", candidates: [a, b], limit: 3)
-    #expect(selected.map(\.memory.id) == ["b"])
-}
-
-@Test func llmExtractorProducesMemoryDrafts() async throws {
-    let model = QueuedLanguageModel([
-        #"{"memories":[{"content":"Prefer actors for shared state","category":"preference","tags":["swift","concurrency"],"trust":"high","confidence":0.9}]}"#
-    ])
-    let extractor = LLMMemoryExtractor(model: model, defaultScope: .global)
-    let drafts = try await extractor.extract(from: "User says they prefer actors")
-
-    #expect(drafts.count == 1)
-    #expect(drafts[0].category == .preference)
-    #expect(drafts[0].scope == .global)
-    #expect(drafts[0].confidence == 0.9)
 }

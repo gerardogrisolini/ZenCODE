@@ -56,7 +56,10 @@ extension AgentProfileBindingReconcilerTests {
         try await Self.withLiveCatalogTemporarySupportDirectory { _ in
             let backend = LiveCatalogProbeBackend()
             let runtime = DirectSubAgentRuntime(
-                contextualBackendFactory: { _ in backend }
+                contextualBackendFactory: { _ in backend },
+                profileResolver: DirectSubAgentRuntime.liveProfileResolver,
+                modelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
+                coordinatesLiveManifestReads: true
             )
 
             do {
@@ -99,25 +102,6 @@ extension AgentProfileBindingReconcilerTests {
             #expect(throws: AgentProfileStoreError.self) {
                 try AgentProfileStore.loadRequired()
             }
-        }
-    }
-
-    @Test
-    func legacyDefaultProfileResolverStillUsesPersistedProfiles() throws {
-        try Self.withLiveCatalogTemporarySupportDirectory { _ in
-            try AgentProfileStore.save([
-                AgentProfile(id: "persisted", name: "Persisted", role: .developer)
-            ])
-            let payload = DirectSubAgentRuntime.RequestedAgentPayload(
-                name: "child",
-                role: "role",
-                profileReference: "Persisted"
-            )
-
-            #expect(
-                DirectSubAgentRuntime.defaultProfileResolver(for: payload)?.id
-                    == "persisted"
-            )
         }
     }
 

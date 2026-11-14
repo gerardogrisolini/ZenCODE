@@ -46,9 +46,4 @@ public enum ZenMarkdownInlineStyle {
         }
         return result
     }
-
-    /// The characters of `inline` without attributes.
-    public static func plainText(_ inline: ZenMarkdownInline) -> String {
-        String(inline.characters)
-    }
 }

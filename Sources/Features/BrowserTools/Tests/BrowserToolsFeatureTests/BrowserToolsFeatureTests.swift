@@ -74,7 +74,7 @@ struct BrowserToolsFeatureTests {
     }
 
     @Test
-    func browserNetworkRequestPolicyRejectsResolvedPrivateDestinations() throws {
+    func browserNetworkRequestPolicyRejectsResolvedPrivateDestinations() async throws {
         let resolver = StaticBrowserHostResolver(addressesByHost: [
             "public.example": ["10.0.0.1"],
             "mixed.example": ["93.184.216.34", "fd00::1"],
@@ -87,22 +87,22 @@ struct BrowserToolsFeatureTests {
             resolver: resolver
         )
 
-        #expect(throws: BrowserURLPolicyError.restrictedHost("10.0.0.1")) {
-            try policy.validateRequestURL("https://public.example/app")
+        await #expect(throws: BrowserURLPolicyError.restrictedHost("10.0.0.1")) {
+            try await policy.validateRequestURLOffloaded("https://public.example/app")
         }
-        #expect(throws: BrowserURLPolicyError.restrictedHost("fd00::1")) {
-            try policy.validateRequestURL("https://mixed.example/app")
+        await #expect(throws: BrowserURLPolicyError.restrictedHost("fd00::1")) {
+            try await policy.validateRequestURLOffloaded("https://mixed.example/app")
         }
-        #expect(throws: BrowserNetworkGuardError.self) {
-            try policy.validateRequestURL("https://rebound.example/app")
+        await #expect(throws: BrowserNetworkGuardError.self) {
+            try await policy.validateRequestURLOffloaded("https://rebound.example/app")
         }
-        #expect(throws: BrowserNetworkGuardError.self) {
-            try policy.validateRequestURL("ws://localhost:3000/hmr")
+        await #expect(throws: BrowserNetworkGuardError.self) {
+            try await policy.validateRequestURLOffloaded("ws://localhost:3000/hmr")
         }
-        try policy.validateRequestURL("https://safe.example/app")
-        try policy.validateRequestURL("about:blank")
-        #expect(throws: BrowserNetworkGuardError.self) {
-            try policy.validateRequestURL("file:///private/file")
+        try await policy.validateRequestURLOffloaded("https://safe.example/app")
+        try await policy.validateRequestURLOffloaded("about:blank")
+        await #expect(throws: BrowserNetworkGuardError.self) {
+            try await policy.validateRequestURLOffloaded("file:///private/file")
         }
 
         let localDevelopmentPolicy = BrowserNetworkRequestPolicy(
@@ -110,9 +110,9 @@ struct BrowserToolsFeatureTests {
             resolver: resolver,
             allowsLoopback: true
         )
-        try localDevelopmentPolicy.validateRequestURL("ws://localhost:3000/hmr")
-        #expect(throws: BrowserNetworkGuardError.self) {
-            try localDevelopmentPolicy.validateRequestURL("https://rebound.example/app")
+        try await localDevelopmentPolicy.validateRequestURLOffloaded("ws://localhost:3000/hmr")
+        await #expect(throws: BrowserNetworkGuardError.self) {
+            try await localDevelopmentPolicy.validateRequestURLOffloaded("https://rebound.example/app")
         }
     }
 

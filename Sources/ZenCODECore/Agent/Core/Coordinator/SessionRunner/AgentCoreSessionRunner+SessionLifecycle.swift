@@ -6,52 +6,7 @@
 //
 
 import Foundation
-import Synchronization
 import ToolCore
-
-
-/// One-shot barrier between creating a prompt task and publishing it in the
-/// runner's cancellation registry.
-///
-/// `Task.yield()` would merely hint to the executor and cannot establish an
-/// ordering edge. `wait()` intentionally does not react to cancellation: a
-/// task cancelled while parked must remain parked until `open()` follows its
-/// registration, so its finalisation cannot clear an as-yet-unregistered ID.
-private final class AgentCorePromptTaskRegistrationGate: Sendable {
-    private struct State {
-        var isOpen = false
-        var waiter: CheckedContinuation<Void, Never>?
-    }
-
-    private let state = Mutex(State())
-
-    func wait() async {
-        await withCheckedContinuation { continuation in
-            let shouldResume = state.withLock { state in
-                guard !state.isOpen else {
-                    return true
-                }
-                state.waiter = continuation
-                return false
-            }
-            if shouldResume {
-                continuation.resume()
-            }
-        }
-    }
-
-    func open() {
-        let waiter = state.withLock { state -> CheckedContinuation<Void, Never>? in
-            guard !state.isOpen else {
-                return nil
-            }
-            state.isOpen = true
-            defer { state.waiter = nil }
-            return state.waiter
-        }
-        waiter?.resume()
-    }
-}
 
 extension AgentCoreSessionRunner {
     public func activeToolDescriptors(
@@ -88,23 +43,6 @@ extension AgentCoreSessionRunner {
             allowedToolNames: configuration.allowedToolNames,
             thinkingSelection: configuration.thinkingSelection,
             preserveThinking: configuration.preserveThinking
-        )
-    }
-
-    @discardableResult
-    public func replaceSessionHistory(
-        id sessionID: String,
-        history: [AgentRuntimeMessage]
-    ) async -> Bool {
-        guard let expectedSessionGeneration = currentSessionGeneration(
-            for: sessionID
-        ) else {
-            return false
-        }
-        return await replaceSessionHistory(
-            id: sessionID,
-            history: history,
-            expectedSessionGeneration: expectedSessionGeneration
         )
     }
 
@@ -198,10 +136,6 @@ extension AgentCoreSessionRunner {
         force: Bool = true,
         maxTokensOverride: Int? = nil
     ) async throws -> AgentRuntimeSessionCompactionResult? {
-        if promptTaskRegistry.hasActiveTasks(for: sessionID) {
-            throw AgentCoreSessionRunnerError.cannotCompactDuringActivePrompt(sessionID)
-        }
-
         let generation = backendGeneration
         let result: AgentRuntimeSessionCompactionResult?
         if let backendResult = await backend?.compactSession(
@@ -236,102 +170,9 @@ extension AgentCoreSessionRunner {
     }
 
 
-    public func streamPrompt(
-        _ prompt: String,
-        configuration: AgentCoreSessionConfiguration,
-        attachments: [AgentRuntimeAttachment] = [],
-        authorizeTool: AgentToolAuthorizationHandler? = nil,
-        onToolWillExecute: (@Sendable (DirectAgentToolCall) async -> Void)? = nil,
-        borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor? = nil,
-        toolProviders: [AgentToolProvider] = []
-    ) -> AsyncThrowingStream<DirectAgentEvent, Error> {
-        let (stream, continuation) = AsyncThrowingStream<DirectAgentEvent, Error>.makeStream()
-        let promptID = UUID()
-        let outcomeTracker = AgentCorePromptOutcomeTracker()
-        let registrationGate = AgentCorePromptTaskRegistrationGate()
-        let task = Task(name: "Agent prompt stream", priority: .userInitiated) {
-            await registrationGate.wait()
-            #if os(macOS)
-            let activity = ProcessInfo.processInfo.beginActivity(
-                options: [.userInitiated, .latencyCritical],
-                reason: "Agent generation"
-            )
-            defer {
-                ProcessInfo.processInfo.endActivity(activity)
-            }
-            #endif
-            do {
-                try Task.checkCancellation()
-                _ = try await sendPrompt(
-                    configuration: configuration,
-                    prompt: prompt,
-                    attachments: attachments,
-                    authorizeTool: authorizeTool,
-                    onToolWillExecute: onToolWillExecute,
-                    borrowedSubAgentToolExecutor: borrowedSubAgentToolExecutor,
-                    toolProviders: toolProviders
-                ) { event in
-                    await outcomeTracker.record(event)
-                    continuation.yield(event)
-                }
-                await finishStream(continuation, outcomeTracker: outcomeTracker, promptID: promptID, error: nil)
-            } catch is CancellationError {
-                await finishStream(continuation, outcomeTracker: outcomeTracker, promptID: promptID, error: CancellationError())
-            } catch {
-                ZenLogger.error(
-                    .viewModelRuntime,
-                    "agent core session runner stream failed: \(error.localizedDescription)"
-                )
-                await finishStream(continuation, outcomeTracker: outcomeTracker, promptID: promptID, error: error)
-            }
-        }
-        promptTaskRegistry.register(task, id: promptID, sessionID: configuration.sessionID)
-        registrationGate.open()
-        continuation.onTermination = { _ in
-            task.cancel()
-        }
-        return stream
-    }
-
-    /// Shared stream-finalization: emits fallback turn-ended event if needed,
-    /// clears the task, and finishes the continuation.
-    private func finishStream(
-        _ continuation: AsyncThrowingStream<DirectAgentEvent, Error>.Continuation,
-        outcomeTracker: AgentCorePromptOutcomeTracker,
-        promptID: UUID,
-        error: Error?
-    ) async {
-        if error == nil, await outcomeTracker.shouldEmitFallback() {
-            continuation.yield(.turnEnded(.completed))
-        } else if error is CancellationError, await outcomeTracker.shouldEmitFallback() {
-            continuation.yield(.turnEnded(.cancelled))
-        } else if let error, await outcomeTracker.shouldEmitFallback() {
-            continuation.yield(.turnEnded(.failed(message: error.localizedDescription)))
-        }
-        clearActivePromptTask(id: promptID)
-        if let error {
-            continuation.finish(throwing: error)
-        } else {
-            continuation.finish()
-        }
-    }
-
-    public func cancelActivePrompt() async {
-        let sessionIDs = promptTaskRegistry.activeSessionIDs
-        promptTaskRegistry.cancelAllTasks()
-        // Terminating background jobs happens after cancelling prompt tasks so
-        // the cancelled turn can no longer start new ones. This is bounded: it
-        // only queues signals and returns without waiting for job exits.
-        _ = await interruptBackgroundJobs()
-        for sessionID in sessionIDs {
-            _ = await interruptSubAgents(rootSessionID: sessionID)
-        }
-    }
-
     public func cancelPrompt(sessionID: String) async {
-        promptTaskRegistry.cancelAll(for: sessionID)
-        // Same ordering as `cancelActivePrompt`: prompt tasks first, then the
-        // approved background jobs the turn may have started.
+        // Terminating background jobs is bounded: it only queues signals and
+        // returns without waiting for job exits.
         _ = await interruptBackgroundJobs()
         _ = await interruptSubAgents(rootSessionID: sessionID)
     }
@@ -340,8 +181,6 @@ extension AgentCoreSessionRunner {
     /// task graph for the same session identity.
     public func rebuildSession(id sessionID: String) async {
         memoryLearningPermits[sessionID] = memoryLearningPermits[sessionID]?.renewed()
-        promptTaskRegistry.cancelAll(for: sessionID)
-        await waitForPromptTasks(for: sessionID)
         invalidateSessionGeneration(for: sessionID, preservingLearningBudget: true)
         sessions.removeValue(forKey: sessionID)
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
@@ -393,7 +232,6 @@ extension AgentCoreSessionRunner {
             return
         }
 
-        await cancelAllPromptTasksAndWait()
         authorizationRouter.discardAll()
         promptSkillProvidersBySessionID.removeAll()
         snapshotStore.discardAll()
@@ -434,7 +272,6 @@ extension AgentCoreSessionRunner {
     /// Throwing counterpart to ``closeSession(id:)`` for callers that need to
     /// observe persistence failures after the applicable teardown completes.
     public func closeSessionThrowing(id sessionID: String) async throws {
-        promptTaskRegistry.cancelAll(for: sessionID)
         // Drop the incarnation before any suspension so a prompt that is still
         // winding down cannot cache or restore this session afterwards.
         invalidateSessionGeneration(for: sessionID)
@@ -442,19 +279,13 @@ extension AgentCoreSessionRunner {
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
         authorizationRouter.discard(sessionID: sessionID)
         _ = await interruptSubAgents(rootSessionID: sessionID)
-        // Wait for every cancelled prompt task to finish its finalisation before
-        // checkpointing. Without this, a prompt winding down can update the task
-        // graph after `flush` has already written the checkpoint, losing the
-        // update or producing an inconsistent snapshot.
-        await waitForPromptTasks(for: sessionID)
         // A recreated session reuses the id, so its recall health belongs to
         // the incarnation that owned the conversation. Drop it before the
         // throwing checkpoint flush so a failed close cannot strand a pause.
         await MemoryTurnCoordinator.shared.discard(sessionID: sessionID)
-        // Durability barrier for memory: after the last prompt activity has
-        // quiesced and before any teardown, flush the automatic-recall
-        // maintenance that deliberately stayed in memory below its checkpoint
-        // threshold. Best effort across every open store; the first failure is
+        // Durability barrier for memory: before any teardown, flush the
+        // automatic-recall maintenance that deliberately stayed in memory below
+        // its checkpoint threshold. Best effort across every open store; the first failure is
         // rethrown so a persistence error surfaces before the session is gone.
         var memoryFlushError: (any Error)?
         do {
@@ -513,15 +344,13 @@ extension AgentCoreSessionRunner {
     public func shutdownBackendKeepingExternalToolsThrowing() async throws {
         memoryLearningPermits.values.forEach { $0.invalidate() }
         memoryLearningPermits.removeAll()
-        await cancelAllPromptTasksAndWait()
         authorizationRouter.discardAll()
         // Fence in-flight backend creation and session work before suspending.
         let backendToShutdown = backendManager.invalidateBackend()
         snapshotStore.discardAll()
-        // Durability barrier for memory: every prompt task has been cancelled
-        // and awaited, so no recall can be in flight anymore; flushing here —
-        // before the teardown below clears the stores that own the pending
-        // maintenance — makes the accumulated in-memory state durable.
+        // Durability barrier for memory: flushing here — before the teardown
+        // below clears the stores that own the pending maintenance — makes the
+        // accumulated in-memory state durable.
         var memoryFlushError: (any Error)?
         do {
             try await memoryGraphStoreRegistry.flushAll()
@@ -541,26 +370,6 @@ extension AgentCoreSessionRunner {
         await sharedChatMentionCatalogStorage?.reset()
         await backendToShutdown?.shutdown()
         if let memoryFlushError { throw memoryFlushError }
-    }
-
-    private func waitForPromptTasks(for sessionID: String) async {
-        let tasks = promptTaskRegistry.tasks(for: sessionID)
-        for task in tasks {
-            await task.value
-        }
-    }
-
-    private func cancelAllPromptTasksAndWait() async {
-        promptTaskRegistry.cancelAllTasks()
-        let tasks = promptTaskRegistry.activeTasks
-        for task in tasks {
-            await task.value
-        }
-    }
-
-    private func clearActivePromptTask(id promptID: UUID) {
-        promptTaskRegistry.clear(id: promptID)
-        authorizationRouter.clear(promptID: promptID)
     }
 
     func ensureSession(

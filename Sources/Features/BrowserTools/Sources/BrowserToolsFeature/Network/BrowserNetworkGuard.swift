@@ -94,20 +94,12 @@ struct BrowserNetworkRequestPolicy: Sendable {
         self.allowsLoopback = allowsLoopback
     }
 
-    func validateRequestURL(_ rawURL: String) throws {
-        guard let host = try validatedRequestHost(rawURL) else { return }
-        let addresses = try resolver.resolve(host: host.name)
-        try validateResolvedAddresses(addresses, for: host, rawURL: rawURL)
-    }
-
-    /// Async counterpart of ``validateRequestURL(_:)`` that applies the same
-    /// URL, loopback, and resolved-address policy checks, but resolves the
-    /// request host off the cooperative thread pool so a slow or blocking DNS
-    /// lookup cannot stall request interception. It is cancellation-aware: when
-    /// the surrounding task is cancelled while a resolution is pending, it
+    /// Applies the URL, loopback, and resolved-address policy checks, resolving
+    /// the request host off the cooperative thread pool so a slow or blocking
+    /// DNS lookup cannot stall request interception. It is cancellation-aware:
+    /// when the surrounding task is cancelled while a resolution is pending, it
     /// throws ``CancellationError`` promptly instead of waiting for the
-    /// (possibly blocking) resolver to return. The synchronous policy used by
-    /// ``validateRequestURL(_:)`` is unchanged.
+    /// (possibly blocking) resolver to return.
     func validateRequestURLOffloaded(_ rawURL: String) async throws {
         try Task.checkCancellation()
         guard let host = try validatedRequestHost(rawURL) else { return }
@@ -115,8 +107,7 @@ struct BrowserNetworkRequestPolicy: Sendable {
         try validateResolvedAddresses(addresses, for: host, rawURL: rawURL)
     }
 
-    /// The request host after scheme and URL-policy checks. Shared by the
-    /// synchronous and offloaded validators so the two cannot drift apart.
+    /// The request host after scheme and URL-policy checks.
     private struct RequestHost {
         let name: String
         let isExplicitLoopback: Bool

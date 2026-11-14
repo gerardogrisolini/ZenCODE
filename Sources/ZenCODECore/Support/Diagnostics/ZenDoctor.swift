@@ -36,19 +36,6 @@ public enum ZenDoctorStatus: String, Sendable, Equatable {
             return "·"
         }
     }
-
-    public var label: String {
-        switch self {
-        case .ok:
-            return "OK"
-        case .warning:
-            return "WARN"
-        case .failure:
-            return "FAIL"
-        case .info:
-            return "INFO"
-        }
-    }
 }
 
 /// A single, self-contained diagnostic result. All fields are guaranteed to be
@@ -102,10 +89,6 @@ public struct ZenDoctorReport: Sendable, Equatable {
 
     public var hasFailure: Bool {
         allChecks.contains { $0.status == .failure }
-    }
-
-    public var hasWarning: Bool {
-        allChecks.contains { $0.status == .warning }
     }
 
     /// Process exit code: non-zero only when a blocking failure was found so the

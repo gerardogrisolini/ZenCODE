@@ -72,7 +72,7 @@ struct DirectExecJobRuntimeTests {
     func executorDispatchesBackgroundExecAndExecJob() async throws {
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
         let workingDirectory = FileManager.default.temporaryDirectory
 
@@ -126,7 +126,7 @@ struct DirectExecJobRuntimeTests {
     @Test
     func execJobIsRejectedWhenNotAllowed() async throws {        let executor = DirectToolExecutor(
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
         let result = await executor.execute(
             sessionID: "exec-job-tests",
@@ -149,7 +149,7 @@ struct DirectExecJobRuntimeTests {
     func executorInterruptBackgroundJobsTerminatesRunningJob() async throws {
         let executor = DirectToolExecutor(
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
         _ = await executor.execute(
             sessionID: "exec-job-tests",

@@ -130,7 +130,7 @@ struct ZenSharedChatReaderTests {
         #expect(reader.isReaderOpen)
         #expect(reader.selectedMessageID == messages[2].id)
         #expect(reader.selectedIndex == 2)
-        #expect(reader.selectedMessage?.text == "Agent 2")
+        #expect(reader.selectedIndex.map { reader.messages[$0].text } == "Agent 2")
         #expect(!reader.isUnread(messages[2].id))
         #expect(reader.isUnread(messages[3].id))
         #expect(reader.unreadCount == 1)

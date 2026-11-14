@@ -373,7 +373,10 @@ struct ChatSessionOperationsTests {
             await harness.clearRecords()
 
             // The menu lists every entry, the active leaf selected.
-            let choices = try #require(try controller.checkpointEntryChoices())
+            guard case let .available(choices) = try controller.checkpointEntryMenu() else {
+                Issue.record("The active saved session has no checkpoint menu.")
+                return
+            }
             #expect(choices.title == "Restore 'branching' from checkpoint entry")
             #expect(choices.items.map(\.id) == saved.checkpointTree.entries.map(\.id))
             #expect(choices.selectedIDs == [saved.checkpointTree.activeLeafID])

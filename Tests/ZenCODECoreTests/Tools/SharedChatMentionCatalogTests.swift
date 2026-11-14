@@ -17,17 +17,13 @@ struct SharedChatMentionCatalogTests {
         _ = await catalog.handleMap(for: [
             AgentSharedChat.Participant(id: "first", name: "Developer", kind: .agent),
         ])
-        #expect(await catalog.participantID(forHandle: "developer") == "first")
 
         _ = await catalog.handleMap(for: [])
-        #expect(await catalog.participantID(forHandle: "developer") == nil)
 
         let replacement = await catalog.handleMap(for: [
             AgentSharedChat.Participant(id: "second", name: "Developer", kind: .agent),
         ])
         #expect(replacement == ["developer-2": "second"])
-        #expect(await catalog.participantID(forHandle: "developer") == nil)
-        #expect(await catalog.participantID(forHandle: "developer-2") == "second")
     }
 
     @Test

@@ -113,7 +113,7 @@ struct DS4EngineCheckpointSessionTests {
             _ = try await client.sendPrompt(
                 sessionID: chat.sessionID, prompt: "hello", attachments: [], onEvent: { _ in }
             )
-            await chat.saveCurrentSession(named: "to delete")
+            await chat.writeSessionNotices(chat.chatSession.saveSessionCommand(named: "to delete").notices)
             let checkpoint = environment.checkpointURL("to delete")
             #expect(FileManager.default.fileExists(atPath: checkpoint.path))
 
@@ -169,11 +169,11 @@ struct DS4EngineCheckpointSessionTests {
             #expect(harness.engine.syncs[1].cached == position(afterSync: 0))
             #expect(harness.engine.syncs[2].cached == position(afterSync: 1))
 
-            await chat.saveCurrentSession(named: "kv")
+            await chat.writeSessionNotices(chat.chatSession.saveSessionCommand(named: "kv").notices)
             let saved = try TerminalSessionStore.load(name: "kv", workingDirectory: environment.workspace)
             // One assistant message for the round, as the backend holds it.
             #expect(saved.history.map(\.role) == [.user, .assistant, .tool, .tool, .assistant, .user, .assistant])
-            try await chat.loadSavedSession(saved)
+            try await chat.writeSessionNotices(chat.chatSession.loadSavedSession(saved, checkpointEntryID: nil).notices)
             let checkpoint = environment.checkpointURL("kv")
             #expect(harness.mock.checkpointCalls == [
                 .saveCheckpoint(sessionID: saved.sessionID, url: checkpoint),

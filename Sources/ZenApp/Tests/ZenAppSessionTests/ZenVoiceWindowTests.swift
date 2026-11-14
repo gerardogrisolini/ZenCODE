@@ -418,7 +418,7 @@ struct ZenVoiceWindowTests {
             first.draft = "Nota:"
             await controller.hear("ciao")
             await waitUntil("the preview shows") { first.draft == "Nota: ciao" }
-            #expect(first.voiceDictation.isActive)
+            #expect(first.voiceDictation.preview != nil)
             let interruptions = await controller.interruptions
 
             runtime.windowDidBecomeActive(second)
@@ -426,7 +426,7 @@ struct ZenVoiceWindowTests {
             await waitUntil("voice follows the second window") { second.isVoiceWindow }
             // The old window keeps the words as ordinary text; voice forgets them.
             #expect(first.draft == "Nota: ciao")
-            #expect(!first.voiceDictation.isActive)
+            #expect(first.voiceDictation.preview == nil)
             await waitUntil("voice forgets the dictation") { await controller.discarded == [1] }
             // The switch is a new target: the reading stops.
             #expect(await controller.interruptions == interruptions + 1)
@@ -542,8 +542,8 @@ struct ZenVoiceWindowTests {
             await runtime.waitForVoice()
             #expect(first.draft == "uno")
             #expect(second.draft == "due")
-            #expect(!first.voiceDictation.isActive)
-            #expect(!second.voiceDictation.isActive)
+            #expect(first.voiceDictation.preview == nil)
+            #expect(second.voiceDictation.preview == nil)
 
             // Dictation goes on in the first window, after its text.
             await controller.hear("tre")
@@ -578,7 +578,7 @@ struct ZenVoiceWindowTests {
             await controller.hearLate(id: 1, "ciao mondo")
             await runtime.waitForVoice()
             #expect(first.draft.isEmpty)
-            #expect(!first.voiceDictation.isActive)
+            #expect(first.voiceDictation.preview == nil)
             #expect(second.draft == "ciao!")
 
             // The next dictation shows in the first window.
@@ -613,7 +613,7 @@ struct ZenVoiceWindowTests {
             await controller.hearLate(id: 1, "ciao mondo")
             await runtime.waitForVoice()
             #expect(first.draft == "ciao")
-            #expect(!first.voiceDictation.isActive)
+            #expect(first.voiceDictation.preview == nil)
 
             // A new voice mode numbers its dictations from 1: they show.
             try await Self.run("/voice off", in: first, runtime)
@@ -638,7 +638,6 @@ struct ZenVoiceWindowTests {
             window.draft = "Nota:"
             await controller.hear("ciao")
             await waitUntil("the preview shows") { window.draft == "Nota: ciao" }
-            #expect(window.voiceDictationPreviewRange == 6..<10)
             #expect(window.voiceDictationUpdate?.change == .started)
             let started = try #require(window.voiceDictationUpdate?.revision)
             await controller.hear("ciao mondo")
@@ -649,12 +648,11 @@ struct ZenVoiceWindowTests {
             ))
             // Setting the same text is not an edit.
             window.draft = window.draft
-            #expect(window.voiceDictation.isActive)
+            #expect(window.voiceDictation.preview != nil)
 
             // An edit turns the dictation into text; voice forgets it.
             window.draft = "Nota: ciao mondo!"
-            #expect(!window.voiceDictation.isActive)
-            #expect(window.voiceDictationPreviewRange == nil)
+            #expect(window.voiceDictation.preview == nil)
             await waitUntil("voice forgets the dictation") { await controller.discarded == [1] }
             await controller.hearLate(id: 1, "ciao mondo e poi")
             #expect(window.draft == "Nota: ciao mondo!")
@@ -677,7 +675,7 @@ struct ZenVoiceWindowTests {
             window.run("/voice pause")
             await waitUntil("the pause removes the preview") { window.draft == "Scritto" }
             #expect(window.voiceDictationUpdate?.change == .removed)
-            #expect(!window.voiceDictation.isActive)
+            #expect(window.voiceDictation.preview == nil)
             #expect(await window.waitUntilIdle())
 
             // So does off.

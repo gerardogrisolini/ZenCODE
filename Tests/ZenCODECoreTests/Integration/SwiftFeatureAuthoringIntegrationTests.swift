@@ -29,7 +29,7 @@ extension SwiftFeatureRuntimeTests {
         let executor = DirectToolExecutor(
             outputLimit: 200_000,
             swiftFeatureRuntime: runtime,
-            subAgentBackendFactory: { SwiftFeatureTestAgentRuntimeBackend() }
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
         let scriptedModel = ScriptedFeatureAuthoringModelBackend(
             toolExecutor: executor

@@ -28,7 +28,6 @@ public actor AgentSharedChat {
     /// are bounded independently from the message body they introduce.
     public static let maximumParticipantNameLength = 64
     public static let maximumParticipantIdentifierLength = 128
-    public static let maximumParticipantNameUTF8Length = 256
     public static let maximumParticipantIdentifierUTF8Length = 512
     /// Room IDs flow into coordinator/operator IDs, so reserve space for their
     /// trusted prefixes as well as bounding their raw scalar and byte input.

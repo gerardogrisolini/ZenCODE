@@ -5,8 +5,8 @@
 //  Entry points of the optional engine checkpoint (DS4 KV cache) of a saved
 //  session. The runner only forwards to the active backend: the file path is
 //  computed by `TerminalSessionStore.engineCheckpointURL`, and the callers
-//  (`TerminalChat.saveCurrentSession`, `TerminalChat.loadSavedSession`) are the
-//  only code that triggers them, so nothing is ever written or read implicitly.
+//  (`ChatSessionController.saveSession(…)`, `ChatSessionController.loadSavedSession(…)`)
+//  are the only code that triggers them, so nothing is ever written or read implicitly.
 //
 
 import Foundation

@@ -513,21 +513,6 @@ public struct AgentConfiguration: Sendable {
         }
     }
 
-    /// Projects only the shared runtime fields. The context window limit and
-    /// the generation parameter overrides are intentionally omitted: the CLI
-    /// configuration does not own them, so the runtime defaults apply.
-    @available(*, deprecated, message: "Use AgentCoreSessionConfiguration.runtimeConfiguration")
-    public var runtimeConfiguration: AgentRuntimeConfiguration {
-        projectedRuntimeConfiguration(
-            locksModelToSession: hostedAgentProfiles != nil,
-            agentID: selectedAgent?.id,
-            agentName: selectedAgent?.name,
-            profileID: selectedAgent?.id,
-            profileName: selectedAgent?.name,
-            profileRole: selectedAgent?.role
-        )
-    }
-
     public static func resolvedWorkingDirectory(
         rawValue: String,
         applyLaunchDirectoryFallback: Bool = true

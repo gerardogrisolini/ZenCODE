@@ -84,15 +84,6 @@ extension TerminalTelegramControlService {
         return receipt
     }
 
-    /// Reads back the artifact of a still-pending offer, when present.
-    public func pendingConsentArtifact(
-        offerID: String, chatID: Int64
-    ) async -> TerminalTelegramArtifact? {
-        await artifactConsent.pendingOffer(
-            offerID: offerID, chatID: chatID
-        )?.artifact
-    }
-
     /// Cancels a pending consent offer without uploading. Idempotent.
     public func cancelArtifactConsent(offerID: String, chatID: Int64) async {
         await artifactConsent.cancel(offerID: offerID, chatID: chatID)
@@ -119,16 +110,6 @@ extension TerminalTelegramControlService {
         )
         try ensureCurrentWireGeneration(wireGeneration)
         return (stored.url, stored.filename, stored.mimeType)
-    }
-
-    /// Lists received-but-unconsumed attachments for a chat.
-    public func inboundAttachmentFilenames(chatID: Int64) async -> [String] {
-        await inboundAttachments.storedFilenames(chatID: chatID)
-    }
-
-    /// Deletes one inbound temporary. Idempotent.
-    public func discardInboundAttachment(filename: String, chatID: Int64) async {
-        await inboundAttachments.discard(filename: filename, chatID: chatID)
     }
 
     /// Deterministic cleanup of every inbound temporary for a chat.

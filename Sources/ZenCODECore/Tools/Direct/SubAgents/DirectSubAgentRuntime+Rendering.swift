@@ -49,9 +49,8 @@ extension DirectSubAgentRuntime {
         if let workingDirectory {
             lines.append(SystemPromptBuilder.workingDirectorySection(path: workingDirectory.path))
         }
-        if let profileSection = selectedProfile?.promptSection(
-            memoryToolEnabled: AgentSessionComposition.memoryToolEnabled(allowedToolNames)
-        ), !lines.contains(profileSection) {
+        if let profileSection = selectedProfile?.promptSection,
+           !lines.contains(profileSection) {
             lines.append(profileSection)
         }
         return lines.joined(separator: "\n")

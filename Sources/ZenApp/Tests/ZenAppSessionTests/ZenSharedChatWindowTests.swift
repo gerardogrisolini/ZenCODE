@@ -95,7 +95,7 @@ struct ZenSharedChatWindowTests {
             window.toggleSharedChatReader()
             #expect(window.sharedChat.isReaderOpen)
             #expect(window.isSharedChatReaderOpen == window.sharedChat.isReaderOpen)
-            #expect(window.sharedChat.selectedMessage?.text == "Build is green")
+            #expect(window.sharedChat.selectedIndex.map { window.sharedChat.messages[$0].text } == "Build is green")
             #expect(window.sharedChat.headerText == "Chat · 1/1 · 0 new")
 
             // The operator answers the agent: delivered by id, kept as read.
@@ -111,9 +111,9 @@ struct ZenSharedChatWindowTests {
             #expect(window.sharedChat.messages.last?.id == sent.messageID)
             #expect(window.sharedChat.messages.last?.sender.kind == .operator)
             #expect(window.sharedChat.unreadCount == 0)
-            #expect(window.sharedChat.selectedMessage?.text == "Build is green")
+            #expect(window.sharedChat.selectedIndex.map { window.sharedChat.messages[$0].text } == "Build is green")
             window.navigateSharedChat(.next)
-            #expect(window.sharedChat.selectedMessage?.text == "thanks")
+            #expect(window.sharedChat.selectedIndex.map { window.sharedChat.messages[$0].text } == "thanks")
             #expect(window.isSharedChatReaderOpen == window.sharedChat.isReaderOpen)
 
             window.toggleSharedChatReader()

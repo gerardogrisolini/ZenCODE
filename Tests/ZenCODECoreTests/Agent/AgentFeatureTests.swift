@@ -100,13 +100,13 @@ extension AgentConfigurationTests {
 
         @Test
     func savedSessionCommandTreatsSaveAsActiveSessionUpdate() {
-                #expect(TerminalChat.savedSessionCommandAction(rawArguments: "") == .list)
-        #expect(TerminalChat.savedSessionCommandAction(rawArguments: "delete") == .delete)
-        #expect(TerminalChat.savedSessionCommandAction(rawArguments: " save ") == .saveActive)
-        #expect(TerminalChat.savedSessionCommandAction(rawArguments: " compact ") == .compact)
-        #expect(TerminalChat.savedSessionCommandAction(rawArguments: " new ") == .newSession)
+                #expect(ChatSessionController.savedSessionCommandAction(rawArguments: "") == .list)
+        #expect(ChatSessionController.savedSessionCommandAction(rawArguments: "delete") == .delete)
+        #expect(ChatSessionController.savedSessionCommandAction(rawArguments: " save ") == .saveActive)
+        #expect(ChatSessionController.savedSessionCommandAction(rawArguments: " compact ") == .compact)
+        #expect(ChatSessionController.savedSessionCommandAction(rawArguments: " new ") == .newSession)
         #expect(
-            TerminalChat.savedSessionCommandAction(rawArguments: "daily checkpoint")
+            ChatSessionController.savedSessionCommandAction(rawArguments: "daily checkpoint")
                 == .saveNamed("daily checkpoint")
         )
     }
@@ -119,7 +119,7 @@ extension AgentConfigurationTests {
             AgentRuntimeMessage(role: .assistant, content: "Sure")
         ]
         #expect(
-            TerminalChat.derivedSessionName(fromFirstPromptIn: messages) == "Fix the login bug"
+            ChatSessionController.derivedSessionName(fromFirstPromptIn: messages) == "Fix the login bug"
         )
     }
 
@@ -182,7 +182,7 @@ extension AgentConfigurationTests {
             for: selectedKeys,
             items: items
         )
-        let activeToolNames = TerminalChat.resolvedActiveToolNames(
+        let activeToolNames = ChatSessionController.resolvedActiveToolNames(
             fallbackAllowedToolNames: allowedToolNames,
             activeDescriptors: [
                 DirectToolDescriptor(

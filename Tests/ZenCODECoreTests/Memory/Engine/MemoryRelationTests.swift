@@ -115,9 +115,10 @@ struct MemoryGraphRelationTests {
     // MARK: Cap
 
     private static func hubGraph(neighbours count: Int, tags: [String] = []) -> MemoryGraph {
-        var graph = makeGraph(["hub"] + numbered("n", 0..<count))
-        if !tags.isEmpty {
-            for tag in tags { graph.addTag(tag, to: "hub") }
+        var graph = MemoryGraph()
+        graph.addMemory(EngineMemoryEntry(id: "hub", category: .fact, content: "entry hub", tags: tags))
+        for id in numbered("n", 0..<count) {
+            graph.addMemory(EngineMemoryEntry(id: id, category: .fact, content: "entry \(id)", tags: []))
         }
         return graph
     }
@@ -146,7 +147,8 @@ struct MemoryGraphRelationTests {
         var graph = Self.hubGraph(neighbours: 14, tags: ["topic"])
         // n00: a one-way supersedes edge. n01: a two-way contradiction.
         graph.addEdge(from: "hub", to: "n00", kind: .supersedes)
-        graph.markContradiction("hub", "n01")
+        graph.addEdge(from: "hub", to: "n01", kind: .contradicts)
+        graph.addEdge(from: "n01", to: "hub", kind: .contradicts)
         // n02: derivedFrom the other way round only.
         graph.addEdge(from: "n02", to: "hub", kind: .derivedFrom)
         for id in numbered("n", 0..<12) {
@@ -337,7 +339,7 @@ struct MemoryRecallRelationTests {
         )
 
         #expect(replayed == direct)
-        #expect(direct.edgeCount > 0)
+        #expect(direct.edges.values.contains { !$0.isEmpty })
         #expect(direct.metadata.linkDiscoveryCount > 0)
         for id in direct.memories.keys {
             #expect(relations(direct, from: id).count <= 1)

@@ -12,18 +12,17 @@ import ToolCore
 /// shapes remain on this side of the presentation boundary.
 enum TerminalTelegramRichMessageRenderer {
     static let maximumBlocks = 100
-    static let maximumCallbackBytes = 64
 
     static func render(_ document: PresentationDocument) throws -> TerminalTelegramInputRichMessage {
         var blocks: [TerminalTelegramInputRichBlock] = []
         for block in document.blocks.prefix(maximumBlocks) {
-            if let rendered = try render(block) { blocks.append(rendered) }
+            if let rendered = render(block) { blocks.append(rendered) }
         }
         guard !blocks.isEmpty else { throw TerminalTelegramControlError.emptyMessage }
         return TerminalTelegramInputRichMessage(blocks: blocks)
     }
 
-    private static func render(_ block: PresentationBlock) throws -> TerminalTelegramInputRichBlock? {
+    private static func render(_ block: PresentationBlock) -> TerminalTelegramInputRichBlock? {
         switch block {
         case let .paragraph(text):
             return text.plainText.nilIfBlank.map { _ in .paragraph(richText(text)) }
@@ -33,26 +32,12 @@ enum TerminalTelegramRichMessageRenderer {
             guard let code = PresentationSanitizer.visibleText(code).nilIfBlank else { return nil }
             return .preformatted(text: .string(code), language: sanitizedLanguage(language))
         case let .list(ordered, items):
-            let renderedItems = try items.compactMap { item -> TerminalTelegramInputRichBlockListItem? in
-                let rendered = try item.compactMap(render)
+            let renderedItems = items.compactMap { item -> TerminalTelegramInputRichBlockListItem? in
+                let rendered = item.compactMap(render)
                 return rendered.isEmpty ? nil : .init(blocks: rendered)
             }
             guard !renderedItems.isEmpty else { return nil }
             return .list(ordered: ordered, items: renderedItems)
-        case let .details(summary, blocks, isOpen):
-            let rendered = try blocks.compactMap(render)
-            guard summary.plainText.nilIfBlank != nil, !rendered.isEmpty else { return nil }
-            return .details(summary: richText(summary), blocks: rendered, isOpen: isOpen)
-        case let .buttons(buttons):
-            let rendered = try buttons.prefix(8).map(renderButton)
-            return rendered.isEmpty ? nil : .buttons(rendered)
-        case let .document(document, caption):
-            let id = PresentationSanitizer.visibleText(document.remoteID)
-            guard id.nilIfBlank != nil, id.utf8.count <= 512,
-                  !id.contains("/"), !id.contains("\\") else {
-                throw TerminalTelegramRichMessageError.invalidDocumentReference
-            }
-            return .document(media: id, caption: caption.map(richText))
         }
     }
 
@@ -76,26 +61,6 @@ enum TerminalTelegramRichMessageRenderer {
         }
     }
 
-    private static func renderButton(_ button: PresentationButton) throws -> TerminalTelegramRichMessageButton {
-        let label = PresentationSanitizer.visibleText(button.label)
-        guard let label = label.nilIfBlank, label.count <= 64 else {
-            throw TerminalTelegramRichMessageError.invalidButton
-        }
-        switch button.action {
-        case let .url(url):
-            guard allowedURL(url), button.style != .link else {
-                throw TerminalTelegramRichMessageError.invalidButton
-            }
-            return .init(text: .string(label), style: button.style?.rawValue, url: url.absoluteString, callbackData: nil)
-        case let .callback(data):
-            let sanitized = PresentationSanitizer.visibleText(data)
-            guard !sanitized.isEmpty, sanitized.utf8.count <= maximumCallbackBytes else {
-                throw TerminalTelegramRichMessageError.invalidButton
-            }
-            return .init(text: .string(label), style: button.style?.rawValue, url: nil, callbackData: sanitized)
-        }
-    }
-
     private static func allowedURL(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased() else { return false }
         return scheme == "https" || scheme == "tg"
@@ -106,11 +71,6 @@ enum TerminalTelegramRichMessageRenderer {
         let allowed = value.filter { $0.isLetter || $0.isNumber || $0 == "+" || $0 == "#" || $0 == "-" }
         return String(allowed.prefix(32)).nilIfBlank
     }
-}
-
-enum TerminalTelegramRichMessageError: Error, Equatable {
-    case invalidButton
-    case invalidDocumentReference
 }
 
 struct TerminalTelegramInputRichMessage: Encodable, Sendable {

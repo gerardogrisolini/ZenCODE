@@ -244,7 +244,6 @@ struct ToolExecutionLogTests {
         #expect(ToolExecutionLog.subsystem == SystemLogEmitter.subsystem)
         #expect(ToolExecutionLog.subsystem == "com.zencode.zen")
         #expect(ToolExecutionLog.category == "tool-execution")
-        #expect(ToolExecutionLog.linuxTag == SystemLogEmitter.linuxTag)
         // The tool channel maps completed executions to notice and every other
         // status to error, preserving the record payload unchanged.
         let completed = SystemLogRecord(

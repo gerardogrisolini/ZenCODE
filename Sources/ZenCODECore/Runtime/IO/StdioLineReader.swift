@@ -70,20 +70,14 @@ public final class StdioLineReader: Sendable {
         pollWaits.withLock { $0 }
     }
 
-    public func readLine() -> String? {
-        readOperation.withLock { _ in
-            readLineInternal(shouldCancel: nil)
-        }
-    }
-
-    /// Cancellation-aware variant used by the off-actor bridges.
+    /// Cancellation-aware read used by the off-actor bridges.
     ///
-    /// `readLine()` alone observes only `Task.isCancelled`, which is always
-    /// `false` on the dedicated dispatch queue used by ``TerminalBlockingRead``.
-    /// A read bridged off the cooperative pool would therefore never see a
-    /// cancellation and would hold stdin until a line happened to arrive. The
-    /// caller supplies the bridge's token so the poll loop unwinds at its next
-    /// timeout boundary and the awaiting side can resume.
+    /// `Task.isCancelled` alone is always `false` on the dedicated dispatch
+    /// queue used by ``TerminalBlockingRead``. A read bridged off the
+    /// cooperative pool would therefore never see a cancellation and would
+    /// hold stdin until a line happened to arrive. The caller supplies the
+    /// bridge's token so the poll loop unwinds at its next timeout boundary
+    /// and the awaiting side can resume.
     func readLine(shouldCancel: @escaping @Sendable () -> Bool) -> String? {
         readOperation.withLock { _ in
             readLineInternal(shouldCancel: shouldCancel)
@@ -91,13 +85,13 @@ public final class StdioLineReader: Sendable {
     }
 
     private func readLineInternal(
-        shouldCancel: (@Sendable () -> Bool)?
+        shouldCancel: @Sendable () -> Bool
     ) -> String? {
         // Cancellation can arrive either as task cancellation (detached reader
         // in the ACP launcher) or through the bridge token (off-actor TUI
         // reads). Both must end the poll loop.
         func isCancelled() -> Bool {
-            Task.isCancelled || shouldCancel?() == true
+            Task.isCancelled || shouldCancel()
         }
 
         while true {
@@ -158,15 +152,6 @@ public final class StdioLineReader: Sendable {
             }
             // Any other reported event (e.g. POLLPRI) carries no readable data;
             // keep polling with the timeout rather than busy-looping.
-        }
-    }
-
-    public func drainBufferedLines(waitMilliseconds: Int32 = 0) -> [String] {
-        readOperation.withLock { _ in
-            drainBufferedLinesInternal(
-                waitMilliseconds: waitMilliseconds,
-                shouldCancel: nil
-            )
         }
     }
 

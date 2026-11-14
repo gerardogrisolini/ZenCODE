@@ -163,18 +163,6 @@ extension ZenCODEACPBridge {
         return nil
     }
 
-    private static func arrayValue(
-        from params: [String: Any],
-        keys: [String]
-    ) -> [Any]? {
-        for key in keys {
-            if let value = params[key] as? [Any] {
-                return value
-            }
-        }
-        return nil
-    }
-
     private static func mcpServerValue(from params: [String: Any]) -> Any? {
         for key in ["mcpServers", "mcp_servers"] {
             if let value = params[key] {

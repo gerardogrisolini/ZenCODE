@@ -38,7 +38,10 @@ struct AnthropicMessagesDirectTests {
         let replay = history.compactMap(RemoteGenerationClient.remoteMessage(from:))
         #expect(replay.last?["is_error"] as? Bool == true)
 
-        let wire = RemoteGenerationClient.chatCompletionsWireHistoryMessages(from: replay)
+        let wire = RemoteGenerationClient.chatCompletionsWireHistoryMessages(
+            from: replay,
+            replayPolicy: .currentToolRound(requiresPlaceholder: false)
+        )
         #expect(wire.count == 2)
         #expect(wire[0]["anthropic_content_blocks"] == nil)
         #expect(wire[1]["is_error"] == nil)

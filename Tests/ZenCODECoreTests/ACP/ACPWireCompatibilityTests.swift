@@ -547,12 +547,6 @@ extension ACPCompatibilityTests {
         #expect(create["status"] as? String == "pending")
         #expect(create["tool_call_id"] == nil)
 
-        let progress = ZenCODEACPBridge.toolCallProgressUpdate(for: toolCall)
-        #expect(progress["sessionUpdate"] as? String == "tool_call_update")
-        #expect(progress["toolCallId"] as? String == "call_001")
-        #expect(progress["title"] as? String == "local.exec swift test")
-        #expect(progress["status"] as? String == "in_progress")
-
         let completion = ZenCODEACPBridge.toolCallCompletionUpdate(
             for: toolCall,
             result: DirectAgentToolResult(
@@ -594,29 +588,6 @@ extension ACPCompatibilityTests {
         let decoded = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: update))
         #expect(decoded == expected)
         #expect(ZenCODEACPBridge.toolCallCreateJSONUpdate(for: toolCall, workingDirectory: workspace) == expected)
-    }
-
-    @Test
-    func toolCallProgressPreservesCompleteWirePayloadAndJSONWrapper() throws {
-        let toolCall = presentedToolCall(
-            id: "call_wire",
-            name: "local.exec",
-            argumentsObject: ["command": "swift test"],
-            argumentsJSON: #"{"command":"swift test"}"#
-        )
-        let expected: JSONValue = .object([
-            "sessionUpdate": .string("tool_call_update"),
-            "toolCallId": .string("call_wire"),
-            "title": .string("local.exec swift test"),
-            "kind": .string("execute"),
-            "status": .string("in_progress"),
-            "locations": .array([]),
-            "_meta": .object(["rawInput": .object(["command": .string("swift test")])]),
-        ])
-        let update = ZenCODEACPBridge.toolCallProgressUpdate(for: toolCall)
-        let decoded = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: update))
-        #expect(decoded == expected)
-        #expect(ZenCODEACPBridge.toolCallProgressJSONUpdate(for: toolCall) == expected)
     }
 
     @Test
@@ -843,10 +814,10 @@ extension ACPCompatibilityTests {
             argumentsJSON: #"{"id":"git-tools"}"#
         )
 
-        #expect(ZenCODEACPBridge.toolKind(for: inspectToolCall) == "read")
-        #expect(ZenCODEACPBridge.toolKind(for: directoryCreationToolCall) == "edit")
-        #expect(ZenCODEACPBridge.toolKind(for: taskCreationToolCall) == "other")
-        #expect(ZenCODEACPBridge.toolKind(for: featureToolCall) == "other")
+        #expect(ZenCODEACPBridge.toolCallCreateUpdate(for: inspectToolCall)["kind"] as? String == "read")
+        #expect(ZenCODEACPBridge.toolCallCreateUpdate(for: directoryCreationToolCall)["kind"] as? String == "edit")
+        #expect(ZenCODEACPBridge.toolCallCreateUpdate(for: taskCreationToolCall)["kind"] as? String == "other")
+        #expect(ZenCODEACPBridge.toolCallCreateUpdate(for: featureToolCall)["kind"] as? String == "other")
         #expect(ZenCODEACPBridge.acpToolKind("destructive") == "delete")
         #expect(ZenCODEACPBridge.acpToolKind("communicate") == "other")
         #expect(ZenCODEACPBridge.acpToolKind("search") == "search")
@@ -858,12 +829,11 @@ extension ACPCompatibilityTests {
             featureToolCall
         ] {
             let create = ZenCODEACPBridge.toolCallCreateUpdate(for: toolCall)
-            let progress = ZenCODEACPBridge.toolCallProgressUpdate(for: toolCall)
             let completion = ZenCODEACPBridge.toolCallCompletionUpdate(
                 for: toolCall,
                 result: DirectAgentToolResult(output: "done", summary: "done")
             )
-            for update in [create, progress, completion] {
+            for update in [create, completion] {
                 let kind = update["kind"] as? String ?? ""
                 #expect(acpToolKinds.contains(kind))
             }
@@ -964,7 +934,7 @@ extension ACPCompatibilityTests {
         ]
 
         for (value, expected) in cases {
-            #expect(ACPPermissionBroker.permissionOptionID(from: value) == expected)
+            #expect(ACPConsentHost.permissionOptionID(from: value) == expected)
         }
     }
 
@@ -976,7 +946,7 @@ extension ACPCompatibilityTests {
             ])
         ])
 
-        #expect(ACPPermissionBroker.permissionOptionID(from: value) == nil)
+        #expect(ACPConsentHost.permissionOptionID(from: value) == nil)
     }
 
     @Test
@@ -1036,16 +1006,16 @@ extension ACPCompatibilityTests {
             workingDirectory: "/tmp/project"
         )
 
-        #expect(ACPPermissionBroker.permissionCacheCommandIdentity(for: localExecRequest) == "1:5:swift")
-        #expect(ACPPermissionBroker.permissionCacheCommandIdentity(for: secondLocalExecRequest) == "1:5:swift")
-        #expect(ACPPermissionBroker.permissionCacheCommandIdentity(for: nonLocalRequest) == "swift test --filter One")
+        #expect(ChatToolConsentAuthorizer.permissionCacheCommandIdentity(for: localExecRequest) == "1:5:swift")
+        #expect(ChatToolConsentAuthorizer.permissionCacheCommandIdentity(for: secondLocalExecRequest) == "1:5:swift")
+        #expect(ChatToolConsentAuthorizer.permissionCacheCommandIdentity(for: nonLocalRequest) == "swift test --filter One")
         #expect(
-            ACPPermissionBroker.permissionCacheCommandIdentity(for: pipelineRequest)
+            ChatToolConsentAuthorizer.permissionCacheCommandIdentity(for: pipelineRequest)
             == "2:5:swift4:tail"
         )
         #expect(
-            ACPPermissionBroker.permissionCacheCommandIdentity(for: separatorPipelineRequest)
-            != ACPPermissionBroker.permissionCacheCommandIdentity(for: separatorExecutableRequest)
+            ChatToolConsentAuthorizer.permissionCacheCommandIdentity(for: separatorPipelineRequest)
+            != ChatToolConsentAuthorizer.permissionCacheCommandIdentity(for: separatorExecutableRequest)
         )
 
         let tupleCollisionA = AgentToolAuthorizationRequest(
@@ -1067,8 +1037,8 @@ extension ACPCompatibilityTests {
             workingDirectory: "/tmp/a\u{1f}1:7:p"
         )
         #expect(
-            ACPPermissionBroker.permissionCacheKeyValue(for: tupleCollisionA)
-            != ACPPermissionBroker.permissionCacheKeyValue(for: tupleCollisionB)
+            ChatToolConsentAuthorizer.permissionCacheKeyValue(for: tupleCollisionA)
+            != ChatToolConsentAuthorizer.permissionCacheKeyValue(for: tupleCollisionB)
         )
     }
 

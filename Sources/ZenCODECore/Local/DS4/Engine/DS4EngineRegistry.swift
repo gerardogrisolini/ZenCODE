@@ -21,9 +21,6 @@
 //  - `withGenerationLeaseIfOpen` is the same lock for work that must not open
 //    a model (the explicit checkpoint save): it runs `body` only when the
 //    engine for the configuration is already open, otherwise returns `nil`.
-//  - `shutdown()` closes everything without waiting for queued leases (a
-//    turn in progress finishes first because engine calls are serialized on
-//    the engine thread); the registry stays usable afterwards.
 //  - `closeIfIdle()` closes the open engine without ever waiting. It returns
 //    `false` and changes nothing while no engine is open, an open is in
 //    progress, the generation lock is held, leases are queued, or a DS4
@@ -72,7 +69,6 @@ actor DS4EngineRegistry {
     private var current: OpenEngine?
     private var pending: PendingOpen?
     /// Bumped by `shutdown()`: an open started before it is discarded.
-    private var epoch: UInt64 = 0
     private var nextToken: UInt64 = 0
 
     private var lockHeld = false
@@ -174,20 +170,6 @@ actor DS4EngineRegistry {
         return try await body(current.engine)
     }
 
-    /// Frees every session and closes the open engine (and one being opened).
-    func shutdown() async {
-        epoch &+= 1
-        let engine = current?.engine
-        current = nil
-        let opening = pending?.task
-        pending = nil
-        if let engine {
-            await engine.close()
-        }
-        // The open task sees the new epoch and closes its engine itself.
-        _ = try? await opening?.value
-    }
-
     /// Closes the open engine when nothing uses it, without waiting. Returns
     /// `true` only when this call closed it. Returns `false` and changes
     /// nothing when no engine is open, an open is in progress, the generation
@@ -208,7 +190,7 @@ actor DS4EngineRegistry {
         guard await open.engine.liveSessionCount() == 0 else {
             return false
         }
-        // A shutdown may have closed or replaced the engine during the await.
+        // The engine checked above must still be the open one after the await.
         guard let stillOpen = current, stillOpen.engine === open.engine else {
             return false
         }
@@ -243,12 +225,11 @@ actor DS4EngineRegistry {
         nextToken &+= 1
         let token = nextToken
         let identity = configuration.identity
-        let epoch = epoch
         let factory = factory
         let task = Task<any DS4Engine, any Error> {
             do {
                 let engine = try await factory(configuration, onStatus)
-                try await self.finishOpen(token: token, identity: identity, epoch: epoch, engine: engine)
+                self.finishOpen(token: token, identity: identity, engine: engine)
                 return engine
             } catch {
                 self.clearPending(token: token)
@@ -259,12 +240,8 @@ actor DS4EngineRegistry {
         return task
     }
 
-    private func finishOpen(token: UInt64, identity: String, epoch: UInt64, engine: any DS4Engine) async throws {
+    private func finishOpen(token: UInt64, identity: String, engine: any DS4Engine) {
         clearPending(token: token)
-        guard epoch == self.epoch else {
-            await engine.close()
-            throw DS4EngineError.engineClosed
-        }
         current = OpenEngine(identity: identity, engine: engine)
     }
 

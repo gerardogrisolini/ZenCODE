@@ -386,10 +386,6 @@ public struct SwiftFeatureGeneratedManifest: Codable, Sendable {
             try container.encode(promotionReady, forKey: .promotionReady)
         }
     }
-
-    public var promotable: Bool {
-        promotionReady
-    }
 }
 
 

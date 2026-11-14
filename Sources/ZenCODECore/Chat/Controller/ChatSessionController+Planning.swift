@@ -11,31 +11,11 @@ import ToolCore
 extension ChatSessionController {
     // MARK: - Planning
 
-    /// Records a structured plan (with task points) as the active plan **without**
-    /// creating its task graph. The graph is created exclusively at plan approval,
-    /// so changing the plan before approval always produces a graph that matches
-    /// the final approved points.
-    @discardableResult
-    func recordStructuredPlan(
-        responseText: String,
-        originalGoal: String,
-        createdAt: Date = Date(),
-        points: [TerminalSessionPlanPoint]
-    ) throws(ChatPlanGenerationError) -> Bool {
-        guard let plan = try Self.structuredPlan(
-            responseText: responseText,
-            originalGoal: originalGoal,
-            createdAt: createdAt,
-            points: points
-        ) else {
-            return false
-        }
-        stateStore.withLock { $0.commandState.activePlan = plan }
-        return true
-    }
-
     /// The unapproved plan a Planner response records, or `nil` when the
-    /// response has no text.
+    /// response has no text. It is recorded as the active plan **without**
+    /// creating its task graph: the graph is created exclusively at plan
+    /// approval, so changing the plan before approval always produces a graph
+    /// that matches the final approved points.
     nonisolated static func structuredPlan(
         responseText: String,
         originalGoal: String,

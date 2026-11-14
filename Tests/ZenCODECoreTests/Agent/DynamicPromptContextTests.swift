@@ -15,7 +15,6 @@ struct DynamicPromptContextTests {
             cwd: "/tmp/one",
             agentsSection: "Agent instructions:\nUse concise answers.",
             memorySection: "Memory tools:\nRead project memory.",
-            memoryToolEnabled: true,
             allowedToolNames: ["tasks.create", "tasks.list", "tasks.update", "agent.create"],
             responseLanguageSection: SystemPromptBuilder.responseLanguageSection(
                 languageName: "Italian"
@@ -25,7 +24,6 @@ struct DynamicPromptContextTests {
             cwd: "/tmp/two",
             agentsSection: "Agent instructions:\nExplain decisions.",
             memorySection: nil,
-            memoryToolEnabled: false,
             allowedToolNames: [],
             responseLanguageSection: SystemPromptBuilder.responseLanguageSection(
                 languageName: "English"
@@ -49,16 +47,15 @@ struct DynamicPromptContextTests {
         #expect(second.dynamicContext.contains("Task workflow policy:") == false)
         #expect(second.dynamicContext.contains("locked to English") == false)
         #expect(
-            SystemPromptBuilder.standalonePrompt(
+            SystemPromptBuilder.standalonePromptSections(
                 cwd: "/tmp/one",
                 agentsSection: "Agent instructions:\nUse concise answers.",
                 memorySection: "Memory tools:\nRead project memory.",
-                memoryToolEnabled: true,
                 allowedToolNames: ["tasks.create", "tasks.list", "tasks.update", "agent.create"],
                 responseLanguageSection: SystemPromptBuilder.responseLanguageSection(
                     languageName: "Italian"
                 )
-            ) == first.combinedPrompt
+            ).combinedPrompt == first.combinedPrompt
         )
     }
 
@@ -131,7 +128,7 @@ struct DynamicPromptContextTests {
 
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             snapshot.compactionInputMessages,
-            maxTokens: 1_000,
+            budget: AgentConversationCompactionBudget(contextWindowTokens: 1_000),
             force: true
         )
         let compacted = snapshot.applyingCompaction(result)

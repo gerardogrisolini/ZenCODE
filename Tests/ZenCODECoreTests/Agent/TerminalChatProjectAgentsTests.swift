@@ -11,16 +11,16 @@ import Testing
 struct TerminalChatProjectAgentsTests {
     @Test
     func menuHelpExplainsProjectToggleAndEnterUsesAgent() {
-        #expect(TerminalChat.projectAgentMenuHelpLines == [
+        #expect(TerminalInteractionHost.focusedMenuHelpLines(toggleLabel: "agents", confirmLabel: "use agent") == [
             "↑/↓ move · Space/X toggle agents · A all · N none · Enter use agent · Esc/Q cancel"
         ])
     }
 
     @Test
     func projectNameIsTheFolderNameOrThePathAtTheFilesystemRoot() {
-        #expect(TerminalChat.projectDisplayName(URL(fileURLWithPath: "/tmp/ZenCODE-demo", isDirectory: true)) == "ZenCODE-demo")
-        #expect(TerminalChat.projectDisplayName(URL(fileURLWithPath: "/tmp/ZenCODE-demo/sub/..")) == "ZenCODE-demo")
-        #expect(TerminalChat.projectDisplayName(URL(fileURLWithPath: "/", isDirectory: true)) == "/")
+        #expect(ChatSessionController.projectDisplayName(URL(fileURLWithPath: "/tmp/ZenCODE-demo", isDirectory: true)) == "ZenCODE-demo")
+        #expect(ChatSessionController.projectDisplayName(URL(fileURLWithPath: "/tmp/ZenCODE-demo/sub/..")) == "ZenCODE-demo")
+        #expect(ChatSessionController.projectDisplayName(URL(fileURLWithPath: "/", isDirectory: true)) == "/")
     }
 
     @Test
@@ -29,20 +29,20 @@ struct TerminalChatProjectAgentsTests {
         let agents = AgentProfileStore.defaultProfiles() + [custom]
 
         #expect(
-            TerminalChat.projectAgentMenuInitialAssociation(agents, savedSelection: nil)
+            ChatSessionController.projectAgentMenuInitialAssociation(agents, savedSelection: nil)
                 == Set(AgentProfileStore.defaultProfiles())
         )
         #expect(
-            TerminalChat.projectAgentMenuInitialAssociation(
+            ChatSessionController.projectAgentMenuInitialAssociation(
                 agents,
                 savedSelection: [custom.id.lowercased(), AgentProfileRole.planner.rawValue]
             ) == Set(agents.filter { $0.id == custom.id || $0.id == AgentProfileRole.planner.rawValue })
         )
-        #expect(TerminalChat.projectAgentMenuInitialAssociation(agents, savedSelection: []).isEmpty)
+        #expect(ChatSessionController.projectAgentMenuInitialAssociation(agents, savedSelection: []).isEmpty)
         // A selection saved with the former UUIDs of the system profiles
         // matches nothing: no profile is ticked.
         #expect(
-            TerminalChat.projectAgentMenuInitialAssociation(
+            ChatSessionController.projectAgentMenuInitialAssociation(
                 agents,
                 savedSelection: ["00000000-0000-0000-0000-000000000010"]
             ).isEmpty
@@ -58,7 +58,8 @@ struct TerminalChatProjectAgentsTests {
                 availableAgents: AgentProfileStore.defaultProfiles(),
                 workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-stale-profile-ids", isDirectory: true)
             ),
-            stdinIsTerminal: false
+            stdinIsTerminal: false,
+            telegramTransportFactory: nil
         )
         func savedSession(agentID: String?, agentName: String?) -> TerminalSavedSession {
             TerminalSavedSession(
@@ -72,14 +73,14 @@ struct TerminalChatProjectAgentsTests {
         }
 
         // The former UUID matches no profile; the saved name still does.
-        let byName = try terminal.restoredAgent(for: savedSession(
+        let byName = try terminal.chatSession.restoredAgent(for: savedSession(
             agentID: "00000000-0000-0000-0000-000000000012",
             agentName: "Developer"
         ))
         #expect(byName?.id == AgentProfileRole.developer.rawValue)
         // Neither matches: the session restores without an agent, as for a
         // profile that no longer exists.
-        #expect(try terminal.restoredAgent(for: savedSession(
+        #expect(try terminal.chatSession.restoredAgent(for: savedSession(
             agentID: "00000000-0000-0000-0000-000000000010",
             agentName: "Renamed Reviewer"
         )) == nil)
@@ -87,16 +88,20 @@ struct TerminalChatProjectAgentsTests {
 
     @Test
     func associationMessageListsTheAssociatedProfilesOrSaysThereAreNone() {
-        let message = TerminalChat.renderProjectAgentAssociation(
-            associated: [
-                AgentProfile(id: "a", name: "Developer", role: .developer),
-                AgentProfile(id: "b", name: "Reviewer", role: .reviewer),
-            ],
-            projectName: "Demo"
+        let message = ChatSessionNoticeText.text(
+            for: .projectAgentsAssociated(
+                agents: [
+                    AgentProfile(id: "a", name: "Developer", role: .developer),
+                    AgentProfile(id: "b", name: "Reviewer", role: .reviewer),
+                ],
+                projectName: "Demo"
+            )
         )
         #expect(message == "Project agents for Demo: Developer, Reviewer.\n")
 
-        let none = TerminalChat.renderProjectAgentAssociation(associated: [], projectName: "Demo")
+        let none = ChatSessionNoticeText.text(
+            for: .projectAgentsAssociated(agents: [], projectName: "Demo")
+        )
         #expect(none.contains("No agent profile is associated with project Demo"))
         #expect(none.contains("/agents"))
         #expect(none.hasSuffix("\n"))

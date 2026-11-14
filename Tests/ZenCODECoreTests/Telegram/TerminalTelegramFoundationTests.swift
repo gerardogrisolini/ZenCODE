@@ -32,7 +32,6 @@ struct TerminalTelegramFoundationTests {
         #expect(description == "Too Many Requests: retry after 3")
         #expect(retryAfter == 3)
         #expect(error.isExplicitRateLimit)
-        #expect(error.retryAfter == 3)
     }
 
     // MARK: - Governor
@@ -156,19 +155,21 @@ struct TerminalTelegramFoundationTests {
     @Test
     func registryDrivesParser() {
         for specification in TerminalTelegramCommandRegistry.commands {
-            for form in specification.allForms {
+            for form in ["/\(specification.name)"] + specification.aliases {
                 #expect(
-                    TerminalTelegramRemoteCommand(text: form) == specification.command,
+                    TerminalTelegramRemoteCommand.invocation(text: form)?.command == specification.command,
                     "form \(form) must resolve to \(specification.command)"
                 )
                 #expect(
-                    TerminalTelegramRemoteCommand(text: form.uppercased()) == specification.command,
+                    TerminalTelegramRemoteCommand.invocation(text: form.uppercased())?.command
+                        == specification.command,
                     "parser is case-insensitive"
                 )
             }
             // A @botname suffix on the slash form resolves too.
             #expect(
-                TerminalTelegramRemoteCommand(text: "/\(specification.name)@zencode_bot") == specification.command
+                TerminalTelegramRemoteCommand.invocation(text: "/\(specification.name)@zencode_bot")?.command
+                    == specification.command
             )
         }
     }
@@ -230,8 +231,10 @@ struct TerminalTelegramFoundationTests {
 
     @Test
     func nonPrivatePairingPresentationDoesNotConsumeGrant() async {
-        let service = TerminalTelegramPairingService(botToken: "token")
-        let grant = await service.issuePairingGrant()
+        let service = TerminalTelegramPairingService(
+            botToken: "token", transport: NIOTelegramHTTPTransport()
+        )
+        let grant = await service.issuePairingDeepLink(botUsername: nil).payload
         #expect(!(await service.consumePairingGrant(
             payload: grant, chatType: "supergroup"
         )))

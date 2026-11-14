@@ -16,10 +16,6 @@ import Markdown
 struct PresentationDocument: Sendable, Equatable {
     var blocks: [PresentationBlock]
 
-    init(blocks: [PresentationBlock]) {
-        self.blocks = blocks
-    }
-
     init(markdown: String) {
         var renderer = PresentationMarkdownRenderer()
         blocks = renderer.visit(Document(parsing: PresentationSanitizer.visibleText(markdown)))
@@ -35,9 +31,6 @@ enum PresentationBlock: Sendable, Equatable {
     case heading(level: Int, text: PresentationText)
     case preformatted(code: String, language: String?)
     case list(ordered: Bool, items: [[PresentationBlock]])
-    case details(summary: PresentationText, blocks: [PresentationBlock], isOpen: Bool)
-    case buttons([PresentationButton])
-    case document(PresentationDocumentReference, caption: PresentationText?)
 
     var plainText: String {
         switch self {
@@ -50,21 +43,12 @@ enum PresentationBlock: Sendable, Equatable {
                 let body = blocks.map(\.plainText).joined(separator: "\n")
                 return "\(marker) \(body)"
             }.joined(separator: "\n")
-        case let .details(summary, blocks, _):
-            ([summary.plainText] + blocks.map(\.plainText)).filter { !$0.isEmpty }.joined(separator: "\n")
-        case let .buttons(buttons): buttons.map(\.label).joined(separator: " · ")
-        case let .document(document, caption):
-            [caption?.plainText, document.filename].compactMap { $0 }.joined(separator: " — ")
         }
     }
 }
 
 struct PresentationText: Sendable, Equatable {
     var runs: [PresentationTextRun]
-
-    init(_ plainText: String) {
-        runs = [.plain(PresentationSanitizer.visibleText(plainText))]
-    }
 
     init(runs: [PresentationTextRun]) {
         self.runs = runs
@@ -87,26 +71,6 @@ enum PresentationTextRun: Sendable, Equatable {
         case let .link(label, _): label.plainText
         }
     }
-}
-
-struct PresentationButton: Sendable, Equatable {
-    enum Action: Sendable, Equatable {
-        case url(URL)
-        case callback(String)
-    }
-    enum Style: String, Sendable, Equatable { case danger, success, primary, link }
-
-    let label: String
-    let action: Action
-    let style: Style?
-}
-
-/// A backend-independent reference to an already-uploaded document. Local paths
-/// and bytes are intentionally excluded, preventing presentation from becoming an
-/// upload/exfiltration channel.
-struct PresentationDocumentReference: Sendable, Equatable {
-    let remoteID: String
-    let filename: String?
 }
 
 enum PresentationSanitizer {

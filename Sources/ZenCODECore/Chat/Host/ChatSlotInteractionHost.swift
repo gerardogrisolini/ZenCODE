@@ -109,11 +109,6 @@ final class ChatSlotInteractionHost: ChatInteractionHost, Sendable {
         state.withLock { $0.openRequests.count }
     }
 
-    /// The number of changes of the active host so far, for tests.
-    var activeHostGeneration: Int {
-        state.withLock { $0.generation }
-    }
-
     var capabilities: ChatChannelCapabilities {
         state.withLock { $0.activeHost.capabilities }
     }

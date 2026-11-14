@@ -16,11 +16,6 @@ struct WebBoundedResponse: Sendable {
     let data: Data
     let response: HTTPURLResponse
     let wasTruncated: Bool
-
-    /// Declared `Content-Length`, when the server sent one.
-    var expectedContentLength: Int64? {
-        response.expectedContentLength >= 0 ? response.expectedContentLength : nil
-    }
 }
 
 /// Session delegate that streams the body with `URLSessionDataDelegate`,

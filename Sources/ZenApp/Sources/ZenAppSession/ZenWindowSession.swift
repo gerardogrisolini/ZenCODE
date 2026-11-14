@@ -186,8 +186,8 @@ public final class ZenWindowSession: Identifiable {
         }
     }
     /// The voice dictation shown at the end of ``draft``, while this window
-    /// is the one voice mode follows; its preview's range is
-    /// ``ZenVoiceDictationDraft/previewRange(in:)`` of ``draft``.
+    /// is the one voice mode follows; its preview covers ``draft`` from
+    /// ``ZenVoiceDictationDraft/Preview/start`` to the end.
     public internal(set) var voiceDictation = ZenVoiceDictationDraft()
     /// The latest change the dictation made to ``draft``, for the composer's
     /// cursor (``ZenVoiceDictationDraft/cursor(_:after:draftCount:)``);
@@ -277,12 +277,6 @@ public final class ZenWindowSession: Identifiable {
     /// Voice mode follows this window (``ZenAppRuntime/activeVoiceWindowID``).
     public var isVoiceWindow: Bool {
         runtime?.activeVoiceWindowID == id
-    }
-
-    /// The characters of ``draft`` the voice dictation previews; `nil` when
-    /// none is shown. For tests.
-    var voiceDictationPreviewRange: Range<Int>? {
-        voiceDictation.previewRange(in: draft)
     }
 
     // MARK: Composition

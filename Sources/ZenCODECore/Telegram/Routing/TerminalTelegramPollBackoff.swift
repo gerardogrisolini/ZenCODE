@@ -135,8 +135,4 @@ struct TerminalTelegramPollBackoff: Sendable, Equatable {
     static func sanitizedDescription(_ error: Error) -> String {
         TerminalTelegramControlError.operatorDescription(error)
     }
-
-    static func redactToken(in text: String) -> String {
-        TerminalTelegramControlError.redactingToken(in: text)
-    }
 }

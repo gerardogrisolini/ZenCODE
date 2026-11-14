@@ -222,7 +222,7 @@ struct AgentConversationCompactionRemediationTests {
         )
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             messages,
-            maxTokens: maxTokens
+            budget: AgentConversationCompactionBudget(contextWindowTokens: maxTokens)
         )
 
         #expect(rawTokenCount > policyTargetTokenCount)
@@ -247,7 +247,7 @@ struct AgentConversationCompactionRemediationTests {
         while rounds < roundLimit {
             let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
                 messages,
-                maxTokens: 16_000,
+                budget: AgentConversationCompactionBudget(contextWindowTokens: 16_000),
                 force: true
             )
             guard result.wasCompacted else {
@@ -337,16 +337,18 @@ struct AgentConversationCompactionRemediationTests {
 
         let withTinyNewFacts = AgentConversationCompactionSupport.conversationMemorySummary(
             priorSummary: priorSummary,
-            olderMessages: [AgentRuntimeMessage(role: .user, content: "One small new fact.")],
+            entries: AgentConversationCompactionSupport.summaryEntries(
+                for: AgentRuntimeMessage(role: .user, content: "One small new fact.")
+            ),
             maxCharacters: maxCharacters
         )
         let withLargeNewFacts = AgentConversationCompactionSupport.conversationMemorySummary(
             priorSummary: priorSummary,
-            olderMessages: (0..<40).map { index in
-                AgentRuntimeMessage(
+            entries: (0..<40).flatMap { index in
+                AgentConversationCompactionSupport.summaryEntries(for: AgentRuntimeMessage(
                     role: .user,
                     content: "NEW-FACT-\(index) " + String(repeating: "context ", count: 60)
-                )
+                ))
             },
             maxCharacters: maxCharacters
         )
@@ -412,7 +414,7 @@ struct AgentConversationCompactionRemediationTests {
         for _ in 0..<3 {
             let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
                 current,
-                maxTokens: 6_000,
+                budget: AgentConversationCompactionBudget(contextWindowTokens: 6_000),
                 force: true
             )
             #expect(result.wasCompacted)

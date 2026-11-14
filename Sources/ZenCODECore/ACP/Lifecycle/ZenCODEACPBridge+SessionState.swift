@@ -169,32 +169,6 @@ extension ZenCODEACPBridge {
         )
     }
 
-    /// Runs a new incarnation of `configuration.sessionID` in the host and
-    /// publishes its ACP state: what `session/new` and `session/load` do
-    /// between their fences, in one step, for the tests that install a
-    /// session directly. The runner session is not created. An entry of an
-    /// earlier incarnation with the same id is replaced and its slot closed,
-    /// as a close followed by a load of the same id would leave it.
-    func installSession(
-        configuration: AgentCoreSessionConfiguration,
-        selectedAgent: AgentProfile? = nil
-    ) async throws -> SessionState {
-        if let replaced = sessions.removeValue(forKey: configuration.sessionID) {
-            await host.closeSlot(replaced.slotID, runtimeSession: .keep)
-        }
-        let incarnation = try await openACPSession(
-            sessionID: configuration.sessionID,
-            cwd: configuration.workingDirectory.path
-        )
-        let state = sessionState(
-            configuration: configuration,
-            selectedAgent: selectedAgent,
-            incarnation: incarnation
-        )
-        sessions[configuration.sessionID] = state
-        return state
-    }
-
     /// Describes the selected runtime configuration without resolving a new
     /// thinking value or injecting presentation metadata into the model turn.
     func initialConfigurationSummary(for session: SessionState) -> String {
@@ -236,33 +210,6 @@ extension ZenCODEACPBridge {
         var merged = allowedToolNames ?? []
         merged.formUnion(descriptorNames)
         return merged
-    }
-
-    public func sessionConfiguration(
-        from configuration: AgentCoreSessionConfiguration,
-        allowedToolNames: Set<String>?
-    ) -> AgentCoreSessionConfiguration {
-        AgentCoreSessionConfiguration(
-            sessionID: configuration.sessionID,
-            modelID: configuration.modelID,
-            agentID: configuration.agentID,
-            agentName: configuration.agentName,
-            agentRole: configuration.agentRole,
-            workingDirectory: configuration.workingDirectory,
-            systemPrompt: configuration.systemPrompt,
-            dynamicContext: configuration.dynamicContext,
-            cacheKey: configuration.cacheKey,
-            sessionRevision: configuration.sessionRevision,
-            history: configuration.history,
-            allowedToolNames: allowedToolNames,
-            configuredContextWindowLimit: configuration.configuredContextWindowLimit,
-            generationParameterOverrides: configuration.generationParameterOverrides,
-            maxToolRounds: configuration.maxToolRounds,
-            maxOutputTokens: configuration.maxOutputTokens,
-            appMode: configuration.appMode,
-            thinkingSelection: configuration.thinkingSelection,
-            preserveThinking: configuration.preserveThinking
-        )
     }
 
     public func refreshSessionStateIfAvailable(

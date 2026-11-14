@@ -69,7 +69,7 @@ struct ProjectAgentSelectionStoreTests {
             for profile in Support.profiles {
                 #expect(ProjectAgentSelectionStore.isAssociated(profile, selection: nil) == profile.isSystemProfile)
                 #expect(
-                    ProjectAgentSelectionStore.isAssociated(profile, workspaceRootURL: workspace)
+                    ProjectAgentSelectionStore.isAssociated(profile, selection: ProjectAgentSelectionStore.load(workspaceRootURL: workspace))
                         == profile.isSystemProfile
                 )
             }
@@ -96,8 +96,8 @@ struct ProjectAgentSelectionStoreTests {
                 ProjectAgentSelectionStore.filter(Support.profiles, selection: selection)
                     == [Support.developer, Support.reviewer]
             )
-            #expect(ProjectAgentSelectionStore.isAssociated(Support.developer, workspaceRootURL: workspace))
-            #expect(!ProjectAgentSelectionStore.isAssociated(Support.reporter, workspaceRootURL: workspace))
+            #expect(ProjectAgentSelectionStore.isAssociated(Support.developer, selection: ProjectAgentSelectionStore.load(workspaceRootURL: workspace)))
+            #expect(!ProjectAgentSelectionStore.isAssociated(Support.reporter, selection: ProjectAgentSelectionStore.load(workspaceRootURL: workspace)))
         }
     }
 
@@ -156,7 +156,7 @@ struct ProjectAgentSelectionStoreTests {
                 ProjectAgentSelectionStore.manifestURL(workspaceRootURL: moved)
                     == ProjectAgentSelectionStore.manifestURL(workspaceRootURL: original)
             )
-            #expect(ProjectAgentSelectionStore.isAssociated(esselunga, workspaceRootURL: moved))
+            #expect(ProjectAgentSelectionStore.isAssociated(esselunga, selection: ProjectAgentSelectionStore.load(workspaceRootURL: moved)))
             #expect(ProjectAgentSelectionStore.filter(profiles, workspaceRootURL: moved) == [esselunga])
             // A developer-role delegation resolves to the associated custom
             // profile, not to the generic system Developer.
@@ -204,11 +204,11 @@ struct ProjectAgentSelectionStoreTests {
                 agentIDs: [Support.developer.id.lowercased()],
                 workspaceRootURL: workspace
             )
-            #expect(ProjectAgentSelectionStore.isAssociated(Support.developer, workspaceRootURL: workspace))
+            #expect(ProjectAgentSelectionStore.isAssociated(Support.developer, selection: ProjectAgentSelectionStore.load(workspaceRootURL: workspace)))
             #expect(
                 ProjectAgentSelectionStore.isAssociated(
                     AgentProfile(id: Support.developer.id.uppercased(), name: "Renamed", role: .developer),
-                    workspaceRootURL: workspace
+                    selection: ProjectAgentSelectionStore.load(workspaceRootURL: workspace)
                 )
             )
             // A caller-supplied set is normalized as well.
@@ -231,9 +231,9 @@ struct ProjectAgentSelectionStoreTests {
             let renamed = AgentProfile(id: Support.developer.id, name: "Lead Developer", role: .developer)
             let created = AgentProfile(id: "AAAAAAAA-0000-0000-0000-0000000000FF", name: "Developer", role: .developer)
 
-            #expect(ProjectAgentSelectionStore.isAssociated(renamed, workspaceRootURL: workspace))
+            #expect(ProjectAgentSelectionStore.isAssociated(renamed, selection: ProjectAgentSelectionStore.load(workspaceRootURL: workspace)))
             // Same name as an associated profile, different ID: not associated.
-            #expect(!ProjectAgentSelectionStore.isAssociated(created, workspaceRootURL: workspace))
+            #expect(!ProjectAgentSelectionStore.isAssociated(created, selection: ProjectAgentSelectionStore.load(workspaceRootURL: workspace)))
             #expect(
                 ProjectAgentSelectionStore.filter(
                     Support.profiles + [created],
@@ -275,7 +275,7 @@ struct ProjectAgentSelectionStoreTests {
             #expect(ProjectAgentSelectionStore.filter(Support.profiles, selection: selection).isEmpty)
             #expect(ProjectAgentSelectionStore.filter(Support.profiles, workspaceRootURL: workspace).isEmpty)
             for profile in Support.profiles {
-                #expect(!ProjectAgentSelectionStore.isAssociated(profile, workspaceRootURL: workspace))
+                #expect(!ProjectAgentSelectionStore.isAssociated(profile, selection: ProjectAgentSelectionStore.load(workspaceRootURL: workspace)))
             }
         }
     }
@@ -301,8 +301,8 @@ struct ProjectAgentSelectionStoreTests {
 
             try Data().write(to: url)
             #expect(ProjectAgentSelectionStore.load(workspaceRootURL: workspace) == nil)
-            #expect(ProjectAgentSelectionStore.isAssociated(Support.developer, workspaceRootURL: workspace))
-            #expect(!ProjectAgentSelectionStore.isAssociated(Support.reporter, workspaceRootURL: workspace))
+            #expect(ProjectAgentSelectionStore.isAssociated(Support.developer, selection: ProjectAgentSelectionStore.load(workspaceRootURL: workspace)))
+            #expect(!ProjectAgentSelectionStore.isAssociated(Support.reporter, selection: ProjectAgentSelectionStore.load(workspaceRootURL: workspace)))
 
             // A later save repairs the file.
             try ProjectAgentSelectionStore.save(agentIDs: [Support.developer.id], workspaceRootURL: workspace)

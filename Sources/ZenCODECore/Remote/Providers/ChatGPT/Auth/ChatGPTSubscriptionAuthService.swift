@@ -128,10 +128,6 @@ public final class ChatGPTSubscriptionSignInSession: Sendable {
         self.promptAuthorizationInput = promptAuthorizationInput
     }
 
-    public func waitForCredentials() async throws -> CodexAgentCredentials {
-        try await waitForCredentials(persist: true)
-    }
-
     func waitForCredentials(
         persist: Bool
     ) async throws -> CodexAgentCredentials {
@@ -161,10 +157,6 @@ public final class ChatGPTSubscriptionSignInSession: Sendable {
         return credentials
     }
 
-    public func submitAuthorizationInput(_ input: String) throws {
-        try callbackServer.submitAuthorizationInput(input)
-    }
-
     public func cancel() {
         Task(name: "ChatGPT authorization background task") {
             await callbackServer.stop()
@@ -179,38 +171,10 @@ public enum ChatGPTSubscriptionAuthService {
     /// request in flight per token so simultaneous expired-session checks and
     /// 401/403 upgrade retries do not race to use the same token.
     private static let refreshCoordinator = ChatGPTSubscriptionRefreshCoordinator()
-    private static let issuer = "https://auth.openai.com"
     private static let authorizeURL = URL(string: "https://auth.openai.com/oauth/authorize")!
     private static let redirectURI = "http://localhost:1455/auth/callback"
     private static let scope = "openid profile email offline_access"
     private static let originator = "ZenCODE"
-
-    public static func signIn() async throws -> CodexAgentCredentials {
-        #if os(macOS)
-        let session = try await startSignIn()
-        print("To continue, complete ChatGPT login in your browser.")
-        if session.isCallbackServerAvailable {
-            print("If the browser does not open, open this URL:")
-            print(session.authorizationURL.absoluteString)
-        } else {
-            print("The local sign-in callback server is unavailable; the browser will not redirect back automatically.")
-            print("After completing the login, paste the authorization code here.")
-            print("Open this URL to start the login:")
-            print(session.authorizationURL.absoluteString)
-        }
-        guard await openAuthorizationURL(session.authorizationURL) else {
-            throw ChatGPTSubscriptionAuthError.browserOpenFailed
-        }
-        return try await session.waitForCredentials()
-        #else
-        return try await signInWithDeviceCode { url, code in
-            print("Open this URL to connect ChatGPT Subscription:")
-            print(url.absoluteString)
-            print("Enter this code: \(code)")
-            _ = await openAuthorizationURL(url)
-        }
-        #endif
-    }
 
     public static func openAuthorizationURL(_ url: URL) async -> Bool {
         await SubscriptionBrowserLauncher.open(url)

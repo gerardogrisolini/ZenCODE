@@ -72,8 +72,9 @@ public enum AgentSessionComposition {
 
     // MARK: - System prompt
 
-    /// Composes the standard standalone prompt sections shared by the app
-    /// factory and the terminal chat.
+    /// Produces the stable standalone instruction prefix shared by the app
+    /// factory and the terminal chat, independently from context that can
+    /// change while the session is alive.
     ///
     /// - Parameters:
     ///   - locksModelToSession: Hosted runs pin the model to the session and
@@ -85,32 +86,10 @@ public enum AgentSessionComposition {
     ///     `AgentStandaloneSystemPrompt.promptSections`). Callers that
     ///     recompose the prompt per turn must pass the snapshot taken when the
     ///     agent was selected.
-    public static func standardSystemPrompt(
-        cwd: String,
-        allowedToolNames: Set<String>?,
-        selectedAgent: AgentProfile?,
-        locksModelToSession: Bool = false,
-        responseLanguageSection: String? = nil,
-        launchFolderProjects: LaunchFolderProjects? = nil
-    ) -> String {
-        standardPromptSections(
-            cwd: cwd,
-            allowedToolNames: allowedToolNames,
-            selectedAgent: selectedAgent,
-            locksModelToSession: locksModelToSession,
-            responseLanguageSection: responseLanguageSection,
-            launchFolderProjects: launchFolderProjects
-        )
-        .combinedPrompt
-    }
-
-    /// Produces the stable standalone instruction prefix independently from
-    /// context that can change while the session is alive.
-    ///
-    /// - Parameter worktreeSection: The Git worktree section of a session
-    ///   whose `cwd` is a `--worktree` worktree
-    ///   (``SystemPromptBuilder/worktreeSection(name:path:)``), placed right
-    ///   after the working-directory section; `nil` otherwise.
+    ///   - worktreeSection: The Git worktree section of a session
+    ///     whose `cwd` is a `--worktree` worktree
+    ///     (``SystemPromptBuilder/worktreeSection(name:path:)``), placed right
+    ///     after the working-directory section; `nil` otherwise.
     public static func standardPromptSections(
         cwd: String,
         allowedToolNames: Set<String>?,
@@ -126,9 +105,7 @@ public enum AgentSessionComposition {
             memoryToolEnabled: memoryToolEnabled,
             allowedToolNames: allowedToolNames,
             locksModelToSession: locksModelToSession,
-            selectedAgentSection: selectedAgent?.promptSection(
-                memoryToolEnabled: memoryToolEnabled
-            ),
+            selectedAgentSection: selectedAgent?.promptSection,
             selectedAgentRole: selectedAgent?.role,
             launchFolderProjects: launchFolderProjects,
             selectedSkillSection: SystemPromptBuilder.staticSkillSection,
@@ -137,36 +114,12 @@ public enum AgentSessionComposition {
         )
     }
 
-    /// Wraps an app-provided prompt with the standard context sections.
-    ///
-    /// The caller-provided text stays authoritative: agent/workflow sections
-    /// are appended as mutable user context, while working-directory, skill,
-    /// and language instructions remain in the stable system prefix.
-    /// `launchFolderProjects` behaves as in `standardPromptSections`; without
-    /// a `cwd` there is no launch folder to list.
-    public static func appProvidedSystemPrompt(
-        _ providedSystemPrompt: String,
-        cwd: String? = nil,
-        allowedToolNames: Set<String>?,
-        selectedAgent: AgentProfile?,
-        responseLanguageSection: String? = SystemPromptBuilder.responseLanguageSection(),
-        launchFolderProjects: LaunchFolderProjects? = nil
-    ) -> String {
-        appProvidedPromptSections(
-            providedSystemPrompt,
-            cwd: cwd,
-            allowedToolNames: allowedToolNames,
-            selectedAgent: selectedAgent,
-            responseLanguageSection: responseLanguageSection,
-            launchFolderProjects: launchFolderProjects
-        )
-        .combinedPrompt
-    }
-
     /// Keeps application-provided system instructions authoritative while
     /// moving tool-, agent-, and workflow-specific state into the session's
-    /// initial user context. Working-directory and language state remain part
-    /// of the stable provider system prefix.
+    /// initial user context. Working-directory, skill, and language state
+    /// remain part of the stable provider system prefix.
+    /// `launchFolderProjects` behaves as in `standardPromptSections`; without
+    /// a `cwd` there is no launch folder to list.
     public static func appProvidedPromptSections(
         _ providedSystemPrompt: String,
         cwd: String? = nil,
@@ -191,16 +144,14 @@ public enum AgentSessionComposition {
                 cwd: $0,
                 memoryToolEnabled: memoryToolEnabled,
                 allowedToolNames: allowedToolNames,
-                selectedAgentSection: selectedAgent?.promptSection(
-                    memoryToolEnabled: memoryToolEnabled
-                ),
+                selectedAgentSection: selectedAgent?.promptSection,
                 selectedAgentRole: selectedAgent?.role,
                 launchFolderProjects: launchFolderProjects,
                 selectedSkillSection: SystemPromptBuilder.staticSkillSection
             )
             .dynamicContext
         } ?? [
-            selectedAgent?.promptSection(memoryToolEnabled: memoryToolEnabled),
+            selectedAgent?.promptSection,
             SystemPromptBuilder.taskOrchestrationSection(
                 allowedToolNames: allowedToolNames,
                 delegatesByRole: selectedAgent?.role.delegatesByRole == true

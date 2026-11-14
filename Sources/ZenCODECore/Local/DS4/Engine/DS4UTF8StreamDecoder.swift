@@ -16,12 +16,6 @@ struct DS4UTF8StreamDecoder: Sendable {
         !pendingBytes.isEmpty
     }
 
-    mutating func consume(_ bytes: [UInt8]) -> String {
-        bytes.withUnsafeBufferPointer { buffer in
-            consume(buffer)
-        }
-    }
-
     mutating func consume(_ buffer: UnsafeBufferPointer<UInt8>) -> String {
         guard !buffer.isEmpty else {
             return ""

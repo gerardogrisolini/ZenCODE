@@ -105,7 +105,7 @@ struct SessionCheckpointTreeTests {
 
         tree.append(.modelChange(modelID: "other-model"))
 
-        #expect(tree.activePath.count == 2)
+        #expect(tree.path(from: tree.activeLeafID).count == 2)
         #expect(tree.activeMessages.map(\.content) == ["Root"])
     }
 

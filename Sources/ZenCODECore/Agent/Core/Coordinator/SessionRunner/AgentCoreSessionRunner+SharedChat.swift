@@ -146,14 +146,6 @@ extension AgentCoreSessionRunner {
         return (participants, handleMap)
     }
 
-    /// Resolves a readable mention handle to its stable participant id, or nil
-    /// when no live mapping exists.
-    public func resolveSharedChatMentionHandle(
-        _ handle: String
-    ) async -> String? {
-        await sharedChatMentionCatalog().participantID(forHandle: handle)
-    }
-
     /// Subscribes to live shared-chat coordination.
     ///
     /// Every consumer — terminal UI, ACP, or a headless driver — receives the

@@ -51,19 +51,6 @@ public actor TurnFileChangeTracker {
     /// The Git processes this tracker launched, as an internal test seam.
     var gitInvocationCount = 0
 
-    public init(workspacePath: String?) {
-        let baseURL: URL
-        if let workspacePath = workspacePath?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !workspacePath.isEmpty {
-            baseURL = URL(fileURLWithPath: workspacePath).standardizedFileURL
-        } else {
-            baseURL = Self.platformDefaultBaseDirectoryURL()
-        }
-
-        self.baseDirectoryURL = baseURL
-        self.baseDirectoryName = baseURL.lastPathComponent
-    }
-
     public init(baseDirectoryURL: URL) {
         let baseURL = baseDirectoryURL.standardizedFileURL
         self.baseDirectoryURL = baseURL
@@ -541,15 +528,5 @@ public actor TurnFileChangeTracker {
             lines.append(nsText.substring(with: range))
         }
         return lines
-    }
-
-    static func platformDefaultBaseDirectoryURL() -> URL {
-        #if os(iOS)
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
-            .standardizedFileURL
-            ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).standardizedFileURL
-        #else
-        UserHomeDirectory.current()
-        #endif
     }
 }

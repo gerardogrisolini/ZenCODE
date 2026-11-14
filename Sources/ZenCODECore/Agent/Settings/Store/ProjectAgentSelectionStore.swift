@@ -160,17 +160,6 @@ public enum ProjectAgentSelectionStore {
         return normalizedKeys(selection).contains(selectionKey(for: profile))
     }
 
-    public static func isAssociated(
-        _ profile: AgentProfile,
-        workspaceRootURL: URL,
-        fileManager: FileManager = .default
-    ) -> Bool {
-        isAssociated(
-            profile,
-            selection: load(workspaceRootURL: workspaceRootURL, fileManager: fileManager)
-        )
-    }
-
     private static func normalizedKeys(_ selection: Set<String>) -> Set<String> {
         Set(selection.map(AgentProfileStore.profileReferenceKey))
     }

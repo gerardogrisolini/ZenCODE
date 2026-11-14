@@ -12,24 +12,6 @@ struct AgentCoreSessionSnapshotRecovery {
     let shouldRestoreBackend: Bool
 }
 
-actor AgentCorePromptOutcomeTracker {
-    private var didEmitOutcome = false
-
-    func record(_ event: DirectAgentEvent) {
-        if case .turnEnded = event {
-            didEmitOutcome = true
-        }
-    }
-
-    func shouldEmitFallback() -> Bool {
-        guard !didEmitOutcome else {
-            return false
-        }
-        didEmitOutcome = true
-        return true
-    }
-}
-
 /// Records a turn from its events, for the session snapshot of a turn the
 /// backend cannot report itself (`recoveredSessionSnapshot`).
 ///

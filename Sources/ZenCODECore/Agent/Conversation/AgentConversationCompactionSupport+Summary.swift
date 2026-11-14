@@ -184,9 +184,8 @@ extension AgentConversationCompactionSupport {
 
     /// Renders the summary within `maxCharacters`.
     ///
-    /// No floor is applied here: the public entry point and `bestCandidate`
-    /// both honour the budget they were given, including values below the
-    /// historical `minimumSummaryCharacters` reference.
+    /// No floor is applied here: `bestCandidate` honours the budget it was
+    /// given, however small.
     static func conversationMemorySummary(
         priorSummary: String?,
         entries: [SummaryEntry],

@@ -137,12 +137,6 @@ extension DirectSubAgentRuntime {
         waitDescriptor
     ]
 
-    static let mutatingToolDescriptors: [DirectToolDescriptor] = [
-        createDescriptor,
-        messageDescriptor,
-        closeDescriptor
-    ]
-
     static let toolDescriptors: [DirectToolDescriptor] = [
         createDescriptor,
         listDescriptor,

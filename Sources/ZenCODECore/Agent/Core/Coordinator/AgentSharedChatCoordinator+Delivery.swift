@@ -97,7 +97,6 @@ extension AgentSharedChatCoordinator {
         case .enqueued:
             markMessageIDs(in: event, for: subscriberID, in: &room)
         case let .dropped(consumed: evicted):
-            room.droppedEventCount += 1
             room.needsTriggerReoffer = true
             room.needsParticipantsReemit = true
             makeMessageIDsRecoverable(in: evicted, for: subscriberID, in: &room)

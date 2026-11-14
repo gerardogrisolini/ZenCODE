@@ -220,7 +220,7 @@ final class MockDS4Engine: DS4Engine {
             modelID: 41,
             routedQuantBits: 2,
             hasVision: false,
-            toolSyntaxID: DS4EngineABI.ToolSyntax.dsml41,
+            toolSyntaxID: DS4ToolSyntax.dsml41.rawValue,
             mtpDraftTokens: 1,
             contextSize: configuration.contextSize
         )
@@ -616,7 +616,7 @@ final class MockDS4Engine: DS4Engine {
             session.stats.generationTokensPerSecond = tokens.isEmpty ? 0 : state.generationTokensPerSecond
             session.stats.position += tokens.count
             // The native session transcript grows with the committed tokens.
-            if !tokens.isEmpty, state.pool.contains(sessionID), state.sessions[sessionID] != nil {
+            if !tokens.isEmpty, state.pool.peekHandle(for: sessionID) != nil, state.sessions[sessionID] != nil {
                 session.operations.append(.tokens(tokens))
             }
             state.sessions[sessionID] = session
@@ -628,7 +628,7 @@ final class MockDS4Engine: DS4Engine {
     func stats(sessionID: String) async -> DS4SessionStats {
         state.withLock { state in
             state.calls.append(.stats(sessionID: sessionID))
-            guard state.pool.contains(sessionID) else {
+            guard state.pool.peekHandle(for: sessionID) != nil else {
                 return .empty
             }
             return state.sessions[sessionID]?.stats ?? .empty
@@ -659,7 +659,7 @@ final class MockDS4Engine: DS4Engine {
     func saveCheckpoint(sessionID: String, to url: URL, trailer: Data?) async throws -> DS4CheckpointSaveOutcome {
         try record(.saveCheckpoint(sessionID: sessionID, url: url))
         let session = try state.withLock { state -> SessionState in
-            guard state.pool.contains(sessionID), let session = state.sessions[sessionID] else {
+            guard state.pool.peekHandle(for: sessionID) != nil, let session = state.sessions[sessionID] else {
                 throw DS4EngineError.sessionFailed("DS4 session '\(sessionID)' is not live")
             }
             return session

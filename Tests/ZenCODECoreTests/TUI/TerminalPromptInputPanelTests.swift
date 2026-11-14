@@ -743,7 +743,7 @@ struct TerminalPromptAttachmentSyncTests {
             availableAgents: AgentProfileStore.defaultProfiles(),
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-prompt-attachments", isDirectory: true)
         )
-        let chat = TerminalChat(configuration: configuration, stdinIsTerminal: false)
+        let chat = TerminalChat(configuration: configuration, stdinIsTerminal: false, telegramTransportFactory: nil)
         chat.pendingAttachments = [
             AgentRuntimeAttachment(
                 kind: .image,

@@ -22,11 +22,15 @@ struct XcodeMCPTransportPolicyTests {
     @Test
     func bridgeListToolsErrorsAreTreatedAsAuthorizationRequired() async {
         let client = makeClient()
-        let response = MCPErrorResponse(code: -32000, message: "Internal error")
 
-        let error = await client.serverError(response, requestMethod: "tools/list")
+        let error = await client.classifiedPolicyError(
+            kind: .serverError,
+            message: "Internal error",
+            requestMethod: "tools/list",
+            errorCode: -32000
+        )
 
-        #expect(error.localizedDescription == XcodeMCPServerConfiguration.authorizationMessage)
+        #expect(error?.localizedDescription == XcodeMCPServerConfiguration.authorizationMessage)
     }
 
     @Test

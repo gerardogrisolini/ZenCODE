@@ -7,14 +7,12 @@
 
 import Foundation
 
-/// Read-only view of the runtime fields that the CLI configuration
-/// (``AgentConfiguration``) and the session identity
-/// (``AgentCoreSessionConfiguration``) share when they project themselves onto
+/// Read-only view of the runtime fields that the session identity
+/// (``AgentCoreSessionConfiguration``) projects onto
 /// ``AgentRuntimeConfiguration``.
 ///
-/// The three configuration types intentionally stay distinct: this protocol
-/// only removes the duplicated field-by-field mapping, it never merges them
-/// into one DTO.
+/// The two configuration types intentionally stay distinct: this protocol
+/// only names the mapped fields, it never merges them into one DTO.
 protocol AgentRuntimeConfigurationProjecting {
     var projectedRuntimeModelID: String? { get }
     var projectedRuntimeWorkingDirectory: URL { get }
@@ -58,16 +56,6 @@ extension AgentRuntimeConfigurationProjecting {
             profileRole: profileRole
         )
     }
-}
-
-extension AgentConfiguration: AgentRuntimeConfigurationProjecting {
-    /// The CLI configuration projects the *effective* model id, which already
-    /// merges the explicit flag, the agent profile, and the settings manifest.
-    var projectedRuntimeModelID: String? { effectiveModelID }
-    var projectedRuntimeWorkingDirectory: URL { workingDirectory }
-    var projectedRuntimeMaxToolRounds: Int { maxToolRounds }
-    var projectedRuntimeMaxOutputTokens: Int? { maxOutputTokens }
-    var projectedRuntimeAppMode: Bool { appMode }
 }
 
 extension AgentCoreSessionConfiguration: AgentRuntimeConfigurationProjecting {

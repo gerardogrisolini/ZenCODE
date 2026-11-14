@@ -180,8 +180,6 @@ struct ZenWindowTabTests {
     func tabsOrder() {
         #expect(tabs == [.chat, .subAgent("a"), .subAgent("b"), .subAgent("c")])
         #expect(ZenWindowTab.tabs(subAgentIDs: []) == [.chat])
-        #expect(ZenWindowTab.chat.agentID == nil)
-        #expect(ZenWindowTab.subAgent("b").agentID == "b")
     }
 
     @Test("Closing a tab that is not selected keeps the selection")

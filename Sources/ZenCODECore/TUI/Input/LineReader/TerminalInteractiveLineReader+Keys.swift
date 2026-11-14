@@ -17,15 +17,6 @@ import os
 #endif
 
 extension TerminalInteractiveLineReader {
-    func readKey(pollTimeoutMilliseconds: Int32? = nil) -> Key? {
-        guard case let .key(key) = readKeyResult(
-            pollTimeoutMilliseconds: pollTimeoutMilliseconds
-        ) else {
-            return nil
-        }
-        return key
-    }
-
     func readKeyResult(
         pollTimeoutMilliseconds: Int32? = nil,
         pickerEscapeBaseByte: UInt8? = nil

@@ -53,6 +53,6 @@ struct MemoryTestWorkspace {
     /// Resolves the graph URL for this workspace under the scoped support dir.
     /// Must be called inside `withIsolatedSupport` so the override is honoured.
     func graphURL() -> URL {
-        MemoryService().graphURL(workspaceRootURL: workspaceURL)
+        MemoryGraphLocation.graphURL(for: .workspace(workspaceURL))
     }
 }

@@ -73,9 +73,6 @@ public final class TelegramChannel: ChatInteractionHost {
     let primaryChannelDescription: String
     /// Where the channel is registered while attached.
     let registry: TelegramChannelRegistry
-    /// Per-route runtime state (pending replies, voice, uploads) torn down
-    /// with the route of the turn in progress.
-    let routeRuntimeState: TerminalTelegramRouteRuntimeState
     /// Permission requests asked in the linked chat.
     let permissionBroker = TerminalTelegramPermissionBroker()
     /// Owns all Telegram voice download and transcription tasks across
@@ -461,12 +458,11 @@ public final class TelegramChannel: ChatInteractionHost {
         self.controlService = controlService
         self.primaryChannelDescription = primaryChannelDescription
         self.registry = registry
-        self.routeRuntimeState = TerminalTelegramRouteRuntimeState(router: router)
         self.workingDirectory = host.slotWorkingDirectory(slotID) ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         self.lastKnownSessionID = host.incarnation(in: slotID)?.sessionID ?? ""
         self.presenter = TelegramChannelPresenter()
         presenter.channel = self
-        incarnationObserverToken = host.addIncarnationObserver(to: slotID) { [weak self] incarnation in
+        host.addIncarnationObserver(to: slotID) { [weak self] incarnation in
             self?.incarnationDidChange(incarnation)
         }
     }
@@ -485,9 +481,6 @@ public final class TelegramChannel: ChatInteractionHost {
             await self?.rebindSharedChatObservationIfNeeded()
         }
     }
-
-    /// The token of the channel's incarnation observer on its slot.
-    private var incarnationObserverToken: UUID?
 
     /// The working directory of the slot's sessions.
     let workingDirectory: URL
@@ -645,9 +638,6 @@ public final class TelegramChannel: ChatInteractionHost {
         await stopDriving(shuttingDown: false)
         await voiceTranscriptions.cancelAllAndWait()
         await endTurnReporting()
-        if let lease = activeRouteLease {
-            await routeRuntimeState.teardown(lease: lease)
-        }
         // Unbind before stopping the transport so no card is queued for a chat
         // that is about to be released. The ledger is retained on purpose; a
         // relay never created has nothing bound.
@@ -679,9 +669,6 @@ public final class TelegramChannel: ChatInteractionHost {
         synchronizeRegistration()
         await stopDriving(shuttingDown: true)
         await endTurnReporting()
-        if let lease = activeRouteLease {
-            await routeRuntimeState.teardown(lease: lease)
-        }
         // Quiesce the relay before the transport it uses: its drain worker must
         // not outlive the service it sends through.
         await sharedChatRelayStorage?.shutdown()

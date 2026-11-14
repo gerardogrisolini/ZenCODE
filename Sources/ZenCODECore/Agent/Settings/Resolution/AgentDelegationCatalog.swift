@@ -36,15 +36,6 @@ public enum AgentDelegationCatalogSnapshot: Sendable {
         }
     }
 
-    public var isAvailable: Bool {
-        switch self {
-        case .available, .catalogOnly:
-            return true
-        case .unavailable:
-            return false
-        }
-    }
-
     public var unavailableReason: String? {
         if case let .unavailable(reason) = self {
             return reason
@@ -186,10 +177,6 @@ public struct ResolvedAgentModelBinding: Sendable, Hashable {
     /// the resolved snapshot.
     public var providerModelID: String {
         model.modelID
-    }
-
-    public var providerID: String? {
-        model.provider?.id ?? model.providerID
     }
 
     public var providerTitle: String? {
@@ -453,12 +440,6 @@ public enum AgentDelegationCatalog {
         }
     }
 
-    /// Compatibility accessor for non-routing UI code. Routing must consume the
-    /// full snapshot so an empty catalog is not confused with an unavailable one.
-    public static func liveModels() -> [AgentSettingsModelManifest] {
-        liveSnapshot().models
-    }
-
     public static func roster(
         agents: [AgentProfile],
         snapshot: AgentDelegationCatalogSnapshot
@@ -466,20 +447,6 @@ public enum AgentDelegationCatalog {
         AgentProfileStore.unambiguousAgents(in: agents).map {
             resolvedBindings(for: $0, snapshot: snapshot)
         }
-    }
-
-    public static func roster(
-        agents: [AgentProfile],
-        models: [AgentSettingsModelManifest]
-    ) -> [ResolvedAgentProfileBindings] {
-        roster(agents: agents, snapshot: .available(models: models))
-    }
-
-    public static func resolvedBindings(
-        for profile: AgentProfile,
-        models: [AgentSettingsModelManifest]
-    ) -> ResolvedAgentProfileBindings {
-        resolvedBindings(for: profile, snapshot: .available(models: models))
     }
 
     public static func resolvedBindings(
@@ -595,27 +562,6 @@ public enum AgentDelegationCatalog {
         }
 
         return .failure(.ambiguousModelReference(candidates.map(\.id).sorted()))
-    }
-
-    public static func canonicalModelID(
-        forReference reference: String?,
-        providerHint: String? = nil,
-        models: [AgentSettingsModelManifest]
-    ) -> String? {
-        guard let reference = reference?.nilIfBlank else {
-            return nil
-        }
-        let probe = AgentModelBinding(
-            id: reference,
-            modelID: reference,
-            modelProvider: providerHint
-        )
-        switch catalogModel(for: probe, in: models) {
-        case let .success(model):
-            return model.id.nilIfBlank
-        case .failure:
-            return nil
-        }
     }
 
     static func lookupKey(_ value: String) -> String {

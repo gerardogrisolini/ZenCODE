@@ -157,7 +157,7 @@ struct TaskCommandTests {
             error: "failed"
         )
 
-        await terminal.handleTasksCommand("/tasks retry task-a")
+        await terminal.writeSessionNotices(terminal.chatSession.runTasksCommand(line: "/tasks retry task-a").notices)
         #expect(try await orchestrator.task(
             sessionID: terminal.sessionID, taskID: "task-a"
         ).task.status == .pending)
@@ -166,7 +166,7 @@ struct TaskCommandTests {
             sessionID: terminal.sessionID,
             claims: [TaskClaim(taskID: "task-a", agentID: "worker-2")]
         )
-        await terminal.handleTasksCommand("/tasks cancel task-a user requested")
+        await terminal.writeSessionNotices(terminal.chatSession.runTasksCommand(line: "/tasks cancel task-a user requested").notices)
         #expect(try await orchestrator.task(
             sessionID: terminal.sessionID, taskID: "task-a"
         ).task.status == .cancelled)
@@ -181,7 +181,8 @@ struct TaskCommandTests {
         return TerminalChat(
             configuration: configuration,
             stdinIsTerminal: false,
-            sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil)
+            sessionRunner: AgentCoreSessionRunner(taskGraphStore: nil),
+            telegramTransportFactory: nil
         )
     }
 }

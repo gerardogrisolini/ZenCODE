@@ -15,7 +15,7 @@ struct ReviewCommandTests {
     @Test
     func defaultReviewerProfileDoesNotEnableShell() throws {
         let reviewer = try #require(
-            AgentProfileStore.defaultProfiles().first(where: TerminalChat.isReviewerProfile)
+            AgentProfileStore.defaultProfiles().first { $0.role == .reviewer }
         )
 
         #expect(!reviewer.tools.contains("shell"))
@@ -51,9 +51,9 @@ struct ReviewCommandTests {
             tools: []
         )
 
-        let prompt = TerminalChat.reviewDelegationPrompt(
+        let prompt = PlanningCommandKernel.reviewDelegationPrompt(
             scope: "focus on errors",
-            reviewer: reviewer,
+            reviewers: [reviewer],
             changeSummary: summary
         )
 
@@ -83,9 +83,9 @@ struct ReviewCommandTests {
             role: .reviewer,
             tools: []
         )
-        let prompt = TerminalChat.reviewDelegationPrompt(
+        let prompt = PlanningCommandKernel.reviewDelegationPrompt(
             scope: "",
-            reviewer: reviewer,
+            reviewers: [reviewer],
             changeSummary: TurnFileChangeSummary(entries: []),
             approvedPlan: TerminalSessionPlan(
                 originalGoal: "goal",
@@ -110,17 +110,17 @@ struct ReviewCommandTests {
             consolidatedText: "plan",
             isApproved: true
         )
-        terminal.activePlan = plan
+        terminal.chatSession.activePlan = plan
 
         for _ in 0..<2 {
-            let action = await terminal.handleReviewCommand("/review")
+            let action = await terminal.terminalAction(presenting: terminal.chatSession.runReviewCommand(line: "/review"))
             guard case let .runHiddenPrompt(prompt, purpose) = action else {
                 Issue.record("An approved plan should allow coverage-only review")
                 return
             }
             #expect(prompt.contains("Approved plan under verification"))
             #expect(purpose == .review)
-            #expect(terminal.activePlan == plan)
+            #expect(terminal.chatSession.activePlan == plan)
         }
     }
 
@@ -135,7 +135,7 @@ struct ReviewCommandTests {
             tasks: [TaskDefinition(id: "task-a", title: "Verify manual work")]
         )
 
-        let action = await terminal.handleReviewCommand("/review")
+        let action = await terminal.terminalAction(presenting: terminal.chatSession.runReviewCommand(line: "/review"))
         guard case let .runHiddenPrompt(prompt, purpose) = action else {
             Issue.record("A manual task graph should enable coverage-only review")
             return
@@ -155,7 +155,7 @@ struct ReviewCommandTests {
                 isDirectory: true
             )
         )
-        let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false)
+        let terminal = TerminalChat(configuration: configuration, stdinIsTerminal: false, telegramTransportFactory: nil)
         terminal.selectedToolKeys.insert("sub-agents")
         return terminal
     }

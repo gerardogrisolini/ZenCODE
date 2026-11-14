@@ -56,11 +56,6 @@ public struct TerminalTelegramCommandSpecification: Sendable, Equatable {
         self.description = description
         self.aliases = aliases
     }
-
-    /// Every accepted spelling of this command (canonical slash form first).
-    public var allForms: [String] {
-        ["/\(name)"] + aliases
-    }
 }
 
 /// The single Telegram command registry.
@@ -135,12 +130,6 @@ public enum TerminalTelegramCommandRegistry {
         ),
     ]
 
-    /// Accepted exact spellings per command, canonical form first. Derived, so
-    /// adding a registry entry extends the parser automatically.
-    public static var recognizedFormsByCommand: [TerminalTelegramRemoteCommand: [String]] {
-        Dictionary(commands.map { ($0.command, $0.allForms) }, uniquingKeysWith: { first, _ in first })
-    }
-
     /// Entries published to `setMyCommands` (and the local menu), in registry
     /// order. Telegram caps `BotCommand.description` at 256 characters and the
     /// command name at 32; these entries sit far below both.
@@ -157,17 +146,8 @@ public enum TerminalTelegramCommandRegistry {
         return remoteCommands + workflowCommands
     }
 
-    /// Resolves one trimmed, lowercased line to a command, or `nil` for an
-    /// unknown line. Single entry point used by the ingress parser.
-    ///
-    /// `/start` stays recognised without being registered: a bare `/start`
-    /// keeps its "already linked" answer and `/start <payload>` is consumed by
-    /// the pairing grant flow.
-    public static func resolve(_ line: String) -> TerminalTelegramRemoteCommand? {
-        resolveInvocation(line)?.command
-    }
-
     /// Resolves one trimmed, lowercased line to a command plus its argument.
+    /// Single entry point used by the ingress parser.
     ///
     /// Slash forms resolve by their FIRST token (with an optional `@botname`
     /// suffix), so `/status foo` is `.status` with argument `foo`. Plain-word
@@ -227,6 +207,10 @@ public enum TerminalTelegramRemoteCommand: Equatable, Sendable {
 
     /// Resolves a line to its command and argument (empty when absent).
     /// Slash commands resolve by first token; plain aliases need the whole line.
+    ///
+    /// `/start` stays recognised without being registered (see the registry
+    /// doc-comment): a bare `/start` keeps its "already linked" answer and
+    /// `/start <payload>` is consumed by the pairing grant flow.
     public static func invocation(
         text: String
     ) -> (command: TerminalTelegramRemoteCommand, argument: String)? {
@@ -243,29 +227,6 @@ public enum TerminalTelegramRemoteCommand: Equatable, Sendable {
             let argument = normalized.dropFirst(first.count)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return (.start, argument)
-        }
-        return nil
-    }
-
-    public init?(text: String) {
-        let normalized = text
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        // The registry is the single authority for command spellings.
-        if let resolved = TerminalTelegramCommandRegistry.resolve(normalized) {
-            self = resolved
-            return
-        }
-        // `/start` remains recognised without being registered (see the
-        // registry doc-comment): first contact and deep links carry a pairing
-        // payload, not command arguments.
-        let command = normalized
-            .split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
-            .first
-            .map(String.init) ?? normalized
-        if command == "/start" || command.hasPrefix("/start@") {
-            self = .start
-            return
         }
         return nil
     }

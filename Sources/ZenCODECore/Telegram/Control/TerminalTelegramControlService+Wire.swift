@@ -191,15 +191,6 @@ extension TerminalTelegramControlService {
             return messageID
         } catch is CancellationError {
             throw CancellationError()
-        } catch let error as TerminalTelegramRichMessageError {
-            _ = error
-            try ensureCurrentWireGeneration(wireGeneration)
-            let messageID = try await client.sendMessage(
-                document.plainText, to: chatID, messageThreadID: topicID, replyMarkup: replyMarkup, governor: rateGovernor
-            )
-            try ensureCurrentWireGeneration(wireGeneration)
-            clearSendDiagnostics()
-            return messageID
         } catch let error as TerminalTelegramControlError {
             guard Self.isRichMessageCompatibilityError(error) else { throw error }
             try ensureCurrentWireGeneration(wireGeneration)
@@ -274,24 +265,8 @@ extension TerminalTelegramControlService {
         return messageID
     }
 
-    func sendMessageDraft(
-        _ text: String, to chatID: Int64, draftID: Int,
-        fence: TerminalTelegramWireFence
-    ) async throws {
-        let topicID = fence.lease.effectiveMessageThreadID
-        let wireGeneration = try await beginWireEffect(fence: fence, chatID: chatID, topicID: topicID)
-        defer { endWireEffect(fence: fence) }
-        let settings = try telegramSettings()
-        let token = try telegramToken(from: settings)
-        try await wireClient(token: token, generation: wireGeneration, fence: fence, chatID: chatID, topicID: topicID)
-            .sendMessageDraft(
-                text, to: chatID, messageThreadID: topicID, draftID: draftID, governor: rateGovernor
-            )
-        try ensureCurrentWireGeneration(wireGeneration)
-    }
-
     /// Streams a structured draft and falls back to the legacy draft method on a
-    /// definite API/client incompatibility. The caller's coalescer remains the
+    /// definite API incompatibility. The caller's coalescer remains the
     /// sole owner of draft timing and cancellation.
     ///
     /// Both draft calls target the lease's topic (`message_thread_id` is omitted
@@ -317,12 +292,6 @@ extension TerminalTelegramControlService {
             )
         } catch is CancellationError {
             throw CancellationError()
-        } catch is TerminalTelegramRichMessageError {
-            try ensureCurrentWireGeneration(wireGeneration)
-            try await client.sendMessageDraft(
-                document.plainText, to: chatID, messageThreadID: topicID, draftID: draftID,
-                canStop: canStop, governor: rateGovernor
-            )
         } catch let error as TerminalTelegramControlError {
             guard Self.isRichMessageCompatibilityError(error) else { throw error }
             try ensureCurrentWireGeneration(wireGeneration)

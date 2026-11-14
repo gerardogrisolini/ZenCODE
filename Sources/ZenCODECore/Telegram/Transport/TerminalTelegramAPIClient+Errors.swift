@@ -26,11 +26,6 @@ public enum TerminalTelegramControlError: LocalizedError, Sendable, Equatable {
     /// Decoded Bot API error envelope: `ok:false` with `error_code`,
     /// `description` and an optional `retry_after` (via `parameters`).
     case apiFailure(status: Int, errorCode: Int?, description: String?, retryAfter: Int?)
-    /// The Bot API `retry_after` this error carries, if any.
-    public var retryAfter: Int? {
-        guard case let .apiFailure(_, _, _, retryAfter) = self else { return nil }
-        return retryAfter
-    }
     /// `true` when this is an explicit 429 rate-limit verdict from Telegram.
     public var isExplicitRateLimit: Bool {
         guard case let .apiFailure(status, _, _, _) = self else { return false }

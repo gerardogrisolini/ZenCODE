@@ -17,13 +17,6 @@ struct ScheduledPromptsSetupTests {
     private typealias Status = ZenCODESetupRunner.ZenCRONSetupStatus
     private typealias Outcome = ZenCODESetupRunner.ZenCRONSetupOutcome
 
-    // MARK: - Section metadata
-
-    @Test(arguments: ["scheduled prompts", "scheduled", "cron", "zencron", "crontab"])
-    func theSectionAnswersToItsAliases(alias: String) {
-        #expect(SetupSection.scheduledPrompts.matches(alias))
-    }
-
     // MARK: - Menu
 
     @Test

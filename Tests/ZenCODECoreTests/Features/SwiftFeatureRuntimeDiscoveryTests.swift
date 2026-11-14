@@ -56,10 +56,10 @@ extension SwiftFeatureRuntimeTests {
             argumentsJSON: "{}"
         )
 
-        let output = try await runtime.executeIfAvailable(
+        let output = try await runtime.executeResultIfAvailable(
             toolCall: toolCall,
             workingDirectory: rootURL
-        )
+        )?.output
 
         #expect(output == "feature-output")
     }
@@ -123,7 +123,7 @@ extension SwiftFeatureRuntimeTests {
                 )
             ]
         )
-        let output = try await runtime.executeIfAvailable(
+        let output = try await runtime.executeResultIfAvailable(
             toolCall: DirectAgentToolCall(
                 id: "swift-outline-call",
                 name: "swift.outline",
@@ -131,7 +131,7 @@ extension SwiftFeatureRuntimeTests {
                 argumentsJSON: #"{"path":"Feature.swift"}"#
             ),
             workingDirectory: rootURL
-        )
+        )?.output
 
         let rendered = try #require(output)
         #expect(rendered.contains("File: \(sourceURL.path)"))
@@ -232,7 +232,7 @@ extension SwiftFeatureRuntimeTests {
         )
         #expect(relatedDescriptors.map(\.name) == ["dynamic.echo"])
 
-        let output = try await runtime.executeIfAvailable(
+        let output = try await runtime.executeResultIfAvailable(
             toolCall: DirectAgentToolCall(
                 id: "dynamic-call-1",
                 name: "dynamic.echo",
@@ -240,7 +240,7 @@ extension SwiftFeatureRuntimeTests {
                 argumentsJSON: "{}"
             ),
             workingDirectory: rootURL
-        )
+        )?.output
         #expect(output == "dynamic-output")
     }
 

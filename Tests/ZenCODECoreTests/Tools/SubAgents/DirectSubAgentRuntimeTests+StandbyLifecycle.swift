@@ -38,12 +38,9 @@ extension DirectSubAgentRuntimeTests {
         let attemptsBefore = taskBeforeStandbyTurn.attempts.count
 
         // Trigger a standby turn.
-        _ = try await runtime.messageAgents(
-            arguments: [
-                "id": .string(agent.id),
-                "message": .string("Follow-up question"),
-            ]
-        )
+        let promptsBefore = await backend.sentPromptCount()
+        try await sendCoordinatorMessage("Follow-up question", to: agent.id, in: runtime)
+        await backend.waitUntilSentPromptCount(promptsBefore + 1)
         await runtime.waitForDirectSubAgentTestWorkLoops(agentID: agent.id)
 
         let taskAfterStandbyTurn = try await orchestrator.task(
@@ -202,12 +199,7 @@ extension DirectSubAgentRuntimeTests {
         // Queue a follow-up whose backend turn blocks, so the resident is
         // `.running` while the graph becomes terminal.
         await backend.blockNextPrompt()
-        _ = try await runtime.messageAgents(
-            arguments: [
-                "id": .string(agent.id),
-                "message": .string("Summarize the work"),
-            ]
-        )
+        try await sendCoordinatorMessage("Summarize the work", to: agent.id, in: runtime)
         await backend.waitUntilBlocked()
 
         // The graph completes while the standby turn is in flight.
@@ -288,6 +280,24 @@ extension DirectSubAgentRuntimeTests {
 
 private enum StandbyFixtureError: Error { case agentNotReady }
 
+/// Sends `text` to `agentID` on the shared chat as the coordinator of
+/// `rootSessionID`: the production path that wakes a delegated agent parked
+/// in standby for a follow-up turn.
+private func sendCoordinatorMessage(
+    _ text: String,
+    to agentID: String,
+    in runtime: DirectSubAgentRuntime,
+    rootSessionID: String = "root"
+) async throws {
+    let delivery = try await runtime.sharedChat.send(
+        roomID: rootSessionID,
+        senderID: AgentSharedChat.coordinatorID(for: rootSessionID),
+        destination: .direct([agentID]),
+        text: text
+    )
+    #expect(delivery.recipients.map(\.id) == [agentID])
+}
+
 /// Starts a blocked standby follow-up turn for `agentID`, then opens an
 /// `agent.message` awaitReply wait from that turn and returns once the
 /// question reached the coordinator mailbox (with a 5 s deadline).
@@ -297,9 +307,7 @@ private func startStandbyAwaitReply(
     backend: BlockingSubAgentRuntimeBackend
 ) async throws -> Task<String, any Error> {
     await backend.blockNextPrompt()
-    _ = try await runtime.messageAgents(
-        arguments: ["id": .string(agentID), "message": .string("What did you change?")]
-    )
+    try await sendCoordinatorMessage("What did you change?", to: agentID, in: runtime)
     await backend.waitUntilBlocked()
     let waiting = Task {
         try await runtime.executeBorrowedSubAgentTool(

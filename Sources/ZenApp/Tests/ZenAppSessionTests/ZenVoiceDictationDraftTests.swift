@@ -20,7 +20,6 @@ struct ZenVoiceDictationDraftTests {
         #expect(dictation.show(id: 1, text: "ciao", in: &draft) == .started)
         #expect(draft == "Nota: ciao")
         #expect(dictation.preview == .init(id: 1, start: 6, insertedSeparator: true))
-        #expect(dictation.previewRange(in: draft) == 6..<10)
 
         #expect(dictation.show(id: 1, text: "ciao mondo", in: &draft) == .updated(previewStart: 6))
         #expect(draft == "Nota: ciao mondo")
@@ -39,7 +38,6 @@ struct ZenVoiceDictationDraftTests {
         var blank = ""
         #expect(empty.show(id: 1, text: "ciao", in: &blank) == .started)
         #expect(blank == "ciao")
-        #expect(empty.previewRange(in: blank) == 0..<4)
     }
 
     @Test("An empty preview removes the dictation and its separator; the typed text stays")
@@ -49,7 +47,7 @@ struct ZenVoiceDictationDraftTests {
         _ = dictation.show(id: 1, text: "ciao", in: &draft)
         #expect(dictation.show(id: 1, text: "", in: &draft) == .removed)
         #expect(draft == "Nota:")
-        #expect(!dictation.isActive)
+        #expect(dictation.preview == nil)
         #expect(dictation.show(id: 1, text: "", in: &draft) == nil)
     }
 
@@ -60,7 +58,7 @@ struct ZenVoiceDictationDraftTests {
         _ = dictation.show(id: 1, text: "ciao", in: &draft)
         #expect(dictation.take(id: 1, text: "ciao mondo", from: &draft) == "Nota: ciao mondo")
         #expect(draft.isEmpty)
-        #expect(!dictation.isActive)
+        #expect(dictation.preview == nil)
         #expect(dictation.endedThrough == 1)
         // The same dictation is never sent twice.
         #expect(dictation.take(id: 1, text: "ciao", from: &draft) == nil)

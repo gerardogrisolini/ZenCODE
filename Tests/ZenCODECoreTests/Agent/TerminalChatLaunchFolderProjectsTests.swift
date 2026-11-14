@@ -49,17 +49,21 @@ struct TerminalChatLaunchFolderProjectsTests {
             stdinIsTerminal: false,
             sessionRunner: AgentCoreSessionRunner(
                 backendFactory: { _, _ in LaunchFolderStubBackend() }
-            )
+            ),
+            telegramTransportFactory: nil
         )
 
         // No agent is selected: no listing, no cache.
-        #expect(!terminal.currentPromptSections(allowedToolNames: []).dynamicContext.contains(headline))
-        #expect(terminal.launchFolderProjectsForSelectedAgent() == nil)
+        #expect(!terminal.chatSession.currentPromptSections(
+            allowedToolNames: [],
+            responseLanguageSection: terminal.responseLanguageSystemPromptSection()
+        ).dynamicContext.contains(headline))
+        #expect(terminal.chatSession.launchFolderProjectsForSelectedAgent() == nil)
         #expect(terminal.chatSession.launchFolderProjectsCache == nil)
 
         // Selecting the Organizer reads the folder once, when the session is
         // created.
-        try await terminal.applyAgentSelection(organizer)
+        try await terminal.writeSessionNotices(terminal.chatSession.selectAgent(organizer).notices)
         #expect(terminal.chatSession.launchFolderProjectsCache?.projects.folderNames == ["alpha", "beta"])
         #expect(
             terminal.chatSession.launchFolderProjectsCache?.agentKey
@@ -74,25 +78,31 @@ struct TerminalChatLaunchFolderProjectsTests {
         // after a `/tools`-style recomposition.
         try makeFolder("gamma", in: workspace)
         for _ in 0..<3 {
-            let sections = terminal.currentPromptSections(allowedToolNames: [])
+            let sections = terminal.chatSession.currentPromptSections(
+                allowedToolNames: [],
+                responseLanguageSection: terminal.responseLanguageSystemPromptSection()
+            )
             #expect(sections.dynamicContext.contains("\n- alpha\n- beta"))
             #expect(!sections.dynamicContext.contains("gamma"))
             let context = terminal.currentSessionConfiguration(allowedToolNames: []).dynamicContext
             #expect(context?.contains("gamma") == false)
         }
         await terminal.updateCurrentSessionToolOptions(discoverExternalTools: false)
-        #expect(!terminal.currentPromptSections(allowedToolNames: []).dynamicContext.contains("gamma"))
+        #expect(!terminal.chatSession.currentPromptSections(
+            allowedToolNames: [],
+            responseLanguageSection: terminal.responseLanguageSystemPromptSection()
+        ).dynamicContext.contains("gamma"))
         #expect(terminal.chatSession.launchFolderProjectsCache?.projects == selectedAt)
 
         // Selecting the Organizer again reads the folder anew.
-        try await terminal.applyAgentSelection(organizer)
+        try await terminal.writeSessionNotices(terminal.chatSession.selectAgent(organizer).notices)
         #expect(terminal.chatSession.launchFolderProjectsCache?.projects.folderNames == ["alpha", "beta", "gamma"])
         let reselected = terminal.currentSessionConfiguration(allowedToolNames: []).dynamicContext
         #expect(reselected?.contains("\n- alpha\n- beta\n- gamma") == true)
 
         // Another agent gets no listing.
-        try await terminal.applyAgentSelection(Support.developer)
-        #expect(terminal.launchFolderProjectsForSelectedAgent() == nil)
+        try await terminal.writeSessionNotices(terminal.chatSession.selectAgent(Support.developer).notices)
+        #expect(terminal.chatSession.launchFolderProjectsForSelectedAgent() == nil)
         let developerContext = terminal.currentSessionConfiguration(allowedToolNames: []).dynamicContext
         #expect(developerContext?.contains(headline) == false)
     }

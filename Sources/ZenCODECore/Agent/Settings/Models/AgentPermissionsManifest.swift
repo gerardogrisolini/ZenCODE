@@ -48,12 +48,6 @@ public struct AgentPermissionsManifest: Codable, Equatable, Sendable {
         }
     }
 
-    public func appendingLocalExecAllowedCommand(
-        _ commandIdentity: String
-    ) -> AgentPermissionsManifest {
-        appendingLocalExecAllowedCommandIdentities([commandIdentity])
-    }
-
     func appendingLocalExecAllowedCommandIdentities(
         _ commandIdentities: [String]
     ) -> AgentPermissionsManifest {
@@ -138,20 +132,6 @@ public enum AgentPermissionsManifestStore {
             )
         }
         return manifest
-    }
-
-    public static func save(
-        _ manifest: AgentPermissionsManifest,
-        to url: URL = permissionsURL()
-    ) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted]
-        let data = try encoder.encode(manifest)
-        try SensitiveManifestCoordination.withExclusiveLock(
-            supportDirectoryURL: url.deletingLastPathComponent()
-        ) {
-            try SensitiveFilePermissions.write(data, to: url)
-        }
     }
 
     static func appendingLocalExecAllowedCommandIdentities(

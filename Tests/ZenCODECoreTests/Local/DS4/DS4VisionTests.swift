@@ -204,7 +204,7 @@ struct DS4VisionPreparedTranscriptTests {
                 modelID: 41,
                 routedQuantBits: 2,
                 hasVision: hasVision,
-                toolSyntaxID: DS4EngineABI.ToolSyntax.dsml41,
+                toolSyntaxID: DS4ToolSyntax.dsml41.rawValue,
                 mtpDraftTokens: 1,
                 contextSize: 8192
             )

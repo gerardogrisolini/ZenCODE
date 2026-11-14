@@ -46,12 +46,6 @@ public struct SessionCheckpointEntry: Codable, Equatable, Sendable, Identifiable
         /// Records a model switch that took effect from this entry onward.
         case modelChange(modelID: String)
     }
-
-    /// Returns the wrapped message when this entry's kind is `.message`.
-    public var message: AgentRuntimeMessage? {
-        guard case let .message(msg) = kind else { return nil }
-        return msg
-    }
 }
 
 // MARK: - SessionCheckpointTree
@@ -117,11 +111,6 @@ public struct SessionCheckpointTree: Codable, Equatable, Sendable {
             currentID = entry.parentID
         }
         return reversed.reversed()
-    }
-
-    /// Convenience: path from the active leaf.
-    public var activePath: [SessionCheckpointEntry] {
-        path(from: activeLeafID)
     }
 
     /// Extracts the ordered list of conversation messages from the path

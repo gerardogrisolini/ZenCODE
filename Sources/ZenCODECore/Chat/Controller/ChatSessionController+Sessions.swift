@@ -705,15 +705,6 @@ extension ChatSessionController {
         )
     }
 
-    /// The checkpoint menu of the active saved session; `nil` when there is
-    /// no active saved session in the project's store.
-    func checkpointEntryChoices() throws -> ChatChoiceList? {
-        guard case let .available(choices) = try checkpointEntryMenu() else {
-            return nil
-        }
-        return choices
-    }
-
     /// The checkpoint menu of the active saved session, or the notice that
     /// says why there is none (``ChatSessionNotice/noActiveSavedSession``,
     /// ``ChatSessionNotice/activeSavedSessionNotFound(name:)``), as

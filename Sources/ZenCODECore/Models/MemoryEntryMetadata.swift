@@ -89,18 +89,8 @@ extension GraphEntry {
 }
 
 extension MemoryEntryMetadata {
-    /// Parses the journal `Timestamp:` field back into a `Date`.
-    ///
-    /// Used by the graph migration so an imported entry keeps its original
-    /// creation date instead of the import date. Returns `nil` when the field
-    /// is absent or not in the journal's `yyyy-MM-dd HH:mm ZoneID` shape.
-    var timestampDate: Date? {
-        guard let timestamp else {
-            return nil
-        }
-        return Self.date(fromTimestamp: timestamp)
-    }
-
+    /// Parses a journal `Timestamp:` value back into a `Date`. Returns `nil`
+    /// when it is not in the journal's `yyyy-MM-dd HH:mm ZoneID` shape.
     static func date(fromTimestamp timestamp: String) -> Date? {
         let components = timestamp.split(separator: " ", omittingEmptySubsequences: true)
         guard components.count >= 2 else {

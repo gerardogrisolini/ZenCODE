@@ -94,10 +94,6 @@ final class TerminalConsentInputOwnership: Sendable {
 extension TerminalConsentInputOwnership {
     /// Process-wide entry points used by the consent prompt and the terminal's
     /// background readers, which all share one controlling terminal.
-    static var isConsentActive: Bool {
-        shared.isConsentActive
-    }
-
     static func beginConsent() async {
         await shared.beginConsent()
     }

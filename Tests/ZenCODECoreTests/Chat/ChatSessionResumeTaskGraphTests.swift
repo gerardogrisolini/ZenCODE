@@ -54,12 +54,13 @@ struct ChatSessionResumeTaskGraphTests {
         sessionID: String,
         in harness: ChatManagementHarness
     ) throws {
-        try SessionTaskGraphStore(supportDirectoryURL: harness.support).save(
+        try SessionTaskGraphStore(supportDirectoryURL: harness.support).compareAndSwap(
             SessionTaskGraphCheckpoint(
                 sessionID: sessionID,
                 currentGraphID: graphs.first?.id,
                 graphs: graphs
             ),
+            replacing: nil,
             workingDirectory: harness.workspace
         )
     }
@@ -315,12 +316,13 @@ struct ChatSessionResumeTaskGraphTests {
             #expect(host.liveSessionIDs() == ["first-window", "second-window"])
 
             for (sessionID, graphID) in [("first-window", "running-elsewhere"), ("old-session", "old-work")] {
-                try store.save(
+                try store.compareAndSwap(
                     SessionTaskGraphCheckpoint(
                         sessionID: sessionID,
                         currentGraphID: graphID,
                         graphs: [Self.graph(graphID)]
                     ),
+                    replacing: nil,
                     workingDirectory: configuration.workingDirectory
                 )
             }

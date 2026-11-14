@@ -96,15 +96,6 @@ extension DirectSubAgentRuntimeTests {
         )
         #expect(failedValidation.task.status == .failed)
 
-        await #expect(throws: SessionTaskOrchestratorError.self) {
-            _ = try await runtime.messageAgents(
-                arguments: [
-                    "id": .string(firstAgent.id),
-                    "message": .string("Try a correction"),
-                ]
-            )
-        }
-
         try await runtime.queuePrompt("stale correction", for: firstAgent.id)
         await runtime.waitForDirectSubAgentTestWorkLoops(agentID: firstAgent.id)
         #expect(await backend.sentPromptCount() == 1)
@@ -132,15 +123,6 @@ extension DirectSubAgentRuntimeTests {
         #expect(retried.attempts.count == 2)
         #expect(retried.activeAttemptID == secondAgent.taskAttemptID)
         #expect(secondAgent.taskAttemptID != firstAttemptID)
-
-        await #expect(throws: SessionTaskOrchestratorError.self) {
-            _ = try await runtime.messageAgents(
-                arguments: [
-                    "id": .string(firstAgent.id),
-                    "message": .string("Reuse the old attempt"),
-                ]
-            )
-        }
 
         #expect(await runtime.closeAgent(id: firstAgent.id))
         let afterClosingOldAgent = try await orchestrator.task(
@@ -222,54 +204,6 @@ extension DirectSubAgentRuntimeTests {
             tasks: [TaskDefinition(id: "tracked", title: "Tracked")]
         )
         #expect(graph.state == .active)
-    }
-
-    @Test
-    func tasklessAgentCannotBeResumedAfterAGraphBecomesActive() async throws {
-        let orchestrator = SessionTaskOrchestrator()
-        let runtime = DirectSubAgentRuntime(
-            contextualBackendFactory: { _ in CapturingSubAgentRuntimeBackend() },
-            profileResolver: builtInDirectSubAgentProfileResolver
-        )
-        await runtime.installTaskOrchestrator(orchestrator)
-
-        _ = try await runtime.createAgents(
-            arguments: [
-                "name": .string("lookup"),
-                "profile": .string("Developer"),
-                "prompt": .string("Inspect the current concern")
-            ],
-            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
-            parentAllowedToolNames: nil,
-            rootSessionID: "root"
-        )
-        await runtime.waitForDirectSubAgentTestWorkLoops()
-        let agentID = try #require(await runtime.snapshots().first?.id)
-
-        _ = try await orchestrator.createGraph(
-            sessionID: "root",
-            id: "graph",
-            source: .manual,
-            state: .active,
-            tasks: [TaskDefinition(id: "tracked", title: "Tracked")]
-        )
-
-        do {
-            _ = try await runtime.messageAgents(
-                arguments: [
-                    "id": .string(agentID),
-                    "message": .string("Continue the lookup")
-                ],
-                parentAllowedToolNames: nil
-            )
-            Issue.record("An active graph should reject resuming a taskless agent")
-        } catch let error as DirectSubAgentRuntimeError {
-            guard case let .taskIDRequiredForActiveTaskGraph(graphID) = error else {
-                Issue.record("Unexpected error: \(error.localizedDescription)")
-                return
-            }
-            #expect(graphID == "graph")
-        }
     }
 
     @Test

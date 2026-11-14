@@ -20,15 +20,6 @@ extension ChatSessionController {
         )
     }
 
-    /// The thinking menu of the current model; `nil` without a current model
-    /// or when its thinking is not configurable.
-    func thinkingChoices() throws -> ChatChoiceList? {
-        guard case let .available(choices) = try thinkingMenu() else {
-            return nil
-        }
-        return choices
-    }
-
     /// The thinking menu of the current model, or the notice that says why
     /// there is none (``ChatSessionNotice/noCurrentModel``,
     /// ``ChatSessionNotice/thinkingNotSupported(model:)``), as `/think`

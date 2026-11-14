@@ -248,19 +248,6 @@ extension TerminalInteractiveLineReader {
         }
     }
 
-    /// Completion matches for the token under the cursor.
-    ///
-    /// Kept as the shared entry point for both the command token and the
-    /// subcommand slot, so callers never have to know which one is being
-    /// completed.
-    static func matchingPanelCommandSuggestions(
-        text: String,
-        cursorIndex: Int,
-        suggestions: [TerminalCommandSuggestion]
-    ) -> [TerminalCommandSuggestion] {
-        TerminalPromptCompletion.matches(buffer: Array(text), cursorIndex: cursorIndex, commands: suggestions)
-    }
-
     func activeCommandSuggestionsLocked(state: State) -> [TerminalCommandSuggestion] {
         state.editor.visibleSuggestions(context: editorContextLocked(state: state))
     }

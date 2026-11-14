@@ -7,41 +7,6 @@ protocol EmbeddingProvider: Sendable {
     func embed(_ text: String) async throws -> [Float]
 }
 
-/// Dependency-free deterministic embedder intended for tests, demos and offline plumbing.
-/// It is a signed feature-hashing bag-of-words encoder; it is NOT a semantic language model.
-struct DeterministicHashEmbeddingProvider: EmbeddingProvider {
-    public let modelID: String
-    public let dimensions: Int
-
-    public init(dimensions: Int = 128, modelID: String = "zenmemory-hash-v1") {
-        precondition(dimensions > 0)
-        self.dimensions = dimensions
-        self.modelID = modelID
-    }
-
-    public func embed(_ text: String) async throws -> [Float] {
-        var vector = Array(repeating: Float.zero, count: dimensions)
-        for token in MemorySearch.tokens(text) {
-            let hash = fnv1a64(token)
-            let index = Int(hash % UInt64(dimensions))
-            let sign: Float = (hash & (1 << 63)) == 0 ? 1 : -1
-            vector[index] += sign
-        }
-        let norm = sqrtf(vector.reduce(0) { $0 + $1 * $1 })
-        guard norm > 0 else { return vector }
-        return vector.map { $0 / norm }
-    }
-
-    private func fnv1a64(_ value: String) -> UInt64 {
-        var hash: UInt64 = 14_695_981_039_346_656_037
-        for byte in value.utf8 {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
-        }
-        return hash
-    }
-}
-
 enum OpenAICompatibleEmbeddingError: Error, Sendable {
     case httpStatus(Int, String)
     case emptyEmbedding

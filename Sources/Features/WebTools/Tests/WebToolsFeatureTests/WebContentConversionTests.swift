@@ -2,6 +2,16 @@ import Foundation
 @testable import WebToolsFeature
 import Testing
 
+extension WebHTMLNode {
+    /// Raw text of a text node, `nil` for every other kind.
+    var text: String? {
+        if case .text(let value) = kind {
+            return value
+        }
+        return nil
+    }
+}
+
 /// Shared helpers for the platform-independent HTML pipeline tests.
 private enum ContentFixture {
     static let pageURL = URL(string: "https://example.com/docs/page.html")!
@@ -159,12 +169,11 @@ extension WebContentConversionTests {
             let anchor = try #require(ContentFixture.elements("a", in: document).first)
 
             #expect(anchor.attributes["href"] == "/path?a=1&b=2")
-            #expect(anchor.attribute("HREF") == "/path?a=1&b=2")
             #expect(anchor.attributes["data-x"] == "single")
             #expect(anchor.attributes["checked"] == "")
             #expect(anchor.attributes["title"] == "q \"x\"")
             #expect(anchor.classList == ["one", "two"])
-            #expect(anchor.id == "main")
+            #expect(anchor.attributes["id"] == "main")
             #expect(anchor.tagName == "a")
         }
 
@@ -340,7 +349,7 @@ extension WebContentConversionTests {
             #expect(try select("div#root.page.wide").count == 1)
             #expect(try select("div#root.missing").isEmpty)
             // `*` matches the outermost element; descendants are not repeated.
-            #expect(try select("*").map(\.id) == ["root"])
+            #expect(try select("*").map { $0.attributes["id"] } == ["root"])
         }
 
         @Test

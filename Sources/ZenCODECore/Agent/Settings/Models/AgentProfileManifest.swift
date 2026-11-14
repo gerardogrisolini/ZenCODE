@@ -126,27 +126,14 @@ public struct AgentProfile: Codable, Hashable, Sendable {
             ?? modelBindings.first { Self.modelBindingKey($0.modelID) == key }
     }
 
-    /// Convenience model identifier for the resolved default binding.
-    public var defaultModelID: String? {
-        defaultModelBinding?.modelID
-    }
-
     // Compatibility accessors for the previous single-model profile shape.
     // New persistence is always expressed through `modelBindings`.
     public var modelID: String? {
         defaultModelBinding?.modelID
     }
 
-    public var modelProvider: String? {
-        defaultModelBinding?.modelProvider
-    }
-
     public var thinkingSelection: AgentThinkingSelection? {
         defaultModelBinding?.thinkingSelection
-    }
-
-    public var capability: Int? {
-        defaultModelBinding?.capability
     }
 
     public init(
@@ -362,24 +349,18 @@ public struct AgentProfile: Codable, Hashable, Sendable {
     }
 
     public var promptSection: String? {
-        promptSection(memoryToolEnabled: true)
-    }
-
-    public func promptSection(memoryToolEnabled: Bool) -> String? {
         var lines = ["Selected agent: \(displayName)"]
-        if let resolvedInstructions = resolvedInstructions(memoryToolEnabled: memoryToolEnabled).nilIfBlank {
+        if let resolvedInstructions = resolvedInstructions().nilIfBlank {
             lines += ["Agent instructions:", resolvedInstructions]
         }
         return lines.joined(separator: "\n").nilIfBlank
     }
 
-    private func resolvedInstructions(memoryToolEnabled: Bool) -> String {
+    private func resolvedInstructions() -> String {
         guard let instructions else {
             return ""
         }
-        guard [true, false].contains(where: {
-            instructions == SystemPromptBuilder.defaultAgentInstructions(memoryToolEnabled: $0)
-        }) else {
+        guard instructions == SystemPromptBuilder.defaultAgentInstructions() else {
             return instructions
         }
         // Legacy Developer profiles persisted the complete standalone prompt as
@@ -672,10 +653,6 @@ public enum AgentProfileStore {
 
     public static func isPlannerAgent(_ agent: AgentProfile?) -> Bool {
         agent?.role == .planner
-    }
-
-    public static func isReviewerAgent(_ agent: AgentProfile?) -> Bool {
-        agent?.role == .reviewer
     }
 
     public static func normalizedAgentsForSave(_ agents: [AgentProfile]) -> [AgentProfile] {

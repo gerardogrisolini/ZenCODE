@@ -36,9 +36,12 @@ extension MemoryGraph {
     ///   cap. Every eviction removes both directions of the evicted relation.
     ///   Merely reinforcing an existing edge never evicts anything.
     ///
-    /// A no-op returning `false` when either endpoint is missing or inactive
-    /// (see ``linkMemories(from:to:weight:)`` for why), or when both ends are
-    /// the same memory. Otherwise `linkDiscoveryCount` grows by one per
+    /// A no-op returning `false` when either endpoint is missing or inactive,
+    /// or when both ends are the same memory. Co-relevance links are discovered
+    /// during retrieval maintenance, which runs after the selector `await`; a
+    /// concurrent `forget` or archive can remove or deactivate an endpoint in
+    /// that window, and without the guard the edge — and its reverse edge —
+    /// would dangle forever. Otherwise `linkDiscoveryCount` grows by one per
     /// direction, created or reinforced.
     @discardableResult
     mutating func reinforceRelation(

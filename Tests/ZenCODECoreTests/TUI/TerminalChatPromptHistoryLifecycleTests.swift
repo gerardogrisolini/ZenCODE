@@ -69,7 +69,8 @@ struct TerminalChatPromptHistoryLifecycleTests {
                 workingDirectory: workspace
             ),
             stdinIsTerminal: false,
-            sessionRunner: runner
+            sessionRunner: runner,
+            telegramTransportFactory: nil
         )
         let reader = chat.interactiveReader
         let inputs = ["before new", "/new"]
@@ -77,7 +78,7 @@ struct TerminalChatPromptHistoryLifecycleTests {
         let originalSessionID = chat.sessionID
 
         do {
-            await chat.startNewSession()
+            await chat.writeSessionNotices(chat.chatSession.newSessionCommand().notices)
             #expect(chat.sessionID != originalSessionID)
             _ = try #require(await runner.snapshotSession(id: chat.sessionID))
             #expect(chat.interactiveReader === reader)
@@ -95,7 +96,7 @@ struct TerminalChatPromptHistoryLifecycleTests {
                     savedHistory, sessionID: "terminal-loaded"
                 )
             )
-            try await chat.loadSavedSession(savedSession)
+            try await chat.writeSessionNotices(chat.chatSession.loadSavedSession(savedSession, checkpointEntryID: nil).notices)
             #expect(chat.sessionID == savedSession.sessionID)
             #expect(chat.chatSession.history == savedSession.history)
             #expect(chat.interactiveReader === reader)
@@ -111,7 +112,7 @@ struct TerminalChatPromptHistoryLifecycleTests {
 
     @Test
     func aNewLaunchStartsWithAnEmptyPromptHistory() async throws {
-        let chat = TerminalChat(configuration: try configuration(), stdinIsTerminal: true)
+        let chat = TerminalChat(configuration: try configuration(), stdinIsTerminal: true, telegramTransportFactory: nil)
         #expect(chat.interactiveReader.commandHistory.isEmpty)
         #expect(chat.sessionID.hasPrefix("terminal-"))
         await chat.sessionHost.shutdown()

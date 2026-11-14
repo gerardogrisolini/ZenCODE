@@ -527,7 +527,7 @@ struct TerminalTelegramSharedChatRelayTests {
 
         // The queue is bounded, so a batch of this size cannot be admitted in
         // one go: the producer is parked instead of losing its tail.
-        await relay.waitUntilProducerIsBlocked()
+        await relay.waitUntilProducersAreBlocked(count: 1)
         #expect(await recorder.cards.isEmpty)
 
         await recorder.open()
@@ -618,7 +618,7 @@ struct TerminalTelegramSharedChatRelayTests {
         // The worker holds one card inside the closed gate and A is parked:
         // nothing can free a slot, so the admitted prefix is now stable.
         await recorder.waitUntilSendStarted()
-        await relay.waitUntilProducerIsBlocked()
+        await relay.waitUntilProducersAreBlocked(count: 1)
         let admittedPrefix = await relay.ledgerEntryCount
         #expect(admittedPrefix > 0)
 
@@ -662,7 +662,7 @@ struct TerminalTelegramSharedChatRelayTests {
         )
         let producer = Task { await relay.forward(batch, roomID: Self.roomID) }
         await recorder.waitUntilSendStarted()
-        await relay.waitUntilProducerIsBlocked()
+        await relay.waitUntilProducersAreBlocked(count: 1)
         // The gate is shut, so no grant can happen: the producer is cancelled
         // while it demonstrably holds no reservation.
         let admitted = await relay.ledgerEntryCount
@@ -708,7 +708,7 @@ struct TerminalTelegramSharedChatRelayTests {
         let batchB = Self.labelledBatch(prefix: "producer-b", count: 6)
         let producerA = Task { await relay.forward(batchA, roomID: Self.roomID) }
         await recorder.waitUntilSendStarted()
-        await relay.waitUntilProducerIsBlocked()
+        await relay.waitUntilProducersAreBlocked(count: 1)
         let producerB = Task { await relay.forward(batchB, roomID: Self.roomID) }
         await relay.waitUntilProducersAreBlocked(count: 2)
 

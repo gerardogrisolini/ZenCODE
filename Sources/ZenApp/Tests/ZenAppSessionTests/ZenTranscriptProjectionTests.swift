@@ -12,6 +12,18 @@ import ToolCore
 import ZenCODECore
 @testable import ZenAppSession
 
+private extension ZenLocalTranscriptItem {
+    /// A row anchored after the last entry of `snapshot`'s log.
+    init(id: UUID = UUID(), anchoredIn snapshot: ChatSessionSnapshot, content: ZenTranscriptItem.Content) {
+        self.init(
+            id: id,
+            epoch: snapshot.epoch,
+            anchorSequence: Self.anchorSequence(in: snapshot),
+            content: content
+        )
+    }
+}
+
 @Suite(.serialized)
 struct ZenTranscriptProjectionTests {
     private let workspace = FileManager.default.temporaryDirectory

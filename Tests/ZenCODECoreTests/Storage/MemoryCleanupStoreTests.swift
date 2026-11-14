@@ -89,7 +89,7 @@ struct MemoryCleanupStoreTests {
 
                 // The backup is never read by the engine as the graph.
                 let reopened = try await MemoryGraphStore.open(graphURL: graphURL)
-                #expect(try await reopened.entries(includeArchived: true, limit: 10).count == 1)
+                #expect(try await reopened.entries(includeArchived: true, offset: 0, limit: 10, filter: .none).count == 1)
             }
         }
     }

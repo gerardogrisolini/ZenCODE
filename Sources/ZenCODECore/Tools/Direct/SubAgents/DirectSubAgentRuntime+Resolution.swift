@@ -188,15 +188,6 @@ extension DirectSubAgentRuntime {
         return latestOverviewBatchID
     }
 
-    /// Re-homes agents that just received new work into `waveID` so the overview
-    /// keeps showing every sub-agent that is actually working.
-    func adoptOverviewWave(_ waveID: UUID, for agentIDs: [String]) {
-        for id in agentIDs {
-            mutateAgent(id) { $0.overviewBatchID = waveID }
-        }
-        latestOverviewBatchID = waveID
-    }
-
     public func snapshots(for ids: [String]) -> [AgentSnapshot] {
         ids.compactMap { id in
             agents[id].map(snapshot(from:))

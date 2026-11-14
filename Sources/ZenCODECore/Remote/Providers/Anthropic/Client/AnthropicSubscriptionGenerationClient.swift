@@ -23,10 +23,6 @@ public actor AnthropicSubscriptionGenerationClient: DirectToolRuntimeBackend {
         public var messages: [[String: Any]]
     }
 
-    public static var isAvailable: Bool {
-        (try? AnthropicSubscriptionAuthService.loadCredentials()) != nil
-    }
-
     static let apiBaseURL = URL(string: "https://api.anthropic.com/v1")!
     static let claudeCodeVersion = "2.1.302"
     static let claudeCodeBetaHeader = "claude-code-20250219"

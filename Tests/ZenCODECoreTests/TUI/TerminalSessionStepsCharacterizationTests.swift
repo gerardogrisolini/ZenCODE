@@ -128,7 +128,7 @@ struct TerminalSessionStepsCharacterizationTests {
             try await terminal.createCurrentSession(discoverExternalTools: false)
             let before = await terminal.renderCoordinator.capturedWriteEvents().count
 
-            await terminal.startNewSession()
+            await terminal.writeSessionNotices(terminal.chatSession.newSessionCommand().notices)
 
             let writes = await Self.writes(of: terminal, skipping: before)
             #expect(writes == Self.newSessionGolden)
@@ -149,7 +149,7 @@ struct TerminalSessionStepsCharacterizationTests {
             )
             let before = await terminal.renderCoordinator.capturedWriteEvents().count
 
-            try await terminal.loadSavedSession(saved)
+            try await terminal.writeSessionNotices(terminal.chatSession.loadSavedSession(saved, checkpointEntryID: nil).notices)
 
             let writes = await Self.writes(of: terminal, skipping: before)
             #expect(writes == Self.loadedSessionGolden)
@@ -167,7 +167,7 @@ struct TerminalSessionStepsCharacterizationTests {
             try await terminal.createCurrentSession(discoverExternalTools: false)
             let previousSessionID = terminal.sessionID
 
-            await terminal.startNewSession()
+            await terminal.writeSessionNotices(terminal.chatSession.newSessionCommand().notices)
 
             #expect(terminal.sessionID != previousSessionID)
             #expect(Self.hasTerminalSessionIDFormat(terminal.sessionID))

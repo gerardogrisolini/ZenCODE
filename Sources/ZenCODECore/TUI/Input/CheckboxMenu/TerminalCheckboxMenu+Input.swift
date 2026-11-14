@@ -14,22 +14,6 @@ import Dispatch
 import Foundation
 
 extension TerminalCheckboxMenu {
-    static func readInputLine(rawInput: TerminalRawInput) -> InputLineReadResult {
-        readInputLine(rawInput: rawInput, shouldCancel: nil)
-    }
-
-    static func readInputLine(
-        rawInput: TerminalRawInput,
-        shouldCancel: (@Sendable () -> Bool)?
-    ) -> InputLineReadResult {
-        readInputLine(
-            rawInput: rawInput,
-            shouldCancel: shouldCancel,
-            initialValue: "",
-            resizeGeneration: nil
-        )
-    }
-
     static func readInputLine(
         rawInput: TerminalRawInput,
         shouldCancel: (@Sendable () -> Bool)?,
@@ -160,38 +144,11 @@ extension TerminalCheckboxMenu {
         }
     }
 
-    static func readByte(
-        rawInput: TerminalRawInput,
-        shouldCancel: (@Sendable () -> Bool)?
-    ) -> UInt8? {
-        switch readByteEvent(
-            rawInput: rawInput,
-            shouldCancel: shouldCancel,
-            resizeGeneration: nil
-        ) {
-        case let .byte(byte):
-            return byte
-        case .resize, .end:
-            return nil
-        }
-    }
-
     static func writeRawOutputByte(_ byte: UInt8) {
         TerminalOutputSynchronization.writeOverlay(
             Data([byte]),
             to: AgentOutput.standardError
         )
-    }
-
-    static func readKey(rawInput: TerminalRawInput) -> Key? {
-        readKey(rawInput: rawInput, shouldCancel: nil)
-    }
-
-    static func readKey(
-        rawInput: TerminalRawInput,
-        shouldCancel: (@Sendable () -> Bool)?
-    ) -> Key? {
-        readKey(rawInput: rawInput, shouldCancel: shouldCancel, resizeGeneration: nil)
     }
 
     static func readKey(

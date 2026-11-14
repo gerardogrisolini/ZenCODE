@@ -9,39 +9,6 @@ import ToolCore
 import Foundation
 
 public enum AgentStandaloneSystemPrompt {
-    /// Combined form of `promptSections`; `launchFolderProjects` behaves as
-    /// documented there.
-    public static func prompt(
-        cwd: String,
-        memoryToolEnabled: Bool = false,
-        allowedToolNames: Set<String>? = nil,
-        locksModelToSession: Bool = false,
-        fileManager: FileManager = .default,
-        globalAgentsDirectoryURL: URL? = nil,
-        selectedAgentSection: String? = nil,
-        selectedAgentRole: AgentProfileRole? = nil,
-        launchFolderProjects: LaunchFolderProjects? = nil,
-        listLaunchFolder: (String) throws -> [String] = LaunchFolderProjects.defaultListDirectory,
-        selectedSkillSection: String? = nil,
-        responseLanguageSection: String? = nil
-    ) -> String {
-        promptSections(
-            cwd: cwd,
-            memoryToolEnabled: memoryToolEnabled,
-            allowedToolNames: allowedToolNames,
-            locksModelToSession: locksModelToSession,
-            fileManager: fileManager,
-            globalAgentsDirectoryURL: globalAgentsDirectoryURL,
-            selectedAgentSection: selectedAgentSection,
-            selectedAgentRole: selectedAgentRole,
-            launchFolderProjects: launchFolderProjects,
-            listLaunchFolder: listLaunchFolder,
-            selectedSkillSection: selectedSkillSection,
-            responseLanguageSection: responseLanguageSection
-        )
-        .combinedPrompt
-    }
-
     /// Composes the stable system prefix and the session's dynamic context.
     ///
     /// - Parameter launchFolderProjects: Only read when `selectedAgentRole`
@@ -144,7 +111,6 @@ public enum AgentStandaloneSystemPrompt {
                     readOnly: AgentSessionComposition.memoryToolsAreReadOnly(allowedToolNames)
                 )
                 : nil,
-            memoryToolEnabled: memoryToolEnabled,
             allowedToolNames: allowedToolNames,
             selectedSkillSection: selectedSkillSection,
             responseLanguageSection: responseLanguageSection,

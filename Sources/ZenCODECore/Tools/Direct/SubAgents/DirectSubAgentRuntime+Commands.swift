@@ -546,11 +546,10 @@ extension DirectSubAgentRuntime {
 
     func reserveTasklessDelegationReservations(
         count tasklessCount: Int,
-        retainingReservationIDs: Set<UUID> = [],
         parentAllowedToolNames: Set<String>?,
         rootSessionID: String
     ) async throws -> [UUID] {
-        guard tasklessCount > 0 || !retainingReservationIDs.isEmpty,
+        guard tasklessCount > 0,
               let taskOrchestrator else {
             return []
         }
@@ -559,7 +558,6 @@ extension DirectSubAgentRuntime {
             return try await taskOrchestrator.reserveTasklessDelegations(
                 sessionID: rootSessionID,
                 count: tasklessCount,
-                retainingReservationIDs: retainingReservationIDs,
                 requiresExclusiveAccess: SystemPromptBuilder.taskWorkflowToolsAreAvailable(
                     parentAllowedToolNames
                 )
@@ -588,98 +586,6 @@ extension DirectSubAgentRuntime {
     public func getAgents(arguments: [String: JSONValue]) -> String {
         let targets = resolveInspectableAgents(arguments: arguments)
         return Self.renderSnapshots(targets, includeLatestOutput: true)
-    }
-
-    public func messageAgents(
-        arguments: [String: JSONValue],
-        parentAllowedToolNames: Set<String>? = nil
-    ) async throws -> String {
-        guard let message = Self.firstString(["message", "prompt", "input"], in: arguments)?.nilIfBlank else {
-            throw DirectSubAgentRuntimeError.missingArgument("message")
-        }
-
-        let targetIDs = try resolveMessageTargetIDs(arguments: arguments)
-        try await validateOpenMessageTargets(targetIDs)
-        let tasklessAgents = targetIDs.compactMap { agents[$0] }
-            .filter { $0.taskID == nil }
-        let tasklessAgentsBySession = Dictionary(
-            grouping: tasklessAgents,
-            by: \.rootSessionID
-        )
-        var reservationIDsByAgentID: [String: UUID] = [:]
-        do {
-            for (rootSessionID, sessionAgents) in tasklessAgentsBySession {
-                let retainedReservationIDs = Set(sessionAgents.compactMap(
-                    \.tasklessDelegationReservationID
-                ))
-                let agentsNeedingReservation = sessionAgents.filter {
-                    $0.tasklessDelegationReservationID == nil
-                }
-                let reservationIDs = try await reserveTasklessDelegationReservations(
-                    count: agentsNeedingReservation.count,
-                    retainingReservationIDs: retainedReservationIDs,
-                    parentAllowedToolNames: parentAllowedToolNames,
-                    rootSessionID: rootSessionID
-                )
-                reservationIDsByAgentID.merge(
-                    Dictionary(uniqueKeysWithValues: zip(
-                        agentsNeedingReservation.map(\.id),
-                        reservationIDs
-                    )),
-                    uniquingKeysWith: { _, latest in latest }
-                )
-            }
-        } catch {
-            for (agentID, reservationID) in reservationIDsByAgentID {
-                if let rootSessionID = agents[agentID]?.rootSessionID,
-                   let taskOrchestrator {
-                    try? await taskOrchestrator.releaseTasklessDelegationReservation(
-                        sessionID: rootSessionID,
-                        reservationID: reservationID
-                    )
-                }
-            }
-            throw error
-        }
-
-        do {
-            try await validateOpenMessageTargets(targetIDs)
-            // Resolved before the prompts are queued so the messaged agents join
-            // the wave that is on screen right now, instead of the one they
-            // themselves are about to make live.
-            let overviewWaveID = currentOverviewWaveID()
-            for (agentID, reservationID) in reservationIDsByAgentID {
-                guard mutateAgent(agentID, {
-                    $0.tasklessDelegationReservationID = reservationID
-                }) != nil else {
-                    throw DirectSubAgentRuntimeError.agentNotFound(agentID)
-                }
-            }
-            for id in targetIDs {
-                try queuePrompt(message, for: id)
-            }
-            adoptOverviewWave(overviewWaveID, for: targetIDs)
-        } catch {
-            for (agentID, reservationID) in reservationIDsByAgentID {
-                mutateAgent(
-                    agentID,
-                    where: { $0.tasklessDelegationReservationID == reservationID }
-                ) {
-                    $0.tasklessDelegationReservationID = nil
-                }
-                if let rootSessionID = agents[agentID]?.rootSessionID,
-                   let taskOrchestrator {
-                    try? await taskOrchestrator.releaseTasklessDelegationReservation(
-                        sessionID: rootSessionID,
-                        reservationID: reservationID
-                    )
-                }
-            }
-            throw error
-        }
-
-        return "Queued message for \(targetIDs.count) delegated sub-agent\(targetIDs.count == 1 ? "" : "s").\n"
-            + Self.renderSnapshots(snapshots(for: targetIDs))
     }
 
     func validateOpenMessageTargets(_ targetIDs: [String]) async throws {

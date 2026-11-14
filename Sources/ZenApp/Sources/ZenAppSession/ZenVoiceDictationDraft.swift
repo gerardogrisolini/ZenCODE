@@ -61,20 +61,6 @@ public struct ZenVoiceDictationDraft: Sendable, Equatable {
         self.endedThrough = endedThrough
     }
 
-    /// The draft shows a dictation.
-    public var isActive: Bool {
-        preview != nil
-    }
-
-    /// The characters of `draft` the preview covers; `nil` when none is
-    /// shown.
-    public func previewRange(in draft: String) -> Range<Int>? {
-        guard let preview else { return nil }
-        let count = draft.count
-        guard preview.start <= count else { return nil }
-        return preview.start..<count
-    }
-
     /// Shows `text` as the preview of dictation `id` at the end of `draft`.
     /// An empty text removes the preview and its inserted separator; the
     /// first text of a dictation is appended after the draft, separated by

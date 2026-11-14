@@ -17,12 +17,13 @@ import Glibc
 
 /// Single-file, compressed archive of the entire ZenCODE support directory.
 ///
-/// `export` produces one gzip tar with a versioned `manifest.json` (relative
-/// paths, SHA-256 digests, sizes) plus one entry per source file under
-/// `payload/`. `import` validates the whole archive before mutating the
-/// destination, then replaces it in one rename with rollback on failure. Both
-/// hold the support directory's coordination lock, and the import swap
-/// preserves the lock file's inode so mutual exclusion survives the rename.
+/// `exportReplacingExisting` produces one gzip tar with a versioned
+/// `manifest.json` (relative paths, SHA-256 digests, sizes) plus one entry per
+/// source file under `payload/`. `import` validates the whole archive before
+/// mutating the destination, then replaces it in one rename with rollback on
+/// failure. Both hold the support directory's coordination lock, and the
+/// import swap preserves the lock file's inode so mutual exclusion survives
+/// the rename.
 ///
 /// The container is produced and read by the system `tar` through
 /// `Foundation.Process`; paths are positional arguments or a NUL-separated
@@ -59,8 +60,6 @@ enum SupportDirectoryArchive {
     ]
 
     enum SupportDirectoryArchiveError: LocalizedError, Equatable {
-        case archiveExists(URL)
-        case missingSourceDirectory(URL)
         case archiveNotReadable(String)
         case tarUnavailable(String)
         case invalidManifest(String)
@@ -79,10 +78,6 @@ enum SupportDirectoryArchive {
 
         var errorDescription: String? {
             switch self {
-            case let .archiveExists(url):
-                return "An archive already exists at \(url.path)."
-            case let .missingSourceDirectory(url):
-                return "Nothing to export: the support directory does not exist at \(url.path)."
             case let .archiveNotReadable(reason):
                 return "The archive is not a readable tar.gz file: \(reason)"
             case let .tarUnavailable(reason):
@@ -187,47 +182,15 @@ enum SupportDirectoryArchive {
     // MARK: - Export
 
     /// Writes a single compressed archive of the whole support directory to
-    /// `archiveURL`, which must not exist yet.
+    /// `archiveURL`. The caller holds the exclusive coordination lock, so the
+    /// archive is a coherent snapshot.
     ///
-    /// Manifest collection and archive creation run under the exclusive
-    /// coordination lock, so the archive is a coherent snapshot. Symbolic links
-    /// are never followed or archived: each one outside the silent exclusions is
-    /// skipped and reported in `ExportResult.skippedSymbolicLinks`, and the
-    /// export goes on. An unreadable file still fails the export. Coordination
-    /// artifacts (lock, journal, import staging) and an archive written inside
-    /// the source directory are never included.
-    static func export(
-        from sourceDirectoryURL: URL,
-        to archiveURL: URL,
-        fileManager: FileManager = .default
-    ) throws -> ExportResult {
-        let sourceURL = sourceDirectoryURL.standardizedFileURL
-        let destinationURL = archiveURL.standardizedFileURL
-        try fileManager.createDirectory(
-            at: destinationURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        guard fileManager.fileExists(atPath: sourceURL.path) else {
-            throw SupportDirectoryArchiveError.missingSourceDirectory(sourceURL)
-        }
-        guard !fileManager.fileExists(atPath: destinationURL.path) else {
-            throw SupportDirectoryArchiveError.archiveExists(destinationURL)
-        }
-
-        return try SensitiveManifestCoordination.withExclusiveLock(
-            supportDirectoryURL: sourceURL,
-            fileManager: fileManager
-        ) {
-            try writeArchive(
-                sourceURL: sourceURL,
-                archiveURL: destinationURL,
-                additionalExcludedArchiveURL: nil,
-                fileManager: fileManager
-            )
-        }
-    }
-
-    /// Lock-holding body of `export`.
+    /// Symbolic links are never followed or archived: each one outside the
+    /// silent exclusions is skipped and reported in
+    /// `ExportResult.skippedSymbolicLinks`, and the export goes on. An
+    /// unreadable file still fails the export. Coordination artifacts (lock,
+    /// journal, import staging) and an archive written inside the source
+    /// directory are never included.
     static func writeArchive(
         sourceURL: URL,
         archiveURL: URL,

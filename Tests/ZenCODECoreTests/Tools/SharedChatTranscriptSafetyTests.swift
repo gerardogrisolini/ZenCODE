@@ -37,7 +37,8 @@ struct SharedChatTranscriptSafetyTests {
             roomID: "bounded-room"
         )
         #expect(hostileName.name.unicodeScalars.count <= AgentSharedChat.maximumParticipantNameLength)
-        #expect(hostileName.name.utf8.count <= AgentSharedChat.maximumParticipantNameUTF8Length)
+        // A Unicode scalar takes at most four UTF-8 bytes.
+        #expect(hostileName.name.utf8.count <= AgentSharedChat.maximumParticipantNameLength * 4)
         #expect(!hostileName.name.unicodeScalars.contains { scalar in
             scalar.properties.isBidiControl
                 || scalar.properties.generalCategory == .format

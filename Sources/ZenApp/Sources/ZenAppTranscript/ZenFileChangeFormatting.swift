@@ -2,10 +2,10 @@
 //  ZenFileChangeFormatting.swift
 //  ZenApp
 //
-//  Pure helpers of the file-change views: the summary header and hint, the
-//  lines of a unified patch, and the diff of a file artifact. They mirror the
-//  terminal UI's file-change summary (`TurnFileChangeSummaryPresentation`)
-//  and file artifacts (`TerminalChat+FileChanges`).
+//  Pure helpers of the file-change views: the summary hint, the lines of a
+//  unified patch, and the diff of a file artifact. They mirror the terminal
+//  UI's file-change summary (`TurnFileChangeSummaryPresentation`) and file
+//  artifacts (`TerminalChat+FileChanges`).
 //
 
 import Foundation
@@ -39,16 +39,6 @@ public struct ZenPatchLine: Sendable, Equatable {
 public enum ZenFileChangeFormatting {
     /// Patch lines a file shows before "Show more".
     public static let patchPreviewLineLimit = 400
-
-    /// `1 file changed` or `N files changed`.
-    public static func fileCountText(_ count: Int) -> String {
-        count == 1 ? "1 file changed" : "\(count) files changed"
-    }
-
-    /// The header of a summary as text: `N files changed  +A −D`.
-    public static func summaryHeaderText(_ summary: TurnFileChangeSummary) -> String {
-        "\(fileCountText(summary.fileCount))  +\(summary.totalAdditions) −\(summary.totalDeletions)"
-    }
 
     /// The hint under a summary, as the terminal writes it.
     public static func hintText(_ summary: TurnFileChangeSummary) -> String {

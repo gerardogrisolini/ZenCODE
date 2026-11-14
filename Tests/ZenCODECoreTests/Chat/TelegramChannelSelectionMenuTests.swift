@@ -133,7 +133,10 @@ struct TelegramChannelSelectionMenuTests {
             }
             #expect(pair.texts.values.isEmpty)
 
-            let thinking = try #require(try controller.thinkingChoices())
+            guard case let .available(thinking) = try controller.thinkingMenu() else {
+                Issue.record("The current model has no thinking menu.")
+                return
+            }
             let agentsMenu = TelegramChannel.agentPickerMenu(try controller.agentChoices())
             let modelsMenu = TelegramChannel.modelsMenu(controller.modelChoices())
             #expect(pair.cards.values == [

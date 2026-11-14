@@ -116,32 +116,6 @@ extension SessionTaskOrchestrator {
     }
 
     @discardableResult
-    public func recordAttemptProgress(
-        sessionID rawSessionID: String,
-        graphID: String? = nil,
-        taskID: String,
-        attemptID: String,
-        output: String
-    ) throws -> Bool {
-        let normalizedOutput = sanitizedPersistedText(
-            output.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
-        try validateLength(
-            normalizedOutput,
-            field: "output",
-            limit: limits.maximumAttemptOutputLength
-        )
-        return try mutateActiveAttempt(
-            sessionID: rawSessionID,
-            graphID: graphID,
-            taskID: taskID,
-            attemptID: attemptID
-        ) { _, attempt, _ in
-            attempt.output = normalizedOutput
-        }
-    }
-
-    @discardableResult
     public func completeAttempt(
         sessionID rawSessionID: String,
         graphID: String? = nil,

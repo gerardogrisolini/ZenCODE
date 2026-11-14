@@ -104,9 +104,7 @@ struct RemoteModelCatalogAnthropicThinkingTests {
         #expect(model.generationParameterOverrides == nil)
         #expect(
             model.thinkingSupport == RemoteModelCatalogClient.thinkingSupport(
-                fromModelMetadata: modelMetadata(from: entry),
-                baseURL: Self.anthropicBaseURL,
-                modelID: "claude-legacy"
+                fromModelMetadata: modelMetadata(from: entry)
             )
         )
     }
@@ -134,9 +132,7 @@ struct RemoteModelCatalogAnthropicThinkingTests {
             #expect(model.generationParameterOverrides?.subscriptionThinkingMode == nil)
             #expect(
                 model.thinkingSupport == RemoteModelCatalogClient.thinkingSupport(
-                    fromModelMetadata: modelMetadata(from: entry),
-                    baseURL: Self.nonAnthropicBaseURL,
-                    modelID: id
+                    fromModelMetadata: modelMetadata(from: entry)
                 )
             )
         }

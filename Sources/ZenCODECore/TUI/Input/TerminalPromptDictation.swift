@@ -36,10 +36,6 @@ struct TerminalPromptDictation: Equatable, Sendable {
     /// Dictations with an id up to this one were ended or sent.
     private(set) var endedThrough: UInt64 = 0
 
-    var isActive: Bool {
-        active != nil
-    }
-
     /// Shows `text` as the preview of dictation `id`. Empty text removes the
     /// preview and its inserted separator; the first text of a dictation is
     /// appended after the draft, separated by one space when the draft does

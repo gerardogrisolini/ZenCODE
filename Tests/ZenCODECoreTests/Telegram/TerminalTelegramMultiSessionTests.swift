@@ -21,19 +21,14 @@ struct TerminalTelegramMultiSessionTests {
     @Test
     func ownerAndPrivateTopicsAreFailClosedAndIsolated() async throws {
         let router = TerminalTelegramSessionRouter(linkedChatID: 42, ownerUserID: 7)
-        let first = try await router.create(topicID: 1, roomID: "one")
-        let second = try await router.create(topicID: 2, roomID: "two")
+        _ = try await router.create(topicID: 1, roomID: "one")
+        _ = try await router.create(topicID: 2, roomID: "two")
         await #expect(throws: TerminalTelegramRouteDenial.unauthorized) {
             try await router.resolve(chatID: 42, userID: 8, topicID: 1)
         }
         await #expect(throws: TerminalTelegramRouteDenial.unauthorized) {
             try await router.resolve(chatID: -100, userID: 7, topicID: 1)
         }
-        let state = TerminalTelegramRouteRuntimeState(router: router)
-        try await state.enqueue("first", lease: first)
-        try await state.enqueue("second", lease: second)
-        #expect(try await state.dequeue(lease: second) == "second")
-        #expect(try await state.dequeue(lease: first) == "first")
     }
 
     @Test
@@ -45,14 +40,10 @@ struct TerminalTelegramMultiSessionTests {
         await #expect(throws: TerminalTelegramRouteDenial.routeClosed) {
             try await router.resolve(chatID: 42, userID: 7, topicID: 12)
         }
-        let reopened = try await router.create(topicID: 12, roomID: "topic-2")
+        _ = try await router.create(topicID: 12, roomID: "topic-2")
         await #expect(throws: TerminalTelegramRouteDenial.staleGeneration) {
             try await router.validate(topic)
         }
-        try await router.delete(reopened)
-        let fallback = try await router.resolve(chatID: 42, userID: 7, topicID: 12)
-        #expect(fallback.key.topicID == nil)
-        #expect(fallback.effectiveMessageThreadID == 12)
     }
 
     /// Characterization of the current lookup: a topic no route was ever
@@ -116,13 +107,11 @@ struct TerminalTelegramMultiSessionTests {
         let router = TerminalTelegramSessionRouter(
             linkedChatID: 42, ownerUserID: 7, persist: recorder.persist
         )
-        let state = TerminalTelegramRouteRuntimeState(router: router)
         let previous = try await router.create(topicID: 10, roomID: "session-a")
-        try await state.enqueue("queued for session-a", lease: previous)
         let fence = TerminalTelegramWireFence(lease: previous, lifecycleEpoch: UUID()) { lease in
             try await router.validate(lease)
         }
-        try await fence.validate(chatID: 42)
+        try await fence.validate(chatID: 42, topicID: fence.lease.effectiveMessageThreadID)
 
         let rebound = try await router.rebind(previous, toRoomID: "session-b")
 
@@ -145,10 +134,7 @@ struct TerminalTelegramMultiSessionTests {
             try await router.validate(previous)
         }
         await #expect(throws: TerminalTelegramRouteDenial.staleGeneration) {
-            try await fence.validate(chatID: 42)
-        }
-        await #expect(throws: TerminalTelegramRouteDenial.staleGeneration) {
-            try await state.dequeue(lease: previous)
+            try await fence.validate(chatID: 42, topicID: fence.lease.effectiveMessageThreadID)
         }
         await #expect(throws: TerminalTelegramRouteDenial.staleGeneration) {
             try await router.close(previous)
@@ -384,7 +370,7 @@ struct TerminalTelegramMultiSessionTests {
     }
 
     private static func waitForOffset(_ updateID: Int, botID: Int64) async throws {
-        try await waitUntil { TerminalTelegramUpdateOffsetStore.load(botID: botID) == updateID }
+        try await waitUntil { (try? TerminalTelegramUpdateOffsetStore.loadRequired(botID: botID)) == updateID }
     }
 
     private static func waitUntil(

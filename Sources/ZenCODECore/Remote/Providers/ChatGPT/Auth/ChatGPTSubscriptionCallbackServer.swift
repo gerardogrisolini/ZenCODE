@@ -114,11 +114,6 @@ final class ChatGPTSubscriptionCallbackServer: Sendable {
         return listener
     }
 
-    func submitAuthorizationInput(_ input: String) throws {
-        let code = try authorizationCode(fromAuthorizationInput: input)
-        complete(.success(code))
-    }
-
     func authorizationCode(fromAuthorizationInput input: String) throws -> String {
         let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else {

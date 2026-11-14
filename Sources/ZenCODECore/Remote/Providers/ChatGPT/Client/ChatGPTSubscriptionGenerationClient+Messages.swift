@@ -53,40 +53,4 @@ extension ChatGPTSubscriptionGenerationClient {
             messages.append(message)
         }
     }
-
-#if DEBUG
-    public static func testIngestStreamObjects(
-        _ objects: [[String: Any]]
-    ) async throws -> (
-        text: String,
-        contentText: String,
-        thoughtText: String,
-        reasoningText: String,
-        stopReason: String
-    ) {
-        let accumulator = StreamAccumulator()
-        var contentText = ""
-        var thoughtText = ""
-        for object in objects {
-            for event in try await accumulator.ingest(StreamAccumulatorObject(object)) {
-                switch event {
-                case let .content(delta):
-                    contentText.append(delta)
-                case let .thought(delta):
-                    thoughtText.append(delta)
-                default:
-                    break
-                }
-            }
-        }
-        let result = try await accumulator.result()
-        return (
-            result.text,
-            contentText,
-            thoughtText,
-            result.reasoningText,
-            result.stopReason
-        )
-    }
-#endif
 }

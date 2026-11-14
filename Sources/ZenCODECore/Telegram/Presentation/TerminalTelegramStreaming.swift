@@ -247,7 +247,4 @@ actor TerminalTelegramEditableMessageLedger {
     func retire() {
         isRetired = true
     }
-
-    /// The adopted Telegram message id, for tests.
-    func currentMessageID() -> Int? { messageID }
 }

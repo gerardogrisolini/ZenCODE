@@ -9,11 +9,11 @@ import Testing
         try await workspace.withIsolatedSupport {
             let store = try await MemoryGraphStore.open(graphURL: MemoryGraphLocation.graphURL(for: workspace.workspaceURL))
             let snapshot = try #require(try await store.learningSnapshot(query: "Widget"))
-            _ = try await store.write(content: "Summary: Widget is one-based.", category: .fact, tags: [])
+            _ = try await store.writeDetailed(content: "Summary: Widget is one-based.", category: .fact, tags: [])
             let committed = try await store.commitLearning(content: "Summary: Widget uses one-based indexes.", existingID: nil,
                 snapshot: snapshot, permit: MemoryLearningPermit(), event: UUID())
             #expect(!committed)
-            #expect(try await store.entries(includeArchived: true, limit: 10).count == 1)
+            #expect(try await store.entries(includeArchived: true, offset: 0, limit: 10, filter: .none).count == 1)
         }
     }
 
@@ -50,7 +50,7 @@ extension ConservativeMemoryLearningStoreTests {
             let current = old.renewed()
             #expect(!(try await store.commitLearning(content: "Summary: Stale proposal.", existingID: nil,
                 snapshot: pending, permit: old, event: UUID())))
-            #expect(try await store.entries(includeArchived: true, limit: 10).isEmpty)
+            #expect(try await store.entries(includeArchived: true, offset: 0, limit: 10, filter: .none).isEmpty)
             for index in 0..<3 {
                 let snapshot = try #require(try await store.learningSnapshot())
                 #expect(try await store.commitLearning(content: "Summary: Verified component \(index).", existingID: nil,
@@ -60,7 +60,7 @@ extension ConservativeMemoryLearningStoreTests {
             let snapshot = try #require(try await store.learningSnapshot())
             #expect(!(try await store.commitLearning(content: "Summary: Fourth mutation.", existingID: nil,
                 snapshot: snapshot, permit: rebuilt, event: UUID())))
-            #expect(try await store.entries(includeArchived: true, limit: 10).count == 3)
+            #expect(try await store.entries(includeArchived: true, offset: 0, limit: 10, filter: .none).count == 3)
         }
     }
 }

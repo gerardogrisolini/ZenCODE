@@ -132,12 +132,6 @@ final class ChatTaskGraphObserver {
 // MARK: - Task-graph observer
 
 extension ChatSessionController {
-    /// The task that consumes the graph events of the running observer; `nil`
-    /// while it is stopped.
-    var taskGraphObserverTask: Task<Void, Never>? {
-        taskGraphObserver.observerTask
-    }
-
     /// Binds the task-graph observer to the current session: it stops the
     /// running one and subscribes to the session's graph events before
     /// returning, so a change that lands after this call is published.

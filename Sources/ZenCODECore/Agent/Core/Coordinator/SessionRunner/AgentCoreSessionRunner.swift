@@ -10,10 +10,6 @@ import Synchronization
 import ToolCore
 
 public actor AgentCoreSessionRunner {
-    public static var isAvailable: Bool {
-        true
-    }
-
     /// Thrown internally when a backend creation is fenced out by a concurrent
     /// reset or shutdown, so `ensureBackend` retries instead of installing a
     /// backend that no longer belongs to the current runtime generation.
@@ -60,7 +56,6 @@ public actor AgentCoreSessionRunner {
     /// the skill selection updates only this snapshot and never the system
     /// prompt, allowlist, cache key, or remote session identity.
     var promptSkillProvidersBySessionID: [String: PromptSkillSessionProvider] = [:]
-    var promptTaskRegistry = AgentCorePromptTaskRegistry()
     /// Serializes complete prompt turns per session without coupling unrelated
     /// sessions. It is deliberately outside backend state so a turn remains
     /// ordered across backend creation, recovery, and finalisation.
@@ -282,41 +277,6 @@ public actor AgentCoreSessionRunner {
         let modelID = try await backend.preloadModel(onEvent: onEvent)
         try verifyBackendGeneration(generation)
         return modelID
-    }
-
-    public func preloadModel(
-        configuration: AgentCoreSessionConfiguration
-    ) -> AsyncThrowingStream<DirectAgentEvent, Error> {
-        let (stream, continuation) = AsyncThrowingStream<DirectAgentEvent, Error>.makeStream()
-        let task = Task(name: "Agent model preload", priority: .userInitiated) {
-            #if os(macOS)
-            let activity = ProcessInfo.processInfo.beginActivity(
-                options: [.userInitiated],
-                reason: "Agent model load"
-            )
-            defer {
-                ProcessInfo.processInfo.endActivity(activity)
-            }
-            #endif
-            do {
-                _ = try await preloadModel(configuration: configuration) { event in
-                    continuation.yield(event)
-                }
-                continuation.finish()
-            } catch is CancellationError {
-                continuation.finish(throwing: CancellationError())
-            } catch {
-                ZenLogger.error(
-                    .viewModelRuntime,
-                    "agent core session runner preload failed: \(error.localizedDescription)"
-                )
-                continuation.finish(throwing: error)
-            }
-        }
-        continuation.onTermination = { _ in
-            task.cancel()
-        }
-        return stream
     }
 
 }

@@ -71,14 +71,6 @@ extension DS4EngineABI {
         static let levelMax: Int32 = 100
     }
 
-    /// `ZENCODE_DS4_TOOL_SYNTAX_*` of the loaded model.
-    enum ToolSyntax {
-        static let dsml: Int32 = 0
-        static let dsml41: Int32 = 1
-        static let glm: Int32 = 2
-        static let qwen: Int32 = 3
-    }
-
     /// `ZENCODE_DS4_STAT_*` ids read with `zencode_ds4_stat`.
     enum StatID {
         static let promptTokens: Int32 = 0

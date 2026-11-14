@@ -22,7 +22,6 @@ public actor DirectMCPToolRuntime {
     public init() {}
 
     enum ServerFamily: Hashable {
-        case figma
         /// External servers are replaced within their visibility domain. This
         /// keeps globally installed servers (`ownership == nil`) deduplicated
         /// by name while allowing ACP session incarnations to register
@@ -81,8 +80,8 @@ public actor DirectMCPToolRuntime {
     /// transport while the actor is reentrant; this generation prevents it
     /// from installing after a newer owned or borrowed request replaced it.
     private var installationGenerations: [ServerFamily: UInt64] = [:]
-    /// Bumped by every `shutdown()`. Any install or discovery that was already
-    /// suspended compares against the generation it captured before the await
+    /// Bumped by every `shutdown()`. Any install that was already suspended
+    /// compares against the generation it captured before the await
     /// and disconnects its executor instead of appending a server to a runtime
     /// that was torn down.
     private var shutdownGeneration: UInt64 = 0
@@ -326,30 +325,10 @@ public actor DirectMCPToolRuntime {
         preferredWorkspaceRootURL: URL? = nil,
         sessionID: String? = nil
     ) async -> [DirectToolDescriptor] {
-        _ = sessionID
-        await discoverIfNeeded(
-            allowedToolNames: allowedToolNames,
-            preferredWorkspaceRootURL: preferredWorkspaceRootURL
-        )
-        return knownDescriptors(
+        knownDescriptors(
             allowedToolNames: allowedToolNames,
             preferredWorkspaceRootURL: preferredWorkspaceRootURL,
             sessionID: sessionID
-        )
-    }
-
-    public func discoverDescriptors(
-        allowedToolNames: Set<String>? = nil,
-        preferredWorkspaceRootURL: URL? = nil
-    ) async -> [DirectToolDescriptor] {
-        await discoverIfNeeded(
-            allowedToolNames: allowedToolNames,
-            preferredWorkspaceRootURL: preferredWorkspaceRootURL,
-            force: true
-        )
-        return knownDescriptors(
-            allowedToolNames: allowedToolNames,
-            preferredWorkspaceRootURL: preferredWorkspaceRootURL
         )
     }
 
@@ -377,15 +356,7 @@ public actor DirectMCPToolRuntime {
         preferredWorkspaceRootURL: URL? = nil,
         sessionID: String? = nil
     ) async -> Bool {
-        if serverAndToolName(for: toolName, sessionID: sessionID) != nil {
-            return true
-        }
-        let discoveryToolNames = allowedToolNames ?? [toolName]
-        await discoverIfNeeded(
-            allowedToolNames: discoveryToolNames,
-            preferredWorkspaceRootURL: preferredWorkspaceRootURL
-        )
-        return serverAndToolName(for: toolName, sessionID: sessionID) != nil
+        serverAndToolName(for: toolName, sessionID: sessionID) != nil
     }
 
     public func execute(
@@ -404,39 +375,5 @@ public actor DirectMCPToolRuntime {
         )
         let output = try await server.backend.execute(request)
         return output.text
-    }
-
-    /// Discovery is driven by explicit feature installation; the runtime
-    /// no longer discovers servers implicitly.
-    func discoverIfNeeded(
-        allowedToolNames: Set<String>? = nil,
-        preferredWorkspaceRootURL: URL? = nil,
-        force: Bool = false
-    ) async {
-    }
-
-    public static func discoveryFamilies(
-        allowedToolNames: Set<String>?
-    ) -> Set<String> {
-        let families = discoveryServerFamilies(allowedToolNames: allowedToolNames)
-        return Set(families.map {
-            switch $0 {
-            case .figma:
-                return "figma"
-            case let .external(name, _):
-                return name
-            }
-        })
-    }
-
-    static func discoveryServerFamilies(
-        allowedToolNames: Set<String>?
-    ) -> Set<ServerFamily> {
-        guard let allowedToolNames else {
-            return [.figma]
-        }
-        return allowedToolNames.contains { $0.hasPrefix("figma.") }
-            ? [.figma]
-            : []
     }
 }

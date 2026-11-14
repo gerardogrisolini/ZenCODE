@@ -8,26 +8,6 @@
 import Foundation
 
 extension MemoryEngine {
-    /// Read-only analyze → retrieve → select, as ``recallDetailed(_:)`` but with no
-    /// retrieval maintenance and no persistence. Use it for lookups such as
-    /// `memory.search`, where mutating counters/confidence/links or failing on a
-    /// save would be a surprising side effect.
-    public func searchReadOnlyDetailed(
-        _ prompt: String,
-        scope: EngineMemoryScope = .all
-    ) async throws -> MemoryRecallResult {
-        let (plan, candidates, selected) = try await retrieveAndSelect(prompt, scope: scope)
-        return MemoryRecallResult(plan: plan, candidates: candidates, selected: selected)
-    }
-
-    /// Read-only retrieval returning only the selected candidates.
-    public func searchReadOnly(
-        _ query: String,
-        scope: EngineMemoryScope = .all
-    ) async throws -> [MemoryCandidate] {
-        try await searchReadOnlyDetailed(query, scope: scope).selected
-    }
-
     /// Maintenance-free lexical fallback for bounded automatic recall. It runs
     /// beside the full (semantic) retrieval so a slow embedding endpoint cannot
     /// erase lexical results at the turn deadline, and performs no maintenance so
@@ -46,9 +26,12 @@ extension MemoryEngine {
         return contextFormatter.format(result.selected)
     }
 
-    /// Read-only retrieval over an explicitly supplied graph: store-level reads
-    /// resolve one coherent graph per request (see ``freshSnapshotForReadOnly()``)
-    /// and run the pipeline over it, with no maintenance or persistence.
+    /// Read-only analyze → retrieve → select, as ``recallDetailed(_:scope:)`` but
+    /// with no retrieval maintenance and no persistence, for lookups such as
+    /// `memory.search`, where mutating counters/confidence/links or failing on a
+    /// save would be a surprising side effect. It runs over an explicitly
+    /// supplied graph: store-level reads resolve one coherent graph per request
+    /// (see ``freshSnapshotForReadOnly()``) and run the pipeline over it.
     ///
     /// `limit` is the number of ranked results an explicit lookup asked for:
     /// every retrieval stage is widened to at least that many hits and the
@@ -69,9 +52,10 @@ extension MemoryEngine {
         return MemoryRecallResult(plan: plan, candidates: candidates, selected: selected)
     }
 
-    /// The shared analyze → retrieve → select core of ``recallDetailed(_:)`` and
-    /// ``searchReadOnlyDetailed(_:scope:)``. It performs no mutation or
-    /// persistence; callers differ only in whether maintenance runs afterwards.
+    /// The shared analyze → retrieve → select core of ``recallDetailed(_:scope:)``
+    /// and ``searchReadOnlyDetailed(_:scope:graph:limit:)``. It performs no
+    /// mutation or persistence; callers differ only in whether maintenance runs
+    /// afterwards.
     func retrieveAndSelect(
         _ prompt: String,
         scope: EngineMemoryScope,

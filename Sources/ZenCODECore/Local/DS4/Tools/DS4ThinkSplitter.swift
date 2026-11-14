@@ -11,18 +11,13 @@
 //    `<|channel>thought`/`<channel|>` pair of the original is opt-in);
 //  - after a closing tag it drops leading ASCII whitespace (space, tab, CR,
 //    LF), like ds4-agent's post-think gap, instead of newlines only;
-//  - a byte-level event API reports consumed tags so DS4GeneratedOutputParser
+//  - its byte-level events report consumed tags so DS4GeneratedOutputParser
 //    can stop feeding it once a tool-call block owns the stream.
 //
 
 import Foundation
 
 struct DS4ThinkSplitter: Sendable {
-    enum Part: Equatable, Sendable {
-        case content(String)
-        case thought(String)
-    }
-
     /// Byte-level output: text routed to a channel, or a consumed tag.
     enum Event: Equatable, Sendable {
         case text(thought: Bool, bytes: [UInt8])
@@ -44,10 +39,6 @@ struct DS4ThinkSplitter: Sendable {
     /// after `</think>`. The flag persists across whitespace-only chunks.
     private var suppressLeadingWhitespace = false
 
-    /// Accumulators of the String API (`consume(_:)`/`finish()`).
-    private(set) var visibleText = ""
-    private(set) var reasoningText = ""
-
     init(
         startsInThinking: Bool,
         openTags: [String] = Self.defaultOpenTags,
@@ -57,47 +48,6 @@ struct DS4ThinkSplitter: Sendable {
         self.openTags = openTags.map { Array($0.utf8) }.filter { !$0.isEmpty }
         self.closeTags = closeTags.map { Array($0.utf8) }.filter { !$0.isEmpty }
         self.allTags = self.closeTags + self.openTags
-    }
-
-    /// Bytes held back because they may start a tag.
-    var hasPendingText: Bool {
-        !pending.isEmpty
-    }
-
-    // MARK: - String API
-
-    mutating func consume(_ chunk: String) -> [Part] {
-        parts(from: consumeBytes(chunk.utf8))
-    }
-
-    mutating func finish() -> [Part] {
-        parts(from: finishBytes())
-    }
-
-    private mutating func parts(from events: [Event]) -> [Part] {
-        var parts: [Part] = []
-        for event in events {
-            guard case let .text(thought, bytes) = event else {
-                continue
-            }
-            let text = DS4Bytes.string(bytes)
-            if thought {
-                reasoningText += text
-                if case let .thought(previous) = parts.last {
-                    parts[parts.count - 1] = .thought(previous + text)
-                } else {
-                    parts.append(.thought(text))
-                }
-            } else {
-                visibleText += text
-                if case let .content(previous) = parts.last {
-                    parts[parts.count - 1] = .content(previous + text)
-                } else {
-                    parts.append(.content(text))
-                }
-            }
-        }
-        return parts
     }
 
     // MARK: - Byte API

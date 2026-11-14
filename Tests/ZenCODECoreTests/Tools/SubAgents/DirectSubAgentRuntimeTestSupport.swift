@@ -12,6 +12,32 @@ func builtInDirectSubAgentProfileResolver(
     )
 }
 
+extension DirectSubAgentRuntime {
+    /// Runtime with an injected profile resolver and, optionally, injected
+    /// model and profile catalogs. As for any caller-supplied resolver, the
+    /// live manifest reads are not coordinated.
+    init(
+        contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
+        profileResolver: @escaping DirectSubAgentProfileResolver,
+        modelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider
+            = DirectSubAgentRuntime.liveModelCatalogProvider,
+        profileCatalogProvider: @escaping DirectSubAgentProfileCatalogProvider
+            = DirectSubAgentRuntime.liveProfileCatalogProvider,
+        parentProfileID: String? = nil,
+        parentProfileName: String? = nil
+    ) {
+        self.init(
+            contextualBackendFactory: contextualBackendFactory,
+            profileResolver: profileResolver,
+            modelCatalogProvider: modelCatalogProvider,
+            profileCatalogProvider: profileCatalogProvider,
+            coordinatesLiveManifestReads: false,
+            parentProfileID: parentProfileID,
+            parentProfileName: parentProfileName
+        )
+    }
+}
+
 func makeDirectSubAgentRuntime(backend: any AgentRuntimeBackend) -> DirectSubAgentRuntime {
     DirectSubAgentRuntime(
         contextualBackendFactory: { _ in backend },

@@ -586,16 +586,6 @@ extension DirectSubAgentRuntime {
         return await isStandbyEligible(agent) ? .standby : .denied
     }
 
-    /// Records a completed turn for callers outside the work loop, which always
-    /// report a normal tracked attempt turn. The authorization-aware overload
-    /// stays internal so ``TurnAuthorization`` is not part of the public surface.
-    public func recordCompletion(
-        _ response: DirectAgentResponse,
-        agentID: String
-    ) async {
-        await recordCompletion(response, agentID: agentID, authorization: .attempt)
-    }
-
     func recordCompletion(
         _ response: DirectAgentResponse,
         agentID: String,

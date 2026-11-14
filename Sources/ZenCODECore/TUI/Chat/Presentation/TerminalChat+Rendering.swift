@@ -31,16 +31,6 @@ extension TerminalChat {
         )
     }
 
-    nonisolated static func resolvedActiveToolNames(
-        fallbackAllowedToolNames: Set<String>,
-        activeDescriptors: [DirectToolDescriptor]
-    ) -> [String] {
-        ChatSessionController.resolvedActiveToolNames(
-            fallbackAllowedToolNames: fallbackAllowedToolNames,
-            activeDescriptors: activeDescriptors
-        )
-    }
-
     public func printStartupSummary() async {
         let allowedToolNames = await selectedAllowedToolNames(
             discoverExternalTools: false
@@ -96,29 +86,6 @@ extension TerminalChat {
         }
         lines.append("Working directory: \(workingDirectory.path)")
         return lines
-    }
-
-    public func toolCompletionSummary(
-        toolCall: DirectAgentToolCall,
-        result: DirectAgentToolResult
-    ) -> String {
-        guard toolCall.name == "local.exec",
-              let command = (toolCall.argumentsObject["command"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-              !command.isEmpty else {
-            return result.summary
-        }
-
-        let summary = result.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        let displayCommand = Self.truncatedInline(command, limit: 120)
-        guard summary != "exit_code: 0" else {
-            return displayCommand
-        }
-        return "\(displayCommand) (\(summary))"
-    }
-
-    public nonisolated static func renderActiveTools(_ toolNames: [String]) -> String {
-        renderActiveTools(toolNames, items: [], selectedKeys: [])
     }
 
     public nonisolated static func renderActiveTools(
@@ -218,12 +185,6 @@ extension TerminalChat {
 
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedValue.isEmpty ? nil : trimmedValue
-    }
-
-    /// Width of the terminal on the standard error (see
-    /// ``TerminalTextMetrics/terminalColumnCount(forceRefresh:)``).
-    public nonisolated static func terminalColumnCount(forceRefresh: Bool = false) -> Int {
-        TerminalTextMetrics.terminalColumnCount(forceRefresh: forceRefresh)
     }
 
     /// Word-wraps `text` to at most `width` grapheme clusters per line, breaking

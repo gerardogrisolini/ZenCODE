@@ -518,18 +518,9 @@ public actor DirectSubAgentRuntime {
     /// Periodic reaper that enforces standby timeout and turn budget.
     var standbyReaperTask: Task<Void, Never>?
 
-    /// Live default with a known read-only resolver; safe to snapshot both
-    /// manifests under one lock. The legacy resolver-taking overload below stays
-    /// uncoordinated so an arbitrary callback may acquire manifest locks itself.
-    public init(backendFactory: @escaping DirectSubAgentBackendFactory) {
-        self.init(
-            contextualBackendFactory: { _ in backendFactory() },
-            profileResolver: DirectSubAgentRuntime.liveProfileResolver,
-            modelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
-            coordinatesLiveManifestReads: true
-        )
-    }
-
+    /// Public construction with a caller-supplied profile resolver and the
+    /// live model catalog. Manifest reads stay uncoordinated, so an arbitrary
+    /// resolver callback may acquire manifest locks itself.
     public init(
         backendFactory: @escaping DirectSubAgentBackendFactory,
         profileResolver: @escaping DirectSubAgentProfileResolver
@@ -539,67 +530,6 @@ public actor DirectSubAgentRuntime {
             profileResolver: profileResolver,
             modelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
             coordinatesLiveManifestReads: false
-        )
-    }
-
-    public init(
-        backendFactory: @escaping DirectSubAgentBackendFactory,
-        profileResolver: @escaping DirectSubAgentProfileResolver,
-        modelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider,
-        profileCatalogProvider: @escaping DirectSubAgentProfileCatalogProvider
-            = DirectSubAgentRuntime.liveProfileCatalogProvider
-    ) {
-        self.init(
-            contextualBackendFactory: { _ in backendFactory() },
-            profileResolver: profileResolver,
-            modelCatalogProvider: modelCatalogProvider,
-            profileCatalogProvider: profileCatalogProvider,
-            coordinatesLiveManifestReads: false
-        )
-    }
-
-    public init(contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory) {
-        self.init(
-            contextualBackendFactory: contextualBackendFactory,
-            profileResolver: DirectSubAgentRuntime.liveProfileResolver,
-            modelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
-            coordinatesLiveManifestReads: true
-        )
-    }
-
-    public init(
-        contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
-        profileResolver: @escaping DirectSubAgentProfileResolver,
-        parentProfileID: String? = nil,
-        parentProfileName: String? = nil
-    ) {
-        self.init(
-            contextualBackendFactory: contextualBackendFactory,
-            profileResolver: profileResolver,
-            modelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
-            coordinatesLiveManifestReads: false,
-            parentProfileID: parentProfileID,
-            parentProfileName: parentProfileName
-        )
-    }
-
-    public init(
-        contextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
-        profileResolver: @escaping DirectSubAgentProfileResolver,
-        modelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider,
-        profileCatalogProvider: @escaping DirectSubAgentProfileCatalogProvider
-            = DirectSubAgentRuntime.liveProfileCatalogProvider,
-        parentProfileID: String? = nil,
-        parentProfileName: String? = nil
-    ) {
-        self.init(
-            contextualBackendFactory: contextualBackendFactory,
-            profileResolver: profileResolver,
-            modelCatalogProvider: modelCatalogProvider,
-            profileCatalogProvider: profileCatalogProvider,
-            coordinatesLiveManifestReads: false,
-            parentProfileID: parentProfileID,
-            parentProfileName: parentProfileName
         )
     }
 

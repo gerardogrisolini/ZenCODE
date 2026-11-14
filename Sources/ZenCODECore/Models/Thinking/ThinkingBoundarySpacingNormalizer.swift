@@ -60,14 +60,6 @@ public nonisolated struct ThinkingBoundarySpacingNormalizer: Sendable {
         return output
     }
 
-    public static func normalized(
-        _ text: String,
-        startsInThinking: Bool = false
-    ) -> String {
-        var normalizer = Self(startsInThinking: startsInThinking)
-        return normalizer.append(text) + normalizer.finish()
-    }
-
     private mutating func processCompleteText(_ text: String) -> String {
         let text = textWithoutSuppressedLeadingOpeningNewline(text)
         guard !text.isEmpty else {

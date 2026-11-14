@@ -46,7 +46,6 @@ enum TerminalStyle {
         static let summaryHeader = Accent.primary
         static let count = Accent.count
         static let metadata = TerminalStyle.sequence(38, 5, 244)
-        static let hunk = TerminalStyle.sequence(38, 5, 141)
         static let addition = TerminalStyle.sequence(38, 5, 114)
         static let deletion = TerminalStyle.sequence(38, 5, 203)
         static let path = Text.primary

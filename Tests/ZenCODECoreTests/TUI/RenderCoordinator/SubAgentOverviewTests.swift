@@ -234,8 +234,16 @@ extension TerminalChatRenderCoordinatorTests {
             repeating: "Weighing every dependency of the failing target. ",
             count: 6
         )
-        let shortText = TerminalChat.renderSubAgentOverview([snapshot(shortParagraph)])
-        let tallText = TerminalChat.renderSubAgentOverview([snapshot(tallParagraph)])
+        let shortText = TerminalSubAgentOverviewLayout.render(
+            [snapshot(shortParagraph)],
+            modelTitleResolver: { $0 },
+            toolPresentationsByAgentID: [:]
+        )
+        let tallText = TerminalSubAgentOverviewLayout.render(
+            [snapshot(tallParagraph)],
+            modelTitleResolver: { $0 },
+            toolPresentationsByAgentID: [:]
+        )
 
         // The coordinator-style header is stable and the only replaceable
         // content is the paragraph below it: no reasoning transcript accrues.

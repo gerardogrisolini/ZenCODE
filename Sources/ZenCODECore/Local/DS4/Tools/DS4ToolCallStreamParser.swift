@@ -87,28 +87,12 @@ struct DS4ToolCallStreamParser: Sendable {
         self.dsmlParameterClosePrefix = Array(syntax.dsmlCloseTag(.parameter).utf8.dropLast())
     }
 
-    /// Name of the call being parsed, once known.
-    var currentToolName: String? {
-        currentName
-    }
-
-    /// Name of the parameter whose value is streaming.
-    var currentParameterName: String? {
-        state == .parameterValue ? parameterName : nil
-    }
-
     /// `agent_dsml_start`: seeds the canonical opening marker.
     mutating func start() {
         state = .structural
         searchTail.removeAll()
         raw.append(contentsOf: startMarker)
         parsePosition = raw.count
-    }
-
-    mutating func feed(_ bytes: some Sequence<UInt8>) {
-        for byte in bytes {
-            feed(byte: byte)
-        }
     }
 
     /// `agent_dsml_feed` for one byte.

@@ -13,15 +13,6 @@ extension ChatGPTSubscriptionAuthService {
     private static let deviceAuthorizationURL = URL(string: "https://auth.openai.com/codex/device")!
     private static let deviceRedirectURI = "https://auth.openai.com/deviceauth/callback"
 
-    public static func signInWithDeviceCode(
-        notifyUser: @Sendable (URL, String) async -> Void
-    ) async throws -> CodexAgentCredentials {
-        try await signInWithDeviceCode(
-            persist: true,
-            notifyUser: notifyUser
-        )
-    }
-
     static func signInWithDeviceCode(
         persist: Bool,
         notifyUser: @Sendable (URL, String) async -> Void
@@ -58,7 +49,7 @@ extension ChatGPTSubscriptionAuthService {
         return try decodedDeviceCode(from: response.body)
     }
 
-    private static func decodedDeviceCode(
+    static func decodedDeviceCode(
         from data: Data
     ) throws -> ChatGPTSubscriptionDeviceCode {
         let responseBody: DeviceCodeResponse
@@ -146,14 +137,6 @@ extension ChatGPTSubscriptionAuthService {
         }
         throw ChatGPTSubscriptionAuthError.deviceCodeTimedOut
     }
-
-#if DEBUG
-    static func testDecodeDeviceCodeResponse(
-        _ data: Data
-    ) throws -> ChatGPTSubscriptionDeviceCode {
-        try decodedDeviceCode(from: data)
-    }
-#endif
 }
 
 public struct ChatGPTSubscriptionDeviceCode: Equatable, Sendable {
