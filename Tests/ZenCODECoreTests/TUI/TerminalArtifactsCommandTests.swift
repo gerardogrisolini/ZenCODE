@@ -53,8 +53,8 @@ struct TerminalArtifactsCommandTests {
         ])
     }
 
-    private func output(_ renderer: TerminalChatRenderCoordinator, droppingFirst count: Int = 0) async -> String {
-        TerminalANSIText.stripANSI(await renderer.capturedWriteEvents().dropFirst(count).map(\.text).joined())
+    private func output(_ renderer: TerminalChatRenderCoordinator) async -> String {
+        TerminalANSIText.stripANSI(await renderer.capturedWriteEvents().map(\.text).joined())
     }
 
     /// Opens the `/artifacts` panel by hand, as `/artifacts` does, on a
@@ -119,10 +119,10 @@ struct TerminalArtifactsCommandTests {
             == ChatCommandOutcome(notices: [.noFileArtifacts]))
         #expect(await terminal.chatSession.runArtifactsCommand(line: "/artifacts now")
             == ChatCommandOutcome(notices: [.artifactsTakeNoArguments]))
-        await terminal.fileArtifactHistory.append(
+        await terminal.chatSession.fileArtifactHistory.append(
             summary: summary("Added.swift"), sessionID: terminal.sessionID, workingDirectory: directory
         )
-        let turns = await terminal.fileArtifactHistory.snapshot()
+        let turns = await terminal.chatSession.fileArtifactHistory.snapshot()
         #expect(await terminal.chatSession.runArtifactsCommand(line: "/artifacts")
             == ChatCommandOutcome(notices: [.fileArtifacts(turns)]))
     }
@@ -136,7 +136,7 @@ struct TerminalArtifactsCommandTests {
         let renderer = makeRenderer()
         let terminal = try makeTerminal(directory, renderer: renderer)
         // Even with artifacts to show.
-        await terminal.fileArtifactHistory.append(
+        await terminal.chatSession.fileArtifactHistory.append(
             summary: summary("Added.swift"), sessionID: terminal.sessionID, workingDirectory: directory
         )
         #expect(continuesTheChat(await terminal.submittedLineAction(line)))
@@ -166,11 +166,11 @@ struct TerminalArtifactsCommandTests {
         let renderer = makeRenderer()
         let terminal = try makeTerminal(directory, renderer: renderer)
         for path in ["Earlier.swift", "Latest.swift"] {
-            await terminal.fileArtifactHistory.append(
+            await terminal.chatSession.fileArtifactHistory.append(
                 summary: summary(path), sessionID: terminal.sessionID, workingDirectory: directory
             )
         }
-        let turns = await terminal.fileArtifactHistory.snapshot()
+        let turns = await terminal.chatSession.fileArtifactHistory.snapshot()
         #expect(terminal.detailPanelScreen() == nil)
         #expect(continuesTheChat(await terminal.submittedLineAction("/artifacts")))
         let text = await output(renderer)
@@ -179,9 +179,9 @@ struct TerminalArtifactsCommandTests {
         #expect(text.contains("### Turn 2 — 1 file"))
         #expect(text.contains("**added `Earlier.swift`**  +1 -0"))
         #expect(text.contains("**added `Latest.swift`**  +1 -0"))
-        #expect(text.contains(TerminalChat.renderFileArtifacts(turns).trimmingCharacters(in: .newlines)))
+        #expect(text.contains(TerminalChat.renderFileArtifacts(turns, includeHistoryHeadings: true).trimmingCharacters(in: .newlines)))
         #expect(!terminal.isDetailPanelOpen)
-        #expect(await terminal.fileArtifactHistory.snapshot() == turns)
+        #expect(await terminal.chatSession.fileArtifactHistory.snapshot() == turns)
     }
 
     // MARK: - Presenter

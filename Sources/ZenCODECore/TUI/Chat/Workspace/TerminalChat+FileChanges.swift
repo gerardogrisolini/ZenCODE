@@ -18,41 +18,9 @@ extension TerminalChat {
         case changedLines(contextLines: Int = 3)
     }
 
-    /// Compatibility name of the controller's live artifact turn.
-    typealias FileArtifactTurnContext = ChatFileArtifactTurn
-
-    func beginFileArtifactTurn(coordinator: TurnFileChangeCoordinator? = nil) async -> FileArtifactTurnContext? {
-        await chatSession.beginFileArtifactTurn(coordinator: coordinator)
-    }
-
     /// Replacing the actor also fences restores that reuse the same session ID.
     func resetFileArtifactState() {
         chatSession.resetFileArtifactState()
-    }
-
-    public func publishFileChangeSummaryIfNeeded(
-        from coordinator: TurnFileChangeCoordinator
-    ) async -> TurnFileChangeSummary? {
-        guard let summary = await collectFileChangeSummaryIfNeeded(from: coordinator) else {
-            return nil
-        }
-
-        await writeFileChangeSummary(summary, includeDiff: false)
-        return summary
-    }
-
-    public func collectFileChangeSummaryIfNeeded(
-        from coordinator: TurnFileChangeCoordinator,
-        sessionID expectedSessionID: String? = nil,
-        history expectedHistory: SessionFileArtifactHistory? = nil,
-        turnID: UUID? = nil
-    ) async -> TurnFileChangeSummary? {
-        await chatSession.collectFileChangeSummaryIfNeeded(
-            from: coordinator,
-            sessionID: expectedSessionID,
-            history: expectedHistory,
-            turnID: turnID
-        )
     }
 
     /// Writes `turns` in the transcript, for `/changes diff` and for the
@@ -65,22 +33,9 @@ extension TerminalChat {
     ) async {
         let markdown = Self.renderFileArtifacts(
             turns,
-            includeHistoryHeadings: includeHistoryHeadings,
-            columnWidth: TerminalTextMetrics.terminalColumnCount(),
-            isEnabled: AgentOutput.standardErrorIsTerminal
+            includeHistoryHeadings: includeHistoryHeadings
         )
         await renderCoordinator.writeMarkdownMessage(markdown, to: .standardError)
-    }
-
-    public nonisolated static func renderFileArtifacts(
-        _ turns: [SessionFileArtifactHistory.Turn],
-        columnWidth: Int = 100,
-        isEnabled: Bool = false
-    ) -> String {
-        renderFileArtifacts(
-            turns, includeHistoryHeadings: true,
-            columnWidth: columnWidth, isEnabled: isEnabled
-        )
     }
 
     /// Output without history headings (`/changes diff`) defaults to changed
@@ -89,18 +44,12 @@ extension TerminalChat {
     nonisolated static func renderFileArtifacts(
         _ turns: [SessionFileArtifactHistory.Turn],
         includeHistoryHeadings: Bool,
-        diffPresentation: FileArtifactDiffPresentation? = nil,
-        columnWidth: Int = 100,
-        isEnabled: Bool = false
+        diffPresentation: FileArtifactDiffPresentation? = nil
     ) -> String {
         let presentation = diffPresentation ?? (includeHistoryHeadings ? .fullFile : .changedLines())
         // The source is intentionally emitted as Markdown and rendered by the
-        // same formatter as assistant output. Keep these parameters for source
-        // compatibility with callers that used the preformatted renderer; the
-        // Markdown formatter owns terminal width and ANSI capability now.
-        _ = columnWidth
-        _ = isEnabled
-
+        // same formatter as assistant output, which owns terminal width and
+        // ANSI capability.
         // Output without headings starts at file metadata; only /artifacts groups turns.
         var lines = includeHistoryHeadings ? ["", "🪬 Artifacts"] : []
         for turn in turns {
@@ -123,7 +72,7 @@ extension TerminalChat {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    /// The Markdown of the diff of one artifact, as ``renderFileArtifacts(_:includeHistoryHeadings:diffPresentation:columnWidth:isEnabled:)``
+    /// The Markdown of the diff of one artifact, as ``renderFileArtifacts(_:includeHistoryHeadings:diffPresentation:)``
     /// writes it below the artifact's metadata: an `artifact-diff` block
     /// (`artifact-diff-<language>` when the path has a language) of the diff
     /// numbered with the source lines. `nil` for a binary file and for an

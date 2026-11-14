@@ -264,9 +264,9 @@ struct PlanCommandTests {
         #expect(loaded.isApproved == false)
         #expect(loaded.points.map(\.status) == [.pending, .pending])
         #expect(loaded.points[1].dependsOn == ["plan-handoff-1"])
-        #expect(source.activeSessionHistory.last?.role == .user)
-        #expect(source.activeSessionHistory.last?.content.contains("[Saved plan handoff]") == true)
-        #expect(source.activeSessionHistory.last?.content.contains("1. Inspect") == true)
+        #expect(source.chatSession.history.last?.role == .user)
+        #expect(source.chatSession.history.last?.content.contains("[Saved plan handoff]") == true)
+        #expect(source.chatSession.history.last?.content.contains("1. Inspect") == true)
     }
 
     @Test
@@ -776,7 +776,7 @@ struct PlanCommandTests {
             agentID: "missing-old-planner",
             revision: 1
         )
-        terminal.planBrainstorming = discussion
+        terminal.chatSession.planBrainstorming = discussion
 
         let oldCollectionID = discussion.collectionID
         guard case .runHiddenPrompt = await terminal.handlePlanCommand("/plan new goal") else {
@@ -784,19 +784,19 @@ struct PlanCommandTests {
             return
         }
         #expect(terminal.activePlan?.id == "plan-existing")
-        #expect(terminal.planBrainstorming?.goal == "new goal")
-        #expect(terminal.planBrainstorming?.collectionID != oldCollectionID)
+        #expect(terminal.chatSession.planBrainstorming?.goal == "new goal")
+        #expect(terminal.chatSession.planBrainstorming?.collectionID != oldCollectionID)
 
         // A late failure/cancellation from the abandoned turn is fenced by its
         // collection id and cannot clear the replacement discussion.
         await terminal.abandonPlanBrainstorming(
             expectedCollectionID: oldCollectionID
         )
-        #expect(terminal.planBrainstorming?.goal == "new goal")
+        #expect(terminal.chatSession.planBrainstorming?.goal == "new goal")
 
         terminal.activePlan = nil
         #expect(isContinueChat(await terminal.handlePlanCommand("/plan clear")))
-        #expect(terminal.planBrainstorming == nil)
+        #expect(terminal.chatSession.planBrainstorming == nil)
     }
 
     @Test

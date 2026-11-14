@@ -12,13 +12,19 @@ import Testing
 extension AgentConfigurationTests {
     @Test
     func featureCommandIsVisibleOnlyWithBuilderAgent() {
-        let normalCommands = TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: false,
-            telegramEnabled: false
+        let normalCommands = TerminalChat.commandRegistry.visibleDescriptors(
+            in: TerminalChat.commandContext(
+                builderAgentEnabled: false,
+                telegramEnabled: false,
+                ds4ModelEnabled: false
+            )
         ).map(\.command)
-        let builderCommands = TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: true,
-            telegramEnabled: false
+        let builderCommands = TerminalChat.commandRegistry.visibleDescriptors(
+            in: TerminalChat.commandContext(
+                builderAgentEnabled: true,
+                telegramEnabled: false,
+                ds4ModelEnabled: false
+            )
         ).map(\.command)
 
         #expect(!normalCommands.contains("/feature"))

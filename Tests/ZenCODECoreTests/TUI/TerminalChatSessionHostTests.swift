@@ -232,11 +232,11 @@ struct TerminalChatSessionHostTests {
             #expect(previous.taskGraphObserverTask != nil)
 
             // The operator changes the selection; the new session starts over.
-            terminal.manualModelIDOverride = "other-model"
-            terminal.manualThinkingSelectionOverride = .high
+            terminal.chatSession.selection.modelIDOverride = "other-model"
+            terminal.chatSession.selection.thinkingOverride = .high
             terminal.selectedToolKeys = ["local"]
-            terminal.selectedSkillNames = ["skill"]
-            terminal.activeSessionHistory = [AgentRuntimeMessage(role: .user, content: "Before")]
+            terminal.chatSession.selection.skillNames = ["skill"]
+            terminal.chatSession.history = [AgentRuntimeMessage(role: .user, content: "Before")]
             await terminal.startNewSession()
 
             let next = terminal.chatSession
@@ -244,11 +244,11 @@ struct TerminalChatSessionHostTests {
             #expect(terminal.sessionID != previousSessionID)
             #expect(terminal.sessionID.hasPrefix("terminal-"))
             #expect(next.selection == launchSelection)
-            #expect(terminal.manualModelIDOverride == launchSelection.modelIDOverride)
-            #expect(terminal.manualThinkingSelectionOverride == nil)
+            #expect(terminal.chatSession.selection.modelIDOverride == launchSelection.modelIDOverride)
+            #expect(terminal.chatSession.selection.thinkingOverride == nil)
             #expect(terminal.selectedToolKeys.isEmpty)
-            #expect(terminal.selectedSkillNames.isEmpty)
-            #expect(terminal.activeSessionHistory.isEmpty)
+            #expect(terminal.chatSession.selection.skillNames.isEmpty)
+            #expect(terminal.chatSession.history.isEmpty)
             #expect(previous.selection.modelIDOverride == "other-model")
             // The slot is the same and runs the new incarnation; the Telegram
             // channel and the routing of the sub-agent tool events follow it.
@@ -325,7 +325,7 @@ struct TerminalChatSessionHostTests {
             try await terminal.createCurrentSession(discoverExternalTools: false)
             let previous = terminal.chatSession
             let previousSessionID = terminal.sessionID
-            terminal.manualThinkingSelectionOverride = .high
+            terminal.chatSession.selection.thinkingOverride = .high
             let history = [
                 AgentRuntimeMessage(role: .user, content: "Saved question"),
                 AgentRuntimeMessage(role: .assistant, content: "Saved answer"),
@@ -338,10 +338,10 @@ struct TerminalChatSessionHostTests {
             #expect(next !== previous)
             #expect(terminal.sessionID == "terminal-kept")
             #expect(terminal.activeSavedSessionName == "kept")
-            #expect(terminal.activeSessionHistory == history)
+            #expect(terminal.chatSession.history == history)
             // The selection is the saved session's, not the previous one's.
-            #expect(terminal.manualModelIDOverride == "test-model")
-            #expect(terminal.manualThinkingSelectionOverride == nil)
+            #expect(terminal.chatSession.selection.modelIDOverride == "test-model")
+            #expect(terminal.chatSession.selection.thinkingOverride == nil)
             #expect(terminal.selectedToolKeys.isEmpty)
             #expect(host.incarnation(in: slot)?.controller === next)
             #expect(previous.taskGraphObserverTask == nil)

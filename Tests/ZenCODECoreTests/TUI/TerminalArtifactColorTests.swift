@@ -19,14 +19,9 @@ struct TerminalArtifactColorTests {
                         explanation: "Prose keeps +12 -345 neutral."
                     )
                     let turns = [SessionFileArtifactHistory.Turn(number: 1, artifacts: [artifact])]
-                    let markdown = TerminalChat.renderFileArtifacts(
-                        turns, includeHistoryHeadings: false, columnWidth: 12, isEnabled: false
-                    )
+                    let markdown = TerminalChat.renderFileArtifacts(turns, includeHistoryHeadings: false)
                     let suffix = isBinary ? " (binary)" : ""
                     #expect(markdown == "\n**\(status.rawValue) `\(path)`**  +\(additions) -\(deletions)\(suffix)\n\(explanation)\n")
-                    #expect(markdown == TerminalChat.renderFileArtifacts(
-                        turns, includeHistoryHeadings: false, columnWidth: 120, isEnabled: true
-                    ))
                     #expect(!markdown.contains("\u{1B}"))
 
                     var disabled = TerminalMarkdownStreamFormatter(isEnabled: false, renderWidth: 0, supportsHyperlinks: false, palette: palette)

@@ -138,7 +138,7 @@ extension AgentConfigurationTests {
             promptBody: "FULL-SKILL-BODY: inspect changelog.",
             sourceHash: "release-review-hash"
         )
-        terminal.availableSkillsCache = [skill]
+        terminal.chatSession.availableSkillsCache = [skill]
 
         try await terminal.createCurrentSession(discoverExternalTools: false)
         let initialConfiguration = terminal.currentSessionConfiguration(
@@ -207,7 +207,7 @@ extension AgentConfigurationTests {
             "shell",
             items: items
         )
-        terminal.activeSessionHistory = [
+        terminal.chatSession.history = [
             AgentRuntimeMessage(role: .user, content: "First request"),
             AgentRuntimeMessage(
                 role: .assistant,

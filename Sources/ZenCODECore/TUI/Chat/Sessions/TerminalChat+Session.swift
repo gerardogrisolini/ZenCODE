@@ -122,24 +122,6 @@ extension TerminalChat {
         chatSession.currentAgentThinkingSelection()
     }
 
-    public nonisolated static func effectiveThinkingSelection(
-        manualThinkingSelectionOverride: AgentThinkingSelection?,
-        hostedModel: AgentSettingsModelManifest?,
-        explicitModelID: String?,
-        agentModelID: String?,
-        agentThinkingSelection: AgentThinkingSelection? = nil,
-        manifest: AgentSettingsManifest? = AgentSettingsManifestStore.load()
-    ) -> AgentThinkingSelection? {
-        ChatSessionController.effectiveThinkingSelection(
-            manualThinkingSelectionOverride: manualThinkingSelectionOverride,
-            hostedModel: hostedModel,
-            explicitModelID: explicitModelID,
-            agentModelID: agentModelID,
-            agentThinkingSelection: agentThinkingSelection,
-            manifest: manifest
-        )
-    }
-
     public func hostedModelManifest(
         for modelID: String?
     ) -> AgentSettingsModelManifest? {

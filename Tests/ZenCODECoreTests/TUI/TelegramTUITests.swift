@@ -154,13 +154,19 @@ struct TelegramTUITests {
 
     @Test
     func telegramCommandIsVisibleOnlyWhenConfigured() {
-        let disabledCommands = TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: false,
-            telegramEnabled: false
+        let disabledCommands = TerminalChat.commandRegistry.visibleDescriptors(
+            in: TerminalChat.commandContext(
+                builderAgentEnabled: false,
+                telegramEnabled: false,
+                ds4ModelEnabled: false
+            )
         ).map(\.command)
-        let enabledCommands = TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: false,
-            telegramEnabled: true
+        let enabledCommands = TerminalChat.commandRegistry.visibleDescriptors(
+            in: TerminalChat.commandContext(
+                builderAgentEnabled: false,
+                telegramEnabled: true,
+                ds4ModelEnabled: false
+            )
         ).map(\.command)
 
         #expect(!disabledCommands.contains("/agents-md"))
@@ -300,13 +306,13 @@ struct TelegramTUITests {
         #expect(startPrompt.contains("Planning goal requested by the user: route all frontends"))
         #expect(startPurpose == .plan(originalGoal: "route all frontends"))
 
-        var discussion = try #require(terminal.planBrainstorming)
+        var discussion = try #require(terminal.chatSession.planBrainstorming)
         discussion.recordPlannerOutput(
             "Planner questions\n1. Keep it runtime-only?",
             agentID: "planner-telegram",
             revision: 1
         )
-        terminal.planBrainstorming = discussion
+        terminal.chatSession.planBrainstorming = discussion
 
         guard case let .startTurn(prompt: replyPrompt, purpose: replyPurpose, locksResponseLanguage: _) =
             await terminal.telegramChannel.lineAction(for:
@@ -321,29 +327,29 @@ struct TelegramTUITests {
 
         // Restore an awaiting state and verify higher-priority remote commands
         // and mentions are not consumed as planning answers.
-        discussion = try #require(terminal.planBrainstorming)
+        discussion = try #require(terminal.chatSession.planBrainstorming)
         discussion.recordPlannerOutput(
             "Planner questions\n1. Another choice?",
             agentID: "planner-telegram",
             revision: 2
         )
-        terminal.planBrainstorming = discussion
+        terminal.chatSession.planBrainstorming = discussion
         guard case .handled = await terminal.telegramChannel.lineAction(for:
             "/help", lease: lease
         ) else {
             Issue.record("Telegram /help must retain remote-command precedence")
             return
         }
-        #expect(terminal.planBrainstorming?.isAwaitingReply == true)
+        #expect(terminal.chatSession.planBrainstorming?.isAwaitingReply == true)
         guard case .handled = await terminal.telegramChannel.lineAction(for:
             "@coordinator keep this separate", lease: lease
         ) else {
             Issue.record("Telegram live mentions must retain mention routing precedence")
             return
         }
-        #expect(terminal.planBrainstorming?.isAwaitingReply == true)
+        #expect(terminal.chatSession.planBrainstorming?.isAwaitingReply == true)
 
-        terminal.planBrainstorming = nil
+        terminal.chatSession.planBrainstorming = nil
         guard case let .startTurn(prompt: goalPrompt, purpose: goalPurpose, locksResponseLanguage: _) =
             await terminal.telegramChannel.lineAction(for:
                 "/goal implement parity", lease: lease
@@ -351,7 +357,7 @@ struct TelegramTUITests {
             Issue.record("Telegram /goal should create a workflow and use its hidden prompt")
             return
         }
-        let goalGraphID = try #require(terminal.activeWorkflow?.graphID)
+        let goalGraphID = try #require(terminal.chatSession.activeWorkflow?.graphID)
         #expect(goalPurpose == .workflow(
             originalGoal: "implement parity",
             graphID: goalGraphID
@@ -396,7 +402,7 @@ struct TelegramTUITests {
             Issue.record("Telegram /goal should create a workflow and use its hidden prompt")
             return
         }
-        let graphID = try #require(terminal.activeWorkflow?.graphID)
+        let graphID = try #require(terminal.chatSession.activeWorkflow?.graphID)
 
         // Nothing is armed yet: an ordinary Telegram message stays ordinary.
         guard case .runPrompt = await terminal.telegramChannel.lineAction(for:
@@ -415,7 +421,7 @@ struct TelegramTUITests {
             graphID: graphID,
             coordinatorMessage: "Which surface should I cover first?"
         )
-        #expect(terminal.activeWorkflow?.isAwaitingReply == true)
+        #expect(terminal.chatSession.activeWorkflow?.isAwaitingReply == true)
 
         guard case let .startTurn(prompt: prompt, purpose: purpose, locksResponseLanguage: _) =
             await terminal.telegramChannel.lineAction(for:
@@ -427,7 +433,7 @@ struct TelegramTUITests {
         #expect(purpose == .workflow(originalGoal: "implement parity", graphID: graphID))
         #expect(prompt.contains("Active workflow task graph: \(graphID)"))
         #expect(prompt.contains("Start with Telegram"))
-        #expect(terminal.activeWorkflow?.isAwaitingReply == false)
+        #expect(terminal.chatSession.activeWorkflow?.isAwaitingReply == false)
 
         // A slash command still takes precedence over the continuation.
         let resumed = try #require(try await terminal.sessionRunner.taskGraphSnapshot(sessionID: terminal.sessionID))
@@ -445,7 +451,7 @@ struct TelegramTUITests {
             Issue.record("Telegram commands must keep precedence over the workflow reply")
             return
         }
-        #expect(terminal.activeWorkflow?.isAwaitingReply == true)
+        #expect(terminal.chatSession.activeWorkflow?.isAwaitingReply == true)
         #expect(terminal.telegramChannel.remoteHelpText().contains(
             "While /goal is waiting for an answer"
         ))

@@ -117,12 +117,12 @@ struct TerminalInteractionHostWorkspaceAccessTests {
         )
 
         #expect(granted)
-        #expect(terminal.isSubAgentDetailOpen)
+        #expect(terminal.detailPanel?.kind == .subAgent)
         #expect(!controller.isStopped)
         #expect(terminal.interactiveReader.withPanelLock { $0.panelSubAgentDetailMode } == .detail)
 
         await terminal.closeDetailPanel(reason: .dismissed)
-        #expect(!terminal.isSubAgentDetailOpen)
+        #expect(terminal.detailPanel?.kind != .subAgent)
         #expect(!terminal.isDetailPanelOpen)
     }
 
@@ -150,8 +150,8 @@ struct TerminalInteractionHostWorkspaceAccessTests {
         )
 
         #expect(granted)
-        #expect(terminal.isArtifactsPanelOpen)
-        #expect(!terminal.isSubAgentDetailOpen)
+        #expect(terminal.detailPanel?.kind == .artifacts)
+        #expect(terminal.detailPanel?.kind != .subAgent)
         #expect(!controller.isStopped)
         #expect(terminal.interactiveReader.withPanelLock { $0.panelSubAgentDetailMode } == .detail)
         #expect(terminal.interactiveReader.withPanelLock { $0.panelOverlayOverride } == TerminalChat.artifactsDetailPanelOverride)

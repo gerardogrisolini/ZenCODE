@@ -330,7 +330,7 @@ extension AgentConfigurationTests {
             selectedModelID: remote.id
         )
 
-        let resolved = TerminalChat.effectiveModelID(
+        let resolved = ChatSessionController.effectiveModelID(
             selectedAgent: nil,
             manualModelIDOverride: local.id,
             manifest: manifest

@@ -10,20 +10,15 @@ import ToolCore
 
 public actor TurnFileChangeCoordinator {
     private let tracker: TurnFileChangeTracker
-    private let baseDirectoryURL: URL
     private var latestSummary: TurnFileChangeSummary?
     private var didPublishSummary = false
 
     public init(workspacePath: String?) {
-        let tracker = TurnFileChangeTracker(workspacePath: workspacePath)
-        self.tracker = tracker
-        self.baseDirectoryURL = tracker.baseDirectoryURL
+        tracker = TurnFileChangeTracker(workspacePath: workspacePath)
     }
 
     public init(baseDirectoryURL: URL) {
-        let tracker = TurnFileChangeTracker(baseDirectoryURL: baseDirectoryURL)
-        self.tracker = tracker
-        self.baseDirectoryURL = tracker.baseDirectoryURL
+        tracker = TurnFileChangeTracker(baseDirectoryURL: baseDirectoryURL)
     }
 
     /// Captures the initial worktree baseline so end-of-turn reconciliation can
@@ -70,43 +65,6 @@ public actor TurnFileChangeCoordinator {
     /// The Git processes the tracker launched, as an internal test seam.
     func gitInvocationCount() async -> Int {
         await tracker.gitInvocationCount
-    }
-
-    public func latestFileChangeSummary() -> TurnFileChangeSummary? {
-        latestSummary
-    }
-
-    public func replaceLatestSummary(_ summary: TurnFileChangeSummary?) {
-        latestSummary = summary
-        didPublishSummary = true
-    }
-
-    public func clearLatestSummary() {
-        latestSummary = nil
-    }
-
-    @discardableResult
-    public func undoLatestChanges() async throws -> TurnFileChangeSummary {
-        // Reserve synchronously before the first suspension. Without clearing
-        // the snapshot here, two actor calls can both read `latestSummary`,
-        // suspend in the undo service and apply the same undo twice.
-        guard let summary = latestSummary else {
-            throw TurnFileChangeUndoError.noTrackedFileChanges
-        }
-        latestSummary = nil
-        do {
-            return try await TurnFileChangeUndoService.undoLatest(
-                summary: summary,
-                baseDirectoryURL: baseDirectoryURL
-            )
-        } catch {
-            // Restore only when no newer summary was published while undo was
-            // suspended; a newer turn always wins over the failed reservation.
-            if latestSummary == nil {
-                latestSummary = summary
-            }
-            throw error
-        }
     }
 }
 

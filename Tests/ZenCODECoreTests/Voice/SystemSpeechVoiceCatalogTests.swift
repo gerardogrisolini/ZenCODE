@@ -157,7 +157,6 @@ struct AgentVoiceSettingsManifestTests {
         let voice = try #require(manifest.voice)
         #expect(!voice.isConfigured)
         #expect(!voice.isEmpty)
-        #expect(!TerminalOptionalCommandAvailability.from(manifest: manifest).voiceEnabled)
 
         let object = try Self.encodedVoice(of: manifest)
         #expect(object["enabled"] as? Bool == false)

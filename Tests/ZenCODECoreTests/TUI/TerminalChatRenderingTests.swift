@@ -676,36 +676,36 @@ struct TerminalChatRenderingTests {
         let terminal = try makeTerminalForToolInterleavingTest()
 
         // No refresh running initially.
-        #expect(terminal.subAgentOverviewRefreshTask == nil)
+        #expect(terminal.chatSession.subAgentOverviewRefreshTask == nil)
 
         // Start refresh (simulating .toolCallStarted for agent.wait).
         terminal.startSubAgentOverviewRefreshIfNeeded()
-        #expect(terminal.subAgentOverviewRefreshTask != nil)
+        #expect(terminal.chatSession.subAgentOverviewRefreshTask != nil)
 
         // Idempotent: a second start must not replace or cancel the running
         // task (guard prevents creating a duplicate).
         terminal.startSubAgentOverviewRefreshIfNeeded()
-        #expect(terminal.subAgentOverviewRefreshTask != nil)
+        #expect(terminal.chatSession.subAgentOverviewRefreshTask != nil)
 
         // Stop refresh (simulating .toolCallCompleted).
         await terminal.stopSubAgentOverviewRefresh()
-        #expect(terminal.subAgentOverviewRefreshTask == nil)
+        #expect(terminal.chatSession.subAgentOverviewRefreshTask == nil)
 
         // Idempotent: stopping when already stopped is a safe no-op.
         await terminal.stopSubAgentOverviewRefresh()
-        #expect(terminal.subAgentOverviewRefreshTask == nil)
+        #expect(terminal.chatSession.subAgentOverviewRefreshTask == nil)
     }
 
     @Test
     func subAgentOverviewRefreshDrainsInFlightTickBeforeReturning() async throws {
         let terminal = try makeTerminalForToolInterleavingTest()
-        terminal.subAgentOverviewRefreshInterval = .milliseconds(1)
+        terminal.chatSession.subAgentOverviewRefresher.interval = .milliseconds(1)
 
         // A gate that suspends the first tick inside the hook, deterministically
         // simulating an in-flight tick (suspended in subAgentSnapshots or the
         // coordinator actor) without relying on sleep timing.
         let gate = TickGate()
-        terminal.onSubAgentOverviewTick = { await gate.wait() }
+        terminal.chatSession.subAgentOverviewRefresher.onTick = { await gate.wait() }
 
         // Start the refresh. The first tick fires after ~1ms and suspends
         // inside gate.wait().
@@ -737,7 +737,7 @@ struct TerminalChatRenderingTests {
         await gate.release()
         await stopTask.value
         #expect(await gate.isStopCompleted())
-        #expect(terminal.subAgentOverviewRefreshTask == nil)
+        #expect(terminal.chatSession.subAgentOverviewRefreshTask == nil)
     }
 
     @Test

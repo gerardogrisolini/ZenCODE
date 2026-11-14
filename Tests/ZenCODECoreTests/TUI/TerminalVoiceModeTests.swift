@@ -12,9 +12,12 @@ import Testing
 struct TerminalVoiceModeTests {
     @Test
     func voiceCommandIsKnownAndUsableDuringGeneration() {
-        let commands = TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: false,
-            telegramEnabled: false
+        let commands = TerminalChat.commandRegistry.visibleDescriptors(
+            in: TerminalChat.commandContext(
+                builderAgentEnabled: false,
+                telegramEnabled: false,
+                ds4ModelEnabled: false
+            )
         ).map(\.command)
         #expect(commands.contains("/voice"))
         #expect(TerminalChat.isKnownSlashCommand("/voice"))

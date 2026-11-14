@@ -228,7 +228,7 @@ struct TerminalArtifactDiffRenderingTests {
     }
 
     private func render(_ artifact: FileChangeArtifact) -> String {
-        TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: [artifact])])
+        TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: [artifact])], includeHistoryHeadings: true)
     }
 
     private func expectBackground(

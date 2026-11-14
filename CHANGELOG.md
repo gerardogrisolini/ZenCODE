@@ -75,6 +75,48 @@ Release tags follow the strict `vX.Y.Z` contract described in
   terminal layout `/artifacts` still prints the artifacts of the finished
   turns; it still accepts no arguments.
 
+### Removed
+
+- **ZenCODECore API:** unused `public` symbols without callers in ZenCODE, its
+  macOS app, or its feature packages are removed:
+  - `TerminalChat` forwarders that `ChatSessionController` superseded:
+    `activeSessionCacheKey`, `activeSessionHistory`, `activeSessionTranscript`,
+    `activeSessionSystemPromptOverride`, `activeSessionDynamicContextOverride`,
+    `activeCheckpointTree`, `manualModelIDOverride`,
+    `manualThinkingSelectionOverride`, `selectedSkillNames`,
+    `lastFileChangeSummary`, `queuedPlans`, `taskGraphObserverTask`,
+    `availableSkillsCache`, `effectiveModelID(selectedAgent:manualModelIDOverride:manifest:)`,
+    `effectiveThinkingSelection(manualThinkingSelectionOverride:hostedModel:explicitModelID:agentModelID:agentThinkingSelection:manifest:)`,
+    `splitAttachmentCommandArguments(_:)`, and the file-change helpers
+    `publishFileChangeSummaryIfNeeded(from:)`,
+    `collectFileChangeSummaryIfNeeded(from:sessionID:history:turnID:)` and
+    `renderFileArtifacts(_:columnWidth:isEnabled:)`, whose width and ANSI
+    parameters were already ignored.
+  - `TurnFileChangeCoordinator.latestFileChangeSummary()`,
+    `replaceLatestSummary(_:)`, `clearLatestSummary()` and
+    `undoLatestChanges()`: `/undo` reverts through
+    `TurnFileChangeUndoService.undoLatest(summary:baseDirectoryURL:)`, which is
+    unchanged.
+- Internal code that nothing reached any more, and helpers only tests used:
+  the `TerminalChat` forwarders `activeSessionTranscriptRetainedByteCount`,
+  `launchFolderProjectsCache` (with its `LaunchFolderProjectsCache` alias),
+  `fileArtifactHistory`, `planBrainstorming`, `pendingPlanApprovalPlanID`,
+  `activeWorkflow`, `subAgentOverviewRefreshTask`,
+  `subAgentOverviewRefreshInterval` and `onSubAgentOverviewTick` (tests set
+  the controller's sub-agent overview refresher directly),
+  `beginFileArtifactTurn(coordinator:)`, `modelReferences(for:)`,
+  `isSubAgentDetailOpen` and the `FileArtifactTurnContext` alias; the unused
+  `unavailableLocalSlashCommandMessage(for:)`,
+  `renderHelpTextForCurrentAgent()`, `isTelegramCommandVisible()` and
+  `isVoiceConfigured()`, with the
+  `TerminalOptionalCommandAvailability.voiceEnabled` flag that only the last
+  one read, and the test-only
+  `visibleCommandDescriptors(builderAgentEnabled:telegramEnabled:ds4ModelEnabled:)`;
+  the ignored `columnWidth` and `isEnabled` parameters of
+  `renderFileArtifacts(_:includeHistoryHeadings:diffPresentation:)`; and
+  `TerminalInteractiveLineReader.setPanelOverlay(_:isProcessing:)`, since a
+  panel override is always set with its key routing.
+
 ### Fixed
 
 - In ACP clients such as Xcode, a conversation reopened after `zen --acp`

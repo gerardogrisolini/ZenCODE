@@ -102,12 +102,6 @@ extension TerminalChat {
         FileManager.default.isReadableFile(atPath: directory.path)
     }
 
-    /// See ``ChatSessionController/splitAttachmentCommandArguments(_:)``,
-    /// whose ``ChatAttachmentCommandError`` this rethrows.
-    public nonisolated static func splitAttachmentCommandArguments(_ rawArguments: String) throws -> [String] {
-        try ChatSessionController.splitAttachmentCommandArguments(rawArguments)
-    }
-
     /// The terminal attachment picker behind
     /// ``TerminalInteractionHost/pickAttachment(startingAt:)``: it browses
     /// from `startingDirectory` and returns the chosen image or video file,

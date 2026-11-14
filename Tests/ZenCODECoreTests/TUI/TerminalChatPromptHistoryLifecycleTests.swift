@@ -97,7 +97,7 @@ struct TerminalChatPromptHistoryLifecycleTests {
             )
             try await chat.loadSavedSession(savedSession)
             #expect(chat.sessionID == savedSession.sessionID)
-            #expect(chat.activeSessionHistory == savedSession.history)
+            #expect(chat.chatSession.history == savedSession.history)
             #expect(chat.interactiveReader === reader)
             #expect(reader.commandHistory == inputs + ["/sessions list"])
         } catch {

@@ -81,7 +81,7 @@ struct AgentProfileRoleCommandTests {
 
             #expect(Self.isContinueChat(await terminal.handleReviewCommand("/review")))
             #expect(Self.isContinueChat(await terminal.handlePlanCommand("/plan ship roles")))
-            #expect(terminal.planBrainstorming == nil)
+            #expect(terminal.chatSession.planBrainstorming == nil)
         }
     }
 

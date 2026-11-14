@@ -199,7 +199,7 @@ public enum ChatSessionNotice: Sendable, Equatable {
 
     // MARK: - Help
 
-    /// `/help` (`renderHelpTextForCurrentAgent`): `commandHelp` holds the help
+    /// `/help` (`handleCommandLine`): `commandHelp` holds the help
     /// line of every command the agent can use, in display order; the text
     /// adds the opening line and the live-chat, consent, and editing lines.
     case help(commandHelp: [String])

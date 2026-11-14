@@ -5,7 +5,7 @@
 //  Pure helpers of the file-change views: the summary header and hint, the
 //  lines of a unified patch, and the diff of a file artifact. They mirror the
 //  terminal UI's file-change summary (`TurnFileChangeSummaryPresentation`)
-//  and live artifacts (`TerminalChat+FileChanges`).
+//  and file artifacts (`TerminalChat+FileChanges`).
 //
 
 import Foundation

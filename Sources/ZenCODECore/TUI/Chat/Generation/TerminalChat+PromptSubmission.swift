@@ -25,12 +25,6 @@ private struct TerminalPromptExecutionTasks {
 }
 
 extension TerminalChat {
-    func renderHelpTextForCurrentAgent() -> String {
-        ChatSessionNoticeText.text(
-            for: .help(commandHelp: Self.commandRegistry.helpLines(in: currentCommandContext()))
-        )
-    }
-
     func commandSuggestionsForCurrentAgent() -> [TerminalCommandSuggestion] {
         visibleCommandDescriptorsForCurrentAgent().map { descriptor in
             TerminalCommandSuggestion(

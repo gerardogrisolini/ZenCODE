@@ -18,7 +18,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
             let file = directory.appendingPathComponent("Value.swift")
             try Data(before.utf8).write(to: file)
             await coordinator.captureBaselineIfNeeded(forAgentToolCall: call("edit", path: "Value.swift"))
-            let context = try #require(await terminal.beginFileArtifactTurn(coordinator: coordinator))
+            let context = try #require(await terminal.chatSession.beginFileArtifactTurn(coordinator: coordinator))
             try Data(after.utf8).write(to: file)
             // The operation and checkpoint resolve different spellings of the same path.
             let change = fallback(path: directory.path + "/unused/../Value.swift")
@@ -35,14 +35,14 @@ struct TerminalChatRecoveredLiveArtifactTests {
             #expect(!output.contains("Diff unavailable"))
             #expect(!output.contains("🪬 Artifacts"))
             #expect(await context.history.snapshot().isEmpty)
-            #expect(terminal.lastFileChangeSummary == nil)
+            #expect(terminal.chatSession.lastFileChangeSummary == nil)
             // Recording is not skipped just because its presentation was replaced.
             #expect(await context.history.recordLive(
                 [change], agentID: delegated ? "worker" : nil, callID: "edit",
                 turnID: context.id, workingDirectory: directory
             ) == nil)
 
-            let summary = try #require(await terminal.collectFileChangeSummaryIfNeeded(
+            let summary = try #require(await terminal.chatSession.collectFileChangeSummaryIfNeeded(
                 from: coordinator, sessionID: context.sessionID, history: context.history, turnID: context.id
             ))
             #expect(summary.entries.count == 1)
@@ -52,7 +52,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
             #expect(recorder.presentations.count == 1)
             #expect(await renderer.capturedWriteEvents().isEmpty)
             #expect(terminal.chatSession.activeFileArtifactTurn == nil)
-            #expect(terminal.lastFileChangeSummary == summary)
+            #expect(terminal.chatSession.lastFileChangeSummary == summary)
             let history = await context.history.snapshot()
             #expect(history.count == 1)
             #expect(history.first?.number == 1)
@@ -68,7 +68,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
             #expect(replay.contains("Turn 1 — 1 file"))
             #expect(replay.components(separatedBy: "modified \(displayedPath)").count - 1 == 1)
             #expect(!replay.contains("Diff unavailable"))
-            _ = try await coordinator.undoLatestChanges()
+            try await TurnFileChangeUndoService.undoLatest(summary: summary, baseDirectoryURL: directory)
             #expect(try Data(contentsOf: file) == Data(before.utf8))
         }
     }
@@ -98,7 +98,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
             let file = directory.appendingPathComponent(trackedPath)
             try before.write(to: file)
             await coordinator.captureBaselineIfNeeded(forAgentToolCall: call("edit", path: trackedPath))
-            let context = try #require(await terminal.beginFileArtifactTurn(
+            let context = try #require(await terminal.chatSession.beginFileArtifactTurn(
                 coordinator: checkpoint == .absent ? nil : coordinator
             ))
             if let after {
@@ -132,14 +132,14 @@ struct TerminalChatRecoveredLiveArtifactTests {
                 #expect(output.contains(FileChangeArtifactMapper.binaryExplanation))
             }
 
-            let summary = try #require(await terminal.collectFileChangeSummaryIfNeeded(
+            let summary = try #require(await terminal.chatSession.collectFileChangeSummaryIfNeeded(
                 from: coordinator, sessionID: context.sessionID, history: context.history, turnID: context.id
             ))
             #expect(summary.entries.first?.beforeDataBase64 == before.base64EncodedString())
             let history = await context.history.snapshot()
             let artifact = try #require(history.first?.artifacts.first)
             #expect(artifact.displayPath == trackedPath)
-            #expect(terminal.lastFileChangeSummary == summary)
+            #expect(terminal.chatSession.lastFileChangeSummary == summary)
             if checkpoint == .oversized {
                 // Counts alone do not establish usable replacement evidence.
                 #expect(artifact.hasLineCounts)
@@ -165,7 +165,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
             let file = directory.appendingPathComponent("Value.swift")
             try Data("let value = 1\n".utf8).write(to: file)
             await coordinator.captureBaselineIfNeeded(forAgentToolCall: call("first", path: "Value.swift"))
-            let context = try #require(await terminal.beginFileArtifactTurn(coordinator: coordinator))
+            let context = try #require(await terminal.chatSession.beginFileArtifactTurn(coordinator: coordinator))
             // No worktree change yet: this completion's genuine fallback must stay.
             await publish(fallback(), callID: "first", terminal: terminal, context: context)
             try Data("let workspace = 2\n".utf8).write(to: file)
@@ -186,7 +186,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
             #expect(output.components(separatedBy: "modified `Value.swift`").count - 1 == 1)
             #expect(!output.contains("let operation = 2"))
             #expect(output.contains("1 │ +let workspace = 2"))
-            _ = await terminal.collectFileChangeSummaryIfNeeded(
+            _ = await terminal.chatSession.collectFileChangeSummaryIfNeeded(
                 from: coordinator, sessionID: context.sessionID, history: context.history, turnID: context.id
             )
             #expect(recorder.presentations.count == presentedCount)
@@ -194,7 +194,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
             #expect(history.first?.artifacts.first?.patch?.contains("+let workspace = 2") == true)
             #expect(history.first?.artifacts.first?.patch?.contains("+let operation = 2") == false)
 
-            let next = try #require(await terminal.beginFileArtifactTurn())
+            let next = try #require(await terminal.chatSession.beginFileArtifactTurn())
             await publish(fallback(), terminal: terminal, context: next)
             let nextOutput = TerminalChat.renderFileArtifacts(
                 recorder.turns.dropFirst(presentedCount).map { $0 }, includeHistoryHeadings: false
@@ -214,12 +214,12 @@ struct TerminalChatRecoveredLiveArtifactTests {
             let before = Data("let value = 1\n".utf8)
             try before.write(to: file)
             await coordinator.captureBaselineIfNeeded(forAgentToolCall: call("edit", path: "Value.swift"))
-            let context = try #require(await terminal.beginFileArtifactTurn(coordinator: coordinator))
+            let context = try #require(await terminal.chatSession.beginFileArtifactTurn(coordinator: coordinator))
             try Data("let value = 2\n".utf8).write(to: file)
             await publish(fallback(), terminal: terminal, context: context)
             #expect(recorder.presentations.count == 1)
             try Data("let value = 3\n".utf8).write(to: file)
-            let summary = try #require(await terminal.collectFileChangeSummaryIfNeeded(
+            let summary = try #require(await terminal.chatSession.collectFileChangeSummaryIfNeeded(
                 from: coordinator, sessionID: context.sessionID, history: context.history, turnID: context.id
             ))
             // The later edit is presented once, sealed; the chat gets nothing.
@@ -233,8 +233,8 @@ struct TerminalChatRecoveredLiveArtifactTests {
             #expect(summary.entries.first?.beforeDataBase64 == before.base64EncodedString())
             let history = await context.history.snapshot()
             #expect(history.first?.artifacts.first?.patch?.contains("+let value = 3") == true)
-            #expect(terminal.lastFileChangeSummary == summary)
-            _ = try await coordinator.undoLatestChanges()
+            #expect(terminal.chatSession.lastFileChangeSummary == summary)
+            try await TurnFileChangeUndoService.undoLatest(summary: summary, baseDirectoryURL: directory)
             #expect(try Data(contentsOf: file) == before)
         }
     }
@@ -245,7 +245,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
 
     private func publish(
         _ change: OperationFileChange, callID: String = "edit", delegated: Bool = false,
-        terminal: TerminalChat, context: TerminalChat.FileArtifactTurnContext
+        terminal: TerminalChat, context: ChatFileArtifactTurn
     ) async {
         let result = DirectAgentToolResult(output: "Updated", summary: "Updated", fileChanges: [change])
         if delegated {

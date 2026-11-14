@@ -275,9 +275,8 @@ struct ChatWorkspaceCommandsTests {
         #expect(throws: ChatAttachmentCommandError.unterminatedQuote) {
             try ChatSessionController.splitAttachmentCommandArguments(#"'open.png"#)
         }
-        // The terminal's helper forwards to the shared one.
         #expect(
-            try TerminalChat.splitAttachmentCommandArguments(#"a.png "b c.png""#)
+            try ChatSessionController.splitAttachmentCommandArguments(#"a.png "b c.png""#)
                 == ["a.png", "b c.png"]
         )
         #expect(ChatAttachmentCommandError.invalidDetachArgument("9").localizedDescription

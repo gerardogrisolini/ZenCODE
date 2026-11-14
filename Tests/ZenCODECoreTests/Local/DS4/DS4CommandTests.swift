@@ -69,11 +69,17 @@ struct DS4CommandTests {
 
     @Test
     func commandIsListedOnlyForDS4Models() throws {
-        let hidden = TerminalChat.visibleCommandDescriptors(builderAgentEnabled: false, telegramEnabled: false)
+        let hidden = TerminalChat.commandRegistry.visibleDescriptors(
+            in: TerminalChat.commandContext(
+                builderAgentEnabled: false, telegramEnabled: false, ds4ModelEnabled: false
+            )
+        )
         #expect(!hidden.map(\.command).contains("/ds4"))
 
-        let visible = TerminalChat.visibleCommandDescriptors(
-            builderAgentEnabled: false, telegramEnabled: false, ds4ModelEnabled: true
+        let visible = TerminalChat.commandRegistry.visibleDescriptors(
+            in: TerminalChat.commandContext(
+                builderAgentEnabled: false, telegramEnabled: false, ds4ModelEnabled: true
+            )
         )
         let descriptor = try #require(visible.first { $0.command == "/ds4" })
         #expect(descriptor.availability == .ds4Model)

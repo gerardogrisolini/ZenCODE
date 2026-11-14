@@ -79,7 +79,7 @@ struct TelegramChannelArtifactsTests {
             let staging = Self.temporaryStagingDirectory()
             defer { try? FileManager.default.removeItem(at: staging) }
             channel.artifactStagingDirectory = staging
-            terminal.lastFileChangeSummary = Self.patchedSummary
+            terminal.chatSession.lastFileChangeSummary = Self.patchedSummary
 
             await channel.handleDiffRequest(lease: lease)
 

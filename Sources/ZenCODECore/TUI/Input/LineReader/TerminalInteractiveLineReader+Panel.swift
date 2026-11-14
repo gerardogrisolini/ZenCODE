@@ -112,22 +112,6 @@ extension TerminalInteractiveLineReader {
         await renderPanel()
     }
 
-    /// Replaces the panel mode override with `override`, and with
-    /// `isProcessing` the processing flag, then redraws the panel. Production
-    /// sets the only overrides, those of the panels above the prompt (the
-    /// `/subagent` detail and the `/artifacts` panel), together with their key
-    /// routing through ``setSubAgentDetailMode(_:panelModeOverride:)``; this
-    /// entry point is left to tests of the override alone.
-    func setPanelOverlay(_ override: TerminalPanelModeOverride?, isProcessing: Bool? = nil) async {
-        withPanelLock { state in
-            applyPanelOverlayLocked(override, state: &state)
-            if let isProcessing {
-                state.panelIsProcessing = isProcessing
-            }
-        }
-        await renderPanel()
-    }
-
     /// Replaces the panel mode override with `override` and resets the
     /// per-override state (a press-and-hold menu is dismissed while an
     /// override shows, and the command suggestion selection starts over).

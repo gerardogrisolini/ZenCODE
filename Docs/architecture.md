@@ -852,7 +852,7 @@ reconfigured instead), so Custom exists at most once.
   decode (their UUIDs become lowercase string ids, consistent with the
   UUID-keyed API-key map) and the migration is retried at the next start.
 - Saved sessions are not migrated: a `remoteapi:<uuid>:<model>` reference still
-  restores through the model-component fallback of `TerminalChat.modelReferences`.
+  restores through the model-component fallback of `ChatModelCatalog.modelReferences`.
   The `remoteapimodel:<uuid>` and `remoteapi:<uuid>` spellings are no longer
   documented for `--model` / `ZENCODE_AGENT_MODEL`; use `<provider>:<model>`.
 

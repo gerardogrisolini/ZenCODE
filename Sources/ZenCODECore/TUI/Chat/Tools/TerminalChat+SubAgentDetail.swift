@@ -53,11 +53,6 @@ extension TerminalChat {
         }
     }
 
-    /// Whether the `/subagent` detail is open.
-    var isSubAgentDetailOpen: Bool {
-        detailPanel?.kind == .subAgent
-    }
-
     // MARK: - Matching
 
     /// The sub-agent `argument` names among `snapshots`, the sub-agents in

@@ -66,7 +66,7 @@ extension TerminalChatRenderingTests {
             )
         ]
 
-        let rendered = TerminalANSIText.stripANSI(TerminalChat.renderFileArtifacts(turns))
+        let rendered = TerminalANSIText.stripANSI(TerminalChat.renderFileArtifacts(turns, includeHistoryHeadings: true))
 
         #expect(rendered.hasPrefix("\n🪬 Artifacts\n"))
         #expect(rendered.contains("Turn 1 — 1 file"))

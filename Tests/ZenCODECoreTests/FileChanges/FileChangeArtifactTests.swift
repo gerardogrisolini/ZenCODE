@@ -202,7 +202,7 @@ extension FileChangeArtifactTests {
         #expect(artifact.oldText == nil && artifact.newText == nil)
         #expect(artifact.patch == patch)
         #expect(artifact.explanation == nil)
-        let rendered = TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: artifacts)])
+        let rendered = TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: artifacts)], includeHistoryHeadings: true)
         #expect(rendered.contains("**modified `CHANGELOG.md`**  +1 -1"))
         #expect(rendered.contains("101 │ -old entry"))
         #expect(rendered.contains("101 │ +new entry"))
@@ -566,7 +566,7 @@ extension FileChangeArtifactTests {
         let counts = bodyCounts(kept)
 
         for rendered in [
-            TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: artifacts)]),
+            TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: artifacts)], includeHistoryHeadings: true),
             TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: artifacts)], includeHistoryHeadings: false)
         ] {
             let metadata = "**modified `Sources/Mod.swift`**  +1000 -1000\n"

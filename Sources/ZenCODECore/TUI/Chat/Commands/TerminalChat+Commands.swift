@@ -19,17 +19,13 @@ extension ChatCommandContext {
 
 struct TerminalOptionalCommandAvailability: Sendable, Equatable {
     var telegramEnabled: Bool
-    var voiceEnabled: Bool
 
     static func load() -> Self {
         from(manifest: AgentSettingsManifestStore.load())
     }
 
     static func from(manifest: AgentSettingsManifest?) -> Self {
-        Self(
-            telegramEnabled: manifest?.telegram?.isEnabled == true,
-            voiceEnabled: manifest?.voice?.isConfigured == true
-        )
+        Self(telegramEnabled: manifest?.telegram?.isEnabled == true)
     }
 }
 
@@ -79,20 +75,6 @@ extension TerminalChat {
         return commandRegistry.isAvailableDuringGeneration(line)
     }
 
-    func unavailableLocalSlashCommandMessage(for line: String) -> String? {
-        // A hidden `/feature` answers from its own handler, which checks the
-        // agent; only the commands hidden as unknown answer here.
-        guard let descriptor = Self.commandRegistry.descriptor(forLine: line),
-              descriptor.hiddenMessage == nil else {
-            return nil
-        }
-        return Self.commandRegistry.message(
-            forHiddenLine: line,
-            context: currentCommandContext(),
-            isGenerating: false
-        )
-    }
-
     func generatingSlashCommandMessage(for line: String) -> String {
         if let hiddenMessage = Self.commandRegistry.message(
             forHiddenLine: line,
@@ -138,34 +120,12 @@ extension TerminalChat {
         Self.commandRegistry.visibleDescriptors(in: currentCommandContext())
     }
 
-    nonisolated static func visibleCommandDescriptors(
-        builderAgentEnabled: Bool,
-        telegramEnabled: Bool,
-        ds4ModelEnabled: Bool = false
-    ) -> [ChatCommandDescriptor] {
-        commandRegistry.visibleDescriptors(
-            in: commandContext(
-                builderAgentEnabled: builderAgentEnabled,
-                telegramEnabled: telegramEnabled,
-                ds4ModelEnabled: ds4ModelEnabled
-            )
-        )
-    }
-
     func visibleCommandNamesForCurrentAgent() -> [String] {
         visibleCommandDescriptorsForCurrentAgent().map(\.command)
     }
 
     func isTelegramConfigured() -> Bool {
         optionalCommandAvailability.telegramEnabled
-    }
-
-    func isTelegramCommandVisible() -> Bool {
-        isTelegramConfigured()
-    }
-
-    func isVoiceConfigured() -> Bool {
-        optionalCommandAvailability.voiceEnabled
     }
 
     nonisolated static func commandToken(from line: String) -> String? {

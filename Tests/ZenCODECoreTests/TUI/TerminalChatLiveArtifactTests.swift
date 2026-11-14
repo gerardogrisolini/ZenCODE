@@ -37,7 +37,7 @@ struct TerminalChatLiveArtifactTests {
                     }
                     #expect(await recorder.liveAgentIDs == [nil, "worker", "worker"])
                     #expect(await recorder.sealedTurns.isEmpty)
-                    let history = await terminal.fileArtifactHistory
+                    let history = await terminal.chatSession.fileArtifactHistory
                     #expect(await history.snapshot().isEmpty)
                 }
                 let success = try await terminal.generateResponse(attempt: TerminalPromptAttempt(
@@ -127,7 +127,7 @@ struct TerminalChatLiveArtifactTests {
                 let tail = output[answer.upperBound..<summary.lowerBound]
                 #expect(!tail.contains("file.txt"))
                 #expect(success.fileChangeSummary?.entries.first?.beforeDataBase64 == Data("initial\n".utf8).base64EncodedString())
-                #expect(await terminal.fileArtifactHistory.snapshot().count == 1)
+                #expect(await terminal.chatSession.fileArtifactHistory.snapshot().count == 1)
                 // Finished, the turn is listed once, with its final evidence.
                 let snapshot = await terminal.chatSession.fileArtifactSnapshot()
                 #expect(snapshot.activeTurnNumber == nil)
@@ -203,7 +203,7 @@ struct TerminalChatLiveArtifactTests {
         let renderer = makeRenderer(isTerminal: isTerminal)
         let terminal = try makeTerminal(directory, renderer: renderer)
         let recorder = TerminalArtifactPresentationRecorder.attached(to: terminal)
-        let context = try #require(await terminal.beginFileArtifactTurn())
+        let context = try #require(await terminal.chatSession.beginFileArtifactTurn())
         let old = "let value = 1\n"
         let new = "let value = 2\n"
         await terminal.chatSession.publishLiveFileArtifacts(
@@ -273,20 +273,20 @@ struct TerminalChatLiveArtifactTests {
             ])
         }
         for summary in summaries {
-            await terminal.fileArtifactHistory.append(
+            await terminal.chatSession.fileArtifactHistory.append(
                 summary: summary, sessionID: terminal.sessionID, workingDirectory: directory
             )
         }
-        terminal.lastFileChangeSummary = summaries[1]
-        let before = await terminal.fileArtifactHistory.snapshot()
+        terminal.chatSession.lastFileChangeSummary = summaries[1]
+        let before = await terminal.chatSession.fileArtifactHistory.snapshot()
         for command in ["/changes diff", "/changes --diff", "/changes diff"] {
             let count = await renderer.capturedWriteEvents().count
             _ = await terminal.submittedLineAction(command)
             let output = await renderer.capturedWriteEvents().dropFirst(count).map(\.text).joined()
             #expect(output.contains("Latest.swift"))
             #expect(!output.contains("Earlier.swift"))
-            #expect(await terminal.fileArtifactHistory.snapshot() == before)
-            #expect(terminal.lastFileChangeSummary == summaries[1])
+            #expect(await terminal.chatSession.fileArtifactHistory.snapshot() == before)
+            #expect(terminal.chatSession.lastFileChangeSummary == summaries[1])
         }
         let count = await renderer.capturedWriteEvents().count
         _ = await terminal.submittedLineAction("/artifacts")
@@ -295,10 +295,10 @@ struct TerminalChatLiveArtifactTests {
         #expect(history.contains("Latest.swift"))
         #expect(history.contains("### Turn 1 — 1 file"))
         #expect(history.contains("### Turn 2 — 1 file"))
-        #expect(await terminal.fileArtifactHistory.snapshot() == before)
+        #expect(await terminal.chatSession.fileArtifactHistory.snapshot() == before)
         #expect(await renderer.capturedWriteEvents().allSatisfy { $0.channel == .standardError })
         // Rendering /changes must not even reserve a hidden history number.
-        let next = await terminal.fileArtifactHistory.append(
+        let next = await terminal.chatSession.fileArtifactHistory.append(
             summary: summaries[1], sessionID: terminal.sessionID, workingDirectory: directory
         )
         #expect(next?.number == 3)
@@ -313,7 +313,7 @@ struct TerminalChatLiveArtifactTests {
         for path in ["Missing.swift", "Deleted.swift"] {
             try Data("unrelated worktree content\n".utf8).write(to: directory.appendingPathComponent(path))
         }
-        terminal.lastFileChangeSummary = TurnFileChangeSummary(entries: [
+        terminal.chatSession.lastFileChangeSummary = TurnFileChangeSummary(entries: [
             .init(path: "Binary.bin", additions: 0, deletions: 0, status: .modified,
                   isBinary: true, existedBefore: true, beforeDataBase64: nil, patch: nil),
             .init(path: "Missing.swift", additions: 1, deletions: 1, status: .modified,
@@ -341,7 +341,7 @@ struct TerminalChatLiveArtifactTests {
         #expect(!output.contains("partial evidence"))
         #expect(!output.contains("unrelated worktree content"))
         #expect(events.allSatisfy { $0.channel == .standardError })
-        #expect(await terminal.fileArtifactHistory.snapshot().isEmpty)
+        #expect(await terminal.chatSession.fileArtifactHistory.snapshot().isEmpty)
     }
 
     @Test(arguments: [false, true])
@@ -363,7 +363,7 @@ struct TerminalChatLiveArtifactTests {
         #expect(output.contains("520 │ +line 520"))
         #expect(!output.contains("Summary:"))
         #expect(events.allSatisfy { $0.channel == .standardError })
-        #expect(await terminal.fileArtifactHistory.snapshot().isEmpty)
+        #expect(await terminal.chatSession.fileArtifactHistory.snapshot().isEmpty)
     }
 
     @Test(arguments: ["assistant", "thought"])
@@ -374,7 +374,7 @@ struct TerminalChatLiveArtifactTests {
         let reference = makeRenderer(isTerminal: true)
         let terminal = try makeTerminal(directory, renderer: renderer)
         let recorder = TerminalArtifactPresentationRecorder.attached(to: terminal)
-        let context = try #require(await terminal.beginFileArtifactTurn())
+        let context = try #require(await terminal.chatSession.beginFileArtifactTurn())
         // Keep both an open fence and an incomplete source line across the
         // delegated completion: the stream must go on as if nothing happened.
         let opening = "```swift\nlet first = 1\nlet second = \""
@@ -433,7 +433,7 @@ struct TerminalChatLiveArtifactTests {
         let terminal = try makeTerminal(directory, renderer: renderer)
         let recorder = TerminalArtifactPresentationRecorder.attached(to: terminal)
         let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: directory)
-        let context = try #require(await terminal.beginFileArtifactTurn())
+        let context = try #require(await terminal.chatSession.beginFileArtifactTurn())
         for path in ["same.txt", "later.txt", "final.txt"] {
             try Data("before\n".utf8).write(to: directory.appendingPathComponent(path))
             await coordinator.captureBaselineIfNeeded(forAgentToolCall: call(path, path: path))
@@ -447,7 +447,7 @@ struct TerminalChatLiveArtifactTests {
         try Data("opaque after live\n".utf8).write(to: directory.appendingPathComponent("later.txt"))
         try Data("final only\n".utf8).write(to: directory.appendingPathComponent("final.txt"))
         #expect(recorder.presentations.count == 1)
-        let summary = await terminal.collectFileChangeSummaryIfNeeded(
+        let summary = await terminal.chatSession.collectFileChangeSummaryIfNeeded(
             from: coordinator, sessionID: context.sessionID, history: context.history, turnID: context.id
         )
         #expect(summary?.fileCount == 3)
@@ -462,12 +462,12 @@ struct TerminalChatLiveArtifactTests {
         #expect(fallback.contains("1 │ +final only"))
         // Nothing of it is written in the chat.
         #expect(await renderer.capturedWriteEvents().isEmpty)
-        let turns = await terminal.fileArtifactHistory.snapshot()
+        let turns = await terminal.chatSession.fileArtifactHistory.snapshot()
         #expect(turns.count == 1)
         #expect(turns.first?.number == 1)
         #expect(turns.first?.artifacts.count == 3)
-        #expect(terminal.lastFileChangeSummary == summary)
-        #expect(await terminal.collectFileChangeSummaryIfNeeded(
+        #expect(terminal.chatSession.lastFileChangeSummary == summary)
+        #expect(await terminal.chatSession.collectFileChangeSummaryIfNeeded(
             from: coordinator, sessionID: context.sessionID, history: context.history, turnID: context.id
         ) == nil)
         #expect(recorder.presentations.count == 2)
@@ -481,7 +481,7 @@ struct TerminalChatLiveArtifactTests {
         let renderer = makeRenderer()
         let terminal = try makeTerminal(directory, renderer: renderer)
         let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: directory)
-        let context = try #require(await terminal.beginFileArtifactTurn(coordinator: coordinator))
+        let context = try #require(await terminal.chatSession.beginFileArtifactTurn(coordinator: coordinator))
         await coordinator.captureBaselineIfNeeded(forAgentToolCall: call("pending", path: "pending.txt"))
         try Data("pending source\n".utf8).write(to: directory.appendingPathComponent("pending.txt"))
         let gate = ArtifactPublicationGate()
@@ -499,7 +499,7 @@ struct TerminalChatLiveArtifactTests {
             }
         }
         let finalization = Task.immediate(name: "ZenCODE.Tests.artifact-finalization") {
-            await terminal.collectFileChangeSummaryIfNeeded(
+            await terminal.chatSession.collectFileChangeSummaryIfNeeded(
                 from: coordinator, sessionID: context.sessionID, history: context.history, turnID: context.id
             )
         }
@@ -524,21 +524,21 @@ struct TerminalChatLiveArtifactTests {
         let renderer = makeRenderer()
         let terminal = try makeTerminal(directory, renderer: renderer)
         let recorder = TerminalArtifactPresentationRecorder.attached(to: terminal)
-        let old = try #require(await terminal.beginFileArtifactTurn())
+        let old = try #require(await terminal.chatSession.beginFileArtifactTurn())
         let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: directory)
         await coordinator.captureBaselineIfNeeded(forAgentToolCall: call("call", path: "stale.txt"))
         try Data("stale\n".utf8).write(to: directory.appendingPathComponent("stale.txt"))
         let evidence = result([OperationFileChange(path: "stale.txt", oldText: nil, newText: "stale\n")])
         terminal.resetFileArtifactState()
-        let current = try #require(await terminal.beginFileArtifactTurn())
+        let current = try #require(await terminal.chatSession.beginFileArtifactTurn())
         #expect(current.sessionID == old.sessionID)
         await terminal.chatSession.publishLiveFileArtifacts(evidence, callID: "call", context: old)
-        #expect(await terminal.collectFileChangeSummaryIfNeeded(
+        #expect(await terminal.chatSession.collectFileChangeSummaryIfNeeded(
             from: coordinator, sessionID: old.sessionID, history: old.history, turnID: old.id
         ) == nil)
         #expect(recorder.presentations.isEmpty)
-        #expect(terminal.lastFileChangeSummary == nil)
-        #expect(await terminal.fileArtifactHistory.snapshot().isEmpty)
+        #expect(terminal.chatSession.lastFileChangeSummary == nil)
+        #expect(await terminal.chatSession.fileArtifactHistory.snapshot().isEmpty)
         await terminal.chatSession.publishLiveFileArtifacts(evidence, callID: "call", context: current)
         #expect(recorder.liveAgentIDs == [nil])
         let presented = recorder.markdown

@@ -37,11 +37,6 @@ extension TerminalChat {
         }
     }
 
-    /// Whether the `/artifacts` panel is open.
-    var isArtifactsPanelOpen: Bool {
-        detailPanel?.kind == .artifacts
-    }
-
     // MARK: - /artifacts
 
     /// `/artifacts`: opens the panel of the files the session changed

@@ -85,7 +85,7 @@ struct GoalCommandTests {
 
         // Before the coordinator turn ends nothing is armed: a plain message is
         // an ordinary prompt.
-        #expect(terminal.activeWorkflow?.isAwaitingReply == false)
+        #expect(terminal.chatSession.activeWorkflow?.isAwaitingReply == false)
         guard case .runPrompt = await terminal.submittedLineAction("unrelated question") else {
             Issue.record("a plain message must not be captured before the workflow turn ends")
             return
@@ -100,7 +100,7 @@ struct GoalCommandTests {
             graphID: graph.id,
             coordinatorMessage: "Which compatibility behavior should I keep?"
         )
-        #expect(terminal.activeWorkflow?.isAwaitingReply == true)
+        #expect(terminal.chatSession.activeWorkflow?.isAwaitingReply == true)
 
         let action = await terminal.submittedLineAction("Keep the existing behavior")
         guard case let .runHiddenPrompt(prompt, purpose) = action else {
@@ -115,8 +115,8 @@ struct GoalCommandTests {
         #expect(prompt.contains("Continue working until the stated goal is fully achieved"))
         #expect(prompt.contains("Use the active workflow graph \(graph.id)"))
         // The reply is consumed once; it does not capture every later message.
-        #expect(terminal.activeWorkflow?.isAwaitingReply == false)
-        #expect(terminal.activeWorkflow?.exchanges.count == 1)
+        #expect(terminal.chatSession.activeWorkflow?.isAwaitingReply == false)
+        #expect(terminal.chatSession.activeWorkflow?.exchanges.count == 1)
     }
 
     @Test
@@ -157,7 +157,7 @@ struct GoalCommandTests {
         _ = await terminal.submittedLineAction("/goal Complete the entire approved change")
         let initial = try #require(try await terminal.sessionRunner.taskGraphSnapshot(sessionID: terminal.sessionID))
         await terminal.recordWorkflowTurnOutcome(graphID: initial.id, coordinatorMessage: "Workflow question\nHeading alone")
-        #expect(terminal.activeWorkflow?.isAwaitingReply == false)
+        #expect(terminal.chatSession.activeWorkflow?.isAwaitingReply == false)
         let blocked = try await terminal.sessionRunner.taskOrchestrator.updateWorkflow(
             sessionID: terminal.sessionID, graphID: initial.id, state: .blocked,
             message: "External service is unavailable; restore access.", expectedRevision: initial.revision
@@ -166,17 +166,17 @@ struct GoalCommandTests {
             graph: blocked, expectedGraphID: initial.id, coordinatorMessage: "Cannot proceed."
         ) == .blocked)
         await terminal.recordWorkflowTurnOutcome(graphID: initial.id, coordinatorMessage: "Cannot proceed.")
-        #expect(terminal.activeWorkflow?.pendingSignal == .blocked("External service is unavailable; restore access."))
+        #expect(terminal.chatSession.activeWorkflow?.pendingSignal == .blocked("External service is unavailable; restore access."))
 
         // Reconstruct the frontend projection exactly as startup recovery does.
-        terminal.activeWorkflow = nil
+        terminal.chatSession.activeWorkflow = nil
         terminal.chatSession.restoreWorkflowProjection(
             from: try await terminal.sessionRunner.taskGraphSnapshot(
                 sessionID: terminal.sessionID,
                 graphID: initial.id
             )
         )
-        #expect(terminal.activeWorkflow?.goal == "Complete the entire approved change")
+        #expect(terminal.chatSession.activeWorkflow?.goal == "Complete the entire approved change")
         guard case let .runHiddenPrompt(prompt, purpose) = await terminal.submittedLineAction("Access restored") else {
             Issue.record("The user reply must resume the same workflow")
             return
@@ -240,8 +240,8 @@ struct GoalCommandTests {
             ), stdinIsTerminal: false, sessionRunner: restoredRunner
         )
         try await terminal.loadSavedSession(saved)
-        #expect(terminal.activeWorkflow?.pendingCoordinatorMessage == "Provide saved-session access")
-        #expect(terminal.activeWorkflow?.goal == "Preserve the full saved objective")
+        #expect(terminal.chatSession.activeWorkflow?.pendingCoordinatorMessage == "Provide saved-session access")
+        #expect(terminal.chatSession.activeWorkflow?.goal == "Preserve the full saved objective")
         guard case let .runHiddenPrompt(prompt, purpose) = await terminal.submittedLineAction("Saved access supplied") else {
             Issue.record("La risposta dopo loadSavedSession deve riprendere il workflow salvato")
             return
@@ -265,10 +265,10 @@ struct GoalCommandTests {
                 checkpointTree: SessionCheckpointTree.fromLinearHistory([], sessionID: otherID)
             )
             _ = try TerminalSessionStore.save(other, supportDirectoryURL: support)
-            terminal.activeWorkflow = WorkflowCommandRuntimeState(goal: "Stale", graphID: graph.id)
+            terminal.chatSession.activeWorkflow = WorkflowCommandRuntimeState(goal: "Stale", graphID: graph.id)
             let loaded = try TerminalSessionStore.load(name: other.name, workingDirectory: workspace, supportDirectoryURL: support)
             try await terminal.loadSavedSession(loaded)
-            #expect(terminal.activeWorkflow == nil)
+            #expect(terminal.chatSession.activeWorkflow == nil)
             guard case .runPrompt = await terminal.submittedLineAction("Ordinary chat") else {
                 Issue.record("Un caricamento non-workflow non deve conservare la proiezione precedente")
                 return
@@ -328,9 +328,9 @@ struct GoalCommandTests {
         #expect(graph.tasks.isEmpty)
         #expect(graph.workflow?.originalGoal == "Keep interrupted objective")
         #expect(graph.workflow?.state == state)
-        #expect(terminal.activeWorkflow?.isAwaitingReply == true)
+        #expect(terminal.chatSession.activeWorkflow?.isAwaitingReply == true)
         if state != .running {
-            #expect(terminal.activeWorkflow?.pendingCoordinatorMessage == "Persisted pause before interruption")
+            #expect(terminal.chatSession.activeWorkflow?.pendingCoordinatorMessage == "Persisted pause before interruption")
         }
         guard case let .runHiddenPrompt(_, resumedPurpose) = await terminal.submittedLineAction("Retry interrupted turn") else {
             Issue.record("La generazione fallita deve lasciare un percorso di recovery")

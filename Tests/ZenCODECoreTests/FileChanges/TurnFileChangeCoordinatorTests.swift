@@ -45,7 +45,7 @@ struct TurnFileChangeCoordinatorTests {
     }
 
     @Test
-    func undoLatestRestoresFilesAndClearsCoordinatorSummary() async throws {
+    func undoLatestRestoresFilesFromTheirSnapshots() async throws {
         let directory = try temporaryDirectory()
         defer {
             try? FileManager.default.removeItem(at: directory)
@@ -72,14 +72,14 @@ struct TurnFileChangeCoordinatorTests {
                 )
             ]
         )
-        let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: directory)
-        await coordinator.replaceLatestSummary(summary)
 
-        let undoneSummary = try await coordinator.undoLatestChanges()
+        let undoneSummary = try await TurnFileChangeUndoService.undoLatest(
+            summary: summary,
+            baseDirectoryURL: directory
+        )
 
         #expect(undoneSummary == summary)
         #expect(try Data(contentsOf: fileURL) == before)
-        #expect(await coordinator.latestFileChangeSummary() == nil)
     }
 
         @Test
@@ -194,7 +194,7 @@ struct TurnFileChangeCoordinatorTests {
             repository.appendingPathComponent("deleted.txt").path
         ])
         #expect(await coordinator.publishSummaryIfNeeded(matching: changes) == nil)
-        #expect(await coordinator.latestFileChangeSummary() == summary)
+        #expect(await coordinator.peekNetSummary() == summary)
     }
 
     @Test
@@ -216,12 +216,13 @@ struct TurnFileChangeCoordinatorTests {
             #expect(entry.beforeDataBase64 == Data(before.utf8).base64EncodedString())
             #expect(entry.patch?.contains("+" + after) == true)
             #expect(await coordinator.collectLiveSummary(matching: []) == nil)
-            #expect(await coordinator.latestFileChangeSummary() == nil)
         }
+        // No live checkpoint published the summary: the turn's publication
+        // still returns it.
         let final = try #require(await coordinator.publishSummaryIfNeeded())
         #expect(final.entries.first?.beforeDataBase64 == Data("user edit\n".utf8).base64EncodedString())
         #expect(await coordinator.matchingLiveArtifactPaths() == [file.path])
-        _ = try await coordinator.undoLatestChanges()
+        try await TurnFileChangeUndoService.undoLatest(summary: final, baseDirectoryURL: repository)
         #expect(try String(contentsOf: file, encoding: .utf8) == "user edit\n")
     }
 
@@ -363,7 +364,7 @@ extension TurnFileChangeCoordinatorTests {
         #expect((artifact.patch?.utf8.count ?? .max) <= OperationFileChangeRecorder.maximumTextBytes)
         // Rendering remains based on captured final evidence even after removal.
         try FileManager.default.removeItem(at: file)
-        let rendered = TerminalChat.renderFileArtifacts(turns)
+        let rendered = TerminalChat.renderFileArtifacts(turns, includeHistoryHeadings: true)
         #expect(rendered.contains("**modified `CHANGELOG.md`**  +1 -1"))
         #expect(rendered.contains(laterOpaqueEdit ? "+opaque final change:" : "+direct change:"))
         #expect(!rendered.contains("Diff unavailable"))
@@ -410,7 +411,7 @@ extension TurnFileChangeCoordinatorTests {
         #expect(artifact.additions == 3142 && artifact.deletions == 0 && artifact.hasLineCounts)
         #expect(artifact.explanation == FileChangeArtifactMapper.truncatedPatchExplanation(shown: kept, total: 3142))
 
-        let rendered = TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: [artifact])])
+        let rendered = TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: [artifact])], includeHistoryHeadings: true)
         #expect(rendered.contains("**added `Scripts/Gen.swift`**  +3142 -0\nExplanation: Diff truncated: showing the first \(kept) of 3142 diff lines;"))
         #expect(rendered.contains("1 │ +\(lines[0])\n"))
         #expect(rendered.contains(" │ +\(lines[kept - 1])\n"))
@@ -425,7 +426,7 @@ extension TurnFileChangeCoordinatorTests {
         #expect(turn.artifacts.first?.explanation == artifact.explanation)
 
         // Undo reverses the complete patch, not the truncated artifact.
-        _ = try await coordinator.undoLatestChanges()
+        try await TurnFileChangeUndoService.undoLatest(summary: final, baseDirectoryURL: repository)
         #expect(!FileManager.default.fileExists(atPath: added.path))
     }
 }
@@ -506,7 +507,7 @@ extension TurnFileChangeCoordinatorTests {
         #expect(total == earlyLines + 3006 + lateLines)
         #expect(artifact.explanation == FileChangeArtifactMapper.truncatedPatchExplanation(shown: shown, total: total))
 
-        let rendered = TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: [artifact])])
+        let rendered = TerminalChat.renderFileArtifacts([.init(number: 1, artifacts: [artifact])], includeHistoryHeadings: true)
         #expect(rendered.contains("**modified `data/big.txt`**  +1700 -1700\nExplanation: Diff truncated: showing the first \(shown) of \(total) diff lines;"))
         #expect(rendered.contains("10 │ -\(lines[9])\n"))
         #expect(rendered.contains("10 │ +edited \(lines[9])\n"))
@@ -516,7 +517,7 @@ extension TurnFileChangeCoordinatorTests {
 
         let final = try #require(await coordinator.publishSummaryIfNeeded())
         #expect(final.entries.first?.patch == fullPatch)
-        _ = try await coordinator.undoLatestChanges()
+        try await TurnFileChangeUndoService.undoLatest(summary: final, baseDirectoryURL: repository)
         #expect(try Data(contentsOf: file) == original)
     }
 }

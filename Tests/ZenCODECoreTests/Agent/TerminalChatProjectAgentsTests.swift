@@ -105,8 +105,11 @@ struct TerminalChatProjectAgentsTests {
     @Test
     func agentsCommandDescriptorDocumentsTheProjectAssociation() throws {
         let descriptor = try #require(
-            TerminalChat.visibleCommandDescriptors(builderAgentEnabled: false, telegramEnabled: false)
-                .first { $0.command == "/agents" }
+            TerminalChat.commandRegistry.visibleDescriptors(
+                in: TerminalChat.commandContext(
+                    builderAgentEnabled: false, telegramEnabled: false, ds4ModelEnabled: false
+                )
+            ).first { $0.command == "/agents" }
         )
         #expect(descriptor.summary.contains("project"))
         #expect(descriptor.help.contains("Space/X"))

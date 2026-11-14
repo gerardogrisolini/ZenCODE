@@ -189,7 +189,7 @@ extension AgentConfigurationTests {
             modelID: "remoteapi:provider:remote-community/server-model"
         )
 
-        let effectiveModelID = TerminalChat.effectiveModelID(
+        let effectiveModelID = ChatSessionController.effectiveModelID(
             selectedAgent: agent,
             manualModelIDOverride: nil,
             manifest: hostedManifest
@@ -202,7 +202,7 @@ extension AgentConfigurationTests {
     func agentThinkingOverridesSettingsSelection() {
         let manifest = thinkingSelectionManifest(selectedThinkingSelection: .high)
 
-        let terminalThinkingSelection = TerminalChat.effectiveThinkingSelection(
+        let chatThinkingSelection = ChatSessionController.effectiveThinkingSelection(
             manualThinkingSelectionOverride: nil,
             hostedModel: nil,
             explicitModelID: nil,
@@ -218,7 +218,7 @@ extension AgentConfigurationTests {
             manifest: manifest
         )
 
-        #expect(terminalThinkingSelection == .low)
+        #expect(chatThinkingSelection == .low)
         #expect(appSessionThinkingSelection == .low)
     }
 
@@ -238,7 +238,7 @@ extension AgentConfigurationTests {
             configuration: configuration,
             stdinIsTerminal: false
         )
-        terminal.activeSessionCacheKey = "terminal:/tmp/ZenCODE-cache-project:session:plan"
+        terminal.chatSession.cacheKey = "terminal:/tmp/ZenCODE-cache-project:session:plan"
 
         let sessionConfiguration = terminal.currentSessionConfiguration(
             allowedToolNames: []

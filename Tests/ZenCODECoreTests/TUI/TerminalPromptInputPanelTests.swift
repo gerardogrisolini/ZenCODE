@@ -348,11 +348,14 @@ struct TerminalPromptInputPanelTests {
         #expect(reader.withPanelLock { $0.editor.pressAndHoldMenu == nil })
 
         installMenu()
-        await reader.setPanelOverlay(
-            TerminalPanelModeOverride(modeText: "Overlay", helpText: "Help")
+        // The production entry point of an override; with the routing mode
+        // closed, the override alone dismisses the menu.
+        reader.setSubAgentDetailMode(
+            .closed,
+            panelModeOverride: TerminalPanelModeOverride(modeText: "Overlay", helpText: "Help")
         )
         #expect(reader.withPanelLock { $0.editor.pressAndHoldMenu == nil })
-        await reader.setPanelOverlay(nil)
+        reader.setSubAgentDetailMode(.closed, panelModeOverride: nil)
 
         installMenu()
         reader.setSharedChatReaderOpen(true)

@@ -13,7 +13,6 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
-import ToolCore
 
 /// TerminalChat coordinates session state; all stateful terminal rendering is isolated by `renderCoordinator`.
 ///
@@ -87,41 +86,11 @@ public final class TerminalChat {
             }
         }
     }
-    public var activeSessionCacheKey: String? {
-        get { chatSession.cacheKey }
-        set { chatSession.cacheKey = newValue }
-    }
-    public var activeSessionHistory: [AgentRuntimeMessage] {
-        get { chatSession.history }
-        set { chatSession.history = newValue }
-    }
-    public var activeSessionTranscript: [AgentRuntimeMessage] {
-        get { chatSession.transcript }
-        set { chatSession.transcript = newValue }
-    }
-    var activeSessionTranscriptRetainedByteCount: Int {
-        get { chatSession.transcriptRetainedByteCount }
-        set { chatSession.transcriptRetainedByteCount = newValue }
-    }
-    public var activeSessionSystemPromptOverride: String? {
-        get { chatSession.savedSessionState.systemPromptOverride }
-        set { chatSession.savedSessionState.systemPromptOverride = newValue }
-    }
-    public var activeSessionDynamicContextOverride: String? {
-        get { chatSession.savedSessionState.dynamicContextOverride }
-        set { chatSession.savedSessionState.dynamicContextOverride = newValue }
-    }
     public var activeResponseLanguageName: String?
     public var didLockResponseLanguage = false
     public var activeSavedSessionName: String? {
         get { chatSession.savedSessionState.savedSessionName }
         set { chatSession.savedSessionState.savedSessionName = newValue }
-    }
-    /// Tracks the checkpoint tree for the active session. Populated when a
-    /// session is loaded or saved, and updated as messages accumulate.
-    public var activeCheckpointTree: SessionCheckpointTree? {
-        get { chatSession.savedSessionState.checkpointTree }
-        set { chatSession.savedSessionState.checkpointTree = newValue }
     }
     public var printedModelID: String?
     public var didPrintActiveTools = false
@@ -134,30 +103,9 @@ public final class TerminalChat {
         get { chatSession.selection.agent }
         set { chatSession.selection.agent = newValue }
     }
-    /// The controller's launch-folder listing for the selected agent (see
-    /// ``ChatSessionController/launchFolderProjectsCache``): ``applyAgentSelection``
-    /// and `loadSavedSession` clear it.
-    var launchFolderProjectsCache: LaunchFolderProjectsCache? {
-        get { chatSession.launchFolderProjectsCache }
-        set { chatSession.launchFolderProjectsCache = newValue }
-    }
-
-    typealias LaunchFolderProjectsCache = ChatSessionController.LaunchFolderProjectsCache
-    public var manualModelIDOverride: String? {
-        get { chatSession.selection.modelIDOverride }
-        set { chatSession.selection.modelIDOverride = newValue }
-    }
-    public var manualThinkingSelectionOverride: AgentThinkingSelection? {
-        get { chatSession.selection.thinkingOverride }
-        set { chatSession.selection.thinkingOverride = newValue }
-    }
     public var selectedToolKeys: Set<String> {
         get { chatSession.selection.toolKeys }
         set { chatSession.selection.toolKeys = newValue }
-    }
-    public var selectedSkillNames: Set<String> {
-        get { chatSession.selection.skillNames }
-        set { chatSession.selection.skillNames = newValue }
     }
     /// The attachments `/attach` staged for the next prompt (see
     /// ``ChatSessionController/pendingAttachments``).
@@ -165,45 +113,9 @@ public final class TerminalChat {
         get { chatSession.pendingAttachments }
         set { chatSession.pendingAttachments = newValue }
     }
-    public var lastFileChangeSummary: TurnFileChangeSummary? {
-        get { chatSession.lastFileChangeSummary }
-        set { chatSession.lastFileChangeSummary = newValue }
-    }
-    /// Runtime-only artifact history. It is never serialized with a session.
-    var fileArtifactHistory: SessionFileArtifactHistory {
-        get { chatSession.fileArtifactHistory }
-        set { chatSession.fileArtifactHistory = newValue }
-    }
     public var activePlan: TerminalSessionPlan? {
         get { chatSession.activePlan }
         set { chatSession.activePlan = newValue }
-    }
-    /// Plans that follow ``activePlan`` in a Planner sequence, in order.
-    public var queuedPlans: [TerminalSessionPlan] {
-        get { chatSession.queuedPlans }
-        set { chatSession.queuedPlans = newValue }
-    }
-    /// Ephemeral `/plan` clarification state. Never copy this into snapshots or
-    /// persisted session models.
-    var planBrainstorming: PlanningCommandRuntimeState? {
-        get { chatSession.planBrainstorming }
-        set { chatSession.planBrainstorming = newValue }
-    }
-    /// Ephemeral `/plan` approval state. It records only the plan being confirmed;
-    /// the requested Goal itself is consumed immediately and never enters a
-    /// checkpoint or persisted session model.
-    var pendingPlanApprovalPlanID: String? {
-        get { chatSession.pendingPlanApprovalPlanID }
-        set { chatSession.pendingPlanApprovalPlanID = newValue }
-    }
-    /// Ephemeral `/goal` workflow state used to continue the same workflow graph.
-    /// It captures the next message only when an explicit signal armed it: the
-    /// coordinator's `Workflow question` block, a graph resumed from a previous
-    /// session, or an interrupted turn whose non-empty graph was preserved.
-    /// Never copy this into snapshots or persisted session models.
-    var activeWorkflow: WorkflowCommandRuntimeState? {
-        get { chatSession.activeWorkflow }
-        set { chatSession.activeWorkflow = newValue }
     }
     /// The terminal side of voice mode (see ``TerminalVoiceModeHost``): the
     /// texts, the prompt draft, and the FIFO of the interactive panel loop.
@@ -224,26 +136,6 @@ public final class TerminalChat {
         session.attachHost(voiceModeHost)
         return session
     }()
-    /// The task that consumes the task-graph events of the shared observer
-    /// (see ``ChatSessionController/taskGraphObserverTask``); `nil` while it
-    /// is stopped.
-    public var taskGraphObserverTask: Task<Void, Never>? {
-        chatSession.taskGraphObserverTask
-    }
-    /// Periodically republishes the sub-agent overview while a blocking
-    /// `agent.*` tool call (e.g. `agent.wait`) is executing (see
-    /// ``ChatSessionController/subAgentOverviewRefreshTask``). Started from
-    /// `.toolCallStarted` and stopped from `.toolCallCompleted` / end-of-turn.
-    var subAgentOverviewRefreshTask: Task<Void, Never>? {
-        chatSession.subAgentOverviewRefreshTask
-    }
-    /// Interval between automatic sub-agent overview refreshes, the one of the
-    /// controller's refresher (see ``ChatSubAgentOverviewRefresher/interval``).
-    /// Mutable so tests can shorten it.
-    var subAgentOverviewRefreshInterval: Duration {
-        get { chatSession.subAgentOverviewRefresher.interval }
-        set { chatSession.subAgentOverviewRefresher.interval = newValue }
-    }
     /// Keys of sub-agent completions already reflected in the statusbar git
     /// summary (agent ID + status + output revision). A sub-agent re-run via
     /// `agent.message` produces a new revision and triggers a fresh refresh.
@@ -259,19 +151,6 @@ public final class TerminalChat {
         reflectedSubAgentCompletionKeys.insert(key).inserted
     }
 
-    /// Test hook invoked at the start of each refresh tick, the one of the
-    /// controller's refresher (see ``ChatSubAgentOverviewRefresher/onTick``).
-    /// When set, the tick awaits this closure before rendering, allowing tests
-    /// to deterministically gate tick timing. Captured at `start` time; `nil`
-    /// in production.
-    var onSubAgentOverviewTick: (@Sendable () async -> Void)? {
-        get { chatSession.subAgentOverviewRefresher.onTick }
-        set { chatSession.subAgentOverviewRefresher.onTick = newValue }
-    }
-    public var availableSkillsCache: [PromptSkill]? {
-        get { chatSession.availableSkillsCache }
-        set { chatSession.availableSkillsCache = newValue }
-    }
     let renderCoordinator: TerminalChatRenderCoordinator
     /// The event queue of the running input loop, from its start to its
     /// teardown: the ending of a turn the terminal adopted from Telegram
@@ -494,23 +373,6 @@ public final class TerminalChat {
 
     public func currentEffectiveModelID() -> String? {
         chatSession.currentEffectiveModelID()
-    }
-
-    public static func effectiveModelID(
-        selectedAgent: AgentProfile?,
-        manualModelIDOverride: String?,
-        manifest: AgentSettingsManifest? = AgentSettingsManifestStore.load()
-    ) -> String? {
-        ChatSessionController.effectiveModelID(
-            selectedAgent: selectedAgent,
-            manualModelIDOverride: manualModelIDOverride,
-            manifest: manifest
-        )
-    }
-
-    /// See ``ChatModelCatalog/modelReferences(for:)``.
-    static func modelReferences(for rawModelID: String) -> [String] {
-        ChatModelCatalog.modelReferences(for: rawModelID)
     }
 
     public func run() async throws {

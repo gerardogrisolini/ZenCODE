@@ -55,17 +55,17 @@ struct TerminalChatLaunchFolderProjectsTests {
         // No agent is selected: no listing, no cache.
         #expect(!terminal.currentPromptSections(allowedToolNames: []).dynamicContext.contains(headline))
         #expect(terminal.launchFolderProjectsForSelectedAgent() == nil)
-        #expect(terminal.launchFolderProjectsCache == nil)
+        #expect(terminal.chatSession.launchFolderProjectsCache == nil)
 
         // Selecting the Organizer reads the folder once, when the session is
         // created.
         try await terminal.applyAgentSelection(organizer)
-        #expect(terminal.launchFolderProjectsCache?.projects.folderNames == ["alpha", "beta"])
+        #expect(terminal.chatSession.launchFolderProjectsCache?.projects.folderNames == ["alpha", "beta"])
         #expect(
-            terminal.launchFolderProjectsCache?.agentKey
+            terminal.chatSession.launchFolderProjectsCache?.agentKey
                 == ProjectAgentSelectionStore.selectionKey(for: organizer)
         )
-        let selectedAt = try #require(terminal.launchFolderProjectsCache?.projects)
+        let selectedAt = try #require(terminal.chatSession.launchFolderProjectsCache?.projects)
         let firstContext = terminal.currentSessionConfiguration(allowedToolNames: []).dynamicContext
         #expect(firstContext?.contains(headline) == true)
         #expect(firstContext?.contains("\n- alpha\n- beta") == true)
@@ -82,11 +82,11 @@ struct TerminalChatLaunchFolderProjectsTests {
         }
         await terminal.updateCurrentSessionToolOptions(discoverExternalTools: false)
         #expect(!terminal.currentPromptSections(allowedToolNames: []).dynamicContext.contains("gamma"))
-        #expect(terminal.launchFolderProjectsCache?.projects == selectedAt)
+        #expect(terminal.chatSession.launchFolderProjectsCache?.projects == selectedAt)
 
         // Selecting the Organizer again reads the folder anew.
         try await terminal.applyAgentSelection(organizer)
-        #expect(terminal.launchFolderProjectsCache?.projects.folderNames == ["alpha", "beta", "gamma"])
+        #expect(terminal.chatSession.launchFolderProjectsCache?.projects.folderNames == ["alpha", "beta", "gamma"])
         let reselected = terminal.currentSessionConfiguration(allowedToolNames: []).dynamicContext
         #expect(reselected?.contains("\n- alpha\n- beta\n- gamma") == true)
 
