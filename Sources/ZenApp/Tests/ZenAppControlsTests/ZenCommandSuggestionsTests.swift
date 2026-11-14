@@ -212,11 +212,12 @@ struct ZenCommandArgumentSuggestionsTests {
     func sessionsAndPlan() {
         #expect(
             ZenCommandSuggestions.argumentSuggestions(for: "/sessions").map(\.command)
-                == ["save", "new", "compact", "delete", "restore"]
+                == ["save", "new", "compact", "memory", "delete", "restore"]
         )
         #expect(names("/sessions t", in: shared).isEmpty)
         #expect(names("/sessions b", in: shared).isEmpty)
         #expect(names("/sessions c", in: shared) == ["compact"])
+        #expect(names("/sessions m", in: shared) == ["memory"])
         let plan = ZenCommandSuggestions.argumentSuggestions(for: "/plan")
         #expect(plan.map(\.command) == ["save", "load", "list", "delete", "status", "approve", "clear"])
         #expect(plan.first(where: { $0.command == "delete" })?.requiresArgument == true)

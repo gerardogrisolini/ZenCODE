@@ -155,6 +155,63 @@ struct AgentCoreSessionRunnerTests {
         #expect(toolMessage.attachments.first?.data == Data([0x89, 0x50, 0x4E, 0x47]))
     }
 
+    /// The calls of one round are dispatched one after the other, each start
+    /// followed by its completion. They are one assistant message, as the
+    /// backend stores the round; the model writing again starts the next one.
+    @Test
+    func aRoundWithSeveralToolCallsIsRecordedAsOneAssistantMessage() async throws {
+        let recorder = AgentCorePromptTurnRecorder(
+            initialSnapshot: AgentRuntimeSessionSnapshot(
+                sessionID: "session-tool-round",
+                modelID: "test-model",
+                workingDirectoryPath: "/tmp/project",
+                systemPrompt: nil,
+                cacheKey: nil,
+                history: [],
+                allowedToolNames: ["local.readFile"],
+                thinkingSelection: nil,
+                preserveThinking: false
+            ),
+            prompt: "read files",
+            attachments: []
+        )
+        func toolCall(_ id: String) -> DirectAgentToolCall {
+            DirectAgentToolCall(
+                id: id,
+                name: "local.readFile",
+                argumentsObject: ["path": "\(id).swift"],
+                argumentsJSON: #"{"path":"\#(id).swift"}"#
+            )
+        }
+        func result(_ text: String) -> DirectAgentToolResult {
+            DirectAgentToolResult(output: text, summary: text, modelOutput: text)
+        }
+
+        await recorder.record(.thought("Two files."))
+        await recorder.record(.content("Reading."))
+        await recorder.record(.toolCallStarted(toolCall("a")))
+        await recorder.record(.toolCallCompleted(toolCall("a"), result("A")))
+        await recorder.record(.toolCallStarted(toolCall("b")))
+        await recorder.record(.toolCallCompleted(toolCall("b"), result("B")))
+        await recorder.record(.thought("One more."))
+        await recorder.record(.toolCallStarted(toolCall("c")))
+        await recorder.record(.toolCallCompleted(toolCall("c"), result("C")))
+        await recorder.record(.content("Done."))
+
+        let history = await recorder.snapshot().history
+        #expect(history.map(\.role) == [.user, .assistant, .tool, .tool, .assistant, .tool, .assistant])
+        #expect(history[1].content == "Reading.")
+        #expect(history[1].reasoningContent == "Two files.")
+        #expect(history[1].toolCalls.map(\.id) == ["a", "b"])
+        #expect(history[2].toolCallID == "a")
+        #expect(history[3].toolCallID == "b")
+        #expect(history[4].reasoningContent == "One more.")
+        #expect(history[4].toolCalls.map(\.id) == ["c"])
+        #expect(history[5].toolCallID == "c")
+        #expect(history[6].content == "Done.")
+        #expect(history[6].toolCalls.isEmpty)
+    }
+
     @Test
     func cancelPromptBySessionIDPublishesCancelledOutcome() async throws {
         let backend = BlockingAgentRuntimeBackend()

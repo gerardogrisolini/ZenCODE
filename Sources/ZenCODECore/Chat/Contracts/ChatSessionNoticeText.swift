@@ -99,6 +99,10 @@ public enum ChatSessionNoticeText {
             return "Nothing to compact yet. The session may be too short or the current model has no context-window limit.\n"
         case let .sessionCompacted(originalTokenCount, tokenCount, keptRecentMessageCount):
             return "Compacted session context from \(tokenCountText(originalTokenCount)) to \(tokenCountText(tokenCount)) estimated tokens, keeping \(keptRecentMessageCount) recent messages.\n"
+        case let .turnMemoryBlock(block):
+            return turnMemoryBlockText(block)
+        case .noTurnMemoryBlock:
+            return "No memory block was provided with the last prompt.\n"
         case let .sessionLoaded(name, messageCount):
             return "Loaded session: \(name) (\(messageCount) messages).\n"
         case .noActiveSavedSession:
@@ -440,12 +444,23 @@ public enum ChatSessionNoticeText {
 
     // MARK: - Sessions
 
+    /// The block, ended by a newline, then one line with its size in
+    /// characters and the estimated tokens it takes
+    /// (``MemoryAutomationSettings/approximateTokens(forCharacters:)``).
+    private static func turnMemoryBlockText(_ block: String) -> String {
+        let characters = block.count
+        let tokens = MemoryAutomationSettings.approximateTokens(forCharacters: characters)
+        return (block.hasSuffix("\n") ? block : block + "\n")
+            + "Memory block: \(characters) characters, ~\(tokens) tokens (estimated).\n"
+    }
+
     private static let sessionSelectionUsage = """
         Usage: /sessions                    List and select saved sessions
                /sessions <name>             Save or overwrite a named snapshot
                /sessions save               Save the current session
                /sessions new                Start a new session
                /sessions compact            Compact context
+               /sessions memory             Show the memory block of the last prompt
                /sessions delete             Delete a session
                /sessions restore [entry-id] Restore in-place from a checkpoint
                                             (interactive picker when omitted)

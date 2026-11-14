@@ -245,6 +245,7 @@ enum TerminalPromptCompletionCatalog {
             TerminalCommandSuggestion(command: "save", summary: "save the current session"),
             TerminalCommandSuggestion(command: "new", summary: "start a new session"),
             TerminalCommandSuggestion(command: "compact", summary: "compact the context"),
+            TerminalCommandSuggestion(command: "memory", summary: "show the memory block of the last prompt"),
             TerminalCommandSuggestion(command: "delete", summary: "delete a saved session"),
             TerminalCommandSuggestion(command: "tree", summary: "show the checkpoint tree"),
             TerminalCommandSuggestion(command: "branches", summary: "list branch leaves"),

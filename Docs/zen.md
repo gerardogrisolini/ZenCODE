@@ -754,6 +754,7 @@ Commands start with `/`:
 - `/sessions <name>` — save or overwrite a named snapshot. With a DS4 model it also writes the DS4 KV checkpoint (`<name>.ds4kv`) next to the snapshot.
 - `/sessions save` — save the current session (derives a name from the first prompt if none is active); with a DS4 model it also writes the DS4 KV checkpoint.
 - `/sessions compact` — force context compaction without saving.
+- `/sessions memory` — print the `<project-memory>` block that was sent to the model with the last prompt of the current session, as it was sent, followed by one line with its size in characters and an estimate of the tokens it takes (four characters per token: an estimate, not the model tokenizer's count); or say that the last prompt had none (also when the session has no prompt yet).
 - `/sessions new` — reset to a fresh, unsaved session.
 - `/sessions delete` — delete a saved snapshot.
 - `/sessions restore [entry-id]` — restore in-place from a checkpoint, branching from that point; without an argument an interactive picker over the checkpoint entries opens.
@@ -1723,6 +1724,7 @@ zen --skills "review,swift"
 /sessions my-feature             # save named snapshot
 /sessions save                   # refresh active snapshot
 /sessions compact                # force context compaction
+/sessions memory                 # print the memory block of the last prompt
 /sessions                        # list and load
 /sessions delete
 /sessions new                    # fresh, unsaved session

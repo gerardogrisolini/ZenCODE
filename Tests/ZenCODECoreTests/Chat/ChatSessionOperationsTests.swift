@@ -788,6 +788,8 @@ struct ChatSessionOperationTextTests {
             .sessionDeleted(name: "old"),
             .sessionSaved(name: "old", messageCount: 1),
             .nothingToCompact,
+            .turnMemoryBlock("<project-memory>\n- Entry\n</project-memory>"),
+            .noTurnMemoryBlock,
             .sessionCompacted(originalTokenCount: 2, tokenCount: 1, keptRecentMessageCount: 1),
             .sessionLoaded(name: "old", messageCount: 1),
             .checkpointRestored(entryID: "a1b2c3d4", messageCount: 1),

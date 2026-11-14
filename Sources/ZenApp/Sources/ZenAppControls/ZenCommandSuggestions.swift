@@ -235,6 +235,7 @@ public enum ZenCommandSuggestions {
             argument("/sessions", "save", "save the current session"),
             argument("/sessions", "new", "start a new session"),
             argument("/sessions", "compact", "compact the context"),
+            argument("/sessions", "memory", "show the memory block of the last prompt"),
             argument("/sessions", "delete", "delete a saved session"),
             argument("/sessions", "restore", "restore from a checkpoint")
         ],

@@ -21,6 +21,8 @@ enum ChatSavedSessionCommandAction: Equatable, Sendable {
     case saveActive
     /// `/sessions compact`.
     case compact
+    /// `/sessions memory`.
+    case memory
     /// `/sessions restore [entry-id]`; an empty ID asks with a picker.
     case restore(entryID: String)
     /// `/sessions <name>`.
@@ -373,8 +375,8 @@ extension ChatSessionController {
     // MARK: - /sessions
 
     /// What `/sessions` does with `rawArguments`: a keyword (`delete`, `new`,
-    /// `save`, `compact`, `restore [entry-id]`) in any case, nothing for the
-    /// list, otherwise a name to save the session as.
+    /// `save`, `compact`, `memory`, `restore [entry-id]`) in any case, nothing
+    /// for the list, otherwise a name to save the session as.
     nonisolated static func savedSessionCommandAction(
         rawArguments: String
     ) -> ChatSavedSessionCommandAction {
@@ -403,6 +405,8 @@ extension ChatSessionController {
             return .saveActive
         case "compact":
             return .compact
+        case "memory":
+            return .memory
         case "restore":
             return .restore(entryID: remainder)
         default:
@@ -425,6 +429,8 @@ extension ChatSessionController {
             return await saveActiveSessionCommand()
         case .compact:
             return await compactSessionCommand()
+        case .memory:
+            return await sessionMemoryCommand()
         case let .restore(entryID):
             return await restoreCheckpointCommand(entrySpecifier: entryID)
         case let .saveNamed(name):
@@ -541,6 +547,22 @@ extension ChatSessionController {
         } catch {
             return Self.failedCommand(error)
         }
+    }
+
+    /// `/sessions memory`: the project-memory block the last prompt of the
+    /// session was sent with, taken as it was stored with the prompt
+    /// (``AgentRuntimeMessage/turnAddition``); nothing is recalled again. A
+    /// session with no prompt yet, a last prompt sent without a block, or no
+    /// snapshot of the session is ``ChatSessionNotice/noTurnMemoryBlock``.
+    func sessionMemoryCommand() async -> ChatCommandOutcome {
+        let snapshot = await runtime.snapshotSession(id: sessionID)
+        let lastPrompt = snapshot?.history.last { $0.role == .user }
+        guard let block = MemoryTurnCoordinator.memoryBlock(
+            inTurnAddition: lastPrompt?.turnAddition
+        ) else {
+            return ChatCommandOutcome(notices: [.noTurnMemoryBlock])
+        }
+        return ChatCommandOutcome(notices: [.turnMemoryBlock(block)])
     }
 
     /// `/sessions restore [entry-id]`: restores the active session in place

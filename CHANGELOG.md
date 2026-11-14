@@ -10,6 +10,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- `/sessions memory` prints the project-memory block that was sent to the model
+  with the last prompt of the current session, exactly as it was sent, followed
+  by one line with its size in characters and an estimate of the tokens it
+  takes (four characters per token, not the model tokenizer's count), or says
+  that the prompt was sent without one. It also works in a session loaded from
+  a saved one, whose prompts keep the block they were sent with. `memory` is
+  now a keyword of `/sessions`, so `/sessions memory` no longer saves a session
+  with that name.
+
 ### Fixed
 
 - In ACP clients such as Xcode, a session whose agent has the Xcode tools
@@ -33,6 +44,28 @@ Release tags follow the strict `vX.Y.Z` contract described in
   such as an Anthropic API provider and the Claude subscription, the prompt
   could be sent to the other provider and fail with "Remote provider failed:
   Not found". The session now keeps the model it was configured with.
+- With a DS4 model, the prompt after a turn in which the model called several
+  tools in one round no longer evaluates the whole session again. At the end
+  of a turn the session is compared with a copy recorded from the turn's
+  events, and rebuilt from that copy when it looks incomplete. The copy held
+  one assistant message for each tool call of a round, while the session
+  holds one for the round, so a complete session could look shorter than the
+  copy and be rebuilt from it. The rebuilt session lost the exact text and
+  tokens of the turns the model had generated, the next prompt rendered them
+  again from their content, and the engine, which reuses its KV cache only
+  when the new prompt starts with everything it holds, evaluated the prompt
+  from the start. The copy now holds one assistant message for a round, like
+  the session. The same applies to every provider: the session is no longer
+  rebuilt after such a turn, so its history, also when it is saved, keeps the
+  calls of a round in one assistant message.
+- Loading a saved session no longer removes the working directory section,
+  and the Git worktree section, from its system prompt. The section that
+  describes the prompt skills was replaced up to the response language
+  section, and the two sections in between were dropped: the model was no
+  longer told its working directory, and the request no longer started with
+  the system prompt the session was saved with. With a DS4 model the KV
+  checkpoint of the saved session was therefore loaded and then discarded by
+  the first prompt, which evaluated the whole session again.
 
 ## [6.0.1] - 2026-11-13
 

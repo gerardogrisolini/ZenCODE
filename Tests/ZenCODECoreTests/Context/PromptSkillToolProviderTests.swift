@@ -35,6 +35,26 @@ struct PromptSkillToolProviderTests {
         #expect(updated.contains("Response language:\nUse Italian."))
     }
 
+    /// A session saved by this build holds the stable instruction followed by
+    /// the working directory, worktree, language and turn-closing sections:
+    /// restoring it must send that prompt unchanged.
+    @Test
+    func persistedPromptWithTheStaticInstructionIsReturnedUnchanged() {
+        let prompt = SystemPromptBuilder.standalonePromptSections(
+            cwd: "/tmp/project",
+            agentsSection: nil,
+            memorySection: nil,
+            memoryToolEnabled: true,
+            responseLanguageSection: SystemPromptBuilder.responseLanguageSection(languageName: "Italian"),
+            worktreeSection: SystemPromptBuilder.worktreeSection(name: "feature", path: "/tmp/project")
+        ).systemPrompt
+
+        let updated = SystemPromptBuilder.replacingSelectedSkillSection(in: prompt)
+
+        #expect(updated == prompt)
+        #expect(updated.contains(SystemPromptBuilder.workingDirectorySection(path: "/tmp/project")))
+    }
+
     @Test
     func listReturnsDeterministicMetadataWithoutBodies() async throws {
         let provider = PromptSkillSessionProvider(skills: [

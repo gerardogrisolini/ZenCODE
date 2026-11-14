@@ -432,6 +432,121 @@ struct ChatCommandDispatchTests {
         }
     }
 
+    @Test
+    func theSessionsMemoryCommandPrintsTheBlockTheLastPromptWasSentWith() async throws {
+        let firstBlock = try #require(MemoryTurnCoordinator.formattedBlock("- [id: A] Summary: first"))
+        let lastBlock = try #require(MemoryTurnCoordinator.formattedBlock("- [id: B] Summary: last"))
+        try await withChatHarness { harness in
+            let controller = harness.controller
+            let line = "/sessions memory"
+
+            // The runtime holds no snapshot of the session yet.
+            #expect(await controller.handleCommandLine(line, context: [])
+                == ChatCommandOutcome(notices: [.noTurnMemoryBlock]))
+
+            try await harness.startSession()
+            let sessionID = controller.sessionID
+
+            // A session with no prompt yet has no block.
+            await harness.runtime.setSessionHistory(
+                [Fixtures.message(.assistant, "Hello.")],
+                sessionID: sessionID
+            )
+            #expect(await controller.handleCommandLine(line, context: [])
+                == ChatCommandOutcome(notices: [.noTurnMemoryBlock]))
+
+            // Two prompts with different blocks: only the last prompt's block
+            // is shown, without the instruction that follows it.
+            await harness.runtime.setSessionHistory(
+                [
+                    AgentRuntimeMessage(
+                        role: .user,
+                        content: "First question",
+                        turnAddition: AgentRuntimeMessage.turnAddition(
+                            memoryBlock: firstBlock,
+                            instruction: "First instruction."
+                        )
+                    ),
+                    Fixtures.message(.assistant, "First answer."),
+                    AgentRuntimeMessage(
+                        role: .user,
+                        content: "Last question",
+                        turnAddition: AgentRuntimeMessage.turnAddition(
+                            memoryBlock: lastBlock,
+                            instruction: "Last instruction."
+                        )
+                    ),
+                    Fixtures.message(.assistant, "Last answer."),
+                ],
+                sessionID: sessionID
+            )
+            #expect(await controller.handleCommandLine(line, context: [])
+                == ChatCommandOutcome(notices: [.turnMemoryBlock(lastBlock)]))
+
+            // The last prompt was sent without a turn addition while an earlier
+            // one had a block.
+            await harness.runtime.setSessionHistory(
+                [
+                    AgentRuntimeMessage(
+                        role: .user,
+                        content: "First question",
+                        turnAddition: firstBlock
+                    ),
+                    Fixtures.message(.assistant, "First answer."),
+                    Fixtures.message(.user, "Last question"),
+                ],
+                sessionID: sessionID
+            )
+            #expect(await controller.handleCommandLine(line, context: [])
+                == ChatCommandOutcome(notices: [.noTurnMemoryBlock]))
+
+            // The last prompt carries only the turn instruction.
+            await harness.runtime.setSessionHistory(
+                [
+                    AgentRuntimeMessage(
+                        role: .user,
+                        content: "First question",
+                        turnAddition: firstBlock
+                    ),
+                    AgentRuntimeMessage(
+                        role: .user,
+                        content: "Last question",
+                        turnAddition: "Only an instruction."
+                    ),
+                ],
+                sessionID: sessionID
+            )
+            #expect(await controller.handleCommandLine(line, context: [])
+                == ChatCommandOutcome(notices: [.noTurnMemoryBlock]))
+        }
+    }
+
+    @Test
+    func memoryIsAKeywordOfTheSessionsCommandInAnyCase() {
+        #expect(ChatSessionController.savedSessionCommandAction(rawArguments: " Memory ") == .memory)
+        #expect(ChatSessionController.savedSessionCommandAction(rawArguments: "memory now") == .memory)
+        #expect(ChatSessionController.savedSessionCommandAction(rawArguments: "memories")
+            == .saveNamed("memories"))
+    }
+
+    @Test
+    func theMemoryNoticesAreWrittenAsTheBlockWithItsSizeAndAsOneLine() {
+        let block = "<project-memory>\n- Entry\n</project-memory>"
+        let characters = block.count
+        let tokens = characters / 4
+        let sizeLine = "Memory block: \(characters) characters, ~\(tokens) tokens (estimated).\n"
+        #expect(ChatSessionNoticeText.text(for: .turnMemoryBlock(block)) == block + "\n" + sizeLine)
+        // A block that already ends with a newline gets no second one, and
+        // its size still counts the block as given.
+        let withNewline = block + "\n"
+        #expect(ChatSessionNoticeText.text(for: .turnMemoryBlock(withNewline))
+            == withNewline + "Memory block: \(withNewline.count) characters, ~\(withNewline.count / 4) tokens (estimated).\n")
+        #expect(ChatSessionNoticeText.text(for: .noTurnMemoryBlock)
+            == "No memory block was provided with the last prompt.\n")
+        #expect(ChatSessionNoticeText.text(for: .sessionSelectionUsage)
+            .contains("/sessions memory             Show the memory block of the last prompt"))
+    }
+
     // MARK: - ACP policy
 
     @Test

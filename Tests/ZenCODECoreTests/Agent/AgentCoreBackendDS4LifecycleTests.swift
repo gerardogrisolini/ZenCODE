@@ -163,4 +163,78 @@ struct AgentCoreSessionRunnerDS4LifecycleTests {
 
         await runner.shutdown()
     }
+
+    /// A round that calls several tools. The copy of the turn the runner
+    /// records from its events must have the shape of the backend's history,
+    /// one assistant message for the round. A longer copy makes the turn look
+    /// missing from the backend, whose session is then rebuilt from the copy
+    /// without the `ds4_` keys of the turns just generated: the next prompt
+    /// would render them again from their text and the engine would prefill
+    /// the whole session.
+    @Test
+    func aSecondPromptReusesTheKVAfterARoundWithSeveralToolCalls() async throws {
+        let harness = try DS4ClientHarness()
+        harness.mock.enqueueGeneration([
+            "Reasoning", "</think>", "Checking.",
+            Self.dsml41EchoCalls(["one", "two"]),
+        ])
+        harness.mock.enqueueGeneration(["More reasoning", "</think>", "Done."])
+        harness.mock.enqueueGeneration(["Second answer."])
+        let client = try await harness.makeClient(sessionID: "root", thinkingSelection: nil)
+        let runner = AgentCoreSessionRunner(
+            backendFactory: { _, _ in client },
+            taskGraphStore: nil,
+            sessionTurnLease: AgentSessionTurnLease(),
+            memoryGraphStoreRegistry: MemoryGraphStoreRegistry(),
+            ds4EngineRegistry: harness.registry
+        )
+        func configuration(history: [AgentRuntimeMessage]) -> AgentCoreSessionConfiguration {
+            AgentCoreSessionConfiguration(
+                sessionID: "root",
+                modelID: "ds4:mock-q2",
+                workingDirectory: harness.base,
+                systemPrompt: DS4ClientHarness.systemPrompt,
+                cacheKey: "root",
+                history: history,
+                allowedToolNames: [DS4ClientHarness.toolName]
+            )
+        }
+
+        _ = try await runner.sendPrompt(
+            configuration: configuration(history: []), prompt: "Echo both", attachments: [], onEvent: { _ in }
+        )
+        let snapshot = try #require(await runner.snapshotSession(id: "root"))
+        // The backend's own history: one assistant message for the round.
+        #expect(snapshot.history.map(\.role) == [.user, .assistant, .tool, .tool, .assistant])
+        #expect(snapshot.history[1].toolCalls.count == 2)
+
+        _ = try await runner.sendPrompt(
+            configuration: configuration(history: snapshot.history), prompt: "Again", attachments: [],
+            onEvent: { _ in }
+        )
+
+        let syncs = harness.engine.syncs
+        try #require(syncs.count == 3)
+        let results = harness.engine.results
+        try #require(results.count == 3)
+        // Every sync reuses what the session already holds: the prompt of the
+        // previous round and the tokens that round generated.
+        #expect(syncs[0].cached == 0)
+        #expect(syncs[1].cached == syncs[0].suffix + results[0].tokens.count)
+        #expect(syncs[2].cached == syncs[1].cached + syncs[1].suffix + results[1].tokens.count)
+        #expect(!harness.mock.calls.contains(.releaseSession("root")))
+
+        await runner.shutdown()
+    }
+
+    /// The DSML 4.1 markup of one round calling `fixture.echo` once per text.
+    private static func dsml41EchoCalls(_ texts: [String]) -> String {
+        "\n\n<｜DSML｜ calls>\n"
+            + texts.map { text in
+                "<｜DSML｜ invoke name=\"\(DS4ClientHarness.toolName)\">\n"
+                    + "<｜DSML｜ parameter name=\"text\" string=\"true\">\(text)</｜DSML｜ parameter>\n"
+                    + "</｜DSML｜ invoke>\n"
+            }.joined()
+            + "</｜DSML｜ calls>"
+    }
 }

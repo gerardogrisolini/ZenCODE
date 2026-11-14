@@ -278,6 +278,24 @@ actor MemoryTurnCoordinator {
 
     static let blockOpeningTag = "<project-memory>"
     static let blockClosingTag = "</project-memory>"
+
+    /// The memory block a turn addition starts with, from the opening tag
+    /// through the first closing tag included, or `nil` when `addition` is
+    /// `nil` or does not begin with the opening tag (an instruction-only
+    /// addition, or a text that merely mentions the tag further on). The
+    /// block is the part ``formattedBlock(_:budgetCharacters:)`` produced
+    /// and ``AgentRuntimeMessage/turnAddition(memoryBlock:instruction:)``
+    /// put first; ``containerSafe(_:)`` keeps delimiters out of its content,
+    /// so the first closing tag is the one that ends it.
+    static func memoryBlock(inTurnAddition addition: String?) -> String? {
+        guard let addition,
+              addition.hasPrefix(blockOpeningTag),
+              let closing = addition.range(of: blockClosingTag) else {
+            return nil
+        }
+        return String(addition[..<closing.upperBound])
+    }
+
     /// Appended when a single entry had to be clipped, so the model can
     /// distinguish a partial block from a complete retrieval result.
     static let truncationNotice = "[…] truncated to fit the per-turn memory budget."

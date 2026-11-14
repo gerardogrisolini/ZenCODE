@@ -330,13 +330,13 @@ extension ConservativeMemoryLearningBackendTests {
                 #expect(root.systemPrompt == "Keep root instructions.")
                 // The mock does not advance its own history, so the runner
                 // restores the ordinary turn recorded from its tool events.
+                // No text came between the calls, so they are recorded as
+                // one round: one assistant message, then the three results.
                 // Only that turn may be added, never the isolated proposal.
                 #expect(root.history.map(\.content) == [
                     "Earlier root message.",
                     "Fix the initial Widget count regression.",
-                    "", failedOutput,
-                    "", "Updated file. Replacements: 1.",
-                    "", passedOutput
+                    "", failedOutput, "Updated file. Replacements: 1.", passedOutput
                 ])
                 #expect(root.history.compactMap(\.toolCallID) == [failure.id, fix.id, verify.id])
                 #expect(root.history.flatMap(\.toolCalls).map(\.id) == [failure.id, fix.id, verify.id])

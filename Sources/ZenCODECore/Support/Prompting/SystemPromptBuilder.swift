@@ -503,6 +503,13 @@ public enum SystemPromptBuilder {
     /// selection-independent instruction. Replaces both the current lazy-skill
     /// catalog and the legacy eager-skill section (and is idempotent), so
     /// restoring a session never replays obsolete, selection-derived guidance.
+    ///
+    /// The skill section ends where the next section of the prompt starts:
+    /// the working directory, the response language or the turn-closing rule,
+    /// whichever comes first after it. Everything from there on is kept as it
+    /// is, so a prompt that already holds the stable instruction is returned
+    /// unchanged and a restored session sends the system prompt it was saved
+    /// with (the prefix a provider cached, the DS4 KV checkpoint).
     public static func replacingSelectedSkillSection(
         in prompt: String
     ) -> String {
@@ -516,7 +523,11 @@ public enum SystemPromptBuilder {
             return prompt
         }
 
-        let suffixMarkers = ["\n\nResponse language:", "\n\nTurn-closing rule:"]
+        let suffixMarkers = [
+            "\n\n" + workingDirectorySectionHeading,
+            "\n\nResponse language:",
+            "\n\nTurn-closing rule:"
+        ]
         let suffixStart = suffixMarkers.compactMap { marker in
             prompt.range(
                 of: marker,
@@ -554,9 +565,12 @@ public enum SystemPromptBuilder {
         """
     }
 
+    /// First line of ``workingDirectorySection(path:)``.
+    static let workingDirectorySectionHeading = "Current task working directory for local tools:"
+
     public static func workingDirectorySection(path: String) -> String {
         """
-        Current task working directory for local tools:
+        \(workingDirectorySectionHeading)
         - Working directory path: \(path)
         Use this directory as the default root for Shell, Git, local filesystem tools, and persistent project context.
         Do not invent a different local root unless the user explicitly asks for one.

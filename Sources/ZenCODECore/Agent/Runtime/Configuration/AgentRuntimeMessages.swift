@@ -127,11 +127,13 @@ public struct AgentRuntimeMessage: Codable, Equatable, Sendable {
             .nilIfEmpty
     }
 
-    /// The same message with `content` and `reasoningContent` replaced; a
-    /// `nil` argument keeps the current value. Every other field is kept.
+    /// The same message with `content`, `reasoningContent` and `toolCalls`
+    /// replaced; a `nil` argument keeps the current value. Every other field
+    /// is kept.
     func replacing(
         content: String? = nil,
-        reasoningContent: String? = nil
+        reasoningContent: String? = nil,
+        toolCalls: [AgentRuntimeToolCall]? = nil
     ) -> AgentRuntimeMessage {
         AgentRuntimeMessage(
             role: role,
@@ -142,7 +144,7 @@ public struct AgentRuntimeMessage: Codable, Equatable, Sendable {
             anthropicContentBlocksJSON: anthropicContentBlocksJSON,
             providerResponseID: providerResponseID,
             attachments: attachments,
-            toolCalls: toolCalls,
+            toolCalls: toolCalls ?? self.toolCalls,
             toolCallID: toolCallID,
             toolName: toolName,
             toolResultIsError: toolResultIsError,

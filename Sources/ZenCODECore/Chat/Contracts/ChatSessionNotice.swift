@@ -163,6 +163,16 @@ public enum ChatSessionNotice: Sendable, Equatable {
     /// The context was compacted; token counts are estimates
     /// (`compactCurrentSession`).
     case sessionCompacted(originalTokenCount: Int, tokenCount: Int, keptRecentMessageCount: Int)
+    /// `/sessions memory`: the project-memory block the last prompt of the
+    /// session was sent with, as it was sent (`sessionMemoryCommand`). The
+    /// text reports, after the block, its size in characters and the
+    /// estimated tokens it takes (four characters per token,
+    /// `MemoryAutomationSettings.approximateTokens`).
+    case turnMemoryBlock(String)
+    /// `/sessions memory` found no memory block with the last prompt: the
+    /// session has no prompt yet, the prompt was sent without one, or the
+    /// runtime holds no snapshot of the session (`sessionMemoryCommand`).
+    case noTurnMemoryBlock
     /// A saved session was loaded (`loadSavedSession`).
     case sessionLoaded(name: String, messageCount: Int)
 
@@ -524,6 +534,8 @@ public enum ChatSessionNotice: Sendable, Equatable {
              .sessionDeleted,
              .sessionSaved,
              .nothingToCompact,
+             .turnMemoryBlock,
+             .noTurnMemoryBlock,
              .sessionCompacted,
              .sessionLoaded,
              .checkpointRestored,

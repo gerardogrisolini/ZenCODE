@@ -30,12 +30,31 @@ actor AgentCorePromptOutcomeTracker {
     }
 }
 
+/// Records a turn from its events, for the session snapshot of a turn the
+/// backend cannot report itself (`recoveredSessionSnapshot`).
+///
+/// A round is recorded the way a backend stores it: one assistant message
+/// with its text and every tool call, followed by one message per result. A
+/// history with one assistant message per call would be longer than the
+/// backend's, so a turn the backend holds in full would look missing from it
+/// (`includesLikelyTurn(from:)`) and the backend session would be rebuilt
+/// from this copy, without what only the backend keeps of a message (the DS4
+/// `ds4_` keys its KV prefix depends on).
+///
+/// The events carry no round boundary: calls with no text between them are
+/// one round here, also when the model issued them in successive rounds
+/// without writing anything. The recorded history is then shorter than the
+/// backend's, never longer.
 actor AgentCorePromptTurnRecorder {
     private let initialSnapshot: AgentRuntimeSessionSnapshot
     private var history: [AgentRuntimeMessage]
     private var assistantContent = ""
     private var assistantReasoning = ""
     private var assistantToolCalls: [AgentRuntimeToolCall] = []
+    /// Index in `history` of the assistant message of the round whose tool
+    /// calls are completing: the other calls of the round join that message.
+    /// `nil` before the first completion and once the model writes again.
+    private var openRoundIndex: Int?
 
     init(
         initialSnapshot: AgentRuntimeSessionSnapshot,
@@ -64,8 +83,10 @@ actor AgentCorePromptTurnRecorder {
     func record(_ event: DirectAgentEvent) {
         switch event {
         case let .thought(delta):
+            openRoundIndex = nil
             assistantReasoning.append(delta)
         case let .content(delta):
+            openRoundIndex = nil
             assistantContent.append(delta)
         case let .toolCallStarted(toolCall):
             recordToolCall(toolCall)
@@ -107,6 +128,17 @@ actor AgentCorePromptTurnRecorder {
             name: toolCall.name,
             argumentsJSON: toolCall.argumentsJSON
         )
+        if let openRoundIndex {
+            // A further call of the round already in `history`: no text came
+            // between its results and this call.
+            let round = history[openRoundIndex]
+            if !round.toolCalls.contains(runtimeToolCall) {
+                history[openRoundIndex] = round.replacing(
+                    toolCalls: round.toolCalls + [runtimeToolCall]
+                )
+            }
+            return
+        }
         guard !assistantToolCalls.contains(runtimeToolCall) else {
             return
         }
@@ -118,6 +150,7 @@ actor AgentCorePromptTurnRecorder {
             return
         }
         history.append(assistantMessage)
+        openRoundIndex = history.count - 1
         assistantContent = ""
         assistantReasoning = ""
         assistantToolCalls = []

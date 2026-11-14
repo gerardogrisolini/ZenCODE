@@ -272,6 +272,7 @@ public struct ChatCommandRegistry: Sendable {
             /sessions save               Save the current session
             /sessions new                Start a new session
             /sessions compact            Compact context
+            /sessions memory             Show the memory block of the last prompt
             /sessions delete             Delete a session
             /sessions restore [entry-id] Restore in-place from a checkpoint (interactive picker when omitted)
             """
