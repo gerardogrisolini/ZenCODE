@@ -276,12 +276,16 @@ struct TerminalSubAgentDetailControllerTests {
         toolIsRunning: Bool = false,
         second: TimeInterval = 0,
         profileName: String? = nil,
+        taskID: String? = nil,
+        taskAttemptOrdinal: Int? = nil,
         configuredModelID: String? = nil,
         modelID: String? = nil,
         metrics: DirectAgentGenerationMetrics? = nil
     ) -> DirectSubAgentRuntime.AgentSnapshot {
         DirectSubAgentRuntime.AgentSnapshot(
             id: id,
+            taskID: taskID,
+            taskAttemptOrdinal: taskAttemptOrdinal,
             name: name,
             profileName: profileName,
             status: status,
@@ -521,15 +525,18 @@ struct TerminalSubAgentDetailControllerTests {
             Issue.record("The list is not shown")
             return
         }
-        let muted = TerminalStyle.Text.muted, reset = TerminalStyle.reset
         #expect(entries.map(\.id) == ["agent-1", "agent-2", "agent-3", "agent-4"])
-        // Agents sharing a name show their id, muted; a blank name is the id.
-        #expect(entries.map(\.title) == [
-            "worker \(muted)agent-1\(reset)", "worker \(muted)agent-2\(reset)", "reviewer", "agent-4"
-        ])
-        // Every entry keeps its own details, the shared names included.
+        // The title is the name alone, or the id when the name is blank.
+        #expect(entries.map(\.title) == ["worker", "worker", "reviewer", "agent-4"])
+        // Agents sharing a name carry their id as the first detail row, on a
+        // line of its own; a blank name is the id, which needs no second row.
         let profile = TerminalSubAgentOverviewLayout.metadataText(label: "agent:", value: "Developer")
-        #expect(entries.allSatisfy { $0.details == [profile] })
+        func id(_ value: String) -> String {
+            TerminalSubAgentOverviewLayout.metadataText(label: "id:   ", value: value)
+        }
+        #expect(entries.map(\.details) == [
+            [id("agent-1"), profile], [id("agent-2"), profile], [profile], [profile]
+        ])
         #expect(focus() == 0)
         #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
 
@@ -590,12 +597,11 @@ struct TerminalSubAgentDetailControllerTests {
             Issue.record("The list is not shown")
             return
         }
-        let dot = " \(Layout.dimText("·")) "
-        // The labels of the detail header: the agent and the configured
-        // model, titled, without the token counters.
+        // The labels of the detail header, one field per row: the agent and
+        // the configured model, titled, without the token counters.
         #expect(entries[0].details == [
-            Layout.metadataText(label: "agent:", value: "Developer") + dot
-                + Layout.metadataText(label: "model:", value: "Title of gpt-5")
+            Layout.metadataText(label: "agent:", value: "Developer"),
+            Layout.metadataText(label: "model:", value: "Title of gpt-5")
         ])
         // Without a configured model the reported one.
         #expect(entries[1].details == [Layout.metadataText(label: "model:", value: "Title of local-model")])
@@ -606,7 +612,7 @@ struct TerminalSubAgentDetailControllerTests {
         // Only what does not go stale: no status, no activity, no counters.
         let text = entries.flatMap { [$0.title] + $0.details }.map(TerminalANSIText.stripANSI)
         #expect(text == [
-            "worker", "agent: Developer · model: Title of gpt-5",
+            "worker", "agent: Developer", "model: Title of gpt-5",
             "tester", "model: Title of local-model",
             "planner", "agent: Planner",
             "bare"
@@ -615,9 +621,10 @@ struct TerminalSubAgentDetailControllerTests {
         // The whole list fits the frame, one blank row between the entries.
         let frame = controller.panel.frameLines(rows: 20, columns: 60)
         #expect(harness.frames.last == frame)
-        #expect(Array(bodyContents(frame).prefix(10)) == [
+        #expect(Array(bodyContents(frame).prefix(11)) == [
             "▸ worker",
-            "┃   agent: Developer · model: Title of gpt-5",
+            "┃   agent: Developer",
+            "┃   model: Title of gpt-5",
             "",
             "  tester",
             "    model: Title of local-model",
@@ -627,7 +634,7 @@ struct TerminalSubAgentDetailControllerTests {
             "",
             "  bare"
         ])
-        #expect(bodyContents(frame).dropFirst(10).allSatisfy { $0.isEmpty })
+        #expect(bodyContents(frame).dropFirst(11).allSatisfy { $0.isEmpty })
 
         // Enter opens the agent of the focused entry.
         await controller.handle(.focusNext)
@@ -635,6 +642,191 @@ struct TerminalSubAgentDetailControllerTests {
         await controller.handle(.confirm)
         #expect(controller.agentID == "agent-3")
         #expect(controller.snapshot?.profileName == "Planner")
+        controller.stop()
+    }
+
+    @Test func theListEntryShowsTheTaskWithItsAttemptOnTheSameRow() async {
+        typealias Layout = TerminalSubAgentOverviewLayout
+        let harness = DetailHarness(transcript: nil)
+        let controller = harness.makeController()
+        let agents = [
+            agent("agent-1", name: "worker", taskID: "parser-core", taskAttemptOrdinal: 2),
+            agent("agent-2", name: "tester", taskID: "docs"),
+            // The attempt belongs to the task row: without a task it has none.
+            agent("agent-3", name: "planner", taskAttemptOrdinal: 3),
+            agent("agent-4", name: "blank", taskID: "  ", taskAttemptOrdinal: 1),
+            agent("agent-5", name: "spaced", taskID: "parser\ncore", taskAttemptOrdinal: 4)
+        ]
+        controller.open(choosing: agents)
+        guard case let .choosing(entries, _) = controller.panel.mode else {
+            Issue.record("The list is not shown")
+            return
+        }
+        let dot = " \(Layout.dimText("·")) "
+        #expect(entries[0].details == [
+            Layout.metadataText(label: "task: ", value: "parser-core") + dot
+                + Layout.metadataText(label: "attempt:", value: "2")
+        ])
+        #expect(entries[1].details == [Layout.metadataText(label: "task: ", value: "docs")])
+        #expect(entries[2].details.isEmpty)
+        #expect(entries[3].details.isEmpty)
+        // The task id is on one line, as in the detail header.
+        #expect(entries[4].details == [
+            Layout.metadataText(label: "task: ", value: "parser core") + dot
+                + Layout.metadataText(label: "attempt:", value: "4")
+        ])
+
+        let text = entries.flatMap { [$0.title] + $0.details }.map(TerminalANSIText.stripANSI)
+        #expect(text == [
+            "worker", "task:  parser-core · attempt: 2",
+            "tester", "task:  docs",
+            "planner",
+            "blank",
+            "spaced", "task:  parser core · attempt: 4"
+        ])
+        controller.stop()
+    }
+
+    @Test func theListEntryOmitsEveryMissingFieldAndKeepsTheOrderOfTheDetailHeader() async {
+        typealias Layout = TerminalSubAgentOverviewLayout
+        let harness = DetailHarness(transcript: nil)
+        let controller = harness.makeController(modelTitleResolver: { "Title of \($0)" })
+        let agents = [
+            // Every field, the shared name included.
+            agent(
+                "agent-1",
+                name: "worker",
+                profileName: "Developer",
+                taskID: "parser-core",
+                taskAttemptOrdinal: 2,
+                configuredModelID: "gpt-5"
+            ),
+            // Only the id, the task and the model.
+            agent("agent-2", name: "worker", taskID: "docs", modelID: "local-model"),
+            // No field at all: the title alone.
+            agent("agent-3", name: "bare"),
+            // Only the task.
+            agent("agent-4", name: "lonely", taskID: "cleanup")
+        ]
+        controller.open(choosing: agents)
+        guard case let .choosing(entries, _) = controller.panel.mode else {
+            Issue.record("The list is not shown")
+            return
+        }
+        let text = entries.map { entry in ([entry.title] + entry.details).map(TerminalANSIText.stripANSI) }
+        #expect(text == [
+            [
+                "worker",
+                "id:    agent-1",
+                "agent: Developer",
+                "task:  parser-core · attempt: 2",
+                "model: Title of gpt-5"
+            ],
+            ["worker", "id:    agent-2", "task:  docs", "model: Title of local-model"],
+            ["bare"],
+            ["lonely", "task:  cleanup"]
+        ])
+        // An agent without fields has no detail row, not even an empty one.
+        #expect(entries[2].details.isEmpty)
+        controller.stop()
+    }
+
+    @Test func theListFramePutsTheValuesOfEveryLabelOnTheSameColumn() async {
+        let harness = DetailHarness(transcript: nil)
+        let controller = harness.makeController(modelTitleResolver: { "Title of \($0)" })
+        let agents = [
+            agent(
+                "agent-1",
+                name: "worker",
+                profileName: "Developer",
+                taskID: "parser-core",
+                taskAttemptOrdinal: 2,
+                configuredModelID: "gpt-5"
+            ),
+            agent("agent-2", name: "worker", taskID: "docs"),
+            agent("agent-3", name: "tester", profileName: "Tester")
+        ]
+        controller.open(choosing: agents)
+        let frame = controller.panel.frameLines(rows: 20, columns: 60)
+        #expect(harness.frames.last == frame)
+        let contents = bodyContents(frame)
+        #expect(Array(contents.prefix(12)) == [
+            "▸ worker",
+            "┃   id:    agent-1",
+            "┃   agent: Developer",
+            "┃   task:  parser-core · attempt: 2",
+            "┃   model: Title of gpt-5",
+            "",
+            "  worker",
+            "    id:    agent-2",
+            "    task:  docs",
+            "",
+            "  tester",
+            "    agent: Tester"
+        ])
+        #expect(contents.dropFirst(12).allSatisfy { $0.isEmpty })
+
+        // Whatever the entry, every value starts at the column after the
+        // longest label: the four columns of the gutter, the label completed
+        // to six columns and the separating space.
+        let valueColumn = 4 + 6 + 1
+        let labels = ["id:", "agent:", "task:", "model:"]
+        let fieldRows = contents.filter { $0.hasPrefix("┃   ") || $0.hasPrefix("    ") }
+        #expect(fieldRows.count == 7)
+        for row in fieldRows {
+            let label = String(row.dropFirst(4).prefix(valueColumn - 4))
+            #expect(label.hasSuffix(" "), "No separator in \"\(row)\"")
+            #expect(labels.contains(label.trimmingCharacters(in: .whitespaces)), "Unknown label in \"\(row)\"")
+            #expect(row.dropFirst(valueColumn).first != " ", "The value of \"\(row)\" is not on column \(valueColumn)")
+        }
+        controller.stop()
+    }
+
+    @Test func theListEntriesShowNoStatusNoActivityAndNoCounters() async {
+        let harness = DetailHarness(transcript: nil)
+        let controller = harness.makeController(modelTitleResolver: { "Title of \($0)" })
+        let agents = [
+            agent(
+                "agent-1",
+                name: "worker",
+                status: .running,
+                pending: true,
+                activity: "WRITING_THE_PARSER",
+                toolName: "swift.build",
+                toolIsRunning: true,
+                profileName: "Developer",
+                taskID: "parser-core",
+                taskAttemptOrdinal: 2,
+                configuredModelID: "gpt-5",
+                metrics: DirectAgentGenerationMetrics(
+                    promptTokenCount: 1_200,
+                    cachedPromptTokenCount: 300,
+                    completionTokenCount: 80
+                )
+            ),
+            agent("agent-2", name: "done", status: .idle, pending: false, profileName: "Developer")
+        ]
+        controller.open(choosing: agents)
+        guard case let .choosing(entries, _) = controller.panel.mode else {
+            Issue.record("The list is not shown")
+            return
+        }
+        let text = entries.flatMap { [$0.title] + $0.details }.map(TerminalANSIText.stripANSI)
+        #expect(text == [
+            "worker",
+            "agent: Developer",
+            "task:  parser-core · attempt: 2",
+            "model: Title of gpt-5",
+            "done",
+            "agent: Developer"
+        ])
+        let everything = (text + bodyContents(controller.panel.frameLines(rows: 20, columns: 60))).joined(separator: "\n")
+        for stale in [
+            "RUNNING", "IDLE", "ACTIVE", "running", "idle", "WRITING_THE_PARSER", "swift.build",
+            "c:", "p:", "g:", "1.2", "error"
+        ] {
+            #expect(!everything.contains(stale), "The list shows \"\(stale)\"")
+        }
         controller.stop()
     }
 

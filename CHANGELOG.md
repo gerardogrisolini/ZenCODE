@@ -75,6 +75,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
   of a turn sticks at the top of the sidebar while its section scrolls. The
   cards, their spacing, and the empty state are unchanged.
 
+- In the agent list that `/subagent` opens when more than one sub-agent is in
+  progress, each agent now shows its fields one per row, in the order of the
+  agent's detail (`id:`, `agent:`, `task:`, `model:`), with the labels muted
+  and the values aligned on the same column. `task:` and `attempt:` are new in
+  the list: the task id comes with its attempt on the same row when it is
+  known (`task:  parser-core · attempt: 2`). The `id:` of an agent whose name
+  another agent shares is a row of its own, the first of its block, and no
+  longer follows the name, which is shown alone. A field the agent does not
+  have is left out, and an agent without fields shows only its name. The list
+  still shows what the agents had when it opened, with no status, activity, or
+  counters; the keys are unchanged.
+
 ### Removed
 
 - The free-form `role` of sub-agents: the string the coordinator passed to

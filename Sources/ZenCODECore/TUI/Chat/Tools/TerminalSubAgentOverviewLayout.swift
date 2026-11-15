@@ -443,8 +443,21 @@ enum TerminalSubAgentOverviewLayout {
     /// The `model:` metadata text of the agent's configured model (the model
     /// the backend reported when none is configured), titled by
     /// `modelTitleResolver`, without the token counters of `modelLine`;
-    /// `nil` without a model. The `/subagent` list reuses it.
+    /// `nil` without a model.
     static func modelText(
+        _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
+        modelTitleResolver: (String) -> String
+    ) -> String? {
+        modelTitle(snapshot, modelTitleResolver: modelTitleResolver).map {
+            metadataText(label: "model:", value: $0)
+        }
+    }
+
+    /// The title of the agent's configured model (the model the backend
+    /// reported when none is configured), by `modelTitleResolver`, on one
+    /// line; `nil` without a model. It is the value of ``modelText(_:modelTitleResolver:)``
+    /// alone, without the label. The `/subagent` list reuses it.
+    static func modelTitle(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
         modelTitleResolver: (String) -> String
     ) -> String? {
@@ -452,10 +465,7 @@ enum TerminalSubAgentOverviewLayout {
             ?? snapshot.modelID?.nilIfBlank else {
             return nil
         }
-        return metadataText(
-            label: "model:",
-            value: InlineTextTruncation.inlineText(modelTitleResolver(modelID))
-        )
+        return InlineTextTruncation.inlineText(modelTitleResolver(modelID))
     }
 
     // MARK: - Activity and detail
