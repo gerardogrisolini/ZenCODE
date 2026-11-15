@@ -803,6 +803,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
   on macOS also when it had already been recognized, or was begun within 3
   seconds of the answer starting. A "Do you want me to read it?" question is
   asked again once the answer is over, as before.
+- In voice mode, a dictation that the terminal or the app refuses is no longer
+  lost. A voice send takes the whole draft, the typed text included, without
+  adding it to the prompt history, and only then is the line admitted: when
+  Telegram drove the session, or the prompt queue was full, the text was gone.
+  The terminal now records the refused text in the prompt history, as it does
+  a refused typed line, and says `Voice: the dictation was not sent. Press ↑ to
+  recall it.`; the app puts it back in the draft as ordinary text, as the draft
+  keeps a typed line that is refused. A live message by voice refused while
+  Telegram drives the session is still not kept.
 
 ## [6.0.1] - 2026-11-13
 

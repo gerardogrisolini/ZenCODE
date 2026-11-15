@@ -111,8 +111,9 @@ extension ZenWindowSession {
     }
 
     /// `text`, an utterance taken from this draft that voice mode could not
-    /// send here any more (it moved to another window meanwhile), goes back
-    /// to the draft as ordinary text, before what was typed since.
+    /// send here (it moved to another window meanwhile, or the window refused
+    /// it), goes back to the draft as ordinary text, before what was typed
+    /// since.
     func restoreVoiceUtterance(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isClosed, !text.isEmpty else { return }
@@ -130,47 +131,63 @@ extension ZenWindowSession {
     }
 
     /// Sends a dictated utterance by the voice rules: a line as if typed,
-    /// without touching the draft or the history (a leading `@mention`
-    /// sends a live message, a reply answers a pending `/plan` or `/goal`
-    /// question, a prompt queues while a line runs, and a full queue refuses
-    /// it with the typed text); text that would read as a command as a plain
-    /// prompt, never as a command. While Telegram drives the slot both are
-    /// refused with the dormant text.
+    /// without touching the history (a leading `@mention` sends a live
+    /// message, a reply answers a pending `/plan` or `/goal` question, a
+    /// prompt queues while a line runs, and a full queue refuses it with the
+    /// typed text); text that would read as a command as a plain prompt,
+    /// never as a command. While Telegram drives the slot both are refused
+    /// with the dormant text. As a refused typed line stays in the draft, a
+    /// refused dictation goes back to it as ordinary text
+    /// (``restoreVoiceUtterance(_:)``); a closed window restores nothing.
     func submitVoiceDictation(_ input: VoiceModeDictatedInput) {
-        guard !isClosed, !refusedWhileDormant() else { return }
+        guard !isClosed else { return }
+        guard !sendVoiceDictation(input) else { return }
+        switch input {
+        case let .line(text), let .plainPrompt(text):
+            restoreVoiceUtterance(text)
+        }
+    }
+
+    /// Sends `input` as ``submitVoiceDictation(_:)`` describes; `false` when
+    /// the window refused it, as ``submitDraft()`` refuses a typed line.
+    private func sendVoiceDictation(_ input: VoiceModeDictatedInput) -> Bool {
+        guard !refusedWhileDormant() else { return false }
         switch input {
         case let .line(text):
             let line = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.isEmpty else { return }
+            guard !line.isEmpty else { return true }
             switch SharedChatMentionParser.parse(from: line, readableHandles: mentionHandles) {
             case let .route(mention):
                 sendMention(mention, line: line)
+                return true
             case .missingText:
                 appendLocalNow(.local(text: Self.mentionMissingTextMessage, isFailure: true))
+                return false
             case .none:
-                route(line)
+                return route(line)
             }
         case let .plainPrompt(text):
-            submitVoicePrompt(text.trimmingCharacters(in: .whitespacesAndNewlines))
+            return submitVoicePrompt(text.trimmingCharacters(in: .whitespacesAndNewlines))
         }
     }
 
     /// A dictated plain prompt: it runs now, or waits in the queue while a
     /// line runs or lines wait; a full queue refuses it with the terminal's
-    /// voice text.
-    private func submitVoicePrompt(_ prompt: String) {
-        guard !prompt.isEmpty else { return }
+    /// voice text and returns `false`.
+    private func submitVoicePrompt(_ prompt: String) -> Bool {
+        guard !prompt.isEmpty else { return true }
         guard isLineRunningOrWaiting else {
             startPlainPrompt(prompt)
-            return
+            return true
         }
         guard queuedLines.count < Self.queueCapacity else {
             appendLocalNow(.local(text: Self.voiceQueueFullMessage, isFailure: true))
-            return
+            return false
         }
         queuedLines.append(ZenQueuedLine(text: prompt, isPlainPrompt: true))
         drainQueueIfIdle()
         sharedChatConsumerStateDidChange()
+        return true
     }
 
     func startPlainPrompt(_ prompt: String) {

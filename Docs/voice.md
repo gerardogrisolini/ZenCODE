@@ -145,6 +145,14 @@ to Reviewer as a live message.
   them as before and leaves the draft alone.
 - A bare yes or no that answers a live-chat question is still sent at once on
   its own and does not touch the draft.
+- When the terminal refuses what voice sends instead of running or queuing it
+  (Telegram drives the session, the prompt queue is full, or a live mention
+  has no message), the text is not lost: it is recorded in the prompt history,
+  as a refused typed line is, and the terminal says
+  `Voice: the dictation was not sent. Press ↑ to recall it.` The draft stays
+  empty. A voice send that runs or is queued is not added to the prompt
+  history, and a live message by voice refused while Telegram drives the
+  session is not kept.
 - `/voice pause` and `/voice off` drop the collected speech and remove its
   preview from the draft; typed text stays. Typing a command turns a
   dictation shown in the draft into ordinary text, so clear the draft with
@@ -484,4 +492,5 @@ open the Telegram section of `zen --setup` again; you can keep the current pairi
 | `/voice is available only in the interactive terminal` | Run `/voice` from the `zen` terminal UI, or from the macOS app (see [app.md](app.md#voice)). |
 | An utterance is never sent | Pause for about 5 seconds after speaking (or the pause chosen with the Send mode "After a pause" in `zen --setup` > Voice mode), and reduce background noise. With the Send mode "On a word", say your word at the end. |
 | An utterance is sent before you finish | Choose the Send mode "After a pause" with a longer pause in `zen --setup` > Voice mode, or "On a word" so that only your word sends. |
+| `Voice: the dictation was not sent` | The terminal refused what voice sent, and the line above says why: Telegram drives the session (`/telegram off` takes it back), the prompt queue is full, or a live mention has no message. Press `↑` to recall the text, then `Enter`. |
 | Answers are read in the wrong language | Set the Response language in `zen --setup`; on Linux, also choose a voice of that language in `zen --setup` > Voice mode. |

@@ -457,6 +457,13 @@ also from the queue, so voice never runs `/exit` or any other command; a full
 queue refuses it with `ZenCODE: prompt queue is full; voice prompt was not
 queued.`
 
+A dictation the window refuses is not lost. A full queue, Telegram driving the
+session (see [Telegram](#while-telegram-drives-the-session)), or a mention
+without a message puts the dictated text back in the draft as ordinary text,
+before anything you typed since, as the draft keeps a typed line that is
+refused. A live message by voice refused while Telegram drives the session is
+not kept.
+
 ### Reading aloud
 
 The final answer of every turn of the active window is read aloud as in the
@@ -499,7 +506,9 @@ state after the full-access dot (see [Status bar](#status-bar)).
 
 While Telegram drives a window's session, the window refuses `/voice` and what
 voice mode would send from it with the dormant text (see
-[Telegram](#while-telegram-drives-the-session)).
+[Telegram](#while-telegram-drives-the-session)); a dictated prompt or line it
+refuses goes back to the draft (see
+[Dictation in the draft](#dictation-in-the-draft)).
 
 ### Permissions and privacy
 
@@ -621,8 +630,9 @@ with `ZenCODE: this session is driven from Telegram. Use /telegram off to take
 it back.`:
 
 - any other line, `/voice` included, and a live `@mention` to the shared chat;
-- what voice mode sends from the window: a dictated prompt or line, and a live
-  message by voice (see [Voice](#voice));
+- what voice mode sends from the window: a dictated prompt or line, which goes
+  back to the draft as ordinary text, and a live message by voice (see
+  [Voice](#voice));
 - the Full Access toggle (⌃G, **Session > Full Access**);
 - attaching files;
 - loading or deleting a saved session from the sidebar.

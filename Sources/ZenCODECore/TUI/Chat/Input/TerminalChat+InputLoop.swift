@@ -419,15 +419,15 @@ extension TerminalChat {
             }
         }
 
-        /// A typed or dictated line. Returns `false` when the loop must end.
-        func handleSubmittedInputLine(_ line: String) async -> Bool {
+        /// A typed or dictated line, and what the loop did with it.
+        func handleSubmittedInputLine(_ line: String) async -> TerminalSubmittedInputOutcome {
             // While Telegram drives the slot the terminal runs only what takes
             // it back; everything else is refused before it is routed. The
             // one admission of a line: a queued line starts only while the
             // terminal drives its slot, and the line-by-line fallback never
             // hands its slot over.
             guard await admitTerminalLine(line) else {
-                return true
+                return .refused
             }
             // A valid leading mention is live control input, not a
             // regular prompt. Route it before the busy/queued-prompt
@@ -440,12 +440,12 @@ extension TerminalChat {
             ) {
             case let .route(route):
                 await sendSharedChatMention(route)
-                return true
+                return .handled
             case .missingText:
                 await writeFailureMessage(
                     "ZenCODE message: add a message after the live mention.\n"
                 )
-                return true
+                return .refused
             case .none:
                 break
             }
@@ -459,11 +459,11 @@ extension TerminalChat {
                     await writeFailureMessage(
                         "ZenCODE: prompt queue is full; wait for a queued prompt to start.\n"
                     )
-                    return true
+                    return .refused
                 }
                 await refreshQueuedPromptCount()
                 scheduleQueuedPromptIfNeeded()
-                return true
+                return .handled
             }
 
             if isGenerating {
@@ -475,30 +475,31 @@ extension TerminalChat {
                         await writeFailureMessage(
                             "ZenCODE: prompt queue is full; wait for the current prompt to finish.\n"
                         )
-                        return true
+                        return .refused
                     }
                     await refreshQueuedPromptCount()
-                    return true
+                    return .handled
                 case .slashCommand:
                     if Self.isAvailableDuringGeneration(for: line) {
                         break
                     }
                     await writeFailureMessage(generatingSlashCommandMessage(for: line))
-                    return true
+                    return .refused
                 }
             }
 
-            return await handleSubmittedPanelLine(line)
+            return await handleSubmittedPanelLine(line) ? .handled : .endsLoop
         }
 
         /// A dictated slash-like utterance always runs as a plain prompt.
-        func handleVoicePromptCompleted(_ result: TerminalVoicePromptResult) async {
+        @discardableResult
+        func handleVoicePromptCompleted(_ result: TerminalVoicePromptResult) async -> TerminalSubmittedInputOutcome {
             switch result.outcome {
             case let .success(prompt):
                 // A dictation is never a command, whatever it reads: while
                 // Telegram drives the slot it is refused, a dictated `/exit`
                 // or `/telegram off` included.
-                guard await admitTerminalInput() else { return }
+                guard await admitTerminalInput() else { return .refused }
                 if isGenerating || !queuedPrompts.isEmpty {
                     guard queuedPrompts.enqueue(
                         ChatQueuedPrompt<TerminalPromptOrigin>(
@@ -509,7 +510,7 @@ extension TerminalChat {
                     ) else {
                         let message = "ZenCODE: prompt queue is full; voice prompt was not queued."
                         await writeFailureMessage(message + "\n")
-                        return
+                        return .refused
                     }
                     await refreshQueuedPromptCount()
                     scheduleQueuedPromptIfNeeded()
@@ -519,6 +520,7 @@ extension TerminalChat {
             case let .failure(message):
                 await writeFailureMessage("ZenCODE: \(message)\n")
             }
+            return .handled
         }
 
         /// Repaints the dock from the reading buffer, e.g. after new messages
@@ -583,7 +585,7 @@ extension TerminalChat {
             case let .input(inputEvent):
                 switch inputEvent {
                 case let .submitted(line):
-                    guard await handleSubmittedInputLine(line) else {
+                    guard await handleSubmittedInputLine(line) != .endsLoop else {
                         break eventLoop
                     }
                 case .cancelRequested:

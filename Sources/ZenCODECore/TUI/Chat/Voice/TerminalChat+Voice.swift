@@ -99,6 +99,18 @@ extension TerminalChat {
     }
 }
 
+/// What the panel loop did with a submitted line or a dictated prompt.
+enum TerminalSubmittedInputOutcome: Sendable, Equatable {
+    /// It ran, was queued, or was sent as a live message.
+    case handled
+    /// The terminal refused it and showed why: Telegram drives the slot, the
+    /// prompt queue is full, a mention has no message, or the command cannot
+    /// run now.
+    case refused
+    /// It ends the loop, as a line that exits.
+    case endsLoop
+}
+
 /// The terminal as the host of its ``VoiceModeSession``: texts are written
 /// like every command's, previews and sends go straight to the interactive
 /// reader's draft, and the controller's events reach the panel loop through
@@ -114,10 +126,13 @@ final class TerminalVoiceModeHost: VoiceModeSessionHost {
         let isUnread: (UUID) -> Bool
         /// Marks a message read aloud as read and repaints the dock.
         let markRead: (UUID) async -> Void
-        /// Handles a dictated line like a typed one; `false` ends the loop.
-        let submitLine: (String) async -> Bool
-        let submitPrompt: (TerminalVoicePromptResult) async -> Void
+        /// Handles a dictated line like a typed one, and tells what it did.
+        let submitLine: (String) async -> TerminalSubmittedInputOutcome
+        /// Runs or queues a dictated plain prompt, and tells what it did.
+        let submitPrompt: (TerminalVoicePromptResult) async -> TerminalSubmittedInputOutcome
     }
+
+    static let refusedDictationMessage = "Voice: the dictation was not sent. Press ↑ to recall it.\n"
 
     weak var chat: TerminalChat?
     weak var session: VoiceModeSession?
@@ -164,15 +179,37 @@ final class TerminalVoiceModeHost: VoiceModeSessionHost {
 
     func voiceModeSubmitDictation(_ input: VoiceModeDictatedInput) async -> Bool {
         guard let loop else { return true }
+        let text: String
+        switch input {
+        case let .line(line):
+            text = line
+        case let .plainPrompt(prompt):
+            text = prompt
+        }
+        let outcome: TerminalSubmittedInputOutcome
         switch TerminalChat.dictatedPromptEvent(for: input) {
         case let .input(.submitted(line)):
-            return await loop.submitLine(line)
+            outcome = await loop.submitLine(line)
         case let .voicePromptCompleted(result):
-            await loop.submitPrompt(result)
+            outcome = await loop.submitPrompt(result)
         default:
-            break
+            outcome = .handled
         }
-        return true
+        switch outcome {
+        case .handled:
+            return true
+        case .endsLoop:
+            return false
+        case .refused:
+            // A typed line the terminal refuses stays in the prompt history;
+            // a dictation, which the voice send takes out of the draft
+            // without recording it, is recorded now, so ↑ recalls it.
+            reader.recordHistory(text)
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                await chat?.writeSystemMessage(Self.refusedDictationMessage)
+            }
+            return true
+        }
     }
 
     // MARK: Shared chat

@@ -263,7 +263,7 @@ struct ZenVoiceWindowTests {
         }
     }
 
-    @Test("A window Telegram drives refuses dictation, a dictated command, and a live message by voice, with the dormant text")
+    @Test("A window Telegram drives refuses dictation, a dictated command, and a live message by voice, with the dormant text; the dictation goes back to the draft")
     func dormantWindowRefusesVoiceInput() async throws {
         try await withVoice { runtime, backend, controllers, workspace in
             let window = try await Self.open(runtime, workspace)
@@ -271,13 +271,25 @@ struct ZenVoiceWindowTests {
             let controller = try await Self.controller(controllers)
             window.isDrivenFromTelegram = true
 
-            for utterance in ["che ore sono?", "/exit", "message to the coordinator: stop"] {
+            // A live message by voice is refused by the session's admission,
+            // which never sees its text: unlike a dictated line or prompt it
+            // does not go back to the draft (a known limit, out of scope).
+            let steps: [(utterance: String, draft: String)] = [
+                ("che ore sono?", "che ore sono?"),
+                ("/exit", "/exit"),
+                ("message to the coordinator: stop", ""),
+            ]
+            for (utterance, draft) in steps {
+                // The voice send takes the whole draft: clear what the last
+                // refusal put back, or it would go out with this utterance.
+                window.draft = ""
                 let refusals = window.transcript.filter { $0.content == Self.dormantRefusal }.count
                 await controller.send(utterance)
                 await runtime.waitForVoice()
                 await waitUntil("\(utterance) is refused") {
                     window.transcript.filter { $0.content == Self.dormantRefusal }.count == refusals + 1
                 }
+                #expect(window.draft == draft)
             }
             #expect(await window.waitUntilIdle())
             #expect(!window.closeRequested)
@@ -718,7 +730,7 @@ struct ZenVoiceWindowTests {
         }
     }
 
-    @Test("A full queue refuses a dictated plain prompt with the voice text, and a dictated line with the typed one")
+    @Test("A full queue refuses a dictated plain prompt with the voice text, and a dictated line with the typed one; each goes back to the draft")
     func fullQueue() async throws {
         try await withVoice { runtime, backend, controllers, workspace in
             let window = try await Self.open(runtime, workspace)
@@ -734,16 +746,22 @@ struct ZenVoiceWindowTests {
                 window.submitDraft()
             }
             #expect(window.queuedLines.count == ZenWindowSession.queueCapacity)
+            #expect(window.draft.isEmpty)
 
             await controller.send("/plain")
             await waitUntil("the plain prompt is refused") {
                 Self.lastRow(of: window) == .local(text: ZenWindowSession.voiceQueueFullMessage, isFailure: true)
             }
             #expect(ZenWindowSession.voiceQueueFullMessage == "ZenCODE: prompt queue is full; voice prompt was not queued.")
+            #expect(window.draft == "/plain")
+            // The voice send takes the whole draft: clear the restored prompt,
+            // or it would go out with the next utterance.
+            window.draft = ""
             await controller.send("dictated line")
             await waitUntil("the line is refused") {
                 Self.lastRow(of: window) == .local(text: ZenWindowSession.queueFullMessage, isFailure: true)
             }
+            #expect(window.draft == "dictated line")
             #expect(window.queuedLines.count == ZenWindowSession.queueCapacity)
             #expect(!window.queuedLines.contains { $0.text == "/plain" || $0.text == "dictated line" })
 
