@@ -3,8 +3,9 @@
 //  ZenApp
 //
 //  The artifacts sidebar of a window, on the right like Xcode's inspectors:
-//  the file artifacts of the session grouped by turn, one collapsed card per
-//  file, and the toolbar button that shows and hides it.
+//  the file artifacts of the session grouped by turn with a sticky header
+//  per turn, one collapsed card per file, and the toolbar button that shows
+//  and hides it.
 //
 
 import Foundation
@@ -14,13 +15,21 @@ import ZenAppTheme
 import ZenAppTranscript
 
 /// The file artifacts of a window's session (``ZenWindowSession/fileArtifacts``),
-/// oldest turn first: a `Turn N · K files` header, then one
-/// ``ZenFileArtifactCard`` per artifact. It reads the artifacts in its own
-/// body, so they update live without running the conversation's body.
+/// oldest turn first: one `List` section per turn, whose header
+/// (`Turn N · K files`) sticks at the top of the list while its section
+/// scrolls, and one ``ZenFileArtifactCard`` per artifact. It reads the
+/// artifacts in its own body, so they update live without running the
+/// conversation's body.
 struct ZenArtifactsSidebar: View {
     let session: ZenWindowSession
 
     @Environment(\.zenPalette) private var palette
+
+    /// The insets of every row of the list, headers included: the 12 pt
+    /// leading and trailing margins the `ScrollView` gave the cards, and a
+    /// 12 pt gap between the cards of a section and between a section and
+    /// the next one.
+    private static let rowInsets = EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12)
 
     var body: some View {
         let groups = session.fileArtifacts
@@ -32,17 +41,19 @@ struct ZenArtifactsSidebar: View {
                 .padding(12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(groups) { group in
-                        ZenArtifactTurnHeader(number: group.number, fileCount: group.entries.count)
+            List {
+                ForEach(groups) { group in
+                    Section(header: ZenArtifactTurnHeader(number: group.number, fileCount: group.entries.count)
+                        .listRowInsets(Self.rowInsets)) {
                         ForEach(group.entries) { entry in
                             ZenFileArtifactCard(artifact: entry.artifact, agentID: entry.agentID)
+                                .listRowInsets(Self.rowInsets)
+                                .listRowSeparator(.hidden)
                         }
                     }
                 }
-                .padding(12)
             }
+            .listStyle(.plain)
         }
     }
 }

@@ -70,6 +70,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   search takes a fraction of the time (a 3,000-message, 850k-token history went
   from seconds to about 0.2 s in a debug build).
 
+- macOS app: the artifacts sidebar groups the file artifacts of a session as a
+  `List` with one section per artifact turn, so the `Turn N · K files` header
+  of a turn sticks at the top of the sidebar while its section scrolls. The
+  cards, their spacing, and the empty state are unchanged.
+
 ### Removed
 
 - The free-form `role` of sub-agents: the string the coordinator passed to
