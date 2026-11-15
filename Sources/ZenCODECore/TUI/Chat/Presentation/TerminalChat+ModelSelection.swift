@@ -50,6 +50,7 @@ extension TerminalChat {
              .contextWindow,
              .subscriptionUsage,
              .content,
+             .toolCallPreview,
              .toolCallStarted,
              .toolCallCompleted,
              .sessionSnapshot,

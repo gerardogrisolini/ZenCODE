@@ -266,6 +266,8 @@ extension ChatSessionController {
             guard !turn.purpose.suppressesCoordinatorContent else { break }
             await turn.transcript.appendAssistantContent(delta)
             await turn.presenter.presentAssistantContent(delta)
+        case let .toolCallPreview(preview):
+            await turn.presenter.presentToolCallPreview(preview)
         case let .toolCallStarted(toolCall):
             await turn.transcript.appendToolCallStarted(toolCall)
             await turn.presenter.presentToolCallStarted(toolCall)

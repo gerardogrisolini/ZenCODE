@@ -83,6 +83,7 @@ extension ChatSessionController {
              .contextWindow,
              .subscriptionUsage,
              .content,
+             .toolCallPreview,
              .toolCallStarted,
              .toolCallCompleted,
              .sessionSnapshot,

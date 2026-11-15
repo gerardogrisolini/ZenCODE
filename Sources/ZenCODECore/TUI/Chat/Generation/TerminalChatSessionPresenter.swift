@@ -73,6 +73,20 @@ final class TerminalChatSessionPresenter: ChatSlotChannelPresenter {
         await chat?.writeSubscriptionUsageStatus(status)
     }
 
+    func presentToolCallPreview(_ preview: DirectAgentToolCallPreview) async {
+        guard let chat else { return }
+        // The header of a drawn call is where its commentary ends: the
+        // pending text goes out first and is offered to voice mode now, as
+        // ``presentToolCallStarted(_:)`` does, which then finds it taken.
+        if case let .toolStarted(name) = preview,
+           TerminalToolCallPreviewFormatter.drawsTool(named: name) {
+            let commentary = await chat.activeAssistantOutput?.takePending() ?? ""
+            await chat.writeAssistantContent(commentary)
+            chat.offerVoiceCommentary(commentary)
+        }
+        await chat.writeToolCallPreview(preview)
+    }
+
     func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {
         guard let chat else { return }
         // The text written before a tool call is a comment on what is about

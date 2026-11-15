@@ -215,6 +215,13 @@ extension DirectSubAgentRuntime {
             // touch the agent or bump its activity timestamps.
             return
         }
+        if case .toolCallPreview = event {
+            // A fragment of a call still being written is live presentation
+            // only, and arrives at the pace of the stream: like a live
+            // metrics update it must not touch the agent or bump its activity
+            // timestamps.
+            return
+        }
 
         // Nothing is recorded, and no lifecycle is forwarded, for an agent
         // that is gone or closed. `apply` reads nothing of the runtime, so the
@@ -348,6 +355,7 @@ extension DirectSubAgentRuntime {
             )
         case .contextWindow,
              .subscriptionUsage,
+             .toolCallPreview,
              .turnEnded:
             break
         }

@@ -76,6 +76,21 @@ extension TerminalChat {
         )
     }
 
+    /// Draws a fragment of a file write or edit the model is still writing.
+    /// Only the start of a drawn call reads the scrolling capacity, which it
+    /// needs to release an owned sub-agent overview like a tool block does.
+    func writeToolCallPreview(_ preview: DirectAgentToolCallPreview) async {
+        var maximumInPlaceRows: Int?
+        if case let .toolStarted(name) = preview,
+           TerminalToolCallPreviewFormatter.drawsTool(named: name) {
+            maximumInPlaceRows = await statusBar.scrollableOutputRowCapacity()
+        }
+        await renderCoordinator.writeToolCallPreview(
+            preview,
+            maximumInPlaceRows: maximumInPlaceRows
+        )
+    }
+
     func writeAccessModeChangeMessage(_ accessMode: AgentLocalExecAccessMode) async {
         await renderCoordinator.writeAccessModeChangeMessage(accessMode)
     }

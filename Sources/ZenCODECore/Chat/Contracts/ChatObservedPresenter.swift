@@ -79,6 +79,10 @@ struct ChatObservedPresenter: ChatSessionPresenter {
         await present { await $0.presentSubscriptionUsage(status) }
     }
 
+    func presentToolCallPreview(_ preview: DirectAgentToolCallPreview) async {
+        await present { await $0.presentToolCallPreview(preview) }
+    }
+
     func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {
         await present { await $0.presentToolCallStarted(toolCall) }
     }

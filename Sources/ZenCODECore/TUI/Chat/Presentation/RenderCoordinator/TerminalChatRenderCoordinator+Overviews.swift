@@ -44,6 +44,8 @@ extension TerminalChatRenderCoordinator {
     /// runtime and continues to evolve while a prior transcript tail is sealed.
     func beginTranscriptTurn() {
         overviewState.isAutomaticTerminalOverviewRenderingSuppressed = false
+        // A tool call of an earlier turn never reopens in this one.
+        endToolCallPreview()
     }
 
     @discardableResult
@@ -158,13 +160,15 @@ extension TerminalChatRenderCoordinator {
         // sole remaining obstacle to rendering: publication must not be
         // suspended and no assistant/thought streaming may be active. This
         // preserves the deferred path and tool-block row ownership when
-        // publication is suspended or while streaming is in progress.
+        // publication is suspended or while streaming (a tool-call preview
+        // with open rows included) is in progress.
         if kind == .subAgents,
            toolState.activeBlock != nil,
            toolState.activeBlockIsSubAgentTool,
            !overviewState.isSuspended,
            !assistantStreamingState.isStreaming,
-           !thoughtStreamingState.isStreaming {
+           !thoughtStreamingState.isStreaming,
+           !isStreamingToolCallPreview {
             let maximumInPlaceRows: Int?
             if case let .subAgents(_, _, _, _, rows) = content {
                 maximumInPlaceRows = rows
@@ -192,6 +196,9 @@ extension TerminalChatRenderCoordinator {
             && toolState.activeBlock == nil
             && !assistantStreamingState.isStreaming
             && !thoughtStreamingState.isStreaming
+            // Like the thought, a streaming tool-call preview defers an
+            // overview instead of letting it land inside a preview row.
+            && !isStreamingToolCallPreview
     }
 
     func renderPendingOverviewsIfIdle() {

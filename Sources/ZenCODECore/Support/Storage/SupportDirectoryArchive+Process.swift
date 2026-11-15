@@ -70,6 +70,10 @@ extension SupportDirectoryArchive {
                 finished.signal()
             }
             thread.stackSize = 256 * 1024
+            // `finish()` blocks the creating thread on this one, and a
+            // semaphore cannot donate priority: run at the creator's QoS so a
+            // higher-QoS caller never waits on a default-QoS drain.
+            thread.qualityOfService = Thread.current.qualityOfService
             thread.start()
         }
 

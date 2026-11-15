@@ -329,6 +329,61 @@ extension DirectSubAgentRuntimeTests {
 
         await runtime.shutdown()
     }
+
+    /// A fragment of a call the model is still writing is live presentation
+    /// only: the agent keeps its activity and its timestamps, and no tool
+    /// event is forwarded for it.
+    @Test
+    func aToolCallPreviewLeavesTheAgentAndTheDelegatedToolEventsUntouched() async throws {
+        let backend = CapturingSubAgentRuntimeBackend(blocksPrompts: true)
+        let runtime = makeDirectSubAgentRuntime(backend: backend)
+        let recorder = DirectSubAgentToolEventRecorder()
+        await runtime.updateSubAgentToolEventHandler { event in
+            await recorder.record(event)
+        }
+        _ = try await runtime.createAgents(
+            arguments: [
+                "name": .string("writer"),
+                "profile": .string("Developer"),
+                "prompt": .string("Write the notes")
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tool-preview"),
+            parentAllowedToolNames: nil
+        )
+        let agentID = try #require(await runtime.snapshots().first?.id)
+        await backend.waitUntilSentPromptCount(1)
+        await runtime.recordEvent(.thought("Planning the notes"), agentID: agentID)
+        let before = try #require(await runtime.snapshots().first)
+
+        let fragments: [DirectAgentToolCallPreview] = [
+            .toolStarted(name: "local.writeFile"),
+            .parameterStarted(name: "path"),
+            .parameterText("Notes.md"),
+            .parameterEnded,
+            .parameterStarted(name: "content"),
+            .parameterText("# Title\n"),
+            .parameterEnded,
+            .ended,
+        ]
+        for fragment in fragments {
+            await runtime.recordEvent(.toolCallPreview(fragment), agentID: agentID)
+        }
+
+        let after = try #require(await runtime.snapshots().first)
+        #expect(after.currentActivity == before.currentActivity)
+        #expect(after.currentActivityKind == before.currentActivityKind)
+        #expect(after.currentThought == before.currentThought)
+        #expect(after.currentToolName == nil)
+        #expect(after.latestEventAt == before.latestEventAt)
+        #expect(after.updatedAt == before.updatedAt)
+        #expect(
+            ChatSubAgentOverview.signature(for: [after])
+                == ChatSubAgentOverview.signature(for: [before])
+        )
+        #expect(await recorder.snapshot().isEmpty)
+
+        await runtime.shutdown()
+    }
 }
 
 private actor DirectSubAgentToolEventRecorder {

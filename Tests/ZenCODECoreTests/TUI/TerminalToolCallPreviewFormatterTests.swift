@@ -1,0 +1,654 @@
+//
+//  TerminalToolCallPreviewFormatterTests.swift
+//  ZenCODE
+//
+//  The pure drawing of a file write or edit the model is still writing: the
+//  header with its streamed path, source rows written as they arrive and
+//  repainted in color with a carriage return over the same cells, the diff
+//  markers of an edit, the rows that are never repainted, terminal-safe text,
+//  independence from how the stream was split, and the interruption that
+//  suspends a call until its next drawn text reopens the header.
+//
+
+import Foundation
+import Testing
+@testable import ZenCODECore
+
+@Suite("Terminal tool-call preview formatter")
+struct TerminalToolCallPreviewFormatterTests {
+    private static let reset = TerminalStyle.reset
+    private static let title = TerminalStyle.Tool.title
+    private static let value = TerminalStyle.Tool.value
+    private static let removal = TerminalMarkdownPalette.dark.diffRemoval
+    private static let addition = TerminalMarkdownPalette.dark.diffAddition
+    /// `let x = 1` as the Swift highlighter of the dark palette colors it.
+    private static let highlightedLetX = "\u{1B}[38;5;141mlet\u{1B}[0m x = \u{1B}[38;5;215m1\u{1B}[0m"
+
+    private func makeFormatter(
+        interactive: Bool = true,
+        inset: String = " "
+    ) -> TerminalToolCallPreviewFormatter {
+        TerminalToolCallPreviewFormatter(
+            isInteractive: interactive,
+            lineInset: inset,
+            palette: .dark
+        )
+    }
+
+    /// The text returned for each event, in order.
+    private func outputs(
+        _ events: [DirectAgentToolCallPreview],
+        interactive: Bool = true,
+        inset: String = " ",
+        columns: Int = 80
+    ) -> [String] {
+        var formatter = makeFormatter(interactive: interactive, inset: inset)
+        return events.map { formatter.consume($0, columns: { columns }) }
+    }
+
+    private func rendered(
+        _ events: [DirectAgentToolCallPreview],
+        interactive: Bool = true,
+        inset: String = " ",
+        columns: Int = 80
+    ) -> String {
+        outputs(events, interactive: interactive, inset: inset, columns: columns).joined()
+    }
+
+    /// What reaches the terminal once the chat writer places the margin before
+    /// the first visible cell of every row, as the coordinator does.
+    private func terminalText(_ text: String, inset: String = " ") -> String {
+        var state = TerminalChatTextFormatting.ChatLineInsetState()
+        return TerminalChatTextFormatting.chatLineInsetApplied(
+            to: text,
+            prefix: inset,
+            state: &state
+        )
+    }
+
+    private func write(
+        path: String? = "Sources/A.swift",
+        content: [String],
+        tool: String = "local.writeFile"
+    ) -> [DirectAgentToolCallPreview] {
+        var events: [DirectAgentToolCallPreview] = [.toolStarted(name: tool)]
+        if let path {
+            events += [.parameterStarted(name: "path"), .parameterText(path), .parameterEnded]
+        }
+        events.append(.parameterStarted(name: "content"))
+        events += content.map(DirectAgentToolCallPreview.parameterText)
+        events += [.parameterEnded, .ended]
+        return events
+    }
+
+    /// Every escape sequence in `text` is a Select Graphic Rendition.
+    private func containsOnlySGREscapes(_ text: String) -> Bool {
+        let scalars = Array(text.unicodeScalars)
+        var index = 0
+        while index < scalars.count {
+            guard scalars[index] == "\u{1B}" else {
+                index += 1
+                continue
+            }
+            guard index + 1 < scalars.count, scalars[index + 1] == "[" else { return false }
+            index += 2
+            while index < scalars.count,
+                  scalars[index].properties.numericType != nil || scalars[index] == ";" {
+                index += 1
+            }
+            guard index < scalars.count, scalars[index] == "m" else { return false }
+            index += 1
+        }
+        return true
+    }
+
+    private func chunks(_ text: String, size: Int) -> [String] {
+        let scalars = Array(text.unicodeScalars)
+        return stride(from: 0, to: scalars.count, by: size).map { start in
+            var chunk = String.UnicodeScalarView()
+            chunk.append(contentsOf: scalars[start..<min(start + size, scalars.count)])
+            return String(chunk)
+        }
+    }
+
+    // MARK: - Header
+
+    @Test
+    func theHeaderOpensAtTheStartAndThePathJoinsItWhileItStreams() {
+        let events: [DirectAgentToolCallPreview] = [
+            .toolStarted(name: "local.writeFile"),
+            .parameterStarted(name: "path"),
+            .parameterText("Sources/"),
+            .parameterText("A.swift"),
+            .parameterEnded,
+            .ended
+        ]
+
+        #expect(outputs(events) == [
+            "\(Self.title)🛠️  write\(Self.reset)",
+            "",
+            " \(Self.value)Sources/",
+            "A.swift",
+            "",
+            "\(Self.reset)\n"
+        ])
+        #expect(outputs(events, interactive: false) == [
+            "🛠️  write", "", " Sources/", "A.swift", "", "\n"
+        ])
+    }
+
+    @Test(arguments: [
+        ("local.writeFile", "write"),
+        ("local.append", "append"),
+        ("local.editFile", "edit"),
+        ("local.replace", "replace"),
+        ("local_writeFile", "write"),
+        ("LOCAL.EDITFILE", "edit"),
+        ("local-replace", "replace")
+    ])
+    func drawnToolsAreRecognizedByTheirNormalizedName(name: String, label: String) {
+        #expect(TerminalToolCallPreviewFormatter.drawsTool(named: name))
+        #expect(rendered([.toolStarted(name: name), .ended], interactive: false) == "🛠️  \(label)\n")
+    }
+
+    @Test
+    func thePathIsShownOnOneTerminalSafeRow() {
+        let text = rendered([
+            .toolStarted(name: "local.writeFile"),
+            .parameterStarted(name: "file_path"),
+            .parameterText("a\nb\u{1B}[2Jc\td"),
+            .ended
+        ], interactive: false)
+
+        #expect(text == "🛠️  write a␊b␛[2Jc    d\n")
+    }
+
+    // MARK: - Source rows
+
+    @Test
+    func sourceTextIsWrittenAsItArrivesAndTheRowIsRepaintedInColorAtItsEnd() {
+        let events = write(content: ["let", " x = 1", "\n"])
+
+        #expect(outputs(events) == [
+            "\(Self.title)🛠️  write\(Self.reset)",
+            "",
+            " \(Self.value)Sources/A.swift",
+            "",
+            "\(Self.reset)\n",
+            "let",
+            " x = 1",
+            "\r \(Self.highlightedLetX)\(Self.reset)\n",
+            "",
+            ""
+        ])
+    }
+
+    @Test
+    func theRepaintOccupiesExactlyTheCellsAlreadyWritten() {
+        let text = terminalText(rendered(write(content: ["let x = 1\nlet y = 2\n"])))
+
+        #expect(terminalScreenText(text, width: 80) == [
+            " 🛠️  write Sources/A.swift",
+            " let x = 1",
+            " let y = 2",
+            ""
+        ].joined(separator: "\n"))
+        #expect(!text.contains("\u{1B}[K"))
+        #expect(!text.contains("\u{1B}[2K"))
+        #expect(!text.contains("\u{1B}[1K"))
+        #expect(!containsCursorUpSequence(text))
+        #expect(containsOnlySGREscapes(text))
+    }
+
+    @Test
+    func aRowAsWideAsTheTerminalIsNotRepainted() {
+        // Inset + `let x = 1` take ten cells: they must be strictly narrower.
+        let tooWide = rendered(write(content: ["let x = 1\n"]), columns: 10)
+        let fits = rendered(write(content: ["let x = 1\n"]), columns: 11)
+
+        #expect(!tooWide.contains("\r"))
+        #expect(tooWide.hasSuffix("\(Self.reset)\nlet x = 1\n"))
+        #expect(fits.contains("\r \(Self.highlightedLetX)\(Self.reset)\n"))
+    }
+
+    @Test
+    func theWidthIsReadOnlyForARowThatWouldBeRepainted() {
+        var reads = 0
+        var formatter = makeFormatter()
+        for event in write(content: ["x = y\n", "let é = 1\n", "let x = 1\n"]) {
+            _ = formatter.consume(event, columns: {
+                reads += 1
+                return 80
+            })
+        }
+        #expect(reads == 1)
+    }
+
+    @Test
+    func nonASCIIRowsAreNotRepainted() {
+        let text = rendered(write(content: ["let é = 1\n", "let s = \"🙂\"\n"]))
+
+        #expect(!text.contains("\r"))
+        #expect(text.hasSuffix("let é = 1\nlet s = \"🙂\"\n"))
+    }
+
+    @Test
+    func rowsWithNothingToColorAreNotRepainted() {
+        let text = rendered(write(content: ["x = y\n", "   \n"]))
+
+        #expect(!text.contains("\r"))
+        #expect(text.hasSuffix("x = y\n   \n"))
+    }
+
+    @Test
+    func aNonInteractiveChannelReceivesPlainTextOnly() {
+        let text = rendered(
+            write(content: ["let x = 1\n", "\u{1B}[31mred\u{07}\n"])
+                + [.toolStarted(name: "local.editFile"),
+                   .parameterStarted(name: "old"), .parameterText("let a = 1\n"), .parameterEnded,
+                   .parameterStarted(name: "new"), .parameterText("let a = 2"), .ended],
+            interactive: false
+        )
+
+        #expect(!text.contains("\u{1B}"))
+        #expect(!text.contains("\r"))
+        #expect(text.contains("- let a = 1\n+ let a = 2\n"))
+    }
+
+    @Test
+    func tabsAreExpandedFromTheSourceColumnAndKeepTheRowRepaintable() {
+        let text = rendered(write(content: ["\tlet x = 1\n", "ab\tc\n"]))
+
+        #expect(text.contains("    let x = 1\r" + " " + "    " + Self.highlightedLetX))
+        #expect(text.hasSuffix("ab  c\n"))
+        #expect(!text.contains("\t"))
+    }
+
+    @Test
+    func lineBreaksOfEveryKindEndOneRow() {
+        let text = rendered(write(content: ["a\r", "\nb\rc\r\n\n"]), interactive: false)
+
+        #expect(text.hasSuffix("\na\nb\nc\n\n"))
+    }
+
+    @Test
+    func contentBeforeThePathUsesTheGenericProfileAndALatePathIsNotShown() {
+        let events: [DirectAgentToolCallPreview] = [
+            .toolStarted(name: "local.writeFile"),
+            .parameterStarted(name: "content"),
+            .parameterText("let x = 1\n"),
+            .parameterEnded,
+            .parameterStarted(name: "path"),
+            .parameterText("Late.swift"),
+            .parameterEnded,
+            .ended
+        ]
+        let text = rendered(events)
+        let generic = TerminalCodeBlockRenderer.renderLine("let x = 1", language: nil, palette: .dark)
+
+        #expect(text == "\(Self.title)🛠️  write\(Self.reset)\nlet x = 1\r \(generic)\(Self.reset)\n")
+        #expect(!text.contains("Late.swift"))
+    }
+
+    @Test
+    func thePathSelectsTheLanguageOfTheSource() {
+        let text = rendered(write(path: "config.json", content: ["{\"a\": 1}\n"]))
+        let json = TerminalCodeBlockRenderer.renderLine("{\"a\": 1}", language: "json", palette: .dark)
+
+        #expect(text.hasSuffix("{\"a\": 1}\r \(json)\(Self.reset)\n"))
+    }
+
+    // MARK: - Edits
+
+    @Test
+    func editRowsStartWithTheirDiffMarkerEvenWhenEmptyAndInTheRepaint() {
+        let events: [DirectAgentToolCallPreview] = [
+            .toolStarted(name: "local.editFile"),
+            .parameterStarted(name: "path"),
+            .parameterText("A.swift"),
+            .parameterEnded,
+            .parameterStarted(name: "old"),
+            .parameterText("let x = 1\n\nb\n"),
+            .parameterEnded,
+            .parameterStarted(name: "new"),
+            .parameterText("let x = 1"),
+            .parameterEnded,
+            .ended
+        ]
+        let minus = "\(Self.removal)- \(Self.reset)"
+        let plus = "\(Self.addition)+ \(Self.reset)"
+        let text = rendered(events)
+
+        #expect(text == "\(Self.title)🛠️  edit\(Self.reset) \(Self.value)A.swift\(Self.reset)\n"
+            + "\(minus)let x = 1\r \(minus)\(Self.highlightedLetX)\(Self.reset)\n"
+            + "\(minus)\n"
+            + "\(minus)b\n"
+            + "\(plus)let x = 1\r \(plus)\(Self.highlightedLetX)\(Self.reset)\n")
+        #expect(terminalScreenText(terminalText(text), width: 80) == [
+            " 🛠️  edit A.swift",
+            " - let x = 1",
+            " - ",
+            " - b",
+            " + let x = 1",
+            ""
+        ].joined(separator: "\n"))
+    }
+
+    @Test
+    func theMarkerCountsInTheRepaintWidth() {
+        // Inset, marker, and `let x = 1` take twelve cells.
+        let events: [DirectAgentToolCallPreview] = [
+            .toolStarted(name: "local.replace"),
+            .parameterStarted(name: "new"),
+            .parameterText("let x = 1\n"),
+            .ended
+        ]
+
+        #expect(!rendered(events, columns: 12).contains("\r"))
+        #expect(rendered(events, columns: 13).contains("\r"))
+    }
+
+    // MARK: - Ignored input
+
+    @Test(arguments: ["local.multiEdit", "local.applyPatch", "local.readFile", "local.exec", "agent.create"])
+    func toolsThatAreNotDrawnProduceNothing(name: String) {
+        let events: [DirectAgentToolCallPreview] = [
+            .toolStarted(name: name),
+            .parameterStarted(name: "path"),
+            .parameterText("A.swift"),
+            .parameterEnded,
+            .parameterStarted(name: "content"),
+            .parameterText("let x = 1\n"),
+            .parameterEnded,
+            .ended
+        ]
+
+        #expect(!TerminalToolCallPreviewFormatter.drawsTool(named: name))
+        #expect(rendered(events) == "")
+    }
+
+    @Test
+    func argumentsThatAreNotDrawnProduceNothing() {
+        let events: [DirectAgentToolCallPreview] = [
+            .toolStarted(name: "local.editFile"),
+            .parameterStarted(name: "replaceAll"),
+            .parameterText("true"),
+            .parameterEnded,
+            .parameterStarted(name: "content"),
+            .parameterText("not an edit argument\n"),
+            .parameterEnded,
+            .ended
+        ]
+
+        #expect(rendered(events, interactive: false) == "🛠️  edit\n")
+    }
+
+    @Test
+    func fragmentsWithoutTheStartOfADrawnToolAreIgnored() {
+        let orphan: [DirectAgentToolCallPreview] = [
+            .parameterStarted(name: "content"),
+            .parameterText("let x = 1\n"),
+            .parameterEnded,
+            .ended
+        ]
+        var formatter = makeFormatter()
+
+        #expect(rendered(orphan) == "")
+        #expect(rendered([.toolStarted(name: "local.readFile")] + orphan) == "")
+        // After its end a call takes no more fragments.
+        #expect(rendered(write(content: ["a\n"]) + orphan, interactive: false)
+            == rendered(write(content: ["a\n"]), interactive: false))
+        #expect(!formatter.isOpen)
+        _ = formatter.consume(.toolStarted(name: "local.append"), columns: { 80 })
+        #expect(formatter.isOpen)
+        _ = formatter.consume(.ended, columns: { 80 })
+        #expect(!formatter.isOpen)
+    }
+
+    // MARK: - Terminal safety
+
+    @Test
+    func controlCharactersAndEscapesInTheContentNeverReachTheTerminal() throws {
+        let hostile = "a\u{1B}[2J\u{1B}]8;;x\u{07}b\u{08}\u{7F}\u{9B}c\u{202E}d\u{200D}e\n"
+        for interactive in [true, false] {
+            let text = rendered(write(content: [hostile]), interactive: interactive)
+            let body = String(text[try #require(text.range(of: "A.swift")).upperBound...])
+
+            #expect(body.contains("a␛[2J␛]8;;x␇b␈␡�c�d�e\n"))
+            #expect(!body.contains("\u{07}"))
+            #expect(!body.contains("\u{08}"))
+            #expect(!body.contains("\u{9B}"))
+            #expect(!body.contains("\u{202E}"))
+            // A row with control pictures is not ASCII: it is never repainted.
+            #expect(!body.contains("\r"))
+            #expect(containsOnlySGREscapes(text))
+        }
+    }
+
+    // MARK: - Stream splitting
+
+    @Test
+    func theOutputDoesNotDependOnHowTheStreamWasSplit() {
+        let path = "Sources/Feature/Écran.swift"
+        let content = "import Foundation\r\n\n\tstruct A {\n    let s = \"é🙂\"\r\n    // \u{1B}[1m\n}\nlast"
+        func events(pathChunks: [String], contentChunks: [String]) -> [DirectAgentToolCallPreview] {
+            [.toolStarted(name: "local.writeFile"), .parameterStarted(name: "path")]
+                + pathChunks.map(DirectAgentToolCallPreview.parameterText)
+                + [.parameterEnded, .parameterStarted(name: "content")]
+                + contentChunks.map(DirectAgentToolCallPreview.parameterText)
+                + [.parameterEnded, .ended]
+        }
+        let whole = rendered(events(pathChunks: [path], contentChunks: [content]))
+
+        for size in [1, 2, 3, 5, 8, 13] {
+            let split = rendered(events(
+                pathChunks: chunks(path, size: size),
+                contentChunks: chunks(content, size: size)
+            ))
+            #expect(split == whole, "chunks of \(size) scalars")
+        }
+        #expect(whole.hasSuffix("}\nlast\n"))
+    }
+
+    // MARK: - Ending
+
+    @Test
+    func theEndClosesAnOpenRowAndAnArgumentLeftOpen() {
+        let events: [DirectAgentToolCallPreview] = [
+            .toolStarted(name: "local.writeFile"),
+            .parameterStarted(name: "content"),
+            .parameterText("let x = 1"),
+            .ended
+        ]
+
+        #expect(outputs(events).last == "\r \(TerminalCodeBlockRenderer.renderLine("let x = 1", language: nil, palette: .dark))\(Self.reset)\n")
+        #expect(rendered(events, interactive: false).hasSuffix("\nlet x = 1\n"))
+    }
+
+    @Test
+    func theEndClosesAHeaderThatIsStillOpen() {
+        let events: [DirectAgentToolCallPreview] = [
+            .toolStarted(name: "local.writeFile"),
+            .parameterStarted(name: "path"),
+            .parameterText("A.swi"),
+            .ended
+        ]
+
+        #expect(outputs(events).last == "\(Self.reset)\n")
+    }
+
+    @Test
+    func aNewToolStartEndsThePreviousCall() {
+        let events: [DirectAgentToolCallPreview] = [
+            .toolStarted(name: "local.writeFile"),
+            .parameterStarted(name: "path"),
+            .parameterText("A.swift"),
+            .parameterStarted(name: "content"),
+            .parameterText("a"),
+            .toolStarted(name: "local.editFile"),
+            .parameterStarted(name: "old"),
+            .parameterText("b"),
+            .toolStarted(name: "local.readFile"),
+            .parameterStarted(name: "path"),
+            .parameterText("ignored"),
+            .ended
+        ]
+
+        #expect(rendered(events, interactive: false) == "🛠️  write A.swift\na\n🛠️  edit\n- b\n")
+    }
+
+    @Test
+    func finishingAClosedFormatterWritesNothing() {
+        var formatter = makeFormatter()
+        #expect(formatter.finish(columns: { 80 }) == "")
+        #expect(formatter.begin(toolNamed: "local.exec") == nil)
+        #expect(!formatter.isOpen)
+    }
+
+    // MARK: - Interruption
+
+    /// Feeds `events` and returns the text they produced.
+    private func feed(
+        _ events: [DirectAgentToolCallPreview],
+        to formatter: inout TerminalToolCallPreviewFormatter
+    ) -> String {
+        events.map { formatter.consume($0, columns: { 80 }) }.joined()
+    }
+
+    @Test
+    func anInterruptionClosesTheRowsAndTheNextDrawnTextReopensTheHeader() {
+        var formatter = makeFormatter(interactive: false)
+        let start = feed(Array(write(content: ["let a = 1\nlet b"]).dropLast(2)), to: &formatter)
+        let interruption = formatter.interrupt(columns: { 80 })
+
+        #expect(start == "🛠️  write Sources/A.swift\nlet a = 1\nlet b")
+        #expect(interruption == "\n")
+        #expect(!formatter.isOpen)
+        #expect(formatter.isSuspended)
+        #expect(formatter.interrupt(columns: { 80 }) == "")
+        #expect(!formatter.resumes(with: .parameterText("")))
+        #expect(!formatter.resumes(with: .parameterEnded))
+        #expect(formatter.resumes(with: .parameterText(" = 2\n")))
+
+        // The row broken by the interruption goes on from a new row.
+        let resumed = feed([.parameterText(" = 2\n"), .parameterText("let c = 3\n")], to: &formatter)
+        #expect(resumed == "🛠️  write Sources/A.swift\n = 2\nlet c = 3\n")
+        #expect(formatter.isOpen)
+        #expect(!formatter.isSuspended)
+        #expect(feed([.parameterEnded, .ended], to: &formatter) == "")
+        #expect(!formatter.isOpen)
+    }
+
+    @Test
+    func theInterruptionRepaintsTheRowAndTheHeaderReopensAsItWasFirstWritten() {
+        var formatter = makeFormatter()
+        let header = "\(Self.title)🛠️  write\(Self.reset) \(Self.value)Sources/A.swift\(Self.reset)\n"
+
+        #expect(feed(Array(write(content: ["let x = 1"]).dropLast(2)), to: &formatter) == header + "let x = 1")
+        #expect(formatter.interrupt(columns: { 80 }) == "\r \(Self.highlightedLetX)\(Self.reset)\n")
+        #expect(feed([.parameterText("\nlet x = 1\n")], to: &formatter)
+            == header + "let x = 1\r \(Self.highlightedLetX)\(Self.reset)\n")
+    }
+
+    @Test
+    func aPathStillStreamingGoesOnAtTheEndOfTheReopenedHeader() {
+        var formatter = makeFormatter()
+        let plus = "\(Self.addition)+ \(Self.reset)"
+        let start = feed([
+            .toolStarted(name: "local.editFile"),
+            .parameterStarted(name: "path"),
+            .parameterText("Sources/")
+        ], to: &formatter)
+
+        #expect(start == "\(Self.title)🛠️  edit\(Self.reset) \(Self.value)Sources/")
+        #expect(formatter.interrupt(columns: { 80 }) == "\(Self.reset)\n")
+        #expect(feed([
+            .parameterText("A.swift"),
+            .parameterEnded,
+            .parameterStarted(name: "new"),
+            .parameterText("let x = 1\n"),
+            .ended
+        ], to: &formatter) == "\(Self.title)🛠️  edit\(Self.reset) \(Self.value)Sources/A.swift\(Self.reset)\n"
+            + "\(plus)let x = 1\r \(plus)\(Self.highlightedLetX)\(Self.reset)\n")
+    }
+
+    @Test
+    func aSuspendedCallWritesOnlyItsDrawnTextAndItsEndOrANewCallForgetsIt() {
+        var formatter = makeFormatter(interactive: false)
+        _ = feed([
+            .toolStarted(name: "local.editFile"),
+            .parameterStarted(name: "path"),
+            .parameterText("A.swift"),
+            .parameterEnded,
+            .parameterStarted(name: "old"),
+            .parameterText("x\n")
+        ], to: &formatter)
+
+        // The row is already closed: the interruption has nothing to write.
+        #expect(formatter.interrupt(columns: { 80 }) == "")
+        #expect(formatter.isSuspended)
+        // Starts and ends of arguments only change the open role, and the text
+        // of an argument that is not drawn stays silent.
+        #expect(feed([
+            .parameterEnded,
+            .parameterStarted(name: "replaceAll"),
+            .parameterText("true"),
+            .parameterEnded,
+            .parameterStarted(name: "new")
+        ], to: &formatter) == "")
+        #expect(formatter.isSuspended)
+        #expect(!formatter.resumes(with: .parameterStarted(name: "new")))
+        #expect(feed([.parameterText("y\n")], to: &formatter) == "🛠️  edit A.swift\n+ y\n")
+
+        // Its end writes nothing and forgets it.
+        #expect(formatter.interrupt(columns: { 80 }) == "")
+        #expect(feed([.ended], to: &formatter) == "")
+        #expect(!formatter.isSuspended)
+        #expect(!formatter.isOpen)
+        #expect(feed([.parameterText("z\n")], to: &formatter) == "")
+
+        // A new call writes only its own header.
+        _ = feed([.toolStarted(name: "local.writeFile"), .parameterStarted(name: "content"), .parameterText("a")],
+                 to: &formatter)
+        #expect(formatter.interrupt(columns: { 80 }) == "\n")
+        #expect(feed([.toolStarted(name: "local.append")], to: &formatter) == "🛠️  append")
+        #expect(formatter.isOpen)
+        #expect(!formatter.isSuspended)
+    }
+
+    @Test
+    func aLineBreakRightAfterTheResumeCompletesTheRowTheInterruptionEnded() {
+        var formatter = makeFormatter(interactive: false)
+        var text = feed([
+            .toolStarted(name: "local.editFile"),
+            .parameterStarted(name: "path"),
+            .parameterText("A.swift"),
+            .parameterEnded,
+            .parameterStarted(name: "old"),
+            .parameterText("let a = 1")
+        ], to: &formatter)
+        text += formatter.interrupt(columns: { 80 })
+        // Only the line break of the row already ended: nothing to draw.
+        #expect(!formatter.resumes(with: .parameterText("\n")))
+        text += feed([.parameterText("\n")], to: &formatter)
+        #expect(formatter.isSuspended)
+        text += feed([.parameterText("b\n"), .parameterEnded, .parameterStarted(name: "new"), .parameterText("let a = 2")],
+                     to: &formatter)
+        text += formatter.interrupt(columns: { 80 })
+        // A CRLF break completes it as well.
+        #expect(formatter.resumes(with: .parameterText("\r\nc")))
+        text += feed([.parameterText("\r\nc"), .ended], to: &formatter)
+
+        // Every row of the source once, and no empty row that is not in it.
+        #expect(text == "🛠️  edit A.swift\n- let a = 1\n"
+            + "🛠️  edit A.swift\n- b\n+ let a = 2\n"
+            + "🛠️  edit A.swift\n+ c\n")
+
+        // At the start of a row the interruption ended nothing: a line break
+        // there is a blank row of the source.
+        var blank = makeFormatter(interactive: false)
+        _ = feed(Array(write(content: ["a\n"]).dropLast(2)), to: &blank)
+        #expect(blank.interrupt(columns: { 80 }) == "")
+        #expect(feed([.parameterText("\nb\n")], to: &blank) == "🛠️  write Sources/A.swift\n\nb\n")
+    }
+}

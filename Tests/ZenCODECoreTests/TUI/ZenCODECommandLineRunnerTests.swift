@@ -81,6 +81,48 @@ struct ZenCODECommandLineRunnerTests {
     }
 
     @Test
+    func jsonlProtocolWritesNoRecordForAToolCallPreview() async throws {
+        let fragments: [DirectAgentToolCallPreview] = [
+            .toolStarted(name: "local.writeFile"),
+            .parameterStarted(name: "path"),
+            .parameterText("/tmp/secret.txt"),
+            .parameterEnded,
+            .parameterStarted(name: "content"),
+            .parameterText("secret body"),
+            .parameterEnded,
+            .ended,
+        ]
+        for fragment in fragments {
+            #expect(ZenCODEHeadlessJSONLProtocol.record(
+                for: .toolCallPreview(fragment),
+                runID: "run-1"
+            ) == nil)
+        }
+
+        let lines = Mutex<[Data]>([])
+        let writer = ZenCODEHeadlessJSONLWriter(runID: "run-1") { data in
+            lines.withLock { $0.append(data) }
+        }
+        await writer.start()
+        for fragment in fragments {
+            await writer.write(event: .toolCallPreview(fragment))
+        }
+        await writer.write(result: DirectAgentResponse(
+            text: "hello",
+            stopReason: "stop",
+            modelID: "test-model"
+        ))
+        await writer.close()
+
+        let written = lines.withLock { $0 }
+        let records = try written.map { try JSONDecoder().decode(JSONValue.self, from: $0) }
+        #expect(records.compactMap { $0.objectValue?["type"]?.stringValue } == [
+            "run.started", "message.completed", "run.completed",
+        ])
+        #expect(!written.contains { String(decoding: $0, as: UTF8.self).contains("secret") })
+    }
+
+    @Test
     func jsonlWriterExposesOnlyApprovedToolFieldsAndTerminalError() throws {
         let started = DirectAgentToolCall(
             id: "call-1",

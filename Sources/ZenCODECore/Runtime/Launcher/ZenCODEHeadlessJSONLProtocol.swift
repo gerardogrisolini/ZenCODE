@@ -286,7 +286,8 @@ public enum ZenCODEHeadlessJSONLProtocol {
         case let .toolCallCompleted(toolCall, result):
             return toolCompleted(runID: runID, toolCall: toolCall, result: result)
         case .status, .diagnostic, .thought, .modelLoaded, .metrics,
-             .contextWindow, .subscriptionUsage, .content, .sessionSnapshot:
+             .contextWindow, .subscriptionUsage, .content, .toolCallPreview,
+             .sessionSnapshot:
             return nil
         case .turnEnded:
             // A successful turn is emitted by `runCompleted(runID:)` only after

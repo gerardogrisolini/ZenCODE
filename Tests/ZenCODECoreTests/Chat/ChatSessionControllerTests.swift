@@ -83,6 +83,86 @@ struct ChatSessionControllerTests {
         }
     }
 
+    // MARK: - Tool call preview
+
+    @Test
+    func aToolCallPreviewReachesThePresenterInStreamOrderAndLeavesNoTraceInTheSession() async throws {
+        let preview: [DirectAgentToolCallPreview] = [
+            .toolStarted(name: "local.writeFile"),
+            .parameterStarted(name: "path"),
+            .parameterText("Notes"),
+            .parameterText(".md"),
+            .parameterEnded,
+            .parameterStarted(name: "content"),
+            .parameterText("# Title\n"),
+            .parameterEnded,
+            .ended,
+        ]
+
+        let withPreview = try await observeWriteTurn(preview: preview)
+        let withoutPreview = try await observeWriteTurn(preview: [])
+
+        // The fragments reach the presenter as the model wrote them: after the
+        // content that preceded the call and before the call itself starts.
+        var expectedEvents: [RecordingChatPresenter.Event] = [
+            .turnWillStart(prompt: "Write the notes"),
+            .content("Writing the notes."),
+        ]
+        expectedEvents += preview.map { .toolPreview($0) }
+        expectedEvents += [
+            .toolStarted("tool-write"),
+            .toolCompleted("tool-write"),
+            .toolSettled("tool-write"),
+            .content("Done."),
+            .turnEnded(.completed),
+            .modelTurnDidReturn,
+            .turnWillFinish,
+        ]
+        #expect(withPreview.events == expectedEvents)
+
+        // Beyond the fragments themselves the presenter sees what it sees
+        // without them, and the session keeps no trace of them: neither the
+        // transcript nor the history nor the session state differ.
+        let withoutFragments = withPreview.events.filter {
+            if case .toolPreview = $0 { false } else { true }
+        }
+        #expect(withoutFragments == withoutPreview.events)
+        #expect(withPreview.transcript == withoutPreview.transcript)
+        #expect(withPreview.transcript.map(\.role) == [.user, .assistant, .assistant, .tool, .assistant])
+        #expect(!withPreview.transcript.contains { $0.content.contains("# Title") })
+        #expect(withPreview.history == withoutPreview.history)
+        #expect(withPreview.stateAfter == withPreview.stateBefore)
+        #expect(withPreview.stateAfter == withoutPreview.stateAfter)
+        #expect(withPreview.finalAssistantBlock == "Done.")
+    }
+
+    @Test
+    func aToolCallPreviewReachesTheObserversBeforeThePrimaryWithoutClosingTheBlock() async throws {
+        let log = ChatPresentationLog()
+        try await withHarness(presentationLog: log) { harness in
+            let observer = RecordingChatPresenter(name: "observer", log: log)
+            harness.controller.addObserver(observer)
+            await harness.runtime.append { call in
+                await call.onEvent(.toolCallPreview(.toolStarted(name: "local.writeFile")))
+                await call.onEvent(.toolCallPreview(.ended))
+                await call.onEvent(.turnEnded(.completed))
+                return DirectAgentResponse(text: "", stopReason: "end_turn", modelID: "scripted-model")
+            }
+
+            _ = try await harness.controller.runTurn(harness.request("Write"))
+
+            let previews = log.entries.filter {
+                if case .toolPreview = $0.event { true } else { false }
+            }
+            #expect(previews == [
+                .init(presenter: "observer", event: .toolPreview(.toolStarted(name: "local.writeFile"))),
+                .init(presenter: "primary", event: .toolPreview(.toolStarted(name: "local.writeFile"))),
+                .init(presenter: "observer", event: .toolPreview(.ended)),
+                .init(presenter: "primary", event: .toolPreview(.ended)),
+            ])
+        }
+    }
+
     @Test
     func aChannelThatDoesNotRetainTheTranscriptNeverAppendsIt() async throws {
         try await withHarness(retainsTranscript: false) { harness in
@@ -1300,6 +1380,73 @@ private final class CallCounter: Sendable {
             return value
         }
     }
+}
+
+/// What one scripted turn left behind, for comparing a turn that streamed
+/// tool-call previews with the same turn without them.
+private struct WriteTurnObservation: Sendable {
+    let events: [RecordingChatPresenter.Event]
+    let transcript: [AgentRuntimeMessage]
+    let history: [AgentRuntimeMessage]
+    let stateBefore: ChatSessionState
+    let stateAfter: ChatSessionState
+    let finalAssistantBlock: String?
+}
+
+private final class WriteTurnObservationBox: Sendable {
+    private let storage = Mutex<WriteTurnObservation?>(nil)
+
+    func store(_ observation: WriteTurnObservation) {
+        storage.withLock { $0 = observation }
+    }
+
+    var value: WriteTurnObservation? {
+        storage.withLock { $0 }
+    }
+}
+
+/// Runs a turn in which the model writes a file: a sentence, the `preview`
+/// fragments of the write call, the call itself, then a closing sentence.
+private func observeWriteTurn(
+    preview: [DirectAgentToolCallPreview]
+) async throws -> WriteTurnObservation {
+    let box = WriteTurnObservationBox()
+    try await withHarness { harness in
+        await harness.runtime.append { call in
+            let write = DirectAgentToolCall(
+                id: "tool-write",
+                name: "local.writeFile",
+                argumentsObject: ["path": "Notes.md", "content": "# Title\n"],
+                argumentsJSON: "{\"content\":\"# Title\\n\",\"path\":\"Notes.md\"}"
+            )
+            await call.onEvent(.content("Writing the notes."))
+            for fragment in preview {
+                await call.onEvent(.toolCallPreview(fragment))
+            }
+            await call.onEvent(.toolCallStarted(write))
+            await call.onEvent(.toolCallCompleted(write, DirectAgentToolResult(output: "ok", summary: "ok")))
+            await call.onEvent(.content("Done."))
+            await call.onEvent(.turnEnded(.completed))
+            return DirectAgentResponse(
+                text: "Writing the notes.Done.",
+                stopReason: "end_turn",
+                modelID: "scripted-model"
+            )
+        }
+        let stateBefore = harness.controller.sessionState
+
+        let result = try await harness.controller.runTurn(harness.request("Write the notes"))
+
+        box.store(WriteTurnObservation(
+            events: await harness.presenter.events,
+            transcript: harness.controller.transcript,
+            history: harness.controller.history,
+            stateBefore: stateBefore,
+            stateAfter: harness.controller.sessionState,
+            finalAssistantBlock: result.finalAssistantBlock
+        ))
+    }
+    return try #require(box.value)
 }
 
 /// Parks a scripted turn until the test releases it, without sleeping: the

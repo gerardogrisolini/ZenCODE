@@ -118,6 +118,8 @@ struct DS4GeneratedOutputParser: Sendable {
     private var undecodedVisible: [UInt8] = []
     private var undecodedThought: [UInt8] = []
     private var terminal: Terminal?
+    /// The `ended` preview of the tool block was returned.
+    private var previewEnded = false
     private var rawText = ""
     private var visibleText = ""
     private var reasoningText = ""
@@ -262,6 +264,29 @@ struct DS4GeneratedOutputParser: Sendable {
         return output
     }
 
+    // MARK: - Live preview
+
+    /// The live-preview fragments of the tool block produced since the last
+    /// call, in stream order; read them after `consume(_:)` and `finish()`.
+    /// Draining never changes what `consume(_:)` and `finish()` return.
+    ///
+    /// `ended` closes the block exactly once, when it completes, turns out
+    /// malformed or is still open at `finish()`, and only if a `toolStarted`
+    /// was produced. A tool call attempted while reasoning or DSML markup
+    /// outside a block never starts the tool parser, so it produces nothing.
+    mutating func drainToolCallPreviews() -> [DirectAgentToolCallPreview] {
+        guard toolActive else {
+            return []
+        }
+        let blockEnded = terminal != nil
+        var previews = tool.drainPreviews(blockEnded: blockEnded)
+        if blockEnded, tool.previewedTool, !previewEnded {
+            previewEnded = true
+            previews.append(.ended)
+        }
+        return previews
+    }
+
     // MARK: - Routing (agent_stream_text)
 
     private mutating func handle(_ events: [DS4ThinkSplitter.Event]) {
@@ -362,6 +387,10 @@ struct DS4GeneratedOutputParser: Sendable {
             fail(Self.thinkingToolCallDetail)
             return
         }
+        // No visible byte follows the opener: the text held back because it
+        // could still have started a marker goes out now, before the block's
+        // previews, instead of at `finish()`.
+        release(thought: false, keepingPossibleMarker: false)
         toolActive = true
         tool.start()
         if implicitInvoke, syntax.usesDSML {

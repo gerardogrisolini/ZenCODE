@@ -368,6 +368,22 @@ differ from the defaults of ds4-agent.
   Sampling is greedy on the structural parts of a tool block (the opening, the
   tags between the parameters, and the end of a value), as in ds4-agent. The
   content of the parameter values is sampled normally.
+- While the model writes a call to `local.writeFile`, `local.append`,
+  `local.editFile`, or `local.replace`, the terminal draws it live, as ds4-agent
+  does: a header row with the target path, then the text as it is generated.
+  The old and new text of an edit start with `- ` and `+ `. A finished row is
+  repainted with the syntax colors of the file's extension when it is plain
+  ASCII and narrower than the terminal; any other row stays as written, and
+  block comments are colored one row at a time. Nothing is cut: a long file
+  scrolls in full. The text is the one the model writes, before any unescaping
+  of the call. When other output lands while a file is being written (a system
+  message, a request for authorization), the preview closes at the end of the
+  row it is on and reopens with its header at the next text of the call. When
+  the call is complete its compact tool block follows as
+  for any other tool. Every other tool, `local.multiEdit` and
+  `local.applyPatch` included, shows only its compact block. The preview exists
+  only in the terminal chat: ACP, the headless and JSONL output, Telegram, the
+  macOS app, saved sessions, and sub-agents never receive it.
 
 ### Context and compaction
 

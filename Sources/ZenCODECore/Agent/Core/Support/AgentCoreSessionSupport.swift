@@ -91,6 +91,7 @@ actor AgentCorePromptTurnRecorder {
              .contextWindow,
              .subscriptionUsage,
              .sessionSnapshot,
+             .toolCallPreview,
              .turnEnded:
             break
         }

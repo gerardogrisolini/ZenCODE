@@ -166,6 +166,12 @@ final class ChatSlotPresenter: ChatSessionPresenter {
         await releasedActivePresenter().presentSubscriptionUsage(status)
     }
 
+    func presentToolCallPreview(_ preview: DirectAgentToolCallPreview) async {
+        // The preview does not close the block: the `presentToolCallStarted`
+        // that follows does, so the live text is left as it is.
+        await releasedActivePresenter().presentToolCallPreview(preview)
+    }
+
     func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {
         // The tool call closes the block that preceded it, as the transcript
         // and the reducer close it.

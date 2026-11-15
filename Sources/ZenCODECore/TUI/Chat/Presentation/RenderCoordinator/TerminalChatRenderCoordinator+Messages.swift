@@ -126,6 +126,7 @@ extension TerminalChatRenderCoordinator {
     /// does not render deferred overviews after the summary: the summary is the
     /// terminal section which closes a completed prompt.
     func writeFinalFileChangeSummaryMessage(_ text: String) {
+        interruptToolCallPreviewIfNeeded()
         interruptActiveToolForInterleavedOutputIfNeeded()
         renderPendingOverviewsIfIdle()
         writeChat(
@@ -148,6 +149,7 @@ extension TerminalChatRenderCoordinator {
     }
 
     private func writeInterleavedMessage(_ write: () -> Void) {
+        interruptToolCallPreviewIfNeeded()
         interruptActiveToolForInterleavedOutputIfNeeded()
         write()
         renderPendingOverviewsIfIdle()

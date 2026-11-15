@@ -379,6 +379,55 @@ struct ChatSessionStateTests {
         #expect(Self.representable(reducer.snapshot.log) == script.expected)
     }
 
+    // MARK: - Tool call preview
+
+    /// A preview is live presentation only: the reducer neither logs it nor
+    /// changes its snapshot, and the block the call interrupts stays open
+    /// until the call starts, so the log is the one the same turn builds
+    /// without previews.
+    @Test
+    @ChatSessionActor
+    func aToolCallPreviewChangesNeitherTheReducerSnapshotNorTheOpenBlock() async throws {
+        let call = Self.toolCall(id: "call-write", name: "local.writeFile")
+        let result = DirectAgentToolResult(output: "ok", summary: "ok")
+        let plain = Self.reducer()
+        let previewed = Self.reducer()
+        for reducer in [plain, previewed] {
+            await reducer.turnWillStart(Self.request("Write the notes"))
+            await reducer.presentThought("Planning. ")
+            await reducer.presentAssistantContent("Writing ")
+        }
+
+        let before = previewed.snapshot
+        let fragments: [DirectAgentToolCallPreview] = [
+            .toolStarted(name: "local.writeFile"),
+            .parameterStarted(name: "path"),
+            .parameterText("Notes.md"),
+            .parameterEnded,
+            .parameterStarted(name: "content"),
+            .parameterText("# Title\n"),
+            .parameterEnded,
+            .ended,
+        ]
+        for fragment in fragments {
+            await previewed.presentToolCallPreview(fragment)
+            #expect(previewed.snapshot == before)
+        }
+
+        for reducer in [plain, previewed] {
+            await reducer.presentAssistantContent("the notes.")
+            await reducer.presentToolCallStarted(call)
+            await reducer.presentToolCallCompleted(call, result: result)
+            await reducer.presentAssistantContent("Done.")
+            await reducer.turnWillFinish()
+        }
+        #expect(Self.representable(previewed.snapshot.log) == Self.representable(plain.snapshot.log))
+        #expect(previewed.snapshot.log.map(\.sequence) == plain.snapshot.log.map(\.sequence))
+        #expect(Self.representable(previewed.snapshot.log).contains {
+            $0.entry == .assistantText("Writing the notes.")
+        })
+    }
+
     // MARK: - Turns
 
     @Test

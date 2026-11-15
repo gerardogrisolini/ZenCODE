@@ -20,6 +20,10 @@ public protocol ChatSessionPresenter: Sendable {
     func presentMetrics(_ metrics: DirectAgentGenerationMetrics) async
     func presentContextWindow(_ status: DirectAgentContextWindowStatus) async
     func presentSubscriptionUsage(_ status: DirectAgentSubscriptionUsageStatus) async
+    /// A fragment of a tool call the model is still writing, before its
+    /// ``presentToolCallStarted(_:)``. Live presentation only: a channel that
+    /// does not draw it ignores it.
+    func presentToolCallPreview(_ preview: DirectAgentToolCallPreview) async
     func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async
     func presentToolCallCompleted(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async
     /// The completed tool call has been fully processed: its live file
@@ -143,6 +147,7 @@ extension ChatSessionPresenter {
     public func presentMetrics(_ metrics: DirectAgentGenerationMetrics) async {}
     public func presentContextWindow(_ status: DirectAgentContextWindowStatus) async {}
     public func presentSubscriptionUsage(_ status: DirectAgentSubscriptionUsageStatus) async {}
+    public func presentToolCallPreview(_ preview: DirectAgentToolCallPreview) async {}
     public func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {}
     public func presentToolCallCompleted(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {}
     public func presentToolCallSettled(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {}

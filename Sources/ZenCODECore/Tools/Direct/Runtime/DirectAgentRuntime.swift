@@ -413,6 +413,7 @@ public enum DirectAgentEvent: Sendable {
     case contextWindow(DirectAgentContextWindowStatus)
     case subscriptionUsage(DirectAgentSubscriptionUsageStatus)
     case content(String)
+    case toolCallPreview(DirectAgentToolCallPreview)
     case toolCallStarted(DirectAgentToolCall)
     case toolCallCompleted(DirectAgentToolCall, DirectAgentToolResult)
     case sessionSnapshot(AgentRuntimeSessionSnapshot)

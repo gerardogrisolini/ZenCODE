@@ -12,6 +12,21 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
+- With the in-process DS4 engine, the terminal shows a file while the model is
+  still writing it, as ds4-agent does. For `local.writeFile`, `local.append`,
+  `local.editFile`, and `local.replace`, a header row with the target path is
+  followed by the text of the call as it is generated; the old and new text of
+  an edit start with `- ` and `+ `. A finished row is repainted with the syntax
+  colors of the file's extension when it is plain ASCII and narrower than the
+  terminal, and stays as written otherwise. Nothing is cut: a long file scrolls
+  in full. The compact tool block follows as before once the call is complete,
+  and every other tool, `local.multiEdit` and `local.applyPatch` included, is
+  unchanged. The preview is drawn only by the terminal chat: other providers do
+  not produce it, and ACP, the headless and JSONL output, Telegram, the macOS
+  app, saved sessions, and sub-agents do not receive it. For host apps,
+  `DirectAgentEvent` gains the case `toolCallPreview` and
+  `ChatSessionPresenter` the method `presentToolCallPreview(_:)`, with a no-op
+  default.
 - `/sessions memory` prints the project-memory block that was sent to the model
   with the last prompt of the current session, exactly as it was sent, followed
   by one line with its size in characters and an estimate of the tokens it

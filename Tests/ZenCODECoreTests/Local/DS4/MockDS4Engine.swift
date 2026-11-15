@@ -163,6 +163,9 @@ final class MockDS4Engine: DS4Engine {
         var error: DS4EngineError?
         /// Ids of the tokens, one per chunk. `nil`: fresh ids from the engine's counter.
         var tokens: [Int32]?
+        /// Thrown once every chunk was emitted without a caller stop: a
+        /// generation that fails midway.
+        var errorAfterChunks: DS4EngineError?
     }
 
     private struct SessionState {
@@ -590,6 +593,9 @@ final class MockDS4Engine: DS4Engine {
                 outcome = .callerStop
                 break
             }
+        }
+        if let failure = generation.errorAfterChunks, emitted == generation.chunks.count, outcome != .callerStop {
+            throw failure
         }
         return finishGeneration(sessionID: sessionID, outcome: outcome, text: text, tokens: ids)
     }

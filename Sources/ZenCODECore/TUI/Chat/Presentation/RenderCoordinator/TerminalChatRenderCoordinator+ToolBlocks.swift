@@ -117,6 +117,7 @@ extension TerminalChatRenderCoordinator {
     }
 
     func writeAccessModeChangeMessage(_ accessMode: AgentLocalExecAccessMode) {
+        interruptToolCallPreviewIfNeeded()
         finishActiveToolOutputBeforeInterleavedMessage()
         writeSystemMessageWithoutInterrupt(
             ChatSessionNoticeText.localExecAccessModeChangeText(accessMode)
@@ -163,7 +164,7 @@ extension TerminalChatRenderCoordinator {
         }
     }
 
-    private func prepareForToolOutput() {
+    func prepareForToolOutput() {
         flushChatOutput()
         if standardErrorIsTerminal {
             writeChat("\n\n", to: .standardError)

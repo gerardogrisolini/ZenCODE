@@ -128,6 +128,10 @@ actor TerminalChatRenderCoordinator {
     /// finishes so every turn gets exactly one prefix.
     var assistantBubblePrefixPending = true
     var thoughtStreamingState: StreamingContentState
+    /// The file write or edit the model is still writing, drawn on standard
+    /// error while its tool call streams. Only the in-process DS4 engine emits
+    /// the fragments it draws.
+    var toolCallPreviewFormatter: TerminalToolCallPreviewFormatter
     /// A submitted prompt starts a transcript turn. The first prompt remains
     /// unadorned; every later one receives exactly one visual turn separator.
     var hasWrittenSubmittedPrompt = false
@@ -185,7 +189,8 @@ actor TerminalChatRenderCoordinator {
             standardOutputIsTerminal: standardOutputIsTerminal,
             standardErrorIsTerminal: standardErrorIsTerminal
         )
-        self.lineInset = stdinIsTerminal ? TerminalChatTextFormatting.chatLineInsetPrefix : ""
+        let lineInset = stdinIsTerminal ? TerminalChatTextFormatting.chatLineInsetPrefix : ""
+        self.lineInset = lineInset
         self.capturesWrites = capturesWrites
         self.streamingFlushDelay = streamingFlushDelay
         self.streamingNow = streamingNow
@@ -213,6 +218,10 @@ actor TerminalChatRenderCoordinator {
                 removesUnbalancedStrongMarkers: true,
                 usesTerminalWidthForStructuredContent: false
             )
+        )
+        self.toolCallPreviewFormatter = TerminalToolCallPreviewFormatter(
+            isInteractive: standardErrorIsTerminal,
+            lineInset: lineInset
         )
     }
 

@@ -26,6 +26,7 @@ actor RecordingChatPresenter: ChatSessionPresenter {
         case thought(String)
         case content(String)
         case modelLoaded(String)
+        case toolPreview(DirectAgentToolCallPreview)
         case toolStarted(String)
         case toolCompleted(String)
         case toolSettled(String)
@@ -237,6 +238,10 @@ actor RecordingChatPresenter: ChatSessionPresenter {
 
     func presentModelLoaded(_ modelID: String) async {
         record(.modelLoaded(modelID))
+    }
+
+    func presentToolCallPreview(_ preview: DirectAgentToolCallPreview) async {
+        record(.toolPreview(preview))
     }
 
     func presentToolCallStarted(_ toolCall: DirectAgentToolCall) async {

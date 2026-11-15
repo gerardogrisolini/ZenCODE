@@ -29,6 +29,7 @@ extension TerminalChatRenderCoordinator {
             return
         }
 
+        interruptToolCallPreviewIfNeeded()
         interruptActiveToolForInterleavedOutputIfNeeded()
         finishAssistantContentFormatting()
         if !thoughtStreamingState.isStreaming {
@@ -81,6 +82,9 @@ extension TerminalChatRenderCoordinator {
     }
 
     func finishStreamingOutput() {
+        // The turn's streaming ends: an unfinished tool-call preview is closed
+        // and a suspended one is forgotten, so neither reopens later.
+        endToolCallPreview()
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
         renderPendingOverviewsIfIdle()
@@ -116,6 +120,9 @@ extension TerminalChatRenderCoordinator {
     }
 
     func finishThoughtOutputIfNeeded() {
+        // The tool-call preview is the other live stream of standard error:
+        // every write that first closes the thought interrupts it too.
+        interruptToolCallPreviewIfNeeded()
         guard let renderedThought = Self.finishStreamingContent(
             in: &thoughtStreamingState
         ) else {

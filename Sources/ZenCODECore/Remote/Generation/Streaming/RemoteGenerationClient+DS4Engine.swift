@@ -88,11 +88,14 @@ private struct DS4TokenizedRound {
 
 /// Bridges the synchronous `onText` callback (engine thread) to the async
 /// event stream: the parser lives behind a `Mutex`, every delta is yielded in
-/// order and the parser state decides the emit flags of each token.
+/// order and the parser state decides the emit flags of each token. The live
+/// tool-call preview of each call follows the deltas of that call.
 final class DS4GenerationBridge: Sendable {
     private struct State {
         var parser: DS4GeneratedOutputParser
         var firstTextAt: Date?
+        /// A `toolStarted` preview was yielded and its block's `ended` was not.
+        var previewOpen = false
     }
 
     private let state: Mutex<State>
@@ -112,6 +115,7 @@ final class DS4GenerationBridge: Sendable {
             for delta in state.parser.consume(text) {
                 continuation.yield(Self.event(for: delta))
             }
+            yieldToolCallPreviews(&state)
             if state.parser.shouldStopGeneration {
                 return .stop
             }
@@ -126,7 +130,34 @@ final class DS4GenerationBridge: Sendable {
             for delta in output.finalDeltas {
                 continuation.yield(Self.event(for: delta))
             }
+            yieldToolCallPreviews(&state)
             return output
+        }
+    }
+
+    /// Closes a tool-call preview the generation left open: it failed or was
+    /// cancelled after a `toolStarted` and before the block's `ended`.
+    func endOpenToolCallPreview() {
+        state.withLock { state in
+            guard state.previewOpen else {
+                return
+            }
+            state.previewOpen = false
+            continuation.yield(.toolCallPreview(.ended))
+        }
+    }
+
+    private func yieldToolCallPreviews(_ state: inout State) {
+        for preview in state.parser.drainToolCallPreviews() {
+            switch preview {
+            case .toolStarted:
+                state.previewOpen = true
+            case .ended:
+                state.previewOpen = false
+            case .parameterStarted, .parameterText, .parameterEnded:
+                break
+            }
+            continuation.yield(.toolCallPreview(preview))
         }
     }
 
@@ -318,6 +349,7 @@ extension RemoteGenerationClient {
         } catch {
             // The lease may have failed before the sync ran.
             prepared.transcript.release()
+            bridge.endOpenToolCallPreview()
             continuation.finish()
             await consumer.value
             throw error
