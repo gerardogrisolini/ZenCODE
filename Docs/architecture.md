@@ -134,7 +134,25 @@ channel runs itself answer `.channelCommand`, for the channel to run: the
 terminal's `/telegram`, `/voice`, `/ds4`, `/feature`, `/cron`, and
 `/exit`, which its registry declares with the `.channel` scope, and
 `/tools logs`, which the shared `/tools` leaves to the channel. ACP runs
-`/telegram` itself too, and answers it before the line reaches the controller.
+`/telegram` itself too, and does the same with `/tasks`, both of them before the
+controller's dispatch of the shared commands: the shared `runTasksCommand` runs
+the action, and ACP reads the graph and answers it twice, as the text the
+terminal renders (`TerminalTaskGraphLayout`, without colors) and as the standard
+ACP `plan` update that is a client's Tasks section
+(`ACP/Routing/ZenCODEACPBridge+TasksCommand.swift`).
+
+The plan is not only the answer of a command: every incarnation keeps an
+observer of its graph events (`ACP/Updates/ACPTaskGraphObserver.swift`), so the
+section follows the graph outside a prompt as the terminal's and the host app's
+overviews do. A turn publishes it through its own update pipeline — the plan is
+written after the content buffered before it, and the pipeline stays installed
+until the turn's final section drained, so the incarnation's observer never
+writes beside it — while the observer publishes every change no turn owns,
+starts with the graph the session already has, and reconciles the graph of a turn
+that ended by cancellation. All of them share the session's
+`ACPTaskPresentation`, which sends a section once per change and refuses a plan
+built from a graph older than one already written.
+
 The terminal places its commands after anchors among the shared ones and adds
 its own facts to the context (`.telegramEnabled` and `.ds4Model`, next to
 Chat's `.builderAgent`); its command handlers are adapters with unchanged
@@ -307,8 +325,11 @@ each turn it presents as the terminal does: the final graph reaches the turn
 that closes, and nothing the observer debounced crosses into the next one),
 while ACP's own prompts and the headless runner start neither and never read the
 sub-agent snapshots for an overview. ACP builds its `plan` and `tool_call`
-updates from `ChatTaskGraphOverview`. The prompts accepted while a session is
-busy wait in `ChatPromptQueue<Origin>` (`Chat/Queue`), a FIFO of
+updates from a graph snapshot: the plan of a turn through the turn's pipeline,
+the plan of an idle graph through the incarnation's own observer of the graph
+events, and the same update again with an explicit `/tasks`. The prompts
+accepted while a session is busy wait in `ChatPromptQueue<Origin>`
+(`Chat/Queue`), a FIFO of
 `ChatQueuedPrompt<Origin>` bounded at 32 prompts whose origin type is the
 channel's.
 
@@ -788,7 +809,10 @@ notification is unchanged, and so are the headless output and the JSONL wire
   boundaries: the last graph is published to the turn that ends, before its
   outcome, and the observer runs again once the turn's reporting ended and
   before the next queued prompt starts, so no publication it debounced crosses
-  into the next turn.
+  into the next turn. The editor's Tasks section follows those turns too, through
+  the incarnation's own observer of the graph events
+  (`ACP/Updates/ACPTaskGraphObserver.swift`), which publishes the plan outside a
+  prompt and stays silent while a prompt owns the update pipeline.
 
 *Compatibility names.* `TerminalChatActor`, the former public name of
 `ChatSessionActor`, was removed in 5.0.0: write `@ChatSessionActor`. The

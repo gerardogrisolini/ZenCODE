@@ -87,11 +87,21 @@ Environment:
 
 ZenCODE emits standard ACP v1 `plan`, `tool_call`, `tool_call_update` and
 `available_commands_update` updates. Only the supported, capability-gated `goal`,
-`review` and `plan` commands are advertised; textual command responses remain the
-fallback. Creating a delegated agent is distinct from that agent's execution and
-from task validation. Failed/blocked/cancelled plan entries are explicitly labelled
-because ACP's plan status enum has no matching failure values. Taskless idle or
-standby alone is not evidence of successful execution. The `title` of the
+`review` and `plan` commands are advertised, plus `tasks`, which reads and
+controls the session task graph (`/tasks`, `/tasks show <id>`, `/tasks get <id>`,
+`/tasks retry <id>`, `/tasks cancel <id>`, `/tasks clear`), and `telegram` while
+the settings enable it; textual command responses remain the fallback. The
+client's Tasks section follows the graph by itself. A turn publishes it through
+its own update pipeline, so the `plan` update never overtakes the content that
+turn produced; outside a turn the session keeps an observer of its task-graph
+events for its whole life, and a turn that ended by cancellation reconciles the
+section at its end. A section is written once per change, and an older graph
+never replaces a newer one, while `/tasks` answers with the graph as text on
+demand. Creating a delegated agent is distinct from that agent's execution and
+from task validation. Failed/blocked/cancelled plan entries are explicitly
+labelled because ACP's plan status enum has no matching failure values.
+Taskless idle or standby alone is not evidence of successful execution. The
+`title` of the
 `tool_call_update` that completes a tool call, a delegated agent's included, ends
 with the call's elapsed time as the terminal shows it (` · 1.25s`); the
 `tool_call` that creates it keeps the plain title.
@@ -144,12 +154,16 @@ still being requested.
 
 Wire/schema tests **do not demonstrate that Xcode renders these views**. Rendering
 must be verified independently in a real Xcode session (plan replacement/clear,
-parallel agents and retry, file diff, command catalog, permission cancel/deny).
+automatic plan updates during and between turns, `/tasks`, parallel agents and
+retry, file diff, command catalog, permission cancel/deny).
 No live-provider/network exercise or Xcode UI verification accompanies these source
-changes. Added focused suites: `ACPStandardPresentationTests`,
+changes. Added focused suites: `ACPCommandRoutingTests` (the plan of a turn,
+outside a turn, and with `/tasks`), `ACPStandardPresentationTests`,
 `ACPPresentationLifecycleIntegrationTests` and `OperationFileChangeTests`; the new
 regressions require independent execution before release. Presentation observers
-are prompt-scoped and do not claim live updates while no ACP prompt is active.
+are prompt-scoped for text and tool rows and do not claim live updates while no
+ACP prompt is active; the plan is the exception, published by the session's own
+task-graph observer between turns and by an explicit `/tasks` with its answer.
 The next prompt reattaches existing runtime observation even when the root emits
 only text. Each taskless runtime execution has a separate transient identity;
 previous output cannot complete a later running turn. Close drains accepted

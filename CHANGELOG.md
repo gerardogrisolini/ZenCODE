@@ -10,6 +10,28 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- ACP: `/tasks` shows the session task graph and controls its tasks, as the
+  terminal and Telegram do: the bare command (also `status`, `list` and `ls`)
+  answers with the graph as text, `/tasks show <id>` (also `get`) with one task,
+  and `/tasks retry <id>`, `/tasks cancel <id>` and `/tasks clear` run the action
+  and answer with the graph it left. The command is listed in
+  `available_commands_update` and never reaches the model. Its answer also
+  publishes the standard ACP `plan` update with one entry per task, so a client
+  that renders the plan as the session's tasks shows that section on demand.
+- ACP: the session's task graph drives the client's Tasks section by itself, as
+  the terminal and the host app show it. A session keeps an observer of its
+  graph for the whole incarnation, so the `plan` update follows every change — a
+  graph restored with the session, a turn run from the linked Telegram chat, a
+  change between two turns — and not only the changes a generating prompt
+  publishes. A turn publishes the section through its own update pipeline, so it
+  never overtakes the content that turn produced, and keeps that pipeline until
+  the final section drained; the session's observer takes over from there, and a
+  turn that ended by cancellation publishes its last graph at its end. Both
+  paths share the session's projection, so a section is written once per change
+  and never goes back to an older graph.
+
 ## [6.1.0] - 2026-11-15
 
 ### Added

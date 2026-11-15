@@ -253,6 +253,11 @@ extension ZenCODEACPBridge {
             title: URL(fileURLWithPath: cwd).lastPathComponent
         )
         await publishAvailableCommands(sessionID: sessionID, epoch: sessionEpoch)
+        // The incarnation's observer publishes the plan of every graph change
+        // the prompts do not own (see `ACPTaskGraphObserver.swift`). It starts
+        // after the session's reply, as its info and commands do, so the client
+        // knows the session before its first `plan`.
+        await startTaskGraphObserverIfNeeded(sessionID: sessionID, epoch: sessionEpoch)
         resumableTaskGraphOfferGate?.finish()
     }
 
@@ -699,6 +704,10 @@ extension ZenCODEACPBridge {
                 sessionID: sessionID,
                 title: URL(fileURLWithPath: session.cwd).lastPathComponent
             )
+            // A restore of a live id is a new presentation boundary: the plan
+            // the client shows again is the graph's, whatever this incarnation
+            // had presented before.
+            await publishTaskGraphPlan(sessionID: sessionID, epoch: session.epoch, force: true)
             return
         }
 
@@ -800,6 +809,10 @@ extension ZenCODEACPBridge {
             title: workingDirectory.lastPathComponent
         )
         await publishAvailableCommands(sessionID: sessionID, epoch: restoredSessionEpoch)
+        // Started after the reply, as in `session/new`: the session exists for
+        // the client before its first `plan`, and a graph restored with the
+        // session is published as the observer's first section.
+        await startTaskGraphObserverIfNeeded(sessionID: sessionID, epoch: restoredSessionEpoch)
     }
 
     public static func sessionID(from params: [String: Any]) -> String? {

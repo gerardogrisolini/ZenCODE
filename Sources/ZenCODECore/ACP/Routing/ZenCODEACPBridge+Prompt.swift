@@ -152,9 +152,16 @@ extension ZenCODEACPBridge {
             )
         } catch {
             await releaseReservation()
+            // A turn that ends by cancellation has no final publication: the
+            // graph it changed still reaches the client, now that no prompt
+            // owns the presentation.
+            await publishTaskGraphPlan(sessionID: sessionID, epoch: epoch)
             throw error
         }
         await releaseReservation()
+        // The graph the turn changed is published once more with the session
+        // back to its own observer; a turn that changed nothing sends nothing.
+        await publishTaskGraphPlan(sessionID: sessionID, epoch: epoch)
     }
 
     private func sendStopReason(id: JSONValue?, _ reason: String) async {
@@ -530,14 +537,25 @@ extension ZenCODEACPBridge {
         )
     }
 
-    /// Ends the turn's presentation: the live incarnation gives the turn's
-    /// pipeline and taskless observer back (only while they are still the
-    /// turn's), the task-graph observer stops, the last task graph is
-    /// published, and the pipeline drains.
+    /// Ends the turn's presentation: the task-graph observer stops, the last
+    /// task graph is published through the turn's pipeline, and the pipeline
+    /// flushes and drains.
+    ///
+    /// The turn gives its pipeline back only once all of that is written. Until
+    /// then the session's own observer stays silent (see
+    /// `ACPTaskGraphObserver.swift`): the plan is published by the turn, so the
+    /// two never write one side by side, and a plan cannot overtake content the
+    /// turn still has buffered.
     private func finishPromptTurnPresentation(
         _ turn: ACPPromptTurn,
         _ presentation: ACPPromptTurnPresentation
     ) async {
+        presentation.graphObserver.cancel()
+        await presentation.graphObserver.value
+        await publishTaskPresentation(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID,
+                                      presentation: presentation.taskPresentation, pipeline: presentation.pipeline)
+        await Self.flushPromptUpdates(through: presentation.pipeline)
+        await presentation.pipeline.drain()
         if liveSession(id: turn.sessionID, epoch: turn.epoch)?.promptUpdatePipeline === presentation.pipeline {
             let tasklessObserver = sessions[turn.sessionID]?.tasklessObserver
             sessions[turn.sessionID]?.tasklessObserver = nil
@@ -545,11 +563,6 @@ extension ZenCODEACPBridge {
             tasklessObserver?.cancel()
             await tasklessObserver?.value
         }
-        presentation.graphObserver.cancel()
-        await presentation.graphObserver.value
-        await publishTaskPresentation(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID,
-                                      presentation: presentation.taskPresentation, pipeline: presentation.pipeline)
-        await presentation.pipeline.drain()
     }
 
     /// Registers the turn's task under the reservation: the bridge's own
@@ -592,7 +605,6 @@ extension ZenCODEACPBridge {
         preservingAllowedToolNames allowedToolNames: Set<String>?
     ) async {
         await finishPromptTurnPresentation(turn, presentation)
-        await Self.flushPromptUpdates(through: presentation.pipeline)
         await refreshSessionStateIfAvailable(
             sessionID: turn.sessionID,
             preservingAllowedToolNames: allowedToolNames,
@@ -766,6 +778,7 @@ extension ZenCODEACPBridge {
             host.retireIncarnation(in: closedSession.slotID, controller: closedSession.controller)
         }
         closedSession?.tasklessObserver?.cancel()
+        closedSession?.taskGraphObserver?.cancel()
         // Withdraw the startup offer of old task graphs before anything
         // suspends: its pending `session/request_permission` returns, so the
         // offer ends as Start fresh and the prompts waiting for it can be
@@ -779,6 +792,7 @@ extension ZenCODEACPBridge {
         let promptHandlersToDrain = promptHandlerTokensSnapshot(sessionID: sessionID)
         await permissionBroker.removeCachedDecisions(sessionID: sessionID)
         await closedSession?.tasklessObserver?.value
+        await closedSession?.taskGraphObserver?.value
         await closedSession?.promptUpdatePipeline?.drain()
         closedSession?.activePromptTask?.cancel()
         if let closedEpoch = closedSession?.epoch {

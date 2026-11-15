@@ -51,6 +51,7 @@ enum ACPCommandNoticeContext: Sendable {
     case plan(CoordinatorCommand.PlanAction)
     case goal
     case review
+    case tasks
     case approvalReply
     case plannerReply
     case workflowReply
@@ -110,6 +111,19 @@ extension ZenCODEACPBridge {
                 sessionID: sessionID,
                 epoch: epoch,
                 promptID: promptID
+            )
+        }
+
+        // `/tasks` is not a coordinator command either: it is answered here,
+        // with the graph the terminal and Telegram show and the plan update of
+        // the client's Tasks section (see `routeACPTasksCommand`).
+        if ChatCommandRegistry.commandToken(from: routedPromptText) == Self.tasksCommandToken {
+            return try await routeACPTasksCommand(
+                routedPromptText,
+                sessionID: sessionID,
+                epoch: epoch,
+                promptID: promptID,
+                fence: fence
             )
         }
 
@@ -559,6 +573,11 @@ extension ZenCODEACPBridge {
                 ]))
             }
         }
+        commands.append(.object([
+            "name": .string("tasks"),
+            "description": .string("Show the session task graph, and retry, cancel, or clear its tasks"),
+            "input": .object(["hint": .string("status, show <id>, retry <id>, cancel <id>, or clear")])
+        ]))
         if Self.isTelegramCommandVisible() {
             commands.append(.object([
                 "name": .string("telegram"),

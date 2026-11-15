@@ -159,6 +159,7 @@ extension ZenCODEACPBridge {
             promptUpdatePipeline: live.promptUpdatePipeline,
             delegatedToolNotifications: live.delegatedToolNotifications,
             tasklessObserver: live.tasklessObserver,
+            taskGraphObserver: live.taskGraphObserver,
             tasklessPresentation: live.tasklessPresentation,
             taskPresentation: live.taskPresentation,
             activeWorkflowPromptID: live.activeWorkflowPromptID,

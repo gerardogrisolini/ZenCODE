@@ -16,8 +16,11 @@ import ToolCore
 /// ``ChatSessionController/stopTaskGraphObserver()``, and
 /// ``ChatSessionController/quiesceTaskGraphObserver()``: the terminal starts it
 /// on every session it creates, restores, or resets, quiesces it at every turn
-/// boundary, and stops it when its input loop ends. The ACP bridge keeps its
-/// own per-prompt observer for the editor and never starts this one; the
+/// boundary, and stops it when its input loop ends. The ACP bridge never starts
+/// this one: it keeps a per-prompt observer of the graph it reads for the
+/// editor's Tasks section, and an observer of the same events for the whole
+/// incarnation that publishes that section while no prompt owns it
+/// (`ACP/Updates/ACPTaskGraphObserver.swift`); the
 /// Telegram channel of an ACP session's slot, and of the slot of a session
 /// started by `zen --telegram`, starts it while it drives the slot, on the
 /// session the slot runs, quiesces it at the end of every turn it presents as

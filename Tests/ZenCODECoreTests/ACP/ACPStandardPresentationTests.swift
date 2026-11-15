@@ -4,24 +4,52 @@ import Testing
 import ToolCore
 @testable import ZenCODECore
 
-/// The ACP projection reads only the graph of the shared overview, so the
-/// overview a test hands it carries no task views.
-private func taskOverview(_ graph: TaskGraphSnapshot?) -> ChatTaskGraphOverview? {
-    graph.map { ChatTaskGraphOverview(graph: $0, tasks: []) }
-}
-
 struct ACPStandardPresentationTests {
     @Test func planUsesOnlyStandardStatusesAndPreservesFailureLabels() {
         for status in TaskStatus.allCases {
             let entry = ACPTaskPresentation.entry(TaskRecord(id: "t", title: "Task", order: 0, status: status))
             let fields = entry.objectValue!
             #expect(fields["priority"] == .string("medium"))
+            if [.blocked, .failed, .cancelled, .awaitingValidation].contains(status) {
+                #expect(fields["content"] == .string("[\(status.rawValue)] Task"))
+            }
             if [.blocked, .failed, .cancelled].contains(status) {
                 #expect(fields["status"] == .string("pending"))
-                #expect(fields["content"] == .string("[\(status.rawValue)] Task"))
             }
             #expect(["pending", "in_progress", "completed"].contains(fields["status"]!.acpStringValue!))
         }
+    }
+
+    @Test func planMapsEveryPriorityAndOrdersLikeTheTerminal() {
+        for priority in TaskPriority.allCases {
+            let entry = ACPTaskPresentation.entry(
+                TaskRecord(id: "t", title: "Task", order: 0, priority: priority)
+            )
+            let expected: String
+            switch priority {
+            case .low: expected = "low"
+            case .normal: expected = "medium"
+            case .high: expected = "high"
+            }
+            #expect(entry.objectValue?["priority"] == .string(expected))
+        }
+
+        // The terminal lists a graph by `order` and then by id; the plan does
+        // the same, so the section and the text of `/tasks` agree.
+        let graph = TaskGraphSnapshot(
+            id: "graph",
+            source: .manual,
+            state: .active,
+            tasks: [
+                TaskRecord(id: "b", title: "Second", order: 1),
+                TaskRecord(id: "a", title: "First", order: 1),
+                TaskRecord(id: "c", title: "Third", order: 0),
+            ]
+        )
+        let entries = ACPTaskPresentation.planUpdate(for: graph)
+            .objectValue?["entries"]?.arrayValue?
+            .compactMap { $0.objectValue?["content"]?.stringValue }
+        #expect(entries == ["Third", "First", "Second"])
     }
 }
 
@@ -77,7 +105,7 @@ extension ACPStandardPresentationTests {
         }
 
         // Prompt A emits and admits the running attempt before its teardown.
-        let promptA = await projection.updates(for: taskOverview(graph(status: .running)))
+        let promptA = await projection.updates(for: graph(status: .running))
         let start = try #require(promptA.first {
             $0.objectValue?["toolCallId"] == .string("acp:work:graph:task:attempt")
         })
@@ -86,7 +114,7 @@ extension ACPStandardPresentationTests {
 
         // The terminal graph arrives after teardown; prompt B must continue the
         // already admitted row instead of opening a second tool call.
-        let promptB = await projection.updates(for: taskOverview(graph(status: .completed, output: "done")))
+        let promptB = await projection.updates(for: graph(status: .completed, output: "done"))
         let terminal = try #require(promptB.first {
             $0.objectValue?["toolCallId"] == .string("acp:work:graph:task:attempt")
         })
@@ -94,7 +122,7 @@ extension ACPStandardPresentationTests {
         #expect(terminal.objectValue?["sessionUpdate"] == .string("tool_call_update"))
         #expect(terminal.objectValue?["status"] == .string("completed"))
         await projection.acknowledge(terminal)
-        let terminalReplay = (await projection.updates(for: taskOverview(graph(status: .completed, output: "done")))).filter {
+        let terminalReplay = (await projection.updates(for: graph(status: .completed, output: "done"))).filter {
             $0.objectValue?["toolCallId"] == .string("acp:work:graph:task:attempt")
         }
         #expect(terminalReplay.isEmpty)

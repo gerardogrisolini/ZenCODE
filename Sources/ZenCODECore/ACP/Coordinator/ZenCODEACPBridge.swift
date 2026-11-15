@@ -44,6 +44,10 @@ public actor ZenCODEACPBridge {
         var promptUpdatePipeline: ACPPromptUpdatePipeline?
         var delegatedToolNotifications = Set<String>()
         var tasklessObserver: Task<Void, Never>?
+        /// The incarnation's observer of the session's task-graph events: it
+        /// publishes the plan of a graph that changes while no prompt owns the
+        /// presentation (see `ACPTaskGraphObserver.swift`).
+        var taskGraphObserver: Task<Void, Never>?
         var tasklessPresentation = ACPTasklessPresentation()
         var taskPresentation = ACPTaskPresentation()
         /// Transient fence: only cancellation of this workflow prompt may arm recovery.
@@ -238,6 +242,8 @@ public actor ZenCODEACPBridge {
         let sessionIDs = Array(sessions.keys)
         let tasklessObservers = sessions.values.compactMap(\.tasklessObserver)
         for observer in tasklessObservers { observer.cancel() }
+        let taskGraphObservers = sessions.values.compactMap(\.taskGraphObserver)
+        for observer in taskGraphObservers { observer.cancel() }
         for sessionID in sessionIDs {
             // Fence the controller first: the cancelled turn must not write
             // command state back while it unwinds.
@@ -261,6 +267,7 @@ public actor ZenCODEACPBridge {
         // shutdown" true regardless of where in-flight work was parked.
         await writer.close()
         for observer in tasklessObservers { await observer.value }
+        for observer in taskGraphObservers { await observer.value }
         for offer in taskGraphOffers { await offer.value }
         await permissionBroker.removeAllCachedDecisions()
         // The host ends every incarnation (its reservations are dead already:
@@ -562,6 +569,7 @@ public actor ZenCODEACPBridge {
             return
         }
         sessions[sessionID]?.tasklessObserver?.cancel()
+        sessions[sessionID]?.taskGraphObserver?.cancel()
         guard let discarded = sessions.removeValue(forKey: sessionID) else {
             return
         }
