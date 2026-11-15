@@ -1047,6 +1047,13 @@ destructive direct tools it grants only the current process/session and is not
 persisted. Use **Run once** when the broader executable-level approval is not
 intended.
 
+`local.delete` asks for consent only when the target escapes the session's
+working directory, the folder the session is already authorized to modify:
+an absolute path outside it, a relative path that climbs out with `..`, a
+path that reaches outside through a symlinked parent, or the working directory
+root itself. Deleting a file, a directory, or a symlink inside the working
+directory runs without a prompt.
+
 `desktop.run` uses the same destructive-tool consent, but only for actions
 that can run code or end processes: `open` of anything other than a plain
 http/https URL (local files, `file:` URLs, other schemes, or an app given by

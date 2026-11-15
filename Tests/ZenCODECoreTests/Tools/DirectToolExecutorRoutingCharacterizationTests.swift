@@ -394,7 +394,7 @@ struct DirectToolExecutorRoutingCharacterizationTests {
         ),
         // Destructive gate.
         row(
-            "local.delete denied", "local.delete", #"{"path":"gone.txt"}"#,
+            "local.delete outside the workspace denied", "local.delete", #"{"path":"../gone.txt"}"#,
             allowed: nil,
             Fixture(authorization: .deny),
             expect: .contains("Operation cancelled."),
@@ -402,10 +402,15 @@ struct DirectToolExecutorRoutingCharacterizationTests {
             requests: ["local.delete"]
         ),
         row(
-            "local.delete approved", "local.delete", #"{"path":"gone.txt"}"#,
+            "local.delete outside the workspace approved", "local.delete", #"{"path":"../gone.txt"}"#,
             allowed: nil,
-            expect: .contains("Deleted "),
+            expect: .contains("Path does not exist"),
             requests: ["local.delete"]
+        ),
+        row(
+            "local.delete inside the workspace is not gated", "local.delete", #"{"path":"gone.txt"}"#,
+            allowed: nil,
+            expect: .contains("Deleted ")
         ),
         row(
             "git.push approved without an implementation", "git.push", #"{"remote":"origin"}"#,

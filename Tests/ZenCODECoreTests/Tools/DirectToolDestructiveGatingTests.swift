@@ -15,11 +15,11 @@ struct DirectToolDestructiveGatingTests {
 
         let deleteRequest = DirectToolExecutor.destructiveAuthorizationRequest(
             sessionID: "s",
-            toolCall: toolCall(name: "local.delete", arguments: ["path": "notes.txt", "recursive": true]),
+            toolCall: toolCall(name: "local.delete", arguments: ["path": "/tmp/notes.txt", "recursive": true]),
             workingDirectory: cwd
         )
         #expect(deleteRequest?.toolName == "local.delete")
-        #expect(deleteRequest?.command == "delete -r notes.txt")
+        #expect(deleteRequest?.command == "delete -r /tmp/notes.txt")
 
         let pushRequest = DirectToolExecutor.destructiveAuthorizationRequest(
             sessionID: "s",
@@ -97,10 +97,92 @@ struct DirectToolDestructiveGatingTests {
     }
 
     @Test
-    func deniedDeleteLeavesFileInPlaceAndReportsCancellation() async throws {
+    func deleteInsideWorkingDirectoryIsNotGated() async throws {
         let workspace = try makeTemporaryWorkspace()
         defer { try? FileManager.default.removeItem(at: workspace) }
-        let fileURL = workspace.appendingPathComponent("keep.txt")
+        let fileURL = workspace.appendingPathComponent("inside.txt")
+        try "delete me".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let capturedRequests = CapturedAuthorizationRequests()
+        let executor = DirectToolExecutor(
+            authorizationHandler: { request in
+                await capturedRequests.append(request)
+                return false
+            },
+            swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
+            subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
+        )
+        let result = await executor.execute(
+            sessionID: "gating-tests",
+            toolCall: toolCall(name: "local.delete", arguments: ["path": fileURL.path]),
+            workingDirectory: workspace,
+            allowedToolNames: nil
+        )
+
+        #expect(result.status == .completed)
+        #expect(!result.output.contains("Operation cancelled."))
+        #expect(!FileManager.default.fileExists(atPath: fileURL.path))
+        #expect(await capturedRequests.requests.isEmpty)
+    }
+
+    @Test
+    func deleteOutsideWorkingDirectoryIsGated() {
+        let cwd = URL(fileURLWithPath: "/tmp/workspace")
+
+        #expect(DirectToolExecutor.destructiveAuthorizationRequest(
+            sessionID: "s",
+            toolCall: toolCall(name: "local.delete", arguments: ["path": "/tmp/outside.txt"]),
+            workingDirectory: cwd
+        )?.toolName == "local.delete")
+
+        #expect(DirectToolExecutor.destructiveAuthorizationRequest(
+            sessionID: "s",
+            toolCall: toolCall(name: "local.delete", arguments: ["path": "../outside.txt"]),
+            workingDirectory: cwd
+        )?.toolName == "local.delete")
+
+        #expect(DirectToolExecutor.destructiveAuthorizationRequest(
+            sessionID: "s",
+            toolCall: toolCall(name: "local.delete", arguments: ["path": "nested/../inside.txt"]),
+            workingDirectory: cwd
+        ) == nil)
+
+        #expect(DirectToolExecutor.destructiveAuthorizationRequest(
+            sessionID: "s",
+            toolCall: toolCall(name: "local.delete", arguments: ["path": "."]),
+            workingDirectory: cwd
+        )?.toolName == "local.delete")
+    }
+
+    @Test
+    func deleteThroughSymlinkedParentOutsideWorkingDirectoryIsGated() throws {
+        let workspace = try makeTemporaryWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let outside = try makeTemporaryWorkspace()
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let link = workspace.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+
+        #expect(DirectToolExecutor.destructiveAuthorizationRequest(
+            sessionID: "s",
+            toolCall: toolCall(name: "local.delete", arguments: ["path": "link/file.txt"]),
+            workingDirectory: workspace
+        )?.toolName == "local.delete")
+
+        // Deleting the symlink itself only removes the link, so it stays ungated.
+        #expect(DirectToolExecutor.destructiveAuthorizationRequest(
+            sessionID: "s",
+            toolCall: toolCall(name: "local.delete", arguments: ["path": "link"]),
+            workingDirectory: workspace
+        ) == nil)
+    }
+
+    @Test
+    func deniedDeleteOutsideWorkingDirectoryLeavesFileInPlaceAndReportsCancellation() async throws {
+        let workspace = try makeTemporaryWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let fileURL = try makeTemporaryFile()
+        defer { try? FileManager.default.removeItem(at: fileURL) }
         try "keep me".write(to: fileURL, atomically: true, encoding: .utf8)
 
         let executor = DirectToolExecutor(
@@ -123,10 +205,11 @@ struct DirectToolDestructiveGatingTests {
     }
 
     @Test
-    func approvedDeleteProceedsAndCapturesRequest() async throws {
+    func approvedDeleteOutsideWorkingDirectoryProceedsAndCapturesRequest() async throws {
         let workspace = try makeTemporaryWorkspace()
         defer { try? FileManager.default.removeItem(at: workspace) }
-        let fileURL = workspace.appendingPathComponent("gone.txt")
+        let fileURL = try makeTemporaryFile()
+        defer { try? FileManager.default.removeItem(at: fileURL) }
         try "delete me".write(to: fileURL, atomically: true, encoding: .utf8)
 
         let capturedRequests = CapturedAuthorizationRequests()
@@ -222,6 +305,13 @@ struct DirectToolDestructiveGatingTests {
             .appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    /// A path outside any ``makeTemporaryWorkspace()`` directory: the file is
+    /// created by the caller, so the gate sees a target it must ask about.
+    private func makeTemporaryFile() throws -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".txt")
     }
 }
 

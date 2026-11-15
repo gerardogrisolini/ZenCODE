@@ -26,7 +26,7 @@ struct AgentConversationCompactionRemediationTests {
         )
 
         #expect(budget.promptTokenBudget == 60_000)
-        #expect(AgentConversationCompactionPolicy.targetTokenCount(for: budget.promptTokenBudget ?? 0) == 30_000)
+        #expect(AgentConversationCompactionPolicy.targetTokenCount(for: budget.promptTokenBudget ?? 0) == 18_000)
         #expect(
             AgentConversationCompactionBudget(contextWindowTokens: 100_000).promptTokenBudget
                 == 100_000

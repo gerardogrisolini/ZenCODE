@@ -96,7 +96,9 @@ struct AgentConversationCompactionSupportTests {
 
         let firstCompaction = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             messages,
-            budget: AgentConversationCompactionBudget(contextWindowTokens: 1_200),
+            budget: AgentConversationCompactionBudget(
+                contextWindowTokens: contextWindow(forTargetTokenCount: 600)
+            ),
             force: true
         )
         var resumedMessages = firstCompaction.messages
@@ -105,7 +107,9 @@ struct AgentConversationCompactionSupportTests {
 
         let secondCompaction = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             resumedMessages,
-            budget: AgentConversationCompactionBudget(contextWindowTokens: 700),
+            budget: AgentConversationCompactionBudget(
+                contextWindowTokens: contextWindow(forTargetTokenCount: 350)
+            ),
             force: true
         )
         let compactedSystemPrompt = secondCompaction.messages.first?.content ?? ""
@@ -192,7 +196,7 @@ struct AgentConversationCompactionSupportTests {
             )
         }
 
-        let maxTokens = 20_000
+        let maxTokens = contextWindow(forTargetTokenCount: 10_000)
         let target = AgentConversationCompactionPolicy.targetTokenCount(for: maxTokens)
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             messages,
@@ -204,6 +208,129 @@ struct AgentConversationCompactionSupportTests {
         #expect(result.estimatedTokenCount >= target / 2)
         #expect(result.keptRecentMessageCount >= 30)
         #expect(result.messages.first?.role == .system)
+        #expect(result.messages.last?.content == messages.last?.content)
+    }
+
+    @Test
+    func targetIsThirtyPercentOfTheBudgetForEveryWindow() {
+        #expect(AgentConversationCompactionPolicy.targetFraction == 0.30)
+        #expect(AgentConversationCompactionPolicy.targetTokenCount(for: 0) == 0)
+        #expect(AgentConversationCompactionPolicy.targetTokenCount(for: 20_000) == 6_000)
+        #expect(AgentConversationCompactionPolicy.targetTokenCount(for: 256_000) == 76_800)
+        // No absolute ceiling: a 1M-token window keeps the same share.
+        #expect(AgentConversationCompactionPolicy.targetTokenCount(for: 1_000_000) == 300_000)
+    }
+
+    @Test
+    func midSizeWindowCompactsDownToThirtyPercentOfItsPromptBudget() throws {
+        // A 256k window whose tokenizer charges 1.6 tokens per estimated token (the
+        // DS4 path passes the exact count): 160k estimated tokens of prompt budget.
+        let budget = AgentConversationCompactionBudget(
+            contextWindowTokens: 256_000,
+            conversationInflationFactor: 1.6
+        )
+        let promptBudget = try #require(budget.promptTokenBudget)
+        // About 136k estimated tokens, the 85% at which DS4 forces a compaction.
+        let messages = toolHeavyConversation(exchanges: 150, payloadRepeats: 100)
+        let rawTokenCount = AgentConversationCompactionSupport.estimatedTokenCount(for: messages)
+
+        let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
+            messages,
+            budget: budget,
+            force: true
+        )
+
+        #expect(promptBudget == 160_000)
+        #expect(rawTokenCount > promptBudget * 8 / 10)
+        #expect(result.wasCompacted)
+        #expect(result.estimatedTokenCount <= promptBudget * 30 / 100)
+        // The target is filled, not undershot.
+        #expect(result.estimatedTokenCount >= promptBudget * 27 / 100)
+        // In the model's own tokens that is at most 30% of the window.
+        #expect(Double(result.estimatedTokenCount) * 1.6 <= 256_000 * 0.30)
+        #expect(result.messages.dropFirst().first?.role != .tool)
+        #expect(result.messages.last?.content == messages.last?.content)
+    }
+
+    @Test
+    func largeContextWindowCompactsDownToThirtyPercentOfItsPromptBudget() throws {
+        // About 900k estimated tokens: above the 95% trigger of a 1M window that
+        // reserves 128k tokens for the output.
+        let messages = toolHeavyConversation(exchanges: 1_000, payloadRepeats: 100)
+        let budget = AgentConversationCompactionBudget(
+            contextWindowTokens: 1_000_000,
+            maxOutputTokens: 128_000
+        )
+        let promptBudget = try #require(budget.promptTokenBudget)
+        let rawTokenCount = AgentConversationCompactionSupport.estimatedTokenCount(for: messages)
+
+        let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
+            messages,
+            budget: budget
+        )
+
+        #expect(rawTokenCount > AgentConversationCompactionPolicy.triggerTokenCount(for: promptBudget))
+        #expect(result.wasCompacted)
+        #expect(result.originalEstimatedTokenCount == rawTokenCount)
+        #expect(result.estimatedTokenCount <= promptBudget * 30 / 100)
+        // The target is filled, not undershot: the recent window stays as large as it allows.
+        #expect(result.estimatedTokenCount >= promptBudget * 27 / 100)
+        #expect(
+            result.keptRecentMessageCount
+                >= AgentConversationCompactionPolicy.minimumRecentMessageCount
+        )
+        #expect(result.messages.first?.role == .system)
+        #expect(
+            result.messages.first?.content.contains(
+                AgentConversationCompactionSupport.memorySummaryHeader
+            ) == true
+        )
+        #expect(result.messages.dropFirst().first?.role != .tool)
+        #expect(result.messages.last?.content == messages.last?.content)
+    }
+
+    @Test
+    func unreachableTargetFallsBackToTheSmallestWindowAndKeepsTheSummary() throws {
+        var messages = [AgentRuntimeMessage(role: .system, content: "System prompt")]
+        for index in 0..<36 {
+            messages.append(
+                AgentRuntimeMessage(
+                    role: index.isMultiple(of: 2) ? .user : .assistant,
+                    content: "Older turn \(index) " + String(repeating: "context ", count: 40)
+                )
+            )
+        }
+        // The four most recent messages alone exceed the target.
+        for index in 36..<40 {
+            messages.append(
+                AgentRuntimeMessage(
+                    role: index.isMultiple(of: 2) ? .user : .assistant,
+                    content: "Recent turn \(index) " + String(repeating: "payload ", count: 400)
+                )
+            )
+        }
+        let budget = AgentConversationCompactionBudget(contextWindowTokens: 4_000)
+        let promptBudget = try #require(budget.promptTokenBudget)
+        let target = AgentConversationCompactionPolicy.targetTokenCount(for: promptBudget)
+        let recentTokenCount = AgentConversationCompactionSupport.estimatedTokenCount(
+            for: Array(messages.suffix(AgentConversationCompactionPolicy.minimumRecentMessageCount))
+        )
+
+        let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
+            messages,
+            budget: budget
+        )
+
+        #expect(recentTokenCount > target)
+        #expect(result.wasCompacted)
+        #expect(result.estimatedTokenCount > target)
+        #expect(result.estimatedTokenCount < result.originalEstimatedTokenCount)
+        #expect(
+            result.keptRecentMessageCount
+                == AgentConversationCompactionPolicy.minimumRecentMessageCount
+        )
+        // The fallback keeps the summary of its preferred budget instead of erasing memory.
+        #expect(result.messages.first?.content.contains("Older turn 0") == true)
         #expect(result.messages.last?.content == messages.last?.content)
     }
 
@@ -231,7 +358,9 @@ struct AgentConversationCompactionSupportTests {
 
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             messages,
-            budget: AgentConversationCompactionBudget(contextWindowTokens: 3_000),
+            budget: AgentConversationCompactionBudget(
+                contextWindowTokens: contextWindow(forTargetTokenCount: 1_500)
+            ),
             force: true
         )
 
@@ -290,7 +419,9 @@ struct AgentConversationCompactionSupportTests {
 
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             messages,
-            budget: AgentConversationCompactionBudget(contextWindowTokens: 1_000),
+            budget: AgentConversationCompactionBudget(
+                contextWindowTokens: contextWindow(forTargetTokenCount: 500)
+            ),
             force: true
         )
 
@@ -313,6 +444,51 @@ struct AgentConversationCompactionSupportTests {
         #expect(result.keptRecentMessageCount >= 20)
         #expect(orphanToolResults == 0)
         #expect(result.messages.last?.content == "File 4 defines one type.")
+    }
+
+    /// Smallest context window whose compaction target is `targetTokenCount`, so a
+    /// scenario sized in absolute tokens does not depend on the policy fraction.
+    private func contextWindow(forTargetTokenCount targetTokenCount: Int) -> Int {
+        Int((Double(targetTokenCount) / AgentConversationCompactionPolicy.targetFraction).rounded(.up))
+    }
+
+    /// A long agentic session: one user request every 25 exchanges, each exchange
+    /// an assistant tool call followed by its (large) tool result.
+    private func toolHeavyConversation(
+        exchanges: Int,
+        payloadRepeats: Int
+    ) -> [AgentRuntimeMessage] {
+        let payload = String(repeating: "let value = compute(input) // line\n", count: payloadRepeats)
+        var messages = [AgentRuntimeMessage(role: .system, content: "System prompt")]
+        for index in 0..<exchanges {
+            if index.isMultiple(of: 25) {
+                messages.append(
+                    AgentRuntimeMessage(role: .user, content: "Request \(index): continue the work.")
+                )
+            }
+            messages.append(
+                AgentRuntimeMessage(
+                    role: .assistant,
+                    content: "Reading file \(index).",
+                    toolCalls: [
+                        AgentRuntimeToolCall(
+                            id: "call_\(index)",
+                            name: "local.readFile",
+                            argumentsJSON: "{\"path\":\"File\(index).swift\"}"
+                        )
+                    ]
+                )
+            )
+            messages.append(
+                AgentRuntimeMessage(
+                    role: .tool,
+                    content: "File \(index)\n" + payload,
+                    toolCallID: "call_\(index)",
+                    toolName: "local.readFile"
+                )
+            )
+        }
+        return messages
     }
 }
 

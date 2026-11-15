@@ -20,7 +20,10 @@ extension DirectToolExecutor {
     /// gate, including `desktop.run` (only for actions that open documents,
     /// launch apps by path, terminate processes, or type text that presses
     /// Return, which is gated as a `local.exec` command). `local.exec` keeps its
-    /// own dedicated command-level gate.
+    /// own dedicated command-level gate. `local.delete` is listed here so the
+    /// gate is consulted, but it only asks for consent when the target escapes
+    /// the session's working directory (see
+    /// ``deleteTargetIsInsideWorkingDirectory(_:workingDirectory:)``).
     public static let destructiveGatedToolNames: Set<String> = [
         "local.delete",
         "git.push",
@@ -42,6 +45,13 @@ extension DirectToolExecutor {
         case "local.delete":
             guard let path = arguments.string("path", "file_path")?.nilIfBlank else {
                 // Let the tool itself raise the missing-argument error.
+                return nil
+            }
+            // Deleting inside the working directory the session already owns is
+            // the ordinary edit surface, so it needs no consent. Only a target
+            // that escapes that directory (an absolute path, `..` traversal, or
+            // a parent reached through a symlink) is gated.
+            guard !deleteTargetIsInsideWorkingDirectory(path, workingDirectory: workingDirectory) else {
                 return nil
             }
             let recursive = arguments.bool("recursive") == true
@@ -110,6 +120,44 @@ extension DirectToolExecutor {
         default:
             return nil
         }
+    }
+
+    /// Whether deleting `path` stays inside the session's working directory.
+    ///
+    /// The path is resolved the way the file tools resolve it (tilde expansion,
+    /// absolute paths kept, relative paths appended to the working directory)
+    /// and standardized, so `..` traversal cannot masquerade as a child. The
+    /// parent directory is also resolved through symlinks: deleting an entry
+    /// only affects that entry, so a symlink inside the working directory is
+    /// safe to remove, while a path that reaches outside through a symlinked
+    /// parent is not. The working directory itself is not considered inside:
+    /// deleting the authorized root is still gated.
+    static func deleteTargetIsInsideWorkingDirectory(
+        _ path: String,
+        workingDirectory: URL
+    ) -> Bool {
+        let expanded = NSString(string: path).expandingTildeInPath
+        let candidate = expanded.hasPrefix("/")
+            ? URL(fileURLWithPath: expanded).standardizedFileURL
+            : workingDirectory.appendingPathComponent(expanded).standardizedFileURL
+        let root = workingDirectory.standardizedFileURL
+        let resolvedRoot = root.resolvingSymlinksInPath().standardizedFileURL
+        let resolvedParent = candidate.deletingLastPathComponent()
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        return isPath(resolvedParent, inside: resolvedRoot)
+            && isPath(candidate, inside: root)
+    }
+
+    /// Whether `candidate` is `root` or one of its descendants, comparing path
+    /// components so siblings with a common textual prefix do not match.
+    static func isPath(_ candidate: URL, inside root: URL) -> Bool {
+        let candidatePath = candidate.standardizedFileURL.path
+        let rootPath = root.standardizedFileURL.path
+        if rootPath == "/" {
+            return candidatePath.hasPrefix("/")
+        }
+        return candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/")
     }
 
     /// Renders one opaque argument for the consent prompt without allowing

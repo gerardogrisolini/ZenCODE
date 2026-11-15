@@ -199,7 +199,6 @@ public enum AgentConversationCompactionSupport {
             forTargetTokenCount: targetTokenCount
         )
         let preferredSummaryCharacterLimit = summaryCharacterLimit
-        var smallestCandidate: Candidate?
 
         // Keep first-occurrence preference without re-rendering the same suffix.
         var seenCounts = Set<Int>()
@@ -226,23 +225,6 @@ public enum AgentConversationCompactionSupport {
         let feasibleCounts = Set(recentCounts.filter { count in
             Int((Double(fixedCharacters + suffixCharacters[count]) / 4.0).rounded(.up)) <= targetTokenCount
         })
-
-        func retainAsFallback(_ candidate: Candidate) {
-            // A fallback must keep the material-progress invariant of a fitting candidate.
-            guard AgentConversationCompactionPolicy.materiallyReducesPrompt(
-                originalTokens: rawTokenCount,
-                candidateTokens: candidate.estimatedTokenCount
-            ) else {
-                return
-            }
-            // Evaluated in preference order, so an equal-sized result keeps the richer
-            // one; lower summary budgets must not erase memory just to shrink a fallback.
-            guard smallestCandidate == nil
-                    || candidate.estimatedTokenCount < smallestCandidate!.estimatedTokenCount else {
-                return
-            }
-            smallestCandidate = candidate
-        }
 
         func makeCandidate(recentMessageCount: Int, summaryLimit: Int) -> Candidate? {
             guard recentMessageCount >= 1,
@@ -281,15 +263,14 @@ public enum AgentConversationCompactionSupport {
             )
         }
 
+        // A suffix over the no-summary lower bound can never fit, so only the
+        // feasible ones are rendered here: a low target on a long history would
+        // otherwise pay one full render per suffix it is about to discard.
         while true {
-            for count in recentCounts {
-                let needsFallback = allowsFallbackBeyondTarget
-                    && summaryCharacterLimit == preferredSummaryCharacterLimit
-                guard feasibleCounts.contains(count) || needsFallback else { continue }
+            for count in recentCounts where feasibleCounts.contains(count) {
                 guard let candidate = makeCandidate(
                     recentMessageCount: count, summaryLimit: summaryCharacterLimit
                 ) else { continue }
-                if needsFallback { retainAsFallback(candidate) }
                 if candidate.estimatedTokenCount <= targetTokenCount,
                    AgentConversationCompactionPolicy.materiallyReducesPrompt(
                     originalTokens: rawTokenCount,
@@ -299,15 +280,37 @@ public enum AgentConversationCompactionSupport {
                 }
             }
 
-            // Impossible even without summary: the preferred-budget pass suffices.
+            // Impossible even without summary: there is nothing to search.
             // Otherwise search per character: rendering is non-monotonic, so
             // geometric/binary search could skip the only fit. Worst-case work
             // is O(summary budget * feasible suffixes), intentionally accepted.
             guard !feasibleCounts.isEmpty, summaryCharacterLimit > 0 else {
-                return allowsFallbackBeyondTarget ? smallestCandidate : nil
+                break
             }
             summaryCharacterLimit -= 1
         }
+
+        guard allowsFallbackBeyondTarget else {
+            return nil
+        }
+        // Nothing fits: fall back to the smallest candidate at the preferred summary
+        // budget; lower budgets must not erase memory just to shrink a fallback.
+        var smallestCandidate: Candidate?
+        for count in recentCounts {
+            // A fallback must keep the material-progress invariant of a fitting candidate.
+            guard let candidate = makeCandidate(
+                recentMessageCount: count, summaryLimit: preferredSummaryCharacterLimit
+            ), AgentConversationCompactionPolicy.materiallyReducesPrompt(
+                originalTokens: rawTokenCount,
+                candidateTokens: candidate.estimatedTokenCount
+            ) else { continue }
+            // Evaluated in preference order, so an equal-sized result keeps the richer one.
+            if smallestCandidate == nil
+                || candidate.estimatedTokenCount < smallestCandidate!.estimatedTokenCount {
+                smallestCandidate = candidate
+            }
+        }
+        return smallestCandidate
     }
 
     private static func splitSystemPrompt(

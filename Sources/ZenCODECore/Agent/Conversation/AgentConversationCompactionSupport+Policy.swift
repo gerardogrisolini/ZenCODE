@@ -9,10 +9,12 @@ import ToolCore
 public enum AgentConversationCompactionPolicy {
     /// Fraction of the budget that triggers a compaction.
     public static let triggerFraction = 0.95
-    /// Fraction of the budget the compacted prompt aims to fill; the headroom is
-    /// what the next turns can grow into. Model output and provider overhead are
-    /// subtracted up front by `AgentConversationCompactionBudget.promptTokenBudget`.
-    public static let targetFraction = 0.50
+    /// Fraction of the budget the compacted prompt aims to fill, whatever the size
+    /// of the context window; the headroom is what the next turns can grow into,
+    /// so a larger fraction means compacting more often. Model output and provider
+    /// overhead are subtracted up front by
+    /// `AgentConversationCompactionBudget.promptTokenBudget`.
+    public static let targetFraction = 0.30
     public static let minimumRecentMessageCount = 4
     public static let maximumSummaryCharacters = 24_000
     /// Share of the target budget the conversation memory summary may use.

@@ -34,6 +34,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- `local.delete` no longer asks for consent when the target stays inside the
+  session's working directory, the folder the session is already authorized to
+  modify. It still asks when the target escapes that directory: an absolute
+  path outside it, a relative path that climbs out with `..`, a path that
+  reaches outside through a symlinked parent, or the working directory root
+  itself. Deleting a symlink that lives inside the working directory stays
+  ungated, because removing the link does not touch its target.
+
 - With the in-process DS4 engine, in the terminal chat, the header of the live
   file write or edit preview names the tool canonically (`local.writeFile`,
   `local.append`, `local.editFile`, `local.replace`) instead of the short labels
@@ -48,6 +56,19 @@ Release tags follow the strict `vX.Y.Z` contract described in
   as before. This applies only to those four tools: `local.multiEdit` and
   `local.applyPatch` are unchanged, and ACP, Telegram, the macOS app, saved
   sessions, and sub-agents do not receive the preview.
+
+- Conversation compaction reduces the context more. Its target is now 30% of
+  the available prompt budget (after output, overhead and wire-inflation
+  reservations) instead of 50%, for every context window. At 50% a compacted
+  session was back at the trigger after little new work, so it compacted
+  often: a 256k-token window kept up to 128k tokens and now keeps at most
+  76.8k, and a 1M-token window up to 300k instead of 500k. The 95% trigger is
+  unchanged, and the target is not a guarantee: indivisible system context and
+  tool-safe recent turns keep the existing material-progress fallback.
+- Compaction no longer renders the recent windows that cannot fit its target
+  before the ones that can. The result is the same; on a long session the
+  search takes a fraction of the time (a 3,000-message, 850k-token history went
+  from seconds to about 0.2 s in a debug build).
 
 ### Removed
 
