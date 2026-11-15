@@ -93,6 +93,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
   To turn the capability off, remove the Builder profile from the profiles
   associated with the project with `/agents`, or remove `sub-agents` from the
   session's tools. See [Docs/builder.md](Docs/builder.md#autonomous-feature-development).
+- The terminal now shows what voice mode does: while it is on, the input panel
+  names its state at the end of the mode text, for example `Prompt · voice on`:
+  `voice starting` until it hears the microphone, `voice on` while it listens,
+  `voice reading` while it reads aloud, and `voice paused`. On Linux `voice
+  starting` also shows while the speech recognizer loads again after a reading,
+  so you can see when you can speak. The app's status bar shows the start too,
+  as an outlined microphone (`Voice mode: starting`). For apps that embed
+  ZenCODE, `VoiceModeSessionState` has the new `isStarting`, and a voice
+  controller reports whether it hears the microphone with the new
+  `VoiceModeCallbacks.listeningChanged`; both are additive.
 
 ### Changed
 
@@ -133,6 +143,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
   reply?") no longer waits for the pause, 5 seconds by default: it is sent as
   soon as speech recognition has finalized it, as it already was with the Send
   mode "On a word". On Linux it is still sent after the pause.
+- `/voice pause` on macOS now closes the microphone instead of discarding what
+  it hears, and `/voice resume` opens it again.
+- In voice mode on macOS, what you say over a long answer is no longer taken
+  for the echo of the answer. The residual-echo filter dropped recognized text
+  when most of its words occurred anywhere in the answer being read, which a
+  long answer made true of nearly any short sentence; it now drops text only
+  when its words repeat a passage of the answer in order.
+- The instruction that voice mode adds to a prompt (short sentences, comments
+  while working) is no longer sent while voice mode is starting, before it
+  first hears the microphone, since nothing is read aloud yet.
 
 ### Removed
 
@@ -812,6 +832,25 @@ Release tags follow the strict `vX.Y.Z` contract described in
   recall it.`; the app puts it back in the draft as ordinary text, as the draft
   keeps a typed line that is refused. A live message by voice refused while
   Telegram drives the session is still not kept.
+- Voice mode on macOS follows a change of the audio device, for example
+  headphones connected or disconnected. The audio engine stops when the
+  hardware changes, and voice mode stayed on without hearing or reading
+  anything. It now stops the reading in progress, starts its audio again on the
+  new device, and says `Voice: the audio device changed; listening again.`; if
+  the audio cannot start again it turns off with a message. Nothing is played
+  on a stopped audio engine any more.
+- Voice mode on Linux no longer stays on without listening when the speech
+  recognizer does not start: a recognizer that prints nothing within 60
+  seconds turns voice mode off with `speech recognition could not start: no
+  answer from the recognizer after 60 seconds`. `/voice off` and leaving `zen`
+  now wait until the recognizer and the reading program have ended, so neither
+  is left running with the microphone open. A `/voice off` or a `/voice pause`
+  that arrives while voice mode starts no longer leaves a recognizer running,
+  and a reading that could not start after another one no longer leaves voice
+  mode deaf.
+- When voice mode stops on its own, for example because the microphone
+  permission is denied, a live-chat question that was pending and the
+  announcements waiting are now dropped, as after `/voice off`.
 
 ## [6.0.1] - 2026-11-13
 

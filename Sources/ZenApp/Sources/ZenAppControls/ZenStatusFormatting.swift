@@ -34,7 +34,7 @@ public struct ZenStatusRun: Equatable, Sendable {
         /// The voice indicator while voice mode listens or reads aloud
         /// (`TerminalStyle.Status.active`).
         case voiceActive
-        /// The voice indicator while voice mode is paused
+        /// The voice indicator while voice mode is paused or starting
         /// (`TerminalStyle.Status.inactive`).
         case voicePaused
     }
@@ -50,8 +50,7 @@ public struct ZenStatusRun: Equatable, Sendable {
 
 /// What the voice fragment shows: the state of the app's voice mode, one for
 /// every window, as an SF Symbol with its tooltip and VoiceOver label. The
-/// terminal has no counterpart: its panel names the reading in the key help
-/// only.
+/// terminal names the same states at the end of its panel's mode text.
 public enum ZenVoiceIndicator: Equatable, Sendable {
     /// Voice mode is on and listens.
     case listening
@@ -59,15 +58,20 @@ public enum ZenVoiceIndicator: Equatable, Sendable {
     case paused
     /// Voice mode reads aloud.
     case readingAloud
+    /// Voice mode is on but does not hear the microphone yet: its controller
+    /// starts, or loads its speech recognizer again.
+    case starting
 
     /// The indicator of `state`; `nil` while voice mode is off. Reading
-    /// aloud wins over the other states.
+    /// aloud wins over the other states, the pause over the start.
     public init?(_ state: VoiceModeSessionState) {
         guard state.isOn else { return nil }
         if state.isSpeaking {
             self = .readingAloud
         } else if state.isPaused {
             self = .paused
+        } else if state.isStarting {
+            self = .starting
         } else {
             self = .listening
         }
@@ -79,6 +83,7 @@ public enum ZenVoiceIndicator: Equatable, Sendable {
         case .listening: "mic.fill"
         case .paused: "mic.slash"
         case .readingAloud: "waveform"
+        case .starting: "mic"
         }
     }
 
@@ -88,15 +93,16 @@ public enum ZenVoiceIndicator: Equatable, Sendable {
         case .listening: "Voice mode: listening"
         case .paused: "Voice mode: paused"
         case .readingAloud: "Voice mode: reading aloud"
+        case .starting: "Voice mode: starting"
         }
     }
 
     /// The color role of the symbol: the terminal's active status while voice
-    /// mode works, its inactive one while it is paused.
+    /// mode works, its inactive one while it is paused or starting.
     public var style: ZenStatusRun.Style {
         switch self {
         case .listening, .readingAloud: .voiceActive
-        case .paused: .voicePaused
+        case .paused, .starting: .voicePaused
         }
     }
 }
@@ -110,7 +116,8 @@ public struct ZenStatusFragment: Equatable, Sendable, Identifiable {
         /// (`TerminalStatusBar.accessModeStatusFragment`).
         case accessMode
         /// The state of the app's voice mode, an SF Symbol
-        /// (``ZenVoiceIndicator``); the app's own, the terminal has none.
+        /// (``ZenVoiceIndicator``); the terminal names it in its panel's
+        /// mode text instead.
         case voice
         /// The activity spinner shown while a prompt is generating.
         case activity

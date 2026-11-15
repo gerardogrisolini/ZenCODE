@@ -351,6 +351,8 @@ struct ZenVoiceWindowTests {
             }
             try await Self.run("/voice on", in: first, runtime)
             let controller = try await Self.controller(controllers)
+            // No instruction goes out before the controller listens.
+            await waitUntil("voice mode listens") { runtime.voiceState == VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false) }
 
             // A turn of the active window carries the instruction; its
             // answer is read aloud.
@@ -915,6 +917,7 @@ struct ZenVoiceWindowTests {
             let window = try await Self.open(runtime, workspace)
             try await Self.run("/voice on", in: window, runtime)
             let controller = try await Self.controller(controllers)
+            await waitUntil("voice mode listens") { window.voiceState == VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false) }
             window.draft = "Alpha"
             window.submitDraft()
             #expect(await window.waitUntilIdle())

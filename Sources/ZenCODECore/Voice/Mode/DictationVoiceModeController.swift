@@ -35,6 +35,58 @@ enum VoiceDictationError: LocalizedError, Equatable {
     }
 }
 
+/// Groups a burst of change notifications, e.g. the audio configuration
+/// changes posted while headphones connect: each change waits a short
+/// settling time, and only the last one of the burst then proceeds.
+struct VoiceChangeSettler: Sendable, Equatable {
+    private var latest: UInt64 = 0
+
+    /// Records a change and returns its token.
+    mutating func begin() -> UInt64 {
+        latest &+= 1
+        return latest
+    }
+
+    /// Whether no change was recorded after the one with `token`.
+    func isLatest(_ token: UInt64) -> Bool {
+        token == latest
+    }
+}
+
+/// Decides what follows a restart of the voice device after an audio device
+/// change: the engine may stop again right away, e.g. when it never stays
+/// running on the new hardware, and restarting must not go on forever.
+struct VoiceAudioRestartPolicy: Sendable, Equatable {
+    enum Decision: Sendable, Equatable {
+        /// The engine runs: listen again and tell the user.
+        case announce
+        /// The engine stopped again: show nothing, another restart follows.
+        case retry
+        /// The engine keeps stopping: give up.
+        case fail
+    }
+
+    /// The restarts in a row after which the engine was stopped again.
+    static let maximumConsecutiveAudioRestarts = 3
+
+    private(set) var consecutiveAudioRestarts = 0
+
+    /// Records a restart of the device and returns what follows it.
+    /// `isEngineRunning` is whether the engine runs right after the restart.
+    mutating func restarted(isEngineRunning: Bool) -> Decision {
+        guard !isEngineRunning else {
+            consecutiveAudioRestarts = 0
+            return .announce
+        }
+        consecutiveAudioRestarts += 1
+        return consecutiveAudioRestarts >= Self.maximumConsecutiveAudioRestarts ? .fail : .retry
+    }
+
+    mutating func reset() {
+        consecutiveAudioRestarts = 0
+    }
+}
+
 /// Owns the dictation voice loop of one interactive terminal on macOS:
 /// microphone and speech permissions, continuous recognition split into
 /// utterances, barge-in and spoken answers. Recognized utterances become
@@ -64,6 +116,26 @@ actor DictationVoiceModeController: VoiceModeController {
             ?? "the current audio output"
         return "Voice: echo cancellation is unavailable with \(output); switch to a local output or use headphones so you can talk over the assistant without it hearing itself.\n"
     }
+
+    /// The echo-cancellation notice after the voice device started: shown
+    /// only when echo cancellation was active before and is not now. Before
+    /// the device first starts it counts as active, so the first start
+    /// reports a missing one.
+    static func echoCancellationLossNotice(
+        wasActive: Bool,
+        isActive: Bool,
+        outputDeviceName: String?
+    ) -> String? {
+        guard wasActive, !isActive else {
+            return nil
+        }
+        return echoCancellationUnavailableMessage(outputDeviceName: outputDeviceName)
+    }
+
+    static let audioDeviceChangedMessage = "Voice: the audio device changed; listening again.\n"
+    static let audioRestartFailedMessage = "ZenCODE: voice audio could not restart after the audio device changed: the audio engine keeps stopping. Run /voice on to retry.\n"
+    /// Audio configuration changes this close together form one device change.
+    static let audioChangeSettling = Duration.milliseconds(300)
 
     static let speechRecognitionDeniedMessage = "ZenCODE: speech recognition is not allowed. Allow your terminal app under System Settings > Privacy & Security > Speech Recognition, then run /voice on.\n"
     static let maximumRapidEndings = 5
@@ -111,6 +183,13 @@ actor DictationVoiceModeController: VoiceModeController {
     private var eventTask: Task<Void, Never>?
     private var silenceTask: Task<Void, Never>?
     private var isAudioRunning = false
+    /// Whether the voice device last started with echo cancellation; `true`
+    /// until it first starts.
+    private var hasEchoCancellation = true
+    /// Groups the audio configuration changes of one device change.
+    private var audioChanges = VoiceChangeSettler()
+    /// Limits the restarts in a row after which the audio engine stopped again.
+    private var audioRestarts = VoiceAudioRestartPolicy()
     private(set) var phase: Phase = .idle
     /// A paused voice mode neither listens nor reads answers aloud.
     private(set) var isPaused = false
@@ -136,6 +215,8 @@ actor DictationVoiceModeController: VoiceModeController {
             return
         }
         phase = .starting
+        hasEchoCancellation = true
+        audioRestarts.reset()
         guard VoiceAudioDevice.isSupported, VoiceDictationRecognizer.isSupported else {
             await fail("ZenCODE: \(VoiceDictationError.unsupportedPlatform.localizedDescription)\n")
             return
@@ -188,27 +269,24 @@ actor DictationVoiceModeController: VoiceModeController {
                 device: device
             )
         }
-        let hasEchoCancellation: Bool
-        do {
-            hasEchoCancellation = try device.start(
-                capturePaused: isPaused,
-                onSamples: { samples in
-                    recognizer.append(samples)
-                }
-            )
-        } catch {
-            recognizer.stop()
-            continuation.finish()
-            await fail("ZenCODE: voice audio could not start: \(error.localizedDescription)\n")
-            return
-        }
         guard phase == .starting else {
             recognizer.stop()
             continuation.finish()
-            device.stop()
             return
         }
-        isAudioRunning = true
+        // A pause asked while starting keeps the microphone closed: resuming
+        // starts the device.
+        var echoCancellationNotice: String?
+        if !isPaused {
+            do {
+                echoCancellationNotice = try startAudio(feeding: recognizer)
+            } catch {
+                recognizer.stop()
+                continuation.finish()
+                await fail("ZenCODE: voice audio could not start: \(error.localizedDescription)\n")
+                return
+            }
+        }
         self.recognizer = recognizer
         self.speaker = speaker
         rapidEndings = 0
@@ -228,10 +306,8 @@ actor DictationVoiceModeController: VoiceModeController {
         }
         phase = .listening
         await callbacks.systemMessage(Self.listeningMessage(localeIdentifier: localeIdentifier))
-        if !hasEchoCancellation {
-            await callbacks.systemMessage(Self.echoCancellationUnavailableMessage(
-                outputDeviceName: device.outputDeviceName
-            ))
+        if let echoCancellationNotice {
+            await callbacks.systemMessage(echoCancellationNotice)
         }
     }
 
@@ -292,25 +368,41 @@ actor DictationVoiceModeController: VoiceModeController {
         }
     }
 
-    /// Pausing stops listening and stops the answer being read aloud;
-    /// resuming listens again. Returns `false` when already in that state.
+    /// Pausing stops listening and stops the answer being read aloud, then
+    /// stops the voice device, which releases the microphone; resuming starts
+    /// it and listens again. Returns `false` when already in that state.
     @discardableResult
     func setPaused(_ paused: Bool) async -> Bool {
         guard paused != isPaused else {
             return false
         }
         isPaused = paused
-        if isAudioRunning {
-            device.setCapturePaused(paused)
-        }
         if paused {
             segmenter.reset()
             keywordCollector?.reset()
             await interruptPlayback()
+            // Nothing is read aloud while paused: the device can stop. The
+            // recognizer stays, so resuming opens a new session of it.
+            if isPaused {
+                stopAudio()
+            }
             await publishDictation()
         } else if phase == .listening {
             rapidEndings = 0
+            audioRestarts.reset()
+            var echoCancellationNotice: String?
+            if !isAudioRunning, let recognizer {
+                do {
+                    echoCancellationNotice = try startAudio(feeding: recognizer)
+                } catch {
+                    await fail("ZenCODE: voice audio could not start: \(error.localizedDescription)\n")
+                    return true
+                }
+            }
             restartRecognition()
+            if let echoCancellationNotice {
+                await callbacks.systemMessage(echoCancellationNotice)
+            }
         }
         return true
     }
@@ -325,10 +417,7 @@ actor DictationVoiceModeController: VoiceModeController {
         recognizer = nil
         await speaker?.stop()
         speaker = nil
-        if isAudioRunning {
-            device.stop()
-            isAudioRunning = false
-        }
+        stopAudio()
         segmenter.reset()
         keywordCollector?.reset()
         await reportSpeakingState()
@@ -352,6 +441,99 @@ actor DictationVoiceModeController: VoiceModeController {
         if phase == .listening, !isPaused {
             restartRecognition()
         }
+    }
+
+    // MARK: - Audio
+
+    /// Starts the voice device feeding `recognizer`, observing its audio
+    /// configuration changes. Returns the notice to show when echo
+    /// cancellation was active before and is not now.
+    private func startAudio(feeding recognizer: VoiceDictationRecognizer) throws -> String? {
+        let isEchoCancelling = try device.start(
+            onSamples: { samples in
+                recognizer.append(samples)
+            },
+            onConfigurationChange: { [weak self] in
+                guard let self else {
+                    return
+                }
+                Task(name: "ZenCODE.dictation-audio-change") {
+                    await self.audioConfigurationChanged()
+                }
+            }
+        )
+        isAudioRunning = true
+        let wasEchoCancelling = hasEchoCancellation
+        hasEchoCancellation = isEchoCancelling
+        return Self.echoCancellationLossNotice(
+            wasActive: wasEchoCancelling,
+            isActive: isEchoCancelling,
+            outputDeviceName: device.outputDeviceName
+        )
+    }
+
+    private func stopAudio() {
+        guard isAudioRunning else {
+            return
+        }
+        device.stop()
+        isAudioRunning = false
+    }
+
+    /// The audio hardware changed, e.g. headphones were connected, and the
+    /// engine stopped itself. A device change posts a burst of notifications:
+    /// once it settles, only the last one, and only if the engine really
+    /// stopped, stops the reading in progress, starts the device again, which
+    /// installs the capture tap for the new input format, and opens a new
+    /// recognition session. When the engine stops again right away, the device
+    /// reports it and another restart follows, up to a limit.
+    private func audioConfigurationChanged() async {
+        let change = audioChanges.begin()
+        try? await Task.sleep(for: Self.audioChangeSettling)
+        guard isPendingAudioChange(change) else {
+            return
+        }
+        await interruptPlayback()
+        guard isPendingAudioChange(change), let recognizer else {
+            return
+        }
+        stopAudio()
+        let hadEchoCancellation = hasEchoCancellation
+        let echoCancellationNotice: String?
+        do {
+            echoCancellationNotice = try startAudio(feeding: recognizer)
+        } catch {
+            await fail("ZenCODE: voice audio could not restart after the audio device changed: \(error.localizedDescription) Run /voice on to retry.\n")
+            return
+        }
+        switch audioRestarts.restarted(isEngineRunning: !device.hasStoppedItself) {
+        case .announce:
+            restartRecognition()
+            // The speech recognized before the change went with its session.
+            await publishDictation()
+            await callbacks.systemMessage(Self.audioDeviceChangedMessage)
+            if let echoCancellationNotice {
+                await callbacks.systemMessage(echoCancellationNotice)
+            }
+        case .retry:
+            // The device reports the stopped engine, so another restart
+            // follows; it reports the echo cancellation that was lost.
+            hasEchoCancellation = hadEchoCancellation
+        case .fail:
+            await fail(Self.audioRestartFailedMessage)
+        }
+    }
+
+    /// Whether the audio change with `token` is the last one and the device
+    /// still has to start again: voice mode listens with the device running,
+    /// and its engine stopped itself. A notification can arrive with the engine
+    /// still running, e.g. shortly after voice processing was enabled.
+    private func isPendingAudioChange(_ token: UInt64) -> Bool {
+        audioChanges.isLatest(token)
+            && phase == .listening
+            && !isPaused
+            && isAudioRunning
+            && device.hasStoppedItself
     }
 
     // MARK: - Recognition
@@ -594,10 +776,7 @@ actor DictationVoiceModeController: VoiceModeController {
         recognizer = nil
         await speaker?.stop()
         speaker = nil
-        if isAudioRunning {
-            device.stop()
-            isAudioRunning = false
-        }
+        stopAudio()
         segmenter.reset()
         keywordCollector?.reset()
         await reportSpeakingState()

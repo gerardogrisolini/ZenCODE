@@ -556,10 +556,11 @@ first one:
 - a red dot (`●`) while **Full Access** is on (see
   [Toolbar and menus](#toolbar-and-menus));
 - while voice mode is on, its state, in every window, since it is one for the
-  whole app (see [Voice](#voice)): a microphone while it listens, a
+  whole app (see [Voice](#voice)): a microphone while it listens, an outlined
+  microphone while it starts and does not hear the microphone yet, a
   crossed-out microphone while it is paused, and a waveform while it reads
   aloud, which wins over the pause; the tooltip says `Voice mode: listening`,
-  `Voice mode: paused`, or `Voice mode: reading aloud`;
+  `Voice mode: starting`, `Voice mode: paused`, or `Voice mode: reading aloud`;
 - the selected agent's name, the model, and the thinking level, with a spinner
   while a turn runs;
 - the context window, `used/max`, with a small gauge;

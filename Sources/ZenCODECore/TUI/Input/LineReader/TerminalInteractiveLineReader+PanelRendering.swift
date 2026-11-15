@@ -114,7 +114,8 @@ extension TerminalInteractiveLineReader {
     ///
     /// The panel is one row tall, so state the operator cannot otherwise see —
     /// which line of a multi-line draft the cursor is on, staged attachments,
-    /// queued prompts — is summarised here rather than spent on extra rows.
+    /// queued prompts, what voice mode does — is summarised here rather than
+    /// spent on extra rows.
     func panelModeTextLocked(state: State) -> String {
         if let modeText = state.panelOverlayOverride?.modeText {
             return modeText
@@ -133,7 +134,26 @@ extension TerminalInteractiveLineReader {
         if state.panelQueuedPromptCount > 0 {
             modeText += " · queued \(state.panelQueuedPromptCount)"
         }
+        if let voiceText = Self.panelVoiceModeText(state.panelVoiceState) {
+            modeText += " · \(voiceText)"
+        }
         return modeText
+    }
+
+    /// What voice mode does, in the mode text; `nil` while it is off. Reading
+    /// aloud wins over the pause, as in the app's voice indicator.
+    static func panelVoiceModeText(_ voiceState: VoiceModeSessionState) -> String? {
+        guard voiceState.isOn else { return nil }
+        if voiceState.isSpeaking {
+            return "voice reading"
+        }
+        if voiceState.isPaused {
+            return "voice paused"
+        }
+        if voiceState.isStarting {
+            return "voice starting"
+        }
+        return "voice on"
     }
 
     /// Help for the mode the prompt is actually in, so a key it lists is a key

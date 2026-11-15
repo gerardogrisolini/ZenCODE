@@ -31,6 +31,21 @@ extension TerminalInteractiveLineReader {
         }
     }
 
+    /// Voice mode changed: on, paused, reading aloud, starting, or off. The
+    /// mode text names it (see `panelModeTextLocked(state:)`).
+    func setPanelVoiceState(_ voiceState: VoiceModeSessionState) async {
+        let changed = withPanelLock { state -> Bool in
+            guard state.panelVoiceState != voiceState else {
+                return false
+            }
+            state.panelVoiceState = voiceState
+            return true
+        }
+        if changed {
+            await renderPanel()
+        }
+    }
+
     public func setPanelCommandSuggestions(_ suggestions: [TerminalCommandSuggestion]) async {
         withPanelLock { state in
             state.panelCommandSuggestions = suggestions

@@ -114,6 +114,8 @@ public final class TerminalInteractiveLineReader: Sendable {
         var panelIsProcessing = false
         /// Voice mode is reading an answer aloud; `Esc` stops it.
         var panelIsSpeaking = false
+        /// What voice mode does, named at the end of the mode text.
+        var panelVoiceState = VoiceModeSessionState.off
         var panelQueuedPromptCount = 0
         var panelPendingAttachmentCount = 0
         var panelOverlayOverride: TerminalPanelModeOverride?

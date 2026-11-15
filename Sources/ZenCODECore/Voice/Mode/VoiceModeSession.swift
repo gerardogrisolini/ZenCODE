@@ -65,6 +65,15 @@ public final class VoiceModeSession {
     private let makeController: ControllerFactory
     private nonisolated let relay = VoiceModeSessionRelay()
     private var stateStreams: [UUID: AsyncStream<VoiceModeSessionState>.Continuation] = [:]
+    /// What the session knows of its current controller; ``state`` is
+    /// computed from it (see `publishState()`).
+    private var facts = ControllerFacts()
+    /// Advanced for every controller `/voice on` creates; its callbacks
+    /// carry it, so what a replaced controller still reports is ignored.
+    private var controllerGeneration: UInt64 = 0
+    /// The start of the last controller `/voice on` created, awaited by the
+    /// tests.
+    private(set) var controllerStart: Task<Void, Never>?
 
     /// A session that runs this platform's controller: local dictation with
     /// the Apple speech frameworks on macOS, the downloaded sherpa-onnx
@@ -180,7 +189,60 @@ public final class VoiceModeSession {
         return stream
     }
 
-    private func publish(_ newState: VoiceModeSessionState) {
+    /// What the session knows of its current controller, reset whenever the
+    /// controller changes. A controller installed without `/voice on` (the
+    /// terminal's tests) is taken to listen.
+    private struct ControllerFacts {
+        var isPaused = false
+        var isSpeaking = false
+        /// `start()` has not returned yet.
+        var isStartPending: Bool {
+            didSet { noteListening() }
+        }
+        /// What the controller last reported through
+        /// ``VoiceModeCallbacks/listeningChanged``; `nil` before it did.
+        var listeningReport: Bool? {
+            didSet { noteListening() }
+        }
+        /// The controller heard the microphone at least once: its start
+        /// returned without a last report that it does not, or it reported
+        /// that it does. It stays so while the recognizer loads again.
+        private(set) var hasListened: Bool
+
+        init(isStartPending: Bool = false, hasListened: Bool = true) {
+            self.isStartPending = isStartPending
+            self.listeningReport = nil
+            self.hasListened = hasListened
+        }
+
+        /// The controller does not hear the microphone: its start did not
+        /// return yet, or it last reported that it does not.
+        var isStarting: Bool {
+            isStartPending || listeningReport == false
+        }
+
+        private mutating func noteListening() {
+            if listeningReport == true || (!isStartPending && listeningReport != false) {
+                hasListened = true
+            }
+        }
+    }
+
+    /// The one place the state changes: computed from the controller and
+    /// `facts`, so `isStarting` always agrees with the pause and the
+    /// reading. Every change reaches ``stateUpdates()``.
+    private func publishState() {
+        let newState: VoiceModeSessionState
+        if controller != nil {
+            newState = VoiceModeSessionState(
+                isOn: true,
+                isPaused: facts.isPaused,
+                isSpeaking: facts.isSpeaking,
+                isStarting: !facts.isPaused && !facts.isSpeaking && facts.isStarting
+            )
+        } else {
+            newState = .off
+        }
         guard newState != state else { return }
         state = newState
         for continuation in stateStreams.values {
@@ -191,9 +253,10 @@ public final class VoiceModeSession {
     // MARK: Controller
 
     /// The controller voice mode runs, or `nil` while it is off. A controller
-    /// that failed stays until it is replaced or stopped, and is inactive.
-    /// Settable by the terminal's tests, which install a controller without
-    /// starting it.
+    /// that failed stays until the session notices it (see
+    /// `activeController()`), which forgets it. Settable by the terminal's
+    /// tests, which install a controller without starting it; such a
+    /// controller is taken to listen.
     var controller: (any VoiceModeController)? {
         get { relay.controller }
         set { relay.controller = newValue }
@@ -203,17 +266,55 @@ public final class VoiceModeSession {
     /// controller failed. Voice mode is off once its controller failed on
     /// its own: only that is read from the controller, since the session
     /// itself pauses, resumes, starts and stops it, and `isActive` never
-    /// comes back.
+    /// comes back. A failed controller is forgotten (see
+    /// `controllerDidFail(_:)`).
     func activeController() async -> (any VoiceModeController)? {
         guard let controller else { return nil }
         guard await controller.isActive else {
-            // It failed on its own: voice mode is off.
-            if self.controller === controller {
-                publish(.off)
-            }
+            await controllerDidFail(controller)
             return nil
         }
         return controller
+    }
+
+    /// `failed` stopped on its own: voice mode is off, as after
+    /// ``stop()``, but the controller is not stopped again, since a failed
+    /// one already released what it held. Callers race here (the start, the
+    /// failure callback, the commands): only the first one that finds
+    /// `failed` still current tears down, and it forgets the controller
+    /// before its first suspension, so the host hears
+    /// ``VoiceModeSessionHost/voiceModeDidStop()`` once for it.
+    private func controllerDidFail(_ failed: any VoiceModeController) async {
+        guard controller === failed else { return }
+        controller = nil
+        facts = ControllerFacts()
+        await cancelDialogue()
+        publishState()
+        await host?.voiceModeDidStop()
+    }
+
+    /// The `start()` of controller `generation` returned. A start that
+    /// failed turns voice mode off; one that listens ends `isStarting`,
+    /// unless the controller last reported that it does not hear the
+    /// microphone yet.
+    private func controllerDidStart(generation: UInt64) async {
+        guard await activeController() != nil,
+              generation == controllerGeneration,
+              controller != nil else {
+            return
+        }
+        facts.isStartPending = false
+        publishState()
+    }
+
+    /// Controller `generation` reported whether it hears the microphone; a
+    /// report of a replaced or stopped controller changes nothing.
+    private func listeningChanged(_ isListening: Bool, generation: UInt64) {
+        guard generation == controllerGeneration, controller != nil else {
+            return
+        }
+        facts.listeningReport = isListening
+        publishState()
     }
 
     /// The controller while it listens: the live-chat dialogue announces,
@@ -267,8 +368,10 @@ public final class VoiceModeSession {
         // A failed controller is replaced, so the language, the reading
         // voice and the options are read again.
         await stop()
+        controllerGeneration &+= 1
+        let generation = controllerGeneration
         let controller: any VoiceModeController
-        switch makeController(makeCallbacks()) {
+        switch makeController(makeCallbacks(generation: generation)) {
         case let .ready(ready):
             controller = ready
         case let .unavailable(message):
@@ -276,15 +379,16 @@ public final class VoiceModeSession {
             return
         }
         self.controller = controller
-        publish(VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false))
+        // On, and starting until `start()` returns.
+        facts = ControllerFacts(isStartPending: true, hasListened: false)
+        publishState()
         await host?.voiceModeDidStart()
         // Starting may wait on the system permission prompts or on loading
         // the speech models; never hold the channel on it. The controller
         // reports when it listens.
-        Task(name: "ZenCODE.voice-start") { [weak self] in
+        controllerStart = Task(name: "ZenCODE.voice-start") { [weak self] in
             await controller.start()
-            // A start that failed turns voice mode off.
-            _ = await self?.activeController()
+            await self?.controllerDidStart(generation: generation)
         }
     }
 
@@ -308,7 +412,8 @@ public final class VoiceModeSession {
         }
         let changed = await controller.setPaused(paused)
         if self.controller === controller {
-            publish(VoiceModeSessionState(isOn: true, isPaused: paused, isSpeaking: state.isSpeaking))
+            facts.isPaused = paused
+            publishState()
         }
         switch (paused, changed) {
         case (true, true):
@@ -332,7 +437,8 @@ public final class VoiceModeSession {
             return
         }
         self.controller = nil
-        publish(.off)
+        facts = ControllerFacts()
+        publishState()
         await controller.stop()
         await host?.voiceModeDidStop()
     }
@@ -343,21 +449,24 @@ public final class VoiceModeSession {
     func detachController() -> (any VoiceModeController)? {
         let controller = self.controller
         self.controller = nil
+        facts = ControllerFacts()
         cancelDeadline()
-        if controller != nil {
-            publish(.off)
-        }
+        publishState()
         return controller
     }
 
     /// The instruction that goes out with a prompt while voice mode listens
-    /// (running and not paused), otherwise `nil`. Ask for it for every
-    /// prompt, so `/voice pause`, `/voice resume` and `/voice off` take
+    /// (running and not paused), otherwise `nil`. A controller that is
+    /// starting hears nothing yet: there is none until it listened a first
+    /// time, then also while it loads its recognizer again. Ask for it for
+    /// every prompt, so `/voice pause`, `/voice resume` and `/voice off` take
     /// effect from the next one; it belongs to the outgoing request only
     /// (see `AgentTurnInstructionContext`), never to history or snapshots.
     public func turnInstruction() async -> String? {
         guard let controller = await activeController(),
-              await !controller.isPaused else {
+              await !controller.isPaused,
+              self.controller === controller,
+              facts.hasListened else {
             return nil
         }
         return Self.turnInstructionText
@@ -453,8 +562,10 @@ public final class VoiceModeSession {
     /// waiting for its answer, a read message turns into "Do you want to
     /// reply?", an idle dialogue announces the next message.
     public func speakingChanged(_ isSpeaking: Bool) async {
-        if state.isOn {
-            publish(VoiceModeSessionState(isOn: true, isPaused: state.isPaused, isSpeaking: isSpeaking))
+        // A late report of a stopped controller changes nothing.
+        if controller != nil {
+            facts.isSpeaking = isSpeaking
+            publishState()
         }
         guard !isSpeaking,
               let controller,
@@ -651,10 +762,11 @@ public final class VoiceModeSession {
 
     // MARK: Callbacks
 
-    /// The controller's callbacks: its texts are shown on the chat actor,
-    /// everything else goes straight to the current host's `nonisolated`
-    /// requirements, never through the chat actor.
-    private func makeCallbacks() -> VoiceModeCallbacks {
+    /// The callbacks of controller `generation`: its texts and whether it
+    /// listens are handled on the chat actor, everything else goes straight
+    /// to the current host's `nonisolated` requirements, never through the
+    /// chat actor.
+    private func makeCallbacks(generation: UInt64) -> VoiceModeCallbacks {
         let relay = relay
         return VoiceModeCallbacks(
             systemMessage: { [weak self] text in
@@ -675,6 +787,9 @@ public final class VoiceModeSession {
             },
             speakingChanged: { isSpeaking in
                 await relay.host?.voiceModeDeliverSpeakingChanged(isSpeaking)
+            },
+            listeningChanged: { [weak self] isListening in
+                await self?.listeningChanged(isListening, generation: generation)
             }
         )
     }

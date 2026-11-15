@@ -71,6 +71,14 @@ extension TerminalChat {
         voiceSession.announcementsSince = Date.now
         // `/voice on` feeds dictated utterances into this FIFO.
         voiceEventQueue = eventQueue
+        // The panel's mode text names what voice mode does while the loop
+        // runs; the teardown ends the observation and clears the name.
+        let voiceStates = voiceSession.stateUpdates()
+        let voiceStateObservation = Task(name: "ZenCODE.TUI.voice-state") { [interactiveReader] in
+            for await voiceState in voiceStates {
+                await interactiveReader.setPanelVoiceState(voiceState)
+            }
+        }
         // SIGWINCH is handled by the status-bar actor, but reader ownership
         // belongs to this one FIFO consumer. The handler only enqueues the
         // collapse notification, so it cannot form an actor callback cycle.
@@ -150,6 +158,13 @@ extension TerminalChat {
             voiceModeHost.loop = nil
             Task(name: "ZenCODE.TUI.voice-stop") {
                 await voice?.stop()
+            }
+            // A state the observation still forwards never lands after the
+            // cleared one.
+            voiceStateObservation.cancel()
+            Task(name: "ZenCODE.TUI.voice-state-clear") { [interactiveReader] in
+                await voiceStateObservation.value
+                await interactiveReader.setPanelVoiceState(.off)
             }
         }
 
@@ -885,6 +900,9 @@ extension TerminalChat {
         // render can run during or after the teardown below.
         await stopTaskGraphObserver()
         await stopVoiceMode()
+        voiceStateObservation.cancel()
+        await voiceStateObservation.value
+        await interactiveReader.setPanelVoiceState(.off)
 
         await stopPanelInput()
     }

@@ -10,6 +10,11 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 @Suite("Sherpa-onnx voice controller", .serialized)
 struct SherpaVoiceModeControllerTests {
@@ -233,6 +238,153 @@ struct SherpaVoiceModeControllerTests {
         await controller.stop()
     }
 
+    /// A failed launch of the next reading ends the one it replaced: the
+    /// speaking state is cleared and what the microphone hears is sent.
+    @Test
+    func aReadingThatCannotLaunchEndsTheReadingItReplaced() async throws {
+        let fixture = try Fixture(readingSeconds: "30")
+        let controller = fixture.makeController()
+        await controller.start()
+        #expect(await waitUntil { await controller.phase == .listening })
+        #expect(await controller.speak("Prima", rendering: .plainText))
+        #expect(await waitUntil { await fixture.events.speaking == [true] })
+        // The first reading must be running its program before the program
+        // is removed: a shell that has not opened it yet would fail on its
+        // own and report a failure of its own.
+        #expect(await waitUntil { FileManager.default.fileExists(atPath: fixture.synthesizer.path + ".pid") })
+
+        try FileManager.default.removeItem(at: fixture.synthesizer)
+        try fixture.queueUtterance("Ciao zen")
+        #expect(await controller.speak("Seconda", rendering: .plainText) == false)
+        #expect(await fixture.events.failures.count == 1)
+        #expect(await fixture.events.failures.first?.contains("the answer could not be read aloud") == true)
+        #expect(await fixture.events.speaking == [true, false])
+        #expect(await controller.isSpeaking == false)
+        #expect(await waitUntil { await fixture.events.utterances == [.dictation(id: 1, text: "Ciao zen")] })
+        #expect(fixture.recognizerLaunches == 2)
+        await controller.stop()
+    }
+
+    // MARK: - Robustness
+
+    /// A stop that comes while the loading notice is reported leaves the
+    /// recognizer unlaunched.
+    @Test
+    func aStopDuringTheLoadingNoticeLaunchesNoRecognizer() async throws {
+        let fixture = try Fixture()
+        let controller = fixture.makeController()
+        await fixture.events.setSystemHook { _ in
+            await controller.stop()
+        }
+        await controller.start()
+
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(await fixture.events.systemMessages == ["Voice: loading the speech recognizer...\n"])
+        #expect(fixture.recognizerLaunches == 0)
+        #expect(await controller.phase == .stopped)
+        #expect(await fixture.events.failures.isEmpty)
+    }
+
+    @Test
+    func aRecognizerThatNeverStartsFailsAfterTheStartTimeout() async throws {
+        let fixture = try Fixture(recognizerNeverStarts: true)
+        let controller = fixture.makeController(recognizerStartTimeout: .seconds(2))
+        await controller.start()
+        #expect(await waitUntil { fixture.recognizerProcessID != nil })
+        let processID = try #require(fixture.recognizerProcessID)
+
+        #expect(await waitUntil { await !fixture.events.failures.isEmpty })
+        #expect(await fixture.events.failures == [
+            "ZenCODE: speech recognition could not start: no answer from the recognizer after 2 seconds. Run /voice on to retry.\n"
+        ])
+        #expect(await controller.isActive == false)
+        #expect(await fixture.events.listening == [false])
+        #expect(await waitUntil { !isProcessRunning(processID) })
+        #expect(fixture.recognizerLaunches == 1)
+    }
+
+    /// The start timeout holds for every launch, also the one that turns
+    /// the microphone back on after a reading.
+    @Test
+    func aRecognizerRelaunchedAfterAReadingIsTimedToo() async throws {
+        let fixture = try Fixture()
+        let controller = fixture.makeController(recognizerStartTimeout: .seconds(2))
+        await controller.start()
+        #expect(await waitUntil { await controller.phase == .listening })
+
+        try fixture.silenceRecognizer()
+        #expect(await controller.speak("Ok", rendering: .plainText))
+        #expect(await waitUntil { fixture.recognizerLaunches == 2 })
+        #expect(await waitUntil { await !fixture.events.failures.isEmpty })
+        #expect(await fixture.events.failures == [
+            "ZenCODE: speech recognition could not start: no answer from the recognizer after 2 seconds. Run /voice on to retry.\n"
+        ])
+        #expect(await controller.isActive == false)
+    }
+
+    /// `false` while the recognizer loads, `true` once it printed `Started`,
+    /// `false` again while a reading or a pause turns the microphone off.
+    @Test
+    func listeningIsReportedFromStartedUntilTheMicrophoneTurnsOff() async throws {
+        let fixture = try Fixture()
+        let controller = fixture.makeController(recognizerStartTimeout: .seconds(1))
+        await controller.start()
+        #expect(await waitUntil { await fixture.events.listening == [false, true] })
+        #expect(await controller.phase == .listening)
+        // `Started` ended the start timeout.
+        try await Task.sleep(for: .milliseconds(1_200))
+        #expect(await controller.isActive)
+        #expect(await fixture.events.failures.isEmpty)
+
+        #expect(await controller.speak("Ok", rendering: .plainText))
+        #expect(await waitUntil { await fixture.events.listening == [false, true, false] })
+        // The recognizer loads again after the reading, then listens.
+        #expect(await waitUntil { await fixture.events.speaking == [true, false] })
+        #expect(await waitUntil { await fixture.events.listening == [false, true, false, true] })
+        #expect(fixture.recognizerLaunches == 2)
+
+        #expect(await controller.setPaused(true))
+        #expect(await waitUntil { await fixture.events.listening == [false, true, false, true, false] })
+        #expect(await controller.setPaused(false))
+        #expect(await waitUntil { await fixture.events.listening == [false, true, false, true, false, true] })
+        await controller.stop()
+        #expect(await waitUntil { await fixture.events.listening == [false, true, false, true, false, true, false] })
+        #expect(await fixture.events.failures.isEmpty)
+    }
+
+    @Test
+    func stopWaitsForARecognizerThatIgnoresSIGTERM() async throws {
+        let fixture = try Fixture(recognizerIgnoresTermination: true)
+        let controller = fixture.makeController()
+        await controller.start()
+        #expect(await waitUntil { await controller.phase == .listening })
+        let processID = try #require(fixture.recognizerProcessID)
+        #expect(isProcessRunning(processID))
+
+        let stoppedAt = ContinuousClock.now
+        await controller.stop()
+        #expect(!isProcessRunning(processID))
+        #expect(stoppedAt.duration(to: .now) < .seconds(5))
+        #expect(await controller.isActive == false)
+    }
+
+    /// The fake synthesizer always ignores SIGTERM.
+    @Test
+    func stopWaitsForAReadingThatIgnoresSIGTERM() async throws {
+        let fixture = try Fixture(readingSeconds: "30")
+        let controller = fixture.makeController()
+        await controller.start()
+        #expect(await waitUntil { await controller.phase == .listening })
+        #expect(await controller.speak("Una risposta molto lunga", rendering: .answer))
+        #expect(await waitUntil { fixture.synthesizerProcessID != nil })
+        let processID = try #require(fixture.synthesizerProcessID)
+        #expect(isProcessRunning(processID))
+
+        await controller.stop()
+        #expect(!isProcessRunning(processID))
+        #expect(await fixture.events.speaking == [true, false])
+    }
+
     // MARK: - Support
 
     private func waitUntil(
@@ -250,6 +402,22 @@ struct SherpaVoiceModeControllerTests {
     }
 }
 
+/// Whether `processID` still runs. A child that exited but was not reaped
+/// yet (a zombie) no longer runs; on Linux `/proc` tells it apart.
+private func isProcessRunning(_ processID: pid_t) -> Bool {
+    guard kill(processID, 0) == 0 else {
+        return false
+    }
+    #if os(Linux)
+    if let status = try? String(contentsOfFile: "/proc/\(processID)/status", encoding: .utf8),
+       let state = status.split(separator: "\n").first(where: { $0.hasPrefix("State:") }) {
+        let fields = state.split(whereSeparator: { $0.isWhitespace })
+        return fields.count < 2 || !["Z", "X", "x"].contains(fields[1])
+    }
+    #endif
+    return true
+}
+
 private struct Preview: Sendable, Equatable {
     let id: UInt64
     let text: String
@@ -261,12 +429,19 @@ private actor VoiceEventRecorder {
     var utterances: [VoiceModeUtterance] = []
     var previews: [Preview] = []
     var speaking: [Bool] = []
+    var listening: [Bool] = []
     private var speakingHook: (@Sendable (Bool) async -> Void)?
+    private var systemHook: (@Sendable (String) async -> Void)?
 
-    func system(_ text: String) { systemMessages.append(text) }
+    func system(_ text: String) async {
+        systemMessages.append(text)
+        await systemHook?(text)
+    }
+
     func failure(_ text: String) { failures.append(text) }
     func utterance(_ utterance: VoiceModeUtterance) { utterances.append(utterance) }
     func preview(_ id: UInt64, _ text: String) { previews.append(Preview(id: id, text: text)) }
+    func listeningChanged(_ value: Bool) { listening.append(value) }
 
     func speakingChanged(_ value: Bool) async {
         speaking.append(value)
@@ -278,11 +453,17 @@ private actor VoiceEventRecorder {
     func setSpeakingHook(_ hook: @escaping @Sendable (Bool) async -> Void) {
         speakingHook = hook
     }
+
+    /// Runs inside the controller's `systemMessage` callback.
+    func setSystemHook(_ hook: @escaping @Sendable (String) async -> Void) {
+        systemHook = hook
+    }
 }
 
-/// Two fake programs in a private directory. Each logs its launches; the
-/// recognizer prints sherpa-onnx style startup lines and an optional queued
-/// utterance, the synthesizer logs its arguments and "reads" for a while.
+/// Two fake programs in a private directory. Each logs its launches and
+/// writes its process id; the recognizer prints sherpa-onnx style startup
+/// lines and an optional queued utterance, the synthesizer logs its
+/// arguments and "reads" for a while.
 private struct Fixture {
     let directory: URL
     let events = VoiceEventRecorder()
@@ -296,6 +477,8 @@ private struct Fixture {
         readingSeconds: String = "0.2",
         laterReadingSeconds: String? = nil,
         recognizerFails: Bool = false,
+        recognizerNeverStarts: Bool = false,
+        recognizerIgnoresTermination: Bool = false,
         synthesizerFails: Bool = false
     ) throws {
         directory = FileManager.default.temporaryDirectory
@@ -305,9 +488,16 @@ private struct Fixture {
             """
             #!/bin/sh
             echo launch >> "$0.log"
+            # Like a child of the TUI, ignore SIGTERM when asked; the process id
+            # is written after, so a test that reads it stops a program that
+            # ignores SIGTERM already.
+            if [ -f "$0.ignore-term" ]; then trap '' TERM; fi
+            echo $$ > "$0.pid"
             echo "VadModelConfig(silero_vad=SileroVadModelConfig(min_silence_duration=2.5))" >&2
             echo " 1: a configuration line before startup is not a result" >&2
             if [ -f "$0.fail" ]; then echo "Cannot open device default" >&2; exit 1; fi
+            # A recognizer stuck loading never prints the startup line.
+            if [ -f "$0.silent" ]; then exec sleep 30; fi
             echo "Started. Please speak" >&2
             # Take the queue before printing it: the test queues the next
             # launch's speech as soon as it sees this one's, and a late removal
@@ -325,6 +515,7 @@ private struct Fixture {
             if [ -f "$0.fail" ]; then echo "bad model" >&2; exit 3; fi
             # Like a child of the TUI, ignore SIGTERM: stopping must escalate.
             trap '' TERM
+            echo $$ > "$0.pid"
             if [ "$(grep -c '' "$0.log")" -gt 1 ]; then exec sleep \(laterReadingSeconds ?? readingSeconds); fi
             exec sleep \(readingSeconds)
             """,
@@ -333,12 +524,21 @@ private struct Fixture {
         if recognizerFails {
             try Data().write(to: URL(fileURLWithPath: recognizer.path + ".fail"))
         }
+        if recognizerNeverStarts {
+            try silenceRecognizer()
+        }
+        if recognizerIgnoresTermination {
+            try Data().write(to: URL(fileURLWithPath: recognizer.path + ".ignore-term"))
+        }
         if synthesizerFails {
             try Data().write(to: URL(fileURLWithPath: synthesizer.path + ".fail"))
         }
     }
 
-    func makeController(sendKeyword: String? = nil) -> SherpaVoiceModeController {
+    func makeController(
+        sendKeyword: String? = nil,
+        recognizerStartTimeout: Duration = SherpaVoiceModeController.defaultRecognizerStartTimeout
+    ) -> SherpaVoiceModeController {
         let events = events
         return SherpaVoiceModeController(
             invocation: .init(
@@ -350,14 +550,21 @@ private struct Fixture {
             voiceName: "paola (it_IT)",
             languageCode: "it",
             sendKeyword: sendKeyword.flatMap(VoiceModeSendKeyword.init),
+            recognizerStartTimeout: recognizerStartTimeout,
             callbacks: VoiceModeCallbacks(
                 systemMessage: { await events.system($0) },
                 failureMessage: { await events.failure($0) },
                 utteranceRecognized: { await events.utterance($0) },
                 dictationChanged: { await events.preview($0, $1) },
-                speakingChanged: { await events.speakingChanged($0) }
+                speakingChanged: { await events.speakingChanged($0) },
+                listeningChanged: { await events.listeningChanged($0) }
             )
         )
+    }
+
+    /// The next recognizer launches never print the startup line.
+    func silenceRecognizer() throws {
+        try Data().write(to: URL(fileURLWithPath: recognizer.path + ".silent"))
     }
 
     func queueUtterance(_ text: String) throws {
@@ -390,6 +597,21 @@ private struct Fixture {
 
     var synthesizerCalls: [String] {
         logLines(of: synthesizer)
+    }
+
+    /// The process id of the last recognizer launched, once it is written.
+    var recognizerProcessID: pid_t? {
+        processID(of: recognizer)
+    }
+
+    /// The process id of the last reading, once it ignores SIGTERM.
+    var synthesizerProcessID: pid_t? {
+        processID(of: synthesizer)
+    }
+
+    private func processID(of program: URL) -> pid_t? {
+        let text = (try? String(contentsOfFile: program.path + ".pid", encoding: .utf8)) ?? ""
+        return pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     private func logLines(of program: URL) -> [String] {

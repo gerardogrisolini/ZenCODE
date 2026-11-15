@@ -30,14 +30,27 @@ struct VoiceModeSessionPublicAPITests {
         #expect(await states.next() == .off)
         #expect(await session.turnInstruction() == nil)
 
+        // Voice mode is on and starting until the controller's start
+        // returns; nothing is heard yet, so no instruction goes out.
+        await controller.holdStart()
         await session.handleCommand("/voice on")
-        #expect(await states.next() == VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false))
+        #expect(await states.next() == VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false, isStarting: true))
         #expect(window.started == 1)
+        #expect(await session.turnInstruction() == nil)
+        await controller.releaseStart()
+        #expect(await states.next() == VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false))
         #expect(await session.turnInstruction() != nil)
+
+        // The controller says it no longer hears the microphone, then again
+        // that it does.
+        let callbacks = try #require(controller.callbacks)
+        await callbacks.listeningChanged(false)
+        #expect(session.state.isStarting)
+        await callbacks.listeningChanged(true)
+        #expect(!session.state.isStarting)
 
         // The controller hears a dictation: the window's draft goes out
         // through its serialized context, and comes back as an utterance.
-        let callbacks = try #require(controller.callbacks)
         await callbacks.utteranceRecognized(.dictation(id: 1, text: "che ore sono?"))
         let delivered = window.delivered
         #expect(delivered == ["che ore sono?"])
@@ -80,6 +93,8 @@ private actor PublicTestVoiceController: VoiceModeController {
     private(set) var isPaused = false
     private(set) var isSpeaking = false
     private(set) var spoken: [String] = []
+    private var isStartHeld = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
     private nonisolated let installedCallbacks = Mutex<VoiceModeCallbacks?>(nil)
 
     nonisolated var callbacks: VoiceModeCallbacks? {
@@ -90,7 +105,26 @@ private actor PublicTestVoiceController: VoiceModeController {
         installedCallbacks.withLock { $0 = callbacks }
     }
 
-    func start() async {}
+    /// Makes the next `start()` wait for ``releaseStart()``.
+    func holdStart() {
+        isStartHeld = true
+    }
+
+    func releaseStart() {
+        isStartHeld = false
+        let waiters = startWaiters
+        startWaiters = []
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func start() async {
+        guard isStartHeld else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
 
     func stop() async {
         isActive = false

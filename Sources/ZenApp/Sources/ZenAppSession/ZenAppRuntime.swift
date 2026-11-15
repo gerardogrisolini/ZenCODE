@@ -46,14 +46,16 @@ public final class ZenAppRuntime {
     /// consent.
     public private(set) var localExecAccessMode: AgentLocalExecAccessMode
     /// What voice mode does now, for every window: on, paused, reading
-    /// aloud. `isSpeaking` follows the controller's reports at once, ahead
-    /// of the session's own state, so Esc can stop a reading as soon as it
-    /// starts.
+    /// aloud, starting. `isSpeaking` follows the controller's reports at
+    /// once, ahead of the session's own state, so Esc can stop a reading as
+    /// soon as it starts; `isStarting` is `false` while it reads.
     public var voiceState: VoiceModeSessionState {
-        VoiceModeSessionState(
+        let isSpeaking = voiceSessionState.isOn && isVoiceSpeaking
+        return VoiceModeSessionState(
             isOn: voiceSessionState.isOn,
             isPaused: voiceSessionState.isPaused,
-            isSpeaking: voiceSessionState.isOn && isVoiceSpeaking
+            isSpeaking: isSpeaking,
+            isStarting: voiceSessionState.isStarting && !isSpeaking
         )
     }
     /// The window voice mode follows: the last one that became active and

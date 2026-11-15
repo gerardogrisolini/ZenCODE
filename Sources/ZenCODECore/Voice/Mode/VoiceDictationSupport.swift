@@ -176,19 +176,72 @@ enum VoiceEchoGuard {
     /// How long after speech ended a recognition can still be its echo.
     static let tail = Duration.milliseconds(1_500)
 
-    /// `true` when at least 80% of the recognized words occur in the text
-    /// being spoken.
+    /// How many words of the spoken text may lie between two consecutive
+    /// recognized words of an echo.
+    static let maximumGap = 3
+
+    /// `true` when at least 80% of the recognized words form, in order and
+    /// close together, a fragment of the text being spoken. Each segment of the
+    /// recognition (one per line) is matched on its own, anywhere in the text.
+    ///
+    /// Answers are read in full, so a long one holds nearly every common word:
+    /// comparing against the set of its words would discard whatever the
+    /// operator says over the reading. The echo of the synthesis is a fragment
+    /// of the text instead: the same words in the same order, with a few
+    /// recognition errors.
     static func isLikelyEcho(_ recognized: String, of spoken: String) -> Bool {
-        let heard = words(in: recognized)
-        guard !heard.isEmpty else {
-            return false
-        }
-        let spokenWords = Set(words(in: spoken))
+        let spokenWords = words(in: spoken)
         guard !spokenWords.isEmpty else {
             return false
         }
-        let matched = heard.filter(spokenWords.contains).count
-        return matched * 5 >= heard.count * 4
+        var heardCount = 0
+        var matched = 0
+        for segment in recognized.components(separatedBy: VoiceDictationSegmenter.segmentSeparator) {
+            let heard = words(in: segment)
+            guard !heard.isEmpty else {
+                continue
+            }
+            heardCount += heard.count
+            matched += bestInOrderMatch(heard, in: spokenWords)
+        }
+        guard heardCount > 0 else {
+            return false
+        }
+        return matched * 5 >= heardCount * 4
+    }
+
+    /// The most recognized words that follow each other in `spoken`, allowing
+    /// `maximumGap` skipped words between two of them and recognition errors
+    /// (words found nowhere near the others are skipped).
+    ///
+    /// The match starts from any of the first three words, so a first word
+    /// recognized wrong does not hide the fragment.
+    private static func bestInOrderMatch(_ heard: [String], in spoken: [String]) -> Int {
+        if heard.count == 1 {
+            return spoken.contains(heard[0]) ? 1 : 0
+        }
+        var best = 0
+        for anchor in 0..<min(3, heard.count) {
+            for start in spoken.indices where spoken[start] == heard[anchor] {
+                var found = 1
+                var next = start + 1
+                for word in heard[(anchor + 1)...] {
+                    guard next < spoken.count else {
+                        break
+                    }
+                    let window = spoken[next..<min(next + 1 + maximumGap, spoken.count)]
+                    if let index = window.firstIndex(of: word) {
+                        found += 1
+                        next = index + 1
+                    }
+                }
+                if found == heard.count {
+                    return found
+                }
+                best = max(best, found)
+            }
+        }
+        return best
     }
 
     /// `true` when `recognized` must be dropped as the assistant's own voice.

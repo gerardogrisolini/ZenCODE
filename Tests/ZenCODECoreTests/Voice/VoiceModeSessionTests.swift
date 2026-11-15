@@ -30,6 +30,7 @@ struct VoiceModeSessionTests {
     private static let on = VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false)
     private static let paused = VoiceModeSessionState(isOn: true, isPaused: true, isSpeaking: false)
     private static let speaking = VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: true)
+    private static let starting = VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false, isStarting: true)
 
     private static func plain(_ text: String) -> Spoken {
         Spoken(text: text, rendering: .plainText)
@@ -98,7 +99,7 @@ struct VoiceModeSessionTests {
         await session.handleCommand("/voice on")
         #expect(host.shown.isEmpty)
         #expect(host.startCount == 1)
-        #expect(session.state == Self.on)
+        #expect(await eventually { session.state == Self.on })
         #expect(await eventually { await controller.startCount == 1 })
 
         let expectations: [(String, Shown)] = [
@@ -126,10 +127,13 @@ struct VoiceModeSessionTests {
     @Test
     func turnInstructionIsSentOnlyWhileVoiceModeListens() async {
         let controller = SessionFakeVoiceController()
-        let session = await makeSession(controller: controller, host: FakeVoiceModeHost())
+        let host = FakeVoiceModeHost()
+        let session = await makeSession(controller: controller, host: host)
         #expect(await session.turnInstruction() == nil)
 
         await session.handleCommand("/voice on")
+        // Once the start returned.
+        #expect(await eventually { session.state == Self.on })
         #expect(await session.turnInstruction() == VoiceModeSession.turnInstructionText)
 
         await session.handleCommand("/voice pause")
@@ -141,6 +145,24 @@ struct VoiceModeSessionTests {
         await controller.fail()
         #expect(await session.turnInstruction() == nil)
         #expect(session.state == .off)
+        #expect(host.stopCount == 1)
+    }
+
+    @Test
+    func noInstructionGoesOutBeforeTheControllerListenedOnce() async {
+        let controller = SessionFakeVoiceController()
+        await controller.holdStart()
+        let session = await makeSession(controller: controller, host: FakeVoiceModeHost())
+
+        // On, starting, and nothing heard: no instruction.
+        await session.handleCommand("/voice on")
+        #expect(session.state == Self.starting)
+        #expect(await eventually { await controller.startCount == 1 })
+        #expect(await session.turnInstruction() == nil)
+
+        await controller.releaseStart()
+        #expect(await eventually { session.state == Self.on })
+        #expect(await session.turnInstruction() == VoiceModeSession.turnInstructionText)
     }
 
     // MARK: Reading aloud
@@ -429,11 +451,15 @@ struct VoiceModeSessionTests {
 
     @Test
     func stateUpdatesFollowVoiceMode() async {
-        let session = await makeSession(controller: SessionFakeVoiceController(), host: FakeVoiceModeHost())
+        let controller = SessionFakeVoiceController()
+        await controller.holdStart()
+        let session = await makeSession(controller: controller, host: FakeVoiceModeHost())
         var updates = session.stateUpdates().makeAsyncIterator()
         #expect(await updates.next() == .off)
 
         await session.handleCommand("/voice on")
+        #expect(await updates.next() == Self.starting)
+        await controller.releaseStart()
         #expect(await updates.next() == Self.on)
         await session.handleCommand("/voice pause")
         #expect(await updates.next() == Self.paused)
@@ -449,6 +475,132 @@ struct VoiceModeSessionTests {
         // A late report of the stopped controller changes nothing.
         await session.speakingChanged(true)
         #expect(session.state == .off)
+    }
+
+    @Test
+    func startingIsPublishedOnlyWhileNeitherPausedNorReading() async {
+        let controller = SessionFakeVoiceController()
+        await controller.holdStart()
+        let session = await makeSession(controller: controller, host: FakeVoiceModeHost())
+
+        await session.handleCommand("/voice on")
+        #expect(session.state == Self.starting)
+        #expect(await eventually { await controller.startCount == 1 })
+
+        // The pause and the reading hide the start, which goes on below.
+        await session.handleCommand("/voice pause")
+        #expect(session.state == Self.paused)
+        await session.handleCommand("/voice resume")
+        #expect(session.state == Self.starting)
+        await session.speakingChanged(true)
+        #expect(session.state == Self.speaking)
+        await session.speakingChanged(false)
+        #expect(session.state == Self.starting)
+
+        // The start returned: voice mode listens.
+        await controller.releaseStart()
+        #expect(await eventually { session.state == Self.on })
+    }
+
+    @Test
+    func theControllerSaysWhenItHearsTheMicrophone() async throws {
+        let controller = SessionFakeVoiceController()
+        await controller.holdStart()
+        let session = await makeSession(controller: controller, host: FakeVoiceModeHost())
+        await session.handleCommand("/voice on")
+        let callbacks = try #require(controller.callbacks)
+
+        // Its start returns while it still loads the recognizer: starting,
+        // and no instruction.
+        await callbacks.listeningChanged(false)
+        await controller.releaseStart()
+        await session.controllerStart?.value
+        #expect(session.state == Self.starting)
+        #expect(await session.turnInstruction() == nil)
+
+        // It hears the microphone.
+        await callbacks.listeningChanged(true)
+        #expect(session.state == Self.on)
+        #expect(await session.turnInstruction() == VoiceModeSession.turnInstructionText)
+
+        // It loads the recognizer again after a reading: starting, but the
+        // instruction stays, since it listened once.
+        await callbacks.listeningChanged(false)
+        #expect(session.state == Self.starting)
+        #expect(await session.turnInstruction() == VoiceModeSession.turnInstructionText)
+        await callbacks.listeningChanged(true)
+        #expect(session.state == Self.on)
+    }
+
+    @Test
+    func aControllerThatFailsTurnsVoiceModeOffOnce() async throws {
+        let controller = SessionFakeVoiceController()
+        let host = FakeVoiceModeHost()
+        let session = await runningSession(controller: controller, host: host)
+        #expect(await eventually { session.state == Self.on })
+        await session.handleSharedChatMessages([Self.message(from: Self.reviewer), Self.message(from: Self.builder)])
+        await session.speakingChanged(false)
+        #expect(session.dialogue.phase != .idle)
+        let callbacks = try #require(controller.callbacks)
+        let awaitingReports = await controller.awaitingShortAnswer.count
+
+        // Everything that notices the failure at once: the host hears the
+        // stop once, the dialogue is dropped, voice mode is off.
+        await controller.fail()
+        async let failure: Void = callbacks.failureMessage("Voice: the microphone stopped.\n")
+        async let instruction = session.turnInstruction()
+        async let command: Void = session.handleCommand("/voice pause")
+        await failure
+        #expect(await instruction == nil)
+        await command
+        #expect(host.stopCount == 1)
+        #expect(session.state == .off)
+        #expect(session.controller == nil)
+        #expect(session.dialogue.phase == .idle)
+        #expect(session.dialogue.pending.isEmpty)
+        // The failed controller is neither stopped nor told anything else.
+        #expect(await controller.stopCount == 0)
+        #expect(await controller.awaitingShortAnswer.count == awaitingReports)
+
+        // Nothing more happens later.
+        #expect(await session.turnInstruction() == nil)
+        await session.handleCommand("/voice off")
+        #expect(host.stopCount == 1)
+    }
+
+    @Test
+    func whatAReplacedControllerReportsIsIgnored() async throws {
+        let first = SessionFakeVoiceController()
+        let second = SessionFakeVoiceController()
+        let host = FakeVoiceModeHost()
+        let session = VoiceModeSession { callbacks in
+            let next = first.callbacks == nil ? first : second
+            next.install(callbacks)
+            return .ready(next)
+        }
+        await session.setHost(host, announcingMessagesSince: .distantPast)
+        await session.handleCommand("/voice on")
+        #expect(await eventually { session.state == Self.on })
+        let stale = try #require(first.callbacks)
+        await session.handleCommand("/voice off")
+        await second.holdStart()
+        await session.handleCommand("/voice on")
+        #expect(second.callbacks != nil)
+        #expect(session.state == Self.starting)
+
+        // The first controller's reports reach neither the state nor the
+        // instruction of the second.
+        await stale.listeningChanged(true)
+        #expect(session.state == Self.starting)
+        #expect(await session.turnInstruction() == nil)
+        await second.releaseStart()
+        #expect(await eventually { session.state == Self.on })
+        await stale.listeningChanged(false)
+        #expect(session.state == Self.on)
+        #expect(await session.turnInstruction() == VoiceModeSession.turnInstructionText)
+        await stale.failureMessage("Voice: the microphone stopped.\n")
+        #expect(session.state == Self.on)
+        #expect(host.stopCount == 1)
     }
 }
 
@@ -470,6 +622,9 @@ private actor SessionFakeVoiceController: VoiceModeController {
     private(set) var interruptCount = 0
     private(set) var awaitingShortAnswer: [Bool] = []
     private(set) var discarded: [UInt64] = []
+    /// While `true`, `start()` waits for ``releaseStart()``.
+    private var isStartHeld = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
     private nonisolated let installedCallbacks = Mutex<VoiceModeCallbacks?>(nil)
 
     /// The callbacks the session created this controller with.
@@ -491,8 +646,27 @@ private actor SessionFakeVoiceController: VoiceModeController {
         isActive = false
     }
 
+    /// Makes the next `start()` wait for ``releaseStart()``, as a
+    /// controller that asks for a permission or loads its models.
+    func holdStart() {
+        isStartHeld = true
+    }
+
+    func releaseStart() {
+        isStartHeld = false
+        let waiters = startWaiters
+        startWaiters = []
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
     func start() async {
         startCount += 1
+        guard isStartHeld else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
     }
 
     func stop() async {

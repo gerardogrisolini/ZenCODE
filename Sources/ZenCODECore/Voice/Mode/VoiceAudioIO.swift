@@ -42,10 +42,20 @@ import CoreAudio
 /// start with it on the current output, the device runs without echo
 /// cancellation and `start` reports it.
 ///
+/// The engine stops itself when the audio hardware changes, e.g. when
+/// headphones are connected or disconnected; while the device runs, `start`'s
+/// `onConfigurationChange` reports it, so the controller can start the device
+/// again. The report can also come with the engine still running, e.g. shortly
+/// after voice processing was enabled: `hasStoppedItself` tells them apart.
+/// Playback is never scheduled on a stopped engine.
+///
 /// Captured audio is delivered as mono 24 kHz Float32 samples; playback takes
 /// the same format. Public methods are driven serially by one voice
-/// controller; the audio callbacks only touch lock-protected state. Audio never
-/// touches the disk.
+/// controller, except `enqueuePlayback`, which the synthesizer calls from its
+/// own queue: starting, stopping and scheduling playback are serialized by
+/// `engineLock`, so playback never reaches an engine being stopped. The audio
+/// callbacks only touch the state protected by `lock`. Audio never touches the
+/// disk.
 final class VoiceAudioDevice: @unchecked Sendable {
     static let isSupported = true
 
@@ -56,15 +66,21 @@ final class VoiceAudioDevice: @unchecked Sendable {
         interleaved: false
     )!
 
+    /// Protects the state the audio callbacks read. Never held while calling
+    /// into the engine, whose stop may wait for those callbacks.
     private let lock = NSLock()
+    /// Serializes `start`, `stop`, `enqueuePlayback` and `interruptPlayback`.
+    /// Never taken by the audio callbacks.
+    private let engineLock = NSLock()
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var converter: AVAudioConverter?
     private var onSamples: (@Sendable ([Float]) -> Void)?
-    private var isCapturePaused = false
     private var playbackGeneration: UInt64 = 0
     private var isRunning = false
     private var isVoiceProcessingActive = false
+    /// Observes the engine's configuration changes while the device runs.
+    private var configurationObserver: (any NSObjectProtocol)?
 
     static func requestMicrophoneAccess() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -81,17 +97,27 @@ final class VoiceAudioDevice: @unchecked Sendable {
     ///
     /// Voice processing can be enabled and still fail to start with some
     /// output devices; the engine is then started once more without it.
+    ///
+    /// Until `stop()`, `onConfigurationChange` runs, on an internal queue,
+    /// whenever the audio hardware changed, and when the engine is found
+    /// stopped right after starting. If the engine stopped itself
+    /// (`hasStoppedItself`), the device must be stopped and started again,
+    /// which installs the capture tap for the new input format.
     @discardableResult
     func start(
-        capturePaused: Bool,
-        onSamples: @escaping @Sendable ([Float]) -> Void
+        onSamples: @escaping @Sendable ([Float]) -> Void,
+        onConfigurationChange: @escaping @Sendable () -> Void
     ) throws -> Bool {
+        engineLock.lock()
+        defer {
+            engineLock.unlock()
+        }
         guard !isRunning else {
             return isVoiceProcessingActive
         }
         isVoiceProcessingActive = enableVoiceProcessing()
         do {
-            try startEngine(capturePaused: capturePaused, onSamples: onSamples)
+            try startEngine(onSamples: onSamples)
         } catch {
             guard isVoiceProcessingActive else {
                 throw error
@@ -99,14 +125,35 @@ final class VoiceAudioDevice: @unchecked Sendable {
             engine.stop()
             disableVoiceProcessing()
             isVoiceProcessingActive = false
-            try startEngine(capturePaused: capturePaused, onSamples: onSamples)
+            try startEngine(onSamples: onSamples)
         }
-        player.play()
-        if isVoiceProcessingActive {
-            engine.inputNode.isVoiceProcessingInputMuted = capturePaused
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: nil
+        ) { _ in
+            onConfigurationChange()
         }
         isRunning = true
+        guard engine.isRunning else {
+            // The engine stopped itself while starting, possibly before the
+            // change could be observed: report it, so the device starts again.
+            onConfigurationChange()
+            return isVoiceProcessingActive
+        }
+        player.play()
         return isVoiceProcessingActive
+    }
+
+    /// Whether the device was started and its engine is no longer running:
+    /// the engine stopped itself, e.g. after the audio hardware changed.
+    /// `false` before `start`, after `stop` and while the engine runs.
+    var hasStoppedItself: Bool {
+        engineLock.lock()
+        defer {
+            engineLock.unlock()
+        }
+        return isRunning && !engine.isRunning
     }
 
     /// Name of the current default output device, e.g. "AirPlay", or `nil`
@@ -138,7 +185,6 @@ final class VoiceAudioDevice: @unchecked Sendable {
     /// Installs the capture tap for the input node's current format and starts
     /// the engine. On failure the tap and the converter are removed again.
     private func startEngine(
-        capturePaused: Bool,
         onSamples: @escaping @Sendable ([Float]) -> Void
     ) throws {
         let input = engine.inputNode
@@ -152,7 +198,6 @@ final class VoiceAudioDevice: @unchecked Sendable {
         lock.withLock {
             self.converter = converter
             self.onSamples = onSamples
-            isCapturePaused = capturePaused
         }
 
         if player.engine == nil {
@@ -175,24 +220,21 @@ final class VoiceAudioDevice: @unchecked Sendable {
         }
     }
 
-    /// Pausing drops captured audio and mutes the voice-processed input; the
-    /// engine keeps running so playback is unaffected.
-    func setCapturePaused(_ paused: Bool) {
-        lock.withLock { isCapturePaused = paused }
-        if isRunning, isVoiceProcessingActive {
-            engine.inputNode.isVoiceProcessingInputMuted = paused
-        }
-    }
-
     /// Schedules mono 24 kHz Float32 samples. `completion` runs once they were
     /// played, unless playback was interrupted first. Returns whether the
-    /// samples were scheduled.
+    /// samples were scheduled: never while the device or its engine is
+    /// stopped, e.g. after the audio hardware changed.
     @discardableResult
     func enqueuePlayback(
         _ samples: [Float],
         completion: (@Sendable () -> Void)? = nil
     ) -> Bool {
+        engineLock.lock()
+        defer {
+            engineLock.unlock()
+        }
         guard isRunning,
+              engine.isRunning,
               !samples.isEmpty,
               let buffer = AVAudioPCMBuffer(
                   pcmFormat: Self.sampleFormat,
@@ -219,30 +261,49 @@ final class VoiceAudioDevice: @unchecked Sendable {
                 completion?()
             }
         }
-        if !player.isPlaying {
+        // Playing on a stopped engine raises an exception: the engine may
+        // have stopped itself meanwhile.
+        if !player.isPlaying, engine.isRunning {
             player.play()
         }
         return true
     }
 
     /// Drops every scheduled buffer. Late completions of dropped buffers are
-    /// fenced by the playback generation and never reported.
+    /// fenced by the playback generation and never reported. On a stopped
+    /// engine only the generation advances: `stop()` drops the buffers.
     func interruptPlayback() {
         lock.withLock {
             playbackGeneration &+= 1
         }
-        guard isRunning else {
+        engineLock.lock()
+        defer {
+            engineLock.unlock()
+        }
+        guard isRunning, engine.isRunning else {
             return
         }
         player.stop()
-        player.play()
+        if engine.isRunning {
+            player.play()
+        }
     }
 
+    /// Stops capture and playback and the observation of configuration
+    /// changes; scheduled buffers are dropped.
     func stop() {
         lock.withLock {
             playbackGeneration &+= 1
             converter = nil
             onSamples = nil
+        }
+        engineLock.lock()
+        defer {
+            engineLock.unlock()
+        }
+        if let configurationObserver {
+            NotificationCenter.default.removeObserver(configurationObserver)
+            self.configurationObserver = nil
         }
         guard isRunning else {
             return
@@ -283,8 +344,8 @@ final class VoiceAudioDevice: @unchecked Sendable {
     }
 
     private func capture(_ buffer: AVAudioPCMBuffer) {
-        let state = lock.withLock { (converter, onSamples, isCapturePaused) }
-        guard let converter = state.0, let handler = state.1, !state.2 else {
+        let state = lock.withLock { (converter, onSamples) }
+        guard let converter = state.0, let handler = state.1 else {
             return
         }
         let samples = Self.monoSamples(from: buffer, converter: converter)
@@ -365,27 +426,25 @@ final class VoiceAudioDevice: Sendable {
 
     @discardableResult
     func start(
-        capturePaused: Bool,
-        onSamples: @escaping @Sendable ([Float]) -> Void
+        onSamples: @escaping @Sendable ([Float]) -> Void,
+        onConfigurationChange: @escaping @Sendable () -> Void
     ) throws -> Bool {
         throw VoiceAudioError.unsupportedPlatform
+    }
+
+    var hasStoppedItself: Bool {
+        false
     }
 
     var outputDeviceName: String? {
         nil
     }
 
-    func setCapturePaused(_ paused: Bool) {}
-
     @discardableResult
     func enqueuePlayback(
         _ samples: [Float],
         completion: (@Sendable () -> Void)? = nil
     ) -> Bool {
-        false
-    }
-
-    var hasPendingPlayback: Bool {
         false
     }
 

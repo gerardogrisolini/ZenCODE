@@ -45,6 +45,12 @@ where one voice mode follows the active window (see
 [app.md](app.md#voice)): it is not a Telegram command, and `zen -p`,
 `--jsonl` and ACP do not have it.
 
+While voice mode is on, the input panel names what it does at the end of its
+mode text, for example `Prompt · voice on`: `voice starting` until it hears the
+microphone (on Linux also while the speech recognizer loads again after a
+reading), `voice on` while it listens, `voice reading` while it reads aloud,
+which wins over the pause, and `voice paused`.
+
 ### A conversation
 
 1. Run `/voice on`. On macOS the first start asks for the permissions (see
@@ -86,7 +92,8 @@ where one voice mode follows the active window (see
    running, `Esc` stops both the generation and the reading.
 
 `/voice pause` stops listening and reading aloud at once; answers that complete
-while voice mode is paused are not read later.
+while voice mode is paused are not read later. On macOS the pause also closes
+the microphone, and `/voice resume` opens it again.
 
 While voice mode listens, every prompt that runs in the terminal also carries a
 short instruction for the model: answer in short sentences, and briefly comment
@@ -95,11 +102,14 @@ tool call are read aloud as they appear, in the same way as answers, as long as
 nothing else is being read and voice mode is not asking you about a live-chat
 message; otherwise they are skipped and only shown in the terminal. The final
 answer interrupts a comment still being read, and `Esc` and `/voice pause` stop
-a comment like any other reading. The thinking of the model, the text of
-delegated agents and `/plan` turns are not read aloud.
+a comment like any other reading. The thinking of the model and the text of
+delegated agents are not read aloud; a `/plan` turn is read like any other, its
+comments and its final answer.
 
 The instruction follows the state of voice mode when each request is made, so
-`/voice pause`, `/voice resume` and `/voice off` apply from the next prompt. It
+`/voice pause`, `/voice resume` and `/voice off` apply from the next prompt. No
+instruction goes out while voice mode is starting, before it first hears the
+microphone, since nothing is read aloud yet. It
 goes with the prompt it was sent with, so later requests resend that prompt
 together with the instruction, also in a saved session that is loaded again. It
 does not appear in the text of the history messages or in the transcript, and
@@ -324,10 +334,19 @@ when the settings are read and is removed the next time they are saved.
 - **Echo cancellation.** Capture and playback share one audio engine with
   system echo cancellation, so the microphone stays open while an answer is
   read and speaking interrupts the reading. A residual-echo filter also discards
-  recognized text that repeats the answer being read, so the assistant neither
-  interrupts nor answers itself. When the current output cannot run echo
-  cancellation, for example an AirPlay device, voice mode starts without it and
-  names the output: switch to a local output or use headphones.
+  recognized text that repeats, in order, a passage of the answer being read,
+  so the assistant neither interrupts nor answers itself; words of yours that
+  merely also occur somewhere in a long answer are kept. When the current
+  output cannot run echo cancellation, for example an AirPlay device, voice
+  mode starts without it and names the output: switch to a local output or use
+  headphones.
+- **Audio devices.** When the audio device changes while voice mode is on, for
+  example headphones are connected or disconnected, voice mode stops the
+  reading in progress, starts its audio again on the new device and says
+  `Voice: the audio device changed; listening again.` What you were saying at
+  that moment is lost. If the audio cannot start again, voice mode turns off
+  with `voice audio could not restart after the audio device changed`. While
+  voice mode is paused the microphone is closed.
 - **Reading voice.** `zen --setup` > **Voice mode** downloads nothing on macOS.
   After the [Send mode](#options) item it lists the system voices installed for
   the voice mode language, with name and
@@ -391,7 +410,11 @@ on the other hand, is a setting: it is saved by **Finish setup** like on macOS.
 While voice mode runs, `sherpa-onnx-vad-alsa-offline-asr` listens and
 `sherpa-onnx-offline-tts-play-alsa` reads each answer, as separate processes.
 Without echo cancellation the microphone is off while an answer or a comment is
-read. It turns back on when the reading ends or `Esc` stops it.
+read. It turns back on when the reading ends or `Esc` stops it: the recognizer
+then loads again, which takes a few seconds, and until it listens the input
+panel shows `voice starting`. A recognizer that does not start within 60
+seconds turns voice mode off. `/voice off` and leaving `zen` wait until both
+programs have ended.
 
 ## Language
 
@@ -465,8 +488,9 @@ open the Telegram section of `zen --setup` again; you can keep the current pairi
 - On macOS, speech recognition runs on the Mac. The first use of a language
   downloads its speech model from Apple.
 - `settings.json` keeps a `voice` object only while something is set: `enabled`
-  turns on Telegram voice-message transcription, and `macOSVoiceIdentifier` is
-  the macOS reading voice.
+  turns on Telegram voice-message transcription, `macOSVoiceIdentifier` is
+  the macOS reading voice, and `sendMode`, `sendKeyword` and
+  `utteranceSilenceSeconds` are the [Send mode](#options) options.
 - The Linux files live in `~/.zencode/voice/`, or in `voice/` under
   `ZENCODE_SUPPORT_DIRECTORY`. They are re-downloadable programs and models:
   a **Data management** export skips them. An import replaces the whole support
@@ -486,6 +510,8 @@ open the Telegram section of `zen --setup` again; you can keep the current pairi
 | `No prebuilt sherpa-onnx programs exist for this processor architecture` | Linux voice features need x86_64 or arm64. |
 | `The tar program is required…` / `The bzip2 program is required…` | Install the missing program with your package manager and choose the voice again. |
 | `speech recognition could not start: … Unable to open: default` | Linux: ALSA has no usable default device. List the devices with `arecord -l` and configure the default one, for example in `~/.asoundrc`. |
+| `speech recognition could not start: no answer from the recognizer after 60 seconds` | Linux: the speech recognizer did not finish loading. Run `/voice on` to retry. |
+| `voice audio could not restart after the audio device changed` | macOS: run `/voice on` again once the audio device you want is connected. |
 | `the answer could not be read aloud: …` | Linux: the voice could not play; check the ALSA playback device, or reinstall the voice. |
 | Telegram: `Voice-message transcription is off` | Open the Telegram section of `zen --setup` again; you can keep the current pairing. |
 | Telegram: `Transcribing voice messages needs opusdec (package opus-tools) or ffmpeg` | Linux: install one, for example `sudo apt install opus-tools`. |

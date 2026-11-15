@@ -34,9 +34,11 @@ struct TerminalVoiceTurnInstructionTests {
         chat.voiceController = voice
 
         await voice.stop()
-        // The controller stays installed (as after a failure) but is inactive.
+        // The controller stays installed until the session notices that it
+        // stopped on its own: it is inactive, and asking forgets it.
         #expect(chat.voiceController != nil)
         #expect(await chat.voiceTurnInstruction() == nil)
+        #expect(chat.voiceController == nil)
     }
 
     private func makeChat() throws -> TerminalChat {

@@ -148,12 +148,18 @@ public struct VoiceModeSessionState: Sendable, Equatable {
     /// Something is being read aloud, as the controller reported it through
     /// ``VoiceModeSession/speakingChanged(_:)``: `Esc` stops it.
     public var isSpeaking: Bool
+    /// Voice mode is on but does not hear the microphone yet: its controller
+    /// is starting, or loads its speech recognizer again (see
+    /// ``VoiceModeCallbacks/listeningChanged``). The session publishes it
+    /// only while voice mode is on, neither paused nor reading aloud.
+    public var isStarting: Bool
 
     public static let off = VoiceModeSessionState(isOn: false, isPaused: false, isSpeaking: false)
 
-    public init(isOn: Bool, isPaused: Bool, isSpeaking: Bool) {
+    public init(isOn: Bool, isPaused: Bool, isSpeaking: Bool, isStarting: Bool = false) {
         self.isOn = isOn
         self.isPaused = isPaused
         self.isSpeaking = isSpeaking
+        self.isStarting = isStarting
     }
 }

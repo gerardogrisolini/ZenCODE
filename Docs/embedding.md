@@ -992,7 +992,9 @@ settings at each `/voice on`; `init(makeController:)` takes a factory instead,
 so the app's tests run a `VoiceModeController` of their own that records
 nothing and asks for no permission: the factory receives the session's
 `VoiceModeCallbacks` and returns `.ready(controller)` (or `.unavailable` with
-the text to show).
+the text to show). A controller that loads something before it can hear the
+microphone says so with the callbacks' `listeningChanged`; one that never calls
+it is taken to listen from the moment its `start()` returns.
 
 One session drives one microphone: create one for the whole app and point it
 at the active window with `setHost(_:announcingMessagesSince:)`. A new host
@@ -1044,10 +1046,12 @@ window hands them back:
 
 `handleCommand(_:)` runs a whole `/voice …` line. Pass `turnInstruction()` as
 the `turnInstructionProvider` of each `ChatTurnRequest`: it is the voice
-instruction while voice mode listens, `nil` otherwise. Call
+instruction while voice mode listens, `nil` otherwise, also while voice mode
+is starting and has not heard the microphone a first time. Call
 `dictationEnded(through:)` (from any context) when an edit, or the switch to
 another window, turns a dictation preview into ordinary text. `state`
-(`VoiceModeSessionState`: `isOn`, `isPaused`, `isSpeaking`) is what a status
+(`VoiceModeSessionState`: `isOn`, `isPaused`, `isSpeaking`, and `isStarting`
+while voice mode is on but does not hear the microphone yet) is what a status
 bar shows and what `Esc` stops; `stateUpdates()` returns a stream that starts
 with it and keeps only the newest change not yet delivered. A spoken question
 waits `answerTimeout` (60 seconds) for its answer. Nothing of voice mode is

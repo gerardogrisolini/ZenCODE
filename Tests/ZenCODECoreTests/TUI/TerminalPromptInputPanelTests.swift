@@ -183,6 +183,63 @@ struct TerminalPromptInputPanelTests {
 
     }
 
+    @Test
+    func modeTextNamesWhatVoiceModeDoesAfterTheQueue() async {
+        let reader = TerminalInteractiveLineReader()
+        func modeText() -> String {
+            reader.withPanelLock { reader.panelModeTextLocked(state: $0) }
+        }
+        reader.withPanelLock { state in
+            state.panelPendingAttachmentCount = 2
+            state.panelQueuedPromptCount = 1
+        }
+        #expect(modeText() == "Prompt · attach 2 · queued 1")
+
+        // Reading aloud wins over the pause, the pause over the start.
+        let expectations: [(VoiceModeSessionState, String)] = [
+            (VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false), "voice on"),
+            (VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false, isStarting: true), "voice starting"),
+            (VoiceModeSessionState(isOn: true, isPaused: true, isSpeaking: false), "voice paused"),
+            (VoiceModeSessionState(isOn: true, isPaused: true, isSpeaking: false, isStarting: true), "voice paused"),
+            (VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: true), "voice reading"),
+            (VoiceModeSessionState(isOn: true, isPaused: true, isSpeaking: true, isStarting: true), "voice reading"),
+        ]
+        for (voiceState, voiceText) in expectations {
+            await reader.setPanelVoiceState(voiceState)
+            #expect(modeText() == "Prompt · attach 2 · queued 1 · \(voiceText)", "\(voiceState)")
+        }
+
+        // Off, nothing; nor with stale flags.
+        await reader.setPanelVoiceState(.off)
+        #expect(modeText() == "Prompt · attach 2 · queued 1")
+        await reader.setPanelVoiceState(VoiceModeSessionState(isOn: false, isPaused: true, isSpeaking: true, isStarting: true))
+        #expect(modeText() == "Prompt · attach 2 · queued 1")
+
+        // Only in the ordinary mode text: an overlay and the accent menu
+        // replace it whole.
+        await reader.setPanelVoiceState(VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false))
+        reader.withPanelLock { state in
+            state.panelPendingAttachmentCount = 0
+            state.panelQueuedPromptCount = 0
+            state.panelIsProcessing = true
+        }
+        #expect(modeText() == "Next prompt · voice on")
+        reader.withPanelLock { $0.panelOverlayOverride = TerminalPanelModeOverride(modeText: "Overlay", helpText: "Help") }
+        #expect(modeText() == "Overlay")
+        reader.withPanelLock { state in
+            state.panelOverlayOverride = nil
+            state.panelIsProcessing = false
+            state.panelSupportsPressAndHold = true
+            let context = reader.editorContextLocked(state: state)
+            for timestamp in [UInt64(0), 500, 550, 600, 650] {
+                _ = state.editor.apply(.character("a"), context: context, timestampMilliseconds: timestamp)
+            }
+        }
+        #expect(reader.withPanelLock { $0.editor.pressAndHoldMenu != nil })
+        #expect(modeText().hasPrefix("Accent "))
+        #expect(!modeText().contains("voice"))
+    }
+
     // MARK: - Panel key handling
 
     @Test

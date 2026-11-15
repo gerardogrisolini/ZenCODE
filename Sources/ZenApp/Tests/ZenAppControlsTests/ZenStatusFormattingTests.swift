@@ -453,6 +453,25 @@ struct ZenStatusFormattingTests {
         #expect(ZenVoiceIndicator(VoiceModeSessionState(isOn: true, isPaused: true, isSpeaking: true)) == .readingAloud)
     }
 
+    @Test("the voice indicator while voice mode starts: its symbol, and which states win over it")
+    func voiceIndicatorStarting() {
+        let starting = ZenVoiceIndicator(VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false, isStarting: true))
+        #expect(starting == .starting)
+        #expect(starting?.symbolName == "mic")
+        #expect(starting?.label == "Voice mode: starting")
+        #expect(starting?.style == .voicePaused)
+
+        // Reading aloud, then the pause, win over the start; off wins over all.
+        #expect(ZenVoiceIndicator(VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: true, isStarting: true)) == .readingAloud)
+        #expect(ZenVoiceIndicator(VoiceModeSessionState(isOn: true, isPaused: true, isSpeaking: false, isStarting: true)) == .paused)
+        #expect(ZenVoiceIndicator(VoiceModeSessionState(isOn: true, isPaused: true, isSpeaking: true, isStarting: true)) == .readingAloud)
+        #expect(ZenVoiceIndicator(VoiceModeSessionState(isOn: false, isPaused: false, isSpeaking: false, isStarting: true)) == nil)
+
+        // The fragment carries it.
+        let state = ZenStatusBarState(voice: VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false, isStarting: true))
+        #expect(ZenStatusFormatting.fragments(for: state).first { $0.kind == .voice }?.voiceIndicator == .starting)
+    }
+
     @Test("the voice fragment follows the red dot, before the spinner and the model, and has no text")
     func voiceFragmentOrder() throws {
         let voice = VoiceModeSessionState(isOn: true, isPaused: false, isSpeaking: false)

@@ -43,19 +43,27 @@ public struct VoiceModeCallbacks: Sendable {
     /// The controller started (`true`) or stopped (`false`) reading an
     /// answer aloud, so `Esc` can stop the reading.
     public let speakingChanged: @Sendable (Bool) async -> Void
+    /// The controller hears the microphone (`true`) or does not although
+    /// voice mode is on and not paused (`false`): while it starts and, on
+    /// Linux, while the speech recognizer loads again after a reading. A
+    /// controller that never reports it is taken to listen from the moment
+    /// ``VoiceModeController/start()`` returns.
+    public let listeningChanged: @Sendable (Bool) async -> Void
 
     init(
         systemMessage: @escaping @Sendable (String) async -> Void,
         failureMessage: @escaping @Sendable (String) async -> Void,
         utteranceRecognized: @escaping @Sendable (VoiceModeUtterance) async -> Void,
         dictationChanged: @escaping @Sendable (UInt64, String) async -> Void,
-        speakingChanged: @escaping @Sendable (Bool) async -> Void
+        speakingChanged: @escaping @Sendable (Bool) async -> Void,
+        listeningChanged: @escaping @Sendable (Bool) async -> Void = { _ in }
     ) {
         self.systemMessage = systemMessage
         self.failureMessage = failureMessage
         self.utteranceRecognized = utteranceRecognized
         self.dictationChanged = dictationChanged
         self.speakingChanged = speakingChanged
+        self.listeningChanged = listeningChanged
     }
 }
 

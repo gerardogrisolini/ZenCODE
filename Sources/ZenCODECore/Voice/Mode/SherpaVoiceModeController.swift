@@ -13,7 +13,6 @@
 //  when the reading ends or `Esc` interrupts it. Audio never touches the disk.
 //
 
-import Dispatch
 import Foundation
 #if canImport(Darwin)
 import Darwin
@@ -157,7 +156,11 @@ final class VoiceModeProcess: @unchecked Sendable {
     }
 
     /// Grace after SIGTERM before SIGKILL.
-    static let terminationGrace = DispatchTimeInterval.milliseconds(300)
+    static let terminationGrace = Duration.milliseconds(300)
+    /// How long ``terminateAndWait()`` still waits for the exit after
+    /// SIGKILL; with the grace, about a second in all.
+    static let killedExitWait = Duration.milliseconds(700)
+    private static let exitPollInterval = Duration.milliseconds(10)
 
     /// SIGTERM, then SIGKILL when the program is still running after a short
     /// grace: a child can inherit an ignored SIGTERM from the terminal's
@@ -167,11 +170,45 @@ final class VoiceModeProcess: @unchecked Sendable {
             return
         }
         process.terminate()
-        DispatchQueue.global().asyncAfter(deadline: .now() + Self.terminationGrace) { [self] in
+        Task(name: "ZenCODE.sherpa-voice-kill") { [self] in
+            try? await Task.sleep(for: Self.terminationGrace)
             if process.isRunning {
                 kill(process.processIdentifier, SIGKILL)
             }
         }
+    }
+
+    /// Like ``terminate()``, but returns once the program ended, or after
+    /// about a second: ZenCODE may exit right after, and a program still
+    /// waiting for its SIGKILL would outlive it with the microphone or the
+    /// speaker open. The exit event still follows.
+    func terminateAndWait() async {
+        guard process.isRunning else {
+            return
+        }
+        process.terminate()
+        if await waitForExit(within: Self.terminationGrace) {
+            return
+        }
+        kill(process.processIdentifier, SIGKILL)
+        _ = await waitForExit(within: Self.killedExitWait)
+    }
+
+    /// Whether the program ended within `limit`. A cancelled wait ends at
+    /// once, so a cancelled stop sends SIGKILL without the grace.
+    private func waitForExit(within limit: Duration) async -> Bool {
+        let deadline = ContinuousClock.now + limit
+        while process.isRunning {
+            guard ContinuousClock.now < deadline else {
+                return false
+            }
+            do {
+                try await Task.sleep(for: Self.exitPollInterval)
+            } catch {
+                return !process.isRunning
+            }
+        }
+        return true
     }
 }
 
@@ -203,6 +240,8 @@ actor SherpaVoiceModeController: VoiceModeController {
     static let rapidExitWindow = Duration.seconds(5)
     static let diagnosticLineCount = 40
     static let recognizerStartedPrefix = "Started"
+    /// How long a launched recognizer may load before it prints `Started`.
+    static let defaultRecognizerStartTimeout = Duration.seconds(60)
 
     static func listeningMessage(voice: String) -> String {
         "Voice: listening (sherpa-onnx, voice \(voice)). Speak or type; answers are read aloud with the microphone off, Esc stops reading. /voice pauses or resumes, /voice off stops.\n"
@@ -272,6 +311,7 @@ actor SherpaVoiceModeController: VoiceModeController {
 
     private let invocation: Invocation
     private let voiceName: String
+    private let recognizerStartTimeout: Duration
     nonisolated let languageCode: String
     /// Set in keyword send mode: speech waiting for the keyword.
     private var keywordCollector: VoiceKeywordCollector?
@@ -298,6 +338,14 @@ actor SherpaVoiceModeController: VoiceModeController {
     private var recognizerLaunchedAt = ContinuousClock.now
     private var rapidRecognizerExits = 0
     private var recognizerDiagnostics: [String] = []
+    /// Fails voice mode when the running recognizer does not print
+    /// `Started` within `recognizerStartTimeout`.
+    private var recognizerStartDeadline: Task<Void, Never>?
+    /// The value last reported with `listeningChanged`; `nil` until the
+    /// first report, so the first one is never skipped.
+    private var publishedListening: Bool?
+    /// A listening change is being reported; see `publishListening()`.
+    private var isPublishingListening = false
 
     private var synthesizer: VoiceModeProcess?
     private var synthesizerGeneration: UInt64 = 0
@@ -326,10 +374,12 @@ actor SherpaVoiceModeController: VoiceModeController {
         voiceName: String,
         languageCode: String,
         sendKeyword: VoiceModeSendKeyword? = nil,
+        recognizerStartTimeout: Duration = SherpaVoiceModeController.defaultRecognizerStartTimeout,
         callbacks: VoiceModeCallbacks
     ) {
         self.invocation = invocation
         self.voiceName = voiceName
+        self.recognizerStartTimeout = recognizerStartTimeout
         self.languageCode = languageCode
         self.keywordCollector = sendKeyword.map(VoiceKeywordCollector.init)
         self.callbacks = callbacks
@@ -351,18 +401,29 @@ actor SherpaVoiceModeController: VoiceModeController {
         phase = .starting
         rapidRecognizerExits = 0
         await callbacks.systemMessage("Voice: loading the speech recognizer...\n")
-        if !isPaused {
-            await startRecognizer()
+        // A stop or a pause may have come while the notice was reported.
+        guard phase == .starting, !isPaused else {
+            return
         }
+        await startRecognizer()
     }
 
     func stop() async {
         phase = .stopped
-        stopRecognizer()
-        stopSynthesizer()
+        let running = [retireRecognizer(), retireSynthesizer()].compactMap { $0 }
         keywordCollector?.reset()
+        // ZenCODE may exit right after: wait until both programs ended, or a
+        // child that ignores SIGTERM would outlive it with the microphone open.
+        await withTaskGroup(of: Void.self) { group in
+            for process in running {
+                group.addTask {
+                    await process.terminateAndWait()
+                }
+            }
+        }
         await setSpeaking(false)
         await publishDictation()
+        await publishListening()
     }
 
     /// Reads an answer or a plain text aloud with the microphone off. Returns
@@ -403,12 +464,23 @@ actor SherpaVoiceModeController: VoiceModeController {
                 await controller.handleSynthesizer(event, generation: generation)
             }
             await setSpeaking(true)
+            await publishListening()
             return true
         } catch {
             await callbacks.failureMessage(
                 "ZenCODE: the answer could not be read aloud: \(error.localizedDescription)\n"
             )
-            await startRecognizer()
+            // Reporting the failure suspends this actor: a stop, a pause or
+            // another reading may have come meanwhile, and then owns the
+            // speaking state and the microphone. Otherwise the reading this
+            // one replaced is over, and its exit is no longer reported.
+            if generation == synthesizerGeneration {
+                await setSpeaking(false)
+            }
+            if generation == synthesizerGeneration, phase == .listening, !isPaused {
+                await startRecognizer()
+            }
+            await publishListening()
             return false
         }
     }
@@ -434,6 +506,7 @@ actor SherpaVoiceModeController: VoiceModeController {
             stopSynthesizer()
             await setSpeaking(false)
             await publishDictation()
+            await publishListening()
         } else if phase == .starting || phase == .listening {
             rapidRecognizerExits = 0
             await startRecognizer()
@@ -476,16 +549,59 @@ actor SherpaVoiceModeController: VoiceModeController {
             observe(process) { controller, event in
                 await controller.handleRecognizer(event, generation: generation)
             }
+            scheduleRecognizerStartDeadline(generation: generation)
         } catch {
             await fail("ZenCODE: speech recognition could not start: \(error.localizedDescription) Run /voice on to retry.\n")
+            return
+        }
+        // Loading the models: the microphone is not heard yet.
+        await publishListening()
+    }
+
+    /// Retires and stops the running recognizer; its late events are
+    /// ignored.
+    private func stopRecognizer() {
+        retireRecognizer()?.terminate()
+    }
+
+    /// Retires the running recognizer without stopping it; its late events
+    /// are ignored.
+    private func retireRecognizer() -> VoiceModeProcess? {
+        recognizerGeneration &+= 1
+        cancelRecognizerStartDeadline()
+        defer {
+            recognizer = nil
+        }
+        return recognizer
+    }
+
+    /// A recognizer that never prints `Started` would leave voice mode deaf
+    /// and mute for good.
+    private func scheduleRecognizerStartDeadline(generation: UInt64) {
+        cancelRecognizerStartDeadline()
+        let timeout = recognizerStartTimeout
+        recognizerStartDeadline = Task(name: "ZenCODE.sherpa-voice-start-deadline") { [weak self] in
+            do {
+                try await Task.sleep(for: timeout)
+            } catch {
+                return
+            }
+            await self?.recognizerStartTimedOut(generation: generation)
         }
     }
 
-    /// Retires the running recognizer; its late events are ignored.
-    private func stopRecognizer() {
-        recognizerGeneration &+= 1
-        recognizer?.terminate()
-        recognizer = nil
+    private func cancelRecognizerStartDeadline() {
+        recognizerStartDeadline?.cancel()
+        recognizerStartDeadline = nil
+    }
+
+    private func recognizerStartTimedOut(generation: UInt64) async {
+        guard generation == recognizerGeneration, recognizer != nil, !recognizerStarted else {
+            return
+        }
+        recognizerStartDeadline = nil
+        let seconds = recognizerStartTimeout.components.seconds
+        await fail("ZenCODE: speech recognition could not start: no answer from the recognizer after \(seconds) seconds. Run /voice on to retry.\n")
     }
 
     private func handleRecognizer(_ event: VoiceModeProcess.Event, generation: UInt64) async {
@@ -498,10 +614,12 @@ actor SherpaVoiceModeController: VoiceModeController {
                 appendDiagnostic(line, to: &recognizerDiagnostics)
                 if line.hasPrefix(Self.recognizerStartedPrefix) {
                     recognizerStarted = true
+                    cancelRecognizerStartDeadline()
                     if phase == .starting {
                         phase = .listening
                         await callbacks.systemMessage(Self.listeningMessage(voice: voiceName))
                     }
+                    await publishListening()
                 }
                 return
             }
@@ -533,7 +651,12 @@ actor SherpaVoiceModeController: VoiceModeController {
 
         case let .exited(status, _):
             recognizer = nil
+            cancelRecognizerStartDeadline()
+            // Every path below reports that the microphone is not heard, after
+            // the decision: an await before it would let a relaunch change
+            // the state it reads.
             guard phase == .starting || phase == .listening, !isPaused, !isSpeaking else {
+                await publishListening()
                 return
             }
             let reason = Self.reason(status: status, diagnostics: recognizerDiagnostics)
@@ -556,11 +679,20 @@ actor SherpaVoiceModeController: VoiceModeController {
 
     // MARK: - Synthesizer
 
-    /// Retires the running synthesizer without turning the microphone on.
+    /// Retires and stops the running synthesizer without turning the
+    /// microphone on.
     private func stopSynthesizer() {
+        retireSynthesizer()?.terminate()
+    }
+
+    /// Retires the running synthesizer without stopping it; its late events
+    /// are ignored.
+    private func retireSynthesizer() -> VoiceModeProcess? {
         synthesizerGeneration &+= 1
-        synthesizer?.terminate()
-        synthesizer = nil
+        defer {
+            synthesizer = nil
+        }
+        return synthesizer
     }
 
     private func handleSynthesizer(_ event: VoiceModeProcess.Event, generation: UInt64) async {
@@ -632,6 +764,34 @@ actor SherpaVoiceModeController: VoiceModeController {
         await callbacks.speakingChanged(speaking)
     }
 
+    /// The recognizer runs and printed `Started`: it hears the microphone.
+    private var hearsMicrophone: Bool {
+        recognizer != nil && recognizerStarted
+    }
+
+    /// Reports whether the recognizer hears the microphone: `false` while it
+    /// loads and while it is stopped (reading, pause, stop, failure) or has
+    /// exited. Only changes are reported, except the first value. Reports
+    /// run one at a time, so they reach the session in order; the one in
+    /// flight reports the latest state.
+    private func publishListening() async {
+        guard !isPublishingListening else {
+            return
+        }
+        isPublishingListening = true
+        defer {
+            isPublishingListening = false
+        }
+        while true {
+            let listening = hearsMicrophone
+            guard listening != publishedListening else {
+                return
+            }
+            publishedListening = listening
+            await callbacks.listeningChanged(listening)
+        }
+    }
+
     private func observe(
         _ process: VoiceModeProcess,
         handler: @escaping @Sendable (SherpaVoiceModeController, VoiceModeProcess.Event) async -> Void
@@ -681,6 +841,7 @@ actor SherpaVoiceModeController: VoiceModeController {
         keywordCollector?.reset()
         await setSpeaking(false)
         await publishDictation()
+        await publishListening()
         await callbacks.failureMessage(message)
     }
 }
