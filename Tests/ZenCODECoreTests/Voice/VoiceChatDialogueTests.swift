@@ -298,4 +298,51 @@ struct VoiceChatDialogueTests {
         #expect(waitingForText.phase == .awaitingMessageText(destination: .all, label: "all"))
         #expect(waitingForText.pending.isEmpty)
     }
+
+    @Test
+    func aYesOrNoThatOutlivesItsQuestionIsAStrayAnswerWhileTheAnswerIsRead() {
+        let first = message(from: reviewer)
+        // Asked, then replaced by an answer before the yes was handled.
+        var dialogue = dialogueAsking(first)
+        _ = dialogue.speechEnded()
+        dialogue.answerReadingStarted()
+        #expect(dialogue.isAnswerReadOverQuestion)
+        #expect(dialogue.interpret("Sì.", participants: []) == .strayAnswer)
+        #expect(dialogue.interpret("no", participants: []) == .strayAnswer)
+        // Anything else is handled as usual.
+        #expect(dialogue.interpret("Che ore sono?", participants: []) == .prompt)
+        #expect(dialogue.pending.map(\.id) == [first.id])
+        // The answer is over: the question is asked again and a yes answers it.
+        #expect(dialogue.speechEnded() == .announceNext)
+        #expect(!dialogue.isAnswerReadOverQuestion)
+        #expect(dialogue.beginAnnouncement(skipping: { _ in false })?.message == first)
+        #expect(dialogue.interpret("sì", participants: []) == .read(first))
+
+        // The reply question of a message already read goes with it: once the
+        // answer is over a yes is a prompt again.
+        var reading = dialogueAsking(first)
+        _ = reading.interpret("sì", participants: [])
+        reading.answerReadingStarted()
+        #expect(reading.interpret("sì", participants: []) == .strayAnswer)
+        _ = reading.speechEnded()
+        #expect(reading.interpret("sì", participants: []) == .prompt)
+
+        // An answer read while no yes or no was awaited changes nothing.
+        var idle = VoiceChatDialogue()
+        idle.answerReadingStarted()
+        #expect(!idle.isAnswerReadOverQuestion)
+        #expect(idle.interpret("sì", participants: []) == .prompt)
+        var awaitingReply = dialogueAsking(first)
+        _ = awaitingReply.interpret("sì", participants: [])
+        _ = awaitingReply.interpret("sì", participants: [])
+        awaitingReply.answerReadingStarted()
+        #expect(!awaitingReply.isAnswerReadOverQuestion)
+
+        // Esc and the like drop it with the dialogue.
+        var cancelled = dialogueAsking(first)
+        cancelled.answerReadingStarted()
+        cancelled.cancelAll()
+        #expect(!cancelled.isAnswerReadOverQuestion)
+        #expect(cancelled.interpret("sì", participants: []) == .prompt)
+    }
 }

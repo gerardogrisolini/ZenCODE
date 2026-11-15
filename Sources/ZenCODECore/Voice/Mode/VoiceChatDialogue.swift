@@ -51,12 +51,20 @@ struct VoiceChatDialogue: Sendable {
         case unknownAgent(String)
         /// The operator does not reply; announce the next message.
         case skip
+        /// A yes or no said to a question that the answer being read has
+        /// replaced: nothing happens, it is never a prompt.
+        case strayAnswer
     }
 
     private(set) var phase: Phase = .idle
     private(set) var pending: [AgentSharedChat.Message] = []
     /// Identifies the latest answer deadline; an older timer is ignored.
     private(set) var deadlineToken: UUID?
+    /// An answer being read took the place of a question that awaited a yes
+    /// or no. Until that reading ends, a bare yes or no was said to the
+    /// question, before the answer started, and is not handled as a prompt
+    /// (`Action.strayAnswer`).
+    private(set) var isAnswerReadOverQuestion = false
 
     /// The message of the current question or reading, if any.
     var currentMessage: AgentSharedChat.Message? {
@@ -118,6 +126,7 @@ struct VoiceChatDialogue: Sendable {
             }
             phase = .askingToRead(message)
             deadlineToken = nil
+            isAnswerReadOverQuestion = false
             return (message, pending.count)
         }
         return nil
@@ -136,8 +145,10 @@ struct VoiceChatDialogue: Sendable {
 
     /// The controller stopped speaking: a reading turns into the reply
     /// question, every question starts waiting for its answer, and an idle
-    /// dialogue may announce the next message.
+    /// dialogue may announce the next message. The answer that replaced a
+    /// question is over too: a yes or no is ordinary speech again.
     mutating func speechEnded() -> SpeechEndTransition {
+        isAnswerReadOverQuestion = false
         switch phase {
         case let .reading(message):
             phase = .askingToReply(message)
@@ -165,8 +176,13 @@ struct VoiceChatDialogue: Sendable {
     /// afterwards; one already read is dropped, since the reply question
     /// cannot be repeated without being spoken again; a text already asked
     /// for ("Tell me your reply.") is still awaited once the answer is over.
+    /// A yes or no said to the question the answer replaces may still be on
+    /// its way: until the answer is over it is a stray answer, not a prompt.
     mutating func answerReadingStarted() {
         deadlineToken = nil
+        if isAwaitingAffirmation {
+            isAnswerReadOverQuestion = true
+        }
         switch phase {
         case let .askingToRead(message):
             if !pending.contains(where: { $0.id == message.id }) {
@@ -184,6 +200,7 @@ struct VoiceChatDialogue: Sendable {
         phase = .idle
         pending.removeAll()
         deadlineToken = nil
+        isAnswerReadOverQuestion = false
     }
 
     /// Interprets an utterance against the current phase. While a text is
@@ -192,7 +209,8 @@ struct VoiceChatDialogue: Sendable {
     /// or after the reading it answers "Do you want to reply?", since the
     /// reading ends with that question. Anything else closes the question and
     /// is handled as from idle: a "message to …" phrase sends, everything
-    /// else is a prompt.
+    /// else is a prompt. While the answer that replaced a question is being
+    /// read, a bare yes or no is a stray answer to that question.
     mutating func interpret(
         _ utterance: String,
         participants: [AgentSharedChat.Participant]
@@ -239,7 +257,9 @@ struct VoiceChatDialogue: Sendable {
                 phase = .idle
             }
         case .idle:
-            break
+            if isAnswerReadOverQuestion, VoiceChatPhrases.affirmation(in: utterance) != nil {
+                return .strayAnswer
+            }
         }
         return interpretFromIdle(utterance, participants: participants)
     }

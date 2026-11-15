@@ -128,6 +128,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   menu or a line prompt, and the end of the session. Without the interactive
   terminal layout `/artifacts` still prints the artifacts of the finished
   turns; it still accepts no arguments.
+- In voice mode on macOS, with the Send mode "After a pause", a yes or no that
+  answers a live-chat question ("Do you want me to read it?", "Do you want to
+  reply?") no longer waits for the pause, 5 seconds by default: it is sent as
+  soon as speech recognition has finalized it, as it already was with the Send
+  mode "On a word". On Linux it is still sent after the pause.
 
 ### Removed
 
@@ -789,6 +794,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
   the system prompt the session was saved with. With a DS4 model the KV
   checkpoint of the saved session was therefore loaded and then discarded by
   the first prompt, which evaluated the whole session again.
+- In voice mode, a yes or no said to a live-chat question is no longer sent to
+  the model as a prompt when an answer has just replaced that question. An
+  answer that completes while the question waits is read first; the yes or no
+  said to the question could then arrive with no question left and run as a
+  prompt, which the model could take for a consent. It is now dropped when it
+  arrives while that answer is being read, in the terminal and in the app, and
+  on macOS also when it had already been recognized, or was begun within 3
+  seconds of the answer starting. A "Do you want me to read it?" question is
+  asked again once the answer is over, as before.
 
 ## [6.0.1] - 2026-11-13
 

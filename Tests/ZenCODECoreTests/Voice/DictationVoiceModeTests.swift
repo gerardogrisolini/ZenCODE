@@ -116,6 +116,65 @@ struct DictationVoiceModeTests {
         #expect(segmenter.takeUtterance() == "Seconda frase dopo la pausa")
     }
 
+    /// In pause send mode a yes or no the live-chat dialogue awaits is sent
+    /// once the recognizer finalized it, without waiting for the silence gap.
+    @Test
+    func aFinalizedYesOrNoDoesNotWaitForTheSilenceGapWhileOneIsAwaited() {
+        let start = ContinuousClock.now
+        var segmenter = VoiceDictationSegmenter(silence: .seconds(10))
+        #expect(segmenter.startedAt == nil)
+        // Still being recognized: it may be the start of "sì, ma prima…".
+        segmenter.observe("Sì", at: start)
+        #expect(segmenter.startedAt == start)
+        #expect(!segmenter.hasFinalizedAnswer(awaitingShortAnswer: true))
+        segmenter.observe("Sì.", at: start + .milliseconds(900), endsSegment: true)
+        #expect(segmenter.hasFinalizedAnswer(awaitingShortAnswer: true))
+        // Long before the silence gap would end the utterance.
+        #expect(!segmenter.isUtteranceComplete(at: start + .seconds(2)))
+        // Without a question it is ordinary speech and waits for the gap.
+        #expect(!segmenter.hasFinalizedAnswer(awaitingShortAnswer: false))
+        // The utterance started with its first words, whatever followed.
+        #expect(segmenter.startedAt == start)
+
+        // More than a yes or no is never an answer.
+        segmenter.observe("ma prima controlla", at: start + .seconds(3), endsSegment: true)
+        #expect(!segmenter.hasFinalizedAnswer(awaitingShortAnswer: true))
+        #expect(segmenter.takeUtterance() == "Sì.\nma prima controlla")
+        #expect(segmenter.startedAt == nil)
+
+        segmenter.observe("No, aspetta", at: start + .seconds(20), endsSegment: true)
+        #expect(segmenter.startedAt == start + .seconds(20))
+        #expect(!segmenter.hasFinalizedAnswer(awaitingShortAnswer: true))
+    }
+
+    /// An answer read while a yes or no is awaited replaces the question: the
+    /// yes or no said to it is not sent as a prompt.
+    @Test
+    func aYesOrNoSaidToAQuestionAnAnswerReplacedIsAStrayAnswer() {
+        let start = ContinuousClock.now
+        var strayAnswers = VoiceStrayAnswerGuard()
+        // No question was replaced: a yes is ordinary speech.
+        #expect(!strayAnswers.isStrayAnswer("sì", startedAt: start))
+        strayAnswers.answerReadingStarted(awaitingShortAnswer: false, at: start)
+        #expect(strayAnswers.questionReplacedAt == nil)
+        #expect(!strayAnswers.isStrayAnswer("sì", startedAt: start))
+
+        let replaced = start + .seconds(10)
+        strayAnswers.answerReadingStarted(awaitingShortAnswer: true, at: replaced)
+        // Already recognized, or begun before the answer could be heard.
+        #expect(strayAnswers.isStrayAnswer("Sì.", startedAt: replaced - .seconds(4)))
+        #expect(strayAnswers.isStrayAnswer("no", startedAt: replaced + .milliseconds(2_900)))
+        // Begun later: it replies to the answer.
+        #expect(!strayAnswers.isStrayAnswer("sì", startedAt: replaced + VoiceStrayAnswerGuard.reactionTime))
+        // Anything but a bare yes or no is never dropped, nor is speech whose
+        // start is unknown.
+        #expect(!strayAnswers.isStrayAnswer("sì, ma prima controlla", startedAt: replaced))
+        #expect(!strayAnswers.isStrayAnswer("sì", startedAt: nil))
+        // An answer read later without a question keeps the last replacement.
+        strayAnswers.answerReadingStarted(awaitingShortAnswer: false, at: replaced + .seconds(60))
+        #expect(strayAnswers.questionReplacedAt == replaced)
+    }
+
     @Test
     func speechStateTracksAnUtteranceUntilItsLastBufferPlays() {
         let start = ContinuousClock.now

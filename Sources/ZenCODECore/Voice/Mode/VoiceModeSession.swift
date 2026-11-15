@@ -486,6 +486,8 @@ public final class VoiceModeSession {
     /// Carries out what the dialogue decides for a recognized utterance: the
     /// answer to a question, a "message to …" phrase sent without a turn, or
     /// a dictation the host sends (``VoiceModeSessionHost/voiceModeSubmitDictation(_:)``).
+    /// A bare yes or no that arrives while the answer that replaced its
+    /// question is being read is dropped.
     /// Returns `false` when the channel ends because of it.
     public func handleUtterance(_ utterance: String) async -> Bool {
         // Nothing was heard: the question, if any, stays open.
@@ -517,6 +519,11 @@ public final class VoiceModeSession {
             await host?.voiceModeMarkSharedChatMessageRead(message.id)
         case .declined, .skip:
             await startNextAnnouncement()
+        case .strayAnswer:
+            // Said to a question the answer being read has replaced: it is
+            // never sent to the model, and a requeued message is announced
+            // again once the answer is over.
+            break
         case .askReplyText:
             await speakDialogueOrCancel(VoiceChatPhrases.replyPrompt(languageCode: languageCode()))
         case .askMessageText:

@@ -253,6 +253,45 @@ struct VoiceModeSessionTests {
     }
 
     @Test
+    func aYesSaidToAQuestionAnAnswerReplacedIsNeverSentAsAPrompt() async {
+        let controller = SessionFakeVoiceController()
+        let host = FakeVoiceModeHost()
+        let session = await runningSession(controller: controller, host: host)
+        let message = Self.message(from: Self.reviewer)
+
+        await session.handleSharedChatMessages([message])
+        await session.speakingChanged(false)
+        // The turn ends before the yes is handled: its answer is read first.
+        await session.turnDidEnd(finalAnswer: "Vuoi che proceda?")
+        await controller.setSpeaking(true)
+        #expect(await session.handleUtterance("sì"))
+        #expect(host.submitted.isEmpty)
+        #expect(await controller.spoken == [
+            Self.plain("Nuovo messaggio da Reviewer. Vuoi che lo legga?"),
+            Self.answer("Vuoi che proceda?")
+        ])
+
+        // The answer is over: the question is asked again, and a yes answers
+        // it.
+        await controller.setSpeaking(false)
+        await session.speakingChanged(false)
+        #expect(await controller.spoken.last == Self.plain("Nuovo messaggio da Reviewer. Vuoi che lo legga?"))
+        #expect(await session.handleUtterance("sì"))
+        #expect(await controller.spoken.last == Self.plain("Ho finito. Vuoi rispondere?"))
+        #expect(host.markedRead == [message.id])
+
+        // The reply question goes with an answer read meanwhile: a yes that
+        // arrives while it is read is dropped, one said after it replies to
+        // the answer.
+        await session.turnDidEnd(finalAnswer: "Fatto.")
+        #expect(await session.handleUtterance("sì"))
+        #expect(host.submitted.isEmpty)
+        await session.speakingChanged(false)
+        #expect(await session.handleUtterance("sì"))
+        #expect(host.submitted == [.line("sì")])
+    }
+
+    @Test
     func anythingElseIsSentByTheHostAsADictation() async {
         let host = FakeVoiceModeHost()
         let session = await runningSession(host: host)

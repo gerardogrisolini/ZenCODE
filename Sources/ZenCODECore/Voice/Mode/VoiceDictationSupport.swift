@@ -59,6 +59,9 @@ struct VoiceDictationSegmenter: Sendable {
     /// The segment being recognized, trimmed.
     private var currentSegment = ""
     private var lastChange: ContinuousClock.Instant?
+    /// When the first words of the current utterance were recognized; `nil`
+    /// while there is no text.
+    private(set) var startedAt: ContinuousClock.Instant?
 
     init(silence: Duration = Self.defaultSilence) {
         self.silence = silence
@@ -80,6 +83,15 @@ struct VoiceDictationSegmenter: Sendable {
     /// being recognized after the last final result.
     var endsWithClosedSegment: Bool {
         !finishedSegments.isEmpty && currentSegment.isEmpty
+    }
+
+    /// `true` when the text is a bare yes or no the live-chat dialogue awaits
+    /// and the recognizer finalized it: nothing is being recognized after it,
+    /// so it is not the start of a longer phrase ("sì, ma prima…") and can be
+    /// sent without waiting for the silence gap.
+    func hasFinalizedAnswer(awaitingShortAnswer: Bool) -> Bool {
+        endsWithClosedSegment
+            && VoiceModeUtterance.isAwaitedAnswer(text, awaitingShortAnswer: awaitingShortAnswer)
     }
 
     /// Records the latest recognized text of the segment in progress; earlier
@@ -114,6 +126,11 @@ struct VoiceDictationSegmenter: Sendable {
             return
         }
         lastChange = combined.isEmpty ? nil : now
+        if combined.isEmpty {
+            startedAt = nil
+        } else if previous.isEmpty {
+            startedAt = now
+        }
     }
 
     func isUtteranceComplete(at now: ContinuousClock.Instant) -> Bool {
@@ -140,6 +157,7 @@ struct VoiceDictationSegmenter: Sendable {
         finishedSegments = []
         currentSegment = ""
         lastChange = nil
+        startedAt = nil
     }
 
     /// Whether both texts hold the same words, ignoring case, accents and
@@ -380,6 +398,42 @@ struct VoiceKeywordCollector: Sendable {
 
     mutating func reset() {
         pending = ""
+    }
+}
+
+/// Recognizes a yes or no said to a live-chat question that an answer has just
+/// replaced. An answer that completes while a question awaits its yes or no is
+/// read first and the question is gone: whoever was answering it spoke before
+/// hearing the answer. A bare yes or no already recognized by then, or begun
+/// within `reactionTime` of that moment, therefore belongs to the question and
+/// is never sent as a prompt; one begun later replies to the answer and is
+/// ordinary speech.
+struct VoiceStrayAnswerGuard: Sendable {
+    /// How long after the answer started a yes or no is still the reaction to
+    /// the question it replaced.
+    static let reactionTime = Duration.seconds(3)
+
+    /// When an answer last started being read over an awaited yes or no.
+    private(set) var questionReplacedAt: ContinuousClock.Instant?
+
+    /// An assistant answer starts being read at `now`; `awaitingShortAnswer`
+    /// tells whether the live-chat dialogue awaited a yes or no until then.
+    mutating func answerReadingStarted(awaitingShortAnswer: Bool, at now: ContinuousClock.Instant) {
+        if awaitingShortAnswer {
+            questionReplacedAt = now
+        }
+    }
+
+    /// Whether `speech`, whose first words were recognized at `startedAt`, is
+    /// a yes or no to the replaced question. Speech with an unknown start is
+    /// never one.
+    func isStrayAnswer(_ speech: String, startedAt: ContinuousClock.Instant?) -> Bool {
+        guard let questionReplacedAt,
+              let startedAt,
+              VoiceChatPhrases.affirmation(in: speech) != nil else {
+            return false
+        }
+        return startedAt < questionReplacedAt + Self.reactionTime
     }
 }
 

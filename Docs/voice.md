@@ -197,6 +197,12 @@ prompt):
 | German | ja, jawohl, klar, ok, okay, lies vor | nein, nicht jetzt, später |
 | Portuguese | sim, claro, ok, pode ler | não, agora não, depois |
 
+A yes or no that answers a question does not wait for the pause of the Send
+mode "After a pause" on macOS: it is sent as soon as recognition has finalized
+it, two or three seconds after you stop, as with the Send mode "On a word". On
+Linux it is sent after that pause, or, with "On a word", at the end of the
+speech segment.
+
 **Sending a message.** At any time, one phrase sends a live message without a
 question: the recipient, an optional `:` `,` `.` or `-`, and the text. The
 coordinator and the broadcast are reserved words and win over an agent with the
@@ -224,10 +230,16 @@ dialogue is in progress is read first. A "Do you want me to read it?" question
 is then asked again; a message already being read, or whose "Do you want to
 reply?" was not answered, is dropped (you can still write to its sender with a
 "message to …" phrase); after "Tell me your reply." or "Tell me the message."
-the text is still awaited once the answer is over. At most 32 messages wait to
-be announced; older ones are dropped. The comments the main agent writes before
-a tool call never interrupt the live chat: they are skipped while a question is
-pending or a message is being read, and they never change the dialogue.
+the text is still awaited once the answer is over. A yes or no said to a
+question that an answer has just replaced is never sent as a prompt: it is
+dropped when it reaches voice mode while that answer is being read, and on
+macOS also when you had already said it, or started saying it within 3 seconds
+of the answer starting. Once the answer is over a yes or no is handled as
+usual: it answers the question asked again or, with no question pending, it is
+a prompt. At most 32 messages wait to be announced; older ones are dropped. The
+comments the main agent writes before a tool call never interrupt the live
+chat: they are skipped while a question is pending or a message is being read,
+and they never change the dialogue.
 
 **Dock and keyboard.** Reading a message aloud marks it as read in the dock,
 exactly like opening it there; a declined or lapsed question leaves it unread.

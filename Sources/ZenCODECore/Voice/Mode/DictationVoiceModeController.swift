@@ -93,6 +93,8 @@ actor DictationVoiceModeController: VoiceModeController {
     private var keywordCollector: VoiceKeywordCollector?
     /// The live-chat dialogue awaits a yes or no.
     private var isAwaitingShortAnswer = false
+    /// Tells a yes or no said to a question that an answer has just replaced.
+    private var strayAnswerGuard = VoiceStrayAnswerGuard()
     /// The dictation previewed in the prompt draft. Advances after every
     /// dictation sent and every discard, so the terminal ignores previews
     /// and sends of a dictation it already ended.
@@ -254,6 +256,13 @@ actor DictationVoiceModeController: VoiceModeController {
         guard !spoken.isEmpty else {
             return false
         }
+        if rendering == .answer {
+            // Only a completed answer is read while a yes or no is awaited
+            // (comments wait for an idle dialogue, and the dialogue's own
+            // texts are plain): it takes the place of the question, so the
+            // yes or no said to it must not become a prompt.
+            strayAnswerGuard.answerReadingStarted(awaitingShortAnswer: isAwaitingShortAnswer, at: .now)
+        }
         device.interruptPlayback()
         await speaker.speak(spoken)
         await reportSpeakingState()
@@ -375,8 +384,12 @@ actor DictationVoiceModeController: VoiceModeController {
                 return
             }
             let now = ContinuousClock.now
+            let startedAt = segmenter.startedAt
             if let utterance = segmenter.takeUtterance() {
-                if keywordCollector != nil {
+                if isStrayAnswer(utterance, startedAt: startedAt) {
+                    // Said to a question an answer has replaced: not sent.
+                    await publishDictation()
+                } else if keywordCollector != nil {
                     // The session ended on its own: the text waits for the
                     // keyword unless it already ends with it.
                     await receiveKeywordSpeech(utterance, at: now)
@@ -409,6 +422,15 @@ actor DictationVoiceModeController: VoiceModeController {
             return
         }
         let now = ContinuousClock.now
+        let startedAt = segmenter.startedAt
+        if segmenter.endsWithClosedSegment, isStrayAnswer(segmenter.text, startedAt: startedAt) {
+            // A yes or no to a question an answer has just replaced: dropped
+            // in either send mode once the recognizer finalized it, so it is
+            // neither sent nor left in the draft.
+            restartRecognition()
+            await publishDictation()
+            return
+        }
         if let collector = keywordCollector {
             // Keyword mode: silence never sends; a text ending with the
             // keyword (or a bare yes/no while one is awaited) does, once the
@@ -423,12 +445,38 @@ actor DictationVoiceModeController: VoiceModeController {
             }
             return
         }
+        // Pause mode. A bare yes or no the live-chat dialogue awaits does not
+        // wait for the pause: it is sent once the recognizer finalized it, as
+        // in keyword mode, so one still being recognized ("sì" on the way to
+        // "sì, ma prima…") does not send.
+        if segmenter.hasFinalizedAnswer(awaitingShortAnswer: isAwaitingShortAnswer),
+           let answer = segmenter.takeUtterance() {
+            restartRecognition()
+            await sendAnswer(answer, at: now)
+            return
+        }
         if segmenter.isUtteranceComplete(at: now), let utterance = segmenter.takeUtterance() {
             // The session still reports the segment in progress: start a
             // fresh one before the next utterance.
             restartRecognition()
-            await sendPauseUtterance(utterance, at: now)
+            if isStrayAnswer(utterance, startedAt: startedAt) {
+                // The pause ended before the recognizer finalized it.
+                await publishDictation()
+            } else {
+                await sendPauseUtterance(utterance, at: now)
+            }
         }
+    }
+
+    /// Whether `speech`, whose first words were recognized at `startedAt`, is
+    /// a yes or no said to a live-chat question that an answer has just
+    /// replaced (see `VoiceStrayAnswerGuard`): it is dropped, never sent.
+    /// After speech collected for the keyword it is ordinary text.
+    private func isStrayAnswer(_ speech: String, startedAt: ContinuousClock.Instant?) -> Bool {
+        guard keywordCollector?.pending.isEmpty ?? true else {
+            return false
+        }
+        return strayAnswerGuard.isStrayAnswer(speech, startedAt: startedAt)
     }
 
     /// A finished segment in keyword send mode: sent on the keyword or as an
