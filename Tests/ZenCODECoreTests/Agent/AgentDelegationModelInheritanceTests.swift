@@ -50,7 +50,6 @@ extension AgentDelegationRoutingTests {
         let payload = try DirectSubAgentRuntime.resolvingModelBinding(
             for: DirectSubAgentRuntime.RequestedAgentPayload(
                 name: "worker",
-                role: "worker",
                 profileReference: profile.displayName,
                 modelID: hasBinding ? "binding:alpha" : nil
             ),
@@ -86,7 +85,6 @@ extension AgentDelegationRoutingTests {
             try DirectSubAgentRuntime.resolvingModelBinding(
                 for: DirectSubAgentRuntime.RequestedAgentPayload(
                     name: "worker",
-                    role: "worker",
                     profileReference: profile.displayName,
                     modelID: "binding:beta"
                 ),

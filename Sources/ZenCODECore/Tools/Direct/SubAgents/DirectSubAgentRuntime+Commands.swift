@@ -243,7 +243,6 @@ extension DirectSubAgentRuntime {
                     cwd: item.workingDirectory.path,
                     systemPrompt: Self.systemPrompt(
                         name: payload.name,
-                        role: payload.role,
                         taskID: payload.taskID,
                         taskAttemptID: receipt?.attemptID,
                         allowedToolNames: childAllowedToolNames,
@@ -544,7 +543,6 @@ extension DirectSubAgentRuntime {
             taskAttemptOrdinal: receipt?.ordinal,
             tasklessDelegationReservationID: tasklessDelegationReservationID,
             name: payload.name.nilIfBlank ?? "sub-agent-\(item.offset + 1)",
-            role: payload.role.nilIfBlank ?? "worker",
             profileID: item.profile.id,
             profileName: item.profile.name,
             profileRole: item.profile.role,

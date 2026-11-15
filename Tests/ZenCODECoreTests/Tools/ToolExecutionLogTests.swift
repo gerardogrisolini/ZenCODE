@@ -149,7 +149,6 @@ struct ToolExecutionLogTests {
         )
         let childContext = DirectSubAgentRuntime.BackendContext(
             requestedName: "Developer 1",
-            requestedRole: "developer",
             profile: developer,
             sharedChatSenderID: "child-id",
             sharedChatRoomID: "root-session"
@@ -172,7 +171,6 @@ struct ToolExecutionLogTests {
         let parent = Self.organizerCoordinator(locksModelToSession: locksModelToSession)
         let childContext = DirectSubAgentRuntime.BackendContext(
             requestedName: "Reviewer 1",
-            requestedRole: "reviewer",
             profile: nil,
             sharedChatSenderID: "child-id",
             sharedChatRoomID: "root-session"

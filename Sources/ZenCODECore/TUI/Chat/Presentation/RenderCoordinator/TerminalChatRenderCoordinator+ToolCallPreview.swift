@@ -8,9 +8,10 @@
 import Foundation
 
 /// Live drawing of a file write or edit while the model is still writing its
-/// tool call. The rows are append-only transcript on the tool-block channel:
-/// they never take the tool block's in-place rewrite slot, so the compact block
-/// that follows is drawn and rewritten exactly as without them.
+/// tool call. The rows are append-only transcript on the tool-block channel.
+/// When the compact block follows the preview of the same call right away, it
+/// omits the header and target the preview already showed; otherwise it is
+/// drawn exactly as without a preview.
 extension TerminalChatRenderCoordinator {
     // MARK: - Tool-call preview
 
@@ -68,15 +69,57 @@ extension TerminalChatRenderCoordinator {
     /// Ends the call: an open preview is closed with the same text as an
     /// interruption, and a suspended one is forgotten without output. Its end,
     /// a new call, the end of the turn's streaming, and a new transcript turn
-    /// call it, so a call never reopens past them.
+    /// call it, so a call never reopens past them. The call it drew is kept for
+    /// the tool block that follows it.
     func endToolCallPreview() {
         let wasOpen = toolCallPreviewFormatter.isOpen
-        writeToolCallPreviewText(
-            toolCallPreviewFormatter.finish(columns: freshColumnWidthProvider)
-        )
+        let ended = toolCallPreviewFormatter.finish(columns: freshColumnWidthProvider)
+        writeToolCallPreviewText(ended.text)
         if wasOpen {
             flushPendingStreamingWrites()
         }
+        if let drawn = ended.drawn {
+            pendingToolCallPreviewDrawing = drawn
+            pendingToolCallPreviewDrawingSequence = emittedWriteCount
+        }
+    }
+
+    /// Forgets the drawings of a turn that ended, so a block of a later turn
+    /// never omits a header it did not see.
+    func clearToolCallPreviewDrawings() {
+        pendingToolCallPreviewDrawing = nil
+        pendingToolCallPreviewDrawingSequence = nil
+        previewMergedToolCallID = nil
+    }
+
+    /// Whether the preview header already showed this call's canonical tool
+    /// name and its path, no output was emitted since, and the terminal can
+    /// rewrite the block in place, so the block draws only its status row. The
+    /// drawing is consumed once, and its call keeps the decision for its
+    /// completion and for a start republished after a bottom-overlay
+    /// transition. A channel that cannot rewrite keeps the full block: its
+    /// completion is append-only.
+    func previewAlreadyShowedHeader(for toolCall: DirectAgentToolCall) -> Bool {
+        if previewMergedToolCallID == toolCall.id {
+            return true
+        }
+        let drawing = pendingToolCallPreviewDrawing
+        let sequence = pendingToolCallPreviewDrawingSequence
+        pendingToolCallPreviewDrawing = nil
+        pendingToolCallPreviewDrawingSequence = nil
+        guard let drawing,
+              drawing.pathWasShown,
+              standardErrorIsTerminal,
+              sequence == emittedWriteCount,
+              let target = ToolCallPresentation.displayToolTarget(for: toolCall),
+              drawing.path == target,
+              TerminalToolCallPreviewFormatter.drawnTool(named: toolCall.name)?.name
+                  == drawing.toolName
+        else {
+            return false
+        }
+        previewMergedToolCallID = toolCall.id
+        return true
     }
 
     /// Rows of a preview are open on screen. A suspended call has none, so it

@@ -492,7 +492,6 @@ struct TelegramChannelLifecycleTests {
         return DirectSubAgentRuntime.AgentSnapshot(
             id: id,
             name: id,
-            role: "worker",
             status: .idle,
             pending: false,
             currentActivity: partial,

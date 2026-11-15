@@ -172,7 +172,6 @@ public struct ChatSubAgentOverview: Sendable {
             return [
                 snapshot.id,
                 snapshot.name,
-                snapshot.role,
                 snapshot.profileName?.nilIfBlank ?? "",
                 snapshot.status.rawValue,
                 snapshot.pending ? "pending" : "idle",

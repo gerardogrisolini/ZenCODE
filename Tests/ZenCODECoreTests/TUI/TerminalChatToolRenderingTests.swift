@@ -397,6 +397,85 @@ extension TerminalChatRenderingTests {
         #expect(lines[1].hasSuffix("✅"))
     }
 
+    @Test
+    func aCompactBlockWhoseHeaderThePreviewShowedKeepsOnlyItsStatus() {
+        let toolCall = presentedToolCall(
+            id: "call_1",
+            name: "local.writeFile",
+            argumentsObject: ["path": "/tmp/Example.swift", "content": "let x = 1\n"],
+            argumentsJSON: "{}"
+        )
+
+        let withHeader = TerminalChat.compactToolLines(
+            for: toolCall,
+            statusIcon: "✅",
+            statusDetail: "1.38ms",
+            columnWidth: 80
+        )
+        let merged = TerminalChat.compactToolLines(
+            for: toolCall,
+            statusIcon: "✅",
+            statusDetail: "1.38ms",
+            columnWidth: 80,
+            omitsHeaderAndTarget: true
+        )
+
+        #expect(withHeader == ["🛠️  local.writeFile", "/tmp/Example.swift ✅ 1.38ms"])
+        #expect(merged == ["✅ 1.38ms"])
+
+        // Every status the block shows keeps only its status row.
+        for icon in ["⏳", "⚠️"] {
+            #expect(TerminalChat.compactToolLines(
+                for: toolCall,
+                statusIcon: icon,
+                columnWidth: 80,
+                omitsHeaderAndTarget: true
+            ) == [icon])
+        }
+        let warning = TerminalChat.compactToolLines(
+            for: toolCall,
+            statusIcon: "⚠️",
+            statusDetail: "1.38ms",
+            columnWidth: 80,
+            omitsHeaderAndTarget: true
+        )
+        #expect(warning == ["⚠️  1.38ms"])
+
+        // On a narrow terminal the status row still fits one row: the detail
+        // that does not fit is dropped, the icon stays.
+        #expect(TerminalChat.compactToolLines(
+            for: toolCall,
+            statusIcon: "✅",
+            statusDetail: "1.38ms",
+            contentInsetWidth: 1,
+            columnWidth: 8,
+            omitsHeaderAndTarget: true
+        ) == ["✅"])
+
+        // A call without a target shows its header on its only row: the flag
+        // is ignored and the block stays complete.
+        let untargeted = DirectAgentToolCall(
+            id: "call_2",
+            name: "local.writeFile",
+            argumentsObject: ["path": "/tmp/Example.swift", "content": "let x = 1\n"],
+            argumentsJSON: "{}"
+        )
+        let complete = TerminalChat.compactToolLines(
+            for: untargeted,
+            statusIcon: "✅",
+            statusDetail: "1.38ms",
+            columnWidth: 80
+        )
+        #expect(complete == ["🛠️  local.writeFile ✅ 1.38ms"])
+        #expect(TerminalChat.compactToolLines(
+            for: untargeted,
+            statusIcon: "✅",
+            statusDetail: "1.38ms",
+            columnWidth: 80,
+            omitsHeaderAndTarget: true
+        ) == complete)
+    }
+
     func ansiStripped(_ text: String) -> String {
         TerminalANSIText.stripANSI(text)
     }

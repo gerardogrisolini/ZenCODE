@@ -738,7 +738,6 @@ private actor DelegatedOverviewBackend: AgentRuntimeBackend {
         return [DirectSubAgentRuntime.AgentSnapshot(
             id: "worker",
             name: "worker",
-            role: "Writes the file",
             profileName: nil,
             status: .running,
             pending: true,

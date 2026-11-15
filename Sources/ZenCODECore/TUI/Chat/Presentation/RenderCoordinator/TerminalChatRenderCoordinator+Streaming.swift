@@ -83,8 +83,10 @@ extension TerminalChatRenderCoordinator {
 
     func finishStreamingOutput() {
         // The turn's streaming ends: an unfinished tool-call preview is closed
-        // and a suspended one is forgotten, so neither reopens later.
+        // and a suspended one is forgotten, so neither reopens later, and the
+        // drawings of its calls are not inherited by a later turn.
         endToolCallPreview()
+        clearToolCallPreviewDrawings()
         finishThoughtOutputIfNeeded()
         finishAssistantContentFormatting()
         renderPendingOverviewsIfIdle()

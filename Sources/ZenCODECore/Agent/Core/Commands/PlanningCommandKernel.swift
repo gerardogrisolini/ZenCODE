@@ -20,7 +20,6 @@ enum PlanningCommandKernel {
         snapshots.filter { snapshot in
             (rootSessionID == nil || snapshot.rootSessionID == rootSessionID)
                 && snapshot.name.caseInsensitiveCompare(planAuthorAgentName) == .orderedSame
-                && snapshot.role.caseInsensitiveCompare(AgentProfileRole.planner.title) == .orderedSame
                 && isPlannerSnapshotProfile(snapshot)
         }
     }

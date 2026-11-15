@@ -21,7 +21,6 @@ struct TerminalSubAgentCommandTests {
         DirectSubAgentRuntime.AgentSnapshot(
             id: id,
             name: name,
-            role: "Reviews the change",
             status: .running,
             pending: true,
             latestOutput: nil,

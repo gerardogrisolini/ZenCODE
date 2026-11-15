@@ -376,7 +376,7 @@ struct TelegramTUITests {
         }
         #expect(reviewPurpose == .review)
         #expect(reviewPrompt.contains("Review focus requested by the user: focus on routing"))
-        #expect(reviewPrompt.contains("role \"Reviewer\""))
+        #expect(reviewPrompt.contains("Reviewers must not edit files."))
     }
 
     @Test(arguments: [false, true])

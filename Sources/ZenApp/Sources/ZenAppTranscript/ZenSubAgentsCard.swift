@@ -12,7 +12,7 @@ import ZenCODECore
 
 /// The session's sub-agents in progress (queued or running) on a content card:
 /// the header with their count, then one row per agent with its status color,
-/// name and badge, live elapsed time, role, profile, task and attempt, model
+/// name and badge, live elapsed time, profile, task and attempt, model
 /// and token counters, current activity (reasoning, message, or tool), and
 /// latest error. The card draws nothing while no sub-agent is in progress, and
 /// never shows the final response of an agent: a finished agent leaves it.
@@ -231,7 +231,7 @@ struct ZenSubAgentRow: View {
     /// The metadata lines under the title, each only when it has something to
     /// say, with muted labels and values in the inline-code color:
     ///
-    /// - `role: <role>  ·  agent: <profile>`
+    /// - `agent: <profile>`
     /// - `task: <id>  ·  attempt: <n>` (the attempt only with a task)
     /// - `model: <model>  ·  c:… p:… g:…` (cache, prefill, and generated
     ///   tokens; the counters alone when the model is unknown)
@@ -250,9 +250,6 @@ struct ZenSubAgentRow: View {
         }
 
         var identity: [[ZenTextRun]] = []
-        if let role = inline(snapshot.role) {
-            identity.append(labeled("role:", role))
-        }
         if let profile = inline(snapshot.profileName) {
             identity.append(labeled("agent:", profile))
         }
@@ -394,7 +391,6 @@ private enum ZenSubAgentPreviewData {
                 taskID: "transcript-views",
                 taskAttemptOrdinal: 2,
                 name: "transcript-dev",
-                role: "Developer",
                 profileName: "Developer",
                 status: .running,
                 pending: true,
@@ -415,7 +411,6 @@ private enum ZenSubAgentPreviewData {
             DirectSubAgentRuntime.AgentSnapshot(
                 id: "agent_2",
                 name: "reviewer",
-                role: "Reviewer",
                 profileName: "Reviewer",
                 status: .queued,
                 pending: true,
@@ -427,7 +422,6 @@ private enum ZenSubAgentPreviewData {
             DirectSubAgentRuntime.AgentSnapshot(
                 id: "agent_3",
                 name: "planner",
-                role: "Planner",
                 status: .running,
                 pending: true,
                 currentActivity: "Checking the palette usage in every view.",
@@ -440,7 +434,6 @@ private enum ZenSubAgentPreviewData {
             DirectSubAgentRuntime.AgentSnapshot(
                 id: "agent_4",
                 name: "builder",
-                role: "Builder",
                 status: .idle,
                 pending: false,
                 latestOutput: "Done.",

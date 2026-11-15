@@ -393,7 +393,6 @@ actor ScriptedACPCommandBackend: AgentRuntimeBackend {
             id: "acp-plan-author",
             rootSessionID: sessionID,
             name: PlanningCommandKernel.planAuthorAgentName,
-            role: AgentProfileStore.plannerAgentName,
             profileID: AgentProfileRole.planner.rawValue,
             profileRole: .planner,
             status: status,

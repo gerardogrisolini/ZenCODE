@@ -32,6 +32,47 @@ Release tags follow the strict `vX.Y.Z` contract described in
   paths share the session's projection, so a section is written once per change
   and never goes back to an older graph.
 
+### Changed
+
+- With the in-process DS4 engine, in the terminal chat, the header of the live
+  file write or edit preview names the tool canonically (`local.writeFile`,
+  `local.append`, `local.editFile`, `local.replace`) instead of the short labels
+  `write`, `append`, `edit`, and `replace`. The compact tool block that follows
+  omits its own header and target only when it comes right after the preview of
+  the same call, with the same tool and path and no other output in between,
+  and the channel is an interactive terminal: the block does not repeat the
+  path and keeps only its status row (`⏳`, then `✅` or `⚠️` with the elapsed
+  time). When a message, an overview, or any other output lands between the end
+  of the preview and the start of the block, when the path differs or was never
+  shown, or on a non-interactive channel, the block keeps its header and target
+  as before. This applies only to those four tools: `local.multiEdit` and
+  `local.applyPatch` are unchanged, and ACP, Telegram, the macOS app, saved
+  sessions, and sub-agents do not receive the preview.
+
+### Removed
+
+- The free-form `role` of sub-agents: the string the coordinator passed to
+  `agent.create` (`worker` by default), which models filled with the profile
+  name, so it repeated the `agent:` line. The `role:` line is gone from the
+  `👥 Sub-Agents` overview in the terminal, from the `/subagent` detail and
+  list, and from the sub-agent card and tab of the macOS app. The
+  `agent.create` schema no longer has `role`, and a `role` the model still
+  sends, in an item or at the root, is ignored without error. The system prompt
+  of a delegated sub-agent no longer has its `Role:` line, the sub-agent list in
+  the results of `agent.create`, `agent.list`, `agent.get`, `agent.wait`, and
+  `agent.close` no longer has `role=`, and the ACP tool call of a sub-agent
+  without a task is titled with the agent's name alone instead of
+  `<name> — <role>`. The coordinator's system prompt and the hidden `/plan` and
+  `/review` prompts no longer ask for a role; a Planner is recognized by its
+  name `plan-author` and the `planner` role of its profile.
+- **Breaking:** in the public API of `ZenCODECore`,
+  `DirectSubAgentRuntime.AgentSnapshot.role`,
+  `DirectSubAgentRuntime.RequestedAgentPayload.role`, and
+  `DirectSubAgentRuntime.BackendContext.requestedRole` are removed, with the
+  `role:` and `requestedRole:` parameters of their initializers, and so is the
+  `role:` parameter of `DirectSubAgentRuntime.systemPrompt(...)`, with no
+  replacement. The profile role (`profileRole`) is unchanged.
+
 ## [6.1.0] - 2026-11-15
 
 ### Added

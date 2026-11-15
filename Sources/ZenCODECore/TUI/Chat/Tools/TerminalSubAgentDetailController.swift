@@ -573,12 +573,12 @@ final class TerminalSubAgentDetailController {
     ///
     /// - the title is the agent's name (its id when the name is blank);
     ///   agents that share a name also show their id, muted;
-    /// - at most two detail rows, with the muted labels of the detail header
+    /// - at most one detail row, with the muted labels of the detail header
     ///   (``TerminalSubAgentOverviewLayout/metadataText(label:value:ansiEnabled:)``):
-    ///   the `role:`, then the `agent:` (the profile name) and the `model:`
+    ///   the `agent:` (the profile name) and the `model:`
     ///   (``TerminalSubAgentOverviewLayout/modelText(_:modelTitleResolver:)``,
     ///   without the token counters) one `·` apart. Each field is on one line;
-    ///   a blank field is left out, and so is a row left without fields.
+    ///   a blank field is left out, and so is the row left without fields.
     static func choiceEntries(
         _ snapshots: [DirectSubAgentRuntime.AgentSnapshot],
         modelTitleResolver: (String) -> String
@@ -604,10 +604,6 @@ final class TerminalSubAgentDetailController {
     ) -> [String] {
         typealias Layout = TerminalSubAgentOverviewLayout
         var rows: [String] = []
-        let role = InlineTextTruncation.inlineText(snapshot.role)
-        if !role.isEmpty {
-            rows.append(Layout.metadataText(label: "role:", value: role))
-        }
         var identity: [String] = []
         let profile = InlineTextTruncation.inlineText(snapshot.profileName ?? "")
         if !profile.isEmpty {

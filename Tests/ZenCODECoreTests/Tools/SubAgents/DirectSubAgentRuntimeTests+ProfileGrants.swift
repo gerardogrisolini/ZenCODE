@@ -20,10 +20,9 @@ extension DirectSubAgentRuntimeTests {
                     name: "agent.create",
                     argumentsObject: [
                         "name": "worker",
-                        "role": "worker",
                         "prompt": "Do the delegated work"
                     ],
-                    argumentsJSON: #"{"name":"worker","role":"worker","prompt":"Do the delegated work"}"#
+                    argumentsJSON: #"{"name":"worker","prompt":"Do the delegated work"}"#
                 ),
                 workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
                 allowedToolNames: ["local.readFile", "local.writeFile"]
@@ -397,7 +396,6 @@ extension DirectSubAgentRuntimeTests {
         _ = try await runtime.createAgents(
             arguments: [
                 "name": .string("worker"),
-                "role": .string("worker"),
                 "profile": .string("Worker")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-skill-propagation-tests"),

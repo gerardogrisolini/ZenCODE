@@ -14,7 +14,7 @@ import ZenCODECore
 /// The detail of one sub-agent, at the top of its tab, on a content card: the
 /// row of the sub-agent card (``ZenSubAgentsCard``) without the activity, so
 /// its status color, name and badge, the elapsed time (live while the agent
-/// works, else its duration), the role and profile, the task and attempt, the
+/// works, else its duration), the profile, the task and attempt, the
 /// model and token counters, and the latest error. The tab shows the activity
 /// after the transcript instead (``ZenSubAgentLiveActivityView``).
 public struct ZenSubAgentDetailCard: View {
@@ -107,7 +107,6 @@ public struct ZenSubAgentLiveActivityView: View {
             taskID: "transcript-views",
             taskAttemptOrdinal: 2,
             name: "transcript-dev",
-            role: "Developer",
             profileName: "Developer",
             status: .running,
             pending: true,
@@ -127,7 +126,6 @@ public struct ZenSubAgentLiveActivityView: View {
         ZenSubAgentDetailCard(snapshot: DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_2",
             name: "tester",
-            role: "Tester",
             status: .failed,
             pending: false,
             latestOutput: nil,
@@ -138,7 +136,6 @@ public struct ZenSubAgentLiveActivityView: View {
         ZenSubAgentLiveActivityView(snapshot: DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_3",
             name: "planner",
-            role: "Planner",
             status: .running,
             pending: true,
             currentActivity: "Reading the tab bar and the conversation list.",
@@ -152,7 +149,6 @@ public struct ZenSubAgentLiveActivityView: View {
         ZenSubAgentLiveActivityView(snapshot: DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_4",
             name: "reviewer",
-            role: "Reviewer",
             status: .queued,
             pending: true,
             latestOutput: nil,

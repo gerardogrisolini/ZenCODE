@@ -46,7 +46,6 @@ extension DirectSubAgentRuntime {
     ///   response-language section; `nil` keeps the generic rule.
     public static func systemPrompt(
         name: String,
-        role: String,
         taskID: String? = nil,
         taskAttemptID: String? = nil,
         allowedToolNames: Set<String>? = nil,
@@ -56,7 +55,6 @@ extension DirectSubAgentRuntime {
     ) -> String {
         var lines = [
             "You are ZenCODE delegated sub-agent \(name).",
-            "Role: \(role)",
             responseLanguageSection?.nilIfBlank
                 ?? SystemPromptBuilder.responseLanguageSection(),
             "You are running inside ZenCODE and receive the complete direct toolset available to this process, including local, shell, git, MCP, and sub-agent tools when exposed.",
@@ -107,7 +105,7 @@ extension DirectSubAgentRuntime {
 
         var lines = ["Sub-agents:"]
         for snapshot in snapshots {
-            var summary = "- \(snapshot.id) name=\(snapshot.name) role=\(snapshot.role) status=\(snapshot.status.rawValue) pending=\(snapshot.pending)"
+            var summary = "- \(snapshot.id) name=\(snapshot.name) status=\(snapshot.status.rawValue) pending=\(snapshot.pending)"
             if let profileName = snapshot.profileName?.nilIfBlank {
                 summary += " profile=\(profileName)"
             }

@@ -131,8 +131,8 @@ extension TerminalChatRenderingTests {
             name: "agent.create",
             argumentsObject: [
                 "agents": [
-                    ["role": "worker"],
-                    ["role": "builder"]
+                    ["profileRole": "developer"],
+                    ["profileRole": "builder"]
                 ]
             ],
             argumentsJSON: "{}"

@@ -1201,7 +1201,6 @@ private func plannerSnapshot(
         id: "plan-author-1",
         rootSessionID: rootSessionID,
         name: PlanningCommandKernel.planAuthorAgentName,
-        role: AgentProfileStore.plannerAgentName,
         profileID: AgentProfileRole.planner.rawValue,
         profileRole: .planner,
         status: .idle,

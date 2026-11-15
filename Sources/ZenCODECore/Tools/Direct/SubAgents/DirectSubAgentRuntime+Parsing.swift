@@ -10,7 +10,6 @@ import ToolCore
 
 private struct RequestedAgentPayloadSignature: Equatable {
     let name: String
-    let role: String
     let profileReference: String?
     let taskID: String?
     let prompt: String?
@@ -21,7 +20,6 @@ private struct RequestedAgentPayloadSignature: Equatable {
 
     init(_ payload: DirectSubAgentRuntime.RequestedAgentPayload) {
         name = payload.name
-        role = payload.role
         profileReference = payload.profileReference.map(AgentProfileStore.profileReferenceKey)
         taskID = payload.taskID
         prompt = payload.prompt
@@ -59,7 +57,6 @@ extension DirectSubAgentRuntime {
     ) -> BackendContext {
         BackendContext(
             requestedName: payload.name,
-            requestedRole: payload.role,
             profile: profile,
             modelBinding: payload.modelBinding,
             modelSelection: payload.modelSelection,
@@ -113,11 +110,6 @@ extension DirectSubAgentRuntime {
                 field: "name",
                 in: object
             ) ?? "sub-agent-\(fallbackIndex + 1)",
-            role: try resolvedAgentString(
-                ["role"],
-                field: "role",
-                in: object
-            ) ?? "worker",
             profileReference: try resolvedAgentString(
                 [
                     "profile", "agent", "agentName", "agent_name", "agentID", "agent_id",
@@ -258,7 +250,7 @@ extension DirectSubAgentRuntime {
         in arguments: [String: JSONValue]
     ) throws -> Bool {
         let rootKeys = [
-            "name", "title", "role",
+            "name", "title",
             "profile", "agent", "agentName", "agent_name", "agentID", "agent_id",
             "profileName", "profile_name",
             "taskID", "task_id",

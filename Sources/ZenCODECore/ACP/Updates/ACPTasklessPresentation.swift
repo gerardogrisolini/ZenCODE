@@ -35,7 +35,7 @@ actor ACPTasklessPresentation {
                         agent.completedExecutionRevision == agent.executionRevision ? agent.latestOutput : nil,
                         agent.latestError].compactMap { $0 }.joined(separator: "\n\n")
             var fields: [String: JSONValue] = [
-                "toolCallId": .string(id), "title": .string("\(agent.name) — \(agent.role)"),
+                "toolCallId": .string(id), "title": .string(agent.name),
                 "kind": .string("other"), "status": .string(status),
                 "content": .array([.object(["type": .string("content"), "content": .object([
                     "type": .string("text"), "text": .string(text)

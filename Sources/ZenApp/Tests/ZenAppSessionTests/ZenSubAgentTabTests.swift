@@ -43,7 +43,6 @@ private func agent(
     DirectSubAgentRuntime.AgentSnapshot(
         id: id,
         name: "Worker \(id)",
-        role: "Developer",
         status: status,
         pending: status.isPending,
         currentActivity: activity,

@@ -416,13 +416,13 @@ struct ChatSessionHostSubAgentToolEventTests {
             #expect(await environment.backend.hasSubAgentToolEventHandler())
             await environment.backend.setSubAgentSnapshots([
                 DirectSubAgentRuntime.AgentSnapshot(
-                    id: "known", rootSessionID: "root", name: "Known", role: "Worker", status: .running,
+                    id: "known", rootSessionID: "root", name: "Known", status: .running,
                     pending: true, latestOutput: nil, executionRevision: 1,
                     completedExecutionRevision: 0, latestOutputRevision: 0, latestError: nil,
                     createdAt: .now, updatedAt: .now
                 ),
                 DirectSubAgentRuntime.AgentSnapshot(
-                    id: "elsewhere", rootSessionID: "another-root", name: "Elsewhere", role: "Worker",
+                    id: "elsewhere", rootSessionID: "another-root", name: "Elsewhere",
                     status: .running, pending: true, latestOutput: nil, executionRevision: 1,
                     completedExecutionRevision: 0, latestOutputRevision: 0, latestError: nil,
                     createdAt: .now, updatedAt: .now

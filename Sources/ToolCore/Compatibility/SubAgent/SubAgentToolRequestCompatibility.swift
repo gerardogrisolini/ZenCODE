@@ -230,7 +230,6 @@ public nonisolated enum SubAgentToolRequestCompatibility {
         case "agent.create":
             assignStructuredJSON(["agents", "items"], from: arguments, to: "agents", in: &normalized)
             assignString(["name"], from: arguments, to: "name", in: &normalized)
-            assignString(["role"], from: arguments, to: "role", in: &normalized)
             assignString(["prompt", "message", "initialPrompt", "initial_prompt"], from: arguments, to: "prompt", in: &normalized)
         case "agent.list":
             assignString(["status"], from: arguments, to: "status", in: &normalized)

@@ -394,7 +394,6 @@ struct AgentProfileRoleTests {
             id: UUID().uuidString,
             rootSessionID: "root",
             name: PlanningCommandKernel.planAuthorAgentName,
-            role: "Planner",
             profileID: profileID,
             profileName: profileName,
             profileRole: profileRole,

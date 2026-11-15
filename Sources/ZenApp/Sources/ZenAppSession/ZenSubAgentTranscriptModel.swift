@@ -356,7 +356,6 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
     /// key look alike, so the newer one is not published.
     private struct DisplayKey: Equatable {
         let name: String
-        let role: String
         let profileName: String?
         let taskID: String?
         let taskAttemptOrdinal: Int?
@@ -386,7 +385,6 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
 
         init(_ snapshot: DirectSubAgentRuntime.AgentSnapshot) {
             name = snapshot.name
-            role = snapshot.role
             profileName = snapshot.profileName
             taskID = snapshot.taskID
             taskAttemptOrdinal = snapshot.taskAttemptOrdinal

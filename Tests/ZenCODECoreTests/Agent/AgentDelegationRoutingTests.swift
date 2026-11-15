@@ -122,7 +122,7 @@ struct AgentDelegationRoutingTests {
         // The roster keeps only its own format instructions; the tool-grant and
         // model-inheritance rules live once, in the agent.create contract and in
         // the per-profile "no configured bindings" line.
-        #expect(section.contains("Give each sub-agent an explicit role and scope."))
+        #expect(section.contains("Give each sub-agent an explicit scope."))
         #expect(section.contains("Do not substitute provider names"))
         #expect(!section.contains("inherits the coordinator's effective session allowlist"))
         #expect(!section.contains("For profiles without bindings, omit `model`"))
@@ -202,7 +202,6 @@ struct AgentDelegationRoutingTests {
             try DirectSubAgentRuntime.resolvingModelBinding(
                 for: DirectSubAgentRuntime.RequestedAgentPayload(
                     name: "worker",
-                    role: "worker",
                     profileReference: "Developer",
                     modelID: "binding:beta"
                 ),
@@ -455,7 +454,6 @@ struct AgentDelegationRoutingTests {
             try DirectSubAgentRuntime.resolvingModelBinding(
                 for: DirectSubAgentRuntime.RequestedAgentPayload(
                     name: "worker",
-                    role: "worker",
                     profileReference: "Developer",
                     modelID: "binding:no-capability"
                 ),
@@ -640,7 +638,6 @@ struct AgentDelegationRoutingTests {
         )
         let payload = DirectSubAgentRuntime.RequestedAgentPayload(
             name: "worker",
-            role: "worker",
             profileReference: "Developer",
             modelID: Self.betaModelID
         )
@@ -680,7 +677,6 @@ struct AgentDelegationRoutingTests {
         let routedPayload = try DirectSubAgentRuntime.resolvingModelBinding(
             for: DirectSubAgentRuntime.RequestedAgentPayload(
                 name: "worker",
-                role: "worker",
                 profileReference: "Developer",
                 modelID: "binding:beta"
             ),

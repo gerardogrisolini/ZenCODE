@@ -230,7 +230,7 @@ private actor PresentationLifecycleBackend: AgentRuntimeBackend {
     func releasePrompt() { released = true; promptWaiter?.resume(); promptWaiter = nil }
     private func publish(status: DirectSubAgentRuntime.Status, completed: UInt64, error: String? = nil) {
         let value = DirectSubAgentRuntime.AgentSnapshot(id: "persistent", rootSessionID: rootID,
-            name: "Persistent", role: "Worker", status: status, pending: status == .running,
+            name: "Persistent", status: status, pending: status == .running,
             latestOutput: completed > 0 ? "Previous execution" : nil,
             executionRevision: UInt64(promptCount), completedExecutionRevision: completed,
             latestOutputRevision: completed, latestError: error, createdAt: .now, updatedAt: .now)

@@ -281,7 +281,6 @@ enum TelegramTurnActivityFixtures {
         return DirectSubAgentRuntime.AgentSnapshot(
             id: id,
             name: id,
-            role: "worker",
             status: status,
             pending: status == .running || status == .queued,
             currentActivity: activity,

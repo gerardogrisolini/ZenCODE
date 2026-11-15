@@ -57,7 +57,7 @@ extension ACPStandardPresentationTests {
     @Test func tasklessExecutionsDoNotReuseTerminalRowsOrHistoricalOutput() async {
         func snapshot(_ status: DirectSubAgentRuntime.Status, execution: UInt64,
                       completed: UInt64 = 0, error: String? = nil) -> DirectSubAgentRuntime.AgentSnapshot {
-            .init(id: "a", rootSessionID: "root", name: "Agent", role: "Worker", status: status,
+            .init(id: "a", rootSessionID: "root", name: "Agent", status: status,
                   pending: status == .running, latestOutput: completed > 0 ? "Old output" : nil,
                   executionRevision: execution, completedExecutionRevision: completed,
                   latestOutputRevision: completed, latestError: error, createdAt: .now, updatedAt: .now)
@@ -66,6 +66,7 @@ extension ACPStandardPresentationTests {
         #expect(await projection.updates([snapshot(.idle, execution: 0)]).isEmpty)
         let running = await projection.updates([snapshot(.running, execution: 1)])
         #expect(running.first?.objectValue?["status"] == .string("in_progress"))
+        #expect(running.first?.objectValue?["title"] == .string("Agent"))
         for update in running { await projection.acknowledge(update) }
         let complete = await projection.updates([snapshot(.idle, execution: 1, completed: 1)])
         #expect(complete.first?.objectValue?["status"] == .string("completed"))

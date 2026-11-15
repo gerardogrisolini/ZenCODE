@@ -60,7 +60,6 @@ struct TerminalSubAgentTranscriptRenderingTests {
             taskID: "plan-graph-task-2",
             taskAttemptOrdinal: 3,
             name: "transcript-renderer",
-            role: "Renders the transcript of a delegated sub-agent",
             profileName: "Developer",
             status: status,
             pending: pending,
@@ -324,7 +323,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
         #expect(text.contains("transcript-renderer"))
         #expect(text.contains("[FAILED]"))
         #expect(text.contains("id: agent_transcript_worker"))
-        #expect(text.contains("role: Renders the transcript"))
+        #expect(!text.contains("role:"))
         #expect(text.contains("agent: Developer"))
         #expect(text.contains("task: plan-graph-task-2"))
         #expect(text.contains("attempt: 3"))

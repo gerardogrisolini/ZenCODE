@@ -68,7 +68,7 @@ extension TerminalChat {
 
     /// The rows heading the sub-agent detail view: the status header (status
     /// marker, name, and badge) and the metadata of the full overview entry
-    /// (id, role, agent, task and attempt, model with its token counters),
+    /// (id, agent, task and attempt, model with its token counters),
     /// then the latest error. Neither the activity nor the final response is
     /// included. No row exceeds `width` visible columns.
     nonisolated static func subAgentDetailHeaderRows(

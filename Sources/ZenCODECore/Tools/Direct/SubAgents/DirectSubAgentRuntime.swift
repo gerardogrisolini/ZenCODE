@@ -136,7 +136,6 @@ public actor DirectSubAgentRuntime {
         public let taskAttemptOrdinal: Int?
         var tasklessDelegationReservationID: UUID?
         public let name: String
-        public let role: String
         public let profileID: String?
         public let profileName: String?
         /// Role of the profile the agent was created from.

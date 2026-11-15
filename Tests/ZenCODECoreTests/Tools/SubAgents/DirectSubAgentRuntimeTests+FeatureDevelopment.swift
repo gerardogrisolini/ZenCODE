@@ -29,7 +29,6 @@ extension DirectSubAgentRuntimeTests {
     ) -> String {
         DirectSubAgentRuntime.systemPrompt(
             name: "worker",
-            role: "feature builder",
             allowedToolNames: allowedToolNames,
             selectedProfile: profile
         )

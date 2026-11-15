@@ -202,7 +202,6 @@ extension DirectSubAgentRuntime {
             taskAttemptID: agent.taskAttemptID,
             taskAttemptOrdinal: agent.taskAttemptOrdinal,
             name: agent.name,
-            role: agent.role,
             profileID: agent.profileID,
             profileName: agent.profileName,
             profileRole: agent.profileRole,

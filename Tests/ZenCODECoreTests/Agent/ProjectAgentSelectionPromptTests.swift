@@ -177,7 +177,7 @@ struct ProjectAgentSelectionPromptTests {
     func rosterWithABuilderEndsWithTheMissingToolParagraph() throws {
         let section = try #require(Self.roster([Support.developer, Self.builder]))
 
-        #expect(section.hasSuffix("an explicit role and scope.\n\n" + Self.rosterParagraph))
+        #expect(section.hasSuffix("an explicit scope.\n\n" + Self.rosterParagraph))
         // Said once, with no role-variant wording.
         #expect(section.components(separatedBy: "Developing a missing tool:").count == 2)
         #expect(!section.contains("profileRole"))

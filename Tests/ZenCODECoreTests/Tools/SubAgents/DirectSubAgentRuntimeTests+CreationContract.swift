@@ -27,7 +27,7 @@ extension DirectSubAgentRuntimeTests {
         let itemProperties = try #require(item["properties"] as? [String: Any])
         #expect(
             Set(itemProperties.keys) == [
-                "profile", "model", "taskID", "prompt", "name", "role",
+                "profile", "model", "taskID", "prompt", "name",
                 "profileRole", "complexity", "workingDirectory",
             ]
         )
@@ -61,7 +61,7 @@ extension DirectSubAgentRuntimeTests {
         for legacyKey in [
             "agent", "agentName", "agent_name", "agentID", "agent_id",
             "profileName", "profile_name", "modelID", "model_id", "task_id",
-            "message", "initialPrompt", "initial_prompt", "title", "items",
+            "message", "initialPrompt", "initial_prompt", "title", "items", "role",
         ] {
             #expect(properties[legacyKey] == nil)
             #expect(itemProperties[legacyKey] == nil)
@@ -517,6 +517,67 @@ extension DirectSubAgentRuntimeTests {
         )
 
         #expect(await runtime.snapshots().count == 12)
+        await runtime.shutdown()
+    }
+
+    /// `role` is no longer an agent.create field: a model that still sends it,
+    /// in an item or at the root and with any value, is ignored without error.
+    @Test
+    func agentCreateIgnoresTheRemovedRoleField() async throws {
+        for value: JSONValue in [.string("Reviewer"), .number(3), .object(["x": .string("y")])] {
+            let item = try DirectSubAgentRuntime.requestedAgentPayload(
+                from: .object([
+                    "name": .string("checker"),
+                    "role": value,
+                    "profile": .string("Reviewer"),
+                ]),
+                fallbackIndex: 0
+            )
+            #expect(item.name == "checker")
+            #expect(item.profileReference == "Reviewer")
+        }
+
+        // A root `role` is neither a root agent field next to a batch nor a
+        // difference between the batch aliases.
+        let batch = try DirectSubAgentRuntime.requestedAgentPayloads(
+            from: [
+                "role": .string("worker"),
+                "agents": .array([
+                    .object(["name": .string("same"), "role": .string("A"), "profile": .string("Developer")]),
+                ]),
+                "items": .array([
+                    .object(["name": .string("same"), "role": .string("B"), "profile": .string("Developer")]),
+                ]),
+            ]
+        )
+        #expect(batch.map(\.name) == ["same"])
+
+        let backend = CapturingSubAgentRuntimeBackend()
+        let runtime = DirectSubAgentRuntime(
+            contextualBackendFactory: { _ in backend },
+            profileResolver: builtInDirectSubAgentProfileResolver
+        )
+        let output = try await runtime.createAgents(
+            arguments: [
+                "agents": .array([
+                    .object([
+                        "name": .string("checker"),
+                        "role": .string("free-form-role-value"),
+                        "profile": .string("Developer"),
+                    ]),
+                ]),
+            ],
+            workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-sub-agent-tests"),
+            parentAllowedToolNames: nil
+        )
+
+        #expect(await runtime.snapshots().map(\.name) == ["checker"])
+        #expect(!output.contains("role="))
+        #expect(!output.contains("free-form-role-value"))
+        let session = try #require(await backend.createdSessions().first)
+        let systemPrompt = try #require(session.systemPrompt)
+        #expect(!systemPrompt.contains("Role:"))
+        #expect(!systemPrompt.contains("free-form-role-value"))
         await runtime.shutdown()
     }
 }

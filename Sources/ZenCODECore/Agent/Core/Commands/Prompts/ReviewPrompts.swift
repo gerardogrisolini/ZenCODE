@@ -127,7 +127,7 @@ extension PlanningCommandKernel {
             - A task in awaiting_validation is not completed and must never be reported as validated.
 
             Delegation rules:
-            - Create the sub-agents with agent.create using role "Reviewer" and \
+            - Create the sub-agents with agent.create using \
             \(AgentProfileStore.delegationProfileClause(reviewers)); Reviewers must not edit files.
             - If a task graph is active, append one independent review task per Reviewer to that \
             graph, including a single Reviewer; call tasks.list with runnableOnly=true and put each \
@@ -262,7 +262,7 @@ extension PlanningCommandKernel {
             \(reviewChangeSummarySection(changeSummary))
 
             Delegation rules:
-            - Create the sub-agents with agent.create using role "Reviewer" and \
+            - Create the sub-agents with agent.create using \
             \(AgentProfileStore.delegationProfileClause(reviewers)); Reviewers must not edit files.
             - When the review surface can be partitioned into independent areas (for \
             example distinct files, modules, or concerns), first call tasks.create once \

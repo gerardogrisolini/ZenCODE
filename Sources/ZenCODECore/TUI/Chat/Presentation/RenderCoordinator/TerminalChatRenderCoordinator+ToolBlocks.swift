@@ -38,7 +38,13 @@ extension TerminalChatRenderCoordinator {
         clearOwnedSubAgentOverviewBeforeInterleavedOutput(
             maximumInPlaceRows: maximumInPlaceRows
         )
-        prepareForToolOutput()
+        if previewAlreadyShowedHeader(for: toolCall) {
+            // The preview header already showed the canonical tool name and the
+            // path: the status row follows the source rows without a separator.
+            flushChatOutput()
+        } else {
+            prepareForToolOutput()
+        }
         toolState.activeBlockIsSubAgentTool = isSubAgentTool
         renderToolBlock(
             toolCall,
@@ -180,11 +186,53 @@ extension TerminalChatRenderCoordinator {
             ? freshColumnWidthProvider()
             : columnWidthProvider()
         let contentInsetWidth = TerminalTextMetrics.displayWidth(lineInset)
+        let activeBlock = toolState.activeBlock
+        let ownsActiveBlock = activeBlock?.id == toolCall.id
+        let shouldRewriteActiveBlock = lifecycle.isCompletion && (activeBlock.map { block in
+            // Safety fuse: if the terminal width changed between tool start
+            // and completion, the saved row count is stale. Emitting
+            // cursor-up / erase sequences based on a stale count can erase
+            // transcript rows or leave orphaned rows. Instead, degrade
+            // fail-safe: skip the destructive clear and append the
+            // completed block.
+            //
+            // A block that exceeded the scrolling region has already
+            // lost its earliest rows to scrollback. The same is true when
+            // its content consumes the whole region: the terminating
+            // newline needs one physical cursor row and scrolls the title
+            // beyond the top margin. Cursor-up / erase can no longer reach
+            // that title, leaving it above the completed redraw.
+            //
+            // A completion may be taller than the region. That does not make
+            // clearing unsafe when the pending block itself is still fully
+            // owned: normal output then scrolls inside the terminal's active
+            // scrolling region. Bounding pending blocks at start keeps them
+            // rewritable and avoids leaving the hourglass copy in the
+            // transcript beside a long completed result.
+            let maximumReplaceableRows = min(
+                replaceableToolRowCapacity(
+                    block.maximumInPlaceRows
+                ) ?? Int.max,
+                replaceableToolRowCapacity(maximumInPlaceRows) ?? Int.max
+            )
+            return block.id == toolCall.id
+                && standardErrorIsTerminal
+                && block.writeSequence == emittedWriteCount
+                && ownsScreenReceipt(block.screenAnchor)
+                && block.columnWidth == columnWidth
+                && block.rows <= maximumReplaceableRows
+        } ?? false)
+        // A completion omits the header and target only when it rewrites the
+        // merged start in place; an append-only completion is drawn in full.
+        let omitsHeaderAndTarget = lifecycle.isCompletion
+            ? (previewMergedToolCallID == toolCall.id && shouldRewriteActiveBlock)
+            : previewMergedToolCallID == toolCall.id
         let renderRows = toolBlockRows(
             for: toolCall,
             lifecycle: lifecycle,
             contentInsetWidth: contentInsetWidth,
-            columnWidth: columnWidth
+            columnWidth: columnWidth,
+            omitsHeaderAndTarget: omitsHeaderAndTarget
         )
         let pendingOwnership: (rows: Int, cursorState: CursorState)?
         if lifecycle.isCompletion {
@@ -203,43 +251,6 @@ extension TerminalChatRenderCoordinator {
         case .started:
             break
         case .completed:
-            let activeBlock = toolState.activeBlock
-            let ownsActiveBlock = activeBlock?.id == toolCall.id
-            let shouldRewriteActiveBlock = activeBlock.map { block in
-                // Safety fuse: if the terminal width changed between tool start
-                // and completion, the saved row count is stale. Emitting
-                // cursor-up / erase sequences based on a stale count can erase
-                // transcript rows or leave orphaned rows. Instead, degrade
-                // fail-safe: skip the destructive clear and append the
-                // completed block.
-                //
-                // A block that exceeded the scrolling region has already
-                // lost its earliest rows to scrollback. The same is true when
-                // its content consumes the whole region: the terminating
-                // newline needs one physical cursor row and scrolls the title
-                // beyond the top margin. Cursor-up / erase can no longer reach
-                // that title, leaving it above the completed redraw.
-                //
-                // A completion may be taller than the region. That does not make
-                // clearing unsafe when the pending block itself is still fully
-                // owned: normal output then scrolls inside the terminal's active
-                // scrolling region. Bounding pending blocks at start keeps them
-                // rewritable and avoids leaving the hourglass copy in the
-                // transcript beside a long completed result.
-                let maximumReplaceableRows = min(
-                    replaceableToolRowCapacity(
-                        block.maximumInPlaceRows
-                    ) ?? Int.max,
-                    replaceableToolRowCapacity(maximumInPlaceRows) ?? Int.max
-                )
-                return block.id == toolCall.id
-                    && standardErrorIsTerminal
-                    && block.writeSequence == emittedWriteCount
-                    && ownsScreenReceipt(block.screenAnchor)
-                    && block.columnWidth == columnWidth
-                    && block.rows <= maximumReplaceableRows
-            } ?? false
-
             // Starts transfer the one physical rewrite slot to the newest
             // block. A completion for an older or otherwise unowned tool is
             // append-only: it must not erase the newer block. It *does*,
@@ -261,12 +272,17 @@ extension TerminalChatRenderCoordinator {
                     for: .standardError
                 )
             }
+            if previewMergedToolCallID == toolCall.id {
+                previewMergedToolCallID = nil
+            }
         }
 
         writeToolBlockRows(
             renderRows,
             for: toolCall,
-            lifecycle: lifecycle
+            lifecycle: lifecycle,
+            titleRowCount: omitsHeaderAndTarget
+                && ToolCallPresentation.displayToolTarget(for: toolCall) != nil ? 0 : 1
         )
         if let pendingOwnership {
             toolState.activeBlock = ActiveToolBlock(
@@ -297,7 +313,8 @@ extension TerminalChatRenderCoordinator {
         for toolCall: DirectAgentToolCall,
         lifecycle: ToolBlockLifecycle,
         contentInsetWidth: Int,
-        columnWidth: Int
+        columnWidth: Int,
+        omitsHeaderAndTarget: Bool
     ) -> TerminalChat.ToolPresentationRows {
         let result: DirectAgentToolResult?
         switch lifecycle {
@@ -314,19 +331,22 @@ extension TerminalChatRenderCoordinator {
             columnWidth: columnWidth,
             // Both lifecycles stay compact. Captured source evidence is shown
             // only on demand by /artifacts, never from mutation arguments.
-            includesSourceChanges: false
+            includesSourceChanges: false,
+            omitsHeaderAndTarget: omitsHeaderAndTarget
         )
     }
 
     private func writeToolBlockRows(
         _ renderRows: TerminalChat.ToolPresentationRows,
         for toolCall: DirectAgentToolCall,
-        lifecycle: ToolBlockLifecycle
+        lifecycle: ToolBlockLifecycle,
+        titleRowCount: Int
     ) {
         TerminalOutputSynchronization.withTransaction {
             writeCompactToolLines(
                 renderRows.compactRows.map(\.plainText),
-                newline: lifecycle.isCompletion && renderRows.detailRows.isEmpty
+                newline: lifecycle.isCompletion && renderRows.detailRows.isEmpty,
+                titleRowCount: titleRowCount
             )
             guard !renderRows.detailRows.isEmpty else { return }
             writeToolBlock(
@@ -341,13 +361,15 @@ extension TerminalChatRenderCoordinator {
     private func writeCompactToolLines(
         _ lines: [String],
         newline: Bool = false,
-        terminator: String = "\n"
+        terminator: String = "\n",
+        titleRowCount: Int = 1
     ) {
         let text = TerminalChat.compactToolTerminalText(
             lines,
             lineInset: lineInset,
             newline: newline,
-            terminator: terminator
+            terminator: terminator,
+            titleRowCount: titleRowCount
         )
         writeRawChatError(text)
     }
@@ -510,7 +532,11 @@ extension TerminalChatRenderCoordinator {
                 maximumInPlaceRows: maximumInPlaceRows
             )
             if deferred.preparesOutput {
-                prepareForToolOutput()
+                if previewAlreadyShowedHeader(for: deferred.toolCall) {
+                    flushChatOutput()
+                } else {
+                    prepareForToolOutput()
+                }
             }
             if !deferred.lifecycle.isCompletion {
                 toolState.activeBlockIsSubAgentTool = deferred.isSubAgentTool

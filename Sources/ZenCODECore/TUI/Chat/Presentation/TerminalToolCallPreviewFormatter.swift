@@ -8,8 +8,9 @@
 import Foundation
 
 /// Draws a file write or edit while the model is still writing its tool call,
-/// as ds4-agent does: a header row with the target path, then the source text
-/// printed as it arrives and repainted in color one row at a time.
+/// as ds4-agent does: a header row naming the canonical tool with the target
+/// path, then the source text printed as it arrives and repainted in color one
+/// row at a time.
 ///
 /// A pure state machine: it takes the ``DirectAgentToolCallPreview`` fragments
 /// in stream order and returns the exact text to write, without any I/O.
@@ -54,8 +55,19 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     /// A tool whose calls are drawn, with the role of each argument it shows.
     /// Every other argument is not drawn.
     struct DrawnTool: Sendable, Equatable {
-        let label: String
+        /// The canonical tool name the header shows, so the header of a drawn
+        /// call is the header of the tool block that follows it.
+        let name: String
         let parameters: [String: ParameterRole]
+    }
+
+    /// What a drawn call showed when it ended: the canonical tool name, the
+    /// path it received, and whether that path reached the header row. The
+    /// tool block that follows the call uses it to avoid repeating the path.
+    struct DrawnCall: Sendable, Equatable {
+        let toolName: String
+        let path: String
+        let pathWasShown: Bool
     }
 
     private static let tabWidth = 4
@@ -80,13 +92,13 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     static func drawnTool(named name: String) -> DrawnTool? {
         switch normalizedToolName(name) {
         case "localwritefile":
-            DrawnTool(label: "write", parameters: contentParameters)
+            DrawnTool(name: "local.writeFile", parameters: contentParameters)
         case "localappend":
-            DrawnTool(label: "append", parameters: contentParameters)
+            DrawnTool(name: "local.append", parameters: contentParameters)
         case "localeditfile":
-            DrawnTool(label: "edit", parameters: editParameters)
+            DrawnTool(name: "local.editFile", parameters: editParameters)
         case "localreplace":
-            DrawnTool(label: "replace", parameters: editParameters)
+            DrawnTool(name: "local.replace", parameters: editParameters)
         default:
             nil
         }
@@ -109,8 +121,6 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     private let palette: TerminalMarkdownPalette
 
     private var tool: DrawnTool?
-    /// The name the call started with, for the icon of its header.
-    private var toolName = ""
     private var headerIsOpen = false
     /// The value color of the path stays open across its fragments, so the
     /// written text does not depend on how the stream was split; the header's
@@ -176,7 +186,8 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     ) -> String {
         switch preview {
         case let .toolStarted(name):
-            return finish(columns: columns) + (begin(toolNamed: name) ?? "")
+            let ended = finish(columns: columns)
+            return ended.text + (begin(toolNamed: name) ?? "")
         case let .parameterStarted(name):
             return beginParameter(named: name, columns: columns)
         case let .parameterText(text):
@@ -184,7 +195,7 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         case .parameterEnded:
             return endParameter(columns: columns)
         case .ended:
-            return finish(columns: columns)
+            return finish(columns: columns).text
         }
     }
 
@@ -198,7 +209,6 @@ struct TerminalToolCallPreviewFormatter: Sendable {
             return nil
         }
         tool = drawnTool
-        toolName = name
         headerIsOpen = true
         return headerTitle()
     }
@@ -206,14 +216,21 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     /// Ends the call, whatever its state. An open call's current source row
     /// is repainted when it can be and closed, the header row is closed, and
     /// the cursor is left at the start of a row; a suspended call has nothing
-    /// open and is forgotten without output.
-    mutating func finish(columns: () -> Int) -> String {
-        guard tool != nil else {
-            return ""
+    /// open and is forgotten without output. Returns the text to write and
+    /// what the call drew, or `nil` when no drawn call was open or suspended;
+    /// the path of a suspended call is not on screen, so it is never shown.
+    mutating func finish(columns: () -> Int) -> (text: String, drawn: DrawnCall?) {
+        guard let tool else {
+            return ("", nil)
         }
         let output = isSuspended ? "" : endParameter(columns: columns) + closeHeader()
+        let drawn = DrawnCall(
+            toolName: tool.name,
+            path: path,
+            pathWasShown: pathIsShown && !isSuspended
+        )
         resetCall()
-        return output
+        return (output, drawn)
     }
 
     /// Closes the open call's rows before other output, with the same text as
@@ -360,7 +377,7 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         guard let tool else {
             return ""
         }
-        let title = "\(ToolCallPresentation.toolIcon(for: toolName))  \(tool.label)"
+        let title = "\(ToolCallPresentation.toolIcon(for: tool.name))  \(tool.name)"
         return styled(title, TerminalStyle.Tool.title)
     }
 
@@ -499,7 +516,6 @@ struct TerminalToolCallPreviewFormatter: Sendable {
 
     private mutating func resetCall() {
         tool = nil
-        toolName = ""
         isSuspended = false
         headerIsOpen = false
         headerValueStyleIsOpen = false

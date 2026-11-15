@@ -61,7 +61,7 @@ extension ZenCODEACPBridge {
 
         Delegation rules:
         - \(delegation)
-        - Use role "Reviewer" and \(AgentProfileStore.delegationProfileClause(reviewers)). The Reviewer must not edit files.
+        - Use \(AgentProfileStore.delegationProfileClause(reviewers)). The Reviewer must not edit files.
         - Ask it to inspect the relevant current files and validation evidence, not merely trust \
         task status, attempt output, or plan claims.
         - Require concrete findings ordered by severity with file:line references when available, \

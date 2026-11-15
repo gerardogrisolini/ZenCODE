@@ -46,6 +46,7 @@ extension TerminalChatRenderCoordinator {
         overviewState.isAutomaticTerminalOverviewRenderingSuppressed = false
         // A tool call of an earlier turn never reopens in this one.
         endToolCallPreview()
+        clearToolCallPreviewDrawings()
     }
 
     @discardableResult

@@ -59,7 +59,7 @@ struct ZenTranscriptViewRenderTests {
     /// A pending agent that reasons, with no tool running.
     private static var reasoningSubAgent: DirectSubAgentRuntime.AgentSnapshot {
         DirectSubAgentRuntime.AgentSnapshot(
-            id: "a4", name: "planner", role: "Planner",
+            id: "a4", name: "planner",
             status: .running, pending: true,
             currentActivity: "Reading", currentActivityKind: .thinking,
             currentThought: "Reading",
@@ -71,7 +71,7 @@ struct ZenTranscriptViewRenderTests {
     /// snapshot keeps the call's name, but no tool runs.
     private static var writingAfterToolSubAgent: DirectSubAgentRuntime.AgentSnapshot {
         DirectSubAgentRuntime.AgentSnapshot(
-            id: "a5", name: "writer", role: "Developer",
+            id: "a5", name: "writer",
             status: .running, pending: true,
             currentToolName: "local.exec", currentToolTarget: "swift build", currentToolIsRunning: false,
             latestOutput: nil, latestError: nil, createdAt: .now, updatedAt: .now
@@ -81,7 +81,7 @@ struct ZenTranscriptViewRenderTests {
     private static var subAgentOverview: ChatSubAgentOverview {
         ChatSubAgentOverview(snapshots: [
             DirectSubAgentRuntime.AgentSnapshot(
-                id: "a1", taskID: "t1", taskAttemptOrdinal: 2, name: "dev", role: "Developer", profileName: "Developer",
+                id: "a1", taskID: "t1", taskAttemptOrdinal: 2, name: "dev", profileName: "Developer",
                 status: .running, pending: true, configuredModelID: "model",
                 currentActivity: "Reading", currentActivityKind: .thinking,
                 currentToolName: "local.exec", currentToolTarget: "swift build", currentToolIsRunning: true,
@@ -89,12 +89,12 @@ struct ZenTranscriptViewRenderTests {
                 latestOutput: nil, latestError: "boom", createdAt: .now, updatedAt: .now
             ),
             DirectSubAgentRuntime.AgentSnapshot(
-                id: "a2", name: "reviewer", role: "Reviewer",
+                id: "a2", name: "reviewer",
                 status: .queued, pending: true,
                 latestOutput: nil, latestError: nil, createdAt: .now, updatedAt: .now
             ),
             DirectSubAgentRuntime.AgentSnapshot(
-                id: "a3", name: "builder", role: "Builder",
+                id: "a3", name: "builder",
                 status: .idle, pending: false,
                 latestOutput: "Done.", latestError: nil, createdAt: .now, updatedAt: .now
             )
@@ -105,12 +105,12 @@ struct ZenTranscriptViewRenderTests {
     private static var finishedSubAgentOverview: ChatSubAgentOverview {
         ChatSubAgentOverview(snapshots: [
             DirectSubAgentRuntime.AgentSnapshot(
-                id: "a3", name: "builder", role: "Builder",
+                id: "a3", name: "builder",
                 status: .idle, pending: false,
                 latestOutput: "Done.", latestError: nil, createdAt: .now, updatedAt: .now
             ),
             DirectSubAgentRuntime.AgentSnapshot(
-                id: "a4", name: "tester", role: "Tester",
+                id: "a4", name: "tester",
                 status: .failed, pending: false,
                 latestOutput: nil, latestError: "The build failed.", createdAt: .now, updatedAt: .now
             )

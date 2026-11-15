@@ -250,11 +250,6 @@ enum TerminalSubAgentOverviewLayout {
                     maxWrappedLines: 1
                 )
             )
-            if !snapshot.role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                lines.append(
-                    .regular(metadataText(label: "role:", value: snapshot.role))
-                )
-            }
             if let profileName = snapshot.profileName?.nilIfBlank {
                 lines.append(
                     .regular(metadataText(label: "agent:", value: profileName))

@@ -66,7 +66,7 @@ extension PlanningCommandKernel {
 
         Delegate and coordinate:
         - Create exactly one sub-agent with agent.create. Use name \
-        "\(planAuthorAgentName)", role "Planner", and \(AgentProfileStore.delegationProfileClause(planners)).
+        "\(planAuthorAgentName)" and \(AgentProfileStore.delegationProfileClause(planners)).
         - Give that Planner the complete requested goal and every relevant constraint from the \
         conversation. Its runtime profile policy owns the brainstorming and plan-authoring protocol.
         - Wait for the Planner with agent.wait. It returns early when the Planner \
@@ -109,13 +109,13 @@ extension PlanningCommandKernel {
             \(plannerPlanSequenceFormatInstruction) \
             Then wait for that same agent. \(plannerWaitInstruction) \
             Do not reinterpret, summarize, or answer the reply yourself. If and only if that agent no \
-            longer exists, recreate exactly one agent named "\(planAuthorAgentName)" with role "Planner" and \
+            longer exists, recreate exactly one agent named "\(planAuthorAgentName)" with \
             \(profileClause), give it the original goal, the complete transcript below, and the \
             coordinator note above, and wait for it the same way.
             """
         } else {
             routing = """
-            Recreate exactly one agent named "\(planAuthorAgentName)" with role "Planner" and \
+            Recreate exactly one agent named "\(planAuthorAgentName)" with \
             \(profileClause), give it the original goal, the complete transcript below, and this \
             coordinator note unchanged: \(plannerDependenciesFormatInstruction) \
             \(plannerPlanSequenceFormatInstruction) Then wait for it. \

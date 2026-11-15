@@ -354,7 +354,6 @@ struct PlanCommandTests {
                 id: id,
                 rootSessionID: "planning-session",
                 name: PlanningCommandKernel.planAuthorAgentName,
-                role: AgentProfileStore.plannerAgentName,
                 profileID: AgentProfileRole.planner.rawValue,
                 profileRole: .planner,
                 status: status,
@@ -432,7 +431,6 @@ struct PlanCommandTests {
                 id: "planner-initial",
                 rootSessionID: "planning-session",
                 name: PlanningCommandKernel.planAuthorAgentName,
-                role: AgentProfileStore.plannerAgentName,
                 profileID: AgentProfileRole.planner.rawValue,
                 profileRole: .planner,
                 status: .idle,
@@ -879,14 +877,12 @@ struct PlanCommandTests {
             snapshots: [
                 subAgentSnapshot(
                     name: PlanningCommandKernel.planAuthorAgentName,
-                    role: "Planner",
                     status: .running,
                     pending: true,
                     latestOutput: "Draft"
                 ),
                 subAgentSnapshot(
                     name: "developer-agent",
-                    role: "Developer",
                     latestOutput: "Default fallback plan"
                 ),
             ],
@@ -1004,7 +1000,6 @@ struct PlanCommandTests {
 
     private func subAgentSnapshot(
         name: String,
-        role: String,
         status: DirectSubAgentRuntime.Status = .idle,
         pending: Bool = false,
         modelID: String? = nil,
@@ -1016,7 +1011,6 @@ struct PlanCommandTests {
         DirectSubAgentRuntime.AgentSnapshot(
             id: "agent-\(name)",
             name: name,
-            role: role,
             profileName: profileName,
             profileRole: profileRole,
             status: status,

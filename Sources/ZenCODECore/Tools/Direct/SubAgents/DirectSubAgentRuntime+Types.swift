@@ -15,7 +15,6 @@ extension DirectSubAgentRuntime {
         public let taskAttemptID: String?
         public let taskAttemptOrdinal: Int?
         public let name: String
-        public let role: String
         public let profileID: String?
         public let profileName: String?
         /// Role of the profile the agent was created from; `nil` only for a
@@ -81,7 +80,6 @@ extension DirectSubAgentRuntime {
             taskAttemptID: String? = nil,
             taskAttemptOrdinal: Int? = nil,
             name: String,
-            role: String,
             profileID: String? = nil,
             profileName: String? = nil,
             profileRole: AgentProfileRole? = nil,
@@ -115,7 +113,6 @@ extension DirectSubAgentRuntime {
             self.taskAttemptID = taskAttemptID?.nilIfBlank
             self.taskAttemptOrdinal = taskAttemptOrdinal
             self.name = name
-            self.role = role
             self.profileID = profileID?.nilIfBlank
             self.profileName = profileName?.nilIfBlank
             self.profileRole = profileRole
@@ -147,7 +144,6 @@ extension DirectSubAgentRuntime {
 
     public struct RequestedAgentPayload: Sendable {
         public let name: String
-        public let role: String
         public let profileReference: String?
         public let taskID: String?
         public let prompt: String?
@@ -192,7 +188,6 @@ extension DirectSubAgentRuntime {
 
         public init(
             name: String,
-            role: String,
             profileReference: String? = nil,
             taskID: String? = nil,
             prompt: String? = nil,
@@ -204,7 +199,6 @@ extension DirectSubAgentRuntime {
         ) {
             self.init(
                 name: name,
-                role: role,
                 profileReference: profileReference,
                 taskID: taskID,
                 prompt: prompt,
@@ -219,7 +213,6 @@ extension DirectSubAgentRuntime {
 
         init(
             name: String,
-            role: String,
             profileReference: String?,
             taskID: String?,
             prompt: String?,
@@ -231,7 +224,6 @@ extension DirectSubAgentRuntime {
             complexity: Int? = nil
         ) {
             self.name = name
-            self.role = role
             self.profileReference = profileReference?.nilIfBlank
             self.taskID = taskID?.nilIfBlank
             self.prompt = prompt?.nilIfBlank
@@ -263,7 +255,6 @@ extension DirectSubAgentRuntime {
         ) -> RequestedAgentPayload {
             RequestedAgentPayload(
                 name: name,
-                role: role,
                 profileReference: profileReference,
                 taskID: taskID,
                 prompt: prompt,
@@ -279,7 +270,6 @@ extension DirectSubAgentRuntime {
 
     public struct BackendContext: Sendable {
         public let requestedName: String
-        public let requestedRole: String
         public let profile: AgentProfile?
         /// The reference originally provided to `agent.create`, if any.
         public let requestedModelID: String?
@@ -310,7 +300,6 @@ extension DirectSubAgentRuntime {
 
         public init(
             requestedName: String,
-            requestedRole: String,
             profile: AgentProfile?,
             modelBinding: AgentModelBinding? = nil,
             modelID: String? = nil,
@@ -331,7 +320,6 @@ extension DirectSubAgentRuntime {
             }
             self.init(
                 requestedName: requestedName,
-                requestedRole: requestedRole,
                 profile: profile,
                 modelBinding: resolvedBinding,
                 modelSelection: nil,
@@ -347,7 +335,6 @@ extension DirectSubAgentRuntime {
 
         init(
             requestedName: String,
-            requestedRole: String,
             profile: AgentProfile?,
             modelBinding: AgentModelBinding?,
             modelSelection: AgentModelSelection?,
@@ -360,7 +347,6 @@ extension DirectSubAgentRuntime {
             inheritsFeatureExposures: Bool = false
         ) {
             self.requestedName = requestedName
-            self.requestedRole = requestedRole
             self.profile = profile
             self.requestedModelID = modelID?.nilIfBlank
             self.modelBinding = modelBinding
@@ -385,7 +371,6 @@ extension DirectSubAgentRuntime {
         ) -> BackendContext {
             BackendContext(
                 requestedName: requestedName,
-                requestedRole: requestedRole,
                 profile: profile,
                 modelBinding: modelBinding,
                 modelSelection: modelSelection,

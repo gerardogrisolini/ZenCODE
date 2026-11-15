@@ -370,7 +370,11 @@ differ from the defaults of ds4-agent.
   content of the parameter values is sampled normally.
 - While the model writes a call to `local.writeFile`, `local.append`,
   `local.editFile`, or `local.replace`, the terminal draws it live, as ds4-agent
-  does: a header row with the target path, then the text as it is generated.
+  does, with one difference in the header row: ds4-agent labels it with a short
+  word (`write`, `append`, `edit`, `replace`), while ZenCODE names the tool
+  canonically (`local.writeFile`, `local.append`, `local.editFile`,
+  `local.replace`). The header carries the target path, then the text follows as
+  it is generated.
   The old and new text of an edit start with `- ` and `+ `. A finished row is
   repainted with the syntax colors of the file's extension when it is plain
   ASCII and narrower than the terminal; any other row stays as written, and
@@ -379,9 +383,13 @@ differ from the defaults of ds4-agent.
   of the call. When other output lands while a file is being written (a system
   message, a request for authorization), the preview closes at the end of the
   row it is on and reopens with its header at the next text of the call. When
-  the call is complete its compact tool block follows as
-  for any other tool. Every other tool, `local.multiEdit` and
-  `local.applyPatch` included, shows only its compact block. The preview exists
+  the call is complete its compact tool block follows. When the preview showed
+  the same tool and path, the block follows it right away (no message,
+  overview, or other output in between), and the channel is an interactive
+  terminal, the block does not repeat the path and keeps only its status row;
+  otherwise it keeps its header and target as for any other tool.
+  Every other tool, `local.multiEdit` and `local.applyPatch` included, shows
+  only its compact block. The preview exists
   only in the terminal chat: ACP, the headless and JSONL output, Telegram, the
   macOS app, saved sessions, and sub-agents never receive it.
 

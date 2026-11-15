@@ -1022,7 +1022,6 @@ struct ZenVoiceWindowTests {
             id: "planner-1",
             rootSessionID: root,
             name: "plan-author",
-            role: AgentProfileRole.planner.title,
             profileRole: .planner,
             status: .idle,
             pending: false,

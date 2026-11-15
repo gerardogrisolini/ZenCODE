@@ -1437,7 +1437,6 @@ struct TerminalChatRenderingTests {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_1",
             name: "swift-scan",
-            role: "swift-scan",
             status: .closed,
             pending: false,
             latestOutput: "Trovati 3 file `.swift`: 1. `./Tests/ZenCODECoreTests/AgentCoreSessionRunnerTests.swift` 2. `./Tests/ZenCODECoreTests/MemoryServiceTests.swift` 3. `./Tests/ZenCODECoreTests/VeryLongFileNameThatShouldWrapInsideTheBox.swift`",
@@ -1471,7 +1470,6 @@ struct TerminalChatRenderingTests {
             DirectSubAgentRuntime.AgentSnapshot(
                 id: "agent-first",
                 name: "first-agent",
-                role: "",
                 status: .closed,
                 pending: false,
                 latestOutput: nil,
@@ -1482,7 +1480,6 @@ struct TerminalChatRenderingTests {
             DirectSubAgentRuntime.AgentSnapshot(
                 id: "agent-second",
                 name: "second-agent",
-                role: "",
                 status: .closed,
                 pending: false,
                 latestOutput: nil,
@@ -1493,7 +1490,6 @@ struct TerminalChatRenderingTests {
             DirectSubAgentRuntime.AgentSnapshot(
                 id: "agent-third",
                 name: "third-agent",
-                role: "",
                 status: .closed,
                 pending: false,
                 latestOutput: nil,
@@ -1542,7 +1538,6 @@ struct TerminalChatRenderingTests {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_2",
             name: "planner",
-            role: "Planner",
             status: .running,
             pending: true,
             modelID: "gpt-5",
@@ -1573,7 +1568,6 @@ struct TerminalChatRenderingTests {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_profile",
             name: "builder",
-            role: "Builder",
             profileID: "developer-profile",
             profileName: "Developer",
             status: .running,
@@ -1593,14 +1587,19 @@ struct TerminalChatRenderingTests {
         let lines = rendered.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
         #expect(rendered.contains("agent: Developer"))
+        #expect(!rendered.contains("role:"))
 
-        // The "agent:" line must appear after the "role:" line.
-        let roleIndex = lines.firstIndex { $0.contains("role: Builder") }
+        // The "agent:" line comes right after the "id:" line and before the
+        // "model:" line.
+        let idIndex = lines.firstIndex { $0.contains("id: agent_profile") }
         let agentIndex = lines.firstIndex { $0.contains("agent: Developer") }
-        #expect(roleIndex != nil)
+        let modelIndex = lines.firstIndex { $0.contains("model: gpt-5") }
+        #expect(idIndex != nil)
         #expect(agentIndex != nil)
-        if let roleIndex, let agentIndex {
-            #expect(agentIndex > roleIndex)
+        #expect(modelIndex != nil)
+        if let idIndex, let agentIndex, let modelIndex {
+            #expect(agentIndex == idIndex + 1)
+            #expect(modelIndex > agentIndex)
         }
     }
 
@@ -1612,7 +1611,6 @@ struct TerminalChatRenderingTests {
             DirectSubAgentRuntime.AgentSnapshot(
                 id: "agent_signature",
                 name: "planner",
-                role: "Planner",
                 status: .running,
                 pending: true,
                 modelID: "gpt-5",
@@ -1664,7 +1662,6 @@ struct TerminalChatRenderingTests {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_resolved",
             name: "planner",
-            role: "Planner",
             status: .running,
             pending: true,
             modelID: "gpt-5",
@@ -1694,7 +1691,6 @@ struct TerminalChatRenderingTests {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_configured_model",
             name: "developer",
-            role: "Developer",
             status: .running,
             pending: true,
             configuredModelID: "binding:chatgpt:gpt-5.6-terra",
@@ -1730,7 +1726,6 @@ struct TerminalChatRenderingTests {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_remote",
             name: "worker",
-            role: "Worker",
             status: .running,
             pending: true,
             modelID: rawModelID,
@@ -1773,7 +1768,6 @@ struct TerminalChatRenderingTests {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_thinking",
             name: "researcher",
-            role: "researcher",
             status: .running,
             pending: true,
             currentActivity: nil,
@@ -1808,7 +1802,6 @@ struct TerminalChatRenderingTests {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_tool",
             name: "researcher",
-            role: "researcher",
             status: .running,
             pending: true,
             currentToolName: toolCall.name,
@@ -1838,7 +1831,6 @@ struct TerminalChatRenderingTests {
             DirectSubAgentRuntime.AgentSnapshot(
                 id: "a\(index)",
                 name: "scout-\(index)",
-                role: "",
                 profileID: "dev",
                 profileName: "Dev",
                 status: .running,
@@ -1915,7 +1907,6 @@ struct TerminalChatRenderingTests {
         let firstCompletion = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent-response-token",
             name: "reviewer",
-            role: "reviewer",
             status: .idle,
             pending: false,
             latestOutput: "**Done**",
@@ -1927,7 +1918,6 @@ struct TerminalChatRenderingTests {
         let closedAfterCompletion = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent-response-token",
             name: "reviewer",
-            role: "reviewer",
             status: .closed,
             pending: false,
             latestOutput: "**Done**",
@@ -1939,7 +1929,6 @@ struct TerminalChatRenderingTests {
         let repeatedContentInNewCompletion = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent-response-token",
             name: "reviewer",
-            role: "reviewer",
             status: .idle,
             pending: false,
             latestOutput: "**Done**",

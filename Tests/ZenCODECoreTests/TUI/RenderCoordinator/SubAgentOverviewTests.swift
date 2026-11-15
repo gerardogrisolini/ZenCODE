@@ -217,7 +217,6 @@ extension TerminalChatRenderCoordinatorTests {
             DirectSubAgentRuntime.AgentSnapshot(
                 id: "agent_thinking",
                 name: "researcher",
-                role: "researcher",
                 status: .running,
                 pending: true,
                 currentActivity: paragraph,

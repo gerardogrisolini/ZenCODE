@@ -92,7 +92,7 @@ struct AgentProfileRoleCommandTests {
             Self.approvePlan(on: terminal)
 
             let prompt = try #require(Self.hiddenPrompt(await terminal.terminalAction(presenting: terminal.chatSession.runReviewCommand(line: "/review"))))
-            #expect(prompt.contains("role \"Reviewer\" and profile \"\(Roles.customReviewer.id)\";"))
+            #expect(prompt.contains("agent.create using profile \"\(Roles.customReviewer.id)\";"))
             #expect(!prompt.contains("profile \"reviewer\""))
             #expect(!prompt.contains("any of them is acceptable"))
         }

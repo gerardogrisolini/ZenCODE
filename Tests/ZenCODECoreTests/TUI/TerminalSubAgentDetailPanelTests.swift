@@ -473,14 +473,14 @@ struct TerminalSubAgentDetailPanelTests {
     @Test(arguments: [5, 8, 12, 20, 40])
     func everyListRowIsTruncatedToTheFrameWidth(columns: Int) {
         let muted = TerminalStyle.Text.muted, reset = TerminalStyle.reset
-        let role = muted + "role:" + reset + " " + String(repeating: "Reviews the change ", count: 6)
+        let profile = muted + "agent:" + reset + " " + String(repeating: "Reviewer of the change ", count: 6)
         let entries: [TerminalSubAgentDetailPanel.ChoiceEntry] = [
             .init(
                 id: "agent-1",
                 title: "worker " + muted + "agent-with-a-rather-long-identifier" + reset,
-                details: [role, muted + "agent:" + reset + " Developer · " + muted + "model:" + reset + " GPT-5"]
+                details: [profile, muted + "model:" + reset + " GPT-5"]
             ),
-            .init(id: "agent-2", title: "reviewer", details: [role])
+            .init(id: "agent-2", title: "reviewer", details: [profile])
         ]
         let panel = TerminalSubAgentDetailPanel(mode: .choosing(entries: entries, focusedIndex: 0))
         let lines = panel.frameLines(rows: 12, columns: columns)
@@ -491,10 +491,10 @@ struct TerminalSubAgentDetailPanelTests {
         if columns >= 40 {
             // A cut row keeps its marker and its indentation.
             #expect(rows[0].hasPrefix("▸ worker agent-with"))
-            #expect(rows[1].hasPrefix("┃   role: Reviews the change"))
+            #expect(rows[1].hasPrefix("┃   agent: Reviewer of"))
             #expect(rows[1].hasSuffix("..."))
-            #expect(rows[2] == "┃   agent: Developer · model: GPT-5")
-            #expect(rows[5].hasPrefix("    role: Reviews the change"))
+            #expect(rows[2] == "┃   model: GPT-5")
+            #expect(rows[5].hasPrefix("    agent: Reviewer of"))
             #expect(rows[5].hasSuffix("..."))
         }
     }

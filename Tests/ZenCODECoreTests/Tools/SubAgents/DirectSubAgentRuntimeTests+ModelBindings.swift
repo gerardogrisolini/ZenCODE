@@ -56,7 +56,6 @@ extension DirectSubAgentRuntimeTests {
         let output = try await runtime.createAgents(
             arguments: [
                 "name": .string("planning-pass"),
-                "role": .string("Planner"),
                 "profile": .string("Planner"),
                 "model": .string("planner-model"),
                 "prompt": .string("Create the plan")
@@ -205,7 +204,6 @@ extension DirectSubAgentRuntimeTests {
                 "agents": .array([
                     .object([
                         "name": .string("quick-task"),
-                        "role": .string("Minimal"),
                         "profile": .string("Minimal"),
                     ]),
                 ]),
@@ -240,7 +238,6 @@ extension DirectSubAgentRuntimeTests {
         )
         let context = DirectSubAgentRuntime.BackendContext(
             requestedName: "Builder",
-            requestedRole: "worker",
             profile: profile,
             modelBinding: AgentModelBinding(
                 id: "builder-model",

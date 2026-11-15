@@ -512,7 +512,6 @@ struct DirectToolExecutorFeatureExposureTests {
         for inherits in [false, true] {
             let context = DirectSubAgentRuntime.BackendContext(
                 requestedName: "Builder 1",
-                requestedRole: "builder",
                 profile: builderProfile,
                 sharedChatSenderID: "builder-agent",
                 sharedChatRoomID: Self.coordinatorSessionID,

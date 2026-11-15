@@ -4,8 +4,9 @@
 //
 //  The terminal presenter of the live file write/edit preview: the pending
 //  assistant commentary goes out before the header of a drawn call and is
-//  offered to voice mode once; the tool call that follows finds it taken. A
-//  call that is not drawn leaves the commentary to its tool start.
+//  offered to voice mode once; the tool call that follows finds it taken and,
+//  on a terminal, merges its block into the preview header. A call that is
+//  not drawn leaves the commentary to its tool start.
 //
 
 import Foundation
@@ -26,13 +27,13 @@ struct TerminalToolCallPreviewPresenterTests {
         let voiceQueue: TerminalChatEventQueue
     }
 
-    private func makeFixture() async throws -> Fixture {
+    private func makeFixture(standardErrorIsTerminal: Bool = false) async throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("tool-call-preview-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let renderer = TerminalChatRenderCoordinator(
             stdinIsTerminal: false, standardOutput: nil, standardError: nil,
-            standardOutputIsTerminal: false, standardErrorIsTerminal: false,
+            standardOutputIsTerminal: false, standardErrorIsTerminal: standardErrorIsTerminal,
             cursorTopology: .separate,
             capturesWrites: true, streamingFlushDelay: nil, columnWidthProvider: { 100 }
         )
@@ -59,8 +60,13 @@ struct TerminalToolCallPreviewPresenterTests {
         )
     }
 
-    private func toolCall(name: String, arguments: [String: Any], json: String) -> DirectAgentToolCall {
-        presentedToolCall(id: "call-1", name: name, argumentsObject: arguments, argumentsJSON: json)
+    private func toolCall(
+        id: String = "call-1",
+        name: String,
+        arguments: [String: Any],
+        json: String
+    ) -> DirectAgentToolCall {
+        presentedToolCall(id: id, name: name, argumentsObject: arguments, argumentsJSON: json)
     }
 
     private func offeredCommentaries(_ queue: TerminalChatEventQueue) async -> [String] {
@@ -80,7 +86,8 @@ struct TerminalToolCallPreviewPresenterTests {
 
     @Test
     func thePendingCommentaryGoesOutBeforeTheHeaderOnce() async throws {
-        let fixture = try await makeFixture()
+        // A terminal channel, so the tool block can merge into the preview.
+        let fixture = try await makeFixture(standardErrorIsTerminal: true)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let presenter = fixture.terminal.chatSessionPresenter
 
@@ -105,9 +112,16 @@ struct TerminalToolCallPreviewPresenterTests {
         let text = await plainText(fixture.renderer)
         #expect(text.components(separatedBy: Self.commentary).count - 1 == 1)
         let commentary = try #require(text.range(of: Self.commentary))
-        let header = try #require(text.range(of: "🛠️  write A.swift"))
+        let header = try #require(text.range(of: "🛠️  local.writeFile A.swift"))
         #expect(commentary.upperBound <= header.lowerBound)
-        #expect(text.contains("🛠️  write A.swift\nlet x = 1\n"))
+        // The tool block that follows the preview of the same call merges into
+        // its header: the tool is named once and the status row closes it.
+        #expect(text.components(separatedBy: "local.writeFile").count - 1 == 1)
+        let screen = terminalScreenText(
+            await fixture.renderer.capturedText(on: .standardError),
+            width: 100
+        )
+        #expect(screen == "\n\n🛠️  local.writeFile A.swift\nlet x = 1\n⏳\n")
         #expect(await fixture.buffer.takePending() == "")
         #expect(await offeredCommentaries(fixture.voiceQueue) == [Self.commentary])
     }
@@ -139,6 +153,7 @@ struct TerminalToolCallPreviewPresenterTests {
         #expect(text.components(separatedBy: Self.commentary).count - 1 == 1)
         #expect(await offeredCommentaries(fixture.voiceQueue) == [Self.commentary])
     }
+
     @Test
     func twoDrawnCallsOfOneBlockTakeTheCommentaryOnce() async throws {
         let fixture = try await makeFixture()
@@ -165,11 +180,13 @@ struct TerminalToolCallPreviewPresenterTests {
             await presenter.presentToolCallPreview(event)
         }
         await presenter.presentToolCallStarted(toolCall(
+            id: "call-1",
             name: "local.writeFile",
             arguments: ["path": "A.swift", "content": "let a = 1\n"],
             json: #"{"path":"A.swift","content":"let a = 1\n"}"#
         ))
         await presenter.presentToolCallStarted(toolCall(
+            id: "call-2",
             name: "local.editFile",
             arguments: ["path": "B.swift", "old": "", "new": "let b = 2\n"],
             json: #"{"path":"B.swift","old":"","new":"let b = 2\n"}"#
@@ -178,8 +195,8 @@ struct TerminalToolCallPreviewPresenterTests {
         let text = await plainText(fixture.renderer)
         #expect(text.components(separatedBy: Self.commentary).count - 1 == 1)
         let commentary = try #require(text.range(of: Self.commentary))
-        let first = try #require(text.range(of: "🛠️  write A.swift\nlet a = 1\n"))
-        let second = try #require(text.range(of: "🛠️  edit B.swift\n+ let b = 2\n"))
+        let first = try #require(text.range(of: "🛠️  local.writeFile A.swift\nlet a = 1\n"))
+        let second = try #require(text.range(of: "🛠️  local.editFile B.swift\n+ let b = 2\n"))
         #expect(commentary.upperBound <= first.lowerBound)
         #expect(first.upperBound <= second.lowerBound)
         #expect(await fixture.buffer.takePending() == "")

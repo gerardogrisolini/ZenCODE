@@ -282,7 +282,7 @@ public enum SystemPromptBuilder {
         In every agent.create `agents` item, pass the exact profile name as `profile`. For profiles with configured bindings, \
         pass the exact `binding:...` value shown after “pass model” as `model`; it is required for those profiles. \
         Do not substitute provider names, display names, raw model slugs, or aliases for a binding. Give each sub-agent \
-        an explicit role and scope.
+        an explicit scope.
         """
         // The paragraph is offered only when a builder is actually delegatable:
         // `roster` already dropped the profiles with no routable binding.
@@ -332,7 +332,7 @@ public enum SystemPromptBuilder {
         Delegation by role:
         You delegate by profile role, never by profile name: each project resolves the role to its own associated profiles and model bindings, so a profile or model you name may not exist there.
         \(roleLines)
-        In every agent.create `agents` item pass `profileRole`, `complexity` (1-10: \(TaskRecord.complexityRubric)), `workingDirectory` (the project folder, an existing directory inside your working directory), a precise `prompt`, and a short descriptive `role`. Omit `complexity` when the item has `taskID`: the task's complexity applies. Never pass `profile` or `model`: the runtime picks the profile visible to that project and the lowest-capability authorized binding that meets the complexity (otherwise its highest binding, reporting the capability gap), and the agent.create result names the chosen profile and model.
+        In every agent.create `agents` item pass `profileRole`, `complexity` (1-10: \(TaskRecord.complexityRubric)), `workingDirectory` (the project folder, an existing directory inside your working directory), and a precise `prompt`. Omit `complexity` when the item has `taskID`: the task's complexity applies. Never pass `profile` or `model`: the runtime picks the profile visible to that project and the lowest-capability authorized binding that meets the complexity (otherwise its highest binding, reporting the capability gap), and the agent.create result names the chosen profile and model.
         """
         guard roles.contains(.builder) else {
             return roleSection

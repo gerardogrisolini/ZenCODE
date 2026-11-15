@@ -275,7 +275,6 @@ struct TerminalSubAgentDetailControllerTests {
         toolName: String? = nil,
         toolIsRunning: Bool = false,
         second: TimeInterval = 0,
-        role: String = "Reviews the change",
         profileName: String? = nil,
         configuredModelID: String? = nil,
         modelID: String? = nil,
@@ -284,7 +283,6 @@ struct TerminalSubAgentDetailControllerTests {
         DirectSubAgentRuntime.AgentSnapshot(
             id: id,
             name: name,
-            role: role,
             profileName: profileName,
             status: status,
             pending: pending,
@@ -509,10 +507,10 @@ struct TerminalSubAgentDetailControllerTests {
         let harness = DetailHarness(transcript: transcript(["SECOND_AGENT"], agentID: "agent-2"))
         let controller = harness.makeController()
         let agents = [
-            agent("agent-1", name: "worker"),
-            agent("agent-2", name: "worker", status: .idle, pending: false),
-            agent("agent-3", name: "reviewer"),
-            agent("agent-4", name: "  ")
+            agent("agent-1", name: "worker", profileName: "Developer"),
+            agent("agent-2", name: "worker", status: .idle, pending: false, profileName: "Developer"),
+            agent("agent-3", name: "reviewer", profileName: "Developer"),
+            agent("agent-4", name: "  ", profileName: "Developer")
         ]
         controller.open(choosing: agents)
         func focus() -> Int? {
@@ -530,8 +528,8 @@ struct TerminalSubAgentDetailControllerTests {
             "worker \(muted)agent-1\(reset)", "worker \(muted)agent-2\(reset)", "reviewer", "agent-4"
         ])
         // Every entry keeps its own details, the shared names included.
-        let role = TerminalSubAgentOverviewLayout.metadataText(label: "role:", value: "Reviews the change")
-        #expect(entries.allSatisfy { $0.details == [role] })
+        let profile = TerminalSubAgentOverviewLayout.metadataText(label: "agent:", value: "Developer")
+        #expect(entries.allSatisfy { $0.details == [profile] })
         #expect(focus() == 0)
         #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
 
@@ -566,7 +564,7 @@ struct TerminalSubAgentDetailControllerTests {
         controller.stop()
     }
 
-    @Test func theListEntriesShowTheRoleTheAgentAndTheModelOfTheSnapshots() async {
+    @Test func theListEntriesShowTheAgentAndTheModelOfTheSnapshots() async {
         typealias Layout = TerminalSubAgentOverviewLayout
         let harness = DetailHarness(transcript: nil)
         let controller = harness.makeController(modelTitleResolver: { "Title of \($0)" })
@@ -583,9 +581,9 @@ struct TerminalSubAgentDetailControllerTests {
                     completionTokenCount: 80
                 )
             ),
-            agent("agent-2", name: "tester", role: "  ", modelID: "local-model"),
-            agent("agent-3", name: "planner", role: "Plans\nthe   work  ", profileName: "Planner"),
-            agent("agent-4", name: "bare", role: "", profileName: "  ")
+            agent("agent-2", name: "tester", modelID: "local-model"),
+            agent("agent-3", name: "planner", profileName: "Planner"),
+            agent("agent-4", name: "bare", profileName: "  ")
         ]
         controller.open(choosing: agents)
         guard case let .choosing(entries, _) = controller.panel.mode else {
@@ -593,49 +591,43 @@ struct TerminalSubAgentDetailControllerTests {
             return
         }
         let dot = " \(Layout.dimText("·")) "
-        // The labels of the detail header: the role, then the agent and the
-        // configured model, titled, without the token counters.
+        // The labels of the detail header: the agent and the configured
+        // model, titled, without the token counters.
         #expect(entries[0].details == [
-            Layout.metadataText(label: "role:", value: "Reviews the change"),
             Layout.metadataText(label: "agent:", value: "Developer") + dot
                 + Layout.metadataText(label: "model:", value: "Title of gpt-5")
         ])
-        // Without a configured model the reported one; a blank role leaves no row.
+        // Without a configured model the reported one.
         #expect(entries[1].details == [Layout.metadataText(label: "model:", value: "Title of local-model")])
-        // A role on several lines takes one row.
-        #expect(entries[2].details == [
-            Layout.metadataText(label: "role:", value: "Plans the   work"),
-            Layout.metadataText(label: "agent:", value: "Planner")
-        ])
+        #expect(entries[2].details == [Layout.metadataText(label: "agent:", value: "Planner")])
+        // A blank profile and no model leave no row.
         #expect(entries[3].details.isEmpty)
 
         // Only what does not go stale: no status, no activity, no counters.
         let text = entries.flatMap { [$0.title] + $0.details }.map(TerminalANSIText.stripANSI)
         #expect(text == [
-            "worker", "role: Reviews the change", "agent: Developer · model: Title of gpt-5",
+            "worker", "agent: Developer · model: Title of gpt-5",
             "tester", "model: Title of local-model",
-            "planner", "role: Plans the   work", "agent: Planner",
+            "planner", "agent: Planner",
             "bare"
         ])
 
         // The whole list fits the frame, one blank row between the entries.
         let frame = controller.panel.frameLines(rows: 20, columns: 60)
         #expect(harness.frames.last == frame)
-        #expect(Array(bodyContents(frame).prefix(12)) == [
+        #expect(Array(bodyContents(frame).prefix(10)) == [
             "▸ worker",
-            "┃   role: Reviews the change",
             "┃   agent: Developer · model: Title of gpt-5",
             "",
             "  tester",
             "    model: Title of local-model",
             "",
             "  planner",
-            "    role: Plans the   work",
             "    agent: Planner",
             "",
             "  bare"
         ])
-        #expect(bodyContents(frame).dropFirst(12).allSatisfy { $0.isEmpty })
+        #expect(bodyContents(frame).dropFirst(10).allSatisfy { $0.isEmpty })
 
         // Enter opens the agent of the focused entry.
         await controller.handle(.focusNext)

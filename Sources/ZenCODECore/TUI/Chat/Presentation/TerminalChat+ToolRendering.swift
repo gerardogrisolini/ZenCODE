@@ -25,7 +25,8 @@ extension TerminalChat {
         statusDetail: String?,
         contentInsetWidth: Int,
         columnWidth: Int,
-        includesSourceChanges: Bool = true
+        includesSourceChanges: Bool = true,
+        omitsHeaderAndTarget: Bool = false
     ) -> ToolPresentationRows {
         let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
         let statusIcon = result.map { result in
@@ -38,7 +39,8 @@ extension TerminalChat {
                 statusIcon: statusIcon,
                 statusDetail: statusDetail,
                 contentInsetWidth: contentInsetWidth,
-                columnWidth: columnWidth
+                columnWidth: columnWidth,
+                omitsHeaderAndTarget: omitsHeaderAndTarget
             ).map(DetailedToolRow.text),
             detailRows: includesSourceChanges
                 ? safelyWrappedDetailedToolRows(
@@ -99,12 +101,13 @@ extension TerminalChat {
         _ lines: [String],
         lineInset: String,
         newline: Bool = false,
-        terminator: String = "\n"
+        terminator: String = "\n",
+        titleRowCount: Int = 1
     ) -> String {
         let text = lines
             .enumerated()
             .map { index, line in
-                "\r\u{1B}[2K\(lineInset)\(renderCompactToolLine(line, isTitle: index == 0))\(TerminalStyle.reset)"
+                "\r\u{1B}[2K\(lineInset)\(renderCompactToolLine(line, isTitle: index < titleRowCount))\(TerminalStyle.reset)"
             }
             .joined(separator: "\n")
         return "\(text)\(terminator)\(newline ? "\n" : "")"
@@ -122,25 +125,36 @@ extension TerminalChat {
         return "\(baseColor)\(renderCompactToolDuration(in: line, restoring: baseColor))"
     }
 
+    /// Builds the compact rows of a call. `omitsHeaderAndTarget` drops both the
+    /// header and the target from the status row: the live preview of a file
+    /// write or edit already showed the canonical tool name and the path, so
+    /// the block that follows it keeps only its status. The flag is ignored
+    /// when the call has no target: the block then stays complete.
     nonisolated static func compactToolLines(
         for toolCall: DirectAgentToolCall,
         statusIcon: String,
         statusDetail: String? = nil,
         contentInsetWidth: Int = 0,
-        columnWidth: Int? = nil
+        columnWidth: Int? = nil,
+        omitsHeaderAndTarget: Bool = false
     ) -> [String] {
         let title = ToolArgumentReader.sanitizedMetadataText(toolCall.name) ?? "tool"
         let header = "\(ToolCallPresentation.toolIcon(for: toolCall.name))  \(title)"
         let target = ToolCallPresentation.displayToolTarget(for: toolCall)
             .flatMap(ToolArgumentReader.sanitizedMetadataText)
+        let omitsHeader = omitsHeaderAndTarget && target != nil
+        let statusTarget = omitsHeader ? "" : (target ?? header)
         let statusLine = compactToolStatusLine(
-            target: target ?? header,
+            target: statusTarget,
             statusIcon: statusIcon,
             statusDetail: statusDetail,
             collapsesTargetWhitespace: target != nil,
             contentInsetWidth: contentInsetWidth,
             columnWidth: columnWidth
         )
+        if omitsHeader {
+            return [statusLine]
+        }
         return target == nil ? [statusLine] : [header, statusLine]
     }
 

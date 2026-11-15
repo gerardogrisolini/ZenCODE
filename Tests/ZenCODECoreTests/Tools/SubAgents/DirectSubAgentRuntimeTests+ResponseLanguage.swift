@@ -82,7 +82,6 @@ extension DirectSubAgentRuntimeTests {
     func aBlankSectionFallsBackToTheGenericRule() {
         let prompt = DirectSubAgentRuntime.systemPrompt(
             name: "worker",
-            role: "developer",
             responseLanguageSection: "  \n"
         )
         #expect(prompt.contains(SystemPromptBuilder.responseLanguageSection()))

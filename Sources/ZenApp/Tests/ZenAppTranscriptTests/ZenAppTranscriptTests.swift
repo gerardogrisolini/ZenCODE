@@ -395,7 +395,6 @@ struct ZenStatusRoleTests {
             DirectSubAgentRuntime.AgentSnapshot(
                 id: UUID().uuidString,
                 name: "agent",
-                role: "Developer",
                 status: status,
                 pending: status.isPending,
                 latestOutput: output,
@@ -433,7 +432,6 @@ struct ZenSubAgentsCardTests {
     private func snapshot(
         id: String = "agent",
         name: String = "agent",
-        role: String = "Developer",
         profileName: String? = nil,
         taskID: String? = nil,
         taskAttemptOrdinal: Int? = nil,
@@ -453,7 +451,6 @@ struct ZenSubAgentsCardTests {
             taskID: taskID,
             taskAttemptOrdinal: taskAttemptOrdinal,
             name: name,
-            role: role,
             profileName: profileName,
             status: status,
             pending: status.isPending,
@@ -505,10 +502,9 @@ struct ZenSubAgentsCardTests {
         #expect(segments.map(\.role) == [nil])
     }
 
-    @Test("metadata shows role, agent, task, attempt, model, and tokens when present")
+    @Test("metadata shows agent, task, attempt, model, and tokens when present")
     func metadataWithEverything() {
         let lines = metadata(snapshot(
-            role: "Developer",
             profileName: "Builder",
             taskID: "transcript-views",
             taskAttemptOrdinal: 2,
@@ -521,7 +517,7 @@ struct ZenSubAgentsCardTests {
             )
         ))
         #expect(lines == [
-            "role: Developer  ·  agent: Builder",
+            "agent: Builder",
             "task: transcript-views  ·  attempt: 2",
             "model: claude-opus  ·  c:48.0k p:1.2k g:312"
         ])
@@ -530,30 +526,29 @@ struct ZenSubAgentsCardTests {
 
     @Test("metadata leaves out what the snapshot does not have")
     func metadataOmitsMissingValues() {
-        // Role only.
-        #expect(metadata(snapshot(role: "Reviewer")) == ["role: Reviewer"])
-        // A blank role and no profile, task, model, or metrics: nothing.
-        #expect(metadata(snapshot(role: "  ")).isEmpty)
+        // No profile, task, model, or metrics: nothing.
+        #expect(metadata(snapshot()).isEmpty)
+        // A blank profile is not shown.
+        #expect(metadata(snapshot(profileName: "  ")).isEmpty)
         // An attempt without a task is not shown.
-        #expect(metadata(snapshot(role: "", taskAttemptOrdinal: 3)).isEmpty)
+        #expect(metadata(snapshot(taskAttemptOrdinal: 3)).isEmpty)
         // A task without an attempt.
-        #expect(metadata(snapshot(role: "", taskID: "t1")) == ["task: t1"])
+        #expect(metadata(snapshot(taskID: "t1")) == ["task: t1"])
         // Only the agent profile.
-        #expect(metadata(snapshot(role: "", profileName: "Tester")) == ["agent: Tester"])
+        #expect(metadata(snapshot(profileName: "Tester")) == ["agent: Tester"])
     }
 
     @Test("the model falls back to the reported one and the counters can stand alone")
     func metadataModelAndTokens() {
-        #expect(metadata(snapshot(role: "", modelID: "gpt-5")) == ["model: gpt-5"])
-        #expect(metadata(snapshot(role: "", configuredModelID: " ", modelID: "gpt-5")) == ["model: gpt-5"])
+        #expect(metadata(snapshot(modelID: "gpt-5")) == ["model: gpt-5"])
+        #expect(metadata(snapshot(configuredModelID: " ", modelID: "gpt-5")) == ["model: gpt-5"])
         // Only some of the counters.
         let partial = DirectAgentGenerationMetrics(promptTokenCount: 10, completionTokenCount: 5)
-        #expect(metadata(snapshot(role: "", configuredModelID: "m", metrics: partial)) == ["model: m  ·  p:10 g:5"])
+        #expect(metadata(snapshot(configuredModelID: "m", metrics: partial)) == ["model: m  ·  p:10 g:5"])
         // Counters without a model.
-        #expect(metadata(snapshot(role: "", metrics: partial)) == ["p:10 g:5"])
+        #expect(metadata(snapshot(metrics: partial)) == ["p:10 g:5"])
         // Metrics without any counter.
         #expect(metadata(snapshot(
-            role: "",
             metrics: DirectAgentGenerationMetrics(promptTokenCount: nil, completionTokenCount: nil)
         )).isEmpty)
     }
@@ -562,7 +557,7 @@ struct ZenSubAgentsCardTests {
     func metadataColors() {
         let lines = ZenSubAgentRow.metadataLines(
             for: snapshot(
-                role: "Developer",
+                profileName: "Developer",
                 taskID: "t1",
                 taskAttemptOrdinal: 1,
                 configuredModelID: "m",
@@ -571,7 +566,7 @@ struct ZenSubAgentsCardTests {
             palette: palette
         )
         #expect(lines.count == 3)
-        let labels: Set<String> = ["role: ", "task: ", "attempt: ", "model: ", "  ·  ", "p:"]
+        let labels: Set<String> = ["agent: ", "task: ", "attempt: ", "model: ", "  ·  ", "p:"]
         for run in lines.flatMap(\.self) {
             if labels.contains(run.text) {
                 #expect(run.color == palette.textMuted, "\(run.text)")

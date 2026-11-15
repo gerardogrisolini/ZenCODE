@@ -151,7 +151,7 @@ extension DirectSubAgentRuntimeTests {
         // still wins the tie, both when sufficient and when short of complexity.
         for complexity in [5, 9] {
             let resolution = try DirectSubAgentRuntime.resolvingProfileRole(
-                for: DirectSubAgentRuntime.RequestedAgentPayload(name: "worker", role: "worker"),
+                for: DirectSubAgentRuntime.RequestedAgentPayload(name: "worker"),
                 role: .developer,
                 complexity: complexity,
                 profiles: [custom, system],
@@ -178,7 +178,7 @@ extension DirectSubAgentRuntimeTests {
             role: .developer
         )
         let resolution = try DirectSubAgentRuntime.resolvingProfileRole(
-            for: DirectSubAgentRuntime.RequestedAgentPayload(name: "worker", role: "worker"),
+            for: DirectSubAgentRuntime.RequestedAgentPayload(name: "worker"),
             role: .developer,
             complexity: 4,
             profiles: [unboundCustom, unboundSystem, Self.seniorDeveloper],
@@ -196,7 +196,7 @@ extension DirectSubAgentRuntimeTests {
 
         do {
             _ = try DirectSubAgentRuntime.resolvingProfileRole(
-                for: DirectSubAgentRuntime.RequestedAgentPayload(name: "worker", role: "worker"),
+                for: DirectSubAgentRuntime.RequestedAgentPayload(name: "worker"),
                 role: .developer,
                 complexity: 4,
                 profiles: [Self.seniorDeveloper],

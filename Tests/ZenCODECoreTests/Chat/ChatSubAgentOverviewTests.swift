@@ -243,7 +243,6 @@ struct ChatSubAgentOverviewTests {
         return DirectSubAgentRuntime.AgentSnapshot(
             id: id,
             name: "Agent \(id)",
-            role: "developer",
             overviewBatchID: batchID,
             isInCurrentOverviewWave: isInCurrentWave,
             status: status,

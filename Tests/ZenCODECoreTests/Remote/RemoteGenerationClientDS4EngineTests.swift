@@ -303,7 +303,6 @@ struct RemoteGenerationClientDS4EngineTests {
         let child = try #require(
             try factory(DirectSubAgentRuntime.BackendContext(
                 requestedName: "child",
-                requestedRole: "worker",
                 profile: nil
             )) as? RemoteGenerationClient
         )
