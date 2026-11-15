@@ -237,17 +237,19 @@ The chat panel (see [Shared chat](#shared-chat)), the composer, and the
 status bar are in the Chat tab only, which keeps its scroll position and your
 draft while another tab shows. When the session waits for an answer while
 another tab shows, the Chat tab shows a dot, and the window never switches to
-it by itself: the tool consents, the menus, and the requests for a line of
-text are sheets of the window, over any tab. The commands you launch (the
-toolbar buttons, the menu items, New and
-Save Session, loading or deleting a saved session) select the Chat tab before
-they start, so you see their result; **Show Chat Reader** (⌃Y) selects it and
-opens the reader. Esc works in the Chat tab only: in a sub-agent tab it does
-nothing. ⌘. (**Stop** in the **Session** menu) stops the turn from any tab,
-without changing tab. The toolbar and
-the artifacts sidebar belong to the window. The tabs are a state of the
-window: they are not saved, a new or loaded session closes the sub-agent tabs
-and shows the Chat tab, and closing the window stops them.
+it by itself: the tool consents and the requests for a line of text are
+sheets of the window, over any tab, and the menus of the commands open in a
+popover above the composer, or under the toolbar button that launched their
+command, in the Chat tab only, so a menu that waits while another tab shows
+opens again when you select the Chat tab. The commands you launch (the
+toolbar buttons, the menu items, New and Save Session, loading or deleting a
+saved session) select the Chat tab before they start, so you see their
+result; **Show Chat Reader** (⌃Y) selects it and opens the reader. Esc works
+in the Chat tab only: in a sub-agent tab it does nothing. ⌘. (**Stop** in the
+**Session** menu) stops the turn from any tab, without changing tab. The
+toolbar and the artifacts sidebar belong to the window. The tabs are a state
+of the window: they are not saved, a new or loaded session closes the
+sub-agent tabs and shows the Chat tab, and closing the window stops them.
 
 ## Composer
 
@@ -540,11 +542,19 @@ before Return answers, and key repeats always are, so a keystroke meant for
 the composer cannot approve a call.
 
 The menus of the commands (`/models`, `/think`, `/agents`, `/tools`,
-`/skills`, `/sessions`, `/open`, and the others) open as sheets: ↑ and ↓ move
-the highlight, typing filters the list, Return confirms, and Esc cancels. In a
-menu with checkboxes, Space toggles the highlighted row. A request for a line
-of text is a sheet with a text field. `/open` lists the files, URLs, and
-attachments of the conversation and opens the one you choose with its default
+`/skills`, `/sessions`, `/open`, and the others) open in a popover, and not
+in a sheet of the window. The menus of a command you launch with a toolbar
+button open under that button, with the arrow pointing at it; all the
+others open above the composer, with the arrow pointing at the composer: a
+command you type, a menu item, a toolbar button you choose from the
+toolbar's overflow menu, and the menus the session asks for by itself. ↑
+and ↓ move the highlight, typing filters the list, Return confirms, and Esc
+cancels. A click outside the popover cancels the menu, like Esc. In a
+menu with checkboxes, Space toggles the highlighted row. The list grows with
+its rows up to a maximum height and then scrolls; it does not shrink while you
+filter. A request for a line of text is a sheet of the window with a text
+field, like the tool consent. `/open` lists the files, URLs, and attachments
+of the conversation and opens the one you choose with its default
 application.
 
 ## Status bar
@@ -667,7 +677,12 @@ thinking level, as icons only (the status bar shows the agent, the model, and
 the level), the buttons for the tools, the skills, and the task graph, and a
 **Changes** menu (show changes, show changes with the diff, undo changes,
 review changes). Always last comes the **Artifacts** button, which shows and
-hides the artifacts sidebar.
+hides the artifacts sidebar. The menus of the command a button runs (the
+agent, the model, the thinking level, the tools, the skills, the task
+graph) open in a popover under that button, with the arrow pointing at it;
+when the window is too narrow and you choose the button from the toolbar's
+overflow menu, they open above the composer. The items of the **Changes**
+menu and of the **Session** menu open their menus above the composer.
 The **Session** menu has Stop (⌘.), then **Show Chat Reader** (**Hide Chat
 Reader**, ⌃Y) in a section of its own, then **Full Access** (⌃G) in a section
 of its own, then **Voice Mode** and **Pause Voice** (**Resume Voice**) in a
@@ -714,7 +729,7 @@ starts in the default mode.
 | Esc | Sub-agent tab | Does nothing |
 | ⌘. | Window | Stops the turn, from any tab |
 | ←, →, Return, Esc | Consent sheet | Moves the focus, chooses the focused button, denies |
-| ↑, ↓, Space, Return, Esc | Menu sheet | Moves, toggles or chooses, confirms, cancels |
+| ↑, ↓, Space, Return, Esc | Menu popover | Moves, toggles or chooses, confirms, cancels |
 | ⌘O | Menu bar | Opens a folder in a window |
 | ⇧⌘N | Menu bar | Starts a new session |
 | ⌘S | Menu bar | Saves the session |
@@ -727,8 +742,8 @@ The app runs the shared slash commands of the Chat API, with its own
 | Commands | Notes |
 | --- | --- |
 | `/help` | Lists the commands the window runs |
-| `/models`, `/think`, `/agents` | Selection sheets |
-| `/tools`, `/skills` | Selection sheets; `/skills` also installs and uninstalls |
+| `/models`, `/think`, `/agents` | Selection popovers |
+| `/tools`, `/skills` | Selection popovers; `/skills` also installs and uninstalls |
 | `/sessions` | List, save, new, compact, delete, restore |
 | `/attach`, `/open` | Attachment picker and files, default application |
 | `/artifacts` | Shows or hides the artifacts sidebar; runs while a turn runs |
@@ -769,7 +784,7 @@ the root graph already resolves. The root graph never depends on it.
 | `ZenAppMarkdown` | The Markdown renderer on swift-markdown: blocks, tables, diffs, and the syntax highlighter |
 | `ZenAppSession` | The composition and the window model, without SwiftUI: one `ChatSessionHost` over the production runner, one slot per window, the transcript projection, the line routing, the prompt history, the window's tabs with the model of each sub-agent tab, and the window's shared chat (its observation of the room and the reader) |
 | `ZenAppTranscript` | The conversation views: prompts, tool calls, thinking, artifacts, summaries, notices, the task-graph and sub-agent cards, and the detail card of a sub-agent tab |
-| `ZenAppControls` | The composer (with the completion of slash commands and mentions), the status bar, the consent sheet, and the menu and request sheets |
+| `ZenAppControls` | The composer (with the completion of slash commands and mentions), the status bar, the consent sheet, the menu popover, and the request sheet |
 | `ZenCODEApp` | The app shell: the window group, the menu bar, the sessions sidebar, the artifacts sidebar, the toolbar, the tab bar and the sub-agent tabs, the shared-chat panel, and the launch |
 
 Every target has its tests in `Tests/<Target>Tests` (`ZenCODEAppTests` covers

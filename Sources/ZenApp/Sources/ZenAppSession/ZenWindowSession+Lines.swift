@@ -55,16 +55,23 @@ extension ZenWindowSession {
     /// line, without touching the draft or the history. The conversation is
     /// selected first, so the line's result shows (the menu and toolbar
     /// commands come here).
-    public func run(_ line: String) {
+    ///
+    /// `menuAnchor` is the point of the window the operator launched the
+    /// line from (a toolbar button), over which the menus the line asks for
+    /// open while it runs (``pendingRequestAnchor``); `nil` opens them over
+    /// the composer. A line that waits in the queue or is refused forgets
+    /// it: its menus open over the composer.
+    public func run(_ line: String, menuAnchor: ZenMenuAnchor? = nil) {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isClosed else { return }
         selectTab(.chat)
-        route(trimmed)
+        route(trimmed, menuAnchor: menuAnchor)
     }
 
-    /// Routes `line`; `false` when it was refused.
+    /// Routes `line`, launched from `menuAnchor` (``run(_:menuAnchor:)``);
+    /// `false` when it was refused.
     @discardableResult
-    func route(_ line: String) -> Bool {
+    func route(_ line: String, menuAnchor: ZenMenuAnchor? = nil) -> Bool {
         let route = ZenLineRoute.route(
             for: line,
             // A turn adopted from Telegram runs as the window's line.
@@ -79,9 +86,9 @@ extension ZenWindowSession {
         )
         switch route {
         case .run:
-            startLine(line)
+            startLine(line, menuAnchor: menuAnchor)
         case .runBeside:
-            startBeside(line)
+            startBeside(line, menuAnchor: menuAnchor)
         case .queue:
             guard queuedLines.count < Self.queueCapacity else {
                 appendLocalNow(.local(text: Self.queueFullMessage, isFailure: true))
@@ -97,9 +104,9 @@ extension ZenWindowSession {
         return true
     }
 
-    func startLine(_ line: String) {
+    func startLine(_ line: String, menuAnchor: ZenMenuAnchor? = nil) {
         startExclusive { [weak self] stop in
-            await self?.execute(line, stop: stop)
+            await self?.execute(line, stop: stop, menuAnchor: menuAnchor)
         }
     }
 
@@ -143,11 +150,11 @@ extension ZenWindowSession {
         }
     }
 
-    private func startBeside(_ line: String) {
+    private func startBeside(_ line: String, menuAnchor: ZenMenuAnchor? = nil) {
         let token = UUID()
         besideTasks[token] = Task { [weak self] in
             // Stop ends the exclusive line, not a command beside it.
-            await self?.execute(line, stop: ZenLineStop())
+            await self?.execute(line, stop: ZenLineStop(), menuAnchor: menuAnchor)
             guard let self else { return }
             self.besideTasks[token] = nil
             if self.statusFactsAreStale, !self.isBusy, self.besideTasks.isEmpty {
@@ -165,8 +172,20 @@ extension ZenWindowSession {
     /// The flow of one line (Docs/embedding.md, "Running a Line"), then the
     /// status facts when the line may have changed them, and the git summary.
     /// `stop` keeps a turn the line builds from starting once the operator
-    /// stopped the line.
-    private func execute(_ line: String, stop: ZenLineStop) async {
+    /// stopped the line. `menuAnchor`, the point the line was launched from,
+    /// counts among ``runningMenuAnchors`` from before the line runs until
+    /// it ends, so the requests the line asks for open over it.
+    private func execute(_ line: String, stop: ZenLineStop, menuAnchor: ZenMenuAnchor? = nil) async {
+        let anchorToken = menuAnchor.map { anchor in
+            let token = UUID()
+            runningMenuAnchors.append((token: token, anchor: anchor))
+            return token
+        }
+        defer {
+            if let anchorToken {
+                runningMenuAnchors.removeAll { $0.token == anchorToken }
+            }
+        }
         guard !isClosed else { return }
         await perform(line, stop: stop)
         guard !isClosed else { return }

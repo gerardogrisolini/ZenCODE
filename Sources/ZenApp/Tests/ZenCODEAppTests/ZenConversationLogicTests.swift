@@ -443,6 +443,32 @@ struct ZenWindowTabBarTests {
         #expect(!ZenWindowTabBarLogic.showsChatBadge(hasPendingRequest: false, selectedTab: .chat))
     }
 
+    @Test("a menu popover shows the pending request in the conversation only, over the presenter it was launched from")
+    func menuPopoverRequest() {
+        let request = UUID()
+        let models = ZenMenuAnchor(id: "/models")
+        let tools = ZenMenuAnchor(id: "/tools")
+        // The composer (presenter nil) gets a request without an anchor.
+        #expect(ZenWindowTabBarLogic.menuPopoverRequest(request, selectedTab: .chat, anchor: nil, presenter: nil) == request)
+        // A request launched from a toolbar button is not the composer's.
+        #expect(ZenWindowTabBarLogic.menuPopoverRequest(request, selectedTab: .chat, anchor: models, presenter: nil) == nil)
+        // The button gets the request launched from it, not another's.
+        #expect(ZenWindowTabBarLogic.menuPopoverRequest(request, selectedTab: .chat, anchor: models, presenter: models) == request)
+        #expect(ZenWindowTabBarLogic.menuPopoverRequest(request, selectedTab: .chat, anchor: tools, presenter: models) == nil)
+        #expect(ZenWindowTabBarLogic.menuPopoverRequest(request, selectedTab: .chat, anchor: nil, presenter: models) == nil)
+        // A sub-agent tab hides the composer: no popover, the toolbar's
+        // neither, and the request waits.
+        #expect(ZenWindowTabBarLogic.menuPopoverRequest(request, selectedTab: .subAgent("a"), anchor: nil, presenter: nil) == nil)
+        #expect(ZenWindowTabBarLogic.menuPopoverRequest(request, selectedTab: .subAgent("a"), anchor: models, presenter: models) == nil)
+        #expect(ZenWindowTabBarLogic.menuPopoverRequest(request, selectedTab: .subAgent("a"), anchor: models, presenter: nil) == nil)
+        // Back in the conversation: the same request again.
+        #expect(ZenWindowTabBarLogic.menuPopoverRequest(request, selectedTab: .chat, anchor: nil, presenter: nil) == request)
+        #expect(ZenWindowTabBarLogic.menuPopoverRequest(request, selectedTab: .chat, anchor: models, presenter: models) == request)
+        #expect(ZenWindowTabBarLogic.menuPopoverRequest(UUID?.none, selectedTab: .chat, anchor: nil, presenter: nil) == nil)
+        #expect(ZenWindowTabBarLogic.menuPopoverRequest(UUID?.none, selectedTab: .chat, anchor: models, presenter: models) == nil)
+        #expect(ZenWindowTabBarLogic.menuPopoverRequest(UUID?.none, selectedTab: .subAgent("a"), anchor: nil, presenter: nil) == nil)
+    }
+
     @Test("a sub-agent tab is titled with the agent's name on one line, cut with an ellipsis, else its id")
     func titles() {
         #expect(ZenWindowTabBarLogic.title(name: "transcript-dev", agentID: "agent_1") == "transcript-dev")

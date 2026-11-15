@@ -87,6 +87,19 @@ extension ZenWindowSession {
         }
         let firstRequest = snapshot.pendingRequests.first
         if pendingRequest != firstRequest {
+            // A request keeps its anchor for as long as it waits: it has one
+            // presenter (each has a gate of its own).
+            let anchor: ZenMenuAnchor?
+            if let firstRequest {
+                anchor = firstRequest.id == pendingRequest?.id
+                    ? pendingRequestAnchor
+                    : runningMenuAnchors.last?.anchor
+            } else {
+                anchor = nil
+            }
+            if pendingRequestAnchor != anchor {
+                pendingRequestAnchor = anchor
+            }
             pendingRequest = firstRequest
         }
         let generating = snapshot.turn.isGenerating

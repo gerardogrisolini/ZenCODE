@@ -107,7 +107,8 @@ struct ZenConversationScreen: View {
         // `onExitCommand` covers Esc without a focused field. Neither acts
         // while an input method composes: its Esc cancels the composition.
         // A sub-agent tab consumes Esc and does nothing; the window's sheets
-        // (the consent sheet's Esc denies) handle their own Esc.
+        // (the consent sheet's Esc denies) and the composer's menu popover
+        // handle their own Esc.
         .onKeyPress(.escape, phases: .down) { _ in
             guard !ZenComposerLogic.focusedInputHasMarkedText() else { return .ignored }
             perform(escapeAction)
@@ -128,7 +129,7 @@ struct ZenConversationScreen: View {
             }
         }
         // Back in the conversation the composer takes the focus again,
-        // unless a request waits: its sheet has it.
+        // unless a request waits: its sheet or its popover has it.
         .onChange(of: session.selectedTab) { _, tab in
             if tab == .chat, session.pendingRequest == nil {
                 isComposerFocused = true
@@ -160,8 +161,10 @@ struct ZenConversationScreen: View {
 /// The floating chrome under the conversation, in one glass container: the
 /// shared-chat panel (``ZenSharedChatPanel``), the composer (which does not
 /// add a container of its own), and the status bar. A tool consent is a sheet
-/// of the window (``ZenConsentSheet``), so it never changes the height of the
-/// chrome.
+/// of the window (``ZenConsentSheet``) and a menu a popover
+/// (``ZenChoicePopover``, in the conversation only) over the composer, or
+/// over the toolbar button that launched its command (``ZenWindowToolbar``),
+/// so neither changes the height of the chrome.
 ///
 /// It owns the window's reader keys: the composer and the panel hand them
 /// over (``ZenComposerActions/readerKey``), and while the reader is open in
@@ -182,6 +185,7 @@ struct ZenBottomChrome: View {
             VStack(alignment: .leading, spacing: 8) {
                 ZenSharedChatPanel(session: session, scroller: scroller, readerKey: readerKey)
                 ZenWindowComposer(session: session, focus: focus, didSubmit: didSubmit, readerKey: readerKey)
+                    .modifier(ZenWindowMenuPopover(session: session))
                 ZenWindowStatusBar(session: session)
             }
         }
@@ -204,6 +208,32 @@ struct ZenBottomChrome: View {
                 scroll: { scroller.scroll($0) }
             )
         }
+    }
+}
+
+/// The menu popover of a window's composer: the session's pending menu, its
+/// arrow pointing to the composer, while the conversation is selected and
+/// the menu opens over the composer, not over the toolbar button that
+/// launched its command
+/// (``ZenWindowTabBarLogic/menuPopoverRequest(_:selectedTab:anchor:presenter:)``).
+/// The window presents the other requests as sheets (``ZenSessionWindow``).
+/// A modifier of its own, so the request, its anchor, and the tab are read
+/// by its body alone, not by the chrome's or the composer's.
+private struct ZenWindowMenuPopover: ViewModifier {
+    let session: ZenWindowSession
+
+    func body(content: Content) -> some View {
+        content
+            .zenPendingMenuPopover(
+                ZenWindowTabBarLogic.menuPopoverRequest(
+                    session.pendingRequest,
+                    selectedTab: session.selectedTab,
+                    anchor: session.pendingRequestAnchor,
+                    presenter: nil
+                )
+            ) { requestID, answer in
+                session.answer(requestID, with: answer)
+            }
     }
 }
 

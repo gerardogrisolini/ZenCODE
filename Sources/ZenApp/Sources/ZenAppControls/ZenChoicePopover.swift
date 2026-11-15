@@ -1,8 +1,8 @@
 //
-//  ZenChoiceSheet.swift
+//  ZenChoicePopover.swift
 //  ZenApp
 //
-//  The sheet of the single, multiple and focused choice menus.
+//  The popover of the single, multiple and focused choice menus.
 //
 
 import Foundation
@@ -10,7 +10,9 @@ import SwiftUI
 import ZenAppTheme
 import ZenCODECore
 
-/// A choice menu sheet driven by a ``ZenChoiceMenuState``.
+/// A choice menu popover driven by a ``ZenChoiceMenuState``, presented by
+/// ``View/zenPendingMenuPopover(_:arrowEdge:onAnswer:)`` over the view it
+/// points to.
 ///
 /// Items are grouped under muted section headers, details are secondary and
 /// the current item is marked in the accent color. A search field filters by
@@ -22,11 +24,28 @@ import ZenCODECore
 ///   click on the checkbox) toggles, Return (or a double click) confirms on
 ///   the focused row with the request's confirm label.
 ///
-/// Esc or Cancel answers `nil`. The sheet answers once.
-public struct ZenChoiceSheet: View {
+/// The popover is ``width`` points wide. Its list grows with the items up to
+/// ``maximumListHeight`` points and scrolls the rest, and it keeps the
+/// tallest height it had while a search filters it, so the popover does not
+/// change size at every key (``listHeight(contentHeight:)``).
+///
+/// Esc or Cancel answers `nil`. The popover answers once.
+public struct ZenChoicePopover: View {
+    /// The width of the popover, padding included.
+    static let width: CGFloat = 460
+    /// The padding around the content of the popover.
+    static let padding: CGFloat = 16
+    /// The tallest the list grows: a longer menu scrolls inside it.
+    static let maximumListHeight: CGFloat = 360
+    /// The shortest the list gets, before it has measured its rows and for
+    /// a menu without items.
+    static let minimumListHeight: CGFloat = 32
+
     @Environment(\.zenPalette) private var palette
     @State private var state: ZenChoiceMenuState
     @State private var hasAnswered = false
+    /// The tallest height of the list's rows measured so far.
+    @State private var contentHeight: CGFloat = 0
     @FocusState private var focus: Field?
     private let onAnswer: @MainActor (ChatPendingRequest.Answer?) -> Void
 
@@ -52,9 +71,25 @@ public struct ZenChoiceSheet: View {
             list
             footer
         }
-        .padding(20)
-        .frame(minWidth: 460, idealWidth: 540, minHeight: 340, idealHeight: 480)
+        .padding(Self.padding)
+        .frame(width: Self.width)
+        .defaultFocus($focus, .list)
         .onAppear { focus = .list }
+    }
+
+    // MARK: - Height
+
+    /// The height of the list for rows `contentHeight` points tall: theirs,
+    /// at least ``minimumListHeight`` and at most ``maximumListHeight``.
+    static func listHeight(contentHeight: CGFloat) -> CGFloat {
+        min(max(contentHeight, minimumListHeight), maximumListHeight)
+    }
+
+    /// The content height the list keeps after measuring its rows `measured`
+    /// points tall: the tallest so far, so the list does not shrink while a
+    /// search filters it.
+    static func retainedContentHeight(_ previous: CGFloat, measured: CGFloat) -> CGFloat {
+        max(previous, measured)
     }
 
     // MARK: - Parts
@@ -114,6 +149,10 @@ public struct ZenChoiceSheet: View {
                 }
                 .padding(4)
             }
+            .scrollBounceBehavior(.basedOnSize)
+            .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentSize.height }) { _, height in
+                contentHeight = Self.retainedContentHeight(contentHeight, measured: height)
+            }
             .onChange(of: state.highlightedID) { _, newValue in
                 if let newValue {
                     proxy.scrollTo(newValue)
@@ -125,7 +164,7 @@ public struct ZenChoiceSheet: View {
                 }
             }
         }
-        .frame(maxHeight: .infinity)
+        .frame(height: Self.listHeight(contentHeight: contentHeight))
         .focusable()
         .focused($focus, equals: .list)
         .focusEffectDisabled()
@@ -290,7 +329,7 @@ public struct ZenChoiceSheet: View {
 }
 
 #Preview("Choice – single") {
-    ZenChoiceSheet(
+    ZenChoicePopover(
         state: ZenChoiceMenuState(
             title: "Choose the model",
             items: ZenControlsPreviewData.items,
@@ -302,7 +341,7 @@ public struct ZenChoiceSheet: View {
 }
 
 #Preview("Choice – multiple") {
-    ZenChoiceSheet(
+    ZenChoicePopover(
         state: ZenChoiceMenuState(
             title: "Select the tool groups",
             items: ZenControlsPreviewData.items,
@@ -314,7 +353,7 @@ public struct ZenChoiceSheet: View {
 }
 
 #Preview("Choice – focused") {
-    ZenChoiceSheet(
+    ZenChoicePopover(
         state: ZenChoiceMenuState(
             title: "Project agents",
             items: ZenControlsPreviewData.items,

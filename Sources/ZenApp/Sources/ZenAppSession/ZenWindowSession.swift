@@ -17,8 +17,10 @@ import ZenCODECore
 /// The window renders the state of the current incarnation's reducer: the
 /// closed rows (``transcript``), the block still streaming (``liveThought``,
 /// ``liveAssistantText``), the status bar (``status``), and the request it
-/// waits for (``pendingRequest``). Each is published on its own and assigned
-/// only when it changes, so a streamed token touches the live block alone.
+/// waits for (``pendingRequest``), with the point of the window its menus
+/// open over (``pendingRequestAnchor``). Each is published on its own and
+/// assigned only when it changes, so a streamed token touches the live block
+/// alone.
 /// A prompt a command built (`/plan`, `/goal`, `/review`, an approved plan, a
 /// Planner continuation) is hidden, as in the terminal: its turn shows, its
 /// prompt does not. A reply the operator typed that the session absorbs (the
@@ -49,10 +51,10 @@ import ZenCODECore
 /// each followed by its own ``ZenSubAgentTranscriptModel``, which keeps what
 /// it read for as long as the tab stays open and knows whether its tab is
 /// the selected one. Only the operator opens and selects tabs; the commands
-/// the operator launches (``run(_:)``, the session operations) select the
-/// conversation before they start, so their result shows; a new or loaded
-/// session closes the sub-agent tabs and selects the conversation, and
-/// closing the window stops them. The tabs are transient state of the
+/// the operator launches (``run(_:menuAnchor:)``, the session operations)
+/// select the conversation before they start, so their result shows; a new
+/// or loaded session closes the sub-agent tabs and selects the conversation,
+/// and closing the window stops them. The tabs are transient state of the
 /// window: never saved.
 ///
 /// The access mode of the app's runner (``ZenAppRuntime/localExecAccessMode``,
@@ -135,6 +137,15 @@ public final class ZenWindowSession: Identifiable {
     public internal(set) var subAgents = ChatSubAgentOverview(snapshots: [])
     /// The oldest interaction the session waits for.
     public internal(set) var pendingRequest: ChatPendingRequest?
+    /// The point of the window from which the operator launched the line
+    /// that asked for ``pendingRequest`` (``run(_:menuAnchor:)``), where its
+    /// menus open; `nil` when they open over the composer: a line typed or
+    /// launched elsewhere, a request no line of the window asked for, no
+    /// request. Assigned with ``pendingRequest``, in the same turn of the
+    /// main actor: a new request takes the anchor of the latest line
+    /// launched with one that still runs, else `nil`, and keeps it for as
+    /// long as it waits.
+    public internal(set) var pendingRequestAnchor: ZenMenuAnchor?
     /// A line runs that is not beside another one: a turn, or a command,
     /// possibly waiting for an answer.
     public internal(set) var isBusy = false
@@ -342,6 +353,10 @@ public final class ZenWindowSession: Identifiable {
     /// one for every line.
     @ObservationIgnored var lineStop: ZenLineStop?
     @ObservationIgnored var besideTasks: [UUID: Task<Void, Never>] = [:]
+    /// The lines launched with a menu anchor that still run, oldest first,
+    /// each with a token of its own: two may overlap (an exclusive line that
+    /// ends and a command beside it), and the end of one keeps the other's.
+    @ObservationIgnored var runningMenuAnchors: [(token: UUID, anchor: ZenMenuAnchor)] = []
     @ObservationIgnored var incarnationTask: Task<Void, Never>?
     @ObservationIgnored var snapshotTask: Task<Void, Never>?
     @ObservationIgnored var gitTask: Task<Void, Never>?

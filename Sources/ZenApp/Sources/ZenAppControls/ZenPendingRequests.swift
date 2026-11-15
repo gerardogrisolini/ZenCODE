@@ -2,9 +2,10 @@
 //  ZenPendingRequests.swift
 //  ZenApp
 //
-//  Presents the session's pending operator requests (tool consents, menus,
-//  text line, attachment picker, workspace access) and answers each one
-//  exactly once.
+//  Presents the session's pending operator requests (tool consents, text
+//  line, attachment picker, workspace access) and answers each one exactly
+//  once. The choice menus are a popover of their own
+//  (`ZenPendingMenuPopover.swift`).
 //
 
 import Foundation
@@ -16,8 +17,6 @@ extension View {
     /// Presents `request` and reports the operator's answer with `onAnswer`.
     ///
     /// - `.toolConsent`: a ``ZenConsentSheet``.
-    /// - `.chooseOne`, `.chooseMany`, `.chooseManyWithFocus`: a
-    ///   ``ZenChoiceSheet``.
     /// - `.readLine`: a ``ZenTextLineSheet``.
     /// - `.pickAttachment`: the file importer (images and movies, one file,
     ///   opened at the starting directory), answering `.attachment(url)`.
@@ -25,6 +24,11 @@ extension View {
     ///   once, since the app is not sandboxed.
     /// - A kind newer than the app: answered `nil` at once, so the command
     ///   that asked never waits for an answer the app cannot give.
+    ///
+    /// The menus (`.chooseOne`, `.chooseMany`, `.chooseManyWithFocus`) are
+    /// not presented here, and wait:
+    /// ``zenPendingMenuPopover(_:arrowEdge:onAnswer:)`` presents them in a
+    /// ``ZenChoicePopover``, applied to the view the popover points to.
     ///
     /// The sheet closes when the request disappears or changes id. Each
     /// request is answered at most once: a cancelled or dismissed sheet or
@@ -40,7 +44,8 @@ extension View {
 
 /// The surface that presents a request kind.
 enum ZenPendingRequestPresentation: Equatable {
-    /// A choice menu sheet.
+    /// A choice menu popover
+    /// (``View/zenPendingMenuPopover(_:arrowEdge:onAnswer:)``).
     case menu(ZenChoiceMenuState)
     /// A text line sheet.
     case textLine(prompt: String)
@@ -102,11 +107,14 @@ struct ZenAutomaticAnswer: Equatable {
     let answer: ChatPendingRequest.Answer?
 }
 
-/// Bookkeeping that keeps every request answered at most once.
+/// Bookkeeping that keeps every request answered at most once. Each
+/// presenting modifier keeps its own: the window sheets and the importer
+/// (``View/zenPendingRequests(_:onAnswer:)``), the menu popover
+/// (``View/zenPendingMenuPopover(_:arrowEdge:onAnswer:)``).
 struct ZenPendingRequestGate: Equatable {
     private(set) var answeredIDs: Set<UUID> = []
-    /// The request whose sheet appeared last.
-    private(set) var presentedSheetID: UUID?
+    /// The request whose sheet or popover appeared last.
+    private(set) var presentedID: UUID?
     /// The request whose importer was dismissed (its answer comes from the
     /// importer's completion or cancellation).
     private(set) var dismissedImporterID: UUID?
@@ -122,20 +130,22 @@ struct ZenPendingRequestGate: Equatable {
         answeredIDs.insert(id).inserted
     }
 
-    mutating func sheetDidAppear(_ id: UUID) {
-        presentedSheetID = id
+    /// Notes that the sheet or the popover of the request `id` is on screen.
+    mutating func presentationDidAppear(_ id: UUID) {
+        presentedID = id
     }
 
-    /// The request a dismissed sheet answers with `nil`: the sheet on screen,
-    /// when it still shows the current request and was not answered. A sheet
-    /// closed because its request was withdrawn or replaced answers nothing.
-    func sheetDismissalTarget(currentRequestID: UUID?) -> UUID? {
-        guard let presentedSheetID,
-              presentedSheetID == currentRequestID,
-              isOpen(presentedSheetID) else {
+    /// The request a dismissed sheet or popover answers with `nil`: the one
+    /// on screen, when it still shows the current request and was not
+    /// answered. A sheet or popover closed because its request was withdrawn,
+    /// replaced, or hidden answers nothing.
+    func dismissalTarget(currentRequestID: UUID?) -> UUID? {
+        guard let presentedID,
+              presentedID == currentRequestID,
+              isOpen(presentedID) else {
             return nil
         }
-        return presentedSheetID
+        return presentedID
     }
 
     mutating func importerDidDismiss(_ id: UUID) {
@@ -148,16 +158,39 @@ struct ZenPendingRequestGate: Equatable {
     }
 }
 
-/// A sheet presented for a request.
-struct ZenPresentedSheet: Identifiable {
-    enum Content {
+/// A sheet presented for a request: a tool consent or a text line.
+struct ZenPresentedSheet: Identifiable, Equatable {
+    enum Content: Equatable {
         case consent(AgentToolAuthorizationRequest)
-        case menu(ZenChoiceMenuState)
         case textLine(prompt: String)
     }
 
     let id: UUID
     let content: Content
+
+    /// The sheet of the request `id` of `kind` while it waits for its
+    /// answer; `nil` once it is answered, and for a kind without a sheet: a
+    /// menu (a popover, ``ZenPresentedMenu``), the importer, and the kinds
+    /// answered without asking.
+    init?(id: UUID, kind: ChatPendingRequest.Kind, gate: ZenPendingRequestGate) {
+        guard gate.isOpen(id) else { return nil }
+        switch ZenPendingRequestPresentation(kind: kind) {
+        case let .consent(consentRequest):
+            content = .consent(consentRequest)
+        case let .textLine(prompt):
+            content = .textLine(prompt: prompt)
+        case .menu, .attachmentPicker, .grantWorkspaceAccess, .unsupported:
+            return nil
+        }
+        self.id = id
+    }
+
+    /// The sheet of `request`, as ``init(id:kind:gate:)``; `nil` without a
+    /// request.
+    init?(request: ChatPendingRequest?, gate: ZenPendingRequestGate) {
+        guard let request else { return nil }
+        self.init(id: request.id, kind: request.kind, gate: gate)
+    }
 }
 
 struct ZenPendingRequestsModifier: ViewModifier {
@@ -170,7 +203,7 @@ struct ZenPendingRequestsModifier: ViewModifier {
         content
             .sheet(item: sheetBinding) { sheet in
                 sheetView(sheet)
-                    .onAppear { gate.sheetDidAppear(sheet.id) }
+                    .onAppear { gate.presentationDidAppear(sheet.id) }
             }
             .fileImporter(
                 isPresented: importerBinding,
@@ -200,10 +233,6 @@ struct ZenPendingRequestsModifier: ViewModifier {
             ZenConsentSheet(request: request) { decision in
                 answer(sheet.id, decision.map(ChatPendingRequest.Answer.consent))
             }
-        case let .menu(state):
-            ZenChoiceSheet(state: state) { value in
-                answer(sheet.id, value)
-            }
         case let .textLine(prompt):
             ZenTextLineSheet(prompt: prompt) { text in
                 answer(sheet.id, text.map { .text($0) })
@@ -211,26 +240,12 @@ struct ZenPendingRequestsModifier: ViewModifier {
         }
     }
 
-    private var presentedSheet: ZenPresentedSheet? {
-        guard let request, gate.isOpen(request.id) else { return nil }
-        switch ZenPendingRequestPresentation(kind: request.kind) {
-        case let .consent(consentRequest):
-            return ZenPresentedSheet(id: request.id, content: .consent(consentRequest))
-        case let .menu(state):
-            return ZenPresentedSheet(id: request.id, content: .menu(state))
-        case let .textLine(prompt):
-            return ZenPresentedSheet(id: request.id, content: .textLine(prompt: prompt))
-        case .attachmentPicker, .grantWorkspaceAccess, .unsupported:
-            return nil
-        }
-    }
-
     private var sheetBinding: Binding<ZenPresentedSheet?> {
         Binding(
-            get: { presentedSheet },
+            get: { ZenPresentedSheet(request: request, gate: gate) },
             set: { newValue in
                 guard newValue == nil,
-                      let id = gate.sheetDismissalTarget(currentRequestID: request?.id) else {
+                      let id = gate.dismissalTarget(currentRequestID: request?.id) else {
                     return
                 }
                 answer(id, nil)

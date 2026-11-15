@@ -7,9 +7,12 @@
 //  skills, tasks, changes), and, always last, the artifacts sidebar toggle.
 //  The status bar shows the agent's name, the model, and the level. Every
 //  other item runs a slash command; the menus a command needs arrive as
-//  pending requests and open as sheets.
+//  pending requests and open in a popover under the button that launched
+//  it, or over the composer when the command came from elsewhere (the
+//  Changes menu, the overflow menu of the toolbar).
 //
 
+import AppKit
 import Foundation
 import SwiftUI
 import ZenAppControls
@@ -39,49 +42,38 @@ enum ZenSessionCommand {
 /// their own bodies. One group holds the agent, model, and thinking buttons as
 /// icons only, followed by the tools, skills, tasks, and changes. The
 /// artifacts sidebar toggle, preceded by its own spacer, is always the
-/// trailing item.
+/// trailing item. The buttons that run a command present its menus under
+/// themselves (``ZenToolbarCommandButton``).
 struct ZenWindowToolbar: ToolbarContent {
     let session: ZenWindowSession
 
     var body: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            Button {
-                session.run(ZenSessionCommand.agents)
-            } label: {
+            ZenToolbarCommandButton(session: session, command: ZenSessionCommand.agents) {
                 ZenAgentToolbarLabel(session: session)
             }
             .help("Choose the agent (/agents)")
 
-            Button {
-                session.run(ZenSessionCommand.models)
-            } label: {
+            ZenToolbarCommandButton(session: session, command: ZenSessionCommand.models) {
                 ZenModelToolbarLabel(session: session)
             }
             .help("Choose the model (/models)")
 
-            Button {
-                session.run(ZenSessionCommand.thinking)
-            } label: {
+            ZenToolbarCommandButton(session: session, command: ZenSessionCommand.thinking) {
                 ZenThinkingToolbarLabel(session: session)
             }
 
-            Button {
-                session.run(ZenSessionCommand.tools)
-            } label: {
+            ZenToolbarCommandButton(session: session, command: ZenSessionCommand.tools) {
                 Label("Tools", systemImage: "wrench.and.screwdriver")
             }
             .help("Tools (/tools)")
 
-            Button {
-                session.run(ZenSessionCommand.skills)
-            } label: {
+            ZenToolbarCommandButton(session: session, command: ZenSessionCommand.skills) {
                 Label("Skills", systemImage: "sparkles")
             }
             .help("Skills (/skills)")
 
-            Button {
-                session.run(ZenSessionCommand.tasks)
-            } label: {
+            ZenToolbarCommandButton(session: session, command: ZenSessionCommand.tasks) {
                 Label("Tasks", systemImage: "checklist")
             }
             .help("Tasks (/tasks)")
@@ -110,6 +102,112 @@ struct ZenWindowToolbar: ToolbarContent {
     static func thinkingHelp(_ status: ZenWindowStatus) -> String {
         guard let thinking = status.thinking else { return "Choose the thinking level (/think)" }
         return "Thinking: \(thinking.displayTitle) (/think)"
+    }
+}
+
+/// A toolbar button that runs `command` and presents the menus the command
+/// asks for in a popover under itself, its arrow pointing to it
+/// (``ZenToolbarMenuPopover``). Its body reads no state of the session: the
+/// label reads its own.
+///
+/// A button that is not in a window at the click (the toolbar moved it to
+/// its overflow menu, which sent the action) could not show the popover, so
+/// the command runs without an anchor and its menus open over the composer;
+/// so does a click the probe cannot tell about.
+private struct ZenToolbarCommandButton<ButtonLabel: View>: View {
+    let session: ZenWindowSession
+    let command: String
+    let label: ButtonLabel
+
+    /// Tells, at the click, whether the label is in a window.
+    @State private var probe = ZenToolbarButtonProbe()
+
+    init(session: ZenWindowSession, command: String, @ViewBuilder label: () -> ButtonLabel) {
+        self.session = session
+        self.command = command
+        self.label = label()
+    }
+
+    var body: some View {
+        let anchor = ZenMenuAnchor(id: command)
+        let probe = probe
+        Button {
+            session.run(command, menuAnchor: probe.isInWindow ? anchor : nil)
+        } label: {
+            label
+                .background(ZenToolbarButtonProbeView(probe: probe))
+        }
+        .modifier(ZenToolbarMenuPopover(session: session, anchor: anchor))
+    }
+}
+
+/// The menu popover of a toolbar button: the session's pending menu, under
+/// the button and its arrow pointing to it, while the conversation is
+/// selected and the menu's command was launched from the button (`anchor`,
+/// ``ZenWindowTabBarLogic/menuPopoverRequest(_:selectedTab:anchor:presenter:)``).
+/// A modifier of its own, so the request, its anchor, and the tab are read
+/// by its body alone, not by the toolbar's.
+private struct ZenToolbarMenuPopover: ViewModifier {
+    let session: ZenWindowSession
+    let anchor: ZenMenuAnchor
+
+    func body(content: Content) -> some View {
+        content
+            .zenPendingMenuPopover(
+                ZenWindowTabBarLogic.menuPopoverRequest(
+                    session.pendingRequest,
+                    selectedTab: session.selectedTab,
+                    anchor: session.pendingRequestAnchor,
+                    presenter: anchor
+                ),
+                arrowEdge: .bottom
+            ) { requestID, answer in
+                session.answer(requestID, with: answer)
+            }
+    }
+}
+
+/// Whether a toolbar button's label is in a window, read at the click; `false`
+/// when no view of it was made or none is left.
+///
+/// The toolbar makes more than one view for a label over time (one more
+/// while the button is in the overflow menu, a new one when the button is
+/// back), and an older one can be updated after a newer one was made. The
+/// probe keeps them all, weakly: the label is in a window when any of them
+/// is.
+@MainActor
+private final class ZenToolbarButtonProbe {
+    private let views = NSHashTable<NSView>.weakObjects()
+
+    var isInWindow: Bool {
+        views.allObjects.contains { $0.window != nil }
+    }
+
+    func add(_ view: NSView) {
+        views.add(view)
+    }
+}
+
+/// The view of a ``ZenToolbarButtonProbe``, in the background of the label.
+/// It draws nothing and takes no clicks.
+private struct ZenToolbarButtonProbeView: NSViewRepresentable {
+    let probe: ZenToolbarButtonProbe
+
+    func makeNSView(context: Context) -> ZenToolbarButtonProbeNSView {
+        let view = ZenToolbarButtonProbeNSView()
+        probe.add(view)
+        return view
+    }
+
+    func updateNSView(_ view: ZenToolbarButtonProbeNSView, context: Context) {
+        probe.add(view)
+    }
+}
+
+/// The view of ``ZenToolbarButtonProbeView``.
+private final class ZenToolbarButtonProbeNSView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
     }
 }
 

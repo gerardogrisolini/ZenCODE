@@ -3,7 +3,7 @@
 //  ZenApp
 //
 //  Consent decision mapping and content, and the answer-once bookkeeping of
-//  the pending-request presentation.
+//  the pending-request presentation: the window sheets and the menu popover.
 //
 
 import Foundation
@@ -435,28 +435,28 @@ struct ZenPendingRequestsTests {
         #expect(!claimed2)
     }
 
-    @Test("dismissing the sheet answers nil once, and only for the request on screen")
-    func sheetDismissal() {
+    @Test("dismissing the sheet or the popover answers nil once, and only for the request on screen")
+    func dismissal() {
         var gate = ZenPendingRequestGate()
         let first = UUID()
         let second = UUID()
 
         // Nothing on screen yet.
-        #expect(gate.sheetDismissalTarget(currentRequestID: first) == nil)
+        #expect(gate.dismissalTarget(currentRequestID: first) == nil)
 
-        gate.sheetDidAppear(first)
-        #expect(gate.sheetDismissalTarget(currentRequestID: first) == first)
+        gate.presentationDidAppear(first)
+        #expect(gate.dismissalTarget(currentRequestID: first) == first)
         // The request was withdrawn or replaced: nothing to answer.
-        #expect(gate.sheetDismissalTarget(currentRequestID: nil) == nil)
-        #expect(gate.sheetDismissalTarget(currentRequestID: second) == nil)
+        #expect(gate.dismissalTarget(currentRequestID: nil) == nil)
+        #expect(gate.dismissalTarget(currentRequestID: second) == nil)
 
         // Answered (by a choice or by the dismissal itself): never again.
         let claimed3 = gate.claim(first)
         #expect(claimed3)
-        #expect(gate.sheetDismissalTarget(currentRequestID: first) == nil)
+        #expect(gate.dismissalTarget(currentRequestID: first) == nil)
 
-        gate.sheetDidAppear(second)
-        #expect(gate.sheetDismissalTarget(currentRequestID: second) == second)
+        gate.presentationDidAppear(second)
+        #expect(gate.dismissalTarget(currentRequestID: second) == second)
     }
 
     @Test("the importer closes once dismissed or answered")
@@ -477,5 +477,111 @@ struct ZenPendingRequestsTests {
         let claimed6 = gate.claim(next)
         #expect(claimed6)
         #expect(!gate.presentsImporter(for: next))
+    }
+
+    private static let consent = AgentToolAuthorizationRequest(
+        turnID: nil,
+        sessionID: nil,
+        toolCallID: "c",
+        toolName: "local.exec",
+        title: "",
+        kind: "",
+        command: "ls",
+        workingDirectory: "/tmp"
+    )
+
+    private static let menuKinds: [ChatPendingRequest.Kind] = {
+        let items = [ChatChoiceItem(id: "a", title: "A")]
+        return [
+            .chooseOne(title: "T", items: items, selectedID: nil),
+            .chooseMany(title: "T", items: items, selectedIDs: []),
+            .chooseManyWithFocus(title: "T", items: items, selectedIDs: [], focusedID: nil, toggleLabel: "x", confirmLabel: "y")
+        ]
+    }()
+
+    @Test("a menu is a popover, a consent or a text line a sheet, never both")
+    func presentationSurface() throws {
+        let gate = ZenPendingRequestGate()
+        for kind in Self.menuKinds {
+            let id = UUID()
+            let menu = try #require(ZenPresentedMenu(id: id, kind: kind, gate: gate))
+            #expect(menu.id == id)
+            #expect(menu.state == ZenChoiceMenuState(kind: kind))
+            #expect(ZenPresentedSheet(id: id, kind: kind, gate: gate) == nil)
+        }
+
+        let consentID = UUID()
+        let consentSheet = try #require(ZenPresentedSheet(id: consentID, kind: .toolConsent(Self.consent), gate: gate))
+        #expect(consentSheet.id == consentID)
+        #expect(consentSheet.content == .consent(Self.consent))
+        #expect(ZenPresentedMenu(id: consentID, kind: .toolConsent(Self.consent), gate: gate) == nil)
+
+        let lineID = UUID()
+        let lineSheet = try #require(ZenPresentedSheet(id: lineID, kind: .readLine(prompt: "Name:"), gate: gate))
+        #expect(lineSheet.id == lineID)
+        #expect(lineSheet.content == .textLine(prompt: "Name:"))
+        #expect(ZenPresentedMenu(id: lineID, kind: .readLine(prompt: "Name:"), gate: gate) == nil)
+
+        // The importer and the kinds answered without asking: neither.
+        let directory = URL(filePath: "/tmp")
+        let others: [ChatPendingRequest.Kind] = [
+            .pickAttachment(startingAt: directory),
+            .workspaceAccess(ChatWorkspaceAccessRequest(workspaceURL: directory, toolTitles: ["Files"]))
+        ]
+        for kind in others {
+            #expect(ZenPresentedSheet(id: UUID(), kind: kind, gate: gate) == nil)
+            #expect(ZenPresentedMenu(id: UUID(), kind: kind, gate: gate) == nil)
+        }
+
+        // Without a request: neither.
+        #expect(ZenPresentedSheet(request: nil, gate: gate) == nil)
+        #expect(ZenPresentedMenu(request: nil, gate: gate) == nil)
+    }
+
+    @Test("an answered request shows neither a sheet nor a popover")
+    func answeredShowsNothing() {
+        var gate = ZenPendingRequestGate()
+        let kinds = Self.menuKinds + [.toolConsent(Self.consent), .readLine(prompt: "Name:")]
+        for kind in kinds {
+            let id = UUID()
+            let claimed = gate.claim(id)
+            #expect(claimed)
+            #expect(ZenPresentedSheet(id: id, kind: kind, gate: gate) == nil)
+            #expect(ZenPresentedMenu(id: id, kind: kind, gate: gate) == nil)
+        }
+    }
+
+    @Test("closing the popover answers nil once; a hidden menu is not answered and shows again")
+    func popoverDismissal() throws {
+        var gate = ZenPendingRequestGate()
+        let id = UUID()
+        let kind = Self.menuKinds[0]
+        let menu = try #require(ZenPresentedMenu(id: id, kind: kind, gate: gate))
+        gate.presentationDidAppear(menu.id)
+
+        // Hidden (the modifier gets no request, a sub-agent tab): no popover,
+        // and its closing answers nothing.
+        #expect(ZenPresentedMenu(request: nil, gate: gate) == nil)
+        #expect(gate.dismissalTarget(currentRequestID: nil) == nil)
+        #expect(gate.isOpen(id))
+
+        // Shown again: the same menu, still waiting.
+        #expect(ZenPresentedMenu(id: id, kind: kind, gate: gate) == menu)
+        gate.presentationDidAppear(id)
+
+        // Esc or a click outside closes it: `nil`, once.
+        #expect(gate.dismissalTarget(currentRequestID: id) == id)
+        let claimed = gate.claim(id)
+        #expect(claimed)
+        #expect(gate.dismissalTarget(currentRequestID: id) == nil)
+        #expect(ZenPresentedMenu(id: id, kind: kind, gate: gate) == nil)
+
+        // Replaced by another menu: the old one is not answered on closing.
+        let next = UUID()
+        var replaced = ZenPendingRequestGate()
+        replaced.presentationDidAppear(id)
+        #expect(replaced.dismissalTarget(currentRequestID: next) == nil)
+        #expect(replaced.isOpen(id))
+        #expect(ZenPresentedMenu(id: next, kind: kind, gate: replaced)?.id == next)
     }
 }

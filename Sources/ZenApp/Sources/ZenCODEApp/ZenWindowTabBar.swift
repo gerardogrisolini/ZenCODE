@@ -34,6 +34,23 @@ enum ZenWindowTabBarLogic {
         hasPendingRequest && selectedTab != .chat
     }
 
+    /// The request a menu popover gets: the pending one, while the
+    /// conversation is selected, when the request opens over the popover's
+    /// `presenter` (`anchor`, ``ZenWindowSession/pendingRequestAnchor``;
+    /// `nil` is the composer); none otherwise, so a request has one
+    /// presenter. In a sub-agent tab, where the composer is hidden, no
+    /// popover gets it, a toolbar button's neither: the menu stays
+    /// unanswered, the Chat tab carries the badge, and its popover shows it
+    /// again when the conversation is selected.
+    static func menuPopoverRequest<Request>(
+        _ pendingRequest: Request?,
+        selectedTab: ZenWindowTab,
+        anchor: ZenMenuAnchor?,
+        presenter: ZenMenuAnchor?
+    ) -> Request? {
+        selectedTab == .chat && anchor == presenter ? pendingRequest : nil
+    }
+
     /// The title of a sub-agent tab: the agent's name on one line, at most
     /// ``titleLimit`` characters, else the agent's id.
     static func title(name: String?, agentID: String) -> String {

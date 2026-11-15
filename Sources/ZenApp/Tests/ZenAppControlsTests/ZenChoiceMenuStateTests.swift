@@ -211,7 +211,7 @@ struct ZenChoiceMenuStateTests {
     @Test("the confirm button of a focused menu uses the request label")
     @MainActor
     func confirmTitle() {
-        #expect(ZenChoiceSheet.capitalizedFirst("use agent") == "Use agent")
-        #expect(ZenChoiceSheet.capitalizedFirst("") == "")
+        #expect(ZenChoicePopover.capitalizedFirst("use agent") == "Use agent")
+        #expect(ZenChoicePopover.capitalizedFirst("") == "")
     }
 }

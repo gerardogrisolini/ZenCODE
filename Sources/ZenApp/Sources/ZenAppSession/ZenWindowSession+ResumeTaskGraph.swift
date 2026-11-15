@@ -14,7 +14,7 @@ import ZenCODECore
 /// opened, through the flow every channel shares
 /// (`ChatSessionController.offerResumableTaskGraphs(choiceHost:)`). Its menus
 /// (`Open tasks from previous sessions`, `Delete old tasks`) reach the window
-/// as pending requests (``pendingRequest``) and show as its choice sheets; a
+/// as pending requests (``pendingRequest``) and show in its menu popover; a
 /// graph the operator resumes moves into the window's session, which keeps
 /// its id. The graphs of the sessions the other windows run now are left out
 /// by the controller (every window is a slot of the app's one

@@ -87,6 +87,20 @@ Release tags follow the strict `vX.Y.Z` contract described in
   still shows what the agents had when it opened, with no status, activity, or
   counters; the keys are unchanged.
 
+- macOS app: the menus of the commands (`/models`, `/think`, `/agents`,
+  `/tools`, `/skills`, `/sessions`, `/open`, and the others) now open in a
+  popover instead of a sheet of the window. The menus of a command launched
+  with a toolbar button (agent, model, thinking, tools, skills, tasks) open
+  under that button, with the arrow pointing at it; all the others (a typed
+  command, a menu item, a button chosen from the toolbar's overflow menu)
+  open above the composer, with the arrow pointing at the composer. Esc or a
+  click outside the popover cancels the menu; ↑, ↓, typing, Return, and Space
+  are unchanged. The list grows with its rows up to a maximum height and then
+  scrolls, and it does not shrink while you filter. A menu that waits while a
+  sub-agent tab shows opens again when you select the Chat tab. The tool
+  consent and the request for a line of text stay sheets of the window, over
+  any tab.
+
 ### Removed
 
 - The free-form `role` of sub-agents: the string the coordinator passed to

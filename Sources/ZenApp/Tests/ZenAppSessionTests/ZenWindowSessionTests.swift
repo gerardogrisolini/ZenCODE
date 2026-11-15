@@ -516,6 +516,41 @@ struct ZenWindowSessionTests {
         }
     }
 
+    @Test("A menu opens over the anchor its line was launched from, and a typed line's over the composer")
+    func menuAnchorOfALaunchedLine() async throws {
+        try await withRuntime { runtime, _, workspace in
+            let window = try await runtime.openWindow(workspace: workspace)
+            let anchor = ZenMenuAnchor(id: "/models")
+            window.run("/models", menuAnchor: anchor)
+            #expect(await eventually {
+                if case .chooseOne? = window.pendingRequest?.kind { return true }
+                return false
+            })
+            #expect(window.pendingRequestAnchor == anchor)
+
+            let launched = try #require(window.pendingRequest)
+            window.answer(launched.id, with: nil)
+            #expect(await eventually { window.pendingRequest == nil })
+            #expect(window.pendingRequestAnchor == nil)
+            #expect(await window.waitUntilIdle())
+
+            // A typed line: its menu opens over the composer.
+            window.draft = "/models"
+            window.submitDraft()
+            #expect(await eventually {
+                if case .chooseOne? = window.pendingRequest?.kind { return true }
+                return false
+            })
+            #expect(window.pendingRequestAnchor == nil)
+
+            let typed = try #require(window.pendingRequest)
+            window.answer(typed.id, with: nil)
+            #expect(await eventually { window.pendingRequest == nil })
+            #expect(await window.waitUntilIdle())
+            await runtime.shutdown()
+        }
+    }
+
     @Test("Closing during a turn fences it: the slot ends, and the window writes nothing after")
     func closeDuringATurn() async throws {
         try await withRuntime { runtime, backend, workspace in

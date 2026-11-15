@@ -139,7 +139,10 @@ struct ZenWindowOpenFailureView: View {
 }
 
 /// The split view of a window with an open session: the saved sessions in
-/// the sidebar, the conversation in the detail.
+/// the sidebar, the conversation in the detail. It presents the pending
+/// requests over any tab as sheets of the window, except the menus, which
+/// are a popover over the composer (``ZenBottomChrome``), or over the
+/// toolbar button that launched their command (``ZenWindowToolbar``).
 struct ZenSessionWindow: View {
     let session: ZenWindowSession
 
