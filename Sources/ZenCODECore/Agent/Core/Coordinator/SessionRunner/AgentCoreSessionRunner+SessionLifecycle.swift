@@ -228,6 +228,10 @@ extension AgentCoreSessionRunner {
             memoryLearningPermits.removeValue(forKey: sessionID)?.invalidate()
             _ = await interruptSubAgents(rootSessionID: sessionID)
             await rebuildSession(id: sessionID)
+            // The conversation ends: so do the features its Builder
+            // sub-agents exposed (after the interruption, before the throwing
+            // discard).
+            await revokeFeatureExposures(sessionID: sessionID)
             try await taskOrchestrator.discardSession(id: sessionID)
             return
         }
@@ -244,6 +248,9 @@ extension AgentCoreSessionRunner {
         )
         sessions.removeAll()
         lastKnownSessionSnapshots.removeAll()
+        // Every conversation of this runner ends; before the loop, so a
+        // failing discard cannot skip it.
+        await revokeKnownFeatureExposures(including: sessionIDs)
         for sessionID in sessionIDs {
             _ = await interruptSubAgents(rootSessionID: sessionID)
             await MemoryTurnCoordinator.shared.discard(sessionID: sessionID)
@@ -279,6 +286,9 @@ extension AgentCoreSessionRunner {
         lastKnownSessionSnapshots.removeValue(forKey: sessionID)
         authorizationRouter.discard(sessionID: sessionID)
         _ = await interruptSubAgents(rootSessionID: sessionID)
+        // The conversation ends: so do the features its Builder sub-agents
+        // exposed, before the throwing flushes below.
+        await revokeFeatureExposures(sessionID: sessionID)
         // A recreated session reuses the id, so its recall health belongs to
         // the incarnation that owned the conversation. Drop it before the
         // throwing checkpoint flush so a failed close cannot strand a pause.
@@ -317,6 +327,11 @@ extension AgentCoreSessionRunner {
         // their retry-and-rebuild behaviour.
         backendManager.latchShutdown()
         await shutdownBackendKeepingExternalTools()
+        // Terminal teardown: no exposure of this runner's sessions survives
+        // it. An ordinary backend reset (model or agent switch) keeps them; an
+        // agent switch revokes them when the session is created again with
+        // the new profile.
+        await revokeKnownFeatureExposures()
         // Process exit: the engine is freed unless a DS4 session is still live
         // (another runner of this process uses the model). Never waits.
         _ = await ds4EngineRegistry.closeIfIdle()

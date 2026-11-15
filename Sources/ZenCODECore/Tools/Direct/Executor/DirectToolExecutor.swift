@@ -340,9 +340,15 @@ public actor DirectToolExecutor {
     /// reload of the feature bundles) is discovered now (`--list-tools`, and
     /// the consent it can ask for).
     /// Without it the descriptors are only the ones already known
-    /// (``SwiftFeatureRuntime/knownDescriptors(allowedToolNames:excludingFeatureIDs:)``):
+    /// (``SwiftFeatureRuntime/knownDescriptors(allowedToolNames:excludingFeatureIDs:sessionID:)``):
     /// nothing is discovered, so such a feature contributes only its declared
     /// tools.
+    ///
+    /// The features a Builder sub-agent delegated by `sessionID` built and
+    /// that are loaded are listed even when `allowedToolNames` does not name
+    /// them (``SwiftFeatureRuntime/exposedFeatureIDs(sessionID:)``); a
+    /// sub-agent that inherits its delegating session's exposures reads that
+    /// session's instead.
     public func descriptors(
         allowedToolNames: Set<String>? = nil,
         preferredWorkspaceRootURL: URL? = nil,
@@ -387,10 +393,17 @@ public actor DirectToolExecutor {
         )
         .filter { !providerToolNames.contains($0.name) }
         .filter { !reservedSkillToolNames.contains($0.name) }
+        let featureExposureSessionID = featureExposureSessionID(for: sessionID)
         let resolvedFeatureDescriptors = if discoversFeatureTools {
-            await swiftFeatureRuntime.descriptors(allowedToolNames: allowedToolNames)
+            await swiftFeatureRuntime.descriptors(
+                allowedToolNames: allowedToolNames,
+                sessionID: featureExposureSessionID
+            )
         } else {
-            await swiftFeatureRuntime.knownDescriptors(allowedToolNames: allowedToolNames)
+            await swiftFeatureRuntime.knownDescriptors(
+                allowedToolNames: allowedToolNames,
+                sessionID: featureExposureSessionID
+            )
         }
         let featureDescriptors = resolvedFeatureDescriptors
             .filter { !reservedSkillToolNames.contains($0.name) }
@@ -475,7 +488,8 @@ public actor DirectToolExecutor {
             )
             let featureToolIsAllowed = await swiftFeatureRuntime.featureToolIsAllowed(
                 toolName: toolCall.name,
-                allowedToolNames: allowedToolNames
+                allowedToolNames: allowedToolNames,
+                sessionID: featureExposureSessionID(for: sessionID)
             )
             guard isAllowed || featureToolIsAllowed else {
                 throw DirectToolExecutorError.toolNotAllowed(toolCall.name)

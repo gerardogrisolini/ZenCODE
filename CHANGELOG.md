@@ -39,6 +39,60 @@ Release tags follow the strict `vX.Y.Z` contract described in
   listed. A page holds 50 sessions, and `nextCursor` leads to the next one.
   The sessions saved with `/sessions` and a session without turns are not
   listed, and listing restores or changes nothing.
+- An agent can have a tool it lacks built on its own initiative. When its
+  session has the `sub-agents` tool and the project sees a delegatable profile
+  with the `builder` role, the system prompt lets the model delegate the
+  construction of a missing, reusable tool to that profile with `agent.create`,
+  instead of stopping or asking you to switch to `/agents Builder` and run
+  `/feature`. The Builder sub-agent scaffolds a disabled feature, implements it,
+  runs `feature.validate` and `feature.build`, enables it only after both
+  succeed, and reports the tools it built; when a generated feature already
+  provides the capability, it rebuilds that one (`feature.validate`,
+  `feature.build`) and makes sure it is enabled instead of duplicating it, and
+  when a bundled or optional feature provides it, it rebuilds nothing and
+  reports that you have to select it with `/tools`. Every profile with the
+  `builder` role works this way, an existing `agents.json` included.
+  `feature.scaffold`, `feature.build`, `feature.install`, and `feature.enable`
+  refuse a delegated Builder, before it writes, builds, or enables anything, a
+  feature whose tool names, aliases, or prefixes start with the namespace of a
+  core tool (`local.readFile.pdf`) or collide with another loaded feature, and a
+  reload of the bundles drops the exposure of a feature whose loaded routing no
+  longer passes; the `mcp-bridge` template is available on macOS only. A
+  Builder you run yourself is not checked. The generated feature it built and
+  enabled is exposed to the session that delegated it: its tools are in the
+  tool list from the model's next round, in the same turn, without `/tools` and
+  without a new session, and the result of the next `agent.*` call announces
+  them once, naming only the tools the session can call (at most 20 per
+  feature, then `and N more`). Only a generated feature qualifies: one whose ID
+  is not a catalog ID (never a bundled or optional feature, nor a local copy
+  that keeps its ID), built under `~/.zencode/features/` and loaded from the
+  executable that build produced; an existing generated feature qualifies only
+  if the Builder rebuilt it in that delegation. Only that session gets the
+  tools; a sub-agent created with the same profile sees them by reading that
+  session's exposures, and a revocation reaches it at once, while a sub-agent
+  with another profile does not. They never include a `feature.*` management
+  tool or the name of a core tool. They last until the conversation ends (a
+  full reset or the shutdown of a runner ends the sessions of that runner), the
+  session's agent changes, or the feature is disabled or deleted; a build whose
+  task was cancelled registers nothing.
+  Only the exposure is transient: the feature stays built and enabled on disk,
+  so a session with no tool restriction sees it like any other enabled feature,
+  and after a restart you select it from `/tools`. `/tools` shows an exposed
+  feature ticked, and the selection you confirm is authoritative: a feature
+  left ticked stays selected, and one you untick is no longer exposed.
+  **Security:** a generated tool that the Builder sub-agent wrote or rebuilt
+  becomes callable in the session without the explicit `/tools` step, without
+  the workspace access request that selecting a generated feature in `/tools`
+  brings, and without a consent request of its own; `local.exec` and the
+  destructive tools still ask, but nothing asks before the new tool first runs.
+  The namespace check is not a sandbox: the Builder can rewrite the package
+  files, `feature.json` included, after the build, and a restart or the reload
+  of another session can load the new manifest, whose feature can then claim
+  another namespace for the sessions that select it or whose tool list makes it
+  relevant, as with a Builder you run yourself.
+  To turn the capability off, remove the Builder profile from the profiles
+  associated with the project with `/agents`, or remove `sub-agents` from the
+  session's tools. See [Docs/builder.md](Docs/builder.md#autonomous-feature-development).
 
 ### Changed
 

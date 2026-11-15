@@ -66,6 +66,8 @@ Project work is delegated by role. The `Organizer` creates each sub-agent with `
 
 To read a project's state, the `Organizer` delegates to the `reporter` or `reviewer` role and reports the result. Both are `readOnly` in the recommended profiles.
 
+When the profiles associated with the launch folder include one with the `builder` role, the `Organizer` may also delegate it, with `profileRole: "builder"`, the construction of a tool it lacks. The generated feature the Builder builds is exposed to the `Organizer`'s session without `/tools` (a bundled or optional feature never is), with the scope, the lifecycle, and the security implication described in [Autonomous Feature Development](builder.md#autonomous-feature-development).
+
 The `Organizer` cannot read files or run commands, so it cannot validate a delegated implementation. It reports the sub-agent's result as unvalidated and asks whether you want to accept it, validate it yourself, or have a `Reviewer` delegated to check it.
 
 ## Example Requests

@@ -11,9 +11,25 @@ import Foundation
 extension ChatSessionController {
     // MARK: - Tools
 
-    /// The tool menu: every tool group, the selected ones ticked.
+    /// The selection keys (`feature:<id>`) of the features the feature runtime
+    /// exposes to this session because one of its Builder sub-agents built
+    /// them. Empty without a feature runtime. A read: it never changes the
+    /// selection or the exposures.
+    private func exposedFeatureSelectionKeys() async -> Set<String> {
+        guard let featureRuntime = environment.featureRuntime else {
+            return []
+        }
+        return Set(
+            await featureRuntime.exposedFeatureIDs(sessionID: sessionID)
+                .map(TerminalToolSelectionCatalog.featurePackageKey(id:))
+        )
+    }
+
+    /// The tool menu: every tool group, the selected ones ticked. A feature
+    /// exposed to the session counts as selected.
     func toolChoices() async -> ChatChoiceList {
         let items = await toolSelectionItems()
+        let exposedKeys = await exposedFeatureSelectionKeys()
         return ChatChoiceList(
             title: "Tools",
             items: items.map { item in
@@ -25,7 +41,7 @@ extension ChatSessionController {
                 )
             },
             selectedIDs: TerminalToolSelectionCatalog.normalizedSelectionKeys(
-                selection.toolKeys,
+                selection.toolKeys.union(exposedKeys),
                 items: items
             )
         )
@@ -64,6 +80,10 @@ extension ChatSessionController {
     /// Selects the tool groups `keys` and keeps the session in step: a
     /// changed allowlist rebuilds it (keeping the conversation and telling
     /// the model what changed), otherwise its options are updated.
+    ///
+    /// The selection is authoritative: the exposures of the session's
+    /// features are revoked. A feature the menu showed ticked is in `keys`
+    /// and so stays selected; one the user unticked is no longer exposed.
     public func selectTools(keys: Set<String>) async -> ChatSelectionOutcome {
         let previousKeys = selection.toolKeys
         let items = await toolSelectionItems()
@@ -71,6 +91,7 @@ extension ChatSessionController {
             keys,
             items: items
         )
+        await environment.featureRuntime?.revokeExposures(sessionID: sessionID)
         savedSessionState.systemPromptOverride = nil
         _ = await requestWorkspaceAccessIfNeeded()
         let shouldDiscoverExternalTools = Self.shouldDiscoverExternalTools(
@@ -101,7 +122,8 @@ extension ChatSessionController {
     }
 
     /// The tool groups the session exposes now, as the terminal's startup
-    /// summary and `/tools` list them.
+    /// summary and `/tools` list them. A feature exposed to the session
+    /// counts among the selected groups.
     public func activeToolsSummary() async -> ChatActiveToolsSummary {
         let allowedToolNames = await selectedAllowedToolNames(
             discoverExternalTools: false
@@ -110,10 +132,11 @@ extension ChatSessionController {
             fallbackAllowedToolNames: allowedToolNames
         )
         let items = await toolSelectionItems()
+        let exposedKeys = await exposedFeatureSelectionKeys()
         return ChatActiveToolsSummary(
             toolNames: activeToolNames,
             items: items,
-            selectedKeys: selection.toolKeys
+            selectedKeys: selection.toolKeys.union(exposedKeys)
         )
     }
 

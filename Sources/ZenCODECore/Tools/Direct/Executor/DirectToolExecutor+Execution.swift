@@ -39,7 +39,8 @@ extension DirectToolExecutor {
         )
         let featureAllowed = await swiftFeatureRuntime.featureToolIsAllowed(
             toolName: toolCall.name,
-            allowedToolNames: allowedToolNames
+            allowedToolNames: allowedToolNames,
+            sessionID: featureExposureSessionID(for: sessionID)
         )
 
         // Only predicates over immutable inputs select the admissible steps.
@@ -205,12 +206,15 @@ extension DirectToolExecutor {
         ))
     }
 
+    /// A Builder sub-agent passes the session that delegated it, so a feature
+    /// it builds is exposed to that session; any other caller passes none.
     private func dispatchFeatureManagement(
         toolCall: DirectAgentToolCall
     ) async throws -> DirectToolDispatchOutcome {
         .handled(DirectToolExecutionOutput(
             output: try await swiftFeatureRuntime.executeManagementTool(
-                toolCall: toolCall
+                toolCall: toolCall,
+                delegatingSessionID: featureExposureDelegatingSessionID
             )
         ))
     }
@@ -298,6 +302,8 @@ extension DirectToolExecutor {
         ))
     }
 
+    /// The output is followed by the announcement of the features newly
+    /// exposed to `sessionID`, the session that delegates.
     private func dispatchSubAgent(
         sessionID: String?,
         toolCall: DirectAgentToolCall,
@@ -307,12 +313,16 @@ extension DirectToolExecutor {
         guard DirectSubAgentRuntime.isSubAgentToolName(toolCall.name) else {
             return .notHandled
         }
+        let output = try await subAgentRuntime.execute(
+            rootSessionID: sessionID,
+            toolCall: toolCall,
+            workingDirectory: workingDirectory,
+            allowedToolNames: allowedToolNames
+        )
         return .handled(DirectToolExecutionOutput(
-            output: try await subAgentRuntime.execute(
-                rootSessionID: sessionID,
-                toolCall: toolCall,
-                workingDirectory: workingDirectory,
-                allowedToolNames: allowedToolNames
+            output: await appendingFeatureExposureAnnouncement(
+                to: output,
+                sessionID: sessionID
             )
         ))
     }

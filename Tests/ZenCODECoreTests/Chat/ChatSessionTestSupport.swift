@@ -683,6 +683,8 @@ actor ScriptedChatRuntime: ChatSessionManagementRuntime {
     private var sessionHistories: [String: [AgentRuntimeMessage]] = [:]
     private var sessionPromptSkills: [String: [PromptSkill]] = [:]
     private var preloadedModelID: String?
+    /// What ``activeToolDescriptors(sessionID:)`` answers; none by default.
+    private var activeDescriptors: [DirectToolDescriptor] = []
     private var compactionResult: AgentRuntimeSessionCompactionResult?
     private var engineSaveOutcome: AgentEngineCheckpointSaveOutcome = .notApplicable
     private var engineSaveError: Error?
@@ -749,6 +751,10 @@ actor ScriptedChatRuntime: ChatSessionManagementRuntime {
 
     func setPreloadedModelID(_ modelID: String?) {
         preloadedModelID = modelID
+    }
+
+    func setActiveToolDescriptors(_ descriptors: [DirectToolDescriptor]) {
+        activeDescriptors = descriptors
     }
 
     func setCompactionResult(_ result: AgentRuntimeSessionCompactionResult?) {
@@ -1126,7 +1132,7 @@ actor ScriptedChatRuntime: ChatSessionManagementRuntime {
 
     func activeToolDescriptors(sessionID: String) async -> [DirectToolDescriptor] {
         queries.append(.activeToolDescriptors(sessionID))
-        return []
+        return activeDescriptors
     }
 
     func knownMCPToolDescriptors(
@@ -1407,7 +1413,8 @@ extension ChatManagementHarness {
 /// reads or writes the real application state. `persistsTaskGraphs` gives the
 /// runtime a task-graph store in that support directory, which the saved-plan
 /// library needs. `userHomeDirectoryURL` is the home the environment hands
-/// the controller (none by default).
+/// the controller (none by default). `featureRuntime` is the feature runtime
+/// the environment hands the controller (none by default).
 func withChatHarness(
     catalog: ChatTestCatalog = .hosted(),
     hostCapabilities: ChatChannelCapabilities = [],
@@ -1415,6 +1422,7 @@ func withChatHarness(
     retainsTranscript: Bool = true,
     persistsTaskGraphs: Bool = false,
     userHomeDirectoryURL: URL? = nil,
+    featureRuntime: SwiftFeatureRuntime? = nil,
     _ body: @escaping @Sendable @ChatSessionActor (ChatManagementHarness) async throws -> Void
 ) async throws {
     let temporary = FileManager.default.temporaryDirectory
@@ -1481,7 +1489,7 @@ func withChatHarness(
             managementRuntime: runtime,
             environment: ChatSessionEnvironment(
                 configuration: configuration,
-                featureRuntime: nil,
+                featureRuntime: featureRuntime,
                 userHomeDirectoryURL: userHomeDirectoryURL
             ),
             workingDirectory: configuration.workingDirectory,

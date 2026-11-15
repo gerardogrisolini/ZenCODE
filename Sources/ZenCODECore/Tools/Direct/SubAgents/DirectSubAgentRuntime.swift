@@ -707,11 +707,15 @@ public actor DirectSubAgentRuntime {
         )
         switch request.name {
         case "agent.create":
+            // The delegating session is the session executing this
+            // `agent.create` (a child's `agent.*` calls go to the borrowed
+            // executor, which refuses `agent.create`).
             return try await createAgents(
                 arguments: request.arguments,
                 workingDirectory: workingDirectory,
                 parentAllowedToolNames: allowedToolNames,
-                rootSessionID: resolvedRootSessionID
+                rootSessionID: resolvedRootSessionID,
+                delegatingSessionID: rootSessionID?.nilIfBlank
             )
         case "agent.list":
             return listAgents(arguments: request.arguments)
@@ -750,6 +754,9 @@ extension AgentRuntimeConfiguration {
             profileID: context.profile?.id,
             profileName: context.profile?.name,
             profileRole: context.profile?.role
+        ).withDelegatingSessionID(
+            context.delegatingSessionID,
+            inheritsFeatureExposures: context.inheritsFeatureExposures
         )
         if locksModelToSession {
             return identifiedConfiguration

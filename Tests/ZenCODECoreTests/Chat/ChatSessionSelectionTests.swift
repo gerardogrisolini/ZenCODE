@@ -754,6 +754,257 @@ struct ChatSessionSelectionTests {
         }
     }
 
+    // MARK: - Tools exposed by a Builder
+
+    private static let builtFeatureID = "built-fixture"
+    private static let builtFeatureKey = TerminalToolSelectionCatalog.featurePackageKey(id: builtFeatureID)
+    private static let builtToolDescriptor = DirectToolDescriptor(
+        name: "built.run",
+        description: "Runs the built fixture",
+        inputSchema: #"{"type":"object","properties":{}}"#
+    )
+
+    /// Runs `body` with a harness whose environment carries a feature runtime
+    /// that holds one loaded feature, `built-fixture`, backed by a real
+    /// executable in a UUID-named directory. Nothing is exposed yet: a test
+    /// registers the Builder outcome for the controller's session itself.
+    private func withBuiltFeature(
+        hostCapabilities: ChatChannelCapabilities = [],
+        _ body: @escaping @Sendable @ChatSessionActor (ChatManagementHarness, SwiftFeatureRuntime) async throws -> Void
+    ) async throws {
+        let root = try SwiftFeatureSessionExposureTests.temporaryDirectory("tools-selection-exposure")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executableURL = root.appendingPathComponent("feature")
+        try SwiftFeatureSessionExposureTests.writeExecutable(at: executableURL)
+        let featureRuntime = SwiftFeatureRuntime(features: [
+            SwiftFeatureBundle(
+                id: Self.builtFeatureID,
+                executableURL: executableURL,
+                tools: [
+                    ToolDescriptor(
+                        name: "built.run",
+                        description: "Runs the built fixture",
+                        inputSchema: #"{"type":"object","properties":{}}"#
+                    ),
+                ],
+                toolNamePrefixes: ["built."]
+            ),
+        ])
+        try await withChatHarness(
+            hostCapabilities: hostCapabilities,
+            featureRuntime: featureRuntime
+        ) { harness in
+            try await body(harness, featureRuntime)
+        }
+    }
+
+    @Test
+    func theToolMenuTicksAFeatureExposedToTheSession() async throws {
+        try await withBuiltFeature(hostCapabilities: [.multipleChoice]) { harness, featureRuntime in
+            let controller = harness.controller
+            let key = Self.builtFeatureKey
+            controller.selection.toolKeys = ["shell"]
+
+            // The loaded feature is listed, but nothing exposes it yet.
+            let before = await controller.toolChoices()
+            #expect(before.items.map(\.id).contains(key))
+            #expect(before.selectedIDs == ["shell"])
+
+            await featureRuntime.exposeForTesting(
+                Self.builtFeatureID,
+                sessionID: controller.sessionID
+            )
+            let exposed = await controller.toolChoices()
+
+            #expect(exposed.items == before.items)
+            #expect(exposed.selectedIDs == ["shell", key])
+            // The menu only reads: neither the selection nor the exposure changed.
+            #expect(controller.selection.toolKeys == ["shell"])
+            #expect(await featureRuntime.exposedFeatureIDs(sessionID: controller.sessionID)
+                == [Self.builtFeatureID])
+
+            // `/tools` hands the host the same ticks.
+            await harness.host.answerChooseMany(nil)
+            _ = await controller.chooseTools()
+            guard case let .chooseMany(_, _, selectedIDs) = try #require(
+                await harness.host.interactions.first
+            ) else {
+                Issue.record("The host was asked for the tool groups")
+                return
+            }
+            #expect(selectedIDs == ["shell", key])
+        }
+    }
+
+    @Test
+    func aCancelledToolMenuKeepsTheExposure() async throws {
+        try await withBuiltFeature(hostCapabilities: [.multipleChoice]) { harness, featureRuntime in
+            let controller = harness.controller
+            await featureRuntime.exposeForTesting(
+                Self.builtFeatureID,
+                sessionID: controller.sessionID
+            )
+            await harness.host.answerChooseMany(nil)
+
+            let outcome = await controller.chooseTools()
+
+            #expect(outcome.change == nil)
+            #expect(controller.selection.toolKeys.isEmpty)
+            #expect(await featureRuntime.exposedFeatureIDs(sessionID: controller.sessionID)
+                == [Self.builtFeatureID])
+            #expect(await harness.runtime.calls.isEmpty)
+        }
+    }
+
+    @Test
+    func confirmingTheToolMenuWithTheExposedFeatureTickedSelectsItAndRevokesTheExposure() async throws {
+        try await withBuiltFeature(hostCapabilities: [.multipleChoice]) { harness, featureRuntime in
+            let controller = harness.controller
+            let key = Self.builtFeatureKey
+            await featureRuntime.exposeForTesting(
+                Self.builtFeatureID,
+                sessionID: controller.sessionID
+            )
+            // The menu showed the feature ticked, so the answer keeps it.
+            await harness.host.answerChooseMany([key])
+            await harness.host.answerWorkspaceAccess(true)
+
+            let outcome = await controller.chooseTools()
+
+            #expect(controller.selection.toolKeys == [key])
+            #expect(await featureRuntime.exposedFeatureIDs(sessionID: controller.sessionID).isEmpty)
+            #expect(outcome.change == .sessionUpdated)
+            #expect(await harness.callNames() == ["updateSessionOptions"])
+            let digest = try #require(await harness.runtime.calls.first?.digest)
+            #expect(try #require(digest.allowedToolNames).contains("built.run"))
+            // The feature stays ticked in the menu, now through the selection.
+            let choices = await controller.toolChoices()
+            #expect(choices.selectedIDs == [key])
+            let title = try #require(choices.items.first { $0.id == key }?.title)
+            guard case let .activeTools(summary) = try #require(outcome.notices.first),
+                  outcome.notices.count == 1 else {
+                Issue.record("The closing notice reports the active tools")
+                return
+            }
+            // Besides the always-present prompt-skill tools, only the feature is listed.
+            #expect(summary.groups.filter { $0.title != "Skills" } == [.init(title: title, toolCount: 1)])
+        }
+    }
+
+    @Test
+    func confirmingTheToolMenuWithoutTheExposedFeatureDropsItFromTheSelectionAndTheExposure() async throws {
+        try await withBuiltFeature(hostCapabilities: [.multipleChoice]) { harness, featureRuntime in
+            let controller = harness.controller
+            let key = Self.builtFeatureKey
+            await featureRuntime.exposeForTesting(
+                Self.builtFeatureID,
+                sessionID: controller.sessionID
+            )
+            // The user unticks the feature and keeps Files.
+            await harness.host.answerChooseMany(["files"])
+
+            let outcome = await controller.chooseTools()
+
+            #expect(controller.selection.toolKeys == ["files"])
+            #expect(!controller.selection.toolKeys.contains(key))
+            #expect(await featureRuntime.exposedFeatureIDs(sessionID: controller.sessionID).isEmpty)
+            let digest = try #require(await harness.runtime.calls.first?.digest)
+            let allowed = try #require(digest.allowedToolNames)
+            #expect(allowed.contains("local.readFile"))
+            #expect(!allowed.contains("built.run"))
+            // The menu no longer ticks it.
+            #expect(await controller.toolChoices().selectedIDs == ["files"])
+            guard case let .activeTools(summary) = try #require(outcome.notices.first) else {
+                Issue.record("The closing notice reports the active tools")
+                return
+            }
+            #expect(summary.groups.map(\.title).filter { $0 != "Skills" } == ["Files"])
+        }
+    }
+
+    @Test
+    func aSelectionGivenAsCommandArgumentsIsAuthoritativeToo() async throws {
+        try await withBuiltFeature { harness, featureRuntime in
+            let controller = harness.controller
+            await featureRuntime.exposeForTesting(
+                Self.builtFeatureID,
+                sessionID: controller.sessionID
+            )
+
+            _ = try await controller.selectTools(rawSelection: "none")
+
+            #expect(controller.selection.toolKeys.isEmpty)
+            #expect(await featureRuntime.exposedFeatureIDs(sessionID: controller.sessionID).isEmpty)
+            #expect(await controller.toolChoices().selectedIDs.isEmpty)
+        }
+    }
+
+    @Test
+    func theActiveToolsSummaryListsAnExposedFeatureAmongTheSelectedGroups() async throws {
+        try await withBuiltFeature { harness, featureRuntime in
+            let controller = harness.controller
+            let key = Self.builtFeatureKey
+            // The backend resolves the feature's tools for the session.
+            await harness.runtime.setActiveToolDescriptors([Self.builtToolDescriptor])
+
+            // Not exposed, not selected: its tools are active, but no group names them.
+            let before = await controller.activeToolsSummary()
+            #expect(before.groups.isEmpty)
+
+            await featureRuntime.exposeForTesting(
+                Self.builtFeatureID,
+                sessionID: controller.sessionID
+            )
+            let exposed = await controller.activeToolsSummary()
+
+            // The exposure counts as a selection: the feature's group is listed.
+            let title = try #require(
+                await controller.toolChoices().items.first { $0.id == key }?.title
+            )
+            #expect(exposed.groups == [.init(title: title, toolCount: 1)])
+            // The summary only reads: neither the selection nor the exposure changed.
+            #expect(controller.selection.toolKeys.isEmpty)
+            #expect(await featureRuntime.exposedFeatureIDs(sessionID: controller.sessionID)
+                == [Self.builtFeatureID])
+
+            // Once revoked, the group is gone again.
+            await featureRuntime.revokeExposures(sessionID: controller.sessionID)
+            #expect(await controller.activeToolsSummary().groups.isEmpty)
+        }
+    }
+
+    @Test
+    func withoutAnExposureForThisSessionTheToolSelectionIsUnchanged() async throws {
+        try await withBuiltFeature(hostCapabilities: [.multipleChoice]) { harness, featureRuntime in
+            let controller = harness.controller
+            let otherSessionID = "other-session-\(UUID().uuidString.lowercased())"
+            controller.selection.toolKeys = ["shell"]
+            let choicesBefore = await controller.toolChoices()
+            let summaryBefore = await controller.activeToolsSummary()
+            #expect(choicesBefore.selectedIDs == ["shell"])
+            #expect(summaryBefore.groups.map(\.title).filter { $0 != "Skills" } == ["Shell"])
+
+            // A feature built for another session is not exposed to this one.
+            await featureRuntime.exposeForTesting(
+                Self.builtFeatureID,
+                sessionID: otherSessionID
+            )
+
+            #expect(await controller.toolChoices() == choicesBefore)
+            #expect(await controller.activeToolsSummary() == summaryBefore)
+
+            // Confirming selects exactly what the menu returns, and revokes
+            // only this session's exposures.
+            await harness.host.answerChooseMany(["shell", "files"])
+            _ = await controller.chooseTools()
+
+            #expect(controller.selection.toolKeys == ["shell", "files"])
+            #expect(await featureRuntime.exposedFeatureIDs(sessionID: otherSessionID)
+                == [Self.builtFeatureID])
+            #expect(await featureRuntime.exposedFeatureIDs(sessionID: controller.sessionID).isEmpty)
+        }
+    }
+
     // MARK: - Skills
 
     @Test

@@ -173,6 +173,14 @@ public struct AgentRuntimeConfiguration: Sendable {
     /// and whether role-based delegation applies; `nil` when no profile is
     /// selected.
     public let profileRole: AgentProfileRole?
+    /// ID of the session that delegated this sub-agent with `agent.create`,
+    /// projected into the child's ``ToolExecutionContext``; `nil` for a
+    /// top-level session.
+    public let delegatingSessionID: String?
+    /// Whether this sub-agent reads the feature exposures of
+    /// ``delegatingSessionID``, projected into the child's
+    /// ``ToolExecutionContext``; `false` for a top-level session.
+    public let inheritsFeatureExposures: Bool
 
     public init(
         modelID: String?,
@@ -188,7 +196,9 @@ public struct AgentRuntimeConfiguration: Sendable {
         agentName: String? = nil,
         profileID: String? = nil,
         profileName: String? = nil,
-        profileRole: AgentProfileRole? = nil
+        profileRole: AgentProfileRole? = nil,
+        delegatingSessionID: String? = nil,
+        inheritsFeatureExposures: Bool = false
     ) {
         self.modelID = modelID?.nilIfBlank
         self.workingDirectory = workingDirectory
@@ -206,6 +216,8 @@ public struct AgentRuntimeConfiguration: Sendable {
         self.profileID = profileID?.nilIfBlank
         self.profileName = profileName?.nilIfBlank
         self.profileRole = profileRole
+        self.delegatingSessionID = delegatingSessionID?.nilIfBlank
+        self.inheritsFeatureExposures = inheritsFeatureExposures
     }
 
     public func withModelID(_ modelID: String?) -> AgentRuntimeConfiguration {
@@ -223,7 +235,9 @@ public struct AgentRuntimeConfiguration: Sendable {
             agentName: agentName,
             profileID: profileID,
             profileName: profileName,
-            profileRole: profileRole
+            profileRole: profileRole,
+            delegatingSessionID: delegatingSessionID,
+            inheritsFeatureExposures: inheritsFeatureExposures
         )
     }
 
@@ -249,7 +263,9 @@ public struct AgentRuntimeConfiguration: Sendable {
             agentName: agentName,
             profileID: profileID,
             profileName: profileName,
-            profileRole: profileRole
+            profileRole: profileRole,
+            delegatingSessionID: delegatingSessionID,
+            inheritsFeatureExposures: inheritsFeatureExposures
         )
     }
 
@@ -270,7 +286,9 @@ public struct AgentRuntimeConfiguration: Sendable {
             agentName: agentName,
             profileID: profileID,
             profileName: profileName,
-            profileRole: profileRole
+            profileRole: profileRole,
+            delegatingSessionID: delegatingSessionID,
+            inheritsFeatureExposures: inheritsFeatureExposures
         )
     }
 
@@ -293,7 +311,9 @@ public struct AgentRuntimeConfiguration: Sendable {
             agentName: agentName,
             profileID: profileID,
             profileName: profileName,
-            profileRole: profileRole
+            profileRole: profileRole,
+            delegatingSessionID: delegatingSessionID,
+            inheritsFeatureExposures: inheritsFeatureExposures
         )
     }
 
@@ -315,7 +335,37 @@ public struct AgentRuntimeConfiguration: Sendable {
             agentName: agentName,
             profileID: profileID,
             profileName: profileName,
-            profileRole: profileRole
+            profileRole: profileRole,
+            delegatingSessionID: delegatingSessionID,
+            inheritsFeatureExposures: inheritsFeatureExposures
+        )
+    }
+
+    /// This configuration for a sub-agent delegated by the session
+    /// `delegatingSessionID` (see ``delegatingSessionID``), reading that
+    /// session's feature exposures when `inheritsFeatureExposures` (see
+    /// ``inheritsFeatureExposures``).
+    public func withDelegatingSessionID(
+        _ delegatingSessionID: String?,
+        inheritsFeatureExposures: Bool
+    ) -> AgentRuntimeConfiguration {
+        AgentRuntimeConfiguration(
+            modelID: modelID,
+            workingDirectory: workingDirectory,
+            configuredContextWindowLimit: configuredContextWindowLimit,
+            generationParameterOverrides: generationParameterOverrides,
+            maxToolRounds: maxToolRounds,
+            maxOutputTokens: maxOutputTokens,
+            appMode: appMode,
+            locksModelToSession: locksModelToSession,
+            toolAuthorizationHandler: toolAuthorizationHandler,
+            agentID: agentID,
+            agentName: agentName,
+            profileID: profileID,
+            profileName: profileName,
+            profileRole: profileRole,
+            delegatingSessionID: delegatingSessionID,
+            inheritsFeatureExposures: inheritsFeatureExposures
         )
     }
 }

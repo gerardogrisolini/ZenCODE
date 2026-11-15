@@ -30,6 +30,29 @@ struct ProjectAgentSelectionPromptTests {
         )
     }
 
+    private static let builder = AgentProfile(
+        id: "builder",
+        name: "Builder",
+        role: .builder
+    )
+
+    /// The paragraph that offers a coordinator to have a missing tool built;
+    /// `delegation` is the sentence naming how the Builder is selected.
+    private static func missingToolParagraph(delegation: String) -> String {
+        """
+        Developing a missing tool:
+        When the work needs a reusable tool that none of your available tools provides, you may have it built instead of stopping or asking the operator to run /feature. \(delegation) In the prompt state the capability, the tool name you expect in a namespace that no existing tool uses (for example `changelog.build`, not `git.changelog`), its inputs and outputs, and every constraint; never ask for credentials to be embedded. Then call agent.wait. A feature that sub-agent builds and enables is exposed to this session automatically: its tools are in your tool list from your next step, and the agent.wait or agent.get result names them, so call them directly without /tools. Do this only for a durable capability; do one-off work with the tools you already have. An installed feature that is merely not selected is not exposed this way: ask the operator to select it with /tools.
+        """
+    }
+
+    private static let rosterParagraph = missingToolParagraph(
+        delegation: "Delegate it with agent.create to a profile listed above whose role is `builder`."
+    )
+
+    private static let roleParagraph = missingToolParagraph(
+        delegation: "Delegate it with agent.create using `profileRole: \"builder\"`."
+    )
+
     @Test
     func rosterBuiltFromTheFilteredProfilesListsOnlyAssociatedOnes() throws {
         let associated = ProjectAgentSelectionStore.filter(
@@ -147,6 +170,109 @@ struct ProjectAgentSelectionPromptTests {
                 selectedAgentRole: .organizer
             ).combinedPrompt
             #expect(!withoutAgentCreate.contains("Delegation by role:"))
+        }
+    }
+
+    @Test
+    func rosterWithABuilderEndsWithTheMissingToolParagraph() throws {
+        let section = try #require(Self.roster([Support.developer, Self.builder]))
+
+        #expect(section.hasSuffix("an explicit role and scope.\n\n" + Self.rosterParagraph))
+        // Said once, with no role-variant wording.
+        #expect(section.components(separatedBy: "Developing a missing tool:").count == 2)
+        #expect(!section.contains("profileRole"))
+    }
+
+    @Test
+    func rosterWithoutABuilderHasNoMissingToolParagraph() throws {
+        let section = try #require(Self.roster([Support.developer, Support.reviewer]))
+
+        #expect(!section.contains("Developing a missing tool"))
+        #expect(!section.contains("/feature"))
+    }
+
+    @Test
+    func missingToolParagraphNeedsADelegatableBuilder() throws {
+        // A builder whose only binding is not configured is dropped from the
+        // roster, so there is nobody to build the tool.
+        let unroutableBuilder = AgentProfile(
+            id: "builder",
+            name: "Builder",
+            role: .builder,
+            modelID: "missing",
+            capability: 5
+        )
+        let section = try #require(Self.roster([Support.developer, unroutableBuilder]))
+        #expect(section.contains("- Developer ["))
+        #expect(!section.contains("- Builder ["))
+        #expect(!section.contains("Developing a missing tool"))
+
+        let nothingRoutable = try #require(Self.roster([unroutableBuilder]))
+        #expect(nothingRoutable.contains("No configured profile currently has a routable model binding"))
+        #expect(!nothingRoutable.contains("Developing a missing tool"))
+
+        // Without agent.create there is no roster at all.
+        #expect(Self.roster([Self.builder], allowedToolNames: ["local.readFile"]) == nil)
+    }
+
+    @Test
+    func roleDelegationWithABuilderEndsWithTheRoleVariantOfTheParagraph() throws {
+        let section = try #require(SystemPromptBuilder.roleDelegationSection(
+            allowedToolNames: nil,
+            roles: [.developer, .builder]
+        ))
+
+        #expect(section.hasSuffix("and the agent.create result names the chosen profile and model.\n\n" + Self.roleParagraph))
+        #expect(section.components(separatedBy: "Developing a missing tool:").count == 2)
+        #expect(!section.contains("to a profile listed above"))
+    }
+
+    @Test
+    func roleDelegationWithoutABuilderHasNoMissingToolParagraph() throws {
+        let section = try #require(SystemPromptBuilder.roleDelegationSection(
+            allowedToolNames: ["agent.create"],
+            roles: [.developer, .reviewer]
+        ))
+
+        #expect(!section.contains("Developing a missing tool"))
+        #expect(SystemPromptBuilder.roleDelegationSection(
+            allowedToolNames: ["local.readFile"],
+            roles: [.builder]
+        ) == nil)
+    }
+
+    @Test
+    func standalonePromptOffersTheMissingToolParagraphOnlyWithABuilderInTheProject() throws {
+        try Support.withTemporaryProject { _, workspace in
+            try AgentProfileStore.save(Support.profiles + [Self.organizer, Self.builder])
+
+            let roster = AgentStandaloneSystemPrompt.promptSections(
+                cwd: workspace.path,
+                allowedToolNames: nil
+            ).combinedPrompt
+            #expect(roster.contains(Self.rosterParagraph))
+
+            let byRole = AgentStandaloneSystemPrompt.promptSections(
+                cwd: workspace.path,
+                allowedToolNames: nil,
+                selectedAgentRole: .organizer
+            ).combinedPrompt
+            #expect(byRole.contains(Self.roleParagraph))
+
+            // A project associated with no builder never sees the paragraph.
+            try ProjectAgentSelectionStore.save(
+                agentIDs: [Support.reviewer.id, Support.developer.id],
+                workspaceRootURL: workspace
+            )
+            for role in [nil, AgentProfileRole.organizer] {
+                let prompt = AgentStandaloneSystemPrompt.promptSections(
+                    cwd: workspace.path,
+                    allowedToolNames: nil,
+                    selectedAgentRole: role
+                ).combinedPrompt
+                #expect(prompt.contains("- Reviewer [") || prompt.contains("- reviewer: "))
+                #expect(!prompt.contains("Developing a missing tool"))
+            }
         }
     }
 }

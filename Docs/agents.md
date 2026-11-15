@@ -56,7 +56,7 @@ and a profile can have any name in any role.
 | Role | Effect |
 | --- | --- |
 | `developer` | The default agent: used when no agent is chosen at launch (`--agent`), picked among the profiles associated with the project (see **Default developer** below). Setup always keeps a profile with this role |
-| `builder` | It can use `/feature` and receives the intrinsic feature-management tools |
+| `builder` | It can use `/feature` and receives the intrinsic feature-management tools. A coordinator with the `sub-agents` tool can also delegate the construction of a missing tool to it, and the generated feature it builds is exposed to the delegating session (see [Tool Authority](#tool-authority) and [builder.md](builder.md#autonomous-feature-development)) |
 | `generic` | No runtime effect beyond the profile's own configuration. The neutral role for custom agents that fit no other role; it has no recommended profile |
 | `planner` | `/plan` delegates to it; its catalog-owned core tools are forced read-only, whatever `readOnly` says |
 | `reviewer` | `/review` delegates to it |
@@ -227,8 +227,10 @@ profiles in setup to give an existing `Reporter` the read-only setting.
 `desktop-tools`, `browser-tools`, `macOS`.
 
 Enabling a package makes it available; `/tools` exposes it in the current
-session. The `sub-agents` group is what lets a profile create delegated
-sub-agents.
+session. The one exception is a generated feature that a Builder sub-agent built
+for the session that delegated it, which that session receives without `/tools`
+(see [Tool Authority](#tool-authority)). The `sub-agents` group is what lets a
+profile create delegated sub-agents.
 
 The `search` group holds `search.glob`, `search.grep`, and `search.locate`. It
 is a core group, like `files` and `text`: the tools run inside `zen` on macOS
@@ -402,6 +404,56 @@ Write authority normally comes from the selected profile's configured tools. A c
   reporting/control-plane operation; `tasks.create`, `tasks.retry`, and
   `tasks.cancel` remain restricted.
 - Every child receives the intrinsic `skills.list` and `skills.read` tools.
+- **A child with the `builder` role** is the one case in which tools reach the
+  delegating session after `agent.create`. A coordinator whose session has
+  `sub-agents`, and whose project sees a delegatable `builder` profile, can have
+  a missing tool built: it delegates with `agent.create` (a `profile`, or
+  `profileRole: "builder"` for a coordinator that delegates by role), and the
+  system prompt tells it so in a *Developing a missing tool* paragraph at the
+  end of the roster or of the *Delegation by role* section. The Builder
+  receives a *Delegated feature development* section (whatever its profile
+  instructions say, an existing `agents.json` included) and runs `feature.list`,
+  `feature.scaffold` (disabled), the implementation, `feature.validate`,
+  `feature.build`, and `feature.enable`; a generated feature that already
+  provides the capability is rebuilt (`feature.validate`, `feature.build`) and
+  enabled rather than duplicated, and when a bundled or optional feature
+  provides it the Builder rebuilds nothing and reports that the operator has to
+  select it with `/tools`. A delegated Builder gets a refusal from
+  `feature.scaffold`, `feature.build`, `feature.install`, and `feature.enable`,
+  before anything is written, built, or enabled, for a feature whose tool names,
+  aliases, or prefixes start with the namespace of a core tool or collide with
+  another loaded feature, and a reload of the feature bundles drops the
+  exposure of a feature whose loaded routing no longer passes that check (a
+  check on the ordinary path, not a sandbox: see **Security** in
+  [builder.md](builder.md#autonomous-feature-development)); the `mcp-bridge`
+  template is available on macOS only.
+  A generated feature it built (an ID that is not a catalog ID, with its package
+  under the generated features root) and that is loaded is exposed to the
+  session that called `agent.create`: its tools are in the tool list from the
+  model's next round, and the next `agent.*` result announces them once. A
+  bundled or optional feature, or the local copy of one that keeps its ID, is
+  never exposed this way, and a generated feature that already existed is
+  exposed only if the Builder rebuilds it in that delegation. The request still
+  cannot assign tools: whether anything is registered depends on the caller
+  identity the runtime sets (a sub-agent with the `builder` role), the real
+  outcome of the build, and its checks on the feature ID, the path, and the
+  executable; the package contents are what the Builder wrote. Only the
+  delegating session receives it. A child with a different profile does not see
+  it. A child created with the coordinator's own profile sees it by feature ID,
+  reading the exposures of the delegating session rather than names added to
+  its allowlist, so it gets no other tool that shares the namespace and a
+  revocation reaches it at once, even if it is already running. It never grants
+  a `feature.*` management tool or the name of a core tool. The exposure is
+  transient: it ends with the conversation, when the session's agent changes,
+  when a reload finds the routing of the feature in a namespace it does not own,
+  or when the feature is disabled or deleted, but the feature stays built and
+  enabled on disk, a session with no tool restriction sees it like any enabled
+  feature, and after a restart it is selected from `/tools`. Remove the Builder
+  profile from the project with `/agents`, or `sub-agents` from the session's
+  tools, to turn the capability off. A tool that a Builder wrote or rebuilt is
+  callable without `/tools`, without the workspace access request that selecting
+  a generated feature there brings, and without a consent request of its own;
+  see [builder.md](builder.md#autonomous-feature-development).
 
 `/plan` and `/review`, and `/goal` when it delegates, use the selected profile's own tools unless that profile is the coordinator's same resolved profile, in which case the coordinator's effective session allowlist is inherited. Different profiles remain isolated; configure each profile with exactly the access required for its role.
 

@@ -22,6 +22,15 @@ public struct ToolExecutionContext: Sendable, Equatable {
     public let profileRole: AgentProfileRole?
     public let modelID: String?
     public let isSubAgent: Bool
+    /// ID of the session that delegated this sub-agent with `agent.create`:
+    /// the session that executed it; `nil` for a coordinator. A Builder
+    /// sub-agent exposes the features it builds to that session.
+    public let delegatingSessionID: String?
+    /// Whether this sub-agent reads the feature exposures of
+    /// `delegatingSessionID` as its own: true only for a child created with
+    /// the coordinator's own profile under a restricted grant, which inherits
+    /// that grant. Set by the runtime when the sub-agent is created.
+    public let inheritsFeatureExposures: Bool
 
     public init(
         agentID: String? = nil,
@@ -30,7 +39,9 @@ public struct ToolExecutionContext: Sendable, Equatable {
         profileName: String? = nil,
         profileRole: AgentProfileRole? = nil,
         modelID: String? = nil,
-        isSubAgent: Bool = false
+        isSubAgent: Bool = false,
+        delegatingSessionID: String? = nil,
+        inheritsFeatureExposures: Bool = false
     ) {
         self.agentID = agentID?.nilIfBlank
         self.agentName = agentName?.nilIfBlank
@@ -39,6 +50,8 @@ public struct ToolExecutionContext: Sendable, Equatable {
         self.profileRole = profileRole
         self.modelID = modelID?.nilIfBlank
         self.isSubAgent = isSubAgent
+        self.delegatingSessionID = delegatingSessionID?.nilIfBlank
+        self.inheritsFeatureExposures = inheritsFeatureExposures
     }
 
     func resolved(fallbackAgentID: String?) -> ToolExecutionContext {
@@ -51,7 +64,9 @@ public struct ToolExecutionContext: Sendable, Equatable {
             profileName: self.profileName,
             profileRole: profileRole,
             modelID: modelID,
-            isSubAgent: isSubAgent
+            isSubAgent: isSubAgent,
+            delegatingSessionID: delegatingSessionID,
+            inheritsFeatureExposures: inheritsFeatureExposures
         )
     }
 }

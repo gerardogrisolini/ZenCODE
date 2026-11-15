@@ -10,17 +10,28 @@ import Foundation
 import ToolCore
 
 extension SwiftFeatureRuntime {
+    /// The descriptors of the loaded features relevant to `allowedToolNames`
+    /// (see ``SwiftFeatureBundle/isRelevant(allowedToolNames:)``) or exposed
+    /// to `sessionID` (see ``isExposed(_:sessionID:)``). An exposed
+    /// feature that is not relevant contributes only its exposable tools: no
+    /// kernel feature-management or core catalog name. Without a session ID,
+    /// or with a nil or empty allowlist, the result is the relevance alone.
     public func descriptors(
         allowedToolNames: Set<String>? = nil,
-        excludingFeatureIDs: Set<String> = []
+        excludingFeatureIDs: Set<String> = [],
+        sessionID: String? = nil
     ) async -> [DirectToolDescriptor] {
         var resolvedTools: [ToolDescriptor] = []
         var seenToolNames = Set<String>()
-        for feature in features where isListed(
-            feature,
-            allowedToolNames: allowedToolNames,
-            excludingFeatureIDs: excludingFeatureIDs
-        ) {
+        for feature in features {
+            guard let listing = listing(
+                of: feature,
+                allowedToolNames: allowedToolNames,
+                excludingFeatureIDs: excludingFeatureIDs,
+                sessionID: sessionID
+            ) else {
+                continue
+            }
             // Runtime discovery invokes the `--list-tools` subprocess and waits
             // for completion, including any feature-owned consent. Only a
             // successful discovery is cached per-feature in
@@ -32,7 +43,7 @@ extension SwiftFeatureRuntime {
                 ? await tools(for: feature)
                 : feature.tools
             appendOwnedTools(
-                featureTools,
+                listing.tools(featureTools),
                 of: feature,
                 to: &resolvedTools,
                 seenToolNames: &seenToolNames
@@ -42,7 +53,8 @@ extension SwiftFeatureRuntime {
         return ToolDescriptor.canonicalized(resolvedTools).map(DirectToolDescriptor.init)
     }
 
-    /// The descriptors ``descriptors(allowedToolNames:excludingFeatureIDs:)``
+    /// The descriptors
+    /// ``descriptors(allowedToolNames:excludingFeatureIDs:sessionID:)``
     /// resolves, from the tools already known only: it never starts a
     /// feature's tool discovery (`--list-tools`) or the consent it can ask
     /// for. A feature that discovers its tools at runtime contributes the
@@ -51,17 +63,22 @@ extension SwiftFeatureRuntime {
     /// its bundles were reloaded (a failed discovery is not cached).
     public func knownDescriptors(
         allowedToolNames: Set<String>? = nil,
-        excludingFeatureIDs: Set<String> = []
+        excludingFeatureIDs: Set<String> = [],
+        sessionID: String? = nil
     ) -> [DirectToolDescriptor] {
         var resolvedTools: [ToolDescriptor] = []
         var seenToolNames = Set<String>()
-        for feature in features where isListed(
-            feature,
-            allowedToolNames: allowedToolNames,
-            excludingFeatureIDs: excludingFeatureIDs
-        ) {
+        for feature in features {
+            guard let listing = listing(
+                of: feature,
+                allowedToolNames: allowedToolNames,
+                excludingFeatureIDs: excludingFeatureIDs,
+                sessionID: sessionID
+            ) else {
+                continue
+            }
             appendOwnedTools(
-                knownTools(for: feature),
+                listing.tools(knownTools(for: feature)),
                 of: feature,
                 to: &resolvedTools,
                 seenToolNames: &seenToolNames
@@ -73,9 +90,9 @@ extension SwiftFeatureRuntime {
 
     /// The IDs of the loaded features whose tools a session allowed
     /// `allowedToolNames` lists: the features
-    /// ``descriptors(allowedToolNames:excludingFeatureIDs:)`` resolves, and
-    /// discovers when they discover their tools at runtime. Never starts a
-    /// feature's tool discovery.
+    /// ``descriptors(allowedToolNames:excludingFeatureIDs:sessionID:)``
+    /// resolves without a session ID, and discovers when they discover their
+    /// tools at runtime. Never starts a feature's tool discovery.
     public func featureIDs(relevantTo allowedToolNames: Set<String>?) -> Set<String> {
         Set(
             features
@@ -84,17 +101,56 @@ extension SwiftFeatureRuntime {
         )
     }
 
-    private func isListed(
+    /// Whether the exposure of `feature` to `sessionID` grants its tools
+    /// under `allowedToolNames`: never for an empty allowlist, which grants
+    /// nothing (as in `DirectToolExecutor.descriptors`).
+    private func exposureGrants(
         _ feature: SwiftFeatureBundle,
-        allowedToolNames: Set<String>?,
-        excludingFeatureIDs: Set<String>
+        sessionID: String?,
+        allowedToolNames: Set<String>?
     ) -> Bool {
-        !excludingFeatureIDs.contains(feature.id)
-            && feature.isRelevant(allowedToolNames: allowedToolNames)
+        allowedToolNames?.isEmpty != true && isExposed(feature, sessionID: sessionID)
+    }
+
+    /// How a feature is listed: because it is relevant to the allowlist (all
+    /// its tools), or only because it is exposed (its exposable tools).
+    private enum FeatureListing {
+        case relevant
+        case exposed
+
+        func tools(_ featureTools: [ToolDescriptor]) -> [ToolDescriptor] {
+            switch self {
+            case .relevant:
+                return featureTools
+            case .exposed:
+                return featureTools.filter {
+                    SwiftFeatureRuntime.isExposableToolName($0.name)
+                }
+            }
+        }
+    }
+
+    private func listing(
+        of feature: SwiftFeatureBundle,
+        allowedToolNames: Set<String>?,
+        excludingFeatureIDs: Set<String>,
+        sessionID: String?
+    ) -> FeatureListing? {
+        guard !excludingFeatureIDs.contains(feature.id) else {
+            return nil
+        }
+        if feature.isRelevant(allowedToolNames: allowedToolNames) {
+            return .relevant
+        }
+        return exposureGrants(
+            feature,
+            sessionID: sessionID,
+            allowedToolNames: allowedToolNames
+        ) ? .exposed : nil
     }
 
     /// Appends the tools of `featureTools` whose name is not listed yet and
-    /// that `feature` executes.
+    /// that `feature` executes (``owns(_:toolName:)``).
     private func appendOwnedTools(
         _ featureTools: [ToolDescriptor],
         of feature: SwiftFeatureBundle,
@@ -103,7 +159,7 @@ extension SwiftFeatureRuntime {
     ) {
         for tool in ToolDescriptor.canonicalized(featureTools)
         where seenToolNames.insert(tool.name).inserted
-            && features.first(where: { $0.contains(toolName: tool.name) })?.id == feature.id {
+            && owns(feature, toolName: tool.name) {
             // Execution resolves the first feature containing a name, even
             // when only a later duplicate is relevant to the allowlist. Do
             // not publish that later descriptor with an owner that cannot
@@ -112,9 +168,21 @@ extension SwiftFeatureRuntime {
         }
     }
 
+    /// Whether `feature` executes `toolName`: execution resolves the first
+    /// loaded feature that contains the name.
+    func owns(_ feature: SwiftFeatureBundle, toolName: String) -> Bool {
+        features.first(where: { $0.contains(toolName: toolName) })?.id == feature.id
+    }
+
+    /// Whether `toolName` is a tool of a loaded feature that is relevant to
+    /// `allowedToolNames` or exposed to `sessionID`. A tool allowed only
+    /// through the exposure must be an exposable name, and an empty allowlist
+    /// allows nothing through it (see
+    /// ``descriptors(allowedToolNames:excludingFeatureIDs:sessionID:)``).
     public func featureToolIsAllowed(
         toolName: String,
-        allowedToolNames: Set<String>?
+        allowedToolNames: Set<String>?,
+        sessionID: String? = nil
     ) -> Bool {
         // Kernel feature-management commands are never feature-owned, even if
         // an invalid manifest advertises the broad `feature.` prefix.
@@ -124,7 +192,14 @@ extension SwiftFeatureRuntime {
         guard let feature = features.first(where: { $0.contains(toolName: toolName) }) else {
             return false
         }
-        return feature.isRelevant(allowedToolNames: allowedToolNames)
+        if feature.isRelevant(allowedToolNames: allowedToolNames) {
+            return true
+        }
+        return exposureGrants(
+            feature,
+            sessionID: sessionID,
+            allowedToolNames: allowedToolNames
+        ) && Self.isExposableToolName(toolName)
     }
 
     func executeResultIfAvailable(

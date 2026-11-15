@@ -146,7 +146,11 @@ and instructs the model not to call `agent.create`. The complete section is
 omitted only when delegation itself is unavailable or the session pins one model.
 An `organizer` coordinator gets a `Delegation by role:` section instead, which
 lists the roles of its visible profiles and no bindings (see
-[Organizer](organizer.md#delegated-work)).
+[Organizer](organizer.md#delegated-work)). When a delegatable profile has the
+`builder` role, the roster, or the `Delegation by role:` section, ends with a
+*Developing a missing tool* paragraph that lets the model have a missing tool
+built by that profile (see
+[Autonomous Feature Development](builder.md#autonomous-feature-development)).
 
 The `binding:<id>` token is the only reference advertised for `model`. Its
 namespace cannot collide with a model ID or provider slug. Provider and model

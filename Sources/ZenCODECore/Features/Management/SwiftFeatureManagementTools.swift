@@ -10,11 +10,28 @@ import Foundation
 import ToolCore
 
 extension SwiftFeatureRuntime {
+    /// Runs a kernel feature-management command.
+    ///
+    /// `delegatingSessionID` is the ID of the session that delegated the
+    /// calling Builder sub-agent with `agent.create`, or `nil` for any other
+    /// caller. With it, `feature.build`, `feature.scaffold`, and
+    /// `feature.install` first refuse a feature that would take a namespace it
+    /// does not own (see ``ensureDelegatedFeatureNamespace(featureID:toolNames:toolNameAliases:toolNamePrefixes:)``),
+    /// `feature.enable` refuses the same way the manifest it would enable
+    /// (see ``ensureDelegatedFeatureNamespace(enabling:)``),
+    /// and a successful build of a generated feature under the generated
+    /// features root exposes it to that session (see
+    /// ``recordBuilderOutcome(_:delegatingSessionID:)``). A `feature.delete`
+    /// removes the feature from every session regardless of the caller.
+    /// Without `delegatingSessionID` the command behaves as it always did,
+    /// and the rendered output never changes.
     public func executeManagementTool(
-        toolCall: DirectAgentToolCall
+        toolCall: DirectAgentToolCall,
+        delegatingSessionID: String? = nil
     ) async throws -> String {
         let arguments = toolCall.argumentsObject
         let canonicalName = Self.managementToolAliases[toolCall.name] ?? toolCall.name
+        let isDelegatedBuild = delegatingSessionID?.nilIfBlank != nil
         switch canonicalName {
         case "feature.list":
             let includeTools = arguments.bool("includeTools", "include_tools") ?? true
@@ -27,6 +44,10 @@ extension SwiftFeatureRuntime {
             )
         case "feature.enable":
             let id = try Self.requiredFeatureID(arguments)
+            if isDelegatedBuild {
+                // Before the manifest is enabled.
+                try ensureDelegatedFeatureNamespace(enabling: id)
+            }
             try await setFeature(id: id, enabled: true)
             return try await renderFeatureMutation(
                 action: "enabled",
@@ -42,6 +63,10 @@ extension SwiftFeatureRuntime {
         case "feature.delete":
             let report = try await deleteFeature(arguments: arguments)
             await reloadFeatureBundles()
+            recordBuilderOutcome(
+                Self.builderOutcome(delete: report),
+                delegatingSessionID: delegatingSessionID
+            )
             return try renderJSON(report)
         case "feature.edit":
             let report = try editFeature(arguments: arguments)
@@ -62,23 +87,58 @@ extension SwiftFeatureRuntime {
                 validateFeature(arguments: arguments)
             )
         case "feature.build":
-            let report = try await buildFeature(arguments: arguments)
+            let manifestURL = try featureManifestURL(arguments: arguments)
+            if isDelegatedBuild,
+               let record = SwiftFeatureRegistry.featureRecord(
+                   manifestURL: manifestURL,
+                   fileManager: fileManager
+               ) {
+                // A missing or invalid manifest is reported by the build.
+                try ensureDelegatedFeatureNamespace(
+                    featureID: record.id,
+                    toolNames: record.tools.map(\.name),
+                    toolNameAliases: record.toolNameAliases,
+                    toolNamePrefixes: record.toolNamePrefixes
+                )
+            }
+            let report = try await buildFeature(
+                manifestURL: manifestURL,
+                arguments: arguments
+            )
             if report.ok {
                 await reloadFeatureBundles()
             }
+            recordBuilderOutcome(
+                Self.builderOutcome(build: report, manifestURL: manifestURL),
+                delegatingSessionID: delegatingSessionID
+            )
             return try renderJSON(report)
         case "feature.scaffold":
-            let report = try await scaffoldFeature(arguments: arguments)
+            let report = try await scaffoldFeature(
+                arguments: arguments,
+                ensuresDelegatedNamespace: isDelegatedBuild
+            )
+            recordBuilderOutcome(
+                Self.builderOutcome(scaffold: report),
+                delegatingSessionID: delegatingSessionID
+            )
             return try renderJSON(report)
         case "feature.promote":
             let report = try await promoteFeature(arguments: arguments)
             await reloadFeatureBundles()
             return try renderJSON(report)
         case "feature.install":
-            let report = try await installFeature(arguments: arguments)
+            let report = try await installFeature(
+                arguments: arguments,
+                ensuresDelegatedNamespace: isDelegatedBuild
+            )
             if report.ok {
                 await reloadFeatureBundles()
             }
+            recordBuilderOutcome(
+                Self.builderOutcome(install: report),
+                delegatingSessionID: delegatingSessionID
+            )
             return try renderJSON(report)
         default:
             throw DirectToolError.unknownTool(toolCall.name)
@@ -224,7 +284,20 @@ extension SwiftFeatureRuntime {
     func buildFeature(
         arguments: [String: Any]
     ) async throws -> SwiftFeatureBuildReport {
-        let manifestURL = try featureManifestURL(arguments: arguments)
+        try await buildFeature(
+            manifestURL: featureManifestURL(arguments: arguments),
+            arguments: arguments
+        )
+    }
+
+    /// Builds the feature package of `manifestURL`; `arguments` supplies only
+    /// the timeout. The manifest and the package are validated here; the
+    /// `swift build` itself runs through ``featureBuildExecutor`` when one is
+    /// installed, otherwise for real.
+    func buildFeature(
+        manifestURL: URL,
+        arguments: [String: Any]
+    ) async throws -> SwiftFeatureBuildReport {
         guard let record = SwiftFeatureRegistry.featureRecord(
             manifestURL: manifestURL,
             fileManager: fileManager
@@ -281,6 +354,38 @@ extension SwiftFeatureRuntime {
             product
         ] + build.arguments
         let timeout = TimeInterval(arguments.int("timeoutSeconds", "timeout") ?? 300)
+        let invocation = SwiftFeatureBuildInvocation(
+            featureID: record.id,
+            packageDirectoryURL: packageDirectoryURL,
+            executableURL: record.executableURL,
+            configuration: configuration,
+            commandArguments: commandArguments,
+            timeout: timeout
+        )
+        if let featureBuildExecutor {
+            return try await featureBuildExecutor(invocation)
+        }
+        return try await runFeatureBuild(invocation)
+    }
+
+    /// Installs the build ``buildFeature(manifestURL:arguments:)`` runs once
+    /// it has validated a package; `nil` restores the real `swift build`.
+    /// Internal seam for tests.
+    func setFeatureBuildExecutor(_ executor: SwiftFeatureBuildExecutor?) {
+        featureBuildExecutor = executor
+    }
+
+    /// The real build of `invocation`: `swift build`, then `strip` for a
+    /// release build.
+    private func runFeatureBuild(
+        _ invocation: SwiftFeatureBuildInvocation
+    ) async throws -> SwiftFeatureBuildReport {
+        let featureID = invocation.featureID
+        let packageDirectoryURL = invocation.packageDirectoryURL
+        let executableURL = invocation.executableURL
+        let configuration = invocation.configuration
+        let commandArguments = invocation.commandArguments
+        let timeout = invocation.timeout
         let baseEnvironment = ProcessInfo.processInfo.environment
         let swiftExecutableURL = try Self.swiftExecutableURL(
             fileManager: fileManager,
@@ -307,11 +412,11 @@ extension SwiftFeatureRuntime {
         } catch {
             throw DirectToolError.processFailed(
                 "Could not launch Swift at \(swiftExecutableURL.path) to build feature "
-                    + "'\(record.id)' in \(packageDirectoryURL.path): \(error.localizedDescription)"
+                    + "'\(featureID)' in \(packageDirectoryURL.path): \(error.localizedDescription)"
             )
         }
         let executableAvailable = fileManager.isExecutableFile(
-            atPath: record.executableURL.path
+            atPath: executableURL.path
         )
 
         guard result.exitCode == 0,
@@ -319,16 +424,16 @@ extension SwiftFeatureRuntime {
               configuration.lowercased() == "release" else {
             return SwiftFeatureBuildReport(
                 ok: result.exitCode == 0 && executableAvailable,
-                id: record.id,
+                id: featureID,
                 command: ["swift"] + commandArguments,
                 workingDirectory: packageDirectoryURL.path,
-                executablePath: record.executableURL.path,
+                executablePath: executableURL.path,
                 exitCode: result.exitCode,
                 timedOut: result.timedOut,
                 stdout: result.stdout,
                 stderr: executableAvailable
                     ? result.stderr
-                    : result.stderr + "\nExecutable not found after build: \(record.executableURL.path)"
+                    : result.stderr + "\nExecutable not found after build: \(executableURL.path)"
             )
         }
 
@@ -336,10 +441,10 @@ extension SwiftFeatureRuntime {
         guard fileManager.isExecutableFile(atPath: stripExecutableURL.path) else {
             return SwiftFeatureBuildReport(
                 ok: false,
-                id: record.id,
+                id: featureID,
                 command: ["swift"] + commandArguments,
                 workingDirectory: packageDirectoryURL.path,
-                executablePath: record.executableURL.path,
+                executablePath: executableURL.path,
                 exitCode: 1,
                 timedOut: false,
                 stdout: result.stdout,
@@ -351,7 +456,7 @@ extension SwiftFeatureRuntime {
         do {
             stripResult = try await AsyncProcessRunner.run(
                 executableURL: stripExecutableURL,
-                arguments: ["-S", record.executableURL.path],
+                arguments: ["-S", executableURL.path],
                 workingDirectory: packageDirectoryURL,
                 environment: processEnvironment,
                 timeout: timeout
@@ -359,10 +464,10 @@ extension SwiftFeatureRuntime {
         } catch {
             return SwiftFeatureBuildReport(
                 ok: false,
-                id: record.id,
+                id: featureID,
                 command: ["swift"] + commandArguments,
                 workingDirectory: packageDirectoryURL.path,
-                executablePath: record.executableURL.path,
+                executablePath: executableURL.path,
                 exitCode: 1,
                 timedOut: false,
                 stdout: result.stdout,
@@ -372,10 +477,10 @@ extension SwiftFeatureRuntime {
 
         return SwiftFeatureBuildReport(
             ok: stripResult.exitCode == 0 && !stripResult.timedOut,
-            id: record.id,
+            id: featureID,
             command: ["swift"] + commandArguments,
             workingDirectory: packageDirectoryURL.path,
-            executablePath: record.executableURL.path,
+            executablePath: executableURL.path,
             exitCode: stripResult.exitCode,
             timedOut: stripResult.timedOut,
             stdout: result.stdout + stripResult.stdout,
@@ -384,7 +489,8 @@ extension SwiftFeatureRuntime {
     }
 
     private func scaffoldFeature(
-        arguments: [String: Any]
+        arguments: [String: Any],
+        ensuresDelegatedNamespace: Bool
     ) async throws -> SwiftFeatureScaffoldReport {
         let id = try Self.requiredFeatureID(arguments)
         guard Self.isValidFeatureID(id) else {
@@ -416,6 +522,27 @@ extension SwiftFeatureRuntime {
         )
 
         let template = Self.scaffoldTemplate(arguments: arguments)
+        if ensuresDelegatedNamespace {
+            // Before any file is written: the requested routing must be a
+            // namespace of its own.
+            switch template {
+            case .basic:
+                let toolName = Self.scaffoldToolName(id: id, arguments: arguments)
+                try ensureDelegatedFeatureNamespace(
+                    featureID: id,
+                    toolNames: [toolName],
+                    toolNameAliases: [],
+                    toolNamePrefixes: [Self.toolNamePrefix(from: toolName)]
+                )
+            case .mcpBridge:
+                try ensureDelegatedFeatureNamespace(
+                    featureID: id,
+                    toolNames: [],
+                    toolNameAliases: [],
+                    toolNamePrefixes: [Self.scaffoldToolPrefix(id: id, arguments: arguments)]
+                )
+            }
+        }
         let displayName = arguments.string("displayName", "display_name", "name")?.nilIfBlank ?? id
         let description = arguments.string("description")?.nilIfBlank
             ?? Self.defaultScaffoldDescription(template: template, displayName: displayName)
@@ -438,9 +565,7 @@ extension SwiftFeatureRuntime {
         let reportToolName: String
         switch template {
         case .basic:
-            let toolName = arguments
-                .string("toolName", "tool_name")?
-                .nilIfBlank ?? "\(Self.defaultToolPrefix(for: id)).echo"
+            let toolName = Self.scaffoldToolName(id: id, arguments: arguments)
             let toolErrors = Self.validationErrorsForToolNames([toolName])
             guard toolErrors.isEmpty else {
                 throw DirectToolError.permissionDenied(toolErrors.joined(separator: "\n"))
@@ -463,10 +588,7 @@ extension SwiftFeatureRuntime {
             ).write(to: manifestURL, atomically: true, encoding: .utf8)
             reportToolName = toolName
         case .mcpBridge:
-            let toolPrefix = Self.normalizedToolPrefix(
-                arguments.string("toolPrefix", "tool_prefix", "prefix")?
-                    .nilIfBlank ?? "\(Self.defaultToolPrefix(for: id))."
-            )
+            let toolPrefix = Self.scaffoldToolPrefix(id: id, arguments: arguments)
             try Self.validateMCPBridgeToolPrefix(toolPrefix)
             let endpointURLString = arguments
                 .string("endpointURL", "endpoint_url", "url")?
@@ -607,7 +729,8 @@ extension SwiftFeatureRuntime {
     }
 
     private func installFeature(
-        arguments: [String: Any]
+        arguments: [String: Any],
+        ensuresDelegatedNamespace: Bool
     ) async throws -> SwiftFeatureInstallReport {
         guard explicitFeatures == nil else {
             throw DirectToolError.permissionDenied(
@@ -650,6 +773,15 @@ extension SwiftFeatureRuntime {
             throw DirectToolError.permissionDenied(
                 "Feature manifest validation failed before install:\n"
                     + manifestRoutingErrors.joined(separator: "\n")
+            )
+        }
+        if ensuresDelegatedNamespace {
+            // Before anything is copied or built.
+            try ensureDelegatedFeatureNamespace(
+                featureID: id,
+                toolNames: sourceManifest.tools.map(\.name),
+                toolNameAliases: sourceManifest.toolNameAliases,
+                toolNamePrefixes: sourceManifest.toolNamePrefixes
             )
         }
 
@@ -788,6 +920,10 @@ extension SwiftFeatureRuntime {
         throw DirectToolError.notFound("Unknown generated Swift feature: \(id).")
     }
 
+    /// Reloads the feature bundles, then revokes the exposure of each
+    /// registered feature whose reloaded routing takes a namespace it does
+    /// not own (``revokeExposuresOutsideTheirNamespace()``), whoever caused
+    /// the reload.
     func reloadFeatureBundles() async {
         runtimeDiscoveredToolsByFeatureID.removeAll()
         persistentProcessReloadCount += 1
@@ -801,9 +937,48 @@ extension SwiftFeatureRuntime {
             searchRoots: featureSearchRoots,
             fileManager: fileManager
         )
+        revokeExposuresOutsideTheirNamespace()
         persistentProcessReloadCount -= 1
         if persistentProcessReloadCount == 0, !persistentProcessesWereShutDown {
             acceptsPersistentProcessRequests = true
         }
     }
+
+    /// The tool name a `basic` scaffold of `id` declares: the requested
+    /// `toolName`, or `<id prefix>.echo`.
+    static func scaffoldToolName(id: String, arguments: [String: Any]) -> String {
+        arguments
+            .string("toolName", "tool_name")?
+            .nilIfBlank ?? "\(defaultToolPrefix(for: id)).echo"
+    }
+
+    /// The tool name prefix an `mcp-bridge` scaffold of `id` declares: the
+    /// requested `toolPrefix`, or `<id prefix>.`, ending in `.`.
+    static func scaffoldToolPrefix(id: String, arguments: [String: Any]) -> String {
+        normalizedToolPrefix(
+            arguments.string("toolPrefix", "tool_prefix", "prefix")?
+                .nilIfBlank ?? "\(defaultToolPrefix(for: id))."
+        )
+    }
 }
+
+/// One `swift build` of a feature package, as
+/// ``SwiftFeatureRuntime/buildFeature(manifestURL:arguments:)`` prepared it
+/// after validating the manifest and the package.
+struct SwiftFeatureBuildInvocation: Sendable {
+    let featureID: String
+    let packageDirectoryURL: URL
+    /// The executable the build must produce.
+    let executableURL: URL
+    let configuration: String
+    /// The `swift` arguments (`build -c <configuration> --product <product>`
+    /// followed by the manifest's build arguments).
+    let commandArguments: [String]
+    let timeout: TimeInterval
+}
+
+/// Runs a ``SwiftFeatureBuildInvocation`` and reports it, in place of the
+/// real `swift build`. Internal test seam of ``SwiftFeatureRuntime``.
+typealias SwiftFeatureBuildExecutor = @Sendable (
+    SwiftFeatureBuildInvocation
+) async throws -> SwiftFeatureBuildReport

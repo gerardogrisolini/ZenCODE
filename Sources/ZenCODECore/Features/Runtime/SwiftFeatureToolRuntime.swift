@@ -53,6 +53,21 @@ public actor SwiftFeatureRuntime {
     /// same feature ID could race on staging directories and publication. The
     /// second concurrent call is rejected with a clear error instead.
     var inProgressInstallations: Set<String> = []
+    /// Builder exposures, keyed by the ID of the session that delegated the
+    /// Builder sub-agent with `agent.create`: for each feature those
+    /// sub-agents built successfully, the standardized path of the executable
+    /// the build produced. A bundle is exposed to the session only while it is
+    /// generated and runs that executable (``isExposed(_:sessionID:)``), which
+    /// is evaluated on read. Transient: never persisted and
+    /// never part of a session snapshot.
+    var builderBuiltExecutablePathsBySessionID: [String: [String: String]] = [:]
+    /// The exposed feature IDs already announced to each delegating session.
+    var announcedExposedFeatureIDsBySessionID: [String: Set<String>] = [:]
+    /// Runs the `swift build` (and `strip`) of a feature package once
+    /// ``buildFeature(manifestURL:arguments:)`` has validated it; `nil` runs
+    /// the real build. Internal seam: tests inject a build that does not run
+    /// `swift build`.
+    var featureBuildExecutor: SwiftFeatureBuildExecutor?
 
     public init(
         features explicitFeatures: [SwiftFeatureBundle]? = nil,

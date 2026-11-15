@@ -230,7 +230,9 @@ public actor ChatGPTSubscriptionGenerationClient: DirectToolRuntimeBackend {
                 profileName: configuration.profileName,
                 profileRole: configuration.profileRole,
                 modelID: configuration.modelID,
-                isSubAgent: sharedChatSenderID != nil
+                isSubAgent: sharedChatSenderID != nil,
+                delegatingSessionID: configuration.delegatingSessionID,
+                inheritsFeatureExposures: configuration.inheritsFeatureExposures
             ),
             subAgentContextualBackendFactory: subAgentContextualBackendFactory
                 ?? DirectSubAgentRuntime.unavailableContextualBackendFactory

@@ -56,6 +56,12 @@ public actor AgentCoreSessionRunner {
     /// the skill selection updates only this snapshot and never the system
     /// prompt, allowlist, cache key, or remote session identity.
     var promptSkillProvidersBySessionID: [String: PromptSkillSessionProvider] = [:]
+    /// Profile identity each session was last created or updated with, used
+    /// to revoke the session's Builder feature exposures when its agent
+    /// profile changes. Deliberately kept across a backend reset (model or
+    /// agent switch), so the switch can be detected when the session is
+    /// created again; dropped with the session by reset, close, and shutdown.
+    var featureExposureProfileIdentities: [String: FeatureExposureProfileIdentity] = [:]
     /// Serializes complete prompt turns per session without coupling unrelated
     /// sessions. It is deliberately outside backend state so a turn remains
     /// ordered across backend creation, recovery, and finalisation.
@@ -211,6 +217,9 @@ public actor AgentCoreSessionRunner {
     private func createSessionUsingMutationLease(
         configuration: AgentCoreSessionConfiguration
     ) async throws {
+        // Before the session can run a round: a profile change, or a session
+        // created again after its reset or close, starts without exposures.
+        await reconcileFeatureExposures(with: configuration)
         try await taskOrchestrator.registerSession(
             id: configuration.sessionID,
             workingDirectory: URL(fileURLWithPath: configuration.workingDirectoryPath)
@@ -231,6 +240,7 @@ public actor AgentCoreSessionRunner {
     public func updateSessionOptions(
         configuration: AgentCoreSessionConfiguration
     ) async throws {
+        await reconcileFeatureExposures(with: configuration)
         let backend = try await ensureBackend(configuration: configuration)
         let generation = backendGeneration
         await backend.updateSessionOptions(

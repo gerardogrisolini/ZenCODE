@@ -19,11 +19,18 @@ extension DirectSubAgentRuntime {
         let note: String?
     }
 
+    /// `delegatingSessionID` is the ID of the session executing this
+    /// `agent.create` (before root-room resolution); each child receives it
+    /// in its ``BackendContext/delegatingSessionID``. A child created with the
+    /// coordinator's own profile under a restricted grant also reads that
+    /// session's feature exposures
+    /// (``BackendContext/inheritsFeatureExposures``).
     public func createAgents(
         arguments: [String: JSONValue],
         workingDirectory: URL,
         parentAllowedToolNames: Set<String>?,
-        rootSessionID: String = "default"
+        rootSessionID: String = "default",
+        delegatingSessionID: String? = nil
     ) async throws -> String {
         // MARK: Validate
         let payloads = try Self.requestedAgentPayloads(from: arguments)
@@ -153,6 +160,15 @@ extension DirectSubAgentRuntime {
                 let payload = item.payload
                 let id = item.id
                 let sessionID = "\(id)_session"
+                // The child that inherits the coordinator's restricted grant
+                // (see `SubAgentToolGrant.resolve`) inherits, by feature ID,
+                // the features exposed to the delegating session too.
+                let inheritsFeatureExposures = parentAllowedToolNames != nil
+                    && SubAgentToolGrant.inheritsParentToolGrant(
+                        profile: item.profile,
+                        parentProfileID: parentProfileID,
+                        parentProfileName: parentProfileName
+                    )
                 let backendContext = Self.backendContext(
                     for: payload,
                     profile: item.profile
@@ -160,7 +176,9 @@ extension DirectSubAgentRuntime {
                 .injecting(
                     sharedChat: sharedChat,
                     sharedChatSenderID: id,
-                    sharedChatRoomID: rootSessionID
+                    sharedChatRoomID: rootSessionID,
+                    delegatingSessionID: delegatingSessionID,
+                    inheritsFeatureExposures: inheritsFeatureExposures
                 )
                 let backend = try backendFactory(backendContext)
                 let runtime = self

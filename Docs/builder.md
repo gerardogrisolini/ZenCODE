@@ -4,6 +4,8 @@ The `Builder` profile creates and manages reusable Dynamic Swift Features. Use i
 
 What makes a profile a builder is its `builder` role, never its ID or name: any profile with that role can use `/feature` and receives the intrinsic feature-management tools. The recommended `Builder` is the system profile with ID `builder`. See [agents.md](agents.md#profile-roles).
 
+You start Builder yourself, as described below, or an agent can do it for you: an agent whose session has the `sub-agents` tool can delegate the construction of a missing tool to a Builder sub-agent and use the result at once, without switching agents. See [Autonomous Feature Development](#autonomous-feature-development).
+
 ## Starting Builder
 
 ```bash
@@ -105,6 +107,73 @@ Two separate steps:
 - **Expose** (`/tools`) decides whether the model can call its tools in the current session.
 
 Builder's own lifecycle tools (`feature.scaffold`, `feature.build`) are intrinsic to the agent and not selectable through `/tools`.
+
+There is one exception to the two steps. A generated feature that a Builder sub-agent built for the session that delegated it is exposed to that session automatically, without `/tools`; a `/tools` selection can still revoke it. A bundled or optional feature never takes this path. See [Autonomous Feature Development](#autonomous-feature-development).
+
+## Autonomous Feature Development
+
+The model can have a tool it lacks built without you switching to Builder. When the work needs a reusable tool that none of its tools provides, it delegates the construction to a Builder sub-agent with `agent.create`, waits for it, and calls the new tool in the same turn: no `/agents Builder`, no `/feature`, no `/tools`.
+
+**Conditions.** Both must hold:
+
+- The session has the `sub-agents` tool.
+- The project sees a delegatable profile with the `builder` role: one associated with the project (see [Project Agents](agents.md#project-agents)) and listed among the delegatable profiles (see [What The Model Sees](bindings.md#what-the-model-sees)). The role is what counts, never the ID or the name, so a custom profile with the `builder` role qualifies as much as the recommended `Builder`.
+
+When they hold, the coordinator's system prompt ends the roster of delegatable profiles with a *Developing a missing tool* paragraph; a coordinator that delegates by role, such as `Organizer`, gets it at the end of its *Delegation by role* section, where the Builder is `profileRole: "builder"`. The paragraph tells the model to delegate only a durable capability, to state in the prompt the capability, the expected tool name, its inputs and outputs, and every constraint, never to ask for credentials to be embedded, and to do one-off work with the tools it already has.
+
+**Flow.** The Builder sub-agent gets a *Delegated feature development* section in its system prompt. No `/feature` wizard and no operator are at its prompt, so it runs the whole workflow with the `feature.*` tools, and the section takes precedence over any profile instruction that hands a step to the operator or to `/tools`:
+
+1. `feature.list`: when a generated feature already provides the capability, reuse it instead of creating a duplicate: change it with `feature.edit` if needed, then run `feature.validate` and `feature.build` on it anyway and make sure it is enabled, because only a feature the Builder builds in this delegation is exposed. When a bundled or optional feature provides the capability, it rebuilds nothing and reports that you have to select it with `/tools`. `feature.list` marks a catalog feature with a `source` of `bundled` or, once it is installed or copied locally, with an `adoptedFrom` value.
+2. `feature.scaffold`, leaving the scaffold disabled and with a tool name in a namespace of its own (see **Namespace** below). For an MCP server it uses the `mcp-bridge` template, which is available on macOS only.
+3. Implement the real behavior in the generated package.
+4. `feature.validate`, then `feature.build`, fixing every error.
+5. `feature.enable`, only after both succeed.
+6. A final report with the feature id and, for each tool, its name, its arguments, and an example call. When it cannot finish, it leaves the feature disabled and reports the blocker.
+
+The section is added for every sub-agent whose profile has the `builder` role and whose tool grant includes `feature.scaffold`. The profiles' instructions are unchanged, so an existing `agents.json` needs no edit.
+
+**Namespace.** The coordinator's paragraph asks for a tool name in a namespace that no existing tool uses (`changelog.build`, not `git.changelog`), and the Builder's section lists the namespaces of the core tools and asks for one of its own. The rule is also checked for a delegated Builder, by `feature.scaffold`, `feature.build`, `feature.install`, and `feature.enable`, before they write, build, or enable anything (`feature.enable` checks the manifest on disk). The entries checked are the tool names, the aliases, the tool name prefixes the manifest declares, and the prefix derived from each tool name (up to its last dot). They refuse a feature when an entry:
+
+- starts with the namespace of a core tool: the core tool name up to and including its first dot (`agent.`, `exec.`, `feature.`, `local.`, `memory.`, `search.`, `skills.`, `tasks.`, `text.`, `todo.`), so `local.readFile.pdf` and `skills.list.x` are refused; a prefix is also refused when it covers the name of a core tool;
+- collides with another loaded feature: it equals one of its tools or aliases, falls under one of its prefixes, or, for a prefix, covers or extends a tool, an alias, or a prefix of it.
+
+An alias counts as itself and is checked like a tool name, but no prefix is derived from it. The refusal names the entry and what it collides with, and the Builder renames the tool. A Builder you run yourself (`--agent Builder`, `/feature`) is not subject to this check: nothing changes for it.
+
+The check also runs at every reload of the feature bundles, whoever causes it: a registered feature whose loaded bundle no longer passes it loses its exposure, and is exposed again only by a new delegated build that passes it. This is a check on the ordinary path, not a sandbox (see **Security**).
+
+**Exposure.** Only a generated feature is exposed: one whose ID is not a catalog ID. A bundled or optional feature, or the editable local copy of one that keeps its ID, is never exposed this way and stays under `/tools`. A generated feature is exposed to the session that called `agent.create` when all of these hold:
+
+- this sub-agent built it successfully in this delegation (`feature.build`, or a `feature.scaffold` or `feature.install` that built it), and the manifest of the package it built is under the generated features root (`~/.zencode/features/`);
+- it is loaded now (enabled, with its executable), and that loaded bundle is a generated feature that runs the executable that build produced. The exposure belongs to the bundle, not to the ID alone: another loaded bundle with the same ID that runs a different executable is not exposed.
+
+A generated feature that already existed is exposed only if the delegated Builder rebuilds it in this delegation. Its tools join the tool list from the model's next round, in the same turn, without `/tools` and without recreating the session. The result of the next `agent.*` call of that session announces them once. The announcement names only the tools the session can actually call, with names made only of the characters `A-Z a-z 0-9 . _ -` (a feature whose ID is not made only of them is not named), at most 20 per feature followed by `and N more`:
+
+```text
+Feature tools now available in this session, built by your Builder sub-agent: <feature-id> (<tool names>). Call them directly.
+```
+
+A feature the Builder built is exposed as soon as it is enabled (the normal flow builds it and enables it afterwards); it needs no new build. A build whose task was cancelled registers nothing.
+
+**Scope.**
+
+- Only the session that called `agent.create` is given the feature. Other sessions do not see it. A sub-agent created with the coordinator's own profile does, because it reads the exposures of the delegating session by feature ID, not names added to its allowlist: it gets the tools of that feature and no other tool that shares their namespace, and revoking the exposure reaches it at its next call, even if it is already running. A child with a different profile does not see it (see [Tool Authority](agents.md#tool-authority)).
+- It never grants a `feature.*` management tool or the name of a core tool, whatever the feature declares.
+- Only a call made by a sub-agent with the `builder` role registers an exposure, and the runtime sets that identity when it creates the sub-agent: arguments written by the model cannot select it. Whether a build is registered depends on that identity, on the real outcome of the build, and on the checks on the feature ID, the path, and the executable above; the content of the package is what the Builder wrote. A Builder you run yourself (`--agent Builder`, `/feature`) exposes nothing: it keeps the `/tools` step.
+
+**Lifecycle.** The exposure is transient: it is held in memory and never saved in a session, a snapshot, or a manifest. It ends:
+
+- with the conversation: a reset, a new session, loading a saved session, closing the session, or shutdown. A full reset and the shutdown of a runner end the exposures of the sessions of that runner;
+- when the session's agent profile changes;
+- at a reload of the feature bundles that finds the loaded routing of the feature in a namespace it does not own (see **Namespace**);
+- while the feature is disabled, and for good when it is deleted (`feature.delete` removes it from every session). Enabling a disabled feature again within the same conversation exposes it again.
+
+It survives compaction, a model change, and an update of the session options. Only the exposure is transient: the feature stays built and enabled on disk, so a session with no tool restriction (no allowlist) sees it like any other enabled feature, and after a restart you select it from `/tools` like any other.
+
+**`/tools`.** The menu shows an exposed feature ticked, and the summary of the active tools lists it. A selection you confirm is authoritative: a feature that stays ticked becomes part of the session's tool selection (and goes through the workspace access request like any generated feature you select there), and one you untick is no longer exposed.
+
+**Turning it off.** Remove the Builder profile from the profiles associated with the project with `/agents`, or remove `sub-agents` from the session's tools with `/tools`.
+
+**Security.** A generated tool that the Builder sub-agent wrote or rebuilt becomes callable in the session without the explicit `/tools` step and without a consent request of its own. The operator consent is unchanged: `local.exec` and the destructive tools still ask, and the Builder sub-agent asks for the same approvals as any delegated agent. But the tools of a feature are approved by selecting them, and here the selection is automatic. That skips two things: the `/tools` step and the workspace access request that selecting a generated feature there brings (the host asks to let the tool reach the workspace folder, and a refusal deselects it). The automatic exposure does not ask, so nothing asks before the new tool first runs, and nothing reviews its source. The exposure is transient, the feature is not: it stays built and enabled under `~/.zencode/features/<feature-id>/`, a session with no tool restriction sees it like any other enabled feature, and after a restart you select it from `/tools`, and that selection goes through the workspace access request. The namespace rule does not change this: it is a check on the ordinary path, not a sandbox. The Builder sub-agent has the file tools and can rewrite the files of the package, `feature.json` included, after the build. Nothing prevents a restart or the reload of another session from loading the rewritten manifest, and the feature can then claim another namespace for the sessions that select it or whose tool list makes it relevant, exactly as a Builder you run yourself can. What the code guarantees is narrower: a feature whose loaded routing takes a namespace it does not own does not stay exposed automatically. Read the generated package before relying on it, and turn the capability off if you do not accept this.
 
 ## MCP Configuration And Secrets
 

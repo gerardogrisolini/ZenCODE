@@ -275,7 +275,7 @@ public enum SystemPromptBuilder {
                 + TaskRecord.delegationCostPolicy
         }
 
-        return """
+        let rosterSection = """
         Delegatable agent profiles and model bindings:
         \(lines.joined(separator: "\n"))
         \(selectionPolicy)
@@ -284,6 +284,14 @@ public enum SystemPromptBuilder {
         Do not substitute provider names, display names, raw model slugs, or aliases for a binding. Give each sub-agent \
         an explicit role and scope.
         """
+        // The paragraph is offered only when a builder is actually delegatable:
+        // `roster` already dropped the profiles with no routable binding.
+        guard roster.contains(where: { $0.profile.role == .builder }) else {
+            return rosterSection
+        }
+        return rosterSection + "\n\n" + missingToolDevelopmentSection(
+            delegationInstruction: "Delegate it with agent.create to a profile listed above whose role is `builder`."
+        )
     }
 
     /// Roster replacement for a project that sees no agent profile: its saved
@@ -320,11 +328,30 @@ public enum SystemPromptBuilder {
         let roleLines = roles
             .map { "- \($0.rawValue): \($0.summary)" }
             .joined(separator: "\n")
-        return """
+        let roleSection = """
         Delegation by role:
         You delegate by profile role, never by profile name: each project resolves the role to its own associated profiles and model bindings, so a profile or model you name may not exist there.
         \(roleLines)
         In every agent.create `agents` item pass `profileRole`, `complexity` (1-10: \(TaskRecord.complexityRubric)), `workingDirectory` (the project folder, an existing directory inside your working directory), a precise `prompt`, and a short descriptive `role`. Omit `complexity` when the item has `taskID`: the task's complexity applies. Never pass `profile` or `model`: the runtime picks the profile visible to that project and the lowest-capability authorized binding that meets the complexity (otherwise its highest binding, reporting the capability gap), and the agent.create result names the chosen profile and model.
+        """
+        guard roles.contains(.builder) else {
+            return roleSection
+        }
+        return roleSection + "\n\n" + missingToolDevelopmentSection(
+            delegationInstruction: "Delegate it with agent.create using `profileRole: \"builder\"`."
+        )
+    }
+
+    /// Tells a coordinator it may have a reusable tool it lacks built by a
+    /// delegated Builder. The text is shared by the profile roster and the role
+    /// delegation; only `delegationInstruction`, the sentence that names how the
+    /// Builder is selected, differs between them.
+    private static func missingToolDevelopmentSection(
+        delegationInstruction: String
+    ) -> String {
+        """
+        Developing a missing tool:
+        When the work needs a reusable tool that none of your available tools provides, you may have it built instead of stopping or asking the operator to run /feature. \(delegationInstruction) In the prompt state the capability, the tool name you expect in a namespace that no existing tool uses (for example `changelog.build`, not `git.changelog`), its inputs and outputs, and every constraint; never ask for credentials to be embedded. Then call agent.wait. A feature that sub-agent builds and enables is exposed to this session automatically: its tools are in your tool list from your next step, and the agent.wait or agent.get result names them, so call them directly without /tools. Do this only for a durable capability; do one-off work with the tools you already have. An installed feature that is merely not selected is not exposed this way: ask the operator to select it with /tools.
         """
     }
 

@@ -1340,6 +1340,115 @@ The transport is opt-in and internal: the stable one-shot `--list-tools` and
 uses this mode so its package-local MCP executor and Xcode consent live for the
 whole ZenCODE session instead of being recreated for every tool call.
 
+**Session exposure of Builder features.** The rule that arguments written by
+the model never change the tools of a session has one explicit, narrow
+exception. A generated feature (a feature ID that is not a catalog ID) that a
+delegated Builder sub-agent built successfully (`feature.build`, or a
+`feature.scaffold` or `feature.install` that built it) under the generated
+features root, and that is loaded now (enabled, with the executable that build
+produced), is exposed to the session that delegated that sub-agent. A bundled or
+optional feature, and the local copy of one that keeps its ID, is never exposed
+this way and stays under `/tools`; a generated feature that already existed is
+exposed only if the delegated Builder rebuilds it in that delegation. Its tools
+are listed from the model's next round in the same turn, without `/tools`, and
+the first `agent.*` result of the session that follows announces them once.
+
+- *State owner.* `SwiftFeatureRuntime`, the actor the coordinator's
+  `DirectToolExecutor` shares with the sub-agents it creates (it injects its
+  runtime into every sub-agent backend context), keeps two in-memory maps
+  keyed by session ID: for each feature built, the standardized path of the
+  executable that build produced, and the IDs already announced. Whether a built
+  feature is exposed is evaluated on every read, per loaded bundle
+  (`isExposed(_:sessionID:)`): the bundle must have the registered ID, be a
+  generated one, and run the executable that build produced. A disabled feature
+  is therefore not exposed, another loaded bundle with the same ID that runs a
+  different executable is not, and a deleted feature is forgotten by every
+  session.
+- *Key.* The ID of the session that called `agent.create` (the raw executing
+  session, not the root room): `BackendContext.delegatingSessionID`, carried
+  by `AgentRuntimeConfiguration` into the child's `ToolExecutionContext`.
+- *Registration.* Only a `DirectToolExecutor` whose context is a sub-agent with
+  the profile role `builder` passes its `delegatingSessionID` to
+  `SwiftFeatureRuntime.executeManagementTool(toolCall:delegatingSessionID:)`.
+  The identity is the one the runtime set when it created the sub-agent. With
+  it, `recordBuilderOutcome` registers a successful build only if the feature ID
+  is not a catalog ID (`bundledFeatureDefinition(id:)`), the built manifest is
+  under the generated features root (`featureRootURL()`), and the calling task
+  is not cancelled; it keeps the path of the executable the build produced. The
+  decision therefore depends on the caller identity the runtime set, the real
+  outcome of the build, and the checks on ID, path, and executable. The
+  arguments the model passes name the feature to build but cannot change that
+  identity, the delegating session, or those checks, and the contents of the
+  package are what the Builder wrote. Every other caller registers nothing, the
+  terminal's `/feature` wizard and a Builder session started by the operator
+  included.
+- *Namespace guard.* For the same delegated caller, `feature.scaffold`,
+  `feature.build`, `feature.install`, and `feature.enable` call
+  `ensureDelegatedFeatureNamespace` before anything is written, copied, built,
+  or enabled (`feature.enable` checks the manifest on disk, and only when there
+  is one). The entries it checks are the tool names, the aliases, the declared
+  tool name prefixes, and the prefix derived from each tool name (up to its last
+  dot); no prefix is derived from an alias, which is checked as a tool name. It
+  refuses a feature when an entry is not exposable (`isExposableToolName`),
+  starts with the namespace of a core catalog tool (`coreToolNamespaces`: each
+  core name up to and including its first dot, such as `local.` and `skills.`,
+  so `local.readFile.pdf` and `skills.list.x` are refused), or, as a prefix,
+  covers a core name; or when it collides with another loaded feature (one with
+  a different ID): it equals one of its tools or aliases, falls under one of its
+  prefixes, or, as a prefix, covers or extends a tool, an alias, or a prefix of
+  it. Any other caller keeps the general validation alone. After every reload
+  of the bundles, whoever causes it, `reloadFeatureBundles()` runs
+  `revokeExposuresOutsideTheirNamespace()`: in each session, the exposure of a
+  registered feature whose exposed bundle no longer passes the same check is
+  revoked. A feature without such a bundle (not loaded, or loaded with another
+  executable) stays registered and is checked once it has one, and a revoked
+  feature is exposed again only by a new delegated build that passes the check.
+  The guard is a check on the ordinary path, not a sandbox: the Builder has the
+  file tools and can rewrite the files of the package, `feature.json` included,
+  after the build, and nothing prevents a restart or the reload of another
+  session from loading the rewritten manifest, whose feature can then claim
+  another namespace for the sessions that select it or whose tool list makes it
+  relevant, exactly as a Builder run by the operator can. What the guard
+  guarantees is narrower: a feature whose loaded routing takes a namespace it
+  does not own does not stay exposed automatically.
+- *Reads.* `descriptors`, `knownDescriptors`, and `featureToolIsAllowed` take the
+  session ID and add the exposed features to the ones the allowlist makes
+  relevant. An exposure publishes or grants a name only if `isExposableToolName`
+  accepts it: never a kernel feature-management command, the reserved
+  `feature.` namespace, or an entry that the allowlist matching would resolve
+  to a core catalog tool; and only a name the exposed feature owns, so it never
+  grants another tool that shares a namespace. The announcement
+  (`featureExposureAnnouncement`) names only those tools, and only names that
+  match `A-Z a-z 0-9 . _ -` (1 to 64 characters), at most 20 entries per
+  feature followed by `and N more`; a feature whose ID does not match is not
+  named. A child delegated with the coordinator's
+  own profile under a restricted grant carries `inheritsFeatureExposures`, and
+  its executor reads the exposures of the delegating session
+  (`featureExposureSessionID(for:)`) by feature ID instead of receiving names
+  in its allowlist, so a revocation reaches it at its next call, even if it is
+  already running; a child with another profile does not read them.
+- *Lifecycle.* `AgentCoreSessionRunner` revokes the exposures of a session when
+  it is reset or closed, of every session that runner knows on a reset of all
+  of them and on shutdown (the sessions of another runner that shares the
+  feature runtime keep theirs), and when a session is created or updated with
+  an agent identity (agent ID, name, and role) other than the one it had, or is
+  created again after its reset or close. A model change, a compaction, and an
+  update of the session options keep them. The `/tools` selection records the
+  choice and then revokes the session's exposures: the menu and the summary of
+  the active tools show an exposed feature ticked, so a feature left ticked stays
+  selected (and goes through the workspace access request that a generated
+  feature selected there requires) and one that is unticked is no longer
+  exposed. The automatic exposure skips both that selection and that request.
+- *Persistence.* None. The maps are never written to a saved session, a
+  session snapshot, a checkpoint tree, a task checkpoint, or a feature
+  manifest. Only the exposure is transient: the feature stays built and enabled
+  on disk, a session with no allowlist sees it like any other enabled feature,
+  and after a restart it is selected from `/tools` like any other.
+
+The public additions are source-compatible: `sessionID` and
+`delegatingSessionID` default to `nil`, and without them the reads and
+`executeManagementTool(toolCall:)` behave as before.
+
 `RemoteTransportCore()` borrows the process-wide NIO event-loop group. A client
 that constructs its own transport closes it during `shutdown()`; an explicitly
 injected transport remains owned by its embedding composition root. The ChatGPT
@@ -1605,7 +1714,7 @@ them without a terminal type.
 | `Sources/ZenCRON` | The standalone SwiftPM package of the `ZenCRON` executable, the host that cron runs for scheduled prompts (see [ZenCRON Host](#zencron-host)): `Package.swift`, the `ZenCRON` executable target with a single `main.swift`, and the package-local `ZenCRONTests` target. It sits outside the root graph, which declares none of its products or targets, and it is not an optional feature: it has no catalog entry and no manifest, and it is not a composition root. It has no dependencies, and it depends on none of `zen`, `ZenCODECore`, and the other targets, nor do they depend on it. `ZenCODECore` knows it only through its installed path, its name, and its `--zencron-version` output (`Support/Scheduling/ZenCRONInstallation*.swift`); the one thing the two share is the `PATH` search rule of `ZenCronJobCommand.locateZen(onPath:)`, which ZenCRON repeats and which changes together with it. |
 | `Sources/ZenApp` | The standalone SwiftPM package of the ZenCODE macOS app (package `ZenApp`, product `ZenCODE`, executable target `ZenCODEApp`, plus one library product per library target, which exists only so that Xcode creates the schemes the SwiftUI previews need; see [ZenCODE for macOS](app.md)): a native SwiftUI app for macOS 26 (Liquid Glass, in the colors of the terminal UI) that replicates the terminal chat. It is a host app of the public Chat API (see [Embedding ZenCODECore in a Host App](embedding.md)) and its own composition root, `ZenAppRuntime`: one `ChatSessionHost` per process over the production runner, and one slot per window. The package has `Package.swift`, the library targets `ZenAppTheme` (the terminal palette as SwiftUI colors), `ZenAppMarkdown` (the Markdown renderer on swift-markdown, with code highlighting, diffs, and tables), `ZenAppSession` (the composition and the window model, without SwiftUI, and `ZenWorktreeClosure`, which closes the worktree of a `--worktree` launch before the app quits), `ZenAppTranscript` (the conversation views), and `ZenAppControls` (composer, status bar, consent sheet, and menus), the `ZenCODEApp` executable target (the app shell, with the Worktree window that asks how to close that worktree), and a package-local `Tests/<Target>Tests` target for each library target, run with `swift test --package-path Sources/ZenApp`. It sits outside the root graph, which declares none of its products or targets, and it is not an optional feature. It consumes only the public products `ZenCODECore` and `ToolCore` of the root package, through the path dependency `path: "../.."`, and swift-markdown, which the root graph already resolves; the root graph and `zen` never depend on it, and root commands do not build it. On macOS only, `zen --ui` builds the package in release mode from the source checkout (the one `zen` was built from, else the installer copy in `<support>/source`) into `<support>/app` (SwiftPM scratch path `app/build`, installed executable and resource bundles in `app/current`, rebuilt when the build stamp of the running `zen` changes) and starts `ZenCODE` as a separate, detached process; `ZenCODECore` knows the app only by its package path, its product name, and its install location (`Support/App`, compiled only on macOS), as it knows ZenCRON, so the root graph still has no build dependency on it. Inside the package, `ZenAppMarkdown`, `ZenAppTranscript`, and `ZenAppControls` depend on `ZenAppTheme`, `ZenAppSession` on no other target of the package, and only `ZenCODEApp` depends on all of them. |
 | `Sources/ZenCODECore` | Runtime domains: `Agent`, `Remote`, `Tools`, `Features`, `Context`, `Memory`, `FileChanges`, `Chat`, `Runtime`, `Setup`, `Telegram`, and `Support`; `TUI` and ACP remain source areas within this target. The `Memory` domain is an async facade over the internal `Memory/Engine` implementation: `MemoryGraphLocation`, `MemoryGraphStore`, `MemoryService`, and the automatic-recall pipeline (`MemoryTurnCoordinator`, `MemoryTurnContext`, `MemoryAutomationSettings`). `MemoryService+Documents.swift` is removed. ZenCODECore exposes its own public DTOs (`MemoryEntry`, `MemoryScope`, `MemoryCategory` under `Models`) that preserve the 1.1.x contract (`id: UUID`, `Hashable`, journal-shaped scope); the internal engine implementation keeps its graph types hidden behind the facade. |
-| `Sources/ZenCODECore/Tools/Direct/SubAgents` | Delegated-agent lifecycle and dispatch. `agent.create` requires an explicit configured profile or a `profileRole` that the runtime resolves to one, and normally derives the child tool grant from that profile; model-authored creation arguments and task metadata cannot add, remove, or replace profile tools. An optional `workingDirectory` (an existing directory equal to or inside the coordinator's) sets the directory the child works in; files, shell, git, project memory, and project-agent association follow it. When the resolved child profile is the same as the coordinator profile, the child inherits the coordinator's effective session allowlist so session-local additions and removals are preserved; only child-intrinsic skills, collaboration, and applicable task-reporting tools are added, with the profile's `readOnly` core-tool policy reapplied. Different profiles (including Reviewer and Planner) retain their own grant boundaries. Model bindings are optional: a profile without bindings inherits the main session's selected model and provider when `model` is omitted; profiles with bindings still require an explicitly authorized model reference, except `profileRole` items, whose binding the runtime selects from `complexity`. |
+| `Sources/ZenCODECore/Tools/Direct/SubAgents` | Delegated-agent lifecycle and dispatch. `agent.create` requires an explicit configured profile or a `profileRole` that the runtime resolves to one, and normally derives the child tool grant from that profile; model-authored creation arguments and task metadata cannot add, remove, or replace profile tools. An optional `workingDirectory` (an existing directory equal to or inside the coordinator's) sets the directory the child works in; files, shell, git, project memory, and project-agent association follow it. When the resolved child profile is the same as the coordinator profile, the child inherits the coordinator's effective session allowlist so session-local additions and removals are preserved; only child-intrinsic skills, collaboration, and applicable task-reporting tools are added, with the profile's `readOnly` core-tool policy reapplied. Different profiles (including Reviewer and Planner) retain their own grant boundaries. Model bindings are optional: a profile without bindings inherits the main session's selected model and provider when `model` is omitted; profiles with bindings still require an explicitly authorized model reference, except `profileRole` items, whose binding the runtime selects from `complexity`. The one exception to the rule that model-authored arguments never change the tools of a session is the exposure of a Builder's feature: a sub-agent with the `builder` role carries a *Delegated feature development* section in its system prompt (`DirectSubAgentRuntime.delegatedFeatureDevelopmentSection`) and the ID of the session that called `agent.create` (`delegatingSessionID`) in its tool-execution identity, both set by the runtime and never read from the arguments; `DirectToolExecutor+FeatureExposure.swift` lets a child with the coordinator's own profile (under a restricted grant) read the exposures of the delegating session by feature ID, so it sees the feature without names added to its allowlist and a revocation reaches it at its next call, and appends each new exposure once to an `agent.*` result of the delegating session; for a delegated Builder, `feature.scaffold`, `feature.build`, `feature.install`, and `feature.enable` also refuse a feature whose tool names, aliases, or prefixes start with the namespace of a core tool or collide with another loaded feature, and a reload drops the exposure of a feature whose loaded routing no longer passes that check, which is a check on the ordinary path and not a sandbox (see *Session exposure of Builder features* under the Compatibility Contract). The `agent.list`, `agent.get`, and `agent.message` surface that a child borrows from its parent cannot create sub-agents. |
 | `Sources/ZenCODECore/Setup` | Interactive configuration for providers, models, agents, feature packages, Telegram, voice, response language, optional memory embeddings, and the build-and-install of ZenCRON (`Integrations/ZenCODESetupRunner+ScheduledPrompts.swift`). Setup is started only by `zen --setup`, which the executable composition root dispatches, even though its implementation and contracts belong to Core; no chat, mode, or channel opens it. |
 | `Sources/ZenCODECore/Runtime/Sessions` | Neutral session state and persistence, including the authoritative task DAG, attempt fencing, execution scopes, atomic task-graph checkpoints, startup enumeration/recovery, the session checkpoint tree (`SessionCheckpointTree`), and the lookups of the saved sessions by session id (`TerminalSessionStore.savedSessionFiles(in:)`, `savedSession(sessionID:workingDirectory:preferringAutosaveChannel:)`, `autosavedSessionFiles(sessionID:autosaveChannel:)`, `autosavedSessionFiles(autosaveChannel:workingDirectory:)`, `deleteSavedSessionFile(_:)` in `TerminalSessionStore.swift`: they decode only a header of each file, `TerminalSavedSessionHeader`, skip hidden, temporary, and DS4 checkpoint files and every file that cannot be read, and rename or migrate nothing; ACP restores, lists, and deletes its saved sessions through them, since a client knows a session only by its id). Workflow-sourced graphs require sub-agent execution attempts, while coordinator tool grants remain independent of that lifecycle constraint. Startup recovery is graph-specific and moves the graph into the session that is running (`SessionTaskOrchestrator.adoptResumableTaskGraph(_:intoSessionID:workingDirectory:)`, in `SessionTaskOrchestrator+Resume.swift`): the orchestrator restores the owning session, which interrupts its persisted active attempts and blocks their tasks, activates exactly the operator-selected graph in the current session, which keeps its id, archives that session's other active graphs, and writes the graph as the current one into the current session's checkpoint first; only then does it remove the graph from the old checkpoint, deleted when nothing resumable remains while its other graphs stay. If that second write fails the graph is still resumed and at worst offered again at the next startup, never lost. The move works before the runtime session exists (the terminal, whose session creation finds the adopted graph, so `currentGraphID` is persisted before backend creation) and after it (Telegram, ACP, the app); a graph that already belongs to the session is resumed in place (`resumeTaskGraph(_:workingDirectory:)`). A negative validation persists `failed`; `tasks.retry` returns the task to `pending`, and retrying a failed attempt always claims a fresh workflow attempt through a new `agent.create(taskID:)` rather than resuming the prior agent. Separately, once a task-bound attempt completes, the agent may optionally remain in a runtime-only, non-persisted `.standby` state for conversational follow-up turns over direct messages that do not mutate the task graph; standby is bounded by a turn budget and an idle timeout, and is released when the graph becomes terminal, when a newer attempt supersedes it, or when the budget/timeout is exhausted. Standby turns are never task attempts, never reopen the completed attempt, and never change `task.activeAttemptID`. `AgentCoreSessionRunner` owns one orchestrator and injects it into every backend; its internal `AgentCoreBackendManager`, `AgentCoreSessionSnapshotStore`, and `AgentCoreAuthorizationRouter` isolate backend generations, session snapshot incarnations, and authorization lifecycle without changing the runner facade. The runner declaration itself keeps only actor state, initializers, local-exec access mode, session creation/options, and skill selection, with domain companions (`+PromptTurn`, `+SessionLifecycle`, `+SharedChat`, `+SnapshotAuthorization`, `+MCP`, `+Tasks`, `+SavedSessions`) implementing prompt-turn execution, session/backend lifecycle, shared-chat turns, snapshot/authorization routing, MCP wiring, task-graph projection, and saved-session persistence for the same actor. Direct task tools are stateless adapters and TUI/ACP code only projects or requests orchestrator-owned snapshot restoration. |
 | `Sources/ZenCODECore/Telegram` | Telegram remote-control runtime: Bot API transport, long-polling, pairing, channel state, voice-attachment download, tool-call permission brokering, safe tool-call presentation, and the ordered per-turn progress reporter (responses, reasoning blocks, tool activity, task-graph card, and sub-agent status; `TerminalTelegramTurnActivity` shapes the texts of the reasoning, activity, and status messages). `TerminalTelegramControlService` retains lifecycle and ingress coordination; pairing, wire effects, attachments, and the command registry are separated into dedicated runtime files. It depends only on `Foundation`/`FoundationNetworking`, `ToolCore`, and neutral runtime contracts (`Agent` settings, `Agent` tool-authorization requests, `ToolCallPresentation`, voice input); it must not depend on terminal presentation types. `TelegramChannel` (`Chat/Channels/Telegram`) is the only adapter that binds this runtime to a chat session, as the Telegram channel of a slot of the `ChatSessionHost`; the TUI and ACP hand their slot to it and back through the host (`TUI/Chat/Telegram/TerminalChat+Telegram.swift`, `ACP/Telegram/ZenCODEACPBridge+TelegramCommand.swift`); `zen --telegram` (`Runtime/Launcher/ZenCODETelegramRunner.swift`, with its process handling and log in `Runtime/Launcher/ZenCODETelegramProcess.swift`) opens a `.telegram` slot that it hands to the `TelegramChannel` at startup and never takes back. |

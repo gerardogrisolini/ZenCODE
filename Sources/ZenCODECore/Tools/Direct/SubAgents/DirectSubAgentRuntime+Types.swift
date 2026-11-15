@@ -298,6 +298,15 @@ extension DirectSubAgentRuntime {
         public let sharedChatSenderID: String?
         /// Root room that contains the coordinator and sibling agents.
         public let sharedChatRoomID: String?
+        /// ID of the session that called `agent.create` for this child, before
+        /// root-room resolution. A Builder child exposes the features it
+        /// builds to it.
+        public let delegatingSessionID: String?
+        /// Whether this child reads the feature exposures of
+        /// `delegatingSessionID` as its own: true only when it was created with
+        /// the coordinator's own profile under a restricted grant, which it
+        /// inherits.
+        public let inheritsFeatureExposures: Bool
 
         public init(
             requestedName: String,
@@ -308,7 +317,9 @@ extension DirectSubAgentRuntime {
             swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
             sharedChat: AgentSharedChat? = nil,
             sharedChatSenderID: String? = nil,
-            sharedChatRoomID: String? = nil
+            sharedChatRoomID: String? = nil,
+            delegatingSessionID: String? = nil,
+            inheritsFeatureExposures: Bool = false
         ) {
             let resolvedBinding: AgentModelBinding?
             if let modelBinding {
@@ -328,7 +339,9 @@ extension DirectSubAgentRuntime {
                 swiftFeatureRuntime: swiftFeatureRuntime,
                 sharedChat: sharedChat,
                 sharedChatSenderID: sharedChatSenderID,
-                sharedChatRoomID: sharedChatRoomID
+                sharedChatRoomID: sharedChatRoomID,
+                delegatingSessionID: delegatingSessionID,
+                inheritsFeatureExposures: inheritsFeatureExposures
             )
         }
 
@@ -342,7 +355,9 @@ extension DirectSubAgentRuntime {
             swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
             sharedChat: AgentSharedChat? = nil,
             sharedChatSenderID: String? = nil,
-            sharedChatRoomID: String? = nil
+            sharedChatRoomID: String? = nil,
+            delegatingSessionID: String? = nil,
+            inheritsFeatureExposures: Bool = false
         ) {
             self.requestedName = requestedName
             self.requestedRole = requestedRole
@@ -354,6 +369,8 @@ extension DirectSubAgentRuntime {
             self.sharedChat = sharedChat
             self.sharedChatSenderID = sharedChatSenderID?.nilIfBlank
             self.sharedChatRoomID = sharedChatRoomID?.nilIfBlank
+            self.delegatingSessionID = delegatingSessionID?.nilIfBlank
+            self.inheritsFeatureExposures = inheritsFeatureExposures
         }
 
         /// Returns a copy of this context with the given SwiftFeatureRuntime,
@@ -362,7 +379,9 @@ extension DirectSubAgentRuntime {
             swiftFeatureRuntime: SwiftFeatureRuntime? = nil,
             sharedChat: AgentSharedChat? = nil,
             sharedChatSenderID: String? = nil,
-            sharedChatRoomID: String? = nil
+            sharedChatRoomID: String? = nil,
+            delegatingSessionID: String? = nil,
+            inheritsFeatureExposures: Bool? = nil
         ) -> BackendContext {
             BackendContext(
                 requestedName: requestedName,
@@ -374,7 +393,9 @@ extension DirectSubAgentRuntime {
                 swiftFeatureRuntime: swiftFeatureRuntime ?? self.swiftFeatureRuntime,
                 sharedChat: sharedChat ?? self.sharedChat,
                 sharedChatSenderID: sharedChatSenderID ?? self.sharedChatSenderID,
-                sharedChatRoomID: sharedChatRoomID ?? self.sharedChatRoomID
+                sharedChatRoomID: sharedChatRoomID ?? self.sharedChatRoomID,
+                delegatingSessionID: delegatingSessionID ?? self.delegatingSessionID,
+                inheritsFeatureExposures: inheritsFeatureExposures ?? self.inheritsFeatureExposures
             )
         }
 
