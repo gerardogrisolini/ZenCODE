@@ -63,6 +63,8 @@ ZenCODE supports several ways to run the model, all selected with `zen --setup`:
 - `zen --ui` (macOS only) opens [ZenCODE for macOS](Docs/app.md), the SwiftUI
   app, building it on first use and after each ZenCODE update.
 
+![ZenCODE for macOS, the native SwiftUI app](Docs/Images/ZenCODE.UI.png)
+
 ## Install
 
 ### macOS
