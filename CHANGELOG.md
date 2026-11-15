@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [6.1.0] - 2026-11-15
+
 ### Added
 
 - With the in-process DS4 engine, the terminal shows a file while the model is
@@ -5967,7 +5969,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.0.1...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.0...HEAD
+[6.1.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.0.1...v6.1.0
 [6.0.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.0.0...v6.0.1
 [6.0.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v5.0.2...v6.0.0
 [5.0.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v5.0.1...v5.0.2
