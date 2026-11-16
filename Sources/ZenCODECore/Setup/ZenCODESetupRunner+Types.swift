@@ -286,17 +286,99 @@ enum SetupProviderKind: Hashable {
             return AgentRemoteProvider.anthropicSubscriptionProviderID
         }
     }
+
+    /// Menu detail of this choice in its family submenu, shown when the
+    /// provider is not configured yet.
+    var menuDetail: String {
+        switch self {
+        case .chatGPTSubscription, .anthropicSubscription:
+            return "browser sign-in; separate credentials and provider key"
+        case let .remoteAPI(preset):
+            switch preset {
+            case .openAIAPI:
+                return "API key; OpenAI Responses protocol"
+            case .anthropicAPI:
+                return "API key; native Messages protocol"
+            case .xaiAPI:
+                return "API key; pay-as-you-go xAI API"
+            case .kimi:
+                return "pay-as-you-go API key from the Kimi platform"
+            case .kimiCode:
+                return "Kimi membership; API key from the Kimi Code console"
+            case .zaiAPI:
+                return "pay-as-you-go API key"
+            case .zaiCodingPlan:
+                return "Coding Plan subscription; plan API key"
+            case .qwenAPI:
+                return "pay-as-you-go API key; Singapore region"
+            case .qwenTokenPlan:
+                return "Token Plan subscription; plan API key (sk-sp-)"
+            case .custom:
+                return "advanced OpenAI-compatible setup; optional auth, fail-closed protocol selection"
+            case .openRouter, .gemini, .deepSeek, .nvidiaAPI, .modal:
+                return "hosted API preset; API key required"
+            }
+        }
+    }
 }
 
-enum SetupProviderFamily: Hashable {
+/// The first page of the provider menu, in display order: the providers that
+/// offer a subscription or a coding plan, then "Other API providers" with the
+/// API-only presets and Custom.
+enum SetupProviderFamily: CaseIterable, Hashable {
     case openAI
     case anthropic
+    case kimi
+    case zAI
+    case qwen
     case otherAPI
-}
 
-enum SetupAnthropicProviderOption: Hashable {
-    case api
-    case subscription
+    var title: String {
+        switch self {
+        case .openAI: return "OpenAI"
+        case .anthropic: return "Anthropic"
+        case .kimi: return "Kimi"
+        case .zAI: return "Z.ai"
+        case .qwen: return "Qwen"
+        case .otherAPI: return "Other API providers"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .openAI: return "OpenAI API or ChatGPT Subscription"
+        case .anthropic: return "Anthropic API status or Claude Subscription"
+        case .kimi: return "Kimi API (Moonshot AI) or Kimi Code membership"
+        case .zAI: return "Z.ai API or Z.ai Coding Plan"
+        case .qwen: return "Qwen API (QwenCloud) or Qwen Token Plan"
+        case .otherAPI: return "hosted presets and advanced Custom setup"
+        }
+    }
+
+    /// Title of the family submenu.
+    var submenuTitle: String {
+        self == .otherAPI ? "API provider preset" : title
+    }
+
+    /// The provider choices of the family, in menu order.
+    var kinds: [SetupProviderKind] {
+        switch self {
+        case .openAI:
+            return [.remoteAPI(.openAIAPI), .chatGPTSubscription]
+        case .anthropic:
+            return [.remoteAPI(.anthropicAPI), .anthropicSubscription]
+        case .kimi:
+            return [.remoteAPI(.kimi), .remoteAPI(.kimiCode)]
+        case .zAI:
+            return [.remoteAPI(.zaiAPI), .remoteAPI(.zaiCodingPlan)]
+        case .qwen:
+            return [.remoteAPI(.qwenAPI), .remoteAPI(.qwenTokenPlan)]
+        case .otherAPI:
+            return SetupProviderPreset.allCases
+                .filter { $0.family == .otherAPI }
+                .map(SetupProviderKind.remoteAPI)
+        }
+    }
 }
 
 /// Hosted API defaults exposed by setup. Each preset configures exactly one
@@ -306,11 +388,15 @@ enum SetupProviderPreset: String, CaseIterable, Hashable {
     case openRouter
     case openAIAPI
     case anthropicAPI
+    case xaiAPI
+    case kimi
+    case kimiCode
     case zaiAPI
     case zaiCodingPlan
+    case qwenAPI
+    case qwenTokenPlan
     case gemini
     case deepSeek
-    case kimi
     case nvidiaAPI
     case modal
     case custom
@@ -320,11 +406,15 @@ enum SetupProviderPreset: String, CaseIterable, Hashable {
         case .openRouter: return "OpenRouter"
         case .openAIAPI: return "OpenAI API"
         case .anthropicAPI: return "Anthropic API"
+        case .xaiAPI: return "Grok API (xAI)"
+        case .kimi: return "Kimi API (Moonshot AI)"
+        case .kimiCode: return "Kimi Code"
         case .zaiAPI: return "Z.ai API"
         case .zaiCodingPlan: return "Z.ai Coding Plan"
+        case .qwenAPI: return "Qwen API (QwenCloud)"
+        case .qwenTokenPlan: return "Qwen Token Plan"
         case .gemini: return "Gemini"
         case .deepSeek: return "DeepSeek"
-        case .kimi: return "Kimi API (Moonshot AI)"
         case .nvidiaAPI: return "NVIDIA API"
         case .modal: return "Modal"
         case .custom: return "Custom"
@@ -336,11 +426,15 @@ enum SetupProviderPreset: String, CaseIterable, Hashable {
         case .openRouter: return "https://openrouter.ai/api/v1"
         case .openAIAPI: return "https://api.openai.com/v1"
         case .anthropicAPI: return "https://api.anthropic.com/v1"
+        case .xaiAPI: return "https://api.x.ai/v1"
+        case .kimi: return "https://api.moonshot.ai/v1"
+        case .kimiCode: return "https://api.kimi.ai/coding/v1"
         case .zaiAPI: return "https://api.z.ai/api/paas/v4"
         case .zaiCodingPlan: return "https://api.z.ai/api/coding/paas/v4"
+        case .qwenAPI: return "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1"
+        case .qwenTokenPlan: return "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1"
         case .gemini: return "https://generativelanguage.googleapis.com/v1beta/openai"
         case .deepSeek: return "https://api.deepseek.com/v1"
-        case .kimi: return "https://api.moonshot.ai/v1"
         case .nvidiaAPI: return "https://integrate.api.nvidia.com/v1"
         case .modal: return "https://api.us-west-2.modal.direct/v1"
         case .custom: return AgentRemoteProvider.defaultOpenRouterBaseURL
@@ -352,10 +446,12 @@ enum SetupProviderPreset: String, CaseIterable, Hashable {
         case .openRouter: return .openRouter
         case .openAIAPI: return .openAI
         case .anthropicAPI: return .anthropic
+        case .xaiAPI: return .xAI
+        case .kimi, .kimiCode: return .moonshot
         case .zaiAPI, .zaiCodingPlan: return .zAI
+        case .qwenAPI, .qwenTokenPlan: return .qwen
         case .gemini: return .googleGemini
         case .deepSeek: return .deepSeek
-        case .kimi: return .moonshot
         case .nvidiaAPI: return .nvidia
         case .modal: return .modal
         case .custom: return .custom
@@ -366,8 +462,11 @@ enum SetupProviderPreset: String, CaseIterable, Hashable {
         switch self {
         case .openAIAPI: return .openAIResponses
         case .anthropicAPI: return .anthropicMessages
+        case .kimiCode: return .kimiCode
         case .zaiCodingPlan: return .zaiCodingPlan
-        case .openRouter, .zaiAPI, .gemini, .deepSeek, .kimi, .nvidiaAPI, .modal, .custom:
+        case .qwenTokenPlan: return .qwenTokenPlan
+        case .openRouter, .xaiAPI, .kimi, .zaiAPI, .qwenAPI, .gemini, .deepSeek, .nvidiaAPI,
+             .modal, .custom:
             return .openAIChatCompletions
         }
     }
@@ -377,13 +476,26 @@ enum SetupProviderPreset: String, CaseIterable, Hashable {
     }
 
     /// Stable provider key, derived from the preset profiles through the single
-    /// key table: `openrouter`, `openai`, `anthropic`, `zai`, `zai-coding-plan`,
-    /// `google.gemini`, `deepseek`, `moonshot`, `nvidia`, `modal`, `custom`.
+    /// key table: `openrouter`, `openai`, `anthropic`, `xai`, `moonshot`,
+    /// `kimi-code`, `zai`, `zai-coding-plan`, `qwen`, `qwen-token-plan`,
+    /// `google.gemini`, `deepseek`, `nvidia`, `modal`, `custom`.
     var providerID: String {
         AgentRemoteProvider.providerKey(
             providerProfileID: providerProfileID,
             protocolProfileID: protocolProfileID
         )
+    }
+
+    /// The first-page family of the provider menu that lists this preset.
+    var family: SetupProviderFamily {
+        switch self {
+        case .openAIAPI: return .openAI
+        case .anthropicAPI: return .anthropic
+        case .kimi, .kimiCode: return .kimi
+        case .zaiAPI, .zaiCodingPlan: return .zAI
+        case .qwenAPI, .qwenTokenPlan: return .qwen
+        case .openRouter, .xaiAPI, .gemini, .deepSeek, .nvidiaAPI, .modal, .custom: return .otherAPI
+        }
     }
 
     var isAdvanced: Bool { self == .custom }

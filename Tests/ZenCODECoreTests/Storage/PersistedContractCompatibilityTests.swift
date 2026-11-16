@@ -255,6 +255,107 @@ struct PersistedContractCompatibilityTests {
     }
 
     @Test
+    func newHostedAndPlanProviderProfilesRoundTripAndIncompatiblePairsFailClosed() throws {
+        let kimiCode = try decode(
+            AgentSettingsProviderManifest.self,
+            from: #"""
+            {
+              "name": "Kimi Code",
+              "baseURL": "https://api.kimi.ai/coding/v1",
+              "chatEndpoint": "chat_completions",
+              "providerProfileID": "moonshot",
+              "protocolProfileID": "moonshot.kimi-code",
+              "authPolicy": "api_key_required"
+            }
+            """#
+        )
+        let qwenTokenPlan = try decode(
+            AgentSettingsProviderManifest.self,
+            from: #"""
+            {
+              "name": "Qwen Token Plan",
+              "baseURL": "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1",
+              "chatEndpoint": "chat_completions",
+              "providerProfileID": "qwen",
+              "protocolProfileID": "qwen.token-plan",
+              "authPolicy": "api_key_required"
+            }
+            """#
+        )
+        let xai = try decode(
+            AgentSettingsProviderManifest.self,
+            from: #"""
+            {
+              "name": "Grok API (xAI)",
+              "baseURL": "https://api.x.ai/v1",
+              "chatEndpoint": "chat_completions",
+              "providerProfileID": "xai",
+              "protocolProfileID": "openai.chat-completions",
+              "authPolicy": "api_key_required"
+            }
+            """#
+        )
+
+        let expected: [(AgentSettingsProviderManifest, String, AgentProviderProfileID, AgentProtocolProfileID, String)] = [
+            (kimiCode, "kimi-code", .moonshot, .kimiCode, "moonshot.kimi-code"),
+            (qwenTokenPlan, "qwen-token-plan", .qwen, .qwenTokenPlan, "qwen.token-plan"),
+            (xai, "xai", .xAI, .openAIChatCompletions, "openai.chat-completions")
+        ]
+        for (provider, key, providerProfile, protocolProfile, protocolRawValue) in expected {
+            // Without an id the provider receives its stable key.
+            #expect(provider.id == key)
+            #expect(AgentRemoteProvider.knownProviderIDs.contains(key))
+            #expect(provider.providerProfileID == providerProfile)
+            #expect(provider.protocolProfileID == protocolProfile)
+            #expect(provider.authPolicy == .apiKeyRequired)
+            #expect(provider.chatEndpoint == .chatCompletions)
+
+            let encoded = try JSONEncoder().encode(provider)
+            let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+            #expect(object["id"] as? String == key)
+            #expect(object["providerProfileID"] as? String == providerProfile.rawValue)
+            #expect(object["protocolProfileID"] as? String == protocolRawValue)
+            #expect(object["authPolicy"] as? String == "api_key_required")
+            let reloaded = try JSONDecoder().decode(AgentSettingsProviderManifest.self, from: encoded)
+            #expect(reloaded == provider)
+            #expect(reloaded.remoteProvider(modelID: "model").protocolProfileID == protocolProfile)
+        }
+
+        #expect(throws: DecodingError.self) {
+            try decode(
+                AgentSettingsProviderManifest.self,
+                from: #"""
+                {
+                  "id": "zai",
+                  "name": "Invalid",
+                  "baseURL": "https://api.kimi.ai/coding/v1",
+                  "chatEndpoint": "chat_completions",
+                  "providerProfileID": "zai",
+                  "protocolProfileID": "moonshot.kimi-code",
+                  "authPolicy": "api_key_required"
+                }
+                """#
+            )
+        }
+        #expect(throws: DecodingError.self) {
+            try decode(
+                AgentSettingsProviderManifest.self,
+                from: #"""
+                {
+                  "id": "moonshot",
+                  "name": "Invalid",
+                  "baseURL": "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1",
+                  "chatEndpoint": "chat_completions",
+                  "providerProfileID": "moonshot",
+                  "protocolProfileID": "qwen.token-plan",
+                  "authPolicy": "api_key_required"
+                }
+                """#
+            )
+        }
+    }
+
+    @Test
     func settingsProfileAndPermissionsFixturesRemainReadable() throws {
         let settings = try decode(
             AgentSettingsManifest.self,

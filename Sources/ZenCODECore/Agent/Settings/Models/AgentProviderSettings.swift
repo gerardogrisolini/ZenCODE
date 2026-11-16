@@ -73,6 +73,8 @@ public enum AgentProviderProfileID: String, CaseIterable, Codable, Hashable, Sen
     case googleGemini = "google.gemini"
     case deepSeek = "deepseek"
     case moonshot = "moonshot"
+    case xAI = "xai"
+    case qwen = "qwen"
     case nvidia = "nvidia"
     case modal = "modal"
     case custom = "custom"
@@ -88,6 +90,8 @@ public enum AgentProtocolProfileID: String, Codable, Hashable, Sendable {
     case anthropicMessages = "anthropic.messages"
     case anthropicClaudeSubscription = "anthropic.claude-subscription"
     case zaiCodingPlan = "zai.coding-plan"
+    case kimiCode = "moonshot.kimi-code"
+    case qwenTokenPlan = "qwen.token-plan"
 
     public var chatEndpoint: AgentRemoteChatEndpoint? {
         switch self {
@@ -97,7 +101,7 @@ public enum AgentProtocolProfileID: String, Codable, Hashable, Sendable {
             return .responses
         case .anthropicMessages, .anthropicClaudeSubscription:
             return nil
-        case .zaiCodingPlan:
+        case .zaiCodingPlan, .kimiCode, .qwenTokenPlan:
             return .chatCompletions
         }
     }

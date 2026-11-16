@@ -866,10 +866,15 @@ kept by `readOnly` profiles such as Reviewer and Planner.
 identified by UUIDs. Every provider has one stable lowercase key, derived by
 `AgentRemoteProvider.providerKey(providerProfileID:protocolProfileID:)` (the
 single key table; setup presets use it): `openrouter`, `openai`, `anthropic`,
-`zai`, `zai-coding-plan`, `google.gemini`, `deepseek`, `moonshot`, `nvidia`,
-`modal`, `custom`, `ds4`, `chatgpt`, and `claude`. The key is the provider
-profile raw value, except the subscriptions (`chatgpt`, `claude`, the prefixes
-their model ids already used) and the Z.ai Coding Plan. The DS4 provider has
+`xai`, `zai`, `zai-coding-plan`, `google.gemini`, `deepseek`, `moonshot`,
+`kimi-code`, `qwen`, `qwen-token-plan`, `nvidia`, `modal`, `custom`, `ds4`,
+`chatgpt`, and `claude`. The key is the provider profile raw value, except the
+subscriptions (`chatgpt`, `claude`, the prefixes their model ids already used)
+and the plans that share the provider profile with their API: the Z.ai Coding
+Plan (`zai-coding-plan`, profile `zai`), Kimi Code (`kimi-code`, profile
+`moonshot`) and the Qwen Token Plan (`qwen-token-plan`, profile `qwen`), each
+told apart from its API by a dedicated protocol profile (`zai.coding-plan`,
+`moonshot.kimi-code`, `qwen.token-plan`). The DS4 provider has
 its own `ds4` provider profile (formerly `custom`), with unchanged runtime
 behaviour. An id is never generated: a provider is configured at most once, and
 setup refuses to add a provider whose key is already configured (it must be

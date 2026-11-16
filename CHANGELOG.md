@@ -10,6 +10,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- `zen --setup`: the first page of the provider menu now lists the providers
+  that offer both an API and a subscription or a coding plan: OpenAI,
+  Anthropic, Kimi, Z.ai, and Qwen. Z.ai API and Z.ai Coding Plan are condensed
+  into the single Z.ai entry, which opens both. "Other API providers" keeps the
+  API-only presets (OpenRouter, Grok API (xAI), Gemini, DeepSeek, NVIDIA API,
+  Modal) and Custom. New presets: Grok API (xAI), Kimi Code, Qwen API
+  (QwenCloud), and Qwen Token Plan, with the provider keys `xai`, `kimi-code`,
+  `qwen`, and `qwen-token-plan`. Grok can be configured only with an xAI API
+  key.
+
 ### Fixed
 
 - Telegram: a response no longer loses parts of its Markdown on the way to the

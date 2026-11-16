@@ -151,7 +151,8 @@ public enum AgentRemoteBackendFactory {
         }
 
         switch provider.protocolProfileID {
-        case .openAIChatCompletions, .openAIResponses, .zaiCodingPlan, .anthropicMessages:
+        case .openAIChatCompletions, .openAIResponses, .zaiCodingPlan, .kimiCode, .qwenTokenPlan,
+             .anthropicMessages:
             break
         case .openAIChatGPTSubscription, .anthropicClaudeSubscription:
             // Native Anthropic API support is intentionally not provided by the

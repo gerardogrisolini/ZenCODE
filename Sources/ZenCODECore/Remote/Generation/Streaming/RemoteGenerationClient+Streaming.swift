@@ -146,7 +146,7 @@ extension RemoteGenerationClient {
         case (.openAI, .openAIChatCompletions),
              (.zAI, .openAIChatCompletions), (.zAI, .zaiCodingPlan),
              (.googleGemini, .openAIChatCompletions),
-             (.moonshot, .openAIChatCompletions):
+             (.moonshot, .openAIChatCompletions), (.moonshot, .kimiCode):
             return .reasoningEffort
         case (.deepSeek, .openAIChatCompletions):
             // The provider dialect can express disable, but only models whose
@@ -155,13 +155,16 @@ extension RemoteGenerationClient {
         case (.nvidia, .openAIChatCompletions), (.modal, .openAIChatCompletions):
             return .chatTemplateKwargs
         default:
+            // xAI and Qwen deliberately send no thinking payload. xAI reasoning
+            // cannot be disabled, defaults to high, and only some models accept
+            // `reasoning_effort`. Qwen (QwenCloud) ignores `reasoning_effort`
+            // and uses `enable_thinking`, which this client does not support.
             return .none
         }
     }
 
     public var chatCompletionsReplayPolicy: AgentChatCompletionsReplayPolicy {
-        if provider.providerProfileID == .moonshot,
-           provider.protocolProfileID == .openAIChatCompletions {
+        if isKimiChatCompletions {
             return .preserveAllAssistantReasoning
         }
         if provider.providerProfileID == .deepSeek,
@@ -171,12 +174,18 @@ extension RemoteGenerationClient {
         return .stripReasoning
     }
 
+    /// Kimi Chat Completions: the Kimi API and Kimi Code, which share the
+    /// `moonshot` provider profile and its dialect.
     public var isKimiChatCompletions: Bool {
-        guard provider.providerProfileID == .moonshot,
-              provider.protocolProfileID == .openAIChatCompletions else {
+        guard provider.providerProfileID == .moonshot else {
             return false
         }
-        return true
+        switch provider.protocolProfileID {
+        case .openAIChatCompletions, .kimiCode:
+            return true
+        default:
+            return false
+        }
     }
 
     /// Chat Completions models that reject the legacy `max_tokens` parameter

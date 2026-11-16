@@ -30,6 +30,30 @@ struct ZenCODESetupProviderPresetTests {
                 .openAI,
                 .openAIResponses
             ),
+            .xaiAPI: (
+                "Grok API (xAI)",
+                "https://api.x.ai/v1",
+                .xAI,
+                .openAIChatCompletions
+            ),
+            .kimiCode: (
+                "Kimi Code",
+                "https://api.kimi.ai/coding/v1",
+                .moonshot,
+                .kimiCode
+            ),
+            .qwenAPI: (
+                "Qwen API (QwenCloud)",
+                "https://ap-southeast-1.maas.qwencloudapi.com/compatible-mode/v1",
+                .qwen,
+                .openAIChatCompletions
+            ),
+            .qwenTokenPlan: (
+                "Qwen Token Plan",
+                "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1",
+                .qwen,
+                .qwenTokenPlan
+            ),
             .zaiAPI: (
                 "Z.ai API",
                 "https://api.z.ai/api/paas/v4",
@@ -183,11 +207,15 @@ struct ZenCODESetupProviderPresetTests {
             .openRouter: "openrouter",
             .openAIAPI: "openai",
             .anthropicAPI: "anthropic",
+            .xaiAPI: "xai",
+            .kimi: "moonshot",
+            .kimiCode: "kimi-code",
             .zaiAPI: "zai",
             .zaiCodingPlan: "zai-coding-plan",
+            .qwenAPI: "qwen",
+            .qwenTokenPlan: "qwen-token-plan",
             .gemini: "google.gemini",
             .deepSeek: "deepseek",
-            .kimi: "moonshot",
             .nvidiaAPI: "nvidia",
             .modal: "modal",
             .custom: "custom"
@@ -214,6 +242,13 @@ struct ZenCODESetupProviderPresetTests {
         #expect(AgentRemoteProvider.providerKey(providerProfileID: .anthropic, protocolProfileID: .anthropicClaudeSubscription) == "claude")
         #expect(AgentRemoteProvider.providerKey(providerProfileID: .zAI, protocolProfileID: .zaiCodingPlan) == "zai-coding-plan")
         #expect(AgentRemoteProvider.providerKey(providerProfileID: .zAI, protocolProfileID: .openAIChatCompletions) == "zai")
+        #expect(AgentRemoteProvider.providerKey(providerProfileID: .moonshot, protocolProfileID: .kimiCode) == "kimi-code")
+        #expect(AgentRemoteProvider.providerKey(providerProfileID: .moonshot, protocolProfileID: .openAIChatCompletions) == "moonshot")
+        #expect(AgentRemoteProvider.providerKey(providerProfileID: .qwen, protocolProfileID: .qwenTokenPlan) == "qwen-token-plan")
+        #expect(AgentRemoteProvider.providerKey(providerProfileID: .qwen, protocolProfileID: .openAIChatCompletions) == "qwen")
+        #expect(AgentRemoteProvider.providerKey(providerProfileID: .xAI, protocolProfileID: .openAIChatCompletions) == "xai")
+        #expect(AgentRemoteProvider.kimiCodeProviderID == "kimi-code")
+        #expect(AgentRemoteProvider.qwenTokenPlanProviderID == "qwen-token-plan")
         #expect(AgentRemoteProvider.providerKey(providerProfileID: .ds4, protocolProfileID: .openAIChatCompletions) == "ds4")
         #expect(AgentRemoteProvider.providerKey(providerProfileID: .custom, protocolProfileID: .openAIResponses) == "custom")
 
@@ -256,7 +291,7 @@ struct ZenCODESetupProviderPresetTests {
 
     @Test
     func anthropicDirectAPIHasNativeMessagesPresetDistinctFromSubscription() {
-        #expect(SetupAnthropicProviderOption.api != .subscription)
+        #expect(SetupProviderKind.remoteAPI(.anthropicAPI) != .anthropicSubscription)
         let preset = SetupProviderPreset.anthropicAPI
         #expect(SetupProviderPreset.allCases.contains(preset))
         #expect(preset.title == "Anthropic API")
@@ -264,6 +299,171 @@ struct ZenCODESetupProviderPresetTests {
         #expect(preset.providerProfileID == .anthropic)
         #expect(preset.protocolProfileID == .anthropicMessages)
         #expect(preset.authPolicy == .apiKeyRequired)
+    }
+
+    // MARK: - Provider menu structure
+
+    private struct MenuRow<Value: Hashable>: Equatable {
+        let value: Value
+        let title: String
+        let detail: String?
+    }
+
+    private static func rows<Value: Hashable>(
+        _ items: [TerminalCheckboxMenuItem<Value>]
+    ) -> [MenuRow<Value>] {
+        items.map { MenuRow(value: $0.value, title: $0.title, detail: $0.detail) }
+    }
+
+    @Test
+    func providerFamilyPageListsSubscriptionFamiliesThenOtherAPIProviders() {
+        #expect(SetupProviderFamily.allCases == [.openAI, .anthropic, .kimi, .zAI, .qwen, .otherAPI])
+        let items = ZenCODESetupRunner.providerFamilyMenuItems()
+        #expect(Self.rows(items) == [
+            MenuRow(value: .openAI, title: "OpenAI", detail: "OpenAI API or ChatGPT Subscription"),
+            MenuRow(value: .anthropic, title: "Anthropic", detail: "Anthropic API status or Claude Subscription"),
+            MenuRow(value: .kimi, title: "Kimi", detail: "Kimi API (Moonshot AI) or Kimi Code membership"),
+            MenuRow(value: .zAI, title: "Z.ai", detail: "Z.ai API or Z.ai Coding Plan"),
+            MenuRow(value: .qwen, title: "Qwen", detail: "Qwen API (QwenCloud) or Qwen Token Plan"),
+            MenuRow(value: .otherAPI, title: "Other API providers", detail: "hosted presets and advanced Custom setup")
+        ])
+    }
+
+    @Test
+    func providerFamilySubmenusListTheirChoicesInOrder() {
+        let hosted = "hosted API preset; API key required"
+        let browser = "browser sign-in; separate credentials and provider key"
+        let expected: [SetupProviderFamily: (title: String, rows: [MenuRow<SetupProviderKind>])] = [
+            .openAI: ("OpenAI", [
+                MenuRow(value: .remoteAPI(.openAIAPI), title: "OpenAI API", detail: "API key; OpenAI Responses protocol"),
+                MenuRow(value: .chatGPTSubscription, title: "ChatGPT Subscription", detail: browser)
+            ]),
+            .anthropic: ("Anthropic", [
+                MenuRow(value: .remoteAPI(.anthropicAPI), title: "Anthropic API", detail: "API key; native Messages protocol"),
+                MenuRow(value: .anthropicSubscription, title: "Claude Subscription", detail: browser)
+            ]),
+            .kimi: ("Kimi", [
+                MenuRow(value: .remoteAPI(.kimi), title: "Kimi API (Moonshot AI)", detail: "pay-as-you-go API key from the Kimi platform"),
+                MenuRow(value: .remoteAPI(.kimiCode), title: "Kimi Code", detail: "Kimi membership; API key from the Kimi Code console")
+            ]),
+            .zAI: ("Z.ai", [
+                MenuRow(value: .remoteAPI(.zaiAPI), title: "Z.ai API", detail: "pay-as-you-go API key"),
+                MenuRow(value: .remoteAPI(.zaiCodingPlan), title: "Z.ai Coding Plan", detail: "Coding Plan subscription; plan API key")
+            ]),
+            .qwen: ("Qwen", [
+                MenuRow(value: .remoteAPI(.qwenAPI), title: "Qwen API (QwenCloud)", detail: "pay-as-you-go API key; Singapore region"),
+                MenuRow(value: .remoteAPI(.qwenTokenPlan), title: "Qwen Token Plan", detail: "Token Plan subscription; plan API key (sk-sp-)")
+            ]),
+            .otherAPI: ("API provider preset", [
+                MenuRow(value: .remoteAPI(.openRouter), title: "OpenRouter", detail: hosted),
+                MenuRow(value: .remoteAPI(.xaiAPI), title: "Grok API (xAI)", detail: "API key; pay-as-you-go xAI API"),
+                MenuRow(value: .remoteAPI(.gemini), title: "Gemini", detail: hosted),
+                MenuRow(value: .remoteAPI(.deepSeek), title: "DeepSeek", detail: hosted),
+                MenuRow(value: .remoteAPI(.nvidiaAPI), title: "NVIDIA API", detail: hosted),
+                MenuRow(value: .remoteAPI(.modal), title: "Modal", detail: hosted),
+                MenuRow(
+                    value: .remoteAPI(.custom),
+                    title: "Custom",
+                    detail: "advanced OpenAI-compatible setup; optional auth, fail-closed protocol selection"
+                )
+            ])
+        ]
+        #expect(Set(expected.keys) == Set(SetupProviderFamily.allCases))
+        for family in SetupProviderFamily.allCases {
+            let items = ZenCODESetupRunner.providerKindMenuItems(for: family, configuredProviderIDs: [])
+            #expect(family.submenuTitle == expected[family]?.title)
+            #expect(Self.rows(items) == expected[family]?.rows)
+            #expect(items.map(\.value) == family.kinds)
+            #expect(
+                ZenCODESetupRunner.preferredProviderKind(in: family, configuredProviderIDs: [])
+                    == family.kinds.first
+            )
+        }
+    }
+
+    @Test
+    func everyProviderChoiceBelongsToExactlyOneFamily() {
+        let allKinds = SetupProviderFamily.allCases.flatMap(\.kinds)
+        #expect(allKinds.count == Set(allKinds).count)
+        for preset in SetupProviderPreset.allCases {
+            let families = SetupProviderFamily.allCases.filter { $0.kinds.contains(.remoteAPI(preset)) }
+            #expect(families == [preset.family])
+        }
+        #expect(allKinds.count == SetupProviderPreset.allCases.count + 2)
+        #expect(SetupProviderFamily.allCases.filter { $0.kinds.contains(.chatGPTSubscription) } == [.openAI])
+        #expect(SetupProviderFamily.allCases.filter { $0.kinds.contains(.anthropicSubscription) } == [.anthropic])
+        #expect(SetupProviderFamily.otherAPI.kinds == SetupProviderPreset.allCases
+            .filter { $0.family == .otherAPI }
+            .map(SetupProviderKind.remoteAPI))
+    }
+
+    @Test
+    func everyFamilyOfTheFirstPageOffersMoreThanOneChoice() {
+        for family in SetupProviderFamily.allCases {
+            #expect(family.kinds.count > 1)
+        }
+        #expect(SetupProviderPreset.xaiAPI.family == .otherAPI)
+    }
+
+    @Test
+    func configuredProviderChoicesAreMarkedInTheirSubmenu() {
+        let configured: Set<String> = ["openai", "xai", "kimi-code", "zai", "qwen", "qwen-token-plan", "openrouter"]
+        let alreadyConfigured = ZenCODESetupRunner.alreadyConfiguredProviderDetail
+
+        // Page 1 keeps the family details: every family opens a submenu.
+        for item in ZenCODESetupRunner.providerFamilyMenuItems() {
+            #expect(item.detail == item.value.detail)
+        }
+
+        // Page 2 marks every configured choice and preselects the first
+        // choice that is not configured, otherwise the first one.
+        for family in SetupProviderFamily.allCases {
+            let items = ZenCODESetupRunner.providerKindMenuItems(for: family, configuredProviderIDs: configured)
+            for item in items {
+                #expect(item.detail == (configured.contains(item.value.providerID) ? alreadyConfigured : item.value.menuDetail))
+            }
+        }
+        let preferred: [SetupProviderFamily: SetupProviderKind] = [
+            .openAI: .chatGPTSubscription,
+            .anthropic: .remoteAPI(.anthropicAPI),
+            .kimi: .remoteAPI(.kimi),
+            .zAI: .remoteAPI(.zaiCodingPlan),
+            .qwen: .remoteAPI(.qwenAPI),
+            .otherAPI: .remoteAPI(.gemini)
+        ]
+        for family in SetupProviderFamily.allCases {
+            #expect(
+                ZenCODESetupRunner.preferredProviderKind(in: family, configuredProviderIDs: configured)
+                    == preferred[family]
+            )
+        }
+    }
+
+    @Test
+    func grokIsChosenFromTheAPIProviderPresetSubmenu() throws {
+        var presentedTitles: [String] = []
+        var presentedRows: [MenuRow<SetupProviderFamily>] = []
+        var preselections: [SetupProviderFamily] = []
+        var openedFamilies: [SetupProviderFamily] = []
+        let kind = try ZenCODESetupRunner.promptProviderKind(
+            configuredProviderIDs: ["openai"],
+            selectFamily: { title, items, selected in
+                presentedTitles.append(title)
+                presentedRows = Self.rows(items)
+                preselections.append(selected)
+                return .otherAPI
+            },
+            promptKind: { family in
+                openedFamilies.append(family)
+                #expect(family.kinds.contains(.remoteAPI(.xaiAPI)))
+                return .remoteAPI(.xaiAPI)
+            }
+        )
+        #expect(kind == .remoteAPI(.xaiAPI))
+        #expect(presentedTitles == ["Provider family"])
+        #expect(preselections == [.openAI])
+        #expect(openedFamilies == [.otherAPI])
+        #expect(presentedRows == Self.rows(ZenCODESetupRunner.providerFamilyMenuItems()))
     }
 
     // MARK: - Regression: reconfiguration keeps the protocol profile in sync

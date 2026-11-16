@@ -38,6 +38,12 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
     /// Stable provider key of the Z.ai Coding Plan, which shares the `zai`
     /// provider profile with the standard Z.ai API.
     public static let zaiCodingPlanProviderID = "zai-coding-plan"
+    /// Stable provider key of Kimi Code, which shares the `moonshot` provider
+    /// profile with the standard Kimi API.
+    public static let kimiCodeProviderID = "kimi-code"
+    /// Stable provider key of the Qwen Token Plan, which shares the `qwen`
+    /// provider profile with the standard Qwen API.
+    public static let qwenTokenPlanProviderID = "qwen-token-plan"
     /// Stable provider key of the local DS4 runtime.
     public static let ds4ProviderID = AgentProviderProfileID.ds4.rawValue
 
@@ -48,13 +54,16 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
     ).union([
         chatGPTSubscriptionProviderID,
         anthropicSubscriptionProviderID,
-        zaiCodingPlanProviderID
+        zaiCodingPlanProviderID,
+        kimiCodeProviderID,
+        qwenTokenPlanProviderID
     ])
 
     /// The single source of truth of the provider key table: the provider
     /// profile raw value, except the subscriptions (`chatgpt`, `claude`, the
-    /// prefixes of their model ids) and the Z.ai Coding Plan
-    /// (`zai-coding-plan`), which share a provider profile with an API preset.
+    /// prefixes of their model ids) and the plans that share a provider profile
+    /// with an API preset: the Z.ai Coding Plan (`zai-coding-plan`), Kimi Code
+    /// (`kimi-code`) and the Qwen Token Plan (`qwen-token-plan`).
     public static func providerKey(
         providerProfileID: AgentProviderProfileID,
         protocolProfileID: AgentProtocolProfileID
@@ -66,6 +75,10 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
             return anthropicSubscriptionProviderID
         case .zaiCodingPlan where providerProfileID == .zAI:
             return zaiCodingPlanProviderID
+        case .kimiCode where providerProfileID == .moonshot:
+            return kimiCodeProviderID
+        case .qwenTokenPlan where providerProfileID == .qwen:
+            return qwenTokenPlanProviderID
         default:
             return providerProfileID.rawValue
         }
@@ -277,6 +290,10 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
             return providerProfileID == .anthropic && authPolicy == .apiKeyRequired
         case .zaiCodingPlan:
             return providerProfileID == .zAI && authPolicy == .apiKeyRequired
+        case .kimiCode:
+            return providerProfileID == .moonshot && authPolicy == .apiKeyRequired
+        case .qwenTokenPlan:
+            return providerProfileID == .qwen && authPolicy == .apiKeyRequired
         case .openAIChatCompletions, .openAIResponses:
             return authPolicy != .chatGPTSubscription && authPolicy != .anthropicSubscription
         }

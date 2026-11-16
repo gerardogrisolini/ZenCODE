@@ -408,15 +408,56 @@ extension ZenCODESetupRunner {
         return choice == 0 ? .chatCompletions : .responses
     }
 
-    /// Asks for the kind of provider to add. Choices whose provider key is in
-    /// `configuredProviderIDs` stay visible but are marked as already
-    /// configured; the caller refuses them (see `readProvider`).
+    /// Items of "Provider family": one per `SetupProviderFamily`, in display
+    /// order. Every family opens a submenu, which marks the configured choices.
+    static func providerFamilyMenuItems() -> [TerminalCheckboxMenuItem<SetupProviderFamily>] {
+        SetupProviderFamily.allCases.map { family in
+            TerminalCheckboxMenuItem(
+                value: family,
+                title: family.title,
+                detail: family.detail
+            )
+        }
+    }
+
+    /// Items of the submenu of `family`: one per provider choice, in family
+    /// order. A choice whose provider key is in `configuredProviderIDs` stays
+    /// visible with `alreadyConfiguredProviderDetail`.
+    static func providerKindMenuItems(
+        for family: SetupProviderFamily,
+        configuredProviderIDs: Set<String>
+    ) -> [TerminalCheckboxMenuItem<SetupProviderKind>] {
+        family.kinds.map { kind in
+            TerminalCheckboxMenuItem(
+                value: kind,
+                title: providerKindTitle(kind),
+                detail: configuredProviderIDs.contains(kind.providerID)
+                    ? alreadyConfiguredProviderDetail
+                    : kind.menuDetail
+            )
+        }
+    }
+
+    /// The preselected choice of the submenu of `family`: the first one that
+    /// is not configured yet, otherwise the first one.
+    static func preferredProviderKind(
+        in family: SetupProviderFamily,
+        configuredProviderIDs: Set<String>
+    ) -> SetupProviderKind {
+        let kinds = family.kinds
+        return kinds.first { !configuredProviderIDs.contains($0.providerID) } ?? kinds[0]
+    }
+
+    /// Asks for the kind of provider to add. "Provider family" lists every
+    /// `SetupProviderFamily` (see `providerFamilyMenuItems`); each family
+    /// opens a submenu titled after the family ("API provider preset" for
+    /// Other API providers, see `providerKindMenuItems`). Choices whose
+    /// provider key is in `configuredProviderIDs` stay visible but are marked
+    /// as already configured; the caller refuses them (see `readProvider`).
     ///
-    /// Esc on a family submenu (OpenAI, Anthropic, API provider preset)
-    /// returns to "Provider family"; Esc there throws
+    /// Esc on a family submenu returns to "Provider family"; Esc there throws
     /// `ZenCODESetupError.cancelled`. `selectFamily` and `promptKind` (the
-    /// submenu of a family; `nil` for the terminal ones) replace the menus in
-    /// tests.
+    /// submenu of a family) replace the menus in tests.
     static func promptProviderKind(
         configuredProviderIDs: Set<String> = [],
         selectFamily: (
@@ -428,35 +469,10 @@ extension ZenCODESetupRunner {
         },
         promptKind promptKindInFamily: ((SetupProviderFamily) throws -> SetupProviderKind)? = nil
     ) throws -> SetupProviderKind {
-        func detail(_ kind: SetupProviderKind, _ text: String) -> String {
-            configuredProviderIDs.contains(kind.providerID)
-                ? alreadyConfiguredProviderDetail
-                : text
-        }
-        func preferred(_ kinds: [SetupProviderKind]) -> SetupProviderKind {
-            kinds.first { !configuredProviderIDs.contains($0.providerID) } ?? kinds[0]
-        }
-
         func promptFamily() throws -> SetupProviderFamily {
             let selected = selectFamily(
                 "Provider family",
-                [
-                    TerminalCheckboxMenuItem(
-                        value: SetupProviderFamily.openAI,
-                        title: "OpenAI",
-                        detail: "OpenAI API or ChatGPT Subscription"
-                    ),
-                    TerminalCheckboxMenuItem(
-                        value: SetupProviderFamily.anthropic,
-                        title: "Anthropic",
-                        detail: "Anthropic API status or Claude Subscription"
-                    ),
-                    TerminalCheckboxMenuItem(
-                        value: SetupProviderFamily.otherAPI,
-                        title: "Other API providers",
-                        detail: "hosted presets and advanced Custom setup"
-                    )
-                ],
+                providerFamilyMenuItems(),
                 .openAI
             )
             guard let selected else {
@@ -469,68 +485,17 @@ extension ZenCODESetupRunner {
             if let promptKindInFamily {
                 return try promptKindInFamily(family)
             }
-            switch family {
-            case .openAI:
-                let kinds: [SetupProviderKind] = [.remoteAPI(.openAIAPI), .chatGPTSubscription]
-                return try promptMenuChoice(
-                    title: "OpenAI",
-                    items: [
-                        TerminalCheckboxMenuItem(
-                            value: SetupProviderKind.remoteAPI(.openAIAPI),
-                            title: SetupProviderPreset.openAIAPI.title,
-                            detail: detail(.remoteAPI(.openAIAPI), "API key; OpenAI Responses protocol")
-                        ),
-                        TerminalCheckboxMenuItem(
-                            value: SetupProviderKind.chatGPTSubscription,
-                            title: "ChatGPT Subscription",
-                            detail: detail(.chatGPTSubscription, "browser sign-in; separate credentials and provider key")
-                        )
-                    ],
-                    selected: preferred(kinds)
+            return try promptMenuChoice(
+                title: family.submenuTitle,
+                items: providerKindMenuItems(
+                    for: family,
+                    configuredProviderIDs: configuredProviderIDs
+                ),
+                selected: preferredProviderKind(
+                    in: family,
+                    configuredProviderIDs: configuredProviderIDs
                 )
-            case .anthropic:
-                let option = try promptMenuChoice(
-                    title: "Anthropic",
-                    items: [
-                        TerminalCheckboxMenuItem(
-                            value: SetupAnthropicProviderOption.api,
-                            title: "Anthropic API",
-                            detail: detail(.remoteAPI(.anthropicAPI), "API key; native Messages protocol")
-                        ),
-                        TerminalCheckboxMenuItem(
-                            value: SetupAnthropicProviderOption.subscription,
-                            title: "Claude Subscription",
-                            detail: detail(.anthropicSubscription, "browser sign-in; separate credentials and provider key")
-                        )
-                    ],
-                    selected: preferred([.remoteAPI(.anthropicAPI), .anthropicSubscription]) == .anthropicSubscription
-                        ? .subscription
-                        : .api
-                )
-                return option == .api ? .remoteAPI(.anthropicAPI) : .anthropicSubscription
-            case .otherAPI:
-                let presets = SetupProviderPreset.allCases.filter {
-                    $0 != .openAIAPI && $0 != .anthropicAPI
-                }
-                let items = presets.map { preset in
-                    TerminalCheckboxMenuItem(
-                        value: preset,
-                        title: preset.title,
-                        detail: detail(
-                            .remoteAPI(preset),
-                            preset.isAdvanced
-                                ? "advanced OpenAI-compatible setup; optional auth, fail-closed protocol selection"
-                                : "hosted API preset; API key required"
-                        )
-                    )
-                }
-                let preset = try promptMenuChoice(
-                    title: "API provider preset",
-                    items: items,
-                    selected: presets.first { !configuredProviderIDs.contains($0.providerID) } ?? .openRouter
-                )
-                return .remoteAPI(preset)
-            }
+            )
         }
 
         // Esc on a family submenu comes back here, never to the submenu

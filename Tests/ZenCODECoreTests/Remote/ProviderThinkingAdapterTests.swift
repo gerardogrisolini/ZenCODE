@@ -35,6 +35,13 @@ struct ProviderThinkingAdapterTests {
             .init(provider: .zAI, protocolProfile: .zaiCodingPlan, selection: .off, expected: #"{"reasoning_effort":"none"}"#),
             .init(provider: .googleGemini, protocolProfile: .openAIChatCompletions, selection: .medium, expected: #"{"reasoning_effort":"medium"}"#),
             .init(provider: .moonshot, protocolProfile: .openAIChatCompletions, selection: .enabled, expected: #"{"reasoning_effort":"enabled"}"#),
+            .init(provider: .moonshot, protocolProfile: .kimiCode, selection: .enabled, expected: #"{"reasoning_effort":"enabled"}"#),
+            .init(provider: .moonshot, protocolProfile: .kimiCode, selection: .high, expected: #"{"reasoning_effort":"high"}"#),
+            // xAI and Qwen send no thinking payload (see `thinkingPayloadStyle`).
+            .init(provider: .xAI, protocolProfile: .openAIChatCompletions, selection: .high, expected: "{}"),
+            .init(provider: .xAI, protocolProfile: .openAIChatCompletions, selection: .off, expected: "{}"),
+            .init(provider: .qwen, protocolProfile: .openAIChatCompletions, selection: .high, expected: "{}"),
+            .init(provider: .qwen, protocolProfile: .qwenTokenPlan, selection: .enabled, expected: "{}"),
             .init(provider: .deepSeek, protocolProfile: .openAIChatCompletions, selection: .enabled, expected: deepSeekEnabled),
             .init(provider: .nvidia, protocolProfile: .openAIChatCompletions, selection: .high, expected: #"{"chat_template_kwargs":{"enable_thinking":true,"reasoning_effort":"high","thinking":true}}"#),
             .init(provider: .modal, protocolProfile: .openAIChatCompletions, selection: .off, expected: #"{"chat_template_kwargs":{"enable_thinking":false,"thinking":false}}"#),
@@ -201,7 +208,9 @@ struct ProviderThinkingAdapterTests {
                 chatEndpoint: protocolProfile.chatEndpoint ?? .chatCompletions,
                 providerProfileID: provider,
                 protocolProfileID: protocolProfile,
-                authPolicy: protocolProfile == .zaiCodingPlan ? .apiKeyRequired : .apiKeyOptional
+                authPolicy: [.zaiCodingPlan, .kimiCode, .qwenTokenPlan].contains(protocolProfile)
+                    ? .apiKeyRequired
+                    : .apiKeyOptional
             ),
             apiKey: nil,
             thinkingOptions: thinkingOptions
