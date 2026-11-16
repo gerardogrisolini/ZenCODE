@@ -75,6 +75,31 @@ extension TelegramChannelTurnActivityTests {
         }
     }
 
+    // MARK: - Long responses
+
+    /// A response written before a tool call and the final response, each
+    /// beyond 3,900 characters, arrive whole, each in one rich message.
+    @Test
+    func aLongIntermediateAndFinalResponseArriveWhole() async throws {
+        try await withHost { environment, slot in
+            let exec = Fixtures.toolCall(id: "e1", name: "local.exec", arguments: ["command": "swift build"])
+            let intermediate = (1 ... 1_000).map { "i\($0)" }.joined(separator: " ")
+            let final = (1 ... 1_200).map { "f\($0)" }.joined(separator: " ")
+            await environment.backend.enqueue([
+                .content(intermediate),
+                .toolCallStarted(exec),
+                .toolCallCompleted(exec, Fixtures.result()),
+                .content(final),
+            ])
+            let requests = try await Self.runTurnFromTheChat("Explain it", in: slot, environment: environment)
+
+            #expect(intermediate.count > 3_900)
+            #expect(final.count > 3_900)
+            let responses = requests.filter { $0.method == "sendRichMessage" }.map(\.text)
+            #expect(responses == [intermediate, "ZenCODE completed\n\n" + final], "\(responses.map(\.count))")
+        }
+    }
+
     // MARK: - Backlog (C)
 
     /// The backlog policy is C: a response that completed before the channel

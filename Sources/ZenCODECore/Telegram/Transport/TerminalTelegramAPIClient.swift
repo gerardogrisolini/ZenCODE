@@ -428,6 +428,16 @@ struct TerminalTelegramAPIClient: Sendable {
         boundedText(text, maximumUTF16Length: maximumMessageUTF16Length)
     }
 
+    /// `text` as the plain-text messages that carry it whole, in order:
+    /// pieces of at most ``maximumMessageUTF16Length`` UTF-16 code units,
+    /// each cut after the last blank line that fits, else the last line
+    /// break, else the last whitespace, else on a grapheme boundary
+    /// (``PresentationTextSplitter/pieces(of:limit:measure:)``), so
+    /// ``boundedMessageText(_:)`` never cuts one; none for a blank text.
+    static func messageTextPieces(_ text: String) -> [String] {
+        PresentationTextSplitter.pieces(of: text, limit: maximumMessageUTF16Length, measure: .utf16Units)
+    }
+
     /// Trims and bounds a topic name to the `createForumTopic` /
     /// `editForumTopic` limit of 128 characters. Like ``boundedMessageText(_:)``
     /// the cut happens on grapheme-cluster boundaries and the result stays

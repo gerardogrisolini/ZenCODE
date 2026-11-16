@@ -275,9 +275,18 @@ actor ACPTelegramScriptedTransport: TelegramHTTPTransport {
     }
 
     /// Every string of a decoded rich message held under a `text` key (a
-    /// string, or an array of strings and styled runs), in document order.
+    /// string, or an array of strings and styled runs), in document order; a
+    /// table gives its rows one per line with their cells joined by ` | `, and
+    /// a divider gives `———`.
     private static func texts(in value: Any) -> [String] {
         if let object = value as? [String: Any] {
+            if let rows = object["cells"] as? [[Any]] {
+                return [rows.map { row in row.map { texts(in: $0).joined() }.joined(separator: " | ") }
+                    .joined(separator: "\n")]
+            }
+            if object["type"] as? String == "divider" {
+                return ["———"]
+            }
             return object.keys.sorted().flatMap { key -> [String] in
                 key == "text" ? flattenedText(object[key] as Any) : texts(in: object[key] as Any)
             }

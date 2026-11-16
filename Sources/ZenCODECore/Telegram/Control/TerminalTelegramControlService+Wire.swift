@@ -163,6 +163,18 @@ extension TerminalTelegramControlService {
     /// plain-text projection only after a definite Rich Messages rejection.
     /// Transport failures are not retried as plain text because the rich send may
     /// already have succeeded and a fallback would duplicate the final answer.
+    ///
+    /// A response larger than one rich message is sent as its pages
+    /// (``PresentationDocument/pages(within:)`` with
+    /// ``TerminalTelegramRichMessageRenderer/messageBudget``), one message
+    /// each, in order, under one wire effect, the wire generation checked
+    /// again before every send; `replyMarkup` goes only on the last message,
+    /// whose id is returned. Once a page is rejected as incompatible, it and
+    /// every later page go out as plain text, never as rich again, each page
+    /// in as many messages as its plain text needs
+    /// (``TerminalTelegramAPIClient/messageTextPieces(_:)``), never cut. Any
+    /// other failure propagates, even when earlier pages were delivered, and
+    /// nothing is sent again.
     func sendRichMessageWithFallback(
         _ text: String,
         to chatID: Int64,
@@ -182,25 +194,44 @@ extension TerminalTelegramControlService {
             token: token, generation: wireGeneration, fence: fence,
             chatID: chatID, topicID: topicID
         )
-        do {
-            let messageID = try await client.sendRichMessage(
-                document, to: chatID, messageThreadID: topicID, replyMarkup: replyMarkup, governor: rateGovernor
-            )
-            try ensureCurrentWireGeneration(wireGeneration)
-            clearSendDiagnostics()
-            return messageID
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch let error as TerminalTelegramControlError {
-            guard Self.isRichMessageCompatibilityError(error) else { throw error }
-            try ensureCurrentWireGeneration(wireGeneration)
-            let messageID = try await client.sendMessage(
-                document.plainText, to: chatID, messageThreadID: topicID, replyMarkup: replyMarkup, governor: rateGovernor
-            )
-            try ensureCurrentWireGeneration(wireGeneration)
-            clearSendDiagnostics()
-            return messageID
+        let pages = document.pages(within: TerminalTelegramRichMessageRenderer.messageBudget)
+        var lastMessageID: Int?
+        var sendsRichMessages = true
+        for (index, page) in pages.enumerated() {
+            if lastMessageID != nil { try ensureCurrentWireGeneration(wireGeneration) }
+            let pageMarkup = index == pages.count - 1 ? replyMarkup : nil
+            if sendsRichMessages {
+                do {
+                    lastMessageID = try await client.sendRichMessage(
+                        page, to: chatID, messageThreadID: topicID, replyMarkup: pageMarkup, governor: rateGovernor
+                    )
+                    continue
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch TerminalTelegramControlError.emptyMessage {
+                    // The page renders to no block: nothing reached the wire.
+                    continue
+                } catch let error as TerminalTelegramControlError {
+                    guard Self.isRichMessageCompatibilityError(error) else { throw error }
+                    sendsRichMessages = false
+                    try ensureCurrentWireGeneration(wireGeneration)
+                }
+            }
+            let pieces = TerminalTelegramAPIClient.messageTextPieces(page.plainText)
+            for (pieceIndex, piece) in pieces.enumerated() {
+                if pieceIndex > 0 { try ensureCurrentWireGeneration(wireGeneration) }
+                lastMessageID = try await client.sendMessage(
+                    piece, to: chatID, messageThreadID: topicID,
+                    replyMarkup: pieceIndex == pieces.count - 1 ? pageMarkup : nil, governor: rateGovernor
+                )
+            }
         }
+        try ensureCurrentWireGeneration(wireGeneration)
+        guard let lastMessageID else {
+            throw TerminalTelegramControlError.emptyMessage
+        }
+        clearSendDiagnostics()
+        return lastMessageID
     }
 
     /// Sends one reasoning block as a single plain-text message, all of it
@@ -269,6 +300,12 @@ extension TerminalTelegramControlService {
     /// definite API incompatibility. The caller's coalescer remains the
     /// sole owner of draft timing and cancellation.
     ///
+    /// The draft shows the message being written: the last page of the text
+    /// (``PresentationDocument/pages(within:)`` with
+    /// ``TerminalTelegramRichMessageRenderer/messageBudget``, without its
+    /// page limit), and on the legacy method the last plain-text piece of
+    /// that page (``TerminalTelegramAPIClient/messageTextPieces(_:)``).
+    ///
     /// Both draft calls target the lease's topic (`message_thread_id` is omitted
     /// without one) and carry `canStop`. The default `true` keeps today's wire,
     /// `can_stop: true` with `keep_on_stop: true`; `false` hides the stop button
@@ -284,10 +321,12 @@ extension TerminalTelegramControlService {
         let settings = try telegramSettings()
         let token = try telegramToken(from: settings)
         let document = PresentationDocument(markdown: text)
+        let page = document.pages(within: TerminalTelegramRichMessageRenderer.messageBudget.withoutPageLimit).last
+            ?? document
         let client = wireClient(token: token, generation: wireGeneration, fence: fence, chatID: chatID, topicID: topicID)
         do {
             try await client.sendRichMessageDraft(
-                document, to: chatID, messageThreadID: topicID, draftID: draftID,
+                page, to: chatID, messageThreadID: topicID, draftID: draftID,
                 canStop: canStop, governor: rateGovernor
             )
         } catch is CancellationError {
@@ -296,7 +335,8 @@ extension TerminalTelegramControlService {
             guard Self.isRichMessageCompatibilityError(error) else { throw error }
             try ensureCurrentWireGeneration(wireGeneration)
             try await client.sendMessageDraft(
-                document.plainText, to: chatID, messageThreadID: topicID, draftID: draftID,
+                TerminalTelegramAPIClient.messageTextPieces(page.plainText).last ?? page.plainText,
+                to: chatID, messageThreadID: topicID, draftID: draftID,
                 canStop: canStop, governor: rateGovernor
             )
         }

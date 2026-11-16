@@ -279,7 +279,10 @@ actor TurnActivityTransport: TelegramHTTPTransport {
         Data(#"{"ok":true,"result":{"message_id":\#(id),"chat":{"id":42,"type":"private"},"date":0}}"#.utf8)
     }
 
-    /// The text of a decoded rich block: the concatenation of its runs.
+    /// The text of a decoded rich block: the concatenation of its runs; for a
+    /// block without text of its own, the text of what it holds: a quotation's
+    /// or a list item's blocks and a list's items one per line, a table's rows
+    /// one per line with their cells joined by ` | `, and `———` for a divider.
     private static func text(of block: Any) -> String {
         if let text = block as? String {
             return text
@@ -288,6 +291,18 @@ actor TurnActivityTransport: TelegramHTTPTransport {
             return array.map { text(of: $0) }.joined()
         }
         guard let object = block as? [String: Any] else { return "" }
-        return object["text"].map { text(of: $0) } ?? ""
+        if let value = object["text"] {
+            return text(of: value)
+        }
+        if let blocks = object["blocks"] as? [Any] {
+            return blocks.map { text(of: $0) }.joined(separator: "\n")
+        }
+        if let items = object["items"] as? [Any] {
+            return items.map { text(of: $0) }.joined(separator: "\n")
+        }
+        if let rows = object["cells"] as? [[Any]] {
+            return rows.map { row in row.map { text(of: $0) }.joined(separator: " | ") }.joined(separator: "\n")
+        }
+        return object["type"] as? String == "divider" ? "———" : ""
     }
 }

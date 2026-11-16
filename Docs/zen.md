@@ -954,7 +954,11 @@ What the sub-agents already showed when Telegram began to drive the session, in
 the terminal or in the editor, is not sent: the chat receives only the
 responses and changes that come later. The turn ends with its outcome (the
 final response, `Stopped.`, or the failure) and the file-change
-summary. A tool line carries no arguments or result, and the calls the
+summary. Responses arrive whole: one longer than a Telegram message arrives as
+several messages, in order, split between paragraphs, list items, table rows
+(each part of a table repeats its header), or lines of code, and a response
+that would need more than four messages stops at the fourth, which ends with
+`… Response truncated.`. A tool line carries no arguments or result, and the calls the
 terminal does not show, such as `agent.message`, are left out. A new message in
 the chat closes the activity message, so the next call opens a new one below
 it; editing the task-graph card or the sub-agent message in place does not,

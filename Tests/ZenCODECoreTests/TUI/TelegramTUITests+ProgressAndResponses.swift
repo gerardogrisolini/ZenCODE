@@ -263,25 +263,31 @@ extension TelegramTUITests {
         }
     }
 
+    /// The aggregated root response is no longer cut at the 3,900-character
+    /// limit of the messages edited in place: it is sent whole, up to the
+    /// bound of the rich texts.
     @Test
-    func telegramReporterTruncatesAggregatedRootResponseToMessageLimit() async {
+    func telegramReporterKeepsTheAggregatedRootResponseUpToTheRichTextLimit() async {
         let collector = TelegramTestMessageCollector()
         let reporter = TerminalTelegramTurnProgressReporter(chatID: 42) { message, _ in
             await collector.append(message)
             return true
         }
-        let limit = TerminalTelegramTurnProgressReporter.maximumMessageLength
+        let limit = TerminalTelegramTurnProgressReporter.maximumRichTextLength
 
         for _ in 0..<10 {
             await reporter.appendAgentResponseDelta(String(repeating: "a", count: 1_000))
         }
         #expect(await reporter.hasPendingAgentResponse)
         await reporter.publishPendingAgentResponseAtBoundary()
+        for _ in 0..<14 {
+            await reporter.appendAgentResponseDelta(String(repeating: "b", count: 10_000))
+        }
+        await reporter.publishPendingAgentResponseAtBoundary()
         await reporter.flush()
 
         let messages = await collector.allMessages()
-        #expect(messages.count == 1)
-        #expect(messages.first?.count == limit)
+        #expect(messages.map(\.count) == [10_000, limit])
     }
 
     @Test

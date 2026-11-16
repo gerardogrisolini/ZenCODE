@@ -96,8 +96,19 @@ struct TerminalTelegramTurnActivityWire: Sendable {
 /// when the reporter retires; only the progress card is deleted. No timer or
 /// task besides the drain exists, so ``retire()`` stops everything.
 actor TerminalTelegramTurnProgressReporter {
-    /// Telegram rejects messages beyond ~4096 characters; stay below it.
+    /// Telegram rejects messages beyond ~4096 characters; stay below it. The
+    /// bound of the messages sent as plain text or edited in place: the tool
+    /// activity, the sub-agent status, the task-graph card, and the thinking.
     static let maximumMessageLength = 3_900
+    /// The bound, in characters, of a text message of the queue (a response,
+    /// a sub-agent response, an authorization, the summary), which leaves as
+    /// rich messages, as many as it needs, and of the root response buffer.
+    /// It only guards memory: it is above the most text the messages of one
+    /// response carry
+    /// (``TerminalTelegramRichMessageRenderer/messageBudget``), so a text
+    /// that reaches it still exceeds their number and ends with the
+    /// truncation notice.
+    static let maximumRichTextLength = 130_000
     /// The room, in UTF-16 code units, an activity message keeps for the
     /// elapsed time of every row still running: a space and the time
     /// (``ToolCallPresentation/elapsedTimeText(_:)`` is at most 11 units below
@@ -175,6 +186,9 @@ actor TerminalTelegramTurnProgressReporter {
     private var hasQueuedProgressCard = false
     /// Root response text aggregated since the last boundary.
     private var pendingAgentResponse = ""
+    /// The characters of ``pendingAgentResponse``, counted as they are
+    /// appended.
+    private var pendingAgentResponseLength = 0
     private var isDraining = false
     private var drainTask: Task<Void, Never>?
     private var isRetired = false
@@ -367,16 +381,19 @@ actor TerminalTelegramTurnProgressReporter {
     /// Aggregates one visible root response delta.
     ///
     /// Nothing is queued here: a delta is not yet a response. The buffer is
-    /// bounded by the per-message limit so a long block cannot grow unbounded.
+    /// bounded by ``maximumRichTextLength`` so a long block cannot grow
+    /// unbounded.
     func appendAgentResponseDelta(_ delta: String) async {
         guard !delta.isEmpty else {
             return
         }
-        let remainingCount = Self.maximumMessageLength - pendingAgentResponse.count
+        let remainingCount = Self.maximumRichTextLength - pendingAgentResponseLength
         guard remainingCount > 0 else {
             return
         }
-        pendingAgentResponse.append(contentsOf: delta.prefix(remainingCount))
+        let accepted = delta.prefix(remainingCount)
+        pendingAgentResponse.append(contentsOf: accepted)
+        pendingAgentResponseLength += accepted.count
         if let draftStreamer { await draftStreamer.append(delta) }
     }
 
@@ -391,6 +408,7 @@ actor TerminalTelegramTurnProgressReporter {
         let text = pendingAgentResponse
             .trimmingCharacters(in: .whitespacesAndNewlines)
         pendingAgentResponse.removeAll(keepingCapacity: true)
+        pendingAgentResponseLength = 0
         await rotateDraftStreamer()
         guard !text.isEmpty else {
             return false
@@ -415,6 +433,7 @@ actor TerminalTelegramTurnProgressReporter {
     /// it here is what keeps that response from being sent twice.
     func discardPendingAgentResponse() async {
         pendingAgentResponse.removeAll(keepingCapacity: false)
+        pendingAgentResponseLength = 0
         await rotateDraftStreamer()
     }
 
@@ -434,6 +453,7 @@ actor TerminalTelegramTurnProgressReporter {
         // so an already-extracted delayed send is fenced at service admission.
         wireFence.invalidate()
         pendingAgentResponse.removeAll()
+        pendingAgentResponseLength = 0
         let abandoned = queue
         queue.removeAll()
         for item in abandoned {
@@ -495,7 +515,9 @@ actor TerminalTelegramTurnProgressReporter {
     }
 
     /// Queues a text message, closing the activity message: it is a new
-    /// message in the chat.
+    /// message in the chat. The text is bounded by
+    /// ``maximumRichTextLength``: the send splits it into as many messages as
+    /// it needs.
     private func enqueue(
         _ message: String,
         deliveryContinuation: CheckedContinuation<Bool, Never>?
@@ -510,7 +532,7 @@ actor TerminalTelegramTurnProgressReporter {
         }
         closeActivityMessage()
         append(.message(
-            text: String(text.prefix(Self.maximumMessageLength)),
+            text: String(text.prefix(Self.maximumRichTextLength)),
             deliveryContinuation: deliveryContinuation
         ))
     }

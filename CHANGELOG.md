@@ -10,6 +10,42 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- Telegram: a response no longer loses parts of its Markdown on the way to the
+  chat. Tables arrive as tables, with their header row, the alignment of each
+  column, and their empty cells; quotations arrive as quotations, with the
+  lists and code blocks they hold; `---` arrives as a divider; `~~text~~` is
+  struck through; task-list items keep their box, ticked or not; and an
+  ordered list that does not start from 1 keeps its numbers. HTML written in a
+  response stays visible as text, so `Array<Int>` outside backticks no longer
+  arrives as `Array`. An `http` link is still not clickable, but its address
+  now follows its text, as `text (url)`, or stands alone when the text is the
+  address; `https` and `tg` links are unchanged. An image arrives as a link
+  labelled with its description, or with its address when it has none. A
+  table with more than 20 columns arrives as a preformatted block with one
+  line per row, and content nested deeper than Telegram accepts arrives as
+  plain text. When Telegram refuses the rich message, the plain-text message
+  sent instead keeps all of this too: the lines of a quotation start with
+  `> `, a divider is `———`, a table has one line per row with its cells
+  separated by ` | `, task items start with `☑` or `☐`, and ordered lists keep
+  their numbers.
+- Telegram: a long response is no longer cut without a word. The final
+  response used to stop at 3,600 characters, and a response written before a
+  tool call, a sub-agent's response, a permission request, or the change
+  summary at 3,900, and a response lost its blocks after the hundredth; they
+  now arrive whole. One longer than a Telegram message arrives as several
+  messages, in order, split between paragraphs, list items, table rows (each
+  part of a table repeats its header and alignments), or lines of code, and an
+  ordered list split this way keeps counting; a response that would need more
+  than four messages stops at the fourth, which ends with
+  `… Response truncated.`. When Telegram refuses the rich message, the text
+  sent instead is split into as many messages as it needs rather than cut at
+  4,000 characters. The preview that shows a response while it is written no
+  longer stops at 4,000 characters: it shows the part being written. The
+  reasoning, the tool activity, the sub-agent status, and the task-graph card
+  keep their 3,900-character limit.
+
 ## [6.1.1] - 2026-11-16
 
 ### Added

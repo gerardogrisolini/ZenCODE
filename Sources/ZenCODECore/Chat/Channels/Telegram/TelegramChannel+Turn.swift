@@ -307,11 +307,12 @@ extension TelegramChannel {
     /// reporting ends. Without a reporter they are sent to the linked chat
     /// directly.
     ///
-    /// The texts are the terminal's: `*ZenCODE completed*` and the final
-    /// response cut to 3 600 characters (only the text since the last tool
-    /// boundary once an intermediate response was published; `Done.` for an
-    /// empty response), `Stopped.`, `ZenCODE failed: <message>`, and the
-    /// summary of ``TurnFileChangeSummaryPresentation/text(_:includesCommandHint:)``.
+    /// The texts are the terminal's: `*ZenCODE completed*` and the whole
+    /// final response (only the text since the last tool boundary once an
+    /// intermediate response was published; `Done.` for an empty response),
+    /// which the reporter sends in as many messages as it needs, `Stopped.`,
+    /// `ZenCODE failed: <message>`, and the summary of
+    /// ``TurnFileChangeSummaryPresentation/text(_:includesCommandHint:)``.
     ///
     /// The session is free again: the next queued prompt starts, so a prompt
     /// queued during a turn the channel did not start (a turn that moved onto
@@ -338,9 +339,7 @@ extension TelegramChannel {
             let trimmed = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
             let completionText = trimmed.isEmpty ? "Done." : trimmed
             let sentText = await finalResponseText(fallback: completionText)
-            outcomePayload = .agentResponse(
-                "*ZenCODE completed*\n\n\(String(sentText.prefix(3_600)))"
-            )
+            outcomePayload = .agentResponse("*ZenCODE completed*\n\n\(sentText)")
         case let .failed(message):
             outcomePayload = .agentResponse("ZenCODE failed: \(message)")
         case .cancelled:

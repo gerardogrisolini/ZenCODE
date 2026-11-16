@@ -422,7 +422,18 @@ editing the card or the status in place closes nothing, and a call's outcome is
 written in its own row. The activity and status messages stay in the chat, and
 `TerminalTelegramTurnActivity` shapes
 their texts, which are model output and are never parsed as Markdown or HTML.
-The turn's ending follows, with its outcome and file-change summary. The
+The turn's ending follows, with its outcome and file-change summary. The text
+messages of the queue (a response, the final one included and never cut, a
+sub-agent response, an authorization, the summary) leave as rich messages, as
+many as their pages need (see the presentation tree below); they, the root
+response buffer, and the draft are bounded at
+`TerminalTelegramTurnProgressReporter.maximumRichTextLength` (130,000
+characters), a memory guard above what four messages carry, so a text that
+reaches it still ends with the truncation notice. The thinking message, the
+activity and status messages, and the task-graph card keep the
+3,900-character `maximumMessageLength`. A turn without a reporter sends its
+outcome as a legacy Markdown `sendMessage`, bounded to 4,000 UTF-16 code units.
+The
 chat receives the last `TelegramChannel.handoverContextEntryCount` (6) prompts
 and responses as context at the handover. The catch-up of `/telegram off` is a
 `ChatTelegramCatchUp`: the entries of the incarnation's log with a sequence
@@ -940,13 +951,50 @@ Domain presentation nodes contain only visible text and semantic blocks; they
 contain no Telegram types, local file paths, reasoning records or tool payloads. Reasoning has no place in the tree:
 the thinking message is a plain text with entities
 (`TerminalTelegramTurnActivity.thoughtMessage(_:)`), never parsed as Markdown.
+The blocks are paragraphs, headings, preformatted code, lists (bulleted, or
+numbered from their own start, each item with an optional task-list box),
+quotations holding blocks, tables (one alignment per column, a header row, and
+cells of inline text), and dividers; inline text is plain, code, emphasis,
+strong, strikethrough, or a link. Nothing the Markdown parser recognizes is
+dropped: raw HTML, inline or as a block, stays as its text; only `https` and
+`tg` destinations become links, an `http` one is kept as text after its label
+(`label (url)`, or the URL alone when it is the label), and any other
+destination keeps only the label; an image is a link labelled with its
+alternative text, or with its source when it has none. Every block has a
+deterministic plain-text projection (quotation lines prefixed by `> `, a
+divider as `———`, one line per table row with cells joined by ` | `, `☑`/`☐`
+in place of a task item's marker).
 Transport adapters depend inward on
-that tree: the Telegram adapter renders the supported subset to Bot API 10.3
+that tree: the Telegram adapter renders every block and style of it to Bot API 10.3
 `InputRichMessage` wire values, while the presentation layer never imports or
-names Telegram. Rich draft, thinking, and final delivery share the Telegram outbound
-governor. An explicit 400/404 compatibility rejection may degrade to the tree's
-deterministic plain-text projection; ambiguous transport/server outcomes never
-trigger a second final send. The tree is not persisted, so settings, session,
+names Telegram. A table wider than the API's 20 columns is sent as a `pre`
+block with its plain-text projection, and content that would nest deeper than
+12 levels of blocks and formatting (the API accepts 16) is flattened into its
+plain text. Rich draft, thinking, and final delivery share the Telegram outbound
+governor. A document larger than one rich message is split into ordered pages
+(`PresentationDocument.pages(within:)`, `Presentation/PresentationDocument+Pages.swift`)
+within the budget the adapter sets in one place
+(`TerminalTelegramRichMessageRenderer.messageBudget`): 30,000 bytes of UTF-8
+text, link URLs and table rows as their plain-text lines included, and 450
+blocks, every nested block, list item, and table row counted, below the API's
+32,768 characters and 500 blocks. Top-level blocks are packed in order; a block
+larger than a page is split into pieces of its own kind (code by lines, then a
+line by graphemes, each piece with its language; a list by items, an ordered
+one numbering on; a table by rows, each piece with the header and alignments; a
+quotation by its blocks, recursively; a paragraph or heading by runs, then by
+whitespace and graphemes, a styled run as its plain text, a heading's later
+pieces as paragraphs), and an item or a row larger than a page is its plain
+text, as paragraphs. A document within the budget is its only page, unchanged.
+A response takes at most four messages: the fourth then ends with a paragraph
+`… Response truncated.`, in place of its last block when it does not fit after
+it. The pages are sent in order under one wire effect, the generation checked
+before each, the reply markup only on the last. A draft shows the last page.
+An explicit 400/404 compatibility rejection of a page degrades it and every
+later page to the tree's deterministic plain-text projection, without trying
+rich again, each page split into messages of at most 4,000 UTF-16 code units
+(after a blank line, else a line break, else whitespace, else a grapheme),
+never cut; ambiguous transport/server outcomes never trigger a second send,
+even after some pages were delivered. The tree is not persisted, so settings, session,
 checkpoint and transcript formats remain unchanged.
 
 The transient presentation rule also covers file-change evidence.

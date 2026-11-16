@@ -19,6 +19,8 @@ actor TerminalTelegramDraftStreamer {
     private let throttle: Duration
     private let sendDraft: @Sendable (String, Int64, Int) async throws -> Void
     private var latestText = ""
+    /// The characters of ``latestText``, counted as they are appended.
+    private var latestTextLength = 0
     private var lastSentText = ""
     private var generation = 0
     private var deliveryTask: Task<Void, Never>?
@@ -37,10 +39,16 @@ actor TerminalTelegramDraftStreamer {
         self.sendDraft = sendDraft
     }
 
+    /// Appends a visible delta. The text is bounded by
+    /// ``TerminalTelegramTurnProgressReporter/maximumRichTextLength``, the
+    /// bound of the response it previews; each draft shows its last page.
     func append(_ delta: String) {
         guard !isFinished, isSupported, !delta.isEmpty else { return }
-        latestText.append(delta)
-        latestText = String(latestText.prefix(TerminalTelegramAPIClient.maximumMessageUTF16Length))
+        let remaining = TerminalTelegramTurnProgressReporter.maximumRichTextLength - latestTextLength
+        guard remaining > 0 else { return }
+        let accepted = delta.prefix(remaining)
+        latestText.append(contentsOf: accepted)
+        latestTextLength += accepted.count
         scheduleIfNeeded()
     }
 
