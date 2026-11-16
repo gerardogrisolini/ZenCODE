@@ -127,6 +127,8 @@ struct RemoteTransportArchitectureParityTests {
         let packageRoot = try RepositoryTestSupport.packageRoot(containing: #filePath)
         let testFiles = [
             "Tests/ZenCODECoreTests/Remote/ChatGPTSubscriptionContinuationTests.swift",
+            "Tests/ZenCODECoreTests/Remote/ChatGPTSubscriptionContinuationTests+Part1.swift",
+            "Tests/ZenCODECoreTests/Remote/ChatGPTSubscriptionContinuationTests+Part2.swift",
             "Tests/ZenCODECoreTests/Remote/ChatGPTSubscriptionSSETests.swift"
         ]
         let platformGuards = [

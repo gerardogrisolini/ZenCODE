@@ -46,91 +46,7 @@ import Synchronization
 import Testing
 @testable import ZenCODECore
 
-/// One-shot async gate: `wait()` suspends until `open()` (cancellable).
-final class MockDS4Gate: Sendable {
-    private struct State {
-        var isOpen = false
-        var waiters: [UInt64: CheckedContinuation<Void, any Error>] = [:]
-        var nextID: UInt64 = 0
-    }
-
-    private let state = Mutex(State())
-
-    init(isOpen: Bool = false) {
-        state.withLock { $0.isOpen = isOpen }
-    }
-
-    var isOpen: Bool {
-        state.withLock { $0.isOpen }
-    }
-
-    func open() {
-        let waiters = state.withLock { state in
-            state.isOpen = true
-            defer { state.waiters.removeAll() }
-            return Array(state.waiters.values)
-        }
-        for waiter in waiters {
-            waiter.resume()
-        }
-    }
-
-    func wait() async throws {
-        let id = state.withLock { state in
-            state.nextID += 1
-            return state.nextID
-        }
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-                let resumeNow: Bool? = state.withLock { state in
-                    if state.isOpen {
-                        return true
-                    }
-                    if Task.isCancelled {
-                        return false
-                    }
-                    state.waiters[id] = continuation
-                    return nil
-                }
-                switch resumeNow {
-                case .some(true): continuation.resume()
-                case .some(false): continuation.resume(throwing: CancellationError())
-                case .none: break
-                }
-            }
-        } onCancel: {
-            let waiter = state.withLock { $0.waiters.removeValue(forKey: id) }
-            waiter?.resume(throwing: CancellationError())
-        }
-    }
-}
-
 final class MockDS4Engine: DS4Engine {
-    enum Call: Sendable, Hashable {
-        case tokenCount
-        case prepare
-        case renderText
-        case thinkModeForContext(mode: Int32, contextSize: Int)
-        case sync(sessionID: String, cached: Int, suffix: Int)
-        case generate(sessionID: String)
-        case stats(sessionID: String)
-        case setPower(sessionID: String, percent: Int)
-        case setSteeringFFN(sessionID: String, scale: Double)
-        case saveCheckpoint(sessionID: String, url: URL)
-        case loadCheckpoint(sessionID: String, url: URL)
-        case releaseSession(String)
-        case evicted(String)
-        case close
-    }
-
-    /// One simulated image encode.
-    struct ImageEncode: Sendable, Hashable {
-        let path: String
-        let byteCount: Int
-        /// Permissions of the file's directory (octal), when readable.
-        let directoryPermissions: Int?
-    }
-
     /// Payload of a prepared transcript: counts its release.
     private final class PreparedPayload: DS4PreparedPayload {
         private let released = Mutex(false)
@@ -153,19 +69,6 @@ final class MockDS4Engine: DS4Engine {
                 onRelease()
             }
         }
-    }
-
-    struct ScriptedGeneration: Sendable {
-        var chunks: [String]
-        /// Outcome when every chunk was emitted without a caller stop.
-        var outcome: DS4GenerateOutcome = .stop
-        /// Thrown instead of generating (after the gate, before any chunk).
-        var error: DS4EngineError?
-        /// Ids of the tokens, one per chunk. `nil`: fresh ids from the engine's counter.
-        var tokens: [Int32]?
-        /// Thrown once every chunk was emitted without a caller stop: a
-        /// generation that fails midway.
-        var errorAfterChunks: DS4EngineError?
     }
 
     private struct SessionState {
@@ -296,45 +199,6 @@ final class MockDS4Engine: DS4Engine {
 
     func enqueueGeneration(_ generation: ScriptedGeneration) {
         state.withLock { $0.script.append(generation) }
-    }
-
-    // MARK: Tokenizer
-
-    static func tokenCount(of operation: DS4TranscriptOperation) -> Int {
-        func text(_ value: String) -> Int {
-            (value.utf8.count + 3) / 4
-        }
-        switch operation {
-        case .begin: return 1
-        case .message(let role, let content): return 3 + text(role) + text(content)
-        case .thinkPrefix: return 2
-        case .assistantPrefix: return 2
-        case .renderedChat(let value): return text(value)
-        case .endOfSequence: return 1
-        case .tokens(let ids): return ids.count
-        case .multimodalMessage(let role, let parts, let images):
-            return 3 + text(role) + parts.map(text).reduce(0, +) + 16 * images.count
-        }
-    }
-
-    static func tokenCount(of transcript: [DS4TranscriptOperation]) -> Int {
-        transcript.map(tokenCount(of:)).reduce(0, +)
-    }
-
-    static func render(_ transcript: [DS4TranscriptOperation]) -> String {
-        transcript.map { operation in
-            switch operation {
-            case .begin: "<bos>"
-            case .message(let role, let content): "<\(role)>\(content)"
-            case .thinkPrefix(let mode): "<think:\(mode)>"
-            case .assistantPrefix(let mode): "<assistant:\(mode)>"
-            case .renderedChat(let text): text
-            case .endOfSequence: "<eos>"
-            case .tokens(let ids): "<tokens:" + ids.map(String.init).joined(separator: ",") + ">"
-            case .multimodalMessage(let role, let parts, let images):
-                "<\(role)>" + parts.joined(separator: "<image>") + "[\(images.count) image(s)]"
-            }
-        }.joined()
     }
 
     // MARK: DS4Engine
@@ -720,106 +584,4 @@ final class MockDS4Engine: DS4Engine {
             state.isClosed = true
         }
     }
-}
-
-// MARK: - Factory
-
-/// Registry factory for tests: counts opens, keeps the opened mocks in
-/// order, can delay opens and fail the next ones with scripted errors.
-final class MockDS4EngineFactory: Sendable {
-    private struct State {
-        var engines: [MockDS4Engine] = []
-        var openCount = 0
-        var failures: [DS4EngineError] = []
-        var statusMessages: [String] = []
-    }
-
-    let openDelay: Duration
-    private let makeEngine: @Sendable (DS4EngineConfiguration) -> MockDS4Engine
-    private let state = Mutex(State())
-
-    init(
-        openDelay: Duration = .zero,
-        makeEngine: @escaping @Sendable (DS4EngineConfiguration) -> MockDS4Engine = { MockDS4Engine(configuration: $0) }
-    ) {
-        self.openDelay = openDelay
-        self.makeEngine = makeEngine
-    }
-
-    var engines: [MockDS4Engine] {
-        state.withLock { $0.engines }
-    }
-
-    var openCount: Int {
-        state.withLock { $0.openCount }
-    }
-
-    var statusMessages: [String] {
-        state.withLock { $0.statusMessages }
-    }
-
-    /// The next open throws `error` (after `openDelay`).
-    func failNextOpen(with error: DS4EngineError) {
-        state.withLock { $0.failures.append(error) }
-    }
-
-    var factory: DS4EngineRegistry.Factory {
-        { [self] configuration, onStatus in
-            try await open(configuration, onStatus: onStatus)
-        }
-    }
-
-    func open(
-        _ configuration: DS4EngineConfiguration,
-        onStatus: @escaping DS4EngineRegistry.StatusHandler
-    ) async throws -> any DS4Engine {
-        state.withLock { $0.openCount += 1 }
-        if openDelay > .zero {
-            try? await Task.sleep(for: openDelay)
-        }
-        if let failure = state.withLock({ $0.failures.isEmpty ? nil : $0.failures.removeFirst() }) {
-            throw failure
-        }
-        let engine = makeEngine(configuration)
-        state.withLock { $0.engines.append(engine) }
-        let message = "opened \(configuration.modelPath ?? "mock")"
-        state.withLock { $0.statusMessages.append(message) }
-        await onStatus(message)
-        return engine
-    }
-}
-
-extension DS4EngineConfiguration {
-    /// Configuration for tests (the library is never loaded by the mocks).
-    static func mock(
-        model: String = "/tmp/zencode-ds4-tests/model.gguf",
-        contextSize: Int = 4096,
-        sessionCapacity: Int = 2,
-        extraOptions: [DS4EngineOption] = []
-    ) -> DS4EngineConfiguration {
-        DS4EngineConfiguration(
-            libraryURL: URL(fileURLWithPath: "/tmp/zencode-ds4-tests/\(DS4EngineABI.libraryFileName)"),
-            options: [DS4EngineOption(key: "model_path", value: model)] + extraOptions,
-            contextSize: contextSize,
-            sessionCapacity: sessionCapacity,
-            buildHint: "Scripts/build-ds4-engine.sh --ds4-root /tmp/ds4"
-        )
-    }
-}
-
-/// Polls `condition` every few milliseconds; records an issue after `timeout`.
-func ds4Eventually(
-    timeout: Duration = .seconds(5),
-    sourceLocation: SourceLocation = #_sourceLocation,
-    _ condition: @Sendable () async -> Bool
-) async {
-    let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: timeout)
-    while clock.now < deadline {
-        if await condition() {
-            return
-        }
-        try? await Task.sleep(for: .milliseconds(2))
-    }
-    Issue.record("condition not met within \(timeout)", sourceLocation: sourceLocation)
 }

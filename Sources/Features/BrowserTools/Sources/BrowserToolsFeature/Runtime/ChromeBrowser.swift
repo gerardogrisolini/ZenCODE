@@ -20,46 +20,6 @@ import Darwin
 import Glibc
 #endif
 
-// MARK: - Errors
-
-enum ChromeBrowserError: LocalizedError, Sendable {
-    case chromeNotFound
-    case spawnFailed(String)
-    case cdpNotReady(String)
-    case httpError(String)
-    case invalidTabResponse(String)
-    case pageNotFound(String)
-    case unsafeRootExecution
-    case profileInUseByLoginSession
-    case loginRequiresVisibleBrowser
-    case automatedBrowserDidNotExit
-
-    var errorDescription: String? {
-        switch self {
-        case .chromeNotFound:
-            "No Chrome or Chromium executable found. Set ZENCODE_CHROME to a Chrome path."
-        case let .spawnFailed(message):
-            "Failed to start Chrome: \(message)"
-        case let .cdpNotReady(message):
-            message
-        case let .httpError(message):
-            "CDP HTTP request failed: \(message)"
-        case let .invalidTabResponse(message):
-            "Chrome returned an unexpected response: \(message)"
-        case let .pageNotFound(pageID):
-            "Browser page '\(pageID)' no longer exists. Open or list pages and use a current pageId."
-        case .unsafeRootExecution:
-            "Browser refuses to launch Chrome as root without its sandbox. Run ZenCODE as a non-root user, or set ZENCODE_BROWSER_ALLOW_UNSANDBOXED_ROOT=1 only inside an externally isolated environment."
-        case .profileInUseByLoginSession:
-            "The Browser profile is open in a manual login window started by browser.login. Ask the user to finish signing in and quit that Chrome window, then retry."
-        case .loginRequiresVisibleBrowser:
-            "browser.login needs a visible Chrome window, but ZENCODE_BROWSER_HEADLESS is enabled. Unset it on a machine with a display to sign in manually."
-        case .automatedBrowserDidNotExit:
-            "The automated Browser Chrome instance did not exit, so the manual login window cannot use its profile. Quit Chrome for the Browser profile and retry."
-        }
-    }
-}
-
 // MARK: - Configuration
 
 /// Process-level Browser configuration. It is intentionally resolved from the
@@ -500,51 +460,6 @@ final class ChromeBrowserManager: Sendable {
 
     // MARK: - Chrome discovery
 
-    static func discoverExecutable(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
-        if let envPath = environment["ZENCODE_CHROME"],
-           !envPath.isEmpty,
-           FileManager.default.isExecutableFile(atPath: envPath)
-        {
-            return envPath
-        }
-
-        #if os(macOS)
-        let macOSApps = [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
-        ]
-        for path in macOSApps where FileManager.default.isExecutableFile(atPath: path) {
-            return path
-        }
-        #endif
-
-        let linuxPaths = [
-            "/usr/bin/google-chrome",
-            "/usr/bin/google-chrome-stable",
-            "/usr/bin/chromium",
-            "/usr/bin/chromium-browser",
-            "/snap/bin/chromium",
-            "/opt/google/chrome/chrome",
-        ]
-        for path in linuxPaths where FileManager.default.isExecutableFile(atPath: path) {
-            return path
-        }
-
-        let names = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]
-        if let pathEnv = environment["PATH"] {
-            for directory in pathEnv.split(separator: ":") {
-                let dir = String(directory)
-                for name in names {
-                    let candidate = "\(dir)/\(name)"
-                    if FileManager.default.isExecutableFile(atPath: candidate) {
-                        return candidate
-                    }
-                }
-            }
-        }
-        return nil
-    }
-
     private static func macOSAppName(environment: [String: String]) -> String? {
         #if os(macOS)
         if environment["ZENCODE_CHROME"] != nil { return nil }
@@ -588,44 +503,6 @@ final class ChromeBrowserManager: Sendable {
         #else
         try launchDirect(executable: executable, arguments: arguments)
         #endif
-    }
-
-    /// Arguments shared by the automated and the manual login instance. Both
-    /// must agree on the profile and on credential storage, otherwise cookies
-    /// saved during a manual login could not be decrypted by the automated
-    /// instance. On macOS Chrome uses the real Keychain like a normal install.
-    static func profileLaunchArguments(configuration: ChromeBrowserConfiguration) -> [String] {
-        var arguments = [
-            "--user-data-dir=\(configuration.profileDirectory.path)",
-            "--no-first-run",
-            "--no-default-browser-check",
-        ]
-        #if !os(macOS)
-        // Linux machines (including headless ones) may have no keyring daemon;
-        // a keyring prompt would block the automated instance.
-        arguments.append("--password-store=basic")
-        #endif
-        return arguments
-    }
-
-    static func automationLaunchArguments(configuration: ChromeBrowserConfiguration) -> [String] {
-        let port = configuration.portOverride ?? 0
-        var arguments = [
-            "--remote-debugging-address=127.0.0.1",
-            "--remote-debugging-port=\(port)",
-        ]
-        arguments += profileLaunchArguments(configuration: configuration)
-        arguments.append("--mute-audio")
-        if configuration.launchesHeadless {
-            arguments.append("--headless=new")
-        }
-        arguments.append("about:blank")
-        return arguments
-    }
-
-    /// A manual login instance deliberately exposes no debugging endpoint.
-    static func loginLaunchArguments(configuration: ChromeBrowserConfiguration, url: URL?) -> [String] {
-        profileLaunchArguments(configuration: configuration) + [url?.absoluteString ?? "about:blank"]
     }
 
     #if os(macOS)

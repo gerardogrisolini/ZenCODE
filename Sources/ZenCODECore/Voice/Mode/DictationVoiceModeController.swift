@@ -7,86 +7,6 @@
 
 import Foundation
 
-enum VoiceDictationEvent: Sendable, Equatable {
-    /// A recognition result. `endsSegment` marks a final one, which closes
-    /// the speech segment recognized since the previous final result: the
-    /// next results hold only what is said after it, so the earlier words
-    /// must be kept by the receiver.
-    case partial(generation: UInt64, text: String, endsSegment: Bool)
-    case ended(generation: UInt64)
-}
-
-enum VoiceDictationError: LocalizedError, Equatable {
-    case unsupportedPlatform
-    case unsupportedLanguage(String)
-    /// The language's speech model could not be downloaded: the locale and
-    /// the reason.
-    case speechModelDownloadFailed(String, String)
-
-    var errorDescription: String? {
-        switch self {
-        case .unsupportedPlatform:
-            return "Voice mode requires macOS."
-        case let .unsupportedLanguage(identifier):
-            return "Speech recognition does not support \(identifier)."
-        case let .speechModelDownloadFailed(identifier, detail):
-            return "The speech recognition model for \(identifier) could not be downloaded (\(detail)). Check the network connection and run /voice on again."
-        }
-    }
-}
-
-/// Groups a burst of change notifications, e.g. the audio configuration
-/// changes posted while headphones connect: each change waits a short
-/// settling time, and only the last one of the burst then proceeds.
-struct VoiceChangeSettler: Sendable, Equatable {
-    private var latest: UInt64 = 0
-
-    /// Records a change and returns its token.
-    mutating func begin() -> UInt64 {
-        latest &+= 1
-        return latest
-    }
-
-    /// Whether no change was recorded after the one with `token`.
-    func isLatest(_ token: UInt64) -> Bool {
-        token == latest
-    }
-}
-
-/// Decides what follows a restart of the voice device after an audio device
-/// change: the engine may stop again right away, e.g. when it never stays
-/// running on the new hardware, and restarting must not go on forever.
-struct VoiceAudioRestartPolicy: Sendable, Equatable {
-    enum Decision: Sendable, Equatable {
-        /// The engine runs: listen again and tell the user.
-        case announce
-        /// The engine stopped again: show nothing, another restart follows.
-        case retry
-        /// The engine keeps stopping: give up.
-        case fail
-    }
-
-    /// The restarts in a row after which the engine was stopped again.
-    static let maximumConsecutiveAudioRestarts = 3
-
-    private(set) var consecutiveAudioRestarts = 0
-
-    /// Records a restart of the device and returns what follows it.
-    /// `isEngineRunning` is whether the engine runs right after the restart.
-    mutating func restarted(isEngineRunning: Bool) -> Decision {
-        guard !isEngineRunning else {
-            consecutiveAudioRestarts = 0
-            return .announce
-        }
-        consecutiveAudioRestarts += 1
-        return consecutiveAudioRestarts >= Self.maximumConsecutiveAudioRestarts ? .fail : .retry
-    }
-
-    mutating func reset() {
-        consecutiveAudioRestarts = 0
-    }
-}
-
 /// Owns the dictation voice loop of one interactive terminal on macOS:
 /// microphone and speech permissions, continuous recognition split into
 /// utterances, barge-in and spoken answers. Recognized utterances become
@@ -102,35 +22,7 @@ actor DictationVoiceModeController: VoiceModeController {
         case stopped
     }
 
-    /// Whether this platform can run dictation at all.
-    static var isSupported: Bool {
-        VoiceAudioDevice.isSupported && VoiceDictationRecognizer.isSupported
-    }
-
     static let microphoneDeniedMessage = "ZenCODE: microphone access is not granted. Allow your terminal app under System Settings > Privacy & Security > Microphone, then run /voice on.\n"
-
-    /// Shown when the voice device runs without echo cancellation because the
-    /// current output cannot run voice processing.
-    static func echoCancellationUnavailableMessage(outputDeviceName: String?) -> String {
-        let output = outputDeviceName.map { "the current audio output (\($0))" }
-            ?? "the current audio output"
-        return "Voice: echo cancellation is unavailable with \(output); switch to a local output or use headphones so you can talk over the assistant without it hearing itself.\n"
-    }
-
-    /// The echo-cancellation notice after the voice device started: shown
-    /// only when echo cancellation was active before and is not now. Before
-    /// the device first starts it counts as active, so the first start
-    /// reports a missing one.
-    static func echoCancellationLossNotice(
-        wasActive: Bool,
-        isActive: Bool,
-        outputDeviceName: String?
-    ) -> String? {
-        guard wasActive, !isActive else {
-            return nil
-        }
-        return echoCancellationUnavailableMessage(outputDeviceName: outputDeviceName)
-    }
 
     static let audioDeviceChangedMessage = "Voice: the audio device changed; listening again.\n"
     static let audioRestartFailedMessage = "ZenCODE: voice audio could not restart after the audio device changed: the audio engine keeps stopping. Run /voice on to retry.\n"
@@ -141,32 +33,23 @@ actor DictationVoiceModeController: VoiceModeController {
     static let maximumRapidEndings = 5
     private static let silencePollInterval = Duration.milliseconds(200)
 
-    static func listeningMessage(localeIdentifier: String) -> String {
-        "Voice: listening (dictation, \(localeIdentifier), on-device). Speak or type; answers are read aloud. /voice pauses or resumes, /voice off stops.\n"
-    }
-
-    /// Shown before macOS downloads the language's speech model.
-    static func downloadingMessage(localeIdentifier: String) -> String {
-        "Voice: downloading the speech recognition model for \(localeIdentifier); macOS does this only the first time.\n"
-    }
-
-    private let callbacks: Callbacks
+    let callbacks: Callbacks
     nonisolated let languageCode: String
     private let locale: Locale
     /// The reading voice chosen in `zen --setup` > Voice mode, if any.
     private let readingVoiceIdentifier: String?
     /// The options chosen in `zen --setup` > Voice mode.
     private let options: VoiceModeOptions
-    private let device = VoiceAudioDevice()
+    let device = VoiceAudioDevice()
     private var recognizer: VoiceDictationRecognizer?
-    private var speaker: VoiceSpeaker?
+    var speaker: VoiceSpeaker?
     private var segmenter: VoiceDictationSegmenter
     /// Set in keyword send mode: speech waiting for the keyword.
     private var keywordCollector: VoiceKeywordCollector?
     /// The live-chat dialogue awaits a yes or no.
-    private var isAwaitingShortAnswer = false
+    var isAwaitingShortAnswer = false
     /// Tells a yes or no said to a question that an answer has just replaced.
-    private var strayAnswerGuard = VoiceStrayAnswerGuard()
+    var strayAnswerGuard = VoiceStrayAnswerGuard()
     /// The dictation previewed in the prompt draft. Advances after every
     /// dictation sent and every discard, so the terminal ignores previews
     /// and sends of a dictation it already ended.
@@ -179,7 +62,7 @@ actor DictationVoiceModeController: VoiceModeController {
     private var generation: UInt64 = 0
     private var generationStartedAt = ContinuousClock.now
     private var rapidEndings = 0
-    private var reportedSpeaking = false
+    var reportedSpeaking = false
     private var eventTask: Task<Void, Never>?
     private var silenceTask: Task<Void, Never>?
     private var isAudioRunning = false
@@ -309,52 +192,6 @@ actor DictationVoiceModeController: VoiceModeController {
         if let echoCancellationNotice {
             await callbacks.systemMessage(echoCancellationNotice)
         }
-    }
-
-    /// Reads an assistant answer or a plain text aloud, replacing anything
-    /// still being spoken. Answers completed while paused are never read
-    /// later.
-    @discardableResult
-    func speak(_ text: String, rendering: VoiceModeSpeechRendering) async -> Bool {
-        guard phase == .listening, !isPaused, let speaker else {
-            return false
-        }
-        let spoken: String
-        switch rendering {
-        case .answer:
-            spoken = VoiceSpeechText.speakable(
-                fromMarkdown: text,
-                languageCode: languageCode
-            )
-        case .plainText:
-            spoken = text
-        }
-        guard !spoken.isEmpty else {
-            return false
-        }
-        if rendering == .answer {
-            // Only a completed answer is read while a yes or no is awaited
-            // (comments wait for an idle dialogue, and the dialogue's own
-            // texts are plain): it takes the place of the question, so the
-            // yes or no said to it must not become a prompt.
-            strayAnswerGuard.answerReadingStarted(awaitingShortAnswer: isAwaitingShortAnswer, at: .now)
-        }
-        device.interruptPlayback()
-        await speaker.speak(spoken)
-        await reportSpeakingState()
-        return true
-    }
-
-    /// `true` while an answer or a live-chat text is being read aloud.
-    var isSpeaking: Bool {
-        speaker?.state.isSpeaking() ?? false
-    }
-
-    /// Stops the answer being spoken, e.g. after Esc or barge-in.
-    func interruptPlayback() async {
-        await speaker?.stop()
-        device.interruptPlayback()
-        await reportSpeakingState()
     }
 
     /// `false` once the controller failed or was stopped; `/voice on` then
@@ -732,19 +569,6 @@ actor DictationVoiceModeController: VoiceModeController {
         }
     }
 
-    /// Whether `text` is the assistant's own voice leaking through the
-    /// microphone, during the reading or within its echo tail.
-    private func isResidualEcho(_ text: String, at now: ContinuousClock.Instant) -> Bool {
-        guard let state = speaker?.state, let reference = state.echoReference(at: now) else {
-            return false
-        }
-        return VoiceEchoGuard.shouldDrop(
-            text,
-            spokenReference: reference,
-            isSpeaking: state.isSpeaking(at: now)
-        )
-    }
-
     private func restartRecognition() {
         guard let recognizer else {
             return
@@ -752,18 +576,6 @@ actor DictationVoiceModeController: VoiceModeController {
         segmenter.reset()
         generation = recognizer.restart()
         generationStartedAt = .now
-    }
-
-    /// Tells the terminal when reading aloud starts or ends, so `Esc` stops
-    /// it. Polled by the silence task because the synthesizer reports the end
-    /// of speech only through its played buffers.
-    private func reportSpeakingState() async {
-        let isSpeaking = speaker?.state.isSpeaking() ?? false
-        guard isSpeaking != reportedSpeaking else {
-            return
-        }
-        reportedSpeaking = isSpeaking
-        await callbacks.speakingChanged(isSpeaking)
     }
 
     private func fail(_ message: String) async {

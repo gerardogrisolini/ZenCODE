@@ -43,17 +43,6 @@ struct ChatPlanningCommandsTests {
         )
     }
 
-    /// A Planner discussion waiting for the operator's answer.
-    private static func plannerDiscussion(goal: String) -> PlanningCommandRuntimeState {
-        var state = PlanningCommandRuntimeState(goal: goal)
-        state.recordPlannerOutput(
-            "Planner questions\n1. Which parser?",
-            agentID: "planner-1",
-            revision: 1
-        )
-        return state
-    }
-
     // MARK: - Gates
 
     @Test
@@ -244,35 +233,6 @@ struct ChatPlanningCommandsTests {
                 == ChatCommandOutcome(notices: [.savedPlanLoaded(loadedSecond)]))
             #expect(controller.activePlan == loadedSecond)
             #expect(controller.queuedPlans.isEmpty)
-        }
-    }
-
-    /// Drives a live graph of `plan` to completion in another session of the
-    /// project, so the saved-plan library mirrors it as completed.
-    @ChatSessionActor
-    private static func completeLivePlanGraph(
-        _ plan: TerminalSessionPlan,
-        harness: ChatManagementHarness
-    ) async throws {
-        let orchestrator = harness.runtime.taskOrchestrator
-        let sessionID = "implementation-\(UUID().uuidString.lowercased())"
-        try await orchestrator.registerSession(id: sessionID, workingDirectory: harness.workspace)
-        _ = try await orchestrator.createGraph(
-            sessionID: sessionID,
-            id: plan.id,
-            source: .plan(planID: plan.id),
-            state: .active,
-            tasks: PlanningCommandKernel.taskDefinitions(for: plan.points)
-        )
-        for point in plan.points {
-            for status in [TaskStatus.inProgress, .completed] {
-                _ = try await orchestrator.updateTask(
-                    sessionID: sessionID,
-                    taskID: point.id,
-                    graphID: plan.id,
-                    update: TaskUpdate(status: status, output: status.rawValue)
-                )
-            }
         }
     }
 

@@ -548,18 +548,6 @@ public actor FeaturePersistentProcess {
         )
     }
 
-    private func shouldInvalidate(after error: Error) -> Bool {
-        guard let transportError = error as? FeaturePersistentProcessError else {
-            return true
-        }
-        switch transportError.kind {
-        case .remote:
-            return false
-        case .unavailable, .closed, .timedOut, .malformedResponse:
-            return true
-        }
-    }
-
     private func closeCurrentProcess(failure: FeaturePersistentProcessError) async {
         let pending = pendingResponse
         pendingResponse = nil

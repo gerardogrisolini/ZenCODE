@@ -90,7 +90,7 @@ public struct ZenComposerDraftUpdate: Equatable, Sendable {
 /// shares a `GlassEffectContainer` the composer creates, unless the caller
 /// already wraps it in one and passes `usesGlassContainer: false`.
 public struct ZenComposer: View {
-    @Environment(\.zenPalette) private var palette
+    @Environment(\.zenPalette) var palette
 
     @Binding private var draft: String
     private let isBusy: Bool
@@ -98,12 +98,12 @@ public struct ZenComposer: View {
     private let isEnabled: Bool
     private let commands: [ChatCommandDescriptor]
     private let mentions: [SharedChatMentionParser.Suggestion]
-    private let queued: [ZenComposerQueuedItem]
+    let queued: [ZenComposerQueuedItem]
     private let draftUpdate: ZenComposerDraftUpdate?
     private let externalFocus: FocusState<Bool>.Binding?
     private let monospaced: Bool
     private let usesGlassContainer: Bool
-    private let actions: ZenComposerActions
+    let actions: ZenComposerActions
 
     @FocusState private var internalFocus: Bool
     @State private var selection: TextSelection?
@@ -113,11 +113,11 @@ public struct ZenComposer: View {
     @State private var isDropTargeted = false
     /// The width of the attach button, so the key hint starts under the
     /// field's text.
-    @State private var attachButtonWidth: CGFloat = 0
+    @State var attachButtonWidth: CGFloat = 0
 
     /// The spacing between the attach button, the field and the trailing
     /// buttons.
-    private static let rowSpacing: CGFloat = 8
+    static let rowSpacing: CGFloat = 8
 
     /// The placeholder of the empty field.
     public static let placeholder = "Message ZenCODE — / for commands"
@@ -337,30 +337,6 @@ public struct ZenComposer: View {
         .accessibilityLabel("Attach")
     }
 
-    /// The key hint, under the field's text, on one line: its compact form
-    /// when the full one does not fit, as in the terminal.
-    private func keyHint(_ hint: ZenComposerLogic.KeyHint) -> some View {
-        keyHintText(hint)
-            .font(.caption)
-            .foregroundStyle(palette.textMuted)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .padding(.leading, attachButtonWidth + Self.rowSpacing)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private func keyHintText(_ hint: ZenComposerLogic.KeyHint) -> some View {
-        if let compact = hint.compact {
-            ViewThatFits(in: .horizontal) {
-                Text(hint.full)
-                Text(compact)
-            }
-        } else {
-            Text(hint.full)
-        }
-    }
-
     @ViewBuilder
     private var trailingButtons: some View {
         let visibility = ZenComposerLogic.buttons(isBusy: isBusy, draft: draft)
@@ -392,44 +368,6 @@ public struct ZenComposer: View {
                 .accessibilityLabel(isBusy ? "Queue" : "Send")
             }
         }
-    }
-
-    private var queuedChips: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 6) {
-                ForEach(queued) { item in
-                    queuedChip(item)
-                }
-            }
-            .padding(.vertical, 2)
-        }
-        .scrollIndicators(.never)
-    }
-
-    private func queuedChip(_ item: ZenComposerQueuedItem) -> some View {
-        HStack(spacing: 6) {
-            Text("queued")
-                .foregroundStyle(palette.statusQueued)
-            Text(ZenComposerLogic.chipText(item.text))
-                .foregroundStyle(palette.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: 240, alignment: .leading)
-            Button {
-                actions.removeQueued(item.id)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.caption2.weight(.bold))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(palette.textMuted)
-            .help("Remove from the queue")
-            .accessibilityLabel("Remove queued prompt")
-        }
-        .font(.caption)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .glassEffect(.regular.tint(palette.statusQueued.opacity(0.15)), in: .capsule)
     }
 
     // MARK: - State

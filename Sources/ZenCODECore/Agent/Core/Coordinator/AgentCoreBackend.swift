@@ -12,7 +12,7 @@ import FoundationNetworking
 #endif
 
 public actor AgentCoreBackend {
-    private struct SessionSeed {
+    struct SessionSeed {
         let cwd: String
         var systemPrompt: String?
         var dynamicContext: String?
@@ -23,10 +23,10 @@ public actor AgentCoreBackend {
         var preserveThinking: Bool
     }
 
-    private let configuration: AgentRuntimeConfiguration
+    let configuration: AgentRuntimeConfiguration
     private let mcpRuntime: DirectMCPToolRuntime
     private let swiftFeatureRuntime: SwiftFeatureRuntime
-    private var activeBackend: (any AgentRuntimeBackend)?
+    var activeBackend: (any AgentRuntimeBackend)?
     /// Single-flight guard for resolving and hydrating the runtime backend.
     /// Actor reentrancy allows another caller into `resolveBackend` whenever
     /// installation awaits an actor-backed runtime; all callers must join the
@@ -34,11 +34,11 @@ public actor AgentCoreBackend {
     private var backendPreparation: Task<any AgentRuntimeBackend, Error>?
     /// Fences an in-flight backend installation when shutdown releases the
     /// runtime while one of its asynchronous setup calls is suspended.
-    private var backendGeneration: UInt64 = 0
+    var backendGeneration: UInt64 = 0
     // AgentCoreSessionRunner owns application/session persistence snapshots.
     // AgentCoreBackend owns only transient seed state used to hydrate its active runtime backend.
-    private var memoryProposalSessions: [String: String] = [:]
-    private var sessions: [String: SessionSeed] = [:]
+    var memoryProposalSessions: [String: String] = [:]
+    var sessions: [String: SessionSeed] = [:]
     private var taskOrchestrator: SessionTaskOrchestrator?
     private var borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?
     private var sharedChatMessageAvailableHandler: (@Sendable (String) -> Void)?
@@ -291,116 +291,6 @@ public actor AgentCoreBackend {
         }
     }
 
-    public func preloadModel(
-        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
-    ) async throws -> String {
-        let backend = try await resolveBackend(onEvent: onEvent)
-        return try await backend.preloadModel(onEvent: onEvent)
-    }
-
-    public func activeToolDescriptors(
-        sessionID: String?
-    ) async -> [DirectToolDescriptor] {
-        if let backend = activeBackend {
-            return await backend.activeToolDescriptors(sessionID: sessionID)
-        }
-        return []
-    }
-
-    public func closeSubAgent(id: String) async -> Bool {
-        guard let activeBackend else { return false }
-        return await activeBackend.closeSubAgent(id: id)
-    }
-
-    public func interruptSubAgents(rootSessionID: String) async -> Int {
-        guard let activeBackend else { return 0 }
-        return await activeBackend.interruptSubAgents(rootSessionID: rootSessionID)
-    }
-
-    public func interruptBackgroundJobs() async -> Int {
-        guard let activeBackend else { return 0 }
-        return await activeBackend.interruptBackgroundJobs()
-    }
-
-    /// Forwards to the active backend; `.notApplicable` while none is resolved
-    /// (saving never builds a backend nor opens a model).
-    public func saveEngineCheckpoint(
-        sessionID: String,
-        to url: URL
-    ) async throws -> AgentEngineCheckpointSaveOutcome {
-        guard let activeBackend else { return .notApplicable }
-        return try await activeBackend.saveEngineCheckpoint(sessionID: sessionID, to: url)
-    }
-
-    /// Forwards to the active backend; `.notApplicable` while none is resolved.
-    public func restoreEngineCheckpoint(
-        sessionID: String,
-        from url: URL,
-        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
-    ) async -> AgentEngineCheckpointRestoreOutcome {
-        guard let activeBackend else { return .notApplicable }
-        return await activeBackend.restoreEngineCheckpoint(sessionID: sessionID, from: url, onEvent: onEvent)
-    }
-
-    /// Forwards to the active backend; rejects while none is resolved (a DS4
-    /// control never builds a backend nor opens a model).
-    public func ds4Control(
-        _ command: AgentDS4ControlCommand,
-        sessionID: String
-    ) async throws -> AgentDS4ControlResult {
-        guard let activeBackend else { throw AgentDS4ControlError.noActiveBackend }
-        return try await activeBackend.ds4Control(command, sessionID: sessionID)
-    }
-
-    public func subAgentSnapshots() async -> [DirectSubAgentRuntime.AgentSnapshot] {
-        if let backend = activeBackend {
-            return await backend.subAgentSnapshots()
-        }
-        return []
-    }
-
-    public func sharedChatParticipants(
-        rootSessionID: String
-    ) async -> [AgentSharedChat.Participant] {
-        guard let activeBackend else { return [] }
-        return await activeBackend.sharedChatParticipants(rootSessionID: rootSessionID)
-    }
-
-    public func sendSharedChatMessage(
-        text: String,
-        destination: AgentSharedChat.Destination,
-        rootSessionID: String,
-        messageID: UUID = UUID()
-    ) async throws -> AgentSharedChat.Delivery {
-        guard let activeBackend else {
-            throw AgentSharedChat.Error.unavailable
-        }
-        return try await activeBackend.sendSharedChatMessage(
-            text: text,
-            destination: destination,
-            rootSessionID: rootSessionID,
-            messageID: messageID
-        )
-    }
-
-    public func drainCoordinatorSharedChatMessages(
-        rootSessionID: String
-    ) async -> [AgentSharedChat.Message] {
-        guard let activeBackend else { return [] }
-        return await activeBackend.drainCoordinatorSharedChatMessages(
-            rootSessionID: rootSessionID
-        )
-    }
-
-    public func sharedChatTranscriptMessages(
-        rootSessionID: String
-    ) async -> [AgentSharedChat.Message] {
-        guard let activeBackend else { return [] }
-        return await activeBackend.sharedChatTranscriptMessages(
-            rootSessionID: rootSessionID
-        )
-    }
-
     public func snapshotSession(id sessionID: String) async -> AgentRuntimeSessionSnapshot? {
         if let snapshot = await activeBackend?.snapshotSession(id: sessionID) {
             // Keep the seed in sync with provider-owned turns so replacing
@@ -414,36 +304,7 @@ public actor AgentCoreBackend {
         return seedSnapshot(id: sessionID, seed: seed)
     }
 
-    public func sendPrompt(
-        sessionID: String,
-        prompt: String,
-        attachments: [AgentRuntimeAttachment] = [],
-        onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
-    ) async throws -> DirectAgentResponse {
-        let backend = try await resolveBackend(onEvent: onEvent)
-        if sessions[sessionID] == nil {
-            sessions[sessionID] = SessionSeed(
-                cwd: configuration.workingDirectory.path,
-                systemPrompt: nil,
-                dynamicContext: nil,
-                history: [],
-                cacheKey: nil,
-                allowedToolNames: normalizedAllowedToolNames(nil),
-                thinkingSelection: nil,
-                preserveThinking: false
-            )
-        }
-        try await ensureSessionExists(sessionID: sessionID, backend: backend)
-
-        return try await backend.sendPrompt(
-            sessionID: sessionID,
-            prompt: prompt,
-            attachments: attachments,
-            onEvent: onEvent
-        )
-    }
-
-    private func resolveBackend(
+    func resolveBackend(
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> any AgentRuntimeBackend {
         if let activeBackend {
@@ -572,7 +433,7 @@ public actor AgentCoreBackend {
         activeBackend = backend
     }
 
-    private func verifyBackendGeneration(_ generation: UInt64) throws {
+    func verifyBackendGeneration(_ generation: UInt64) throws {
         guard generation == backendGeneration else {
             throw CancellationError()
         }
@@ -641,26 +502,7 @@ public actor AgentCoreBackend {
         }
     }
 
-    private func ensureSessionExists(
-        sessionID: String,
-        backend: any AgentRuntimeBackend
-    ) async throws {
-        guard let seed = sessions[sessionID] else {
-            return
-        }
-        await backend.createSessionIfNeeded(
-            id: sessionID,
-            cwd: seed.cwd,
-            systemPrompt: seed.systemPrompt,
-            history: runtimeHistory(for: seed),
-            cacheKey: seed.cacheKey,
-            allowedToolNames: seed.allowedToolNames,
-            thinkingSelection: seed.thinkingSelection,
-            preserveThinking: seed.preserveThinking
-        )
-    }
-
-    private func normalizedAllowedToolNames(
+    func normalizedAllowedToolNames(
         _ allowedToolNames: Set<String>?
     ) -> Set<String>? {
         guard configuration.appMode else {
@@ -723,22 +565,8 @@ public actor AgentCoreBackend {
         )
     }
 
-    private func runtimeHistory(for seed: SessionSeed) -> [AgentRuntimeMessage] {
+    func runtimeHistory(for seed: SessionSeed) -> [AgentRuntimeMessage] {
         AgentRuntimeDynamicContext.inserting(seed.dynamicContext, into: seed.history)
-    }
-}
-
-enum AgentCoreBackendError: LocalizedError {
-    case missingRemoteProvider
-    case missingRemoteAPIKey(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .missingRemoteProvider:
-            return "The selected remote provider is no longer configured in ZenCODE."
-        case let .missingRemoteAPIKey(providerName):
-            return "No API key is stored for \(providerName). Run zen --setup to configure that provider."
-        }
     }
 }
 
@@ -747,108 +575,5 @@ extension AgentCoreBackend {
     private func closeMemoryProposal(parentID: String) async {
         guard let id = memoryProposalSessions.removeValue(forKey: parentID) else { return }
         await activeBackend?.closeSession(id: id)
-    }
-
-    /// Bypasses runner snapshots, seeds, skills, graph registration and recall.
-    /// Structured children are always joined; no losing request survives a turn.
-    func proposeMemory(
-        parentSessionID: String,
-        prompt: String,
-        systemPrompt: String,
-        permit: MemoryLearningPermit,
-        timeout: Duration = .seconds(8)
-    ) async throws -> String {
-        guard let runtime = activeBackend, let parent = sessions[parentSessionID], permit.canPropose else {
-            throw CancellationError()
-        }
-        let generation = backendGeneration
-        let id = "memory-proposal-\(UUID().uuidString.lowercased())"
-        let result = MemoryProposalEvents()
-        memoryProposalSessions[parentSessionID] = id
-        defer {
-            if memoryProposalSessions[parentSessionID] == id { memoryProposalSessions.removeValue(forKey: parentSessionID) }
-        }
-        return try await MemoryConsolidationContext.$isIsolated.withValue(true) {
-            try await MemoryTurnContext.$currentTurnMemoryBlock.withValue(nil) {
-                try await AgentTurnInstructionContext.$currentTurnInstruction.withValue(nil) {
-                    await runtime.createSession(id: id, cwd: parent.cwd, systemPrompt: systemPrompt,
-                        history: [], cacheKey: nil, allowedToolNames: [],
-                        thinkingSelection: parent.thinkingSelection, preserveThinking: false)
-                    do {
-                        try verifyBackendGeneration(generation)
-                        try Task.checkCancellation()
-                        guard permit.canPropose, memoryProposalSessions[parentSessionID] == id else { throw CancellationError() }
-                        let text = try await withThrowingTaskGroup(of: String.self) { group in
-                            group.addTask {
-                                try Task.checkCancellation()
-                                guard permit.canPropose else { throw CancellationError() }
-                                let response = try await runtime.sendPrompt(sessionID: id, prompt: prompt,
-                                    attachments: [], onEvent: { await result.record($0) })
-                                guard await result.acceptsResponse(), response.text.count <= 4000,
-                                      !["length", "max_tokens", "tool_calls", "tool_use"].contains(response.stopReason) else {
-                                    throw CancellationError()
-                                }
-                                return response.text
-                            }
-                            group.addTask {
-                                // Cancellation also closes the transport before the
-                                // group joins its request child (no detached cleanup).
-                                let clock = ContinuousClock()
-                                let deadline = clock.now.advanced(by: timeout)
-                                while !Task.isCancelled, permit.canPropose, clock.now < deadline {
-                                    try? await Task.sleep(for: .milliseconds(20))
-                                }
-                                await runtime.closeSession(id: id)
-                                throw CancellationError()
-                            }
-                            defer { group.cancelAll() }
-                            return try await group.next() ?? "null"
-                        }
-                        await runtime.closeSession(id: id)
-                        try verifyBackendGeneration(generation)
-                        guard permit.canPropose else { throw CancellationError() }
-                        return text
-                    } catch {
-                        await runtime.closeSession(id: id)
-                        throw error
-                    }
-                }
-            }
-        }
-    }
-}
-
-private actor MemoryProposalEvents {
-    private var attemptedTool = false
-    private var characters = 0
-    func record(_ event: DirectAgentEvent) {
-        switch event {
-        case .toolCallStarted, .toolCallCompleted: attemptedTool = true
-        case .content(let text): characters += text.count
-        default: break
-        }
-    }
-    func acceptsResponse() -> Bool { !attemptedTool && characters <= 4000 }
-}
-
-extension AgentCoreBackend {
-    func existingSubAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]>? {
-        guard let activeBackend else { return nil }
-        return await activeBackend.subAgentSnapshotEvents(rootSessionID: rootSessionID)
-    }
-
-    public func subAgentSnapshotEvents(rootSessionID: String) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]> {
-        guard let activeBackend else { return AsyncStream { $0.finish() } }
-        return await activeBackend.subAgentSnapshotEvents(rootSessionID: rootSessionID)
-    }
-
-    /// Forwards to the active backend; `nil` while none is resolved (a
-    /// transcript read never builds a backend).
-    public func subAgentTranscript(
-        agentID: String,
-        rootSessionID: String
-    ) async -> ChatSubAgentTranscript? {
-        guard let activeBackend else { return nil }
-        return await activeBackend.subAgentTranscript(agentID: agentID, rootSessionID: rootSessionID)
     }
 }

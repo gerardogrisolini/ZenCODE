@@ -19,9 +19,9 @@ import Testing
 
 @Suite("Terminal tool-call preview formatter")
 struct TerminalToolCallPreviewFormatterTests {
-    private typealias DrawnCall = TerminalToolCallPreviewFormatter.DrawnCall
+    typealias DrawnCall = TerminalToolCallPreviewFormatter.DrawnCall
 
-    private static let reset = TerminalStyle.reset
+    static let reset = TerminalStyle.reset
     private static let title = TerminalStyle.Tool.title
     private static let value = TerminalStyle.Tool.value
     private static let removal = TerminalMarkdownPalette.dark.diffRemoval
@@ -29,7 +29,7 @@ struct TerminalToolCallPreviewFormatterTests {
     /// `let x = 1` as the Swift highlighter of the dark palette colors it.
     private static let highlightedLetX = "\u{1B}[38;5;141mlet\u{1B}[0m x = \u{1B}[38;5;215m1\u{1B}[0m"
 
-    private func makeFormatter(
+    func makeFormatter(
         interactive: Bool = true,
         inset: String = " "
     ) -> TerminalToolCallPreviewFormatter {
@@ -41,7 +41,7 @@ struct TerminalToolCallPreviewFormatterTests {
     }
 
     /// The text returned for each event, in order.
-    private func outputs(
+    func outputs(
         _ events: [DirectAgentToolCallPreview],
         interactive: Bool = true,
         inset: String = " ",
@@ -51,7 +51,7 @@ struct TerminalToolCallPreviewFormatterTests {
         return events.map { formatter.consume($0, columns: { columns }) }
     }
 
-    private func rendered(
+    func rendered(
         _ events: [DirectAgentToolCallPreview],
         interactive: Bool = true,
         inset: String = " ",
@@ -71,7 +71,7 @@ struct TerminalToolCallPreviewFormatterTests {
         )
     }
 
-    private func write(
+    func write(
         path: String? = "Sources/A.swift",
         content: [String],
         tool: String = "local.writeFile"
@@ -87,14 +87,14 @@ struct TerminalToolCallPreviewFormatterTests {
     }
 
     /// Feeds `events` and returns the text they produced.
-    private func feed(
+    func feed(
         _ events: [DirectAgentToolCallPreview],
         to formatter: inout TerminalToolCallPreviewFormatter
     ) -> String {
         events.map { formatter.consume($0, columns: { 80 }) }.joined()
     }
 
-    private func chunks(_ text: String, size: Int) -> [String] {
+    func chunks(_ text: String, size: Int) -> [String] {
         let scalars = Array(text.unicodeScalars)
         return stride(from: 0, to: scalars.count, by: size).map { start in
             var chunk = String.UnicodeScalarView()
@@ -328,252 +328,6 @@ struct TerminalToolCallPreviewFormatterTests {
 
         #expect(!rendered(events, columns: 12).contains("\r"))
         #expect(rendered(events, columns: 13).contains("\r"))
-    }
-
-    // MARK: - Ignored input
-
-    @Test(arguments: ["local.multiEdit", "local.applyPatch", "local.readFile", "local.exec", "agent.create"])
-    func toolsThatAreNotDrawnProduceNothing(name: String) {
-        let events: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: name),
-            .parameterStarted(name: "path"),
-            .parameterText("A.swift"),
-            .parameterEnded,
-            .parameterStarted(name: "content"),
-            .parameterText("let x = 1\n"),
-            .parameterEnded,
-            .ended
-        ]
-
-        #expect(!TerminalToolCallPreviewFormatter.drawsTool(named: name))
-        #expect(rendered(events) == "")
-    }
-
-    @Test
-    func argumentsThatAreNotDrawnProduceNothing() {
-        let events: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: "local.editFile"),
-            .parameterStarted(name: "replaceAll"),
-            .parameterText("true"),
-            .parameterEnded,
-            .parameterStarted(name: "content"),
-            .parameterText("not an edit argument\n"),
-            .parameterEnded,
-            .ended
-        ]
-
-        #expect(rendered(events, interactive: false) == "🛠️  local.editFile\n")
-    }
-
-    @Test
-    func fragmentsWithoutTheStartOfADrawnToolAreIgnored() {
-        let orphan: [DirectAgentToolCallPreview] = [
-            .parameterStarted(name: "content"),
-            .parameterText("let x = 1\n"),
-            .parameterEnded,
-            .ended
-        ]
-        var formatter = makeFormatter()
-
-        #expect(rendered(orphan) == "")
-        #expect(rendered([.toolStarted(name: "local.readFile")] + orphan) == "")
-        // After its end a call takes no more fragments.
-        #expect(rendered(write(content: ["a\n"]) + orphan, interactive: false)
-            == rendered(write(content: ["a\n"]), interactive: false))
-        #expect(!formatter.isOpen)
-        _ = formatter.consume(.toolStarted(name: "local.append"), columns: { 80 })
-        #expect(formatter.isOpen)
-        _ = formatter.consume(.ended, columns: { 80 })
-        #expect(!formatter.isOpen)
-    }
-
-    // MARK: - Terminal safety
-
-    @Test
-    func controlCharactersAndEscapesInTheContentNeverReachTheTerminal() throws {
-        let hostile = "a\u{1B}[2J\u{1B}]8;;x\u{07}b\u{08}\u{7F}\u{9B}c\u{202E}d\u{200D}e\n"
-        for interactive in [true, false] {
-            let text = rendered(write(content: [hostile]), interactive: interactive)
-            let body = String(text[try #require(text.range(of: "A.swift")).upperBound...])
-
-            #expect(body.contains("a␛[2J␛]8;;x␇b␈␡�c�d�e\n"))
-            #expect(!body.contains("\u{07}"))
-            #expect(!body.contains("\u{08}"))
-            #expect(!body.contains("\u{9B}"))
-            #expect(!body.contains("\u{202E}"))
-            // A row with control pictures is not ASCII: it is never repainted.
-            #expect(!body.contains("\r"))
-            #expect(containsOnlySGREscapes(text))
-        }
-    }
-
-    // MARK: - Stream splitting
-
-    @Test
-    func theOutputDoesNotDependOnHowTheStreamWasSplit() {
-        let path = "Sources/Feature/Écran.swift"
-        let content = "import Foundation\r\n\n\tstruct A {\n    let s = \"é🙂\"\r\n    // \u{1B}[1m\n}\nlast"
-        func events(pathChunks: [String], contentChunks: [String]) -> [DirectAgentToolCallPreview] {
-            [.toolStarted(name: "local.writeFile"), .parameterStarted(name: "path")]
-                + pathChunks.map(DirectAgentToolCallPreview.parameterText)
-                + [.parameterEnded, .parameterStarted(name: "content")]
-                + contentChunks.map(DirectAgentToolCallPreview.parameterText)
-                + [.parameterEnded, .ended]
-        }
-        let whole = rendered(events(pathChunks: [path], contentChunks: [content]))
-
-        for size in [1, 2, 3, 5, 8, 13] {
-            let split = rendered(events(
-                pathChunks: chunks(path, size: size),
-                contentChunks: chunks(content, size: size)
-            ))
-            #expect(split == whole, "chunks of \(size) scalars")
-        }
-        #expect(whole.hasSuffix("}\nlast\n"))
-    }
-
-    // MARK: - Ending
-
-    @Test
-    func theEndClosesAnOpenRowAndAnArgumentLeftOpen() {
-        let events: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: "local.writeFile"),
-            .parameterStarted(name: "content"),
-            .parameterText("let x = 1"),
-            .ended
-        ]
-
-        #expect(outputs(events).last == "\r \(TerminalCodeBlockRenderer.renderLine("let x = 1", language: nil, palette: .dark))\(Self.reset)\n")
-        #expect(rendered(events, interactive: false).hasSuffix("\nlet x = 1\n"))
-    }
-
-    @Test
-    func theEndClosesAHeaderThatIsStillOpen() {
-        let events: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: "local.writeFile"),
-            .parameterStarted(name: "path"),
-            .parameterText("A.swi"),
-            .ended
-        ]
-
-        #expect(outputs(events).last == "\(Self.reset)\n")
-    }
-
-    @Test
-    func aNewToolStartEndsThePreviousCall() {
-        let events: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: "local.writeFile"),
-            .parameterStarted(name: "path"),
-            .parameterText("A.swift"),
-            .parameterStarted(name: "content"),
-            .parameterText("a"),
-            .toolStarted(name: "local.editFile"),
-            .parameterStarted(name: "old"),
-            .parameterText("b"),
-            .toolStarted(name: "local.readFile"),
-            .parameterStarted(name: "path"),
-            .parameterText("ignored"),
-            .ended
-        ]
-
-        #expect(rendered(events, interactive: false) == "🛠️  local.writeFile A.swift\na\n🛠️  local.editFile\n- b\n")
-    }
-
-    @Test
-    func finishingAClosedFormatterWritesNothing() {
-        var formatter = makeFormatter()
-        let finished = formatter.finish(columns: { 80 })
-        #expect(finished.text == "")
-        #expect(finished.drawn == nil)
-        #expect(formatter.begin(toolNamed: "local.exec") == nil)
-        #expect(!formatter.isOpen)
-    }
-
-    // MARK: - Drawn call record
-
-    @Test
-    func theEndKeepsWhatTheCallShowedForTheToolBlockThatFollowsIt() {
-        var formatter = makeFormatter(interactive: false)
-        _ = feed(Array(write(path: "/tmp/A.swift", content: ["let x = 1\n"]).dropLast(2)), to: &formatter)
-        let ended = formatter.finish(columns: { 80 })
-
-        #expect(ended.text == "")
-        #expect(ended.drawn == DrawnCall(toolName: "local.writeFile", path: "/tmp/A.swift", pathWasShown: true))
-        // The record belongs to the call that ended: finishing again has none.
-        #expect(formatter.finish(columns: { 80 }).drawn == nil)
-    }
-
-    @Test
-    func aPathThatNeverReachedTheHeaderIsRecordedAsNotShown() {
-        var formatter = makeFormatter(interactive: false)
-        _ = feed(Array(writeWithContentBeforeThePath(path: "Late.swift").dropLast(2)), to: &formatter)
-        let drawn = formatter.finish(columns: { 80 }).drawn
-
-        #expect(drawn?.pathWasShown == false)
-        #expect(drawn?.path == "Late.swift")
-    }
-
-    @Test
-    func aToolThatIsNotDrawnRecordsNoCall() {
-        var formatter = makeFormatter(interactive: false)
-        _ = feed([
-            .toolStarted(name: "local.multiEdit"),
-            .parameterStarted(name: "path"),
-            .parameterText("A.swift")
-        ], to: &formatter)
-
-        #expect(formatter.finish(columns: { 80 }).drawn == nil)
-    }
-
-    @Test
-    func aSuspendedCallThatEndsRecordsItsPathAsNotShown() {
-        var formatter = makeFormatter(interactive: false)
-        _ = feed(Array(write(path: "/tmp/A.swift", content: ["let x"]).dropLast(2)), to: &formatter)
-        #expect(formatter.interrupt(columns: { 80 }) == "\n")
-        let ended = formatter.finish(columns: { 80 })
-
-        // Other output followed the header that showed the path: the record
-        // keeps the path, but not as shown.
-        #expect(ended.text == "")
-        #expect(ended.drawn == DrawnCall(toolName: "local.writeFile", path: "/tmp/A.swift", pathWasShown: false))
-    }
-
-    @Test
-    func aPathStillStreamingOnTheHeaderIsRecordedAsShown() {
-        var formatter = makeFormatter(interactive: false)
-        _ = feed([
-            .toolStarted(name: "local.writeFile"),
-            .parameterStarted(name: "path"),
-            .parameterText("A.swi")
-        ], to: &formatter)
-        let ended = formatter.finish(columns: { 80 })
-
-        #expect(ended.text == "\n")
-        #expect(ended.drawn == DrawnCall(toolName: "local.writeFile", path: "A.swi", pathWasShown: true))
-    }
-
-    @Test
-    func theRecordNamesTheCanonicalTool() {
-        var formatter = makeFormatter(interactive: false)
-        _ = feed(Array(write(path: "A.swift", content: ["a\n"], tool: "local_writeFile").dropLast(2)), to: &formatter)
-
-        #expect(formatter.finish(columns: { 80 }).drawn?.toolName == "local.writeFile")
-    }
-
-    @Test
-    func thePathOfTheFilePathAliasIsRecorded() {
-        var formatter = makeFormatter(interactive: false)
-        _ = feed([
-            .toolStarted(name: "local.editFile"),
-            .parameterStarted(name: "file_path"),
-            .parameterText("A.swift"),
-            .parameterEnded,
-            .parameterStarted(name: "new"),
-            .parameterText("b\n")
-        ], to: &formatter)
-
-        #expect(formatter.finish(columns: { 80 }).drawn
-            == DrawnCall(toolName: "local.editFile", path: "A.swift", pathWasShown: true))
     }
 
     // MARK: - Interruption
