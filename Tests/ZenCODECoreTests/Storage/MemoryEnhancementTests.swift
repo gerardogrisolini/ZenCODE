@@ -49,7 +49,7 @@ struct MemoryEnhancementTests {
                 State: the first implementation is active.
                 Next: validate it.
                 """,
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             let timeZone = try #require(TimeZone(identifier: "Europe/Rome"))
             let updateDate = try #require(DateComponents(
@@ -82,7 +82,7 @@ struct MemoryEnhancementTests {
                 memoryService: service
             )
             let entries = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 10
             )
             let updated = try #require(entries.first)
@@ -120,7 +120,7 @@ struct MemoryEnhancementTests {
             )
             let firstEntry = try #require(
                 try await service.readEntries(
-                    workspaceRootURL: workspace.workspaceURL,
+                    target: .workspace(workspace.workspaceURL),
                     limit: 10
                 ).first
             )
@@ -128,7 +128,7 @@ struct MemoryEnhancementTests {
             _ = try await service.updateEntry(
                 id: firstEntry.id.uuidString,
                 content: "Timestamp: 2024-01-01 09:00 Europe/Rome\n\(body)",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             _ = try await MemoryTool.executeAsync(
                 ToolRequest(name: "memory.write", arguments: ["content": .string(body)]),
@@ -141,7 +141,7 @@ struct MemoryEnhancementTests {
             )
 
             let entries = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 10
             )
             #expect(entries.count == 2)
@@ -156,20 +156,21 @@ struct MemoryEnhancementTests {
             let service = MemoryService()
             let entry = try await service.writeEntry(
                 content: "Summary: archived project state.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
-            _ = try await service.archiveEntry(
+            _ = try await service.setArchived(
+                true,
                 id: entry.id.uuidString,
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
 
             _ = try await service.updateEntry(
                 id: entry.id.uuidString,
                 content: "Summary: corrected archived project state.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             let all = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 includeArchived: true,
                 limit: 10
             )
@@ -178,7 +179,7 @@ struct MemoryEnhancementTests {
             #expect(all.first?.isArchived == true)
             #expect(all.first?.metadata.summary == "corrected archived project state.")
             #expect(try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 10
             ).isEmpty)
         }
@@ -197,7 +198,7 @@ struct MemoryEnhancementTests {
                 State: full content stays in the graph.
                 Next: query only when relevant.
                 """,
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
 
             let output = try await MemoryTool.executeAsync(
@@ -234,7 +235,7 @@ struct MemoryEnhancementTests {
             let service = MemoryService()
             _ = try await service.writeEntry(
                 content: "Summary: full result.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
 
             let output = try await MemoryTool.executeAsync(
@@ -262,16 +263,16 @@ struct MemoryEnhancementTests {
             let service = MemoryService()
             let richer = try await service.writeEntry(
                 content: "Summary: transport architecture for the swift server.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             _ = try await service.writeEntry(
                 content: "Summary: transport layer notes.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
 
             let matches = try await service.searchEntries(
                 query: "transport architecture",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 10
             )
 
@@ -302,15 +303,15 @@ struct MemoryEnhancementTests {
             let service = MemoryService()
             _ = try await service.writeEntry(
                 content: "Summary: transport architecture for the swift server.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             _ = try await service.writeEntry(
                 content: "Summary: transport layer notes.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             _ = try await service.writeEntry(
                 content: "Summary: transport cost analysis report.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
 
             let store = try await MemoryGraphStoreRegistry.shared.store(
@@ -348,23 +349,23 @@ struct MemoryEnhancementTests {
             let service = MemoryService()
             let direct = try await service.writeEntry(
                 content: "Summary: postgres connection pooling configuration.",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 tags: ["backend"]
             )
             let related = try await service.writeEntry(
                 content: "Summary: background task scheduler workers.",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 tags: ["backend"]
             )
             let unrelated = try await service.writeEntry(
                 content: "Summary: frontend animation spring physics.",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 tags: ["ui"]
             )
 
             let matches = try await service.searchEntries(
                 query: "postgres pooling",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 10
             )
             let ids = Set(matches.map(\.id))
@@ -408,17 +409,18 @@ struct MemoryEnhancementTests {
             let graphURL = workspace.graphURL()
             let first = try await service.writeEntry(
                 content: "Summary: persisted fact one.",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 tags: ["persistence"]
             )
             let second = try await service.writeEntry(
                 content: "Summary: persisted fact two.",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 tags: ["persistence"]
             )
-            _ = try await service.archiveEntry(
+            _ = try await service.setArchived(
+                true,
                 id: second.id.uuidString,
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
 
             #expect(FileManager.default.fileExists(atPath: graphURL.path))
@@ -450,7 +452,7 @@ struct MemoryEnhancementTests {
                 State: ready for updates.
                 Next: serialize them.
                 """,
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             let updateCount = 32
             let barrier = MemoryUpdateBarrier(participantCount: updateCount)
@@ -467,7 +469,7 @@ struct MemoryEnhancementTests {
                             State: serialized update \(index).
                             Next: retain one complete winner.
                             """,
-                            workspaceRootURL: workspace.workspaceURL,
+                            target: .workspace(workspace.workspaceURL),
                             updatedAt: Date(timeIntervalSince1970: TimeInterval(index)),
                             timeZone: timeZone
                         )
@@ -477,7 +479,7 @@ struct MemoryEnhancementTests {
             }
 
             let entries = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 10
             )
             let winner = try #require(entries.first)

@@ -10,6 +10,26 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- **ZenCODECore API:** public helpers that the terminal and the macOS app now
+  share instead of keeping their own copies: `StatusMetricsFormatting` (the
+  text of the status metrics: token counts, the context window, speeds,
+  subscription usage, durations), `CodeSyntaxVocabulary` (the keywords, types,
+  and constants each code-block highlighter colors per language family),
+  `TerminalGitStatusSummary.read(in:timeout:)` with
+  `numstatSummary(from:)` and `untrackedFileCount(fromPorcelain:)`,
+  `ToolMutationClassifier.isFileMutationTool(_:)`,
+  `TerminalSubAgentSnapshotMailbox` (now with `throttle(interval:sleep:)`)
+  with `TerminalSubAgentLifecycle` and `TerminalSubAgentReloadKey`, and
+  `ResponseLanguageResolver.lockedDisplayName()` and `configuredDisplayName()`.
+  `FeatureKit` adds `FeatureURLRedaction` and
+  `FeatureIPAddress.normalizedHost(_:)`, which the Browser and Web features now
+  share, and `FeatureMCPBridgeKit` adds `MCPClientError.indicatesPermissionDenied`
+  and `messageIndicatesPermissionDenied(_:)`, which the host and the Xcode
+  feature now share. The output of `zen`, of the macOS app, and of ACP is
+  unchanged.
+
 ### Changed
 
 - `zen --setup`: the first page of the provider menu now lists the providers
@@ -37,6 +57,41 @@ Release tags follow the strict `vX.Y.Z` contract described in
   progress. The list keeps its layout and, as before, does not follow live
   updates: it comes back as it was opened, and the agent is followed again
   only when you open it.
+
+### Removed
+
+- **Breaking:** in the public API of `ZenCODECore`, symbols that nothing used
+  any more, or that only forwarded to another API:
+  `DirectToolExecutor.init(outputLimit:authorizationHandler:mcpRuntime:swiftFeatureRuntime:preferredWorkspaceRootURL:borrowedSubAgentToolExecutor:toolExecutionContext:subAgentContextualBackendFactory:subAgentProfileResolver:subAgentModelCatalogProvider:)`,
+  which nothing called (the initializer with `subAgentProfileResolver:` reads
+  the live model catalog); `ZenCODEACPBridge.handleMessage(_:)` (send the
+  message as one JSON line with `handleLine(_:)`); the `workspaceRootURL:`
+  methods of `MemoryService` (`readEntries`, `searchEntries`, `updateEntry`,
+  `setArchived`, `deleteEntry`, and `archiveEntry`): use the `target:`
+  variants with `.workspace(url)`, where `includeArchived`, `offset`, and
+  `filter` now have defaults; `writeEntry(content:workspaceRootURL:category:tags:)`
+  becomes `writeEntry(content:target:category:tags:)`, and
+  `archiveEntry(id:workspaceRootURL:)` is `setArchived(true, id:target:)`; and
+  `AgentSettingsModelManifestFactory.agentThinkingSelection(from:)`, which no
+  longer converted anything: `ThinkingSelection` is now a type alias of
+  `AgentThinkingSelection`, with the same cases and raw values, so the encoded
+  model metadata is unchanged.
+- **Breaking:** in `FeatureMCPBridgeKit`, the browser OAuth flow of the HTTP
+  transport, which no feature package, template, or document used:
+  `MCPBrowserOAuthConfiguration`, the case `MCPHTTPAuthentication.browserOAuth`,
+  `MCPClientError.browserAuthenticationFailed`,
+  `MCPBrowserOAuthCallbackServer`, the `MCPOAuth…` types, and the OAuth members
+  of `MCPHTTPTransportClient` (`shouldUseBrowserOAuth`,
+  `ensureOAuthAccessToken(requiringFreshLogin:)`, `performBrowserOAuthLogin()`,
+  `loadOAuthMetadata`, `registerOAuthClient`, `makeAuthorizationURL`,
+  `exchangeAuthorizationCode`, the PKCE, form-encoding, browser, and
+  registration-persistence helpers, `defaultOAuthMetadataURL(for:)`,
+  `isAuthorizationHeader(_:)`, `hasStaticAuthorizationHeader`,
+  `oauthMetadata`, `oauthClientRegistration`, `oauthAccessToken`, and
+  `oauthAuthenticationFlight`). `MCPHTTPAuthentication` keeps `.none`: the HTTP
+  transport authenticates with the configured headers, as every feature of the
+  repository already did. The target no longer depends on swift-crypto. Tool
+  names, feature IDs, and wire formats are unchanged.
 
 ### Fixed
 

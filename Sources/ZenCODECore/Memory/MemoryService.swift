@@ -64,90 +64,27 @@ public final class MemoryService: @unchecked Sendable {
 
     // MARK: - Reads
 
-    public func readEntries(
-        workspaceRootURL: URL?,
-        includeArchived: Bool = false,
-        limit: Int
-    ) async throws -> [MemoryEntry] {
-        try await readEntries(
-            workspaceRootURL: workspaceRootURL,
-            includeArchived: includeArchived,
-            offset: 0,
-            limit: limit,
-            filter: .none
-        )
-    }
-
-    /// Journal page: newest first, skipping `offset` matching entries, narrowed
-    /// by `filter`.
-    public func readEntries(
-        workspaceRootURL: URL?,
-        includeArchived: Bool,
-        offset: Int,
-        limit: Int,
-        filter: MemoryEntryFilter
-    ) async throws -> [MemoryEntry] {
-        try await readEntries(
-            target: workspaceRootURL.map(MemoryGraphTarget.workspace),
-            includeArchived: includeArchived,
-            offset: offset,
-            limit: limit,
-            filter: filter
-        )
-    }
-
-    /// Journal page of the graph addressed by `target`.
+    /// Journal page of the graph addressed by `target`: newest first,
+    /// skipping `offset` matching entries, narrowed by `filter`.
     public func readEntries(
         target: MemoryGraphTarget?,
-        includeArchived: Bool,
-        offset: Int,
+        includeArchived: Bool = false,
+        offset: Int = 0,
         limit: Int,
-        filter: MemoryEntryFilter
+        filter: MemoryEntryFilter = .none
     ) async throws -> [MemoryEntry] {
         try await store(for: target)
             .entries(includeArchived: includeArchived, offset: offset, limit: limit, filter: filter)
             .map { MemoryEntry($0) }
     }
 
-    public func searchEntries(
-        query: String,
-        workspaceRootURL: URL?,
-        includeArchived: Bool = false,
-        limit: Int
-    ) async throws -> [MemoryEntry] {
-        try await searchEntries(
-            query: query,
-            workspaceRootURL: workspaceRootURL,
-            includeArchived: includeArchived,
-            limit: limit,
-            filter: .none
-        )
-    }
-
-    /// Ranked lookup narrowed by `filter`.
-    public func searchEntries(
-        query: String,
-        workspaceRootURL: URL?,
-        includeArchived: Bool,
-        limit: Int,
-        filter: MemoryEntryFilter
-    ) async throws -> [MemoryEntry] {
-        try await searchEntries(
-            query: query,
-            target: workspaceRootURL.map(MemoryGraphTarget.workspace),
-            includeArchived: includeArchived,
-            limit: limit,
-            filter: filter
-        )
-    }
-
     /// Ranked lookup in the graph addressed by `target`, narrowed by `filter`.
     public func searchEntries(
         query: String,
         target: MemoryGraphTarget?,
-        includeArchived: Bool,
+        includeArchived: Bool = false,
         limit: Int,
-        filter: MemoryEntryFilter
+        filter: MemoryEntryFilter = .none
     ) async throws -> [MemoryEntry] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedQuery.isEmpty else {
@@ -172,16 +109,18 @@ public final class MemoryService: @unchecked Sendable {
 
     // MARK: - Mutations
 
+    /// Writes an entry in the graph addressed by `target`; a write that
+    /// duplicates an active entry returns that entry.
     @discardableResult
     public func writeEntry(
         content: String,
-        workspaceRootURL: URL?,
+        target: MemoryGraphTarget?,
         category: MemoryCategory = .fact,
         tags: [String] = []
     ) async throws -> MemoryEntry {
         try await writeEntryOutcome(
             content: content,
-            workspaceRootURL: workspaceRootURL,
+            target: target,
             category: category,
             tags: tags
         ).entry
@@ -199,23 +138,6 @@ public final class MemoryService: @unchecked Sendable {
     /// `generatedTimestamp` must stay `false` for every caller that did not
     /// itself prepend the `Timestamp:` annotation: the public `writeEntry`
     /// therefore keeps a literal duplicate check.
-    func writeEntryOutcome(
-        content: String,
-        workspaceRootURL: URL?,
-        category: MemoryCategory = .fact,
-        tags: [String] = [],
-        generatedTimestamp: Bool = false
-    ) async throws -> MemoryWriteOutcome {
-        try await writeEntryOutcome(
-            content: content,
-            target: workspaceRootURL.map(MemoryGraphTarget.workspace),
-            category: category,
-            tags: tags,
-            generatedTimestamp: generatedTimestamp
-        )
-    }
-
-    /// `writeEntryOutcome` against the graph addressed by `target`.
     func writeEntryOutcome(
         content: String,
         target: MemoryGraphTarget?,
@@ -247,26 +169,6 @@ public final class MemoryService: @unchecked Sendable {
         )
     }
 
-    /// Replaces the content of an entry in place, preserving its id.
-    @discardableResult
-    public func updateEntry(
-        id: String,
-        content: String,
-        workspaceRootURL: URL?,
-        tags: [String]? = nil,
-        updatedAt: Date = Date(),
-        timeZone: TimeZone = .current
-    ) async throws -> MemoryEntry {
-        try await updateEntry(
-            id: id,
-            content: content,
-            target: workspaceRootURL.map(MemoryGraphTarget.workspace),
-            tags: tags,
-            updatedAt: updatedAt,
-            timeZone: timeZone
-        )
-    }
-
     /// Replaces the content of an entry of the graph addressed by `target`.
     @discardableResult
     public func updateEntry(
@@ -289,27 +191,6 @@ public final class MemoryService: @unchecked Sendable {
     }
 
     @discardableResult
-    public func archiveEntry(
-        id: String,
-        workspaceRootURL: URL?
-    ) async throws -> MemoryEntry {
-        try await setArchived(true, id: id, workspaceRootURL: workspaceRootURL)
-    }
-
-    @discardableResult
-    public func setArchived(
-        _ isArchived: Bool,
-        id: String,
-        workspaceRootURL: URL?
-    ) async throws -> MemoryEntry {
-        try await setArchived(
-            isArchived,
-            id: id,
-            target: workspaceRootURL.map(MemoryGraphTarget.workspace)
-        )
-    }
-
-    @discardableResult
     public func setArchived(
         _ isArchived: Bool,
         id: String,
@@ -319,16 +200,6 @@ public final class MemoryService: @unchecked Sendable {
             .setArchived(isArchived, id: id)
         Self.notifyMemoryEntriesChanged()
         return MemoryEntry(entry)
-    }
-
-    public func deleteEntry(
-        id: String,
-        workspaceRootURL: URL?
-    ) async throws {
-        try await deleteEntry(
-            id: id,
-            target: workspaceRootURL.map(MemoryGraphTarget.workspace)
-        )
     }
 
     public func deleteEntry(

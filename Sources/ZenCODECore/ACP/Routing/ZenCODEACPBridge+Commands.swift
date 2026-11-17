@@ -368,7 +368,8 @@ extension ZenCODEACPBridge {
         }
     }
 
-    /// The ACP message of a planning notice, as ACP wrote it.
+    /// The ACP message of a command notice: the ACP wording where it differs
+    /// from the shared text (``ChatSessionNoticeText``), else the shared text.
     static func acpText(
         for notice: ChatSessionNotice,
         context: ACPCommandNoticeContext
@@ -376,8 +377,6 @@ extension ZenCODEACPBridge {
         switch notice {
         case let .operationFailed(description):
             return "ZenCODE: \(description)"
-        case let .agentRoleUnavailable(role):
-            return AgentProfileStore.roleUnavailableForProjectMessage(role)
         case let .subAgentToolsRequired(command):
             return "ZenCODE: \(command) requires the sub-agent tools in this ACP session."
         // /plan
@@ -387,11 +386,6 @@ extension ZenCODEACPBridge {
             return "ZenCODE: finish the current Planner clarification or use /plan clear before approving, saving, or loading a plan."
         case .planUnavailableForSaving:
             return "ZenCODE: no completed plan is available to save."
-        case let .planSaved(planID):
-            return "Saved plan: \(planID). Use /plan load in a new session to review or revise it."
-        case let .planSequenceSaved(planIDs):
-            return "Saved \(planIDs.count) plans to run in sequence: \(planIDs.joined(separator: ", ")). "
-                + "Use /plan load in a new session to load the first one that is not completed."
         case .runtimeSessionUnavailable:
             switch context {
             case .plan(.clear):
@@ -401,8 +395,6 @@ extension ZenCODEACPBridge {
             default:
                 return "ZenCODE: the ACP session changed while loading the plan."
             }
-        case .activePlanAlreadyExists:
-            return "ZenCODE: an active plan already exists. Use /plan clear before loading a saved plan."
         case .savedPlanUnavailable, .noSavedPlans:
             return "ZenCODE: no saved plan is available for this project."
         case .savedPlansAllCompleted:
@@ -426,10 +418,6 @@ extension ZenCODEACPBridge {
             )
         case let .planClarificationActive(goal):
             return "Planner clarification is active for: \(goal)"
-        case .planAwaitingApprovalGoal:
-            return "A descriptive Goal is required before plan approval can continue."
-        case .noActivePlan:
-            return "No active plan."
         case let .planStatus(plan, graph):
             return PlanningCommandKernel.planStatusTable(for: plan, graph: graph)
         case let .queuedPlans(plans):
@@ -441,17 +429,9 @@ extension ZenCODEACPBridge {
             return "ZenCODE: no completed plan is available to approve. Run /plan <goal> first."
         case .planApprovalGoalPrompt:
             return "Before approving this plan, provide a descriptive Goal for the work it represents."
-        case .noPendingPlanApproval:
-            return "ZenCODE: no pending plan approval is available."
-        case .planDiscussionCleared:
-            return "Cleared the unfinished planning discussion."
-        case .noPlanToClear:
-            return "No active plan or planning discussion to clear."
         case .activePlanCleared:
             return "Cleared the active plan and archived its task graph. Saved-plan library copies are unaffected."
         // /goal
-        case .workflowMissingGoal:
-            return "ZenCODE: /goal requires a goal. Use /goal <goal> to describe the outcome to achieve."
         case .workflowBlockedByPlan:
             return "ZenCODE: /goal cannot start while an active plan or planning discussion exists. Finish it or use /plan clear first."
         case let .workflowAlreadyActive(graphID, open):
@@ -460,7 +440,8 @@ extension ZenCODEACPBridge {
                 + "Reply in this session to continue it when it is waiting for you, "
                 + "or clear its task graph before starting another /goal."
         default:
-            // The ACP policy raises no other notice from these commands.
+            // Every other notice reads in ACP as the shared text, without its
+            // trailing newline.
             return ChatSessionNoticeText.text(for: notice)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }

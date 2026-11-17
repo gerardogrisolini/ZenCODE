@@ -23,31 +23,14 @@ extension SwiftFeatureRuntime {
         destinationDirectoryURL: URL
     ) throws -> MaterializedFeaturePackage {
         let featureRootURL = featureRootURL()
-        guard Self.path(destinationDirectoryURL, isDescendantOf: featureRootURL),
-              destinationDirectoryURL.path != featureRootURL.path else {
-            throw DirectToolError.permissionDenied(
-                "Features can only be installed under the generated features directory: \(featureRootURL.path)."
-            )
-        }
-
-        let sourcePackageURL = sourceDirectoryURL.appendingPathComponent("Package.swift")
-        guard fileManager.fileExists(atPath: sourcePackageURL.path) else {
-            throw DirectToolError.permissionDenied(
-                """
-                Feature package manifest not found: \(sourcePackageURL.path).
-                Optional features must be self-contained SwiftPM packages.
-                """
-            )
-        }
-        let packageContents = try Self.packageManifestRewritingZenPackagePath(
-            String(contentsOf: sourcePackageURL, encoding: .utf8),
-            zenPackagePath: zenPackageRootURL.path,
-            packageURL: sourcePackageURL
-        )
-        let manifestContents = try Self.adoptedFeatureManifestContents(
+        let contents = try preparedFeaturePackageContents(
             definition: definition,
+            sourceDirectoryURL: sourceDirectoryURL,
+            zenPackageRootURL: zenPackageRootURL,
             displayName: displayName,
-            enabled: false
+            enabled: false,
+            destinationDirectoryURL: destinationDirectoryURL,
+            featureRootURL: featureRootURL
         )
 
         let stagingDirectoryURL = featureRootURL.appendingPathComponent(
@@ -57,31 +40,16 @@ extension SwiftFeatureRuntime {
         try fileManager.createDirectory(at: stagingDirectoryURL, withIntermediateDirectories: true)
         do {
             try copyFeatureDirectoryContents(from: sourceDirectoryURL, to: stagingDirectoryURL)
-            try packageContents.write(
-                to: stagingDirectoryURL.appendingPathComponent("Package.swift"),
-                atomically: true,
-                encoding: .utf8
-            )
-            try manifestContents.write(
-                to: stagingDirectoryURL.appendingPathComponent(SwiftFeatureRegistry.manifestFilename),
-                atomically: true,
-                encoding: .utf8
-            )
+            try Self.write(contents, to: stagingDirectoryURL)
         } catch {
             try? fileManager.removeItem(at: stagingDirectoryURL)
             throw error
         }
 
-        return MaterializedFeaturePackage(
+        return Self.materializedFeaturePackage(
+            definition: definition,
             sourceDirectoryURL: sourceDirectoryURL,
-            destinationDirectoryURL: stagingDirectoryURL,
-            packageURL: stagingDirectoryURL.appendingPathComponent("Package.swift"),
-            manifestURL: stagingDirectoryURL
-                .appendingPathComponent(SwiftFeatureRegistry.manifestFilename),
-            executableURL: stagingDirectoryURL
-                .appendingPathComponent(".build", isDirectory: true)
-                .appendingPathComponent("release", isDirectory: true)
-                .appendingPathComponent(definition.executableName),
+            directoryURL: stagingDirectoryURL,
             copied: false
         )
     }
@@ -114,6 +82,52 @@ extension SwiftFeatureRuntime {
         let destinationDirectoryURL = featureRootURL
             .appendingPathComponent(definition.id, isDirectory: true)
             .standardizedFileURL
+        let contents = try preparedFeaturePackageContents(
+            definition: definition,
+            sourceDirectoryURL: sourceDirectoryURL,
+            zenPackageRootURL: zenPackageRootURL,
+            displayName: displayName,
+            enabled: enabled,
+            destinationDirectoryURL: destinationDirectoryURL,
+            featureRootURL: featureRootURL
+        )
+
+        let copied = try installFeatureDirectory(
+            sourceDirectoryURL: sourceDirectoryURL,
+            destinationDirectoryURL: destinationDirectoryURL,
+            overwrite: overwrite
+        ) { stagingURL in
+            try Self.write(contents, to: stagingURL)
+        }
+
+        return Self.materializedFeaturePackage(
+            definition: definition,
+            sourceDirectoryURL: sourceDirectoryURL,
+            directoryURL: destinationDirectoryURL,
+            copied: copied
+        )
+    }
+
+    /// The `Package.swift` and the `feature.json` a feature package gets when
+    /// it is installed.
+    private struct FeaturePackageContents {
+        let package: String
+        let manifest: String
+    }
+
+    /// Checks that `destinationDirectoryURL` is inside the feature root and
+    /// that `sourceDirectoryURL` is a SwiftPM package, then returns its
+    /// `Package.swift` pointing at `zenPackageRootURL` and its generated
+    /// `feature.json`.
+    private func preparedFeaturePackageContents(
+        definition: BundledFeatureDefinition,
+        sourceDirectoryURL: URL,
+        zenPackageRootURL: URL,
+        displayName: String,
+        enabled: Bool,
+        destinationDirectoryURL: URL,
+        featureRootURL: URL
+    ) throws -> FeaturePackageContents {
         guard Self.path(destinationDirectoryURL, isDescendantOf: featureRootURL),
               destinationDirectoryURL.path != featureRootURL.path else {
             throw DirectToolError.permissionDenied(
@@ -130,41 +144,46 @@ extension SwiftFeatureRuntime {
                 """
             )
         }
-        let packageContents = try Self.packageManifestRewritingZenPackagePath(
-            String(contentsOf: sourcePackageURL, encoding: .utf8),
-            zenPackagePath: zenPackageRootURL.path,
-            packageURL: sourcePackageURL
-        )
-        let manifestContents = try Self.adoptedFeatureManifestContents(
-            definition: definition,
-            displayName: displayName,
-            enabled: enabled
-        )
-
-        let copied = try installFeatureDirectory(
-            sourceDirectoryURL: sourceDirectoryURL,
-            destinationDirectoryURL: destinationDirectoryURL,
-            overwrite: overwrite
-        ) { stagingURL in
-            try packageContents.write(
-                to: stagingURL.appendingPathComponent("Package.swift"),
-                atomically: true,
-                encoding: .utf8
+        return FeaturePackageContents(
+            package: try Self.packageManifestRewritingZenPackagePath(
+                String(contentsOf: sourcePackageURL, encoding: .utf8),
+                zenPackagePath: zenPackageRootURL.path,
+                packageURL: sourcePackageURL
+            ),
+            manifest: try Self.adoptedFeatureManifestContents(
+                definition: definition,
+                displayName: displayName,
+                enabled: enabled
             )
-            try manifestContents.write(
-                to: stagingURL.appendingPathComponent(SwiftFeatureRegistry.manifestFilename),
-                atomically: true,
-                encoding: .utf8
-            )
-        }
+        )
+    }
 
-        return MaterializedFeaturePackage(
+    private static func write(_ contents: FeaturePackageContents, to directoryURL: URL) throws {
+        try contents.package.write(
+            to: directoryURL.appendingPathComponent("Package.swift"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try contents.manifest.write(
+            to: directoryURL.appendingPathComponent(SwiftFeatureRegistry.manifestFilename),
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
+    private static func materializedFeaturePackage(
+        definition: BundledFeatureDefinition,
+        sourceDirectoryURL: URL,
+        directoryURL: URL,
+        copied: Bool
+    ) -> MaterializedFeaturePackage {
+        MaterializedFeaturePackage(
             sourceDirectoryURL: sourceDirectoryURL,
-            destinationDirectoryURL: destinationDirectoryURL,
-            packageURL: destinationDirectoryURL.appendingPathComponent("Package.swift"),
-            manifestURL: destinationDirectoryURL
+            destinationDirectoryURL: directoryURL,
+            packageURL: directoryURL.appendingPathComponent("Package.swift"),
+            manifestURL: directoryURL
                 .appendingPathComponent(SwiftFeatureRegistry.manifestFilename),
-            executableURL: destinationDirectoryURL
+            executableURL: directoryURL
                 .appendingPathComponent(".build", isDirectory: true)
                 .appendingPathComponent("release", isDirectory: true)
                 .appendingPathComponent(definition.executableName),

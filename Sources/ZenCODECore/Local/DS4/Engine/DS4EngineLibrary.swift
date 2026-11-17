@@ -50,6 +50,8 @@ struct DS4EngineSymbols: @unchecked Sendable {
     let chatAppendAssistantPrefix: DS4EngineABI.ChatAppendThinkModeFunction
     let tokenizeRenderedChat: DS4EngineABI.TokenizeRenderedChatFunction
     let tokensPushEOS: DS4EngineABI.EngineTokensFunction
+    /// Part of the ABI mirror (the header's exports and `symbolNames` match
+    /// one to one), resolved with the rest; ZenCODE does not call it.
     let renderTokensText: DS4EngineABI.RenderTokensTextFunction
     let engineVisionEncodeFile: DS4EngineABI.VisionEncodeFileFunction
     let visionEmbeddingFree: DS4EngineABI.HandleFreeFunction

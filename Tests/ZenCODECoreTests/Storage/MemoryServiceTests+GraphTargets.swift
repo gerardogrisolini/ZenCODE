@@ -223,7 +223,7 @@ extension MemoryServiceTests {
             }
             // The same `nil` resolution backs the `workspaceRootURL:` wrappers.
             await #expect(throws: MemoryServiceError.self) {
-                try await service.readEntries(workspaceRootURL: nil, limit: 10)
+                try await service.readEntries(target: nil, limit: 10)
             }
             #expect(!FileManager.default.fileExists(atPath: MemoryGraphLocation.graphURL(for: .global).path))
         }
@@ -240,22 +240,22 @@ extension MemoryServiceTests {
             let service = MemoryService()
             _ = try await service.writeEntry(
                 content: "Summary: actors isolate mutable state.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             _ = try await service.writeEntry(
                 content: "Summary: database migrations run at startup.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
 
             let matches = try await service.searchEntries(
                 query: "actors mutable state",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 10
             )
             #expect(matches.contains { $0.content.contains("actors") })
 
             let all = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 10
             )
             #expect(all.allSatisfy { $0.embedding == nil && $0.embeddingModel == nil })
@@ -271,7 +271,7 @@ extension MemoryServiceTests {
             let service = MemoryService()
             let entry = try await service.writeEntry(
                 content: "Summary: prefer structured concurrency for new networking code.",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 category: .preference,
                 tags: ["swift", "concurrency"]
             )

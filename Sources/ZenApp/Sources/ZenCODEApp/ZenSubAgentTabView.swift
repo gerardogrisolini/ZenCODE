@@ -105,17 +105,13 @@ struct ZenSubAgentTabView: View {
     /// Follows the bottom without animation, so a tab that is not shown only
     /// moves its own scroll view.
     private func follow(old: ZenScrollMetrics, new: ZenScrollMetrics) {
-        switch ZenScrollMetrics.followStep(old: old, new: new, isFollowing: isFollowing) {
-        case .scrollToBottom:
-            position.scrollTo(edge: .bottom)
-        case let .setFollowing(following):
-            if isFollowing != following {
-                isFollowing = following
-            }
-        }
-        if isFarFromBottom != new.isFarFromBottom {
-            isFarFromBottom = new.isFarFromBottom
-        }
+        ZenScrollMetrics.follow(
+            old: old,
+            new: new,
+            position: &position,
+            isFollowing: &isFollowing,
+            isFarFromBottom: &isFarFromBottom
+        )
     }
 
     /// The operator's jump: only a shown tab has a button to click.

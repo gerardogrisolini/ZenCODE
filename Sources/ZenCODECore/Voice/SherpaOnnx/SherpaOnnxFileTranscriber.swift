@@ -13,13 +13,8 @@
 //  private directory removed as soon as the transcription ends.
 //
 
-import Dispatch
+import FeatureKit
 import Foundation
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
 
 /// The program that turns a voice message into the WAV file the recognizer
 /// reads: 16-bit PCM, mono, 16 kHz.
@@ -309,139 +304,25 @@ struct SherpaOnnxProgramOutput: Sendable, Equatable {
     }
 }
 
-/// Runs a program to completion off the cooperative thread pool. Cancelling
-/// the calling task ends the program: SIGTERM, then SIGKILL after a short
-/// grace, because a child can inherit the ignored SIGTERM of the terminal.
+/// Runs a program to completion through FeatureKit's one-shot process runner:
+/// off the cooperative thread pool, with standard input closed. Cancelling the
+/// calling task ends the program: SIGTERM, then SIGKILL after
+/// ``terminationGrace``, because a child can inherit the ignored SIGTERM of
+/// the terminal.
 enum SherpaOnnxProgramRunner {
-    static let maximumOutputBytes = 1 << 20
     static let errorTailBytes = 4_096
-    static let terminationGrace = DispatchTimeInterval.milliseconds(300)
+    static let terminationGrace: Duration = .milliseconds(300)
 
     static func run(_ executable: URL, arguments: [String]) async throws -> SherpaOnnxProgramOutput {
-        let program = RunningProgram()
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    continuation.resume(with: Result {
-                        try runToCompletion(executable, arguments: arguments, program: program)
-                    })
-                }
-            }
-        } onCancel: {
-            program.cancel()
-        }
-    }
-
-    private static func runToCompletion(
-        _ executable: URL,
-        arguments: [String],
-        program: RunningProgram
-    ) throws -> SherpaOnnxProgramOutput {
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = arguments
-        process.standardInput = FileHandle.nullDevice
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-        guard try program.launch(process) else {
-            throw CancellationError()
-        }
-        let output = PipeCollector(
-            handle: outputPipe.fileHandleForReading,
-            limit: maximumOutputBytes,
-            keepsTail: false
+        let result = try await FeatureProcessRunner.run(
+            executableURL: executable,
+            arguments: arguments,
+            terminationGrace: terminationGrace
         )
-        let errors = PipeCollector(
-            handle: errorPipe.fileHandleForReading,
-            limit: errorTailBytes,
-            keepsTail: true
-        )
-        process.waitUntilExit()
-        let standardOutput = output.finish()
-        let standardError = errors.finish()
-        if program.wasCancelled {
-            throw CancellationError()
-        }
         return SherpaOnnxProgramOutput(
-            status: process.terminationStatus,
-            standardOutput: standardOutput,
-            standardErrorTail: String(decoding: standardError, as: UTF8.self)
+            status: result.exitCode,
+            standardOutput: result.stdoutData,
+            standardErrorTail: String(decoding: result.stderrData.suffix(errorTailBytes), as: UTF8.self)
         )
-    }
-
-    /// The launched process, shared with the cancellation handler.
-    private final class RunningProgram: @unchecked Sendable {
-        private let lock = NSLock()
-        private var process: Process?
-        private var isCancelled = false
-
-        /// Launches `process` unless the task was cancelled first.
-        func launch(_ process: Process) throws -> Bool {
-            try lock.withLock {
-                guard !isCancelled else {
-                    return false
-                }
-                try process.run()
-                self.process = process
-                return true
-            }
-        }
-
-        var wasCancelled: Bool {
-            lock.withLock { isCancelled }
-        }
-
-        func cancel() {
-            let process = lock.withLock { () -> Process? in
-                isCancelled = true
-                return self.process
-            }
-            guard let process, process.isRunning else {
-                return
-            }
-            process.terminate()
-            DispatchQueue.global().asyncAfter(deadline: .now() + SherpaOnnxProgramRunner.terminationGrace) {
-                if process.isRunning {
-                    kill(process.processIdentifier, SIGKILL)
-                }
-            }
-        }
-    }
-
-    /// Drains a pipe on a dedicated thread until EOF, keeping at most
-    /// `limit` bytes: the first ones, or the last ones with `keepsTail`.
-    private final class PipeCollector: @unchecked Sendable {
-        private let lock = NSLock()
-        private let finished = DispatchSemaphore(value: 0)
-        private var data = Data()
-
-        init(handle: FileHandle, limit: Int, keepsTail: Bool) {
-            let thread = Thread { [self] in
-                while let chunk = try? handle.read(upToCount: 16 * 1_024), !chunk.isEmpty {
-                    lock.withLock {
-                        if keepsTail {
-                            data.append(chunk)
-                            if data.count > limit {
-                                data = Data(data.suffix(limit))
-                            }
-                        } else if data.count < limit {
-                            data.append(chunk.prefix(limit - data.count))
-                        }
-                    }
-                }
-                try? handle.close()
-                finished.signal()
-            }
-            thread.stackSize = 256 * 1_024
-            thread.start()
-        }
-
-        /// Waits for EOF and returns the retained bytes.
-        func finish() -> Data {
-            finished.wait()
-            return lock.withLock { data }
-        }
     }
 }

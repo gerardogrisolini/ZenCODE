@@ -445,8 +445,7 @@ final class ZenCODETelegramChannelHooks: ChatSessionChannelHooks {
         guard !didLockResponseLanguage else { return }
         didLockResponseLanguage = true
         // The language of the settings, else the system's, as the terminal.
-        lockedResponseLanguageName = Self.configuredResponseLanguageName()
-            ?? ResponseLanguageResolver.systemDisplayName()
+        lockedResponseLanguageName = ResponseLanguageResolver.lockedDisplayName()
     }
 
     func agentDidChange(_ agent: AgentProfile) async {
@@ -465,14 +464,5 @@ final class ZenCODETelegramChannelHooks: ChatSessionChannelHooks {
     private func resetResponseLanguageLock() {
         lockedResponseLanguageName = nil
         didLockResponseLanguage = false
-    }
-
-    /// The response language of `settings.json` as an English name; `nil`
-    /// when none is configured or its code is unknown.
-    private static func configuredResponseLanguageName() -> String? {
-        guard let code = AgentSettingsManifestStore.load()?.responseLanguage else {
-            return nil
-        }
-        return ResponseLanguageResolver.displayName(forCode: code)
     }
 }

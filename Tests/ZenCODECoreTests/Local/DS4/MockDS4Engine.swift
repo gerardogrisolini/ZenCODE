@@ -31,7 +31,7 @@
 //    between chunks. `generationStarted` opens when a generation begins.
 //  - Every call is recorded in `calls`; `close()` is idempotent.
 //  - Images: a `.multimodalMessage` "encodes" each image file when it is
-//    tokenized (`tokenCount`, `renderText`, `prepare`, `sync(transcript:)`),
+//    tokenized (`tokenCount`, `prepare`, `sync(transcript:)`),
 //    recording it in `imageEncodes` and failing with `DS4EngineError.vision`
 //    when the file is missing (the client deletes the files only after the
 //    sync) or `failImageEncoding` is set. `prepare` + `sync(prepared:)` encode
@@ -305,13 +305,6 @@ final class MockDS4Engine: DS4Engine {
             ownerToken: instanceToken,
             payload: payload
         )
-    }
-
-    func renderText(of transcript: [DS4TranscriptOperation]) async throws -> String {
-        try record(.renderText)
-        try validate(transcript)
-        try encodeImages(in: transcript)
-        return Self.render(transcript)
     }
 
     func thinkMode(parseLevel: String) -> Int32? {

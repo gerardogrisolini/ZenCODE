@@ -197,28 +197,4 @@ nonisolated enum XcodeToolIntegration {
         case .other: return "Use"
         }
     }
-
-    static func isPermissionDenied(_ error: MCPClientError) -> Bool {
-        switch error {
-        case .authorizationRequired:
-            return true
-        case let .serverExited(_, message),
-             let .serverError(_, message):
-            return messageLooksLikePermissionDenied(message)
-        default:
-            return false
-        }
-    }
-
-    static func messageLooksLikePermissionDenied(_ message: String) -> Bool {
-        let lowered = message.lowercased()
-        return lowered.contains("permission denied")
-            || lowered.contains("consent denied")
-            || lowered.contains("not authorized")
-            || lowered.contains("not authorised")
-            || lowered.contains("not allowed")
-            || lowered.contains("not permitted")
-            || lowered.contains("rejected")
-            || lowered.contains("declined")
-    }
 }

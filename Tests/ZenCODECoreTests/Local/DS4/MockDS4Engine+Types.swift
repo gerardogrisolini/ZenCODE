@@ -15,7 +15,6 @@ extension MockDS4Engine {
     enum Call: Sendable, Hashable {
         case tokenCount
         case prepare
-        case renderText
         case thinkModeForContext(mode: Int32, contextSize: Int)
         case sync(sessionID: String, cached: Int, suffix: Int)
         case generate(sessionID: String)

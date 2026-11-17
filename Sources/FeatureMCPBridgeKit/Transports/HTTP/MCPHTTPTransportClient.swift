@@ -8,7 +8,6 @@ public actor MCPHTTPTransportClient {
     public let httpAuthentication: MCPHTTPAuthentication
     public let preferredProtocolVersion: String
     public let urlSession: URLSession
-    public let hasStaticAuthorizationHeader: Bool
     public var sessionIdentifier: String?
     public var isInitialized = false
     public var nextRequestID = 1
@@ -21,12 +20,6 @@ public actor MCPHTTPTransportClient {
     /// cancellation-aware for every joiner and fences a late handshake result
     /// after `disconnect()`.
     public let connectFlight = MCPSingleFlight<Void>()
-    public var oauthMetadata: MCPOAuthAuthorizationServerMetadata?
-    public var oauthClientRegistration: MCPOAuthClientRegistration?
-    public var oauthAccessToken: MCPOAuthAccessToken?
-    /// Coalesces concurrent browser sign-ins with the same cancellation and
-    /// late-result fencing guarantees as `connectFlight`.
-    public let oauthAuthenticationFlight = MCPSingleFlight<MCPOAuthAccessToken>()
 
     public init(
         endpointURL: URL,
@@ -38,7 +31,6 @@ public actor MCPHTTPTransportClient {
         self.httpHeaders = httpHeaders
         self.httpAuthentication = httpAuthentication
         self.preferredProtocolVersion = preferredProtocolVersion
-        self.hasStaticAuthorizationHeader = httpHeaders.keys.contains(where: Self.isAuthorizationHeader)
 
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 60

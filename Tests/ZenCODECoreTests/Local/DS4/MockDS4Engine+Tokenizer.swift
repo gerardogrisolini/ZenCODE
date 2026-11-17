@@ -33,20 +33,4 @@ extension MockDS4Engine {
     static func tokenCount(of transcript: [DS4TranscriptOperation]) -> Int {
         transcript.map(tokenCount(of:)).reduce(0, +)
     }
-
-    static func render(_ transcript: [DS4TranscriptOperation]) -> String {
-        transcript.map { operation in
-            switch operation {
-            case .begin: "<bos>"
-            case .message(let role, let content): "<\(role)>\(content)"
-            case .thinkPrefix(let mode): "<think:\(mode)>"
-            case .assistantPrefix(let mode): "<assistant:\(mode)>"
-            case .renderedChat(let text): text
-            case .endOfSequence: "<eos>"
-            case .tokens(let ids): "<tokens:" + ids.map(String.init).joined(separator: ",") + ">"
-            case .multimodalMessage(let role, let parts, let images):
-                "<\(role)>" + parts.joined(separator: "<image>") + "[\(images.count) image(s)]"
-            }
-        }.joined()
-    }
 }

@@ -489,21 +489,6 @@ public enum PromptSkillInstaller {
         throw PromptSkillInstallerError.unsafeSkillPath(destinationURL.path)
     }
 
-    private static func uniqueStandardizedURLs(_ urls: [URL]) -> [URL] {
-        var uniqueURLs: [URL] = []
-        var seenPaths: Set<String> = []
-
-        for url in urls {
-            let standardizedURL = url.standardizedFileURL
-            guard seenPaths.insert(standardizedURL.path).inserted else {
-                continue
-            }
-            uniqueURLs.append(standardizedURL)
-        }
-
-        return uniqueURLs
-    }
-
     private static func validateSkillFile(
         _ skillURL: URL,
         containedIn rootURL: URL

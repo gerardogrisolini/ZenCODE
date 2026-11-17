@@ -27,46 +27,48 @@ extension ZenCODESetupDS4Tests {
 
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: nil,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, _ in
-                #expect(!candidates.contains { $0.relativePath == shardPath })
-                return [Self.qwenPath, Self.customPath]
-            },
-            selectBackend: { _, backend in backend },
-            selectAuxiliaryFile: { model, kind, pairable, current in
-                asked.append("\(model.relativePath)|\(kind)")
-                #expect(current == nil)
-                // The model itself is never offered; the list is complete (shards included).
-                #expect(!pairable.contains { $0.relativePath == model.relativePath })
-                #expect(pairable.contains { $0.relativePath == shardPath })
-                // Five GGUFs in the folder, minus the model itself; the steering file is no GGUF.
-                #expect(pairable.count == 4)
-                #expect(!pairable.contains { $0.relativePath == Self.steeringPath })
-                guard model.relativePath == Self.qwenPath else { return nil }
-                return kind == .vision ? Self.visionPath : Self.mtpPath
-            },
-            promptTuning: { candidate, defaults in
-                #expect(defaults == AgentDS4RuntimeTuning())
-                guard candidate.relativePath == Self.qwenPath else { return defaults }
-                return AgentDS4RuntimeTuning(
-                    contextWindow: 32_768,
-                    mtp: true,
-                    dspark: true,
-                    mtpDraftTokens: 4,
-                    mtpMargin: 2.5,
-                    quality: true,
-                    threads: 12,
-                    prefillChunk: 512,
-                    warmWeights: true,
-                    steeringRelativePath: Self.steeringPath,
-                    steeringFFN: 1.5,
-                    steeringAttn: -0.25,
-                    cudaArch: "sm_120",
-                    rocmArch: "gfx1100",
-                    engineSessions: 4,
-                    extraEngineArguments: ["--gpu-devices", "0,1"]
-                )
-            },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, _ in
+                    #expect(!candidates.contains { $0.relativePath == shardPath })
+                    return [Self.qwenPath, Self.customPath]
+                },
+                selectBackend: { _, backend in backend },
+                selectAuxiliaryFile: { model, kind, pairable, current in
+                    asked.append("\(model.relativePath)|\(kind)")
+                    #expect(current == nil)
+                    // The model itself is never offered; the list is complete (shards included).
+                    #expect(!pairable.contains { $0.relativePath == model.relativePath })
+                    #expect(pairable.contains { $0.relativePath == shardPath })
+                    // Five GGUFs in the folder, minus the model itself; the steering file is no GGUF.
+                    #expect(pairable.count == 4)
+                    #expect(!pairable.contains { $0.relativePath == Self.steeringPath })
+                    guard model.relativePath == Self.qwenPath else { return nil }
+                    return kind == .vision ? Self.visionPath : Self.mtpPath
+                },
+                promptTuning: { candidate, defaults in
+                    #expect(defaults == AgentDS4RuntimeTuning())
+                    guard candidate.relativePath == Self.qwenPath else { return defaults }
+                    return AgentDS4RuntimeTuning(
+                        contextWindow: 32_768,
+                        mtp: true,
+                        dspark: true,
+                        mtpDraftTokens: 4,
+                        mtpMargin: 2.5,
+                        quality: true,
+                        threads: 12,
+                        prefillChunk: 512,
+                        warmWeights: true,
+                        steeringRelativePath: Self.steeringPath,
+                        steeringFFN: 1.5,
+                        steeringAttn: -0.25,
+                        cudaArch: "sm_120",
+                        rocmArch: "gfx1100",
+                        engineSessions: 4,
+                        extraEngineArguments: ["--gpu-devices", "0,1"]
+                    )
+                }
+            ),
             engine: Self.engine(fixture)
         )
 
@@ -125,16 +127,18 @@ extension ZenCODESetupDS4Tests {
 
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: nil,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
-            selectBackend: { candidate, _ in
-                // Two models share the CPU backend, one needs CUDA.
-                candidate.relativePath == Self.customPath ? .cuda : .cpu
-            },
-            selectAuxiliaryFile: Self.keepAuxiliary,
-            promptTuning: { candidate, defaults in
-                candidate.relativePath == Self.customPath ? AgentDS4RuntimeTuning(cudaArch: "sm_120") : defaults
-            },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
+                selectBackend: { candidate, _ in
+                    // Two models share the CPU backend, one needs CUDA.
+                    candidate.relativePath == Self.customPath ? .cuda : .cpu
+                },
+                selectAuxiliaryFile: Self.keepAuxiliary,
+                promptTuning: { candidate, defaults in
+                    candidate.relativePath == Self.customPath ? AgentDS4RuntimeTuning(cudaArch: "sm_120") : defaults
+                }
+            ),
             engine: Self.engine(fixture, builder: builder, output: output) { requests in
                 questions.append(requests)
                 return true
@@ -174,10 +178,12 @@ extension ZenCODESetupDS4Tests {
 
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: nil,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
-            selectBackend: { _, backend in backend },
-            promptTuning: { _, tuning in tuning },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
+                selectBackend: { _, backend in backend },
+                promptTuning: { _, tuning in tuning }
+            ),
             engine: Self.engine(fixture, builder: builder, output: output) { _ in
                 asked += 1
                 return false
@@ -207,10 +213,12 @@ extension ZenCODESetupDS4Tests {
 
         _ = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: nil,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
-            selectBackend: { _, _ in .cpu },
-            promptTuning: { _, tuning in tuning },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
+                selectBackend: { _, _ in .cpu },
+                promptTuning: { _, tuning in tuning }
+            ),
             engine: Self.engine(fixture, builder: builder, output: output) { _ in
                 asked += 1
                 return true
@@ -235,10 +243,12 @@ extension ZenCODESetupDS4Tests {
 
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: nil,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
-            selectBackend: { _, _ in .cpu },
-            promptTuning: { _, tuning in tuning },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
+                selectBackend: { _, _ in .cpu },
+                promptTuning: { _, tuning in tuning }
+            ),
             engine: Self.engine(fixture, builder: builder, output: output) { _ in true }
         )
 
@@ -281,10 +291,12 @@ extension ZenCODESetupDS4Tests {
 
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: existing,
-            promptFolder: { _ in
-                Issue.record("The rebuild must not walk the reconfigure flow")
-                return nil
-            },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in
+                    Issue.record("The rebuild must not walk the reconfigure flow")
+                    return nil
+                }
+            ),
             selectAction: {
                 actionPrompts += 1
                 return .rebuildEngine

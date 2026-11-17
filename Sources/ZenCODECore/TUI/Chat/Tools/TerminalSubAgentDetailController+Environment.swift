@@ -64,7 +64,7 @@ extension TerminalSubAgentDetailController {
             resubscribeInterval: Duration = .seconds(1),
             viewportPollInterval: Duration = .milliseconds(200),
             subscribeResize: @escaping (_ observer: @escaping @Sendable () -> Void) -> (@Sendable () -> Void)
-                = Environment.subscribeToTerminalResize
+                = TerminalPanelViewportWatch.subscribeToTerminalResize
         ) {
             self.snapshotEvents = snapshotEvents
             self.transcript = transcript
@@ -80,15 +80,6 @@ extension TerminalSubAgentDetailController {
             self.resubscribeInterval = resubscribeInterval
             self.viewportPollInterval = viewportPollInterval
             self.subscribeResize = subscribeResize
-        }
-
-        /// The production ``subscribeResize``: a
-        /// ``TerminalResizeCoordinator/shared`` subscription.
-        static func subscribeToTerminalResize(
-            _ observer: @escaping @Sendable () -> Void
-        ) -> @Sendable () -> Void {
-            let subscription = TerminalResizeCoordinator.shared.subscribe(observer)
-            return { subscription.cancel() }
         }
     }
 }

@@ -8,7 +8,7 @@
 import Foundation
 import ToolCore
 
-public actor RemoteGenerationClient: DirectToolRuntimeBackend {
+public actor RemoteGenerationClient: LeasedSessionRuntimeBackend {
     public struct AgentSession {
         public let id: String
         public let cwd: URL
@@ -38,7 +38,7 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
     /// A generation is a lease on a particular lifetime of a session ID. It is
     /// deliberately retained after removal so an operation suspended on an old
     /// session cannot recreate it when it resumes.
-    private var sessionGenerations: [String: UInt64] = [:]
+    private(set) var sessionGenerations: [String: UInt64] = [:]
     private var nextSessionGeneration: UInt64 = 0
     public var didEmitLoadedModel = false
     /// Endpoint base override used only by deterministic loopback tests.
@@ -162,31 +162,6 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
             )), id: id)
     }
 
-    public func createSessionIfNeeded(
-        id: String,
-        cwd: String,
-        systemPrompt: String? = nil,
-        history: [AgentRuntimeMessage] = [],
-        cacheKey: String? = nil,
-        allowedToolNames: Set<String>? = nil,
-        thinkingSelection: AgentThinkingSelection? = nil,
-        preserveThinking: Bool = false
-    ) {
-        guard sessions[id] == nil else {
-            return
-        }
-        createSession(
-            id: id,
-            cwd: cwd,
-            systemPrompt: systemPrompt,
-            history: history,
-            cacheKey: cacheKey,
-            allowedToolNames: allowedToolNames,
-            thinkingSelection: thinkingSelection,
-            preserveThinking: preserveThinking
-        )
-    }
-
     public func closeSession(id: String) async {
         invalidateSession(id: id)
         await toolExecutor.removeToolProviders(sessionID: id)
@@ -238,38 +213,6 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
             await onEvent(.modelLoaded(provider.modelID))
         }
         return provider.modelID
-    }
-
-    public func activeToolDescriptors(
-        sessionID: String?
-    ) async -> [DirectToolDescriptor] {
-        await toolDescriptors(sessionID: sessionID, discoversFeatureTools: true)
-    }
-
-    public func knownToolDescriptors(
-        sessionID: String?
-    ) async -> [DirectToolDescriptor] {
-        await toolDescriptors(sessionID: sessionID, discoversFeatureTools: false)
-    }
-
-    private func toolDescriptors(
-        sessionID: String?,
-        discoversFeatureTools: Bool
-    ) async -> [DirectToolDescriptor] {
-        let session = if let sessionID {
-            sessions[sessionID]
-        } else {
-            sessions.values.first
-        }
-        guard let session else {
-            return []
-        }
-        return await toolExecutor.descriptors(
-            allowedToolNames: session.allowedToolNames,
-            preferredWorkspaceRootURL: session.cwd,
-            sessionID: session.id,
-            discoversFeatureTools: discoversFeatureTools
-        )
     }
 
     public func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot? {
@@ -350,11 +293,6 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         )
     }
 
-    struct SessionLease: Sendable {
-        let id: String
-        let generation: UInt64
-    }
-
     private func installSession(_ session: AgentSession, id: String) {
         nextSessionGeneration &+= 1
         sessionGenerations[id] = nextSessionGeneration
@@ -369,34 +307,6 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         nextSessionGeneration &+= 1
         sessionGenerations[id] = nextSessionGeneration
         sessions.removeValue(forKey: id)
-    }
-
-    func sessionLease(for id: String) -> SessionLease? {
-        guard sessions[id] != nil, let generation = sessionGenerations[id] else {
-            return nil
-        }
-        return SessionLease(id: id, generation: generation)
-    }
-
-    func currentSession(for lease: SessionLease) -> AgentSession? {
-        guard sessionGenerations[lease.id] == lease.generation else {
-            return nil
-        }
-        return sessions[lease.id]
-    }
-
-    @discardableResult
-    func mutateSession(
-        for lease: SessionLease,
-        _ mutation: (inout AgentSession) -> Void
-    ) -> Bool {
-        guard sessionGenerations[lease.id] == lease.generation,
-              var session = sessions[lease.id] else {
-            return false
-        }
-        mutation(&session)
-        sessions[lease.id] = session
-        return true
     }
 
     public static func agentRuntimeMessages(
@@ -536,4 +446,8 @@ public actor RemoteGenerationClient: DirectToolRuntimeBackend {
         )
         return compactedMessages
     }
+}
+
+extension RemoteGenerationClient.AgentSession: LeasedRuntimeSession {
+    var workingDirectoryURL: URL { cwd }
 }

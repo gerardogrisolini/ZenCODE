@@ -96,7 +96,7 @@ public enum ChatSessionNoticeText {
         case .nothingToCompact:
             return "Nothing to compact yet. The session may be too short or the current model has no context-window limit.\n"
         case let .sessionCompacted(originalTokenCount, tokenCount, keptRecentMessageCount):
-            return "Compacted session context from \(tokenCountText(originalTokenCount)) to \(tokenCountText(tokenCount)) estimated tokens, keeping \(keptRecentMessageCount) recent messages.\n"
+            return "Compacted session context from \(StatusMetricsFormatting.contextTokenCountText(originalTokenCount)) to \(StatusMetricsFormatting.contextTokenCountText(tokenCount)) estimated tokens, keeping \(keptRecentMessageCount) recent messages.\n"
         case let .turnMemoryBlock(block):
             return turnMemoryBlockText(block)
         case .noTurnMemoryBlock:
@@ -484,7 +484,7 @@ public enum ChatSessionNoticeText {
         }
         parts.append("\(session.messageCount) messages")
         if let usedTokens = session.contextUsedTokens {
-            parts.append("ctx \(tokenCountText(usedTokens))")
+            parts.append("ctx \(StatusMetricsFormatting.contextTokenCountText(usedTokens))")
         }
         parts.append("saved \(timestampText(session.savedAt))")
         return parts.joined(separator: " · ")
@@ -496,18 +496,6 @@ public enum ChatSessionNoticeText {
         formatter.dateStyle = .short
         formatter.timeStyle = .short
         return formatter.string(from: date)
-    }
-
-    /// A token count: `950`, `12.3k`, `1.2m`.
-    static func tokenCountText(_ value: Int) -> String {
-        let absoluteValue = abs(value)
-        if absoluteValue >= 1_000_000 {
-            return String(format: "%.1fm", Double(value) / 1_000_000)
-        }
-        if absoluteValue >= 1_000 {
-            return String(format: "%.1fk", Double(value) / 1_000)
-        }
-        return "\(value)"
     }
 
     // MARK: - Task graphs from previous sessions

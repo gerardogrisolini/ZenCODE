@@ -79,7 +79,7 @@ struct MemoryPublicAPITests {
             let service = MemoryService()
             let written = try await service.writeEntry(
                 content: "Summary: facade preserves data.",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 category: .entity,
                 tags: ["dto"]
             )
@@ -89,7 +89,7 @@ struct MemoryPublicAPITests {
             #expect(written.isArchived == false)
 
             let read = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 5
             )
             #expect(read.count == 1)
@@ -104,7 +104,7 @@ struct MemoryPublicAPITests {
     func asyncReadWithNilWorkspaceThrows() async {
         let service = MemoryService()
         await #expect(throws: MemoryServiceError.self) {
-            try await service.readEntries(workspaceRootURL: nil, limit: 10)
+            try await service.readEntries(target: nil, limit: 10)
         }
     }
 
@@ -143,7 +143,7 @@ struct MemoryPublicAPITests {
 
             // And only one entry actually exists.
             let stored = try await MemoryService().readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 10
             )
             #expect(stored.count == 1)
@@ -159,14 +159,14 @@ struct MemoryPublicAPITests {
             let service = MemoryService()
             let first = try await service.writeEntryOutcome(
                 content: "Summary: outcome flag.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             #expect(first.created)
             #expect(first.deduplicated == false)
 
             let second = try await service.writeEntryOutcome(
                 content: "Summary: outcome flag.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             #expect(second.created == false)
             #expect(second.deduplicated)
@@ -175,7 +175,7 @@ struct MemoryPublicAPITests {
             // The public signature is unchanged and still yields the entry.
             let viaPublicAPI = try await service.writeEntry(
                 content: "Summary: outcome flag.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             #expect(viaPublicAPI.id == first.entry.id)
         }

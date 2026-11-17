@@ -44,7 +44,7 @@ let package = Package(
         ),
         .target(
             name: "ZenAppMarkdown",
-            dependencies: ["ZenAppTheme", markdown],
+            dependencies: ["ZenAppTheme", zenCODECore, markdown],
             swiftSettings: memberImportVisibilitySettings
         ),
         .target(

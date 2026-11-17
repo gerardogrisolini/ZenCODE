@@ -160,11 +160,7 @@ public struct DS4InstallationScanner: @unchecked Sendable {
     }
 
     private func isSymbolicLink(_ url: URL) -> Bool {
-        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
-              let type = attributes[.type] as? FileAttributeType else {
-            return false
-        }
-        return type == .typeSymbolicLink
+        AgentDS4PathGuard.isSymbolicLink(url, fileManager: fileManager)
     }
 
     private func relativePath(of url: URL, root: URL) -> String {

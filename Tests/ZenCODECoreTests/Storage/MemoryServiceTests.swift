@@ -97,18 +97,18 @@ struct MemoryServiceTests {
             let service = MemoryService()
             let first = try await service.writeEntry(
                 content: "Summary: the graph store is the durable source.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             // Identical active content returns the existing entry instead of
             // creating a duplicate.
             let duplicate = try await service.writeEntry(
                 content: "Summary: the graph store is the durable source.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             #expect(duplicate.id == first.id)
 
             let entries = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 10
             )
             #expect(entries.count == 1)
@@ -133,11 +133,11 @@ struct MemoryServiceTests {
             let service = MemoryService()
             _ = try await service.writeEntry(
                 content: content,
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             let readEntry = try #require(
                 try await service.readEntries(
-                    workspaceRootURL: workspace.workspaceURL,
+                    target: .workspace(workspace.workspaceURL),
                     limit: 10
                 ).first
             )
@@ -186,7 +186,7 @@ struct MemoryServiceTests {
             )
             let entry = try #require(
                 try await service.readEntries(
-                    workspaceRootURL: workspace.workspaceURL,
+                    target: .workspace(workspace.workspaceURL),
                     limit: 10
                 ).first
             )
@@ -240,14 +240,14 @@ struct MemoryServiceTests {
             #expect(secondResult["deduplicated"] == .bool(true))
             #expect(
                 try await service.readEntries(
-                    workspaceRootURL: workspace.workspaceURL,
+                    target: .workspace(workspace.workspaceURL),
                     limit: 10
                 ).count == 1
             )
             // The surviving entry keeps the first turn's stamp verbatim: a
             // duplicate is reused, never rewritten.
             let stored = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 10
             )
             #expect(stored.first?.content.hasPrefix("Timestamp: 2023-11-14 23:13 Europe/Rome") == true)
@@ -294,7 +294,7 @@ struct MemoryServiceTests {
             #expect(authored.rawResult?.objectValue?["written"]?.boolValue == true)
             #expect(autoStamped.rawResult?.objectValue?["written"]?.boolValue == true)
             let entries = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 10
             )
             #expect(entries.count == 2)
@@ -314,17 +314,17 @@ struct MemoryServiceTests {
             let service = MemoryService()
             let first = try await service.writeEntry(
                 content: "Timestamp: 2024-01-01 09:00 Europe/Rome\nSummary: migrated the journal.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             let second = try await service.writeEntry(
                 content: "Timestamp: 2025-02-02 10:00 Europe/Rome\nSummary: migrated the journal.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
 
             #expect(first.id != second.id)
             #expect(
                 try await service.readEntries(
-                    workspaceRootURL: workspace.workspaceURL,
+                    target: .workspace(workspace.workspaceURL),
                     limit: 10
                 ).count == 2
             )
@@ -340,7 +340,7 @@ struct MemoryServiceTests {
             let service = MemoryService()
             _ = try await service.writeEntry(
                 content: "Summary: architecture runtime decision.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
 
             let output = try await MemoryTool.executeAsync(

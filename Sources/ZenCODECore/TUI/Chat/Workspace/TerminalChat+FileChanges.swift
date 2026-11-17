@@ -60,7 +60,7 @@ extension TerminalChat {
             }
             for artifact in turn.artifacts {
                 lines.append("")
-                lines.append(renderFileArtifactMetadata(artifact))
+                lines.append(ChatSessionNoticeText.fileArtifactMetadata(artifact))
 
                 if let explanation = artifact.explanation?.nilIfBlank {
                     lines.append("Explanation: \(explanation)")
@@ -241,16 +241,6 @@ extension TerminalChat {
         return output.joined(separator: "\n")
     }
 
-    private nonisolated static func renderFileArtifactMetadata(
-        _ artifact: FileChangeArtifact
-    ) -> String {
-        let path = artifact.displayPath.nilIfBlank ?? artifact.absolutePath
-        let displayedPath = path.nilIfBlank ?? "(unknown path)"
-        let counts = artifact.hasLineCounts ? "  +\(artifact.additions) -\(artifact.deletions)" : ""
-        let binary = artifact.isBinary ? " (binary)" : ""
-        return "**\(artifact.status.rawValue) `\(markdownInlineCode(displayedPath))`**\(counts)\(binary)"
-    }
-
     private nonisolated static func appendMarkdownCodeBlock(
         _ text: String,
         language: String?,
@@ -289,10 +279,6 @@ extension TerminalChat {
         }
         let length = max(3, longestBacktickRun + 1)
         return String(repeating: "`", count: length) + (language ?? "")
-    }
-
-    private nonisolated static func markdownInlineCode(_ text: String) -> String {
-        text.replacingOccurrences(of: "`", with: "\\`")
     }
 
     public func writeFileChangeSummary(

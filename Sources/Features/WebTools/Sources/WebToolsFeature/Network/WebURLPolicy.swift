@@ -39,7 +39,7 @@ struct WebURLPolicy: Sendable {
             throw WebURLPolicyError.missingHost(value)
         }
 
-        let host = normalizedHost(rawHost)
+        let host = FeatureIPAddress.normalizedHost(rawHost)
         guard allowsPrivateNetwork || !isRestricted(host: host) else { throw WebURLPolicyError.restrictedHost(rawHost) }
         return url
     }
@@ -47,7 +47,7 @@ struct WebURLPolicy: Sendable {
     /// Rechecks a numeric address returned by a host resolver immediately
     /// before a request is allowed to proceed.
     func validateResolvedAddress(_ rawAddress: String) throws {
-        let address = normalizedHost(rawAddress)
+        let address = FeatureIPAddress.normalizedHost(rawAddress)
         guard !address.isEmpty else { throw WebURLPolicyError.restrictedHost(rawAddress) }
         guard allowsPrivateNetwork || !isRestricted(host: address) else {
             throw WebURLPolicyError.restrictedHost(rawAddress)
@@ -55,7 +55,7 @@ struct WebURLPolicy: Sendable {
     }
 
     func isLoopbackHost(_ rawHost: String) -> Bool {
-        let host = normalizedHost(rawHost)
+        let host = FeatureIPAddress.normalizedHost(rawHost)
         if host == "localhost" || host.hasSuffix(".localhost") || host == "::1" {
             return true
         }
@@ -72,14 +72,6 @@ struct WebURLPolicy: Sendable {
             return false
         }
         return FeatureIPAddress.classifyIPv4(embedded.octets) == .loopback
-    }
-
-    private func normalizedHost(_ host: String) -> String {
-        host
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
-            .lowercased()
     }
 
     /// Every non-public classification, loopback included, is restricted:

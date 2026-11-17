@@ -55,7 +55,7 @@ struct MemoryMarkdownIgnoredTests {
                 switch operation {
                 case .read:
                     let entries = try await service.readEntries(
-                        workspaceRootURL: workspace.workspaceURL,
+                        target: .workspace(workspace.workspaceURL),
                         includeArchived: true,
                         limit: 100
                     )
@@ -63,7 +63,7 @@ struct MemoryMarkdownIgnoredTests {
                 case .search:
                     let entries = try await service.searchEntries(
                         query: query,
-                        workspaceRootURL: workspace.workspaceURL,
+                        target: .workspace(workspace.workspaceURL),
                         includeArchived: true,
                         limit: 100
                     )
@@ -82,7 +82,7 @@ struct MemoryMarkdownIgnoredTests {
 
                 let written = try await service.writeEntry(
                     content: "Summary: JSON-only durable entry.",
-                    workspaceRootURL: workspace.workspaceURL
+                    target: .workspace(workspace.workspaceURL)
                 )
                 let persisted = try await JSONMemoryPersistence(url: graphURL).load()
                 #expect(persisted.memories.count == 1)

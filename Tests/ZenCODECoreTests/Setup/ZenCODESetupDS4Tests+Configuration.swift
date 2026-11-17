@@ -21,32 +21,34 @@ extension ZenCODESetupDS4Tests {
 
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: nil,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, preselected in
-                #expect(preselected.isEmpty)
-                #expect(candidates.count == 2)
-                return Set(candidates.map(\.relativePath))
-            },
-            selectBackend: { _, defaultBackend in
-                #if os(macOS)
-                #expect(defaultBackend == .metal)
-                #else
-                #expect(defaultBackend == .cpu)
-                #endif
-                return .cuda
-            },
-            selectAPIModelID: { _ in
-                Issue.record("API id must be inferred")
-                return "glm-5.2"
-            },
-            selectAuxiliaryFile: { _, _, _, current in
-                #expect(current == nil)
-                return current
-            },
-            promptTuning: { _, defaults in
-                #expect(defaults == AgentDS4RuntimeTuning())
-                return defaults
-            },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, preselected in
+                    #expect(preselected.isEmpty)
+                    #expect(candidates.count == 2)
+                    return Set(candidates.map(\.relativePath))
+                },
+                selectBackend: { _, defaultBackend in
+                    #if os(macOS)
+                    #expect(defaultBackend == .metal)
+                    #else
+                    #expect(defaultBackend == .cpu)
+                    #endif
+                    return .cuda
+                },
+                selectAPIModelID: { _ in
+                    Issue.record("API id must be inferred")
+                    return "glm-5.2"
+                },
+                selectAuxiliaryFile: { _, _, _, current in
+                    #expect(current == nil)
+                    return current
+                },
+                promptTuning: { _, defaults in
+                    #expect(defaults == AgentDS4RuntimeTuning())
+                    return defaults
+                }
+            ),
             engine: Self.engine(fixture)
         )
 
@@ -84,10 +86,12 @@ extension ZenCODESetupDS4Tests {
 
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: existing,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
-            selectBackend: { _, backend in backend },
-            promptTuning: { _, tuning in tuning },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
+                selectBackend: { _, backend in backend },
+                promptTuning: { _, tuning in tuning }
+            ),
             engine: Self.engine(fixture)
         )
 
@@ -120,18 +124,20 @@ extension ZenCODESetupDS4Tests {
 
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: nil,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
-            selectBackend: { candidate, _ in
-                askedBackend.append(candidate.relativePath)
-                return try #require(backends[candidate.relativePath])
-            },
-            selectAuxiliaryFile: Self.keepAuxiliary,
-            promptTuning: { candidate, defaults in
-                askedTuning.append(candidate.relativePath)
-                #expect(defaults == AgentDS4RuntimeTuning())
-                return try #require(tunings[candidate.relativePath])
-            },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
+                selectBackend: { candidate, _ in
+                    askedBackend.append(candidate.relativePath)
+                    return try #require(backends[candidate.relativePath])
+                },
+                selectAuxiliaryFile: Self.keepAuxiliary,
+                promptTuning: { candidate, defaults in
+                    askedTuning.append(candidate.relativePath)
+                    #expect(defaults == AgentDS4RuntimeTuning())
+                    return try #require(tunings[candidate.relativePath])
+                }
+            ),
             engine: Self.engine(fixture)
         )
 
@@ -220,35 +226,37 @@ extension ZenCODESetupDS4Tests {
 
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: original,
-            promptFolder: { previous in
-                #expect(previous == previousRuntime.rootDirectory)
-                return fixture.root.path
-            },
-            selectFiles: { candidates, preselected in
-                #expect(preselected == [Self.qwenPath])
-                return Set(candidates.map(\.relativePath))
-            },
-            selectBackend: { candidate, defaultBackend in
-                // Defaults come from the model's own saved runtime only.
-                if candidate.relativePath == Self.qwenPath {
-                    #expect(defaultBackend == .cuda)
-                } else {
-                    #expect(defaultBackend == ZenCODESetupRunner.defaultDS4Backend)
+            prompts: DS4SetupPrompts(
+                promptFolder: { previous in
+                    #expect(previous == previousRuntime.rootDirectory)
+                    return fixture.root.path
+                },
+                selectFiles: { candidates, preselected in
+                    #expect(preselected == [Self.qwenPath])
+                    return Set(candidates.map(\.relativePath))
+                },
+                selectBackend: { candidate, defaultBackend in
+                    // Defaults come from the model's own saved runtime only.
+                    if candidate.relativePath == Self.qwenPath {
+                        #expect(defaultBackend == .cuda)
+                    } else {
+                        #expect(defaultBackend == ZenCODESetupRunner.defaultDS4Backend)
+                    }
+                    return defaultBackend
+                },
+                selectAuxiliaryFile: Self.keepAuxiliary,
+                promptTuning: { candidate, defaults in
+                    if candidate.relativePath == Self.qwenPath {
+                        #expect(defaults.contextWindow == 131_072)
+                        #expect(defaults.ssdStreaming)
+                        #expect(defaults.mtp)
+                        #expect(defaults.power == 73)
+                    } else {
+                        #expect(defaults == AgentDS4RuntimeTuning())
+                    }
+                    return defaults
                 }
-                return defaultBackend
-            },
-            selectAuxiliaryFile: Self.keepAuxiliary,
-            promptTuning: { candidate, defaults in
-                if candidate.relativePath == Self.qwenPath {
-                    #expect(defaults.contextWindow == 131_072)
-                    #expect(defaults.ssdStreaming)
-                    #expect(defaults.mtp)
-                    #expect(defaults.power == 73)
-                } else {
-                    #expect(defaults == AgentDS4RuntimeTuning())
-                }
-                return defaults
-            },
+            ),
             selectAction: { .reconfigure },
             engine: Self.engine(fixture)
         )
@@ -289,11 +297,13 @@ extension ZenCODESetupDS4Tests {
         defer { fixture.remove() }
         let first = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: nil,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
-            selectBackend: { _, backend in backend },
-            selectAuxiliaryFile: Self.keepAuxiliary,
-            promptTuning: { _, tuning in tuning },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
+                selectBackend: { _, backend in backend },
+                selectAuxiliaryFile: Self.keepAuxiliary,
+                promptTuning: { _, tuning in tuning }
+            ),
             engine: Self.engine(fixture)
         )
         let manifest = try #require(first)
@@ -308,11 +318,13 @@ extension ZenCODESetupDS4Tests {
 
         let second = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: selected,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { _, _ in [Self.qwenPath] },
-            selectBackend: { _, backend in backend },
-            selectAuxiliaryFile: Self.keepAuxiliary,
-            promptTuning: { _, tuning in tuning },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { _, _ in [Self.qwenPath] },
+                selectBackend: { _, backend in backend },
+                selectAuxiliaryFile: Self.keepAuxiliary,
+                promptTuning: { _, tuning in tuning }
+            ),
             selectAction: { .reconfigure },
             engine: Self.engine(fixture)
         )
@@ -330,14 +342,16 @@ extension ZenCODESetupDS4Tests {
 
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: nil,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
-            selectBackend: { _, backend in backend },
-            selectAPIModelID: { candidate in
-                asked.append(candidate.fileName)
-                return "glm-5.2"
-            },
-            promptTuning: { _, tuning in tuning },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
+                selectBackend: { _, backend in backend },
+                selectAPIModelID: { candidate in
+                    asked.append(candidate.fileName)
+                    return "glm-5.2"
+                },
+                promptTuning: { _, tuning in tuning }
+            ),
             engine: Self.engine(fixture)
         )
         let manifest = try #require(result)
@@ -353,31 +367,39 @@ extension ZenCODESetupDS4Tests {
 
         let cancelledFolder = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: nil,
-            promptFolder: { _ in throw ZenCODESetupError.cancelled }
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in throw ZenCODESetupError.cancelled }
+            )
         )
         #expect(cancelledFolder == nil)
 
         let cancelledBackend = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: original,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
-            selectBackend: { _, _ in throw ZenCODESetupError.cancelled }
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
+                selectBackend: { _, _ in throw ZenCODESetupError.cancelled }
+            )
         )
         #expect(cancelledBackend == original)
 
         let tuningError = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: original,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
-            selectBackend: { _, backend in backend },
-            promptTuning: { _, _ in throw AgentDS4RuntimeConfigurationError.invalidPower(0) },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
+                selectBackend: { _, backend in backend },
+                promptTuning: { _, _ in throw AgentDS4RuntimeConfigurationError.invalidPower(0) }
+            ),
             engine: Self.engine(fixture)
         )
         #expect(tuningError == original)
 
         let missingFolder = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: original,
-            promptFolder: { _ in fixture.root.path + "/does-not-exist" }
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path + "/does-not-exist" }
+            )
         )
         #expect(missingFolder == original)
     }
@@ -421,14 +443,16 @@ extension ZenCODESetupDS4Tests {
 
         let changed = await ZenCODESetupRunner.reconfigureDS4ProviderInput(
             input,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, preselected in
-                #expect(preselected == [Self.qwenPath])
-                return Set(candidates.map(\.relativePath))
-            },
-            selectBackend: { _, backend in backend },
-            selectAuxiliaryFile: Self.keepAuxiliary,
-            promptTuning: { _, tuning in tuning },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, preselected in
+                    #expect(preselected == [Self.qwenPath])
+                    return Set(candidates.map(\.relativePath))
+                },
+                selectBackend: { _, backend in backend },
+                selectAuxiliaryFile: Self.keepAuxiliary,
+                promptTuning: { _, tuning in tuning }
+            ),
             engine: Self.engine(fixture)
         )
         #expect(changed.id == providerID)
@@ -438,7 +462,9 @@ extension ZenCODESetupDS4Tests {
 
         let cancelled = await ZenCODESetupRunner.reconfigureDS4ProviderInput(
             input,
-            promptFolder: { _ in throw ZenCODESetupError.cancelled },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in throw ZenCODESetupError.cancelled }
+            ),
             engine: Self.engine(fixture)
         )
         #expect(cancelled.models == input.models)

@@ -52,7 +52,7 @@ import ZenCODECore
 ///
 /// The updates other than the lifecycle changes are applied at most once per
 /// ``updateInterval``: the stream is iterated by a child task that keeps only
-/// the newest value while the model waits (``ZenSubAgentSnapshotMailbox``),
+/// the newest value while the model waits (``TerminalSubAgentSnapshotMailbox``),
 /// so the latest value is never lost, and that wakes the model during the
 /// wait for a lifecycle change. A stream that finishes (the runtime had no
 /// backend yet) is subscribed again after ``resubscribeInterval``, for as
@@ -145,7 +145,7 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
     @ObservationIgnored private var callDurations: [String: Duration] = [:]
     /// The latest applied snapshot of the agent, as the reads decide on it;
     /// it starts from the snapshot the tab opened with.
-    @ObservationIgnored private var reloadKey: ReloadKey?
+    @ObservationIgnored private var reloadKey: TerminalSubAgentReloadKey?
     /// A hidden tab put a read off: it reads when it is selected.
     @ObservationIgnored private(set) var isReloadDue = false
     /// The reads started, and the one whose transcript is applied: a read
@@ -179,7 +179,7 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
         self.snapshot = snapshot
         // The read at the start covers the snapshot the tab opened with: the
         // stream's first value, which repeats it, reads nothing more.
-        reloadKey = snapshot.map(ReloadKey.init)
+        reloadKey = snapshot.map(TerminalSubAgentReloadKey.init)
         self.source = source
         self.updateInterval = updateInterval
         self.resubscribeInterval = resubscribeInterval
@@ -205,7 +205,7 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
                 // `self` stays weak while the model follows the stream: only
                 // an update being applied holds it.
                 guard self != nil else { return }
-                let mailbox = ZenSubAgentSnapshotMailbox(agentID: agentID, lifecycle: self?.reloadKey?.lifecycle)
+                let mailbox = TerminalSubAgentSnapshotMailbox(agentID: agentID, lifecycle: self?.reloadKey?.lifecycle)
                 let sleepFailed = await withTaskGroup(of: Void.self) { group -> Bool in
                     // The child iterates the stream; it ends when the stream
                     // finishes or the model's task is cancelled, which
@@ -217,7 +217,7 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
                     while let delivery = await mailbox.next() {
                         guard let self, !Task.isCancelled else { return false }
                         await self.apply(delivery)
-                        switch await Self.throttle(mailbox, interval: updateInterval, sleep: sleep) {
+                        switch await mailbox.throttle(interval: updateInterval, sleep: sleep) {
                         case .elapsed, .lifecycleChanged:
                             continue
                         case .failed:
@@ -250,54 +250,18 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
 
     // MARK: - Updates
 
-    /// How the wait after an applied update ended.
-    private enum ThrottleEnd: Sendable {
-        /// The interval elapsed.
-        case elapsed
-        /// A value that changes the agent's lifecycle arrived first.
-        case lifecycleChanged
-        /// The sleep threw: the model's task was cancelled.
-        case failed
-    }
-
-    /// Waits `interval`, or less when a value that changes the agent's
-    /// lifecycle reaches `mailbox` first; the other wait is cancelled.
-    private nonisolated static func throttle(
-        _ mailbox: ZenSubAgentSnapshotMailbox,
-        interval: Duration,
-        sleep: @escaping @Sendable (Duration) async throws -> Void
-    ) async -> ThrottleEnd {
-        await withTaskGroup(of: ThrottleEnd.self) { group in
-            group.addTask {
-                do {
-                    try await sleep(interval)
-                    return .elapsed
-                } catch {
-                    return .failed
-                }
-            }
-            group.addTask {
-                await mailbox.waitForLifecycleChange()
-                return .lifecycleChanged
-            }
-            let end = await group.next() ?? .failed
-            group.cancelAll()
-            return end
-        }
-    }
-
     /// Applies the snapshots of one update: the agent's snapshot when it
     /// shows something new, then a read of the transcript when it is due (see
     /// the type's documentation). An update without the agent changes
     /// nothing.
-    private func apply(_ delivery: ZenSubAgentSnapshotMailbox.Delivery) async {
+    private func apply(_ delivery: TerminalSubAgentSnapshotMailbox.Delivery) async {
         guard !isStopped else { return }
         updateCount += 1
         guard let agent = delivery.snapshots.first(where: { $0.id == agentID }) else { return }
         if snapshot.map(DisplayKey.init) != DisplayKey(agent) {
             snapshot = agent
         }
-        let key = ReloadKey(agent)
+        let key = TerminalSubAgentReloadKey(agent)
         let changesLifecycle = delivery.changesLifecycle || key.lifecycle != reloadKey?.lifecycle
         guard changesLifecycle || key != reloadKey else { return }
         reloadKey = key
@@ -406,42 +370,5 @@ public final class ZenSubAgentTranscriptModel: Identifiable {
             createdAt = snapshot.createdAt
             finishedAt = snapshot.pending ? nil : snapshot.updatedAt
         }
-    }
-
-    /// What decides that the transcript may have changed: the agent's
-    /// lifecycle, its completed execution, its tool and whether it runs (the
-    /// end of the call adds its result to the transcript), and its latest
-    /// event.
-    private struct ReloadKey: Equatable {
-        let lifecycle: ZenSubAgentLifecycle
-        let completedExecutionRevision: UInt64
-        let toolName: String?
-        let toolIsRunning: Bool
-        let latestEventAt: Date?
-        let updatedAt: Date
-
-        init(_ snapshot: DirectSubAgentRuntime.AgentSnapshot) {
-            lifecycle = ZenSubAgentLifecycle(snapshot)
-            completedExecutionRevision = snapshot.completedExecutionRevision
-            toolName = snapshot.currentToolName
-            toolIsRunning = snapshot.currentToolIsRunning
-            latestEventAt = snapshot.latestEventAt
-            updatedAt = snapshot.updatedAt
-        }
-    }
-}
-
-/// The lifecycle of a sub-agent in a snapshot: its status, whether it is
-/// pending, and its execution revision. A change of it is applied, and the
-/// transcript read, without waiting for the throttle.
-struct ZenSubAgentLifecycle: Equatable, Sendable {
-    let status: DirectSubAgentRuntime.Status
-    let pending: Bool
-    let executionRevision: UInt64
-
-    init(_ snapshot: DirectSubAgentRuntime.AgentSnapshot) {
-        status = snapshot.status
-        pending = snapshot.pending
-        executionRevision = snapshot.executionRevision
     }
 }

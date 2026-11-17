@@ -137,17 +137,17 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
     }
 
     /// Stable lowercase provider key (see ``providerKey(providerProfileID:protocolProfileID:)``).
-    public let id: String
-    public let name: String
-    public let baseURL: String
-    public let modelID: String
-    public let chatEndpoint: AgentRemoteChatEndpoint
-    public let providerProfileID: AgentProviderProfileID
-    public let protocolProfileID: AgentProtocolProfileID
-    public let authPolicy: AgentProviderAuthPolicy
+    public private(set) var id: String
+    public private(set) var name: String
+    public private(set) var baseURL: String
+    public private(set) var modelID: String
+    public private(set) var chatEndpoint: AgentRemoteChatEndpoint
+    public private(set) var providerProfileID: AgentProviderProfileID
+    public private(set) var protocolProfileID: AgentProtocolProfileID
+    public private(set) var authPolicy: AgentProviderAuthPolicy
     /// Optional persisted metadata for a local DS4 runtime. The provider's
     /// OpenAI-compatible base URL remains unchanged and is still persisted.
-    public let ds4Runtime: AgentDS4RuntimeConfiguration?
+    public private(set) var ds4Runtime: AgentDS4RuntimeConfiguration?
 
     /// Creates a provider. When `id` is nil or blank the provider receives the
     /// stable key derived from its resolved profiles; an id is never generated.
@@ -227,32 +227,31 @@ public struct AgentRemoteProvider: Codable, Hashable, Sendable {
     /// Rebuilds the provider with a different model while retaining all
     /// protocol, authentication and DS4 metadata.
     public func withModelID(_ modelID: String) -> AgentRemoteProvider {
-        AgentRemoteProvider(
-            id: id,
-            name: name,
-            baseURL: baseURL,
-            modelID: modelID,
-            chatEndpoint: chatEndpoint,
-            providerProfileID: providerProfileID,
-            protocolProfileID: protocolProfileID,
-            authPolicy: authPolicy,
-            ds4Runtime: ds4Runtime
-        )
+        renormalized { $0.modelID = modelID }
     }
 
     public func withDS4Runtime(
         _ ds4Runtime: AgentDS4RuntimeConfiguration?
     ) -> AgentRemoteProvider {
-        AgentRemoteProvider(
-            id: id,
-            name: name,
-            baseURL: baseURL,
-            modelID: modelID,
-            chatEndpoint: chatEndpoint,
-            providerProfileID: providerProfileID,
-            protocolProfileID: protocolProfileID,
-            authPolicy: authPolicy,
-            ds4Runtime: ds4Runtime
+        renormalized { $0.ds4Runtime = ds4Runtime }
+    }
+
+    /// A copy with `change` applied, passed again through the initializer so
+    /// every value keeps the initializer's normalization and profile
+    /// resolution.
+    private func renormalized(_ change: (inout AgentRemoteProvider) -> Void) -> AgentRemoteProvider {
+        var copy = self
+        change(&copy)
+        return AgentRemoteProvider(
+            id: copy.id,
+            name: copy.name,
+            baseURL: copy.baseURL,
+            modelID: copy.modelID,
+            chatEndpoint: copy.chatEndpoint,
+            providerProfileID: copy.providerProfileID,
+            protocolProfileID: copy.protocolProfileID,
+            authPolicy: copy.authPolicy,
+            ds4Runtime: copy.ds4Runtime
         )
     }
 

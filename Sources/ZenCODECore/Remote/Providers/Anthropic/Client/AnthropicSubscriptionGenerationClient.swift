@@ -7,7 +7,7 @@
 
 import Foundation
 
-public actor AnthropicSubscriptionGenerationClient: DirectToolRuntimeBackend {
+public actor AnthropicSubscriptionGenerationClient: LeasedSessionRuntimeBackend {
     public struct AgentSession {
         public let id: String
         public let cwd: URL
@@ -122,10 +122,6 @@ public actor AnthropicSubscriptionGenerationClient: DirectToolRuntimeBackend {
                 ?? DirectSubAgentRuntime.unavailableContextualBackendFactory
         )
     }
-    struct SessionLease: Sendable {
-        let id: String
-        let generation: UInt64
-    }
 
     func installSession(_ session: AgentSession, id: String) {
         nextSessionGeneration &+= 1
@@ -141,36 +137,15 @@ public actor AnthropicSubscriptionGenerationClient: DirectToolRuntimeBackend {
         sessionRequestOverhead.removeValue(forKey: id)
     }
 
-    func sessionLease(for id: String) -> SessionLease? {
-        guard sessions[id] != nil, let generation = sessionGenerations[id] else {
-            return nil
-        }
-        return SessionLease(id: id, generation: generation)
+    /// A session mutation may append user, assistant, or tool wire content.
+    /// The cached request rate is content-dependent, so favour correctness
+    /// over attempting to infer which mutation leaves it unchanged. Static
+    /// provider overhead is measured again with the next wire payload.
+    func sessionDidMutate(id: String) {
+        sessionRequestOverhead.removeValue(forKey: id)
     }
+}
 
-    func currentSession(for lease: SessionLease) -> AgentSession? {
-        guard sessionGenerations[lease.id] == lease.generation else {
-            return nil
-        }
-        return sessions[lease.id]
-    }
-
-    @discardableResult
-    func mutateSession(
-        for lease: SessionLease,
-        _ mutation: (inout AgentSession) -> Void
-    ) -> Bool {
-        guard sessionGenerations[lease.id] == lease.generation,
-              var session = sessions[lease.id] else {
-            return false
-        }
-        mutation(&session)
-        sessions[lease.id] = session
-        // A session mutation may append user, assistant, or tool wire content.
-        // The cached request rate is content-dependent, so favour correctness
-        // over attempting to infer which mutation leaves it unchanged. Static
-        // provider overhead is measured again with the next wire payload.
-        sessionRequestOverhead.removeValue(forKey: lease.id)
-        return true
-    }
+extension AnthropicSubscriptionGenerationClient.AgentSession: LeasedRuntimeSession {
+    var workingDirectoryURL: URL { cwd }
 }

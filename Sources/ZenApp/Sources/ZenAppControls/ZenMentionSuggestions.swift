@@ -146,12 +146,7 @@ public enum ZenMentionSuggestions {
         candidates: [SharedChatMentionParser.Suggestion],
         prefix: String
     ) -> [SharedChatMentionParser.Suggestion] {
-        let matches = candidates.filter { $0.command.hasPrefix(prefix) }
-        let exactMatches = matches.filter { $0.command == prefix }
-        guard !exactMatches.isEmpty else {
-            return matches
-        }
-        return exactMatches + matches.filter { $0.command != prefix }
+        zenOrderedCompletions(candidates, prefix: prefix, command: \.command)
     }
 }
 

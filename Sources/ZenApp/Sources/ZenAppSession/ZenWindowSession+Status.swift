@@ -68,7 +68,7 @@ extension ZenWindowSession {
         }
         let workspace = workspace
         gitTask = Task { [weak self] in
-            let summary = await ZenGitStatus.summary(in: workspace)
+            let summary = await TerminalGitStatusSummary.read(in: workspace)
             guard let self else { return }
             self.gitTask = nil
             guard !self.isClosed else { return }

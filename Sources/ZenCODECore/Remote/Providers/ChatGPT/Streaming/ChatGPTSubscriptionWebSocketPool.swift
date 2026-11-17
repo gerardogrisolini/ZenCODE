@@ -158,13 +158,6 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     /// Test seam for forcing the narrow interval between an HTTP opener
     /// completing and ownership promotion into `activeHTTPStreams`.
     let beforeHTTPStreamRegistration: @Sendable () async -> Void
-    /// Test seam for observing that all retired HTTP work has drained before
-    /// this pool tears down the transport it owns.
-    let beforeOwnedTransportShutdown: @Sendable () async -> Void
-    /// Test seam that records each caller once it has entered shutdown's
-    /// serialization point. It is synchronous specifically so it is safe to
-    /// invoke under `state`'s mutex.
-    let didEnterShutdown: @Sendable () -> Void
     /// Non-nil only when this pool constructed the NIO transport itself. An
     /// injected transport remains owned by its embedding composition root.
     let ownedTransport: RemoteTransportCore?
@@ -198,9 +191,7 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
         httpStreamOpener: (@Sendable (
             RemoteHTTPStreamingRequest
         ) async throws -> RemoteHTTPStreamingResponse)? = nil,
-        beforeHTTPStreamRegistration: @escaping @Sendable () async -> Void = {},
-        beforeOwnedTransportShutdown: @escaping @Sendable () async -> Void = {},
-        didEnterShutdown: @escaping @Sendable () -> Void = {}
+        beforeHTTPStreamRegistration: @escaping @Sendable () async -> Void = {}
     ) {
         let resolvedTransport = transport ?? RemoteTransportCore()
         self.heartbeatIntervalNanoseconds = max(heartbeatIntervalNanoseconds, 1)
@@ -216,8 +207,6 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
             try await resolvedTransport.openHTTPStream(request)
         }
         self.beforeHTTPStreamRegistration = beforeHTTPStreamRegistration
-        self.beforeOwnedTransportShutdown = beforeOwnedTransportShutdown
-        self.didEnterShutdown = didEnterShutdown
     }
 
     /// Idle time has no independent TTL: a session may wait on a long-running
@@ -428,7 +417,6 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
     public func shutdown() async {
         let shutdown = state.withLock {
             state -> (Task<Void, Never>, RetiredHTTPStreams?, OneShotGate?) in
-            didEnterShutdown()
             if let shutdownTask = state.shutdownTask {
                 return (shutdownTask, nil, nil)
             }
@@ -455,7 +443,6 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
             let terminalGate = OneShotGate()
             let closeWebSocketTask = self.closeWebSocketTask
             let ownedTransport = self.ownedTransport
-            let beforeOwnedTransportShutdown = self.beforeOwnedTransportShutdown
             let task = Task {
                 await terminalGate.wait()
                 for entry in entries {
@@ -469,7 +456,6 @@ public final class ChatGPTSubscriptionWebSocketPool: Sendable {
                 // observe the same drain boundary.
                 await httpStreamDrain.value
                 if let ownedTransport {
-                    await beforeOwnedTransportShutdown()
                     try? await ownedTransport.shutdown()
                 }
             }

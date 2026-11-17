@@ -35,31 +35,6 @@ extension AnthropicSubscriptionGenerationClient {
             )), id: id)
     }
 
-    public func createSessionIfNeeded(
-        id: String,
-        cwd: String,
-        systemPrompt: String? = nil,
-        history: [AgentRuntimeMessage] = [],
-        cacheKey: String? = nil,
-        allowedToolNames: Set<String>? = nil,
-        thinkingSelection: AgentThinkingSelection? = nil,
-        preserveThinking: Bool = false
-    ) {
-        guard sessions[id] == nil else {
-            return
-        }
-        createSession(
-            id: id,
-            cwd: cwd,
-            systemPrompt: systemPrompt,
-            history: history,
-            cacheKey: cacheKey,
-            allowedToolNames: allowedToolNames,
-            thinkingSelection: thinkingSelection,
-            preserveThinking: preserveThinking
-        )
-    }
-
     public func closeSession(id: String) async {
         invalidateSession(id: id)
         await toolExecutor.removeToolProviders(sessionID: id)
@@ -130,38 +105,6 @@ extension AnthropicSubscriptionGenerationClient {
         let modelLLMID = modelLLMID()
         await onEvent(.modelLoaded(AgentRemoteProvider.anthropicSubscriptionDisplayTitle + " · " + RemoteSubscriptionModelID.modelID(fromLLMID: modelLLMID, prefix: "claude")))
         return modelLLMID
-    }
-
-    public func activeToolDescriptors(
-        sessionID: String?
-    ) async -> [DirectToolDescriptor] {
-        await toolDescriptors(sessionID: sessionID, discoversFeatureTools: true)
-    }
-
-    public func knownToolDescriptors(
-        sessionID: String?
-    ) async -> [DirectToolDescriptor] {
-        await toolDescriptors(sessionID: sessionID, discoversFeatureTools: false)
-    }
-
-    private func toolDescriptors(
-        sessionID: String?,
-        discoversFeatureTools: Bool
-    ) async -> [DirectToolDescriptor] {
-        let session = if let sessionID {
-            sessions[sessionID]
-        } else {
-            sessions.values.first
-        }
-        guard let session else {
-            return []
-        }
-        return await toolExecutor.descriptors(
-            allowedToolNames: session.allowedToolNames,
-            preferredWorkspaceRootURL: session.cwd,
-            sessionID: session.id,
-            discoversFeatureTools: discoversFeatureTools
-        )
     }
 
     public func snapshotSession(id: String) -> AgentRuntimeSessionSnapshot? {

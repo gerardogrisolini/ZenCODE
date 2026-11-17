@@ -103,7 +103,7 @@ final class TerminalSubAgentDetailController {
     /// The snapshots the agent list opened with.
     private var choiceSnapshots: [DirectSubAgentRuntime.AgentSnapshot] = []
     /// The latest applied snapshot of the agent, as the reads decide on it.
-    private var reloadKey: ReloadKey?
+    private var reloadKey: TerminalSubAgentReloadKey?
     /// The kinds and the tool durations of the latest transcript applied, and
     /// their revision.
     private var kinds: [ChatTurnEntry.Kind]?
@@ -118,13 +118,19 @@ final class TerminalSubAgentDetailController {
     /// stale.
     private var following: UInt64 = 0
     private var followTask: Task<Void, Never>?
-    private var viewportTask: Task<Void, Never>?
-    private var cancelResizeSubscription: (@Sendable () -> Void)?
-    /// The viewport of the last frame presented.
-    private var lastViewport: Viewport?
+    /// The viewport checks: the poll, the resize subscription, and the
+    /// viewport of the last frame presented.
+    private let viewportWatch: TerminalPanelViewportWatch
 
     init(environment: Environment) {
         self.environment = environment
+        viewportWatch = TerminalPanelViewportWatch(
+            viewport: environment.viewport,
+            isCancelled: environment.isCancelled,
+            sleep: environment.sleep,
+            pollInterval: environment.viewportPollInterval,
+            subscribeResize: environment.subscribeResize
+        )
     }
 
     // MARK: - Opening and closing
@@ -208,10 +214,7 @@ final class TerminalSubAgentDetailController {
         guard !isStopped else { return }
         isStopped = true
         endFollowing()
-        viewportTask?.cancel()
-        viewportTask = nil
-        cancelResizeSubscription?()
-        cancelResizeSubscription = nil
+        viewportWatch.stop()
     }
 
     /// Stops the controller, then reports `reason` through
@@ -254,7 +257,7 @@ final class TerminalSubAgentDetailController {
         self.snapshot = snapshot
         // The read at the opening covers the snapshot the agent opened with:
         // the stream's first value, which repeats it, reads nothing more.
-        reloadKey = snapshot.map(ReloadKey.init)
+        reloadKey = snapshot.map(TerminalSubAgentReloadKey.init)
         kinds = nil
         toolDurations = [:]
         transcriptRows = nil
@@ -289,7 +292,7 @@ final class TerminalSubAgentDetailController {
                     while let delivery = await mailbox.next() {
                         guard let self, self.isFollowing(following), !Task.isCancelled else { return false }
                         await self.apply(delivery, following: following)
-                        switch await Self.throttle(mailbox, interval: updateInterval, sleep: sleep) {
+                        switch await mailbox.throttle(interval: updateInterval, sleep: sleep) {
                         case .elapsed, .lifecycleChanged:
                             continue
                         case .failed:
@@ -322,42 +325,6 @@ final class TerminalSubAgentDetailController {
         !isStopped && following == self.following
     }
 
-    /// How the wait after an applied update ended.
-    private enum ThrottleEnd: Sendable {
-        /// The interval elapsed.
-        case elapsed
-        /// A value that changes the agent's lifecycle arrived first.
-        case lifecycleChanged
-        /// The sleep threw: the following was cancelled.
-        case failed
-    }
-
-    /// Waits `interval`, or less when a value that changes the agent's
-    /// lifecycle reaches `mailbox` first; the other wait is cancelled.
-    private nonisolated static func throttle(
-        _ mailbox: TerminalSubAgentSnapshotMailbox,
-        interval: Duration,
-        sleep: @escaping @Sendable (Duration) async throws -> Void
-    ) async -> ThrottleEnd {
-        await withTaskGroup(of: ThrottleEnd.self) { group in
-            group.addTask {
-                do {
-                    try await sleep(interval)
-                    return .elapsed
-                } catch {
-                    return .failed
-                }
-            }
-            group.addTask {
-                await mailbox.waitForLifecycleChange()
-                return .lifecycleChanged
-            }
-            let end = await group.next() ?? .failed
-            group.cancelAll()
-            return end
-        }
-    }
-
     /// Applies the snapshots of one update: the agent's snapshot, then a read
     /// of the transcript when the reload key changed. An update without the
     /// agent changes nothing.
@@ -365,7 +332,7 @@ final class TerminalSubAgentDetailController {
         guard isFollowing(following), let agentID,
               let agent = delivery.snapshots.first(where: { $0.id == agentID }) else { return }
         snapshot = agent
-        let key = ReloadKey(agent)
+        let key = TerminalSubAgentReloadKey(agent)
         let changesLifecycle = delivery.changesLifecycle || key.lifecycle != reloadKey?.lifecycle
         guard changesLifecycle || key != reloadKey else {
             render()
@@ -408,44 +375,12 @@ final class TerminalSubAgentDetailController {
     /// Starts the viewport checks: a poll every
     /// ``Environment/viewportPollInterval`` and one at every resize signal.
     private func watchViewport() {
-        guard !isStopped, viewportTask == nil, cancelResizeSubscription == nil else { return }
-        cancelResizeSubscription = environment.subscribeResize { [weak self] in
-            Task { @ChatSessionActor [weak self] in
-                await self?.checkLayout()
-            }
-        }
-        let sleep = environment.sleep
-        let interval = environment.viewportPollInterval
-        viewportTask = Task { [weak self] in
-            while !Task.isCancelled {
-                do {
-                    try await sleep(interval)
-                } catch {
-                    return
-                }
-                guard let self, !self.isStopped else { return }
-                if self.environment.isCancelled() {
-                    // This task closes the controller: keep it out of the
-                    // cancellation of `stop()`, so `onClosed` runs uncancelled.
-                    self.viewportTask = nil
-                }
-                await self.checkLayout()
-                guard !self.isStopped else { return }
-            }
-        }
-    }
-
-    /// Closes the controller once the screen fell back to append-only output;
-    /// otherwise draws the panel again when the viewport changed since the
-    /// last frame.
-    private func checkLayout() async {
         guard !isStopped else { return }
-        guard !environment.isCancelled() else {
-            await close(reason: .layoutUnavailable)
-            return
-        }
-        guard Viewport(environment.viewport()) != lastViewport else { return }
-        render()
+        viewportWatch.start(
+            isActive: { [weak self] in self.map { !$0.isStopped } ?? false },
+            layoutUnavailable: { [weak self] in await self?.close(reason: .layoutUnavailable) },
+            redraw: { [weak self] in self?.render() }
+        )
     }
 
     // MARK: - Rendering
@@ -453,8 +388,7 @@ final class TerminalSubAgentDetailController {
     /// Draws the panel for the current viewport and presents it.
     private func render() {
         guard !isStopped else { return }
-        let viewport = Viewport(environment.viewport())
-        lastViewport = viewport
+        let viewport = viewportWatch.frameViewport()
         var headerRows: [String] = []
         var bodyRows: [String] = []
         if case .showing = panel.mode {
@@ -525,41 +459,9 @@ final class TerminalSubAgentDetailController {
 
     // MARK: - Keys
 
-    private struct Viewport: Equatable {
-        let rows: Int
-        let columns: Int
-
-        init(_ viewport: (rows: Int, columns: Int)) {
-            rows = viewport.rows
-            columns = viewport.columns
-        }
-    }
-
     private struct TranscriptRows {
         let revision: UInt64
         let width: Int
         let rows: [String]
-    }
-
-    /// What decides that the transcript may have changed: the agent's
-    /// lifecycle, its completed execution, its tool and whether that tool
-    /// still runs (its result reaches the transcript when it stops), and its
-    /// latest event.
-    private struct ReloadKey: Equatable {
-        let lifecycle: TerminalSubAgentLifecycle
-        let completedExecutionRevision: UInt64
-        let toolName: String?
-        let toolIsRunning: Bool
-        let latestEventAt: Date?
-        let updatedAt: Date
-
-        init(_ snapshot: DirectSubAgentRuntime.AgentSnapshot) {
-            lifecycle = TerminalSubAgentLifecycle(snapshot)
-            completedExecutionRevision = snapshot.completedExecutionRevision
-            toolName = snapshot.currentToolName
-            toolIsRunning = snapshot.currentToolIsRunning
-            latestEventAt = snapshot.latestEventAt
-            updatedAt = snapshot.updatedAt
-        }
     }
 }

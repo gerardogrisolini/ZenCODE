@@ -43,9 +43,7 @@ public enum AgentSettingsModelManifestFactory {
             configuredContextWindowLimit: configuredContextWindowLimit,
             generationParameterOverrides: generationParameterOverrides,
             thinkingOptions: agentThinkingOptions(from: thinkingSupport),
-            defaultThinkingSelection: agentThinkingSelection(
-                from: thinkingSupport?.defaultSelection
-            )
+            defaultThinkingSelection: thinkingSupport?.defaultSelection
         )
     }
 
@@ -56,16 +54,7 @@ public enum AgentSettingsModelManifestFactory {
               support.supportsThinking else {
             return nil
         }
-        let options = support.availableSelections.compactMap(agentThinkingSelection)
+        let options = support.availableSelections
         return options.isEmpty ? nil : options
-    }
-
-    public static func agentThinkingSelection(
-        from selection: ThinkingSelection?
-    ) -> AgentThinkingSelection? {
-        guard let selection else {
-            return nil
-        }
-        return AgentThinkingSelection(rawValue: selection.rawValue)
     }
 }

@@ -29,10 +29,6 @@ extension ZenCODEACPBridge {
         }
     }
 
-    public func handleMessage(_ message: [String: Any]) async {
-        await handleJSONMessage(message.mapValues { JSONValue(jsonObject: $0) })
-    }
-
     private func handleJSONMessage(_ message: [String: JSONValue]) async {
         let id = JSONValue.acpRequestID(from: message)
         if message["jsonrpc"]?.stringValue == "2.0",

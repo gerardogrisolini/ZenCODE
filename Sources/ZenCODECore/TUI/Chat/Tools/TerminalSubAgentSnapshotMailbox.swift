@@ -3,7 +3,8 @@
 //  ZenCODE
 //
 //  The mailbox that hands the newest sub-agent snapshots from the task that
-//  iterates their stream to the `/subagent` detail controller.
+//  iterates their stream to the loop that applies them: the `/subagent`
+//  detail controller and the sub-agent tabs of the macOS app.
 //
 
 import Synchronization
@@ -11,21 +12,31 @@ import Synchronization
 // MARK: - Mailbox
 
 /// The newest snapshots of one stream, handed from the child task that
-/// iterates the stream (``pump(_:)``) to the following loop of a
-/// ``TerminalSubAgentDetailController`` that applies them (``next()``).
+/// iterates the stream (``pump(_:)``) to the following loop that applies them
+/// (``next()``).
 ///
 /// It keeps only the newest value, and tells whether a value changes the
 /// agent's lifecycle from the last value taken (at first, from the lifecycle
 /// it was made with); a change seen in a value that a newer one replaced still
-/// counts. ``waitForLifecycleChange()`` lets the controller's throttle end as
-/// soon as such a value arrives. Every wait ends when its task is cancelled,
+/// counts. ``waitForLifecycleChange()`` lets the follower's throttle
+/// (``throttle(interval:sleep:)``) end as soon as such a value arrives. Every wait ends when its task is cancelled,
 /// and nothing polls.
-final class TerminalSubAgentSnapshotMailbox: Sendable {
+public final class TerminalSubAgentSnapshotMailbox: Sendable {
     /// A value taken from the mailbox.
-    struct Delivery: Sendable {
-        let snapshots: [DirectSubAgentRuntime.AgentSnapshot]
+    public struct Delivery: Sendable {
+        public let snapshots: [DirectSubAgentRuntime.AgentSnapshot]
         /// The value, or one it replaced, changes the agent's lifecycle.
-        let changesLifecycle: Bool
+        public let changesLifecycle: Bool
+    }
+
+    /// How the wait after an applied update ended (``throttle(interval:sleep:)``).
+    public enum ThrottleEnd: Sendable {
+        /// The interval elapsed.
+        case elapsed
+        /// A value that changes the agent's lifecycle arrived first.
+        case lifecycleChanged
+        /// The sleep threw: the follower's task was cancelled.
+        case failed
     }
 
     private enum Waiter {
@@ -80,16 +91,16 @@ final class TerminalSubAgentSnapshotMailbox: Sendable {
 
     /// - Parameters:
     ///   - agentID: The agent whose lifecycle the mailbox watches.
-    ///   - lifecycle: The lifecycle of the last snapshot the controller
+    ///   - lifecycle: The lifecycle of the last snapshot the follower
     ///     applied.
-    init(agentID: String, lifecycle: TerminalSubAgentLifecycle?) {
+    public init(agentID: String, lifecycle: TerminalSubAgentLifecycle?) {
         self.agentID = agentID
         state = Mutex(State(lifecycle: lifecycle))
     }
 
     /// Iterates `stream` until it finishes or the task is cancelled, keeping
     /// its newest value, then finishes the mailbox.
-    func pump(_ stream: AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]>) async {
+    public func pump(_ stream: AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]>) async {
         for await snapshots in stream {
             put(snapshots)
         }
@@ -98,7 +109,7 @@ final class TerminalSubAgentSnapshotMailbox: Sendable {
 
     /// Replaces the value not taken yet with `snapshots`, and wakes the waits
     /// it satisfies.
-    func put(_ snapshots: [DirectSubAgentRuntime.AgentSnapshot]) {
+    public func put(_ snapshots: [DirectSubAgentRuntime.AgentSnapshot]) {
         let lifecycle = snapshots.first { $0.id == agentID }.map(TerminalSubAgentLifecycle.init)
         let waiters = state.withLock { state in
             state.latest = snapshots
@@ -115,7 +126,7 @@ final class TerminalSubAgentSnapshotMailbox: Sendable {
 
     /// No value comes any more: ``next()`` answers the one not taken yet,
     /// then `nil`.
-    func finish() {
+    public func finish() {
         let waiter = state.withLock { state in
             state.isFinished = true
             return state.take(.value)
@@ -125,7 +136,7 @@ final class TerminalSubAgentSnapshotMailbox: Sendable {
 
     /// The newest value not taken yet, waiting for one; `nil` once the
     /// mailbox finished with nothing left, or when the task is cancelled.
-    func next() async -> Delivery? {
+    public func next() async -> Delivery? {
         while !Task.isCancelled {
             let delivery = state.withLock { state -> Delivery?? in
                 if let latest = state.latest {
@@ -150,8 +161,33 @@ final class TerminalSubAgentSnapshotMailbox: Sendable {
 
     /// Returns once a value that changes the agent's lifecycle waits to be
     /// taken, or when the task is cancelled.
-    func waitForLifecycleChange() async {
+    public func waitForLifecycleChange() async {
         await wait(for: .lifecycleChange)
+    }
+
+    /// Waits `interval`, or less when a value that changes the agent's
+    /// lifecycle reaches the mailbox first; the other wait is cancelled.
+    public func throttle(
+        interval: Duration,
+        sleep: @escaping @Sendable (Duration) async throws -> Void
+    ) async -> ThrottleEnd {
+        await withTaskGroup(of: ThrottleEnd.self) { group in
+            group.addTask {
+                do {
+                    try await sleep(interval)
+                    return .elapsed
+                } catch {
+                    return .failed
+                }
+            }
+            group.addTask {
+                await self.waitForLifecycleChange()
+                return .lifecycleChanged
+            }
+            let end = await group.next() ?? .failed
+            group.cancelAll()
+            return end
+        }
     }
 
     private func wait(for waiter: Waiter) async {

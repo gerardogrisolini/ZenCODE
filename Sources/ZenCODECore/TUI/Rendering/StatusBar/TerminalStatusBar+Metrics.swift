@@ -67,55 +67,6 @@ extension TerminalStatusBar {
         DirectAgentGenerationMetrics.merging(current: current, update: update)
     }
 
-    static func tokenWindowText(
-        usedTokens: Int?,
-        metricUsedTokens: Int?,
-        maxTokens: Int?
-    ) -> String {
-        let resolvedUsedTokens = usedTokens ?? metricUsedTokens
-        let usedText = resolvedUsedTokens.map(contextTokenCountText) ?? "0.0k"
-        guard let maxTokens, maxTokens > 0 else {
-            return "\(usedText)/--"
-        }
-        return "\(usedText)/\(contextWindowLimitText(maxTokens))"
-    }
-
-    static func contextWindowLimitText(_ value: Int) -> String {
-        let absoluteValue = abs(value)
-        if absoluteValue >= 1_000_000 {
-            return String(format: "%.1fm", Double(value) / 1_000_000)
-        }
-        if absoluteValue >= 1_000 {
-            return String(format: "%.1fk", Double(value) / 1_000)
-        }
-        return "\(value)"
-    }
-
-    static func contextTokenCountText(_ value: Int) -> String {
-        let absoluteValue = abs(value)
-        if absoluteValue >= 1_000_000 {
-            return String(format: "%.1fm", Double(value) / 1_000_000)
-        }
-        if absoluteValue >= 1_000 {
-            return String(format: "%.1fk", Double(value) / 1_000)
-        }
-        return "\(value)"
-    }
-
-    static func tokenCountText(_ value: Int) -> String {
-        let absoluteValue = abs(value)
-        if absoluteValue >= 1_000_000 {
-            return String(format: "%.1fm", Double(value) / 1_000_000)
-        }
-        if absoluteValue >= 10_000 {
-            return "\(value / 1_000)k"
-        }
-        if absoluteValue >= 1_000 {
-            return String(format: "%.1fk", Double(value) / 1_000)
-        }
-        return "\(value)"
-    }
-
     /// Status-bar presentation of the token counters (`c:<cached> p:<prompt>
     /// g:<generated>`, only the known ones): the `c:` / `p:` / `g:` labels are
     /// muted so only their values keep the default foreground.
@@ -123,9 +74,9 @@ extension TerminalStatusBar {
         _ metrics: DirectAgentGenerationMetrics
     ) -> String? {
         let fragments = [
-            metrics.cachedPromptTokenCount.map { mutedLabel("c:") + tokenCountText($0) },
-            metrics.promptTokenCount.map { mutedLabel("p:") + tokenCountText($0) },
-            metrics.completionTokenCount.map { mutedLabel("g:") + tokenCountText($0) }
+            metrics.cachedPromptTokenCount.map { mutedLabel("c:") + StatusMetricsFormatting.tokenCountText($0) },
+            metrics.promptTokenCount.map { mutedLabel("p:") + StatusMetricsFormatting.tokenCountText($0) },
+            metrics.completionTokenCount.map { mutedLabel("g:") + StatusMetricsFormatting.tokenCountText($0) }
         ].compactMap(\.self)
 
         guard !fragments.isEmpty else {
@@ -156,12 +107,12 @@ extension TerminalStatusBar {
         guard let throughput = metrics.throughput else {
             return nil
         }
-        let prefillRate = throughput.prefillTokensPerSecond.flatMap(throughputRateText)
+        let prefillRate = throughput.prefillTokensPerSecond.flatMap(StatusMetricsFormatting.throughputRateText)
         let unit = "tok/s"
 
         if let processed = throughput.processedTokens,
            let target = throughput.targetTokens {
-            let progress = styleLabel("p:") + "\(tokenCountText(processed))/\(tokenCountText(target))"
+            let progress = styleLabel("p:") + "\(StatusMetricsFormatting.tokenCountText(processed))/\(StatusMetricsFormatting.tokenCountText(target))"
             guard let prefillRate else {
                 return progress
             }
@@ -171,22 +122,13 @@ extension TerminalStatusBar {
         let segments = [
             prefillRate.map { styleLabel("p:") + $0 },
             throughput.generationTokensPerSecond
-                .flatMap(throughputRateText)
+                .flatMap(StatusMetricsFormatting.throughputRateText)
                 .map { styleLabel("g:") + $0 }
         ].compactMap(\.self)
         guard !segments.isEmpty else {
             return nil
         }
         return "\(segments.joined(separator: " ")) \(unit)"
-    }
-
-    /// One decimal (`%.1f`) for every speed, prefill and generation alike;
-    /// nothing for a value that is not a finite, non-negative speed.
-    static func throughputRateText(_ value: Double) -> String? {
-        guard value.isFinite, value >= 0 else {
-            return nil
-        }
-        return String(format: "%.1f", value)
     }
 
     /// Status-bar presentation of the subscription usage counters
@@ -200,35 +142,14 @@ extension TerminalStatusBar {
             return nil
         }
         let fragments = [
-            status.dailyUsedPercent.map { mutedLabel("d:") + usagePercentText($0) },
-            status.weeklyUsedPercent.map { mutedLabel("w:") + usagePercentText($0) }
+            status.dailyUsedPercent.map { mutedLabel("d:") + StatusMetricsFormatting.usagePercentText($0) },
+            status.weeklyUsedPercent.map { mutedLabel("w:") + StatusMetricsFormatting.usagePercentText($0) }
         ].compactMap(\.self)
         return fragments.joined(separator: " ")
     }
 
     private static func mutedLabel(_ label: String) -> String {
         "\(TerminalStyle.Text.muted)\(label)\(TerminalStyle.reset)"
-    }
-
-    static func usagePercentText(_ value: Double) -> String {
-        guard value.isFinite else {
-            return "--"
-        }
-        let clamped = min(max(value, 0), 100)
-        if clamped >= 10 || clamped == 0 {
-            return "\(Int(clamped.rounded()))%"
-        }
-        return String(format: "%.1f%%", clamped)
-    }
-
-    static func durationText(_ value: Double) -> String {
-        guard value.isFinite, value >= 0 else {
-            return "--"
-        }
-        let style = Duration.TimeFormatStyle(pattern: .hourMinuteSecond)
-        return Duration
-            .seconds(value)
-            .formatted(style)
     }
 
     static func visibleCharacterCount(_ text: String) -> Int {

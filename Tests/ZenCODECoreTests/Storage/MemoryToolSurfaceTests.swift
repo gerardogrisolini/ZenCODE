@@ -68,11 +68,11 @@ struct MemoryToolSurfaceTests {
                 State: build and tests green, tag pushed, artifacts published.
                 Next: announce the release.
                 """,
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
             _ = try await service.writeEntry(
                 content: "Summary: the Telegram transport keeps a single private owner chat.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
 
             let overlapping = try await Self.execute("memory.write", [
@@ -113,7 +113,7 @@ struct MemoryToolSurfaceTests {
             for index in 1...5 {
                 _ = try await service.writeEntry(
                     content: "Summary: journal entry number \(index).",
-                    workspaceRootURL: workspace.workspaceURL
+                    target: .workspace(workspace.workspaceURL)
                 )
             }
 
@@ -142,23 +142,23 @@ struct MemoryToolSurfaceTests {
             let service = MemoryService()
             let both = try await service.writeEntry(
                 content: "Summary: memory note validated on linux.",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 tags: ["memory", "linux"]
             )
             let memoryOnly = try await service.writeEntry(
                 content: "Summary: memory note about the graph.",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 tags: ["memory"]
             )
             let correction = try await service.writeEntry(
                 content: "Summary: correction note about the graph.",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 category: .correction,
                 tags: ["memory"]
             )
 
             let bothTags = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 includeArchived: false,
                 offset: 0,
                 limit: 10,
@@ -167,7 +167,7 @@ struct MemoryToolSurfaceTests {
             #expect(bothTags.map(\.id) == [both.id])
 
             let oneTag = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 includeArchived: false,
                 offset: 0,
                 limit: 10,
@@ -210,9 +210,9 @@ struct MemoryToolSurfaceTests {
                 State: kept for the record.
                 Next: none.
                 """,
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
-            _ = try await service.archiveEntry(id: entry.id.uuidString, workspaceRootURL: workspace.workspaceURL)
+            _ = try await service.setArchived(true, id: entry.id.uuidString, target: .workspace(workspace.workspaceURL))
 
             let fetched = try await Self.execute("memory.get", [
                 "id": .string(entry.id.uuidString)
@@ -242,10 +242,10 @@ struct MemoryToolSurfaceTests {
             let service = MemoryService()
             let entry = try await service.writeEntry(
                 content: "Summary: restorable fact.",
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
-            _ = try await service.archiveEntry(id: entry.id.uuidString, workspaceRootURL: workspace.workspaceURL)
-            #expect(try await service.readEntries(workspaceRootURL: workspace.workspaceURL, limit: 10).isEmpty)
+            _ = try await service.setArchived(true, id: entry.id.uuidString, target: .workspace(workspace.workspaceURL))
+            #expect(try await service.readEntries(target: .workspace(workspace.workspaceURL), limit: 10).isEmpty)
 
             let restored = try await Self.execute("memory.restore", [
                 "id": .string(entry.id.uuidString)
@@ -253,7 +253,7 @@ struct MemoryToolSurfaceTests {
             #expect(restored.result["restored"] == .bool(true))
             #expect(restored.text.hasPrefix("Restored memory entry."))
 
-            let active = try await service.readEntries(workspaceRootURL: workspace.workspaceURL, limit: 10)
+            let active = try await service.readEntries(target: .workspace(workspace.workspaceURL), limit: 10)
             #expect(active.map(\.id) == [entry.id])
             #expect(active.first?.isArchived == false)
         }

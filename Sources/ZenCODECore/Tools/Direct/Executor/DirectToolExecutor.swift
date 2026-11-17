@@ -92,7 +92,6 @@ public actor DirectToolExecutor {
             borrowedSubAgentToolExecutor: borrowedSubAgentToolExecutor,
             subAgentContextualBackendFactory: subAgentContextualBackendFactory,
             subAgentProfileResolver: DirectSubAgentRuntime.liveProfileResolver,
-            subAgentModelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
             coordinatesLiveManifestReads: true,
             sharedChat: sharedChat,
             sharedChatSenderID: sharedChatSenderID,
@@ -121,34 +120,6 @@ public actor DirectToolExecutor {
             borrowedSubAgentToolExecutor: borrowedSubAgentToolExecutor,
             subAgentContextualBackendFactory: subAgentContextualBackendFactory,
             subAgentProfileResolver: subAgentProfileResolver,
-            subAgentModelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
-            coordinatesLiveManifestReads: false,
-            toolExecutionContext: toolExecutionContext
-        )
-    }
-
-    public init(
-        outputLimit: Int,
-        authorizationHandler: AgentToolAuthorizationHandler?,
-        mcpRuntime: DirectMCPToolRuntime,
-        swiftFeatureRuntime: SwiftFeatureRuntime,
-        preferredWorkspaceRootURL: URL?,
-        borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?,
-        toolExecutionContext: ToolExecutionContext = ToolExecutionContext(),
-        subAgentContextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
-        subAgentProfileResolver: @escaping DirectSubAgentProfileResolver,
-        subAgentModelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider
-    ) {
-        self.init(
-            outputLimit: outputLimit,
-            authorizationHandler: authorizationHandler,
-            mcpRuntime: mcpRuntime,
-            swiftFeatureRuntime: swiftFeatureRuntime,
-            preferredWorkspaceRootURL: preferredWorkspaceRootURL,
-            borrowedSubAgentToolExecutor: borrowedSubAgentToolExecutor,
-            subAgentContextualBackendFactory: subAgentContextualBackendFactory,
-            subAgentProfileResolver: subAgentProfileResolver,
-            subAgentModelCatalogProvider: subAgentModelCatalogProvider,
             coordinatesLiveManifestReads: false,
             toolExecutionContext: toolExecutionContext
         )
@@ -163,7 +134,6 @@ public actor DirectToolExecutor {
         borrowedSubAgentToolExecutor: AgentBorrowedToolExecutor?,
         subAgentContextualBackendFactory: @escaping DirectSubAgentContextualBackendFactory,
         subAgentProfileResolver: @escaping DirectSubAgentProfileResolver,
-        subAgentModelCatalogProvider: @escaping DirectSubAgentModelCatalogProvider,
         coordinatesLiveManifestReads: Bool,
         sharedChat: AgentSharedChat? = nil,
         sharedChatSenderID: String? = nil,
@@ -195,7 +165,7 @@ public actor DirectToolExecutor {
                 )
             },
             profileResolver: subAgentProfileResolver,
-            modelCatalogProvider: subAgentModelCatalogProvider,
+            modelCatalogProvider: DirectSubAgentRuntime.liveModelCatalogProvider,
             coordinatesLiveManifestReads: coordinatesLiveManifestReads,
             sharedChat: self.sharedChat,
             sharedChatSenderID: self.sharedChatSenderID,
@@ -492,38 +462,10 @@ public actor DirectToolExecutor {
             return true
         }
         if let mcpError = error as? MCPClientError,
-           mcpErrorIsPermissionDenied(mcpError) {
+           mcpError.indicatesPermissionDenied {
             return true
         }
         return false
-    }
-
-    private static func mcpErrorIsPermissionDenied(_ error: MCPClientError) -> Bool {
-        // Generic, cross-platform detection of MCP permission failures.
-        //
-        // Keep permission classification generic so every MCP connector follows
-        // the same result contract on every supported platform.
-        switch error {
-        case .authorizationRequired:
-            return true
-        case let .serverExited(_, message),
-             let .serverError(_, message):
-            return messageLooksLikePermissionDenied(message)
-        default:
-            return false
-        }
-    }
-
-    private static func messageLooksLikePermissionDenied(_ message: String) -> Bool {
-        let lowered = message.lowercased()
-        return lowered.contains("permission denied")
-            || lowered.contains("consent denied")
-            || lowered.contains("not authorized")
-            || lowered.contains("not authorised")
-            || lowered.contains("not allowed")
-            || lowered.contains("not permitted")
-            || lowered.contains("rejected")
-            || lowered.contains("declined")
     }
 }
 

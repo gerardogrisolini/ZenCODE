@@ -308,8 +308,6 @@ protocol DS4Engine: AnyObject, Sendable {
     /// uses it ends. Throws as `tokenCount(of:)`; a failed image encode is
     /// `DS4EngineError.vision`.
     func prepare(transcript: [DS4TranscriptOperation]) async throws -> DS4PreparedTranscript
-    /// The prompt built from `transcript` rendered back to text.
-    func renderText(of transcript: [DS4TranscriptOperation]) async throws -> String
 
     /// Explicit effort "0"..."100" -> `ThinkMode.levelBase + level`, nil when invalid.
     func thinkMode(parseLevel: String) -> Int32?

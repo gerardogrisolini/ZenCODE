@@ -49,11 +49,11 @@ struct MemoryReadOnlySearchStoreTests {
                 let service = MemoryService()
                 _ = try await service.writeEntry(
                     content: "Summary: actors isolate mutable state.",
-                    workspaceRootURL: workspace.workspaceURL
+                    target: .workspace(workspace.workspaceURL)
                 )
                 _ = try await service.writeEntry(
                     content: "Summary: structured concurrency guide.",
-                    workspaceRootURL: workspace.workspaceURL
+                    target: .workspace(workspace.workspaceURL)
                 )
 
                 let graphURL = workspace.graphURL()
@@ -62,12 +62,12 @@ struct MemoryReadOnlySearchStoreTests {
                 // Multiple searches to prove idempotence and read-only-ness.
                 _ = try await service.searchEntries(
                     query: "actors",
-                    workspaceRootURL: workspace.workspaceURL,
+                    target: .workspace(workspace.workspaceURL),
                     limit: 10
                 )
                 _ = try await service.searchEntries(
                     query: "structured concurrency",
-                    workspaceRootURL: workspace.workspaceURL,
+                    target: .workspace(workspace.workspaceURL),
                     limit: 10
                 )
 
@@ -136,7 +136,7 @@ struct MemoryReadOnlySearchStoreTests {
             // must return no results, and must NOT create the graph file.
             let results = try await service.searchEntries(
                 query: "cold",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 10
             )
             #expect(results.isEmpty)
@@ -146,7 +146,7 @@ struct MemoryReadOnlySearchStoreTests {
 
             // A cold read is equally harmless.
             let entries = try await service.readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 10
             )
             #expect(entries.isEmpty)
@@ -196,7 +196,7 @@ struct MemoryEmbeddingIsolationTests {
                 let service = MemoryService()
                 let entry = try await service.writeEntry(
                     content: "Summary: deterministic embedding injection.",
-                    workspaceRootURL: workspace.workspaceURL
+                    target: .workspace(workspace.workspaceURL)
                 )
                 #expect(entry.embedding?.isEmpty == false)
                 #expect(entry.embeddingModel == "injected-v1")

@@ -316,15 +316,15 @@ import Testing
                 let service = MemoryService()
                 let kept = try await service.writeEntry(
                     content: "Summary: keep this vector",
-                    workspaceRootURL: workspace.workspaceURL,
+                    target: .workspace(workspace.workspaceURL),
                     tags: ["keep"]
                 )
                 let dropped = try await service.writeEntry(
                     content: "Summary: archived then removed",
-                    workspaceRootURL: workspace.workspaceURL,
+                    target: .workspace(workspace.workspaceURL),
                     tags: ["drop"]
                 )
-                try await service.archiveEntry(id: dropped.id.uuidString, workspaceRootURL: workspace.workspaceURL)
+                try await service.setArchived(true, id: dropped.id.uuidString, target: .workspace(workspace.workspaceURL))
 
                 let graphURL = workspace.graphURL()
                 let store = try await MemoryGraphStoreRegistry.shared.store(graphURL: graphURL)

@@ -277,20 +277,6 @@ final class DS4NativeEngineCore: @unchecked Sendable {
         )
     }
 
-    func renderText(of transcript: [DS4TranscriptOperation]) throws -> String {
-        let engine = try requireEngine()
-        let tokens = try makeTokens(transcript)
-        defer { symbols.tokensFree(tokens) }
-        var length = 0
-        guard let text = symbols.renderTokensText(engine, tokens, &length) else {
-            throw failure(DS4EngineABI.ErrorCode.invalidArgument)
-        }
-        defer { symbols.stringFree(text) }
-        return text.withMemoryRebound(to: UInt8.self, capacity: length) {
-            String(decoding: UnsafeBufferPointer(start: $0, count: length), as: UTF8.self)
-        }
-    }
-
     func thinkMode(forContext mode: Int32, contextSize: Int) -> Int32 {
         let result = symbols.thinkModeForContext(mode, Int32(clamping: contextSize))
         return result < 0 ? mode : result

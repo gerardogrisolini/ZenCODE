@@ -174,12 +174,7 @@ public enum ZenCommandSuggestions {
         candidates: [ChatCommandDescriptor],
         prefix: String
     ) -> [ChatCommandDescriptor] {
-        let matches = candidates.filter { $0.command.hasPrefix(prefix) }
-        let exactMatches = matches.filter { $0.command == prefix }
-        guard !exactMatches.isEmpty else {
-            return matches
-        }
-        return exactMatches + matches.filter { $0.command != prefix }
+        zenOrderedCompletions(candidates, prefix: prefix, command: \.command)
     }
 
     /// Whether an operand follows `index`, with the literal-space grammar of

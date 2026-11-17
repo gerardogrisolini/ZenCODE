@@ -3,8 +3,8 @@
 //  ZenAppSessionTests
 //
 //  The sub-agent tabs without a window: the projection of a sub-agent
-//  transcript and of its tool durations, which tab a close selects, the
-//  mailbox of the snapshots, and the model of a tab over a scripted source
+//  transcript and of its tool durations, which tab a close selects, and the
+//  model of a tab over a scripted source
 //  and a sleep the test releases (the throttling, the lifecycle changes, the
 //  selection, the re-subscription, the reads, the last read kept, the tool
 //  durations, the stop).
@@ -221,69 +221,5 @@ final class ZenSleepGate: Sendable {
                 throw error
             }
         }
-    }
-}
-
-// MARK: - Mailbox
-
-@Suite("Sub-agent snapshot mailbox")
-struct ZenSubAgentSnapshotMailboxTests {
-    @Test("It keeps the newest value and flags the lifecycle changes of its agent, a replaced one too")
-    func newestValueAndLifecycle() async {
-        let mailbox = ZenSubAgentSnapshotMailbox(agentID: "agent-1", lifecycle: ZenSubAgentLifecycle(agent()))
-        // A newer event of the same lifecycle replaces the value, unflagged.
-        mailbox.put([agent(second: 1)])
-        mailbox.put([agent(second: 2)])
-        let first = await mailbox.next()
-        #expect(first?.snapshots.first?.latestEventAt == referenceDate.addingTimeInterval(2))
-        #expect(first?.changesLifecycle == false)
-
-        // A change that a newer value replaced still counts, and wakes the
-        // wait for a change.
-        mailbox.put([agent(status: .idle, second: 3)])
-        mailbox.put([agent(status: .running, second: 4)])
-        await mailbox.waitForLifecycleChange()
-        let second = await mailbox.next()
-        #expect(second?.snapshots.first?.latestEventAt == referenceDate.addingTimeInterval(4))
-        #expect(second?.changesLifecycle == true)
-
-        // Another agent's change, or a value without the agent, is not one.
-        mailbox.put([agent("agent-2", status: .idle)])
-        #expect(await mailbox.next()?.changesLifecycle == false)
-        // The comparison is with the last value taken that had the agent.
-        mailbox.put([agent(status: .idle, second: 5)])
-        #expect(await mailbox.next()?.changesLifecycle == true)
-        mailbox.put([agent(status: .idle, second: 6)])
-        #expect(await mailbox.next()?.changesLifecycle == false)
-
-        // Finished: the value not taken yet, then nothing.
-        mailbox.put([agent(status: .idle, second: 7)])
-        mailbox.finish()
-        #expect(await mailbox.next()?.snapshots.first?.latestEventAt == referenceDate.addingTimeInterval(7))
-        #expect(await mailbox.next() == nil)
-    }
-
-    @Test("Its waits end when a value comes, when it finishes, or when their task is cancelled")
-    func waitsEnd() async {
-        let mailbox = ZenSubAgentSnapshotMailbox(agentID: "agent-1", lifecycle: nil)
-        let waitingValue = Task { await mailbox.next()?.snapshots.count }
-        try? await Task.sleep(for: .milliseconds(20))
-        mailbox.put([agent()])
-        #expect(await waitingValue.value == 1)
-
-        let cancelledValue = Task { await mailbox.next() == nil }
-        try? await Task.sleep(for: .milliseconds(20))
-        cancelledValue.cancel()
-        #expect(await cancelledValue.value)
-
-        let cancelledChange = Task { await mailbox.waitForLifecycleChange() }
-        try? await Task.sleep(for: .milliseconds(20))
-        cancelledChange.cancel()
-        await cancelledChange.value
-
-        let finished = Task { await mailbox.next() == nil }
-        try? await Task.sleep(for: .milliseconds(20))
-        mailbox.finish()
-        #expect(await finished.value)
     }
 }

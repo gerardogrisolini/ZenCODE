@@ -326,7 +326,7 @@ extension TerminalChatRenderingTests {
         """
 
         #expect(
-            TerminalChat.gitNumstatSummary(from: output) == TerminalGitStatusSummary(
+            TerminalGitStatusSummary.numstatSummary(from: output) == TerminalGitStatusSummary(
                 changedFileCount: 3,
                 additions: 11,
                 deletions: 2

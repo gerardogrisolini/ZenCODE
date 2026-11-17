@@ -158,44 +158,11 @@ class WebRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     }
 }
 
-/// Minimal URL redaction for policy diagnostics, mirroring the Browser
-/// feature's approach: credentials and fragments are dropped, sensitive query
-/// values are masked, and oversized or malformed URLs are fully redacted.
+/// The diagnostic form of a URL for policy diagnostics
+/// (``FeatureURLRedaction``), cut to 2,048 characters with an ellipsis.
 enum WebNetworkURLRedaction {
-    private static let maximumRawURLBytes = 8 * 1_024
-    private static let sensitiveQueryNameFragments = [
-        "auth", "bearer", "code", "cookie", "credential", "key", "password",
-        "proxy", "secret", "session", "sig", "signature", "token",
-    ]
-
     static func apply(to rawURL: String) -> String {
-        guard rawURL.lengthOfBytes(using: .utf8) <= maximumRawURLBytes else { return "<redacted-url>" }
-        guard var components = URLComponents(string: rawURL),
-              let scheme = components.scheme?.lowercased(),
-              !scheme.isEmpty
-        else {
-            return "<redacted-url>"
-        }
-        if scheme == "data" || scheme == "blob" {
-            return "\(scheme):[redacted]"
-        }
-
-        components.user = nil
-        components.password = nil
-        components.fragment = nil
-        if let queryItems = components.queryItems {
-            components.queryItems = queryItems.map { item in
-                let normalizedName = item.name.lowercased()
-                guard !sensitiveQueryNameFragments.contains(where: normalizedName.contains) else {
-                    return URLQueryItem(name: item.name, value: "[redacted]")
-                }
-                return item
-            }
-        } else if components.query != nil {
-            components.query = nil
-        }
-
-        guard let result = components.string else { return "<redacted-url>" }
+        let result = FeatureURLRedaction.redacted(rawURL)
         if result.lengthOfBytes(using: .utf8) > 2_048 {
             return String(result.prefix(2_048)) + "…"
         }

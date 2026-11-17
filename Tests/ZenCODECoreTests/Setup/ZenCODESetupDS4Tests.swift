@@ -104,15 +104,17 @@ struct ZenCODESetupDS4Tests {
 
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: nil,
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
-            selectBackend: { _, backend in backend },
-            selectAPIModelID: { _ in
-                Issue.record("API id must be inferred")
-                return "glm-5.2"
-            },
-            selectAuxiliaryFile: Self.keepAuxiliary,
-            promptTuning: { _, tuning in tuning },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
+                selectBackend: { _, backend in backend },
+                selectAPIModelID: { _ in
+                    Issue.record("API id must be inferred")
+                    return "glm-5.2"
+                },
+                selectAuxiliaryFile: Self.keepAuxiliary,
+                promptTuning: { _, tuning in tuning }
+            ),
             engine: Self.engine(fixture)
         )
 
@@ -152,11 +154,13 @@ struct ZenCODESetupDS4Tests {
 
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: Self.savedDS4Manifest(models: [qwen, deepSeek]),
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
-            selectBackend: { _, backend in backend },
-            selectAuxiliaryFile: Self.keepAuxiliary,
-            promptTuning: { _, tuning in tuning },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
+                selectBackend: { _, backend in backend },
+                selectAuxiliaryFile: Self.keepAuxiliary,
+                promptTuning: { _, tuning in tuning }
+            ),
             selectAction: { .reconfigure },
             engine: Self.engine(fixture)
         )
@@ -212,18 +216,20 @@ struct ZenCODESetupDS4Tests {
 
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: Self.savedDS4Manifest(models: models),
-            promptFolder: { _ in fixture.root.path },
-            selectFiles: { candidates, preselected in
-                #expect(preselected.count == 3)
-                return Set(candidates.map(\.relativePath))
-            },
-            selectBackend: { _, backend in backend },
-            selectAPIModelID: { _ in
-                Issue.record("The saved API id must be reused")
-                return "glm-5.2"
-            },
-            selectAuxiliaryFile: Self.keepAuxiliary,
-            promptTuning: { _, tuning in tuning },
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { candidates, preselected in
+                    #expect(preselected.count == 3)
+                    return Set(candidates.map(\.relativePath))
+                },
+                selectBackend: { _, backend in backend },
+                selectAPIModelID: { _ in
+                    Issue.record("The saved API id must be reused")
+                    return "glm-5.2"
+                },
+                selectAuxiliaryFile: Self.keepAuxiliary,
+                promptTuning: { _, tuning in tuning }
+            ),
             selectAction: { .reconfigure },
             engine: Self.engine(fixture)
         )

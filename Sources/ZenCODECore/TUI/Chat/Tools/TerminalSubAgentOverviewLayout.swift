@@ -434,7 +434,7 @@ enum TerminalSubAgentOverviewLayout {
             .map { label, value in
                 metricText(
                     label: label,
-                    value: TerminalStatusBar.tokenCountText(value)
+                    value: StatusMetricsFormatting.tokenCountText(value)
                 )
             }
             .joined(separator: " ")

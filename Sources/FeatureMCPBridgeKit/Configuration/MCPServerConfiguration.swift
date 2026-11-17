@@ -1,60 +1,10 @@
-#if canImport(CryptoKit)
-
-import CryptoKit
-#else
-import Crypto
-#endif
 import Foundation
 import ToolCore
 
-public nonisolated struct MCPBrowserOAuthConfiguration: Hashable, Sendable {
-    public let clientName: String
-    public let serviceName: String
-    public let redirectHost: String
-    public let redirectPort: UInt16
-    public let redirectPath: String
-    public let metadataURL: URL?
-    public let callbackTimeout: TimeInterval
-
-    public init(
-        clientName: String = "MCP client",
-        serviceName: String = "MCP service",
-        redirectHost: String = "127.0.0.1",
-        redirectPort: UInt16 = 8787,
-        redirectPath: String = "/callback",
-        metadataURL: URL? = nil,
-        callbackTimeout: TimeInterval = 300
-    ) {
-        self.clientName = clientName
-        self.serviceName = serviceName
-        self.redirectHost = redirectHost
-        self.redirectPort = redirectPort
-        self.redirectPath = redirectPath
-        self.metadataURL = metadataURL
-        self.callbackTimeout = callbackTimeout
-    }
-
-    public var redirectURL: URL {
-        var components = URLComponents()
-        components.scheme = "http"
-        components.host = redirectHost
-        components.port = Int(redirectPort)
-        components.path = redirectPath
-        guard let url = components.url else {
-            // The URL is assembled from init parameters; it can only fail if a
-            // caller supplied an invalid host or path. Fail loudly with enough
-            // context to diagnose instead of crashing on a bare force-unwrap.
-            preconditionFailure(
-                "Invalid MCP OAuth redirect URL: host=\(redirectHost), port=\(redirectPort), path=\(redirectPath)"
-            )
-        }
-        return url
-    }
-}
-
+/// How the HTTP transport authenticates beyond the configured headers.
 public nonisolated enum MCPHTTPAuthentication: Hashable, Sendable {
+    /// Only the configured headers (an `Authorization` header included).
     case none
-    case browserOAuth(MCPBrowserOAuthConfiguration)
 }
 
 public nonisolated struct MCPServerConfiguration: Hashable, Sendable {
@@ -91,7 +41,6 @@ public nonisolated enum MCPClientError: LocalizedError, Sendable {
     case connectionClosed
     case unsupportedPlatform
     case authorizationRequired(service: String, message: String)
-    case browserAuthenticationFailed(String)
     case serverExited(status: Int32, message: String)
     case serverError(code: Int, message: String)
     case unsupportedMessageID
@@ -107,8 +56,6 @@ public nonisolated enum MCPClientError: LocalizedError, Sendable {
         case .unsupportedPlatform:
             return "MCP desktop tooling is unavailable on this platform."
         case let .authorizationRequired(_, message):
-            return message
-        case let .browserAuthenticationFailed(message):
             return message
         case let .serverExited(status, message):
             return "The MCP bridge exited early with status \(status). \(message)"

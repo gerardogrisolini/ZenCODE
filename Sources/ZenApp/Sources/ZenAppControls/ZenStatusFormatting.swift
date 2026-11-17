@@ -3,7 +3,9 @@
 //  ZenApp
 //
 //  The status-bar text of the app, formatted exactly like the terminal UI's
-//  status bar (`TerminalStatusBar+Metrics.swift` and `statusTextLocked`).
+//  status bar: the text of each metric is the shared
+//  `StatusMetricsFormatting`, and the fragments and their order mirror
+//  `TerminalStatusBar+Metrics.swift` and `statusTextLocked`.
 //
 
 import Foundation
@@ -243,64 +245,6 @@ public enum ZenStatusFormatting {
 
     // MARK: - Token counts
 
-    /// `"used/max"`; `"0.0k"` without a used count and `"--"` without a
-    /// positive maximum (`TerminalStatusBar.tokenWindowText`).
-    public static func tokenWindowText(
-        usedTokens: Int?,
-        metricUsedTokens: Int?,
-        maxTokens: Int?
-    ) -> String {
-        let resolvedUsedTokens = usedTokens ?? metricUsedTokens
-        let usedText = resolvedUsedTokens.map(contextTokenCountText) ?? "0.0k"
-        guard let maxTokens, maxTokens > 0 else {
-            return "\(usedText)/--"
-        }
-        return "\(usedText)/\(contextWindowLimitText(maxTokens))"
-    }
-
-    /// The context-window size: `%.1fm`, `%.1fk`, or the plain count
-    /// (`TerminalStatusBar.contextWindowLimitText`).
-    public static func contextWindowLimitText(_ value: Int) -> String {
-        let absoluteValue = abs(value)
-        if absoluteValue >= 1_000_000 {
-            return String(format: "%.1fm", Double(value) / 1_000_000)
-        }
-        if absoluteValue >= 1_000 {
-            return String(format: "%.1fk", Double(value) / 1_000)
-        }
-        return "\(value)"
-    }
-
-    /// The tokens used in the context window: `%.1fm`, `%.1fk`, or the plain
-    /// count (`TerminalStatusBar.contextTokenCountText`).
-    public static func contextTokenCountText(_ value: Int) -> String {
-        let absoluteValue = abs(value)
-        if absoluteValue >= 1_000_000 {
-            return String(format: "%.1fm", Double(value) / 1_000_000)
-        }
-        if absoluteValue >= 1_000 {
-            return String(format: "%.1fk", Double(value) / 1_000)
-        }
-        return "\(value)"
-    }
-
-    /// A token counter: `%.1fm` from a million, whole `k` from ten thousand,
-    /// `%.1fk` from a thousand, else the plain count
-    /// (`TerminalStatusBar.tokenCountText`).
-    public static func tokenCountText(_ value: Int) -> String {
-        let absoluteValue = abs(value)
-        if absoluteValue >= 1_000_000 {
-            return String(format: "%.1fm", Double(value) / 1_000_000)
-        }
-        if absoluteValue >= 10_000 {
-            return "\(value / 1_000)k"
-        }
-        if absoluteValue >= 1_000 {
-            return String(format: "%.1fk", Double(value) / 1_000)
-        }
-        return "\(value)"
-    }
-
     /// `"c:<cached> p:<prompt> g:<generated>"` with only the known counters;
     /// `nil` when none is known
     /// (`TerminalStatusBar.styledGenerationTokenCountsFragment`).
@@ -308,9 +252,9 @@ public enum ZenStatusFormatting {
         _ metrics: DirectAgentGenerationMetrics
     ) -> [ZenStatusRun]? {
         let fragments: [[ZenStatusRun]] = [
-            metrics.cachedPromptTokenCount.map { labeled("c:", tokenCountText($0)) },
-            metrics.promptTokenCount.map { labeled("p:", tokenCountText($0)) },
-            metrics.completionTokenCount.map { labeled("g:", tokenCountText($0)) }
+            metrics.cachedPromptTokenCount.map { labeled("c:", StatusMetricsFormatting.tokenCountText($0)) },
+            metrics.promptTokenCount.map { labeled("p:", StatusMetricsFormatting.tokenCountText($0)) },
+            metrics.completionTokenCount.map { labeled("g:", StatusMetricsFormatting.tokenCountText($0)) }
         ].compactMap(\.self)
 
         guard !fragments.isEmpty else {
@@ -330,12 +274,12 @@ public enum ZenStatusFormatting {
         guard let throughput = metrics.throughput else {
             return nil
         }
-        let prefillRate = throughput.prefillTokensPerSecond.flatMap(throughputRateText)
+        let prefillRate = throughput.prefillTokensPerSecond.flatMap(StatusMetricsFormatting.throughputRateText)
         let unit = "tok/s"
 
         if let processed = throughput.processedTokens,
            let target = throughput.targetTokens {
-            let progress = labeled("p:", "\(tokenCountText(processed))/\(tokenCountText(target))")
+            let progress = labeled("p:", "\(StatusMetricsFormatting.tokenCountText(processed))/\(StatusMetricsFormatting.tokenCountText(target))")
             guard let prefillRate else {
                 return progress
             }
@@ -345,22 +289,13 @@ public enum ZenStatusFormatting {
         let segments: [[ZenStatusRun]] = [
             prefillRate.map { labeled("p:", $0) },
             throughput.generationTokensPerSecond
-                .flatMap(throughputRateText)
+                .flatMap(StatusMetricsFormatting.throughputRateText)
                 .map { labeled("g:", $0) }
         ].compactMap(\.self)
         guard !segments.isEmpty else {
             return nil
         }
         return joined(segments, separator: " ") + [ZenStatusRun(" \(unit)")]
-    }
-
-    /// One decimal for every speed; `nil` for a value that is not a finite,
-    /// non-negative speed (`TerminalStatusBar.throughputRateText`).
-    public static func throughputRateText(_ value: Double) -> String? {
-        guard value.isFinite, value >= 0 else {
-            return nil
-        }
-        return String(format: "%.1f", value)
     }
 
     // MARK: - Subscription usage
@@ -374,39 +309,13 @@ public enum ZenStatusFormatting {
             return nil
         }
         let fragments: [[ZenStatusRun]] = [
-            status.dailyUsedPercent.map { labeled("d:", usagePercentText($0)) },
-            status.weeklyUsedPercent.map { labeled("w:", usagePercentText($0)) }
+            status.dailyUsedPercent.map { labeled("d:", StatusMetricsFormatting.usagePercentText($0)) },
+            status.weeklyUsedPercent.map { labeled("w:", StatusMetricsFormatting.usagePercentText($0)) }
         ].compactMap(\.self)
         return joined(fragments, separator: " ")
     }
 
-    /// A usage percentage clamped to 0...100: whole from 10% (and at 0%),
-    /// one decimal below; `"--"` when not finite
-    /// (`TerminalStatusBar.usagePercentText`).
-    public static func usagePercentText(_ value: Double) -> String {
-        guard value.isFinite else {
-            return "--"
-        }
-        let clamped = min(max(value, 0), 100)
-        if clamped >= 10 || clamped == 0 {
-            return "\(Int(clamped.rounded()))%"
-        }
-        return String(format: "%.1f%%", clamped)
-    }
-
     // MARK: - Durations
-
-    /// `h:mm:ss`; `"--"` for a negative or non-finite value
-    /// (`TerminalStatusBar.durationText`).
-    public static func durationText(_ value: Double) -> String {
-        guard value.isFinite, value >= 0 else {
-            return "--"
-        }
-        let style = Duration.TimeFormatStyle(pattern: .hourMinuteSecond)
-        return Duration
-            .seconds(value)
-            .formatted(style)
-    }
 
     /// The whole seconds elapsed from `start` to `now`, truncated like the
     /// terminal's live timer (`Duration.components.seconds`).
@@ -470,7 +379,7 @@ public enum ZenStatusFormatting {
             ))
         }
         if tokensUsed != nil || state.contextWindow?.maxTokens != nil {
-            let contextText = tokenWindowText(
+            let contextText = StatusMetricsFormatting.tokenWindowText(
                 usedTokens: state.contextWindow?.usedTokens,
                 metricUsedTokens: tokensUsed,
                 maxTokens: state.contextWindow?.maxTokens
@@ -488,12 +397,12 @@ public enum ZenStatusFormatting {
             let elapsed = elapsedSeconds(since: start, now: now)
             fragments.append(ZenStatusFragment(
                 kind: .duration,
-                runs: [ZenStatusRun(durationText(elapsed))]
+                runs: [ZenStatusRun(StatusMetricsFormatting.durationText(elapsed))]
             ))
         } else if let duration = state.metrics?.responseDurationSeconds {
             fragments.append(ZenStatusFragment(
                 kind: .duration,
-                runs: [ZenStatusRun(durationText(duration))]
+                runs: [ZenStatusRun(StatusMetricsFormatting.durationText(duration))]
             ))
         }
         if let metrics = state.metrics,

@@ -1,29 +1,31 @@
 //
-//  ZenGitStatus.swift
-//  ZenApp
+//  TerminalGitStatusSummary+Reading.swift
+//  ZenCODE
 //
-//  The git summary of the status bar, ported from the terminal
-//  (`TerminalChat+GitStatus.swift`): the same commands and the same parsing.
+//  How the working-tree summary of the status bar is read, shared by the
+//  terminal status bar and the macOS app: the same git commands, time limit,
+//  and parsing.
 //
 
 import Foundation
-import ZenCODECore
 
-/// The working-tree summary the status bar shows: changed files (tracked
-/// changes against `HEAD` plus untracked files) with added and deleted lines.
-public enum ZenGitStatus {
-    /// The time limit of each git command of the status bar: the terminal's.
+extension TerminalGitStatusSummary {
+    /// The time limit of each git command of the summary.
     public static let defaultTimeout: TimeInterval = 2
+
     /// The summary of `workingDirectory`, read off the caller's actor with
     /// `git diff --numstat HEAD --` and `git status --porcelain=v1
-    /// --untracked-files=all`; `nil` outside a git repository, without git,
-    /// or when the diff fails or times out (`timeout` seconds per command,
-    /// ``defaultTimeout`` by default).
+    /// --untracked-files=all`: changed files (tracked changes against `HEAD`
+    /// plus untracked files) with added and deleted lines. `nil` outside a git
+    /// repository, without git, or when the diff fails or times out
+    /// (`timeout` seconds per command); a failed status counts no untracked
+    /// file.
     @concurrent
-    public static func summary(
+    public static func read(
         in workingDirectory: URL,
         timeout: TimeInterval = defaultTimeout
     ) async -> TerminalGitStatusSummary? {
+        #if canImport(Darwin) || canImport(Glibc)
         do {
             let diff = try await AsyncProcessRunner.run(
                 executableURL: GitExecutableResolver.executableURL(),
@@ -45,6 +47,11 @@ public enum ZenGitStatus {
         } catch {
             return nil
         }
+        #else
+        _ = workingDirectory
+        _ = timeout
+        return nil
+        #endif
     }
 
     /// Parses `git diff --numstat` output: one changed file per line with at
@@ -78,7 +85,6 @@ public enum ZenGitStatus {
             .count
     }
 
-    @concurrent
     private static func untrackedFileCount(in workingDirectory: URL, timeout: TimeInterval) async -> Int? {
         do {
             let result = try await AsyncProcessRunner.run(
@@ -94,19 +100,6 @@ public enum ZenGitStatus {
             return untrackedFileCount(fromPorcelain: result.stdout)
         } catch {
             return nil
-        }
-    }
-
-    /// The file-mutation tools after which the terminal refreshes the
-    /// summary (`ToolMutationClassifier.isFileMutationTool`).
-    public static func isFileMutationTool(_ toolName: String) -> Bool {
-        switch toolName.trimmingCharacters(in: .whitespacesAndNewlines) {
-        case "local.writeFile", "local.append", "local.replace",
-             "local.editFile", "local.multiEdit", "local.applyPatch",
-             "local.delete", "local.move", "local.mkdir":
-            true
-        default:
-            false
         }
     }
 }

@@ -35,34 +35,11 @@ public enum AgentSettingsManifestStore {
     static func loadRequiredUnlocked(
         from url: URL
     ) throws -> AgentSettingsManifest {
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw AgentSettingsManifestStoreError.missingFile(url)
-        }
-
-        let data: Data
-        do {
-            try SensitiveFilePermissions.hardenExistingFile(at: url)
-            data = try Data(contentsOf: url)
-        } catch {
-            throw AgentSettingsManifestStoreError.unreadableFile(url, error)
-        }
-
-        let manifest: AgentSettingsManifest
-        do {
-            manifest = try JSONDecoder().decode(AgentSettingsManifest.self, from: data)
-        } catch {
-            throw AgentSettingsManifestStoreError.invalidFile(url, error)
-        }
-
-        guard manifest.version >= AgentSettingsManifest.minimumSupportedVersion,
-              manifest.version <= AgentSettingsManifest.currentVersion else {
-            throw AgentSettingsManifestStoreError.unsupportedVersion(
-                url,
-                manifest.version,
-                AgentSettingsManifest.currentVersion
-            )
-        }
-        return manifest
+        try SensitiveManifestFile.loadUnlocked(
+            AgentSettingsManifest.self,
+            from: url,
+            failure: AgentSettingsManifestStoreError.self
+        )
     }
 
     public static func save(
@@ -99,9 +76,7 @@ public enum AgentSettingsManifestStore {
     static func encodedData(
         for manifest: AgentSettingsManifest
     ) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted]
-        return try encoder.encode(manifest)
+        try SensitiveManifestFile.encodedData(manifest)
     }
 
     public static func saveSelectedModel(
@@ -224,7 +199,7 @@ public enum AgentSettingsManifestStore {
     }
 }
 
-public enum AgentSettingsManifestStoreError: LocalizedError {
+public enum AgentSettingsManifestStoreError: LocalizedError, SensitiveManifestStoreError {
     case missingFile(URL)
     case unreadableFile(URL, Error)
     case invalidFile(URL, Error)

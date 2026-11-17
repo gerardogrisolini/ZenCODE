@@ -116,12 +116,7 @@ extension ZenCODESetupRunner {
         existingManifest: AgentSettingsManifest?,
         scanner: DS4InstallationScanner = DS4InstallationScanner(),
         catalog: DS4ModelCatalog = .default,
-        promptFolder: ((String?) throws -> String?)? = nil,
-        selectFiles: (([DS4SetupModelCandidate], Set<String>) throws -> Set<String>?)? = nil,
-        selectBackend: ((DS4SetupModelCandidate, AgentDS4RuntimeBackend) throws -> AgentDS4RuntimeBackend)? = nil,
-        selectAPIModelID: ((DS4SetupModelCandidate) throws -> String)? = nil,
-        selectAuxiliaryFile: DS4SetupAuxiliaryFileSelector? = nil,
-        promptTuning: ((DS4SetupModelCandidate, AgentDS4RuntimeTuning) throws -> AgentDS4RuntimeTuning)? = nil,
+        prompts: DS4SetupPrompts = DS4SetupPrompts(),
         selectAction: (() throws -> DS4SetupAction)? = nil,
         engine: DS4SetupEngineOptions = DS4SetupEngineOptions()
     ) async throws -> AgentSettingsManifest? {
@@ -163,12 +158,7 @@ extension ZenCODESetupRunner {
             reservedModelIDs: reserved,
             scanner: scanner,
             catalog: catalog,
-            promptFolder: promptFolder,
-            selectFiles: selectFiles,
-            selectBackend: selectBackend,
-            selectAPIModelID: selectAPIModelID,
-            selectAuxiliaryFile: selectAuxiliaryFile,
-            promptTuning: promptTuning,
+            prompts: prompts,
             engine: engine
         ) else {
             return existingManifest
@@ -215,12 +205,7 @@ extension ZenCODESetupRunner {
         reservedModelIDs: Set<String> = [],
         scanner: DS4InstallationScanner = DS4InstallationScanner(),
         catalog: DS4ModelCatalog = .default,
-        promptFolder: ((String?) throws -> String?)? = nil,
-        selectFiles: (([DS4SetupModelCandidate], Set<String>) throws -> Set<String>?)? = nil,
-        selectBackend: ((DS4SetupModelCandidate, AgentDS4RuntimeBackend) throws -> AgentDS4RuntimeBackend)? = nil,
-        selectAPIModelID: ((DS4SetupModelCandidate) throws -> String)? = nil,
-        selectAuxiliaryFile: DS4SetupAuxiliaryFileSelector? = nil,
-        promptTuning: ((DS4SetupModelCandidate, AgentDS4RuntimeTuning) throws -> AgentDS4RuntimeTuning)? = nil,
+        prompts: DS4SetupPrompts = DS4SetupPrompts(),
         engine: DS4SetupEngineOptions = DS4SetupEngineOptions()
     ) async -> SetupProviderInput {
         await stageDS4ProviderOrNil(
@@ -230,12 +215,7 @@ extension ZenCODESetupRunner {
             reservedModelIDs: reservedModelIDs,
             scanner: scanner,
             catalog: catalog,
-            promptFolder: promptFolder,
-            selectFiles: selectFiles,
-            selectBackend: selectBackend,
-            selectAPIModelID: selectAPIModelID,
-            selectAuxiliaryFile: selectAuxiliaryFile,
-            promptTuning: promptTuning,
+            prompts: prompts,
             engine: engine
         ) ?? providerInput
     }

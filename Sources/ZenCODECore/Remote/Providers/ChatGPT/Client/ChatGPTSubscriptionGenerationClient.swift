@@ -12,7 +12,7 @@ import ToolCore
 import os
 #endif
 
-public actor ChatGPTSubscriptionGenerationClient: DirectToolRuntimeBackend {
+public actor ChatGPTSubscriptionGenerationClient: LeasedSessionRuntimeBackend {
     struct AgentSession {
         let id: String
         let cwd: String
@@ -238,10 +238,6 @@ public actor ChatGPTSubscriptionGenerationClient: DirectToolRuntimeBackend {
                 ?? DirectSubAgentRuntime.unavailableContextualBackendFactory
         )
     }
-    struct SessionLease: Sendable {
-        let id: String
-        let generation: UInt64
-    }
 
     /// Fences transport fallback state to one installed incarnation of a
     /// logical session. Reusing the same public session ID after close/recreate
@@ -271,32 +267,8 @@ public actor ChatGPTSubscriptionGenerationClient: DirectToolRuntimeBackend {
         sessionGenerations[id] = nextSessionGeneration
         return sessions.removeValue(forKey: id)
     }
+}
 
-    func sessionLease(for id: String) -> SessionLease? {
-        guard sessions[id] != nil, let generation = sessionGenerations[id] else {
-            return nil
-        }
-        return SessionLease(id: id, generation: generation)
-    }
-
-    func currentSession(for lease: SessionLease) -> AgentSession? {
-        guard sessionGenerations[lease.id] == lease.generation else {
-            return nil
-        }
-        return sessions[lease.id]
-    }
-
-    @discardableResult
-    func mutateSession(
-        for lease: SessionLease,
-        _ mutation: (inout AgentSession) -> Void
-    ) -> Bool {
-        guard sessionGenerations[lease.id] == lease.generation,
-              var session = sessions[lease.id] else {
-            return false
-        }
-        mutation(&session)
-        sessions[lease.id] = session
-        return true
-    }
+extension ChatGPTSubscriptionGenerationClient.AgentSession: LeasedRuntimeSession {
+    var workingDirectoryURL: URL { URL(fileURLWithPath: cwd) }
 }

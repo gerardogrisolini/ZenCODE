@@ -39,7 +39,7 @@ struct MemoryAutomationFlowTests {
                 State: calibrate the quantum flange before deploy.
                 Next: run deploy.
                 """,
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
 
             let backend = MemoryObservingBackend()
@@ -110,7 +110,7 @@ struct MemoryAutomationFlowTests {
             // the explicit memory tools.
             #expect(await backend.promptCount() == 1)
             let entries = try await MemoryService().readEntries(
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 100
             )
             #expect(entries.isEmpty)
@@ -133,7 +133,7 @@ struct MemoryAutomationFlowTests {
                 State: the quantum flange names every frobnicator instance.
                 Next: reuse the convention.
                 """,
-                workspaceRootURL: workspace.workspaceURL
+                target: .workspace(workspace.workspaceURL)
             )
 
             let backend = MemoryObservingBackend()

@@ -21,7 +21,7 @@ struct MemoryPersistenceTestHelper {
             let workspace = URL(fileURLWithPath: arguments[1], isDirectory: true)
             _ = try await MemoryService().writeEntry(
                 content: arguments[2],
-                workspaceRootURL: workspace
+                target: .workspace(workspace)
             )
         } catch {
             FileHandle.standardError.write(Data("MemoryPersistenceTestHelper: \(error)\n".utf8))

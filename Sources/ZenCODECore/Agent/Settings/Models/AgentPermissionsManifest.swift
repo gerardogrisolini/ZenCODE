@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct AgentPermissionsManifest: Codable, Equatable, Sendable {
+public struct AgentPermissionsManifest: Codable, Equatable, Sendable, SensitiveVersionedManifest {
     private enum CodingKeys: String, CodingKey {
         case version
         case localExecAllowedCommands
@@ -104,34 +104,11 @@ public enum AgentPermissionsManifestStore {
     static func loadRequiredUnlocked(
         from url: URL
     ) throws -> AgentPermissionsManifest {
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw AgentPermissionsManifestStoreError.missingFile(url)
-        }
-
-        let data: Data
-        do {
-            try SensitiveFilePermissions.hardenExistingFile(at: url)
-            data = try Data(contentsOf: url)
-        } catch {
-            throw AgentPermissionsManifestStoreError.unreadableFile(url, error)
-        }
-
-        let manifest: AgentPermissionsManifest
-        do {
-            manifest = try JSONDecoder().decode(AgentPermissionsManifest.self, from: data)
-        } catch {
-            throw AgentPermissionsManifestStoreError.invalidFile(url, error)
-        }
-
-        guard manifest.version >= AgentPermissionsManifest.minimumSupportedVersion,
-              manifest.version <= AgentPermissionsManifest.currentVersion else {
-            throw AgentPermissionsManifestStoreError.unsupportedVersion(
-                url,
-                manifest.version,
-                AgentPermissionsManifest.currentVersion
-            )
-        }
-        return manifest
+        try SensitiveManifestFile.loadUnlocked(
+            AgentPermissionsManifest.self,
+            from: url,
+            failure: AgentPermissionsManifestStoreError.self
+        )
     }
 
     static func appendingLocalExecAllowedCommandIdentities(
@@ -151,10 +128,8 @@ public enum AgentPermissionsManifestStore {
                 identities
             )
             if updated != current {
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.prettyPrinted]
                 try SensitiveFilePermissions.write(
-                    encoder.encode(updated),
+                    SensitiveManifestFile.encodedData(updated),
                     to: url
                 )
             }
@@ -169,7 +144,7 @@ public enum AgentPermissionsManifestStore {
     }
 }
 
-public enum AgentPermissionsManifestStoreError: LocalizedError {
+public enum AgentPermissionsManifestStoreError: LocalizedError, SensitiveManifestStoreError {
     case missingFile(URL)
     case unreadableFile(URL, Error)
     case invalidFile(URL, Error)

@@ -7,23 +7,9 @@
 
 import Foundation
 
-public nonisolated enum ThinkingSelection: String, Codable, CaseIterable, Identifiable, Sendable {
-    case off
-    case enabled
-    case minimal
-    case low
-    case medium
-    case high
-    case xhigh
-    case max
-    case ultra
-
-    public var id: String { rawValue }
-
-    public var isEnabled: Bool {
-        self != .off
-    }
-}
+/// The thinking level a model's metadata advertises: the levels, and the raw
+/// values they are encoded with, of ``AgentThinkingSelection``.
+public typealias ThinkingSelection = AgentThinkingSelection
 
 public nonisolated struct ModelThinkingSupport: Codable, Hashable, Sendable {
     public let supportsThinking: Bool

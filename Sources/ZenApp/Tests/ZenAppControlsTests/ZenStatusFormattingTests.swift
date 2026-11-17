@@ -37,38 +37,6 @@ struct ZenStatusFormattingTests {
 
     // MARK: - Counters
 
-    @Test("token counters follow the k/m rules of the terminal")
-    func tokenCountRules() {
-        #expect(ZenStatusFormatting.tokenCountText(0) == "0")
-        #expect(ZenStatusFormatting.tokenCountText(999) == "999")
-        #expect(ZenStatusFormatting.tokenCountText(1_000) == "1.0k")
-        #expect(ZenStatusFormatting.tokenCountText(2_000) == "2.0k")
-        #expect(ZenStatusFormatting.tokenCountText(4_100) == "4.1k")
-        #expect(ZenStatusFormatting.tokenCountText(9_999) == "10.0k")
-        #expect(ZenStatusFormatting.tokenCountText(10_000) == "10k")
-        #expect(ZenStatusFormatting.tokenCountText(15_500) == "15k")
-        #expect(ZenStatusFormatting.tokenCountText(25_000) == "25k")
-        #expect(ZenStatusFormatting.tokenCountText(1_000_000) == "1.0m")
-        #expect(ZenStatusFormatting.tokenCountText(-1_500) == "-1.5k")
-
-        #expect(ZenStatusFormatting.contextTokenCountText(952) == "952")
-        #expect(ZenStatusFormatting.contextTokenCountText(35_000) == "35.0k")
-        #expect(ZenStatusFormatting.contextTokenCountText(1_500_000) == "1.5m")
-        #expect(ZenStatusFormatting.contextWindowLimitText(10_000) == "10.0k")
-        #expect(ZenStatusFormatting.contextWindowLimitText(128_000) == "128.0k")
-        #expect(ZenStatusFormatting.contextWindowLimitText(1_000_000) == "1.0m")
-        #expect(ZenStatusFormatting.contextWindowLimitText(512) == "512")
-    }
-
-    @Test("the context window shows used/max with the terminal fallbacks")
-    func tokenWindowText() {
-        #expect(ZenStatusFormatting.tokenWindowText(usedTokens: nil, metricUsedTokens: nil, maxTokens: nil) == "0.0k/--")
-        #expect(ZenStatusFormatting.tokenWindowText(usedTokens: 952, metricUsedTokens: nil, maxTokens: 10_000) == "952/10.0k")
-        #expect(ZenStatusFormatting.tokenWindowText(usedTokens: nil, metricUsedTokens: 35_000, maxTokens: nil) == "35.0k/--")
-        #expect(ZenStatusFormatting.tokenWindowText(usedTokens: nil, metricUsedTokens: 35_000, maxTokens: 0) == "35.0k/--")
-        #expect(ZenStatusFormatting.tokenWindowText(usedTokens: 1_200, metricUsedTokens: 99, maxTokens: 128_000) == "1.2k/128.0k")
-    }
-
     @Test("generation token counts are compact and optional")
     func generationTokenCounts() {
         #expect(
@@ -242,7 +210,7 @@ struct ZenStatusFormattingTests {
         ])
     }
 
-    // MARK: - Usage, durations, git
+    // MARK: - Usage, git
 
     @Test("subscription usage omits the unavailable window")
     func subscriptionUsage() {
@@ -264,28 +232,8 @@ struct ZenStatusFormattingTests {
         ])
     }
 
-    @Test("usage percentages: whole from 10%, one decimal below, clamped")
-    func usagePercent() {
-        #expect(ZenStatusFormatting.usagePercentText(0) == "0%")
-        #expect(ZenStatusFormatting.usagePercentText(4.5) == "4.5%")
-        #expect(ZenStatusFormatting.usagePercentText(9.96) == "10.0%")
-        #expect(ZenStatusFormatting.usagePercentText(10) == "10%")
-        #expect(ZenStatusFormatting.usagePercentText(12.4) == "12%")
-        #expect(ZenStatusFormatting.usagePercentText(12.5) == "13%")
-        #expect(ZenStatusFormatting.usagePercentText(150) == "100%")
-        #expect(ZenStatusFormatting.usagePercentText(-3) == "0%")
-        #expect(ZenStatusFormatting.usagePercentText(.nan) == "--")
-    }
-
-    @Test("durations are h:mm:ss, invalid values --")
-    func durations() {
-        #expect(ZenStatusFormatting.durationText(0) == "0:00:00")
-        #expect(ZenStatusFormatting.durationText(12) == "0:00:12")
-        #expect(ZenStatusFormatting.durationText(3_725) == "1:02:05")
-        #expect(ZenStatusFormatting.durationText(-1) == "--")
-        #expect(ZenStatusFormatting.durationText(.infinity) == "--")
-        #expect(ZenStatusFormatting.durationText(.nan) == "--")
-
+    @Test("the elapsed time is in whole seconds, truncated")
+    func elapsedSeconds() {
         let start = Date(timeIntervalSinceReferenceDate: 1_000)
         #expect(ZenStatusFormatting.elapsedSeconds(since: start, now: start.addingTimeInterval(42.9)) == 42)
         #expect(ZenStatusFormatting.elapsedSeconds(since: start, now: start) == 0)

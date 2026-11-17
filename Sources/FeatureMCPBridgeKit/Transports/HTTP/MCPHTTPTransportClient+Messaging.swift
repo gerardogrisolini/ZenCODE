@@ -31,11 +31,10 @@ extension MCPHTTPTransportClient {
     }
 
     public func disconnect() async {
-        // Invalidate both single-flights BEFORE clearing session state: their
+        // Invalidate the single-flight BEFORE clearing session state: its
         // waiters fail with CancellationError and any result still in flight is
         // fenced, so it cannot resurrect the session we are tearing down.
         connectFlight.cancel()
-        oauthAuthenticationFlight.cancel()
         sessionGeneration &+= 1
         let tasks = Array(requestTasks.values)
         requestTasks.removeAll()
@@ -111,8 +110,7 @@ extension MCPHTTPTransportClient {
 
     private func send(
         payload: Data,
-        includeSession: Bool,
-        allowAuthenticationRetry: Bool = true
+        includeSession: Bool
     ) async throws -> (message: MCPIncomingMessage?, response: HTTPURLResponse?) {
         var request = URLRequest(url: endpointURL)
         request.httpMethod = "POST"
@@ -137,15 +135,6 @@ extension MCPHTTPTransportClient {
            !responseSessionID.isEmpty,
            requestGeneration == sessionGeneration {
             sessionIdentifier = responseSessionID
-        }
-
-        if httpResponse.statusCode == 401,
-           allowAuthenticationRetry,
-           shouldUseBrowserOAuth {
-            try Task.checkCancellation()
-            let requiresFreshLogin = oauthAccessToken != nil
-            _ = try await ensureOAuthAccessToken(requiringFreshLogin: requiresFreshLogin)
-            return try await send(payload: payload, includeSession: includeSession, allowAuthenticationRetry: false)
         }
 
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
@@ -174,11 +163,6 @@ extension MCPHTTPTransportClient {
 
         for (header, value) in httpHeaders {
             request.setValue(value, forHTTPHeaderField: header)
-        }
-
-        if !hasStaticAuthorizationHeader,
-           let oauthAccessToken {
-            request.setValue(oauthAccessToken.authorizationHeaderValue, forHTTPHeaderField: "Authorization")
         }
     }
 

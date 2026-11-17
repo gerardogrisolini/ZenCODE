@@ -45,6 +45,24 @@ public enum ResponseLanguageResolver {
             .sorted { $0.value.localizedCaseInsensitiveCompare($1.value) == .orderedAscending }
             .map { (code: $0.key, displayName: $0.value) }
 
+    /// The language a session locks its responses to: the one configured in
+    /// `settings.json` (``configuredDisplayName()``), else the operating
+    /// system's (``systemDisplayName()``). Returns nil when neither can be
+    /// determined, so callers can fall back to generic guidance.
+    public static func lockedDisplayName() -> String? {
+        configuredDisplayName() ?? systemDisplayName()
+    }
+
+    /// Resolves the response language declared in `settings.json` into a
+    /// human-readable English name. Returns nil when no language is configured
+    /// or the stored code cannot be resolved.
+    public static func configuredDisplayName() -> String? {
+        guard let code = AgentSettingsManifestStore.load()?.responseLanguage else {
+            return nil
+        }
+        return displayName(forCode: code)
+    }
+
     /// Resolves the operating system language into a human-readable English
     /// language name (e.g. "Italian"). Returns nil when the system language
     /// cannot be determined, so callers can fall back to generic guidance.

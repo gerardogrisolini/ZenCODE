@@ -114,6 +114,31 @@ struct ZenScrollMetrics: Equatable {
         }
         return .setFollowing(new.isAtBottom)
     }
+
+    /// Applies the ``followStep(old:new:isFollowing:)`` of a geometry change
+    /// to a scroll view's state, without animation: scrolls `position` to the
+    /// bottom or updates `isFollowing`, then records `isFarFromBottom`. Each
+    /// value is written only when it changes, so the view is not invalidated
+    /// for nothing.
+    static func follow(
+        old: ZenScrollMetrics,
+        new: ZenScrollMetrics,
+        position: inout ScrollPosition,
+        isFollowing: inout Bool,
+        isFarFromBottom: inout Bool
+    ) {
+        switch followStep(old: old, new: new, isFollowing: isFollowing) {
+        case .scrollToBottom:
+            position.scrollTo(edge: .bottom)
+        case let .setFollowing(following):
+            if isFollowing != following {
+                isFollowing = following
+            }
+        }
+        if isFarFromBottom != new.isFarFromBottom {
+            isFarFromBottom = new.isFarFromBottom
+        }
+    }
 }
 
 /// The scrolling transcript of a window.
@@ -203,17 +228,13 @@ struct ZenConversationList: View {
     }
 
     private func follow(old: ZenScrollMetrics, new: ZenScrollMetrics) {
-        switch ZenScrollMetrics.followStep(old: old, new: new, isFollowing: isFollowing) {
-        case .scrollToBottom:
-            position.scrollTo(edge: .bottom)
-        case let .setFollowing(following):
-            if isFollowing != following {
-                isFollowing = following
-            }
-        }
-        if isFarFromBottom != new.isFarFromBottom {
-            isFarFromBottom = new.isFarFromBottom
-        }
+        ZenScrollMetrics.follow(
+            old: old,
+            new: new,
+            position: &position,
+            isFollowing: &isFollowing,
+            isFarFromBottom: &isFarFromBottom
+        )
     }
 
     private func jumpToLatest(animated: Bool) {

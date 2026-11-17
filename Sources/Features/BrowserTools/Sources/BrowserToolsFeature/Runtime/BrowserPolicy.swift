@@ -72,7 +72,7 @@ struct BrowserURLPolicy: Sendable {
             throw BrowserURLPolicyError.missingHost(value)
         }
 
-        let host = normalizedHost(rawHost)
+        let host = FeatureIPAddress.normalizedHost(rawHost)
         guard allowsPrivateNetwork || !isRestricted(host: host) else { throw BrowserURLPolicyError.restrictedHost(rawHost) }
         return url
     }
@@ -82,7 +82,7 @@ struct BrowserURLPolicy: Sendable {
     /// tests; a network guard calls this method immediately before Chrome is
     /// allowed to continue an intercepted request.
     func validateResolvedAddress(_ rawAddress: String) throws {
-        let address = normalizedHost(rawAddress)
+        let address = FeatureIPAddress.normalizedHost(rawAddress)
         guard !address.isEmpty else { throw BrowserURLPolicyError.restrictedHost(rawAddress) }
         guard allowsPrivateNetwork || !isRestricted(host: address) else { throw BrowserURLPolicyError.restrictedHost(rawAddress) }
     }
@@ -101,7 +101,7 @@ struct BrowserURLPolicy: Sendable {
     }
 
     func isLoopbackHost(_ rawHost: String) -> Bool {
-        let host = normalizedHost(rawHost)
+        let host = FeatureIPAddress.normalizedHost(rawHost)
         if host == "localhost" || host.hasSuffix(".localhost") {
             return true
         }
@@ -121,14 +121,6 @@ struct BrowserURLPolicy: Sendable {
             return false
         }
         return FeatureIPAddress.classifyIPv4(embedded.octets) == .loopback
-    }
-
-    private func normalizedHost(_ host: String) -> String {
-        host
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
-            .lowercased()
     }
 
     /// Loopback recognised by ``isLoopbackHost(_:)`` is the local-development

@@ -67,10 +67,6 @@ final class RecordingDS4Engine: DS4Engine {
         try await base.prepare(transcript: transcript)
     }
 
-    func renderText(of transcript: [DS4TranscriptOperation]) async throws -> String {
-        try await base.renderText(of: transcript)
-    }
-
     func thinkMode(parseLevel: String) -> Int32? {
         base.thinkMode(parseLevel: parseLevel)
     }

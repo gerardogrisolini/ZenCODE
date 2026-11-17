@@ -5,53 +5,19 @@
 //  Created by Gerardo Grisolini on 30/05/26.
 //
 
+import FeatureKit
 import Foundation
 
 // MARK: - Network Redaction
 
+/// The diagnostic form of a URL (``FeatureURLRedaction``), bounded to
+/// ``BrowserNetworkOutputBounds/maximumURLBytes``.
 enum BrowserNetworkURLRedaction {
-    private static let maximumRawURLBytes = 8 * 1_024
-    private static let sensitiveQueryNameFragments = [
-        "auth", "bearer", "code", "cookie", "credential", "key", "password",
-        "proxy", "secret", "session", "sig", "signature", "token",
-    ]
-
     static func apply(to rawURL: String) -> String {
-        guard rawURL.lengthOfBytes(using: .utf8) <= maximumRawURLBytes else { return "<redacted-url>" }
-        guard var components = URLComponents(string: rawURL),
-              let scheme = components.scheme?.lowercased(),
-              !scheme.isEmpty
-        else {
-            // A malformed URL cannot be reliably decomposed into credentials,
-            // query, and fragment. Never fall back to the raw value.
-            return "<redacted-url>"
-        }
-
-        // data: and blob: URLs often embed document data in their path. They
-        // are valid browser requests, but do not have a safe diagnostic form.
-        if scheme == "data" || scheme == "blob" {
-            return "\(scheme):[redacted]"
-        }
-
-        components.user = nil
-        components.password = nil
-        components.fragment = nil
-        if let queryItems = components.queryItems {
-            components.queryItems = queryItems.map { item in
-                let normalizedName = item.name.lowercased()
-                guard !sensitiveQueryNameFragments.contains(where: normalizedName.contains) else {
-                    return URLQueryItem(name: item.name, value: "[redacted]")
-                }
-                return item
-            }
-        } else if components.query != nil {
-            // Preserve no query data if it was too malformed for URLComponents
-            // to parse item-by-item.
-            components.query = nil
-        }
-
-        guard let result = components.string else { return "<redacted-url>" }
-        return BrowserNetworkOutputBounds.clip(result, maximumBytes: BrowserNetworkOutputBounds.maximumURLBytes)
+        BrowserNetworkOutputBounds.clip(
+            FeatureURLRedaction.redacted(rawURL),
+            maximumBytes: BrowserNetworkOutputBounds.maximumURLBytes
+        )
     }
 }
 

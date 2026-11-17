@@ -154,33 +154,33 @@ public struct AgentToolProvider: Sendable {
 }
 
 public struct AgentRuntimeConfiguration: Sendable {
-    public let modelID: String?
-    public let workingDirectory: URL
-    public let configuredContextWindowLimit: Int?
-    public let generationParameterOverrides: AgentGenerationParameterOverrides
-    public let maxToolRounds: Int
-    public let maxOutputTokens: Int?
-    public let appMode: Bool
-    public let locksModelToSession: Bool
-    public let toolAuthorizationHandler: AgentToolAuthorizationHandler?
-    public let agentID: String?
-    public let agentName: String?
+    public private(set) var modelID: String?
+    public private(set) var workingDirectory: URL
+    public private(set) var configuredContextWindowLimit: Int?
+    public private(set) var generationParameterOverrides: AgentGenerationParameterOverrides
+    public private(set) var maxToolRounds: Int
+    public private(set) var maxOutputTokens: Int?
+    public private(set) var appMode: Bool
+    public private(set) var locksModelToSession: Bool
+    public private(set) var toolAuthorizationHandler: AgentToolAuthorizationHandler?
+    public private(set) var agentID: String?
+    public private(set) var agentName: String?
     /// Stable profile identity used to decide whether a delegated child may
     /// inherit the coordinator's effective session allowlist.
-    public let profileID: String?
-    public let profileName: String?
+    public private(set) var profileID: String?
+    public private(set) var profileName: String?
     /// Role of the selected profile. Selects the memory graph a session uses
     /// and whether role-based delegation applies; `nil` when no profile is
     /// selected.
-    public let profileRole: AgentProfileRole?
+    public private(set) var profileRole: AgentProfileRole?
     /// ID of the session that delegated this sub-agent with `agent.create`,
     /// projected into the child's ``ToolExecutionContext``; `nil` for a
     /// top-level session.
-    public let delegatingSessionID: String?
+    public private(set) var delegatingSessionID: String?
     /// Whether this sub-agent reads the feature exposures of
     /// ``delegatingSessionID``, projected into the child's
     /// ``ToolExecutionContext``; `false` for a top-level session.
-    public let inheritsFeatureExposures: Bool
+    public private(set) var inheritsFeatureExposures: Bool
 
     public init(
         modelID: String?,
@@ -221,75 +221,23 @@ public struct AgentRuntimeConfiguration: Sendable {
     }
 
     public func withModelID(_ modelID: String?) -> AgentRuntimeConfiguration {
-        AgentRuntimeConfiguration(
-            modelID: modelID?.nilIfBlank,
-            workingDirectory: workingDirectory,
-            configuredContextWindowLimit: configuredContextWindowLimit,
-            generationParameterOverrides: generationParameterOverrides,
-            maxToolRounds: maxToolRounds,
-            maxOutputTokens: maxOutputTokens,
-            appMode: appMode,
-            locksModelToSession: locksModelToSession,
-            toolAuthorizationHandler: toolAuthorizationHandler,
-            agentID: agentID,
-            agentName: agentName,
-            profileID: profileID,
-            profileName: profileName,
-            profileRole: profileRole,
-            delegatingSessionID: delegatingSessionID,
-            inheritsFeatureExposures: inheritsFeatureExposures
-        )
+        renormalized { $0.modelID = modelID }
     }
 
     public func withModelSettings(
         configuredContextWindowLimit: Int?,
         generationParameterOverrides: AgentGenerationParameterOverrides?
     ) -> AgentRuntimeConfiguration {
-        AgentRuntimeConfiguration(
-            modelID: modelID,
-            workingDirectory: workingDirectory,
-            configuredContextWindowLimit: configuredContextWindowLimit.map {
-                min(max($0, 1), 1_048_576)
-            },
-            generationParameterOverrides: generationParameterOverrides?
-                .normalized()
-                ?? AgentGenerationParameterOverrides(),
-            maxToolRounds: maxToolRounds,
-            maxOutputTokens: maxOutputTokens,
-            appMode: appMode,
-            locksModelToSession: locksModelToSession,
-            toolAuthorizationHandler: toolAuthorizationHandler,
-            agentID: agentID,
-            agentName: agentName,
-            profileID: profileID,
-            profileName: profileName,
-            profileRole: profileRole,
-            delegatingSessionID: delegatingSessionID,
-            inheritsFeatureExposures: inheritsFeatureExposures
-        )
+        renormalized {
+            $0.configuredContextWindowLimit = configuredContextWindowLimit
+            $0.generationParameterOverrides = generationParameterOverrides ?? AgentGenerationParameterOverrides()
+        }
     }
 
     public func withToolAuthorizationHandler(
         _ toolAuthorizationHandler: AgentToolAuthorizationHandler?
     ) -> AgentRuntimeConfiguration {
-        AgentRuntimeConfiguration(
-            modelID: modelID,
-            workingDirectory: workingDirectory,
-            configuredContextWindowLimit: configuredContextWindowLimit,
-            generationParameterOverrides: generationParameterOverrides,
-            maxToolRounds: maxToolRounds,
-            maxOutputTokens: maxOutputTokens,
-            appMode: appMode,
-            locksModelToSession: locksModelToSession,
-            toolAuthorizationHandler: toolAuthorizationHandler,
-            agentID: agentID,
-            agentName: agentName,
-            profileID: profileID,
-            profileName: profileName,
-            profileRole: profileRole,
-            delegatingSessionID: delegatingSessionID,
-            inheritsFeatureExposures: inheritsFeatureExposures
-        )
+        renormalized { $0.toolAuthorizationHandler = toolAuthorizationHandler }
     }
 
     public func withProfileIdentity(
@@ -297,48 +245,21 @@ public struct AgentRuntimeConfiguration: Sendable {
         profileName: String?,
         profileRole: AgentProfileRole?
     ) -> AgentRuntimeConfiguration {
-        AgentRuntimeConfiguration(
-            modelID: modelID,
-            workingDirectory: workingDirectory,
-            configuredContextWindowLimit: configuredContextWindowLimit,
-            generationParameterOverrides: generationParameterOverrides,
-            maxToolRounds: maxToolRounds,
-            maxOutputTokens: maxOutputTokens,
-            appMode: appMode,
-            locksModelToSession: locksModelToSession,
-            toolAuthorizationHandler: toolAuthorizationHandler,
-            agentID: agentID,
-            agentName: agentName,
-            profileID: profileID,
-            profileName: profileName,
-            profileRole: profileRole,
-            delegatingSessionID: delegatingSessionID,
-            inheritsFeatureExposures: inheritsFeatureExposures
-        )
+        renormalized {
+            $0.profileID = profileID
+            $0.profileName = profileName
+            $0.profileRole = profileRole
+        }
     }
 
     public func withToolExecutionIdentity(
         agentID: String?,
         agentName: String?
     ) -> AgentRuntimeConfiguration {
-        AgentRuntimeConfiguration(
-            modelID: modelID,
-            workingDirectory: workingDirectory,
-            configuredContextWindowLimit: configuredContextWindowLimit,
-            generationParameterOverrides: generationParameterOverrides,
-            maxToolRounds: maxToolRounds,
-            maxOutputTokens: maxOutputTokens,
-            appMode: appMode,
-            locksModelToSession: locksModelToSession,
-            toolAuthorizationHandler: toolAuthorizationHandler,
-            agentID: agentID,
-            agentName: agentName,
-            profileID: profileID,
-            profileName: profileName,
-            profileRole: profileRole,
-            delegatingSessionID: delegatingSessionID,
-            inheritsFeatureExposures: inheritsFeatureExposures
-        )
+        renormalized {
+            $0.agentID = agentID
+            $0.agentName = agentName
+        }
     }
 
     /// This configuration for a sub-agent delegated by the session
@@ -349,23 +270,36 @@ public struct AgentRuntimeConfiguration: Sendable {
         _ delegatingSessionID: String?,
         inheritsFeatureExposures: Bool
     ) -> AgentRuntimeConfiguration {
-        AgentRuntimeConfiguration(
-            modelID: modelID,
-            workingDirectory: workingDirectory,
-            configuredContextWindowLimit: configuredContextWindowLimit,
-            generationParameterOverrides: generationParameterOverrides,
-            maxToolRounds: maxToolRounds,
-            maxOutputTokens: maxOutputTokens,
-            appMode: appMode,
-            locksModelToSession: locksModelToSession,
-            toolAuthorizationHandler: toolAuthorizationHandler,
-            agentID: agentID,
-            agentName: agentName,
-            profileID: profileID,
-            profileName: profileName,
-            profileRole: profileRole,
-            delegatingSessionID: delegatingSessionID,
-            inheritsFeatureExposures: inheritsFeatureExposures
+        renormalized {
+            $0.delegatingSessionID = delegatingSessionID
+            $0.inheritsFeatureExposures = inheritsFeatureExposures
+        }
+    }
+
+    /// A copy with `change` applied, passed again through the initializer so
+    /// every value, changed or not, keeps the initializer's normalization.
+    private func renormalized(
+        _ change: (inout AgentRuntimeConfiguration) -> Void
+    ) -> AgentRuntimeConfiguration {
+        var copy = self
+        change(&copy)
+        return AgentRuntimeConfiguration(
+            modelID: copy.modelID,
+            workingDirectory: copy.workingDirectory,
+            configuredContextWindowLimit: copy.configuredContextWindowLimit,
+            generationParameterOverrides: copy.generationParameterOverrides,
+            maxToolRounds: copy.maxToolRounds,
+            maxOutputTokens: copy.maxOutputTokens,
+            appMode: copy.appMode,
+            locksModelToSession: copy.locksModelToSession,
+            toolAuthorizationHandler: copy.toolAuthorizationHandler,
+            agentID: copy.agentID,
+            agentName: copy.agentName,
+            profileID: copy.profileID,
+            profileName: copy.profileName,
+            profileRole: copy.profileRole,
+            delegatingSessionID: copy.delegatingSessionID,
+            inheritsFeatureExposures: copy.inheritsFeatureExposures
         )
     }
 }

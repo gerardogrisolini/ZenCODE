@@ -139,10 +139,6 @@ final class DS4NativeEngine: DS4Engine {
         }
     }
 
-    func renderText(of transcript: [DS4TranscriptOperation]) async throws -> String {
-        try await perform { core in try core.renderText(of: transcript) }
-    }
-
     func thinkMode(parseLevel: String) -> Int32? {
         library.thinkMode(parseLevel: parseLevel)
     }

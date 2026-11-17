@@ -42,11 +42,7 @@ final class ZenWindowHooks: ChatSessionChannelHooks {
     var slotID: ChatSlotID?
     /// The language a lock decides; the configured one, else the system one.
     var languageNameResolver: @Sendable () -> String? = {
-        if let code = AgentSettingsManifestStore.load()?.responseLanguage,
-           let name = ResponseLanguageResolver.displayName(forCode: code) {
-            return name
-        }
-        return ResponseLanguageResolver.systemDisplayName()
+        ResponseLanguageResolver.lockedDisplayName()
     }
     /// Called when the model, thinking level, agent, or command context of
     /// the next turn may have changed.
@@ -219,7 +215,7 @@ final class ZenWindowPresenter: ChatSessionPresenter {
     }
 
     func presentToolCallSettled(_ toolCall: DirectAgentToolCall, result: DirectAgentToolResult) async {
-        if ZenGitStatus.isFileMutationTool(toolCall.name) {
+        if ToolMutationClassifier.isFileMutationTool(toolCall.name) {
             fileMutationHandler?()
         }
         guard let controller else { return }
@@ -234,7 +230,7 @@ final class ZenWindowPresenter: ChatSessionPresenter {
     /// the window through the reducer.
     func presentSubAgentToolEvent(_ event: DirectSubAgentToolEvent) async {
         guard case .completed = event.lifecycle,
-              ZenGitStatus.isFileMutationTool(event.toolCall.name) else { return }
+              ToolMutationClassifier.isFileMutationTool(event.toolCall.name) else { return }
         fileMutationHandler?()
     }
 

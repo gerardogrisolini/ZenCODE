@@ -5,6 +5,7 @@ import Darwin
 #elseif canImport(Glibc)
 import Glibc
 #endif
+import Foundation
 
 /// Network scope of a numeric IP address, derived only from the address
 /// bytes.
@@ -62,11 +63,23 @@ public struct FeatureEmbeddedIPv4: Sendable, Equatable {
 /// network-aware features.
 ///
 /// Every function works on an already normalized value: callers trim
-/// whitespace, IPv6 brackets, and trailing dots, and lowercase it. None of
-/// these functions applies a policy: they never decide whether a host may be
-/// contacted, never give host names such as `localhost` or `.local` any
-/// meaning, and never decide what loopback means for a feature.
+/// whitespace, IPv6 brackets, and trailing dots, and lowercase it
+/// (``normalizedHost(_:)``). None of these functions applies a policy: they
+/// never decide whether a host may be contacted, never give host names such as
+/// `localhost` or `.local` any meaning, and never decide what loopback means
+/// for a feature.
 public enum FeatureIPAddress {
+    /// The normalized form of a host the other functions expect: without
+    /// surrounding whitespace, IPv6 brackets, and leading or trailing dots,
+    /// lowercased. It neither parses nor classifies the host.
+    public static func normalizedHost(_ host: String) -> String {
+        host
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .lowercased()
+    }
+
     /// Parses a canonical dotted-quad IPv4 literal (`93.184.216.34`): exactly
     /// four decimal labels in `0...255` without leading zeros. Returns the
     /// four octets, or nil for any other spelling, including the alternative

@@ -103,7 +103,7 @@ final class TerminalArtifactsPanelController {
             reloadInterval: Duration = .milliseconds(500),
             viewportPollInterval: Duration = .milliseconds(200),
             subscribeResize: @escaping (_ observer: @escaping @Sendable () -> Void) -> (@Sendable () -> Void)
-                = TerminalSubAgentDetailController.Environment.subscribeToTerminalResize
+                = TerminalPanelViewportWatch.subscribeToTerminalResize
         ) {
             self.snapshot = snapshot
             self.viewport = viewport
@@ -156,14 +156,20 @@ final class TerminalArtifactsPanelController {
     /// The reads started, and the one whose snapshot is applied.
     private var startedReadCount: UInt64 = 0
     private var appliedRead: UInt64 = 0
-    private var viewportTask: Task<Void, Never>?
-    private var cancelResizeSubscription: (@Sendable () -> Void)?
-    /// The viewport of the last frame presented.
-    private var lastViewport: Viewport?
+    /// The viewport checks: the poll, the resize subscription, and the
+    /// viewport of the last frame presented.
+    private let viewportWatch: TerminalPanelViewportWatch
     private var diffRows: DiffRows?
 
     init(environment: Environment) {
         self.environment = environment
+        viewportWatch = TerminalPanelViewportWatch(
+            viewport: environment.viewport,
+            isCancelled: environment.isCancelled,
+            sleep: environment.sleep,
+            pollInterval: environment.viewportPollInterval,
+            subscribeResize: environment.subscribeResize
+        )
     }
 
     // MARK: - Opening and closing
@@ -269,10 +275,7 @@ final class TerminalArtifactsPanelController {
         isStopped = true
         reloadTask?.cancel()
         reloadTask = nil
-        viewportTask?.cancel()
-        viewportTask = nil
-        cancelResizeSubscription?()
-        cancelResizeSubscription = nil
+        viewportWatch.stop()
     }
 
     /// Stops the controller, then reports `reason` through
@@ -362,44 +365,12 @@ final class TerminalArtifactsPanelController {
     /// Starts the viewport checks: a poll every
     /// ``Environment/viewportPollInterval`` and one at every resize signal.
     private func watchViewport() {
-        guard !isStopped, viewportTask == nil, cancelResizeSubscription == nil else { return }
-        cancelResizeSubscription = environment.subscribeResize { [weak self] in
-            Task { @ChatSessionActor [weak self] in
-                await self?.checkLayout()
-            }
-        }
-        let sleep = environment.sleep
-        let interval = environment.viewportPollInterval
-        viewportTask = Task { [weak self] in
-            while !Task.isCancelled {
-                do {
-                    try await sleep(interval)
-                } catch {
-                    return
-                }
-                guard let self, !self.isStopped else { return }
-                if self.environment.isCancelled() {
-                    // This task closes the controller: keep it out of the
-                    // cancellation of `stop()`, so `onClosed` runs uncancelled.
-                    self.viewportTask = nil
-                }
-                await self.checkLayout()
-                guard !self.isStopped else { return }
-            }
-        }
-    }
-
-    /// Closes the controller once the screen fell back to append-only output;
-    /// otherwise draws the panel again when the viewport changed since the
-    /// last frame.
-    private func checkLayout() async {
         guard !isStopped else { return }
-        guard !environment.isCancelled() else {
-            await close(reason: .layoutUnavailable)
-            return
-        }
-        guard Viewport(environment.viewport()) != lastViewport else { return }
-        render()
+        viewportWatch.start(
+            isActive: { [weak self] in self.map { !$0.isStopped } ?? false },
+            layoutUnavailable: { [weak self] in await self?.close(reason: .layoutUnavailable) },
+            redraw: { [weak self] in self?.render() }
+        )
     }
 
     // MARK: - Rendering
@@ -407,8 +378,7 @@ final class TerminalArtifactsPanelController {
     /// Draws the panel for the current viewport and presents it.
     private func render() {
         guard !isStopped else { return }
-        let viewport = Viewport(environment.viewport())
-        lastViewport = viewport
+        let viewport = viewportWatch.frameViewport()
         var headerRows: [String] = []
         var bodyRows: [String] = []
         if case .showing = panel.mode, let entry {
@@ -639,16 +609,6 @@ final class TerminalArtifactsPanelController {
 
     private nonisolated static func muted(_ text: String, standardErrorIsTerminal: Bool) -> String {
         standardErrorIsTerminal ? "\(TerminalStyle.Text.muted)\(text)\(TerminalStyle.reset)" : text
-    }
-
-    private struct Viewport: Equatable {
-        let rows: Int
-        let columns: Int
-
-        init(_ viewport: (rows: Int, columns: Int)) {
-            rows = viewport.rows
-            columns = viewport.columns
-        }
     }
 
     private struct DiffRows {

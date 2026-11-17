@@ -25,7 +25,7 @@ struct MemoryCleanupStoreTests {
         for (index, content) in contents.enumerated() {
             let entry = try await service.writeEntry(
                 content: content,
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 tags: ["tag-\(index)"]
             )
             identifiers.append(entry.id.uuidString)
@@ -61,7 +61,7 @@ struct MemoryCleanupStoreTests {
                 )
                 let service = MemoryService()
                 for id in identifiers.dropFirst() {
-                    try await service.archiveEntry(id: id, workspaceRootURL: workspace.workspaceURL)
+                    try await service.setArchived(true, id: id, target: .workspace(workspace.workspaceURL))
                 }
                 let graphURL = workspace.graphURL()
                 let store = try await MemoryGraphStoreRegistry.shared.store(graphURL: graphURL)
@@ -102,9 +102,10 @@ struct MemoryCleanupStoreTests {
         try await workspace.withIsolatedSupport {
             try await MemoryEmbedding.withProvider(nil) {
                 let identifiers = try await Self.seed(workspace, contents: ["Summary: one", "Summary: two"])
-                try await MemoryService().archiveEntry(
+                try await MemoryService().setArchived(
+                    true,
                     id: identifiers[1],
-                    workspaceRootURL: workspace.workspaceURL
+                    target: .workspace(workspace.workspaceURL)
                 )
                 let graphURL = workspace.graphURL()
                 let store = try await MemoryGraphStoreRegistry.shared.store(graphURL: graphURL)
@@ -133,9 +134,10 @@ struct MemoryCleanupStoreTests {
         try await workspace.withIsolatedSupport {
             try await MemoryEmbedding.withProvider(nil) {
                 let identifiers = try await Self.seed(workspace, contents: ["Summary: one", "Summary: two"])
-                try await MemoryService().archiveEntry(
+                try await MemoryService().setArchived(
+                    true,
                     id: identifiers[1],
-                    workspaceRootURL: workspace.workspaceURL
+                    target: .workspace(workspace.workspaceURL)
                 )
                 let graphURL = workspace.graphURL()
                 let store = try await MemoryGraphStoreRegistry.shared.store(graphURL: graphURL)

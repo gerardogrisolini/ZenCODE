@@ -22,27 +22,27 @@ struct MemorySearchLimitTests {
             for index in 0..<20 {
                 _ = try await service.writeEntry(
                     content: "Summary: redis note \(index) about the cache layer.",
-                    workspaceRootURL: workspace.workspaceURL
+                    target: .workspace(workspace.workspaceURL)
                 )
             }
 
             let twenty = try await service.searchEntries(
                 query: "redis cache",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 20
             )
             #expect(twenty.count == 20)
 
             let fifty = try await service.searchEntries(
                 query: "redis cache",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 50
             )
             #expect(fifty.count == 20)
 
             let five = try await service.searchEntries(
                 query: "redis cache",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 limit: 5
             )
             #expect(five.count == 5)
@@ -58,23 +58,24 @@ struct MemorySearchLimitTests {
             for index in 0..<4 {
                 _ = try await service.writeEntry(
                     content: "Summary: active redis note \(index).",
-                    workspaceRootURL: workspace.workspaceURL
+                    target: .workspace(workspace.workspaceURL)
                 )
             }
             for index in 0..<4 {
                 let entry = try await service.writeEntry(
                     content: "Summary: archived redis note \(index).",
-                    workspaceRootURL: workspace.workspaceURL
+                    target: .workspace(workspace.workspaceURL)
                 )
-                _ = try await service.archiveEntry(
+                _ = try await service.setArchived(
+                    true,
                     id: entry.id.uuidString,
-                    workspaceRootURL: workspace.workspaceURL
+                    target: .workspace(workspace.workspaceURL)
                 )
             }
 
             let matches = try await service.searchEntries(
                 query: "redis",
-                workspaceRootURL: workspace.workspaceURL,
+                target: .workspace(workspace.workspaceURL),
                 includeArchived: true,
                 limit: 4
             )

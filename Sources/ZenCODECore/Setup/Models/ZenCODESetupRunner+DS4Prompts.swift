@@ -55,23 +55,23 @@ struct DS4SetupPrompts {
     /// `nil` use the interactive prompt. The injected tuning seam takes no
     /// context: it is dropped, and the seam receives the model and its defaults.
     init(
-        folder: ((String?) throws -> String?)? = nil,
-        files: (([DS4SetupModelCandidate], Set<String>) throws -> Set<String>?)? = nil,
-        backend: ((DS4SetupModelCandidate, AgentDS4RuntimeBackend) throws -> AgentDS4RuntimeBackend)? = nil,
-        auxiliaryFile: DS4SetupAuxiliaryFileSelector? = nil,
-        tuning: ((DS4SetupModelCandidate, AgentDS4RuntimeTuning) throws -> AgentDS4RuntimeTuning)? = nil,
-        apiModelID: ((DS4SetupModelCandidate) throws -> String)? = nil
+        promptFolder: ((String?) throws -> String?)? = nil,
+        selectFiles: (([DS4SetupModelCandidate], Set<String>) throws -> Set<String>?)? = nil,
+        selectBackend: ((DS4SetupModelCandidate, AgentDS4RuntimeBackend) throws -> AgentDS4RuntimeBackend)? = nil,
+        selectAPIModelID: ((DS4SetupModelCandidate) throws -> String)? = nil,
+        selectAuxiliaryFile: DS4SetupAuxiliaryFileSelector? = nil,
+        promptTuning: ((DS4SetupModelCandidate, AgentDS4RuntimeTuning) throws -> AgentDS4RuntimeTuning)? = nil
     ) {
-        self.folder = folder ?? Self.promptFolder
-        self.files = files ?? Self.promptModelFiles
-        self.backend = backend ?? Self.promptBackend
-        self.auxiliaryFile = auxiliaryFile ?? Self.promptAuxiliaryFile
-        if let tuning {
-            self.tuning = { candidate, defaults, _ in try tuning(candidate, defaults) }
+        folder = promptFolder ?? Self.promptFolder
+        files = selectFiles ?? Self.promptModelFiles
+        backend = selectBackend ?? Self.promptBackend
+        apiModelID = selectAPIModelID ?? Self.promptAPIModelID
+        auxiliaryFile = selectAuxiliaryFile ?? Self.promptAuxiliaryFile
+        if let promptTuning {
+            tuning = { candidate, defaults, _ in try promptTuning(candidate, defaults) }
         } else {
-            self.tuning = Self.promptTuning
+            tuning = Self.promptTuning
         }
-        self.apiModelID = apiModelID ?? Self.promptAPIModelID
     }
 
     // MARK: Interactive prompts

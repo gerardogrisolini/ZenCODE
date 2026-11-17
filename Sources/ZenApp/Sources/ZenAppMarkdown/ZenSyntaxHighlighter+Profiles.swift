@@ -2,11 +2,13 @@
 //  ZenSyntaxHighlighter+Profiles.swift
 //  ZenApp
 //
-//  Language profiles of `ZenSyntaxHighlighter`. Keyword, type and constant
-//  sets mirror the terminal renderer's `TerminalCodeBlockRenderer.profile(for:)`.
+//  Language profiles of `ZenSyntaxHighlighter`. The keyword, type and
+//  constant sets are the shared `CodeSyntaxVocabulary`, the ones the terminal
+//  renderer's `TerminalCodeBlockRenderer.profile(for:)` uses.
 //
 
 import Foundation
+import ZenCODECore
 
 /// How a family of languages is scanned.
 enum ZenSyntaxGrammar: Sendable {
@@ -159,23 +161,9 @@ extension ZenSyntaxHighlighter {
         switch language {
         case "swift":
             return ZenSyntaxProfile(
-                keywords: [
-                    "actor", "any", "as", "associatedtype", "async", "await", "borrowing",
-                    "break", "case", "catch", "class", "consuming", "continue", "default",
-                    "defer", "deinit", "do", "else", "enum", "extension", "fallthrough",
-                    "false", "fileprivate", "for", "func", "guard", "if", "import", "in",
-                    "indirect", "init", "inout", "internal", "is", "isolated", "let", "nil",
-                    "nonisolated", "open", "operator", "private", "protocol", "public",
-                    "repeat", "rethrows", "return", "self", "some", "static", "struct",
-                    "subscript", "super", "switch", "throw", "throws", "true", "try",
-                    "typealias", "var", "where", "while"
-                ],
-                types: [
-                    "Array", "Bool", "Character", "Data", "Date", "Dictionary", "Double",
-                    "Error", "Float", "Int", "Int64", "Never", "Optional", "Result",
-                    "Set", "String", "UInt", "URL", "Void"
-                ],
-                constants: ["false", "nil", "true"],
+                keywords: CodeSyntaxVocabulary.swift.keywords,
+                types: CodeSyntaxVocabulary.swift.types,
+                constants: CodeSyntaxVocabulary.swift.constants,
                 lineComments: ["//"],
                 blockComments: [ZenSyntaxProfile.cBlockComment],
                 attributePrefixes: ["@"],
@@ -185,20 +173,9 @@ extension ZenSyntaxHighlighter {
             )
         case "javascript", "typescript":
             return ZenSyntaxProfile(
-                keywords: [
-                    "as", "async", "await", "break", "case", "catch", "class", "const",
-                    "continue", "debugger", "default", "delete", "do", "else", "export",
-                    "extends", "finally", "for", "from", "function", "if", "import",
-                    "in", "instanceof", "interface", "let", "new", "of", "private",
-                    "protected", "public", "return", "static", "super", "switch",
-                    "throw", "try", "type", "typeof", "var", "void", "while", "yield"
-                ],
-                types: [
-                    "Array", "Boolean", "Date", "Error", "Map", "Number", "Object",
-                    "Promise", "Record", "Set", "String", "boolean", "never", "number",
-                    "string", "unknown", "void"
-                ],
-                constants: ["false", "null", "true", "undefined"],
+                keywords: CodeSyntaxVocabulary.javaScript.keywords,
+                types: CodeSyntaxVocabulary.javaScript.types,
+                constants: CodeSyntaxVocabulary.javaScript.constants,
                 lineComments: ["//"],
                 blockComments: [ZenSyntaxProfile.cBlockComment],
                 attributePrefixes: ["@"],
@@ -207,15 +184,9 @@ extension ZenSyntaxHighlighter {
             )
         case "python":
             return ZenSyntaxProfile(
-                keywords: [
-                    "False", "None", "True", "and", "as", "assert", "async", "await",
-                    "break", "class", "continue", "def", "del", "elif", "else",
-                    "except", "finally", "for", "from", "global", "if", "import",
-                    "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise",
-                    "return", "try", "while", "with", "yield"
-                ],
-                types: ["bool", "bytes", "dict", "float", "int", "list", "set", "str", "tuple"],
-                constants: ["False", "None", "True"],
+                keywords: CodeSyntaxVocabulary.python.keywords,
+                types: CodeSyntaxVocabulary.python.types,
+                constants: CodeSyntaxVocabulary.python.constants,
                 lineComments: ["#"],
                 attributePrefixes: ["@"],
                 stringDelimiters: ["\"", "'"],
@@ -223,11 +194,9 @@ extension ZenSyntaxHighlighter {
             )
         case "shell":
             return ZenSyntaxProfile(
-                keywords: [
-                    "case", "do", "done", "elif", "else", "esac", "fi", "for",
-                    "function", "if", "in", "select", "then", "until", "while"
-                ],
-                constants: ["false", "true"],
+                keywords: CodeSyntaxVocabulary.shell.keywords,
+                types: CodeSyntaxVocabulary.shell.types,
+                constants: CodeSyntaxVocabulary.shell.constants,
                 lineComments: ["#"],
                 stringDelimiters: ["\"", "'", "`"],
                 commentsNeedSpace: true,
@@ -235,35 +204,18 @@ extension ZenSyntaxHighlighter {
             )
         case "rust":
             return ZenSyntaxProfile(
-                keywords: [
-                    "as", "async", "await", "break", "const", "continue", "crate",
-                    "dyn", "else", "enum", "extern", "false", "fn", "for", "if",
-                    "impl", "in", "let", "loop", "match", "mod", "move", "mut",
-                    "pub", "ref", "return", "self", "static", "struct", "super",
-                    "trait", "true", "type", "unsafe", "use", "where", "while"
-                ],
-                types: [
-                    "Box", "Option", "Result", "Self", "String", "Vec", "bool", "char",
-                    "f32", "f64", "i32", "i64", "isize", "str", "u32", "u64", "usize"
-                ],
-                constants: ["false", "None", "Some", "true"],
+                keywords: CodeSyntaxVocabulary.rust.keywords,
+                types: CodeSyntaxVocabulary.rust.types,
+                constants: CodeSyntaxVocabulary.rust.constants,
                 lineComments: ["//"],
                 blockComments: [ZenSyntaxProfile.cBlockComment],
                 attributePrefixes: ["#"]
             )
         case "go":
             return ZenSyntaxProfile(
-                keywords: [
-                    "break", "case", "chan", "const", "continue", "default", "defer",
-                    "else", "fallthrough", "for", "func", "go", "goto", "if",
-                    "import", "interface", "map", "package", "range", "return",
-                    "select", "struct", "switch", "type", "var"
-                ],
-                types: [
-                    "any", "bool", "byte", "complex64", "complex128", "error", "float32",
-                    "float64", "int", "int32", "int64", "rune", "string", "uint", "uint64"
-                ],
-                constants: ["false", "nil", "true"],
+                keywords: CodeSyntaxVocabulary.go.keywords,
+                types: CodeSyntaxVocabulary.go.types,
+                constants: CodeSyntaxVocabulary.go.constants,
                 lineComments: ["//"],
                 blockComments: [ZenSyntaxProfile.cBlockComment],
                 stringDelimiters: ["\"", "'", "`"],
@@ -271,20 +223,9 @@ extension ZenSyntaxHighlighter {
             )
         case "c", "cpp", "objc":
             return ZenSyntaxProfile(
-                keywords: [
-                    "auto", "break", "case", "catch", "class", "const", "constexpr",
-                    "continue", "default", "delete", "do", "else", "enum", "extern",
-                    "for", "friend", "goto", "if", "inline", "namespace", "new",
-                    "operator", "private", "protected", "public", "return", "sizeof",
-                    "static", "struct", "switch", "template", "this", "throw", "try",
-                    "typedef", "typename", "union", "using", "virtual", "void", "while"
-                ],
-                types: [
-                    "BOOL", "bool", "char", "double", "float", "int", "int32_t",
-                    "int64_t", "long", "short", "size_t", "std", "string", "uint32_t",
-                    "uint64_t"
-                ],
-                constants: ["false", "NULL", "nullptr", "true"],
+                keywords: CodeSyntaxVocabulary.c.keywords,
+                types: CodeSyntaxVocabulary.c.types,
+                constants: CodeSyntaxVocabulary.c.constants,
                 lineComments: ["//"],
                 blockComments: [ZenSyntaxProfile.cBlockComment],
                 attributePrefixes: ["@"],
@@ -293,21 +234,9 @@ extension ZenSyntaxHighlighter {
             )
         case "java", "kotlin", "csharp":
             return ZenSyntaxProfile(
-                keywords: [
-                    "abstract", "as", "break", "case", "catch", "class", "const",
-                    "continue", "default", "do", "else", "enum", "extends", "final",
-                    "finally", "for", "fun", "if", "implements", "import", "in",
-                    "interface", "internal", "is", "new", "object", "override",
-                    "package", "private", "protected", "public", "return", "sealed",
-                    "static", "switch", "this", "throw", "throws", "try", "val",
-                    "var", "void", "when", "while"
-                ],
-                types: [
-                    "Boolean", "Char", "Double", "Exception", "Float", "Int",
-                    "Integer", "List", "Long", "Map", "String", "boolean", "char",
-                    "double", "float", "int", "long", "string"
-                ],
-                constants: ["false", "null", "true"],
+                keywords: CodeSyntaxVocabulary.java.keywords,
+                types: CodeSyntaxVocabulary.java.types,
+                constants: CodeSyntaxVocabulary.java.constants,
                 lineComments: ["//"],
                 blockComments: [ZenSyntaxProfile.cBlockComment],
                 attributePrefixes: ["@"],
@@ -317,17 +246,9 @@ extension ZenSyntaxHighlighter {
             )
         case "php":
             return ZenSyntaxProfile(
-                keywords: [
-                    "abstract", "and", "array", "as", "break", "case", "catch",
-                    "class", "clone", "const", "continue", "declare", "default",
-                    "do", "echo", "else", "elseif", "extends", "final", "finally",
-                    "for", "foreach", "function", "global", "if", "implements",
-                    "interface", "namespace", "new", "or", "private", "protected",
-                    "public", "return", "static", "switch", "throw", "trait", "try",
-                    "use", "var", "while", "xor"
-                ],
-                types: ["bool", "float", "int", "mixed", "string", "void"],
-                constants: ["false", "null", "true"],
+                keywords: CodeSyntaxVocabulary.php.keywords,
+                types: CodeSyntaxVocabulary.php.types,
+                constants: CodeSyntaxVocabulary.php.constants,
                 lineComments: ["//", "#"],
                 blockComments: [ZenSyntaxProfile.cBlockComment],
                 attributePrefixes: ["@"],
@@ -335,42 +256,27 @@ extension ZenSyntaxHighlighter {
             )
         case "ruby":
             return ZenSyntaxProfile(
-                keywords: [
-                    "BEGIN", "END", "alias", "and", "begin", "break", "case", "class",
-                    "def", "defined", "do", "else", "elsif", "end", "ensure", "false",
-                    "for", "if", "in", "module", "next", "nil", "not", "or", "redo",
-                    "rescue", "retry", "return", "self", "super", "then", "true",
-                    "undef", "unless", "until", "when", "while", "yield"
-                ],
-                types: ["Array", "Class", "Hash", "Integer", "Module", "String", "Symbol"],
-                constants: ["false", "nil", "true"],
+                keywords: CodeSyntaxVocabulary.ruby.keywords,
+                types: CodeSyntaxVocabulary.ruby.types,
+                constants: CodeSyntaxVocabulary.ruby.constants,
                 lineComments: ["#"],
                 attributePrefixes: ["@"],
                 stringDelimiters: ["\"", "'", "`"]
             )
         case "sql":
             return ZenSyntaxProfile(
-                keywords: [
-                    "ALTER", "AND", "AS", "ASC", "BETWEEN", "BY", "CASE", "CREATE",
-                    "DELETE", "DESC", "DISTINCT", "DROP", "ELSE", "END", "FROM",
-                    "GROUP", "HAVING", "IN", "INSERT", "INTO", "IS", "JOIN", "LEFT",
-                    "LIKE", "LIMIT", "NOT", "NULL", "ON", "OR", "ORDER", "RIGHT",
-                    "SELECT", "SET", "TABLE", "THEN", "UPDATE", "VALUES", "WHEN",
-                    "WHERE"
-                ],
-                types: ["BIGINT", "BOOLEAN", "DATE", "FLOAT", "INT", "INTEGER", "TEXT", "VARCHAR"],
-                constants: ["FALSE", "NULL", "TRUE"],
+                keywords: CodeSyntaxVocabulary.sql.keywords,
+                types: CodeSyntaxVocabulary.sql.types,
+                constants: CodeSyntaxVocabulary.sql.constants,
                 lineComments: ["--"],
                 blockComments: [ZenSyntaxProfile.cBlockComment],
                 stringDelimiters: ["\"", "'"]
             )
         case "docker":
             return ZenSyntaxProfile(
-                keywords: [
-                    "ADD", "ARG", "CMD", "COPY", "ENTRYPOINT", "ENV", "EXPOSE",
-                    "FROM", "HEALTHCHECK", "LABEL", "MAINTAINER", "ONBUILD", "RUN",
-                    "SHELL", "STOPSIGNAL", "USER", "VOLUME", "WORKDIR"
-                ],
+                keywords: CodeSyntaxVocabulary.docker.keywords,
+                types: CodeSyntaxVocabulary.docker.types,
+                constants: CodeSyntaxVocabulary.docker.constants,
                 lineComments: ["#"],
                 stringDelimiters: ["\"", "'"],
                 commentsNeedSpace: true

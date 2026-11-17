@@ -8,7 +8,7 @@
 import Foundation
 import ToolCore
 
-public struct AgentSettingsManifest: Codable, Equatable, Sendable {
+public struct AgentSettingsManifest: Codable, Equatable, Sendable, SensitiveVersionedManifest {
     private enum CodingKeys: String, CodingKey {
         case version
         case providers

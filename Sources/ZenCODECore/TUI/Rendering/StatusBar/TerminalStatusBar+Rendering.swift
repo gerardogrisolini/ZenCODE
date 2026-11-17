@@ -450,7 +450,7 @@ extension TerminalStatusBar {
             )
         }
         if tokensUsed != nil || state.latestContextWindow?.maxTokens != nil {
-            let contextText = Self.tokenWindowText(
+            let contextText = StatusMetricsFormatting.tokenWindowText(
                 usedTokens: state.latestContextWindow?.usedTokens,
                 metricUsedTokens: tokensUsed,
                 maxTokens: state.latestContextWindow?.maxTokens
@@ -464,9 +464,9 @@ extension TerminalStatusBar {
             let elapsedSeconds = Double(
                 startInstant.duration(to: ContinuousClock.now).components.seconds
             )
-            fragments.append(Self.durationText(elapsedSeconds))
+            fragments.append(StatusMetricsFormatting.durationText(elapsedSeconds))
         } else if let duration = state.latestMetrics?.responseDurationSeconds {
-            fragments.append(Self.durationText(duration))
+            fragments.append(StatusMetricsFormatting.durationText(duration))
         }
         if let latestMetrics = state.latestMetrics,
            let tokenCountsText = Self.styledGenerationTokenCountsFragment(latestMetrics) {

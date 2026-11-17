@@ -62,7 +62,6 @@ public enum XcodeToolsFeatureRunner {
              .connectionClosed,
              .unsupportedPlatform,
              .authorizationRequired,
-             .browserAuthenticationFailed,
              .serverExited:
             return true
         }
@@ -201,7 +200,7 @@ struct XcodeFeatureConfiguration: MCPFeatureConfiguration, PersistentMCPFeatureC
     /// not mistake an ordinary cancellation or rejection for a consent problem.
     private func isXcodeConsentDenied(_ error: Error) -> Bool {
         if let clientError = error as? MCPClientError {
-            return XcodeToolIntegration.isPermissionDenied(clientError)
+            return clientError.indicatesPermissionDenied
         }
         if error is CancellationError || error is XcodeFeatureError {
             return false
@@ -213,7 +212,7 @@ struct XcodeFeatureConfiguration: MCPFeatureConfiguration, PersistentMCPFeatureC
         let lowered = message.lowercased()
         return lowered.contains("xcode.mcpbridge.authorization")
             || lowered.contains("authorization error")
-            || XcodeToolIntegration.messageLooksLikePermissionDenied(message)
+            || MCPClientError.messageIndicatesPermissionDenied(message)
     }
 
     func presentation(for tool: ToolDescriptor) -> ToolPresentationDefinition {

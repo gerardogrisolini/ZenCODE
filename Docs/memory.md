@@ -197,13 +197,11 @@ an old copy put back by hand) uses its inline vectors and ignores the file.
 ZenCODECore exposes its own public DTOs (`MemoryEntry`, `MemoryScope`,
 `MemoryCategory`) declared under `Models`; the internal `ZenMemory`
 engine implementation stays behind the facade (internal aliases bridge the two).
-The facade API is async: `MemoryService`'s methods (`readEntries`,
-`searchEntries`, `writeEntry`, `updateEntry`, `archiveEntry`, `setArchived`,
-`deleteEntry`) are `async throws` and keyed by `workspaceRootURL:`; `entry`,
-`readEntries`, `searchEntries`, `updateEntry`, `setArchived` and `deleteEntry`
-also take a `target:` (`MemoryGraphTarget`), which can address the global graph.
-A nil workspace or target fails with `scopeUnavailable` for reads and mutations
-alike. The tool entry point is
+The facade API is async: `MemoryService`'s methods (`entry`, `readEntries`,
+`searchEntries`, `writeEntry`, `updateEntry`, `setArchived`, `deleteEntry`) are
+`async throws` and take a `target:` (`MemoryGraphTarget`), which addresses a
+workspace graph (`.workspace(url)`) or the global graph (`.global`).
+A nil target fails with `scopeUnavailable` for reads and mutations alike. The tool entry point is
 `MemoryTool.executeAsync(_:context:memoryService:)`, whose `MemoryToolContext`
 names the graph with `graphTarget:`. The synchronous surface deprecated since
 1.1.x — the `scope:` / `workingDirectory:` wrappers that blocked the calling

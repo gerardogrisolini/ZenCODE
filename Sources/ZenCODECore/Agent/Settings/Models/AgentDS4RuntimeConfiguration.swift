@@ -243,7 +243,8 @@ public enum AgentDS4PathGuard {
         return candidatePath.hasPrefix(rootPath + "/")
     }
 
-    private static func isSymbolicLink(
+    /// Whether `url` names a symbolic link; `false` when it cannot be read.
+    static func isSymbolicLink(
         _ url: URL,
         fileManager: FileManager
     ) -> Bool {

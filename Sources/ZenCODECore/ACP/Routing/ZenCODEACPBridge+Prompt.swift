@@ -49,7 +49,7 @@ extension ZenCODEACPBridge {
     public func prompt(id: JSONValue?, params: [String: Any]) async throws {
         // Check the fence *before* looking the session up. `shutdown()` empties
         // `sessions`, so the reverse order would report "unknown session" and
-        // `handleMessage` would turn that into a JSON-RPC error response on a
+        // the message dispatch would turn that into a JSON-RPC error response on a
         // transport that is already closed. A post-shutdown prompt must be
         // abandoned silently instead. `ensureConfigured()` keeps that order and
         // additionally answers `auth_required` while ZenCODE is not set up.

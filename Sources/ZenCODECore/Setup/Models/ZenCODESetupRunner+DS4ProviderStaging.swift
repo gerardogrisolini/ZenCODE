@@ -19,12 +19,7 @@ extension ZenCODESetupRunner {
         reservedModelIDs: Set<String> = [],
         scanner: DS4InstallationScanner = DS4InstallationScanner(),
         catalog: DS4ModelCatalog = .default,
-        promptFolder: ((String?) throws -> String?)? = nil,
-        selectFiles: (([DS4SetupModelCandidate], Set<String>) throws -> Set<String>?)? = nil,
-        selectBackend: ((DS4SetupModelCandidate, AgentDS4RuntimeBackend) throws -> AgentDS4RuntimeBackend)? = nil,
-        selectAPIModelID: ((DS4SetupModelCandidate) throws -> String)? = nil,
-        selectAuxiliaryFile: DS4SetupAuxiliaryFileSelector? = nil,
-        promptTuning: ((DS4SetupModelCandidate, AgentDS4RuntimeTuning) throws -> AgentDS4RuntimeTuning)? = nil,
+        prompts: DS4SetupPrompts = DS4SetupPrompts(),
         engine: DS4SetupEngineOptions = DS4SetupEngineOptions()
     ) async -> SetupProviderInput? {
         do {
@@ -35,12 +30,7 @@ extension ZenCODESetupRunner {
                 reservedModelIDs: reservedModelIDs,
                 scanner: scanner,
                 catalog: catalog,
-                promptFolder: promptFolder,
-                selectFiles: selectFiles,
-                selectBackend: selectBackend,
-                selectAPIModelID: selectAPIModelID,
-                selectAuxiliaryFile: selectAuxiliaryFile,
-                promptTuning: promptTuning,
+                prompts: prompts,
                 engine: engine
             )
         } catch {
@@ -73,22 +63,9 @@ extension ZenCODESetupRunner {
         reservedModelIDs: Set<String> = [],
         scanner: DS4InstallationScanner = DS4InstallationScanner(),
         catalog: DS4ModelCatalog = .default,
-        promptFolder: ((String?) throws -> String?)? = nil,
-        selectFiles: (([DS4SetupModelCandidate], Set<String>) throws -> Set<String>?)? = nil,
-        selectBackend: ((DS4SetupModelCandidate, AgentDS4RuntimeBackend) throws -> AgentDS4RuntimeBackend)? = nil,
-        selectAPIModelID: ((DS4SetupModelCandidate) throws -> String)? = nil,
-        selectAuxiliaryFile: DS4SetupAuxiliaryFileSelector? = nil,
-        promptTuning: ((DS4SetupModelCandidate, AgentDS4RuntimeTuning) throws -> AgentDS4RuntimeTuning)? = nil,
+        prompts: DS4SetupPrompts = DS4SetupPrompts(),
         engine: DS4SetupEngineOptions = DS4SetupEngineOptions()
     ) async throws -> SetupProviderInput? {
-        let prompts = DS4SetupPrompts(
-            folder: promptFolder,
-            files: selectFiles,
-            backend: selectBackend,
-            auxiliaryFile: selectAuxiliaryFile,
-            tuning: promptTuning,
-            apiModelID: selectAPIModelID
-        )
         let previousRootDirectory = (existingProvider?.ds4Runtime
             ?? existingModels.compactMap(\.ds4Runtime).first
         )?.rootDirectory

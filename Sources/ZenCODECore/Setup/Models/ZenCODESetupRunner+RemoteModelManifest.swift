@@ -227,9 +227,7 @@ extension ZenCODESetupRunner {
         let thinkingConfiguration = try promptThinkingSupport(
             forModel: modelID,
             existingOptions: AgentSettingsModelManifestFactory.agentThinkingOptions(from: knownThinkingSupport),
-            existingDefaultSelection: AgentSettingsModelManifestFactory.agentThinkingSelection(
-                from: knownThinkingSupport?.defaultSelection
-            )
+            existingDefaultSelection: knownThinkingSupport?.defaultSelection
         )
         let manifestID = AgentRemoteProvider.modelManifestID(providerID: providerID, modelID: modelID)
         return AgentSettingsModelManifest(
@@ -296,7 +294,7 @@ extension ZenCODESetupRunner {
             ? AgentSettingsModelManifestFactory.agentThinkingOptions(from: fallbackSupport)
             : existingOptions
         let suggestedDefault = existingDefaultSelection ?? (useFallback
-            ? AgentSettingsModelManifestFactory.agentThinkingSelection(from: fallbackSupport?.defaultSelection)
+            ? fallbackSupport?.defaultSelection
             : nil)
 
         let availableOptions = AgentThinkingSelection.allCases

@@ -93,8 +93,7 @@ let targets: [Target] = [
         name: "FeatureMCPBridgeKit",
         dependencies: [
             "FeatureKit",
-            "ToolCore",
-            .product(name: "Crypto", package: "swift-crypto")
+            "ToolCore"
         ],
         swiftSettings: memberImportVisibilitySettings
     ),
