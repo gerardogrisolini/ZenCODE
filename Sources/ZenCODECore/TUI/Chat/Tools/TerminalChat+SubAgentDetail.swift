@@ -32,6 +32,14 @@ extension TerminalChat {
         helpText: "↑↓ PgUp PgDn Home End scroll · Esc close"
     )
 
+    /// The input panel's mode while the detail shows an agent that it opened
+    /// from the agent list: `Esc` goes back to the list instead of closing the
+    /// panel.
+    nonisolated static let subAgentListDetailPanelOverride = TerminalPanelModeOverride(
+        modeText: "Sub-agent",
+        helpText: "↑↓ PgUp PgDn Home End scroll · Esc back"
+    )
+
     /// The input panel's mode while the detail lists the agents in progress,
     /// which own every key of the panel until one is opened.
     nonisolated static let subAgentListPanelOverride = TerminalPanelModeOverride(
@@ -41,15 +49,17 @@ extension TerminalChat {
 
     /// The input panel's mode that goes with each routing of the panel keys
     /// to the detail: ``subAgentListPanelOverride`` for the agent list,
-    /// ``subAgentDetailPanelOverride`` for an agent's detail, none once the
-    /// detail is closed.
+    /// ``subAgentDetailPanelOverride`` for an agent's detail (or
+    /// ``subAgentListDetailPanelOverride`` when `detailReturnsToList`: the
+    /// detail was opened from the list), none once the detail is closed.
     nonisolated static func subAgentPanelModeOverride(
-        for mode: TerminalInteractiveLineReader.SubAgentDetailMode
+        for mode: TerminalInteractiveLineReader.SubAgentDetailMode,
+        detailReturnsToList: Bool = false
     ) -> TerminalPanelModeOverride? {
         switch mode {
         case .closed: nil
         case .list: subAgentListPanelOverride
-        case .detail: subAgentDetailPanelOverride
+        case .detail: detailReturnsToList ? subAgentListDetailPanelOverride : subAgentDetailPanelOverride
         }
     }
 
@@ -107,9 +117,10 @@ extension TerminalChat {
     /// opens nothing. A failed match leaves an open panel as it is.
     ///
     /// The agent list owns every key of the panel. An agent's detail takes
-    /// only the keys that scroll it and `Esc`, which closes it: the prompt
-    /// keeps the other keys, so prompts and `@` mentions are typed and sent
-    /// while it stays open, and a command goes on with it open unless it
+    /// only the keys that scroll it and `Esc`, which goes back to the list when
+    /// the detail was opened from it and closes the panel otherwise: the
+    /// prompt keeps the other keys, so prompts and `@` mentions are typed and
+    /// sent while it stays open, and a command goes on with it open unless it
     /// opens a menu or a line prompt
     /// (``closeDetailPanelForModalInput()``).
     func handleSubAgentCommand(_ command: String) async {

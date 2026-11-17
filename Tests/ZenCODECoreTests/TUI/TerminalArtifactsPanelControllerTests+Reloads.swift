@@ -33,7 +33,7 @@ extension TerminalArtifactsPanelControllerTests {
         #expect(controller.entries.map(\.id) == ["3:/repo/C.swift", "2:/repo/B.swift", "1:/repo/A.swift"])
         #expect(focusedIndex(controller) == 2)
         #expect(harness.frames.last == controller.panel.frameLines(rows: 20, columns: 60))
-        #expect(listContents(harness.frames.last ?? [])[6] == "▸ modified A.swift  +1 -1")
+        #expect(listContents(harness.frames.last ?? [])[4] == "▸ turn 1                modified  +1 -1  A.swift")
 
         // The focused file leaves: the focus keeps its position, clamped.
         harness.feed.setSnapshot(ChatFileArtifactSnapshot(

@@ -49,6 +49,12 @@ import ToolCore
 /// check closes the controller with ``CloseReason/layoutUnavailable`` once the
 /// screen fell back to append-only output (``Environment/isCancelled``).
 ///
+/// In the detail of an agent picked from the list `Esc` goes back to the list,
+/// focused on that agent, and closes the panel from there; in the detail the
+/// panel opened on directly (an agent named in the command, or the only one in
+/// progress) `Esc` closes the panel. The list is the one the panel opened with:
+/// going back to it does not update it.
+///
 /// After ``stop()`` the controller never calls ``Environment/present``,
 /// ``Environment/onClosed`` or ``Environment/modeDidChange`` again, not even
 /// from a read still in flight.
@@ -56,7 +62,8 @@ import ToolCore
 final class TerminalSubAgentDetailController {
     /// Why the panel closed.
     enum CloseReason: Sendable, Equatable {
-        /// The operator dismissed the panel (Esc, or `q` in the agent list).
+        /// The operator dismissed the panel (Esc in the agent list or in the
+        /// detail the panel opened on directly, or `q` in the agent list).
         case dismissed
         /// A consent request needs the input panel.
         case consent
@@ -76,6 +83,11 @@ final class TerminalSubAgentDetailController {
     private let environment: Environment
     /// The panel as the last frame drew it.
     private(set) var panel = TerminalSubAgentDetailPanel()
+    /// Whether the panel opened on the agent list (``open(choosing:)``), so
+    /// that `Esc` in an agent's detail goes back to it. `false` for a panel
+    /// that opened directly on an agent (``open(agentID:snapshot:)``), which
+    /// `Esc` closes.
+    private(set) var returnsToList = false
     /// The agent shown; `nil` while the operator chooses one.
     private(set) var agentID: String?
     /// The latest snapshot of the agent shown. It stays when the agent leaves
@@ -120,39 +132,36 @@ final class TerminalSubAgentDetailController {
     /// Shows the agent list, one entry per snapshot, focused on the first
     /// (``choiceEntries(_:modelTitleResolver:)``). The entries are built once
     /// from `snapshots`: the list does not follow the updates. No transcript
-    /// is read until an agent is confirmed. Does nothing after ``stop()``.
+    /// is read until an agent is confirmed, and an agent's detail opened from
+    /// it goes back to it with `Esc`. Does nothing after ``stop()``.
     func open(choosing snapshots: [DirectSubAgentRuntime.AgentSnapshot]) {
         guard !isStopped else { return }
-        endFollowing()
         choiceSnapshots = snapshots
-        agentID = nil
-        snapshot = nil
-        reloadKey = nil
-        panel = TerminalSubAgentDetailPanel(
-            mode: .choosing(
-                entries: Self.choiceEntries(snapshots, modelTitleResolver: environment.modelTitleResolver),
-                focusedIndex: 0
-            )
-        )
-        render()
+        returnsToList = true
+        showList(focusing: nil)
         watchViewport()
     }
 
     /// Shows the agent `agentID`, from `snapshot` until the first update, and
-    /// starts following it. Does nothing after ``stop()``.
+    /// starts following it; `Esc` closes the panel there, which has no list to
+    /// go back to. Does nothing after ``stop()``.
     func open(agentID: String, snapshot: DirectSubAgentRuntime.AgentSnapshot?) {
         guard !isStopped else { return }
+        returnsToList = false
         show(agentID: agentID, snapshot: snapshot)
         watchViewport()
     }
 
     /// Applies a key of the panel. In the agent list ↑/↓ move the focus,
     /// Enter shows the focused agent and Esc/`q` close; in an agent's detail
-    /// the scrolling keys scroll and Esc closes (the panel leaves `q` and
-    /// Enter to the prompt there). The list's `q` (``TerminalSubAgentDetailAction/closeList``)
-    /// that reaches an agent's detail was typed ahead of the switch to it
-    /// and is ignored, so it never closes the detail just opened. Every
-    /// other key is ignored, and so is every key after ``stop()``.
+    /// the scrolling keys scroll and Esc goes back to the list when the panel
+    /// opened on it (``returnsToList``, with the focus on that agent, the
+    /// following ended, and ``Environment/modeDidChange`` told), otherwise it
+    /// closes (the panel leaves `q` and Enter to the prompt there). The list's
+    /// `q` (``TerminalSubAgentDetailAction/closeList``) that reaches an agent's
+    /// detail was typed ahead of the switch to it and is ignored, so it never
+    /// closes the detail just opened. Every other key is ignored, and so is
+    /// every key after ``stop()``.
     func handle(_ action: TerminalSubAgentDetailAction) async {
         guard !isStopped else { return }
         switch panel.mode {
@@ -180,7 +189,12 @@ final class TerminalSubAgentDetailController {
                 panel.apply(action, frameRows: environment.viewport().rows)
                 render()
             case .close:
-                await close(reason: .dismissed)
+                guard returnsToList, !choiceSnapshots.isEmpty else {
+                    await close(reason: .dismissed)
+                    return
+                }
+                showList(focusing: agentID)
+                await environment.modeDidChange(true)
             case .focusPrevious, .focusNext, .confirm, .closeList:
                 return
             }
@@ -210,6 +224,29 @@ final class TerminalSubAgentDetailController {
     }
 
     // MARK: - Following
+
+    /// Draws the agent list of the snapshots it opened with, focused on the
+    /// agent `focusedID` (the first when `nil` or not listed), and leaves the
+    /// agent shown: the following ends, and what was read of its transcript
+    /// is dropped. The entries are rebuilt from those snapshots, not from the
+    /// latest of the agent.
+    private func showList(focusing focusedID: String?) {
+        endFollowing()
+        agentID = nil
+        snapshot = nil
+        reloadKey = nil
+        kinds = nil
+        toolDurations = [:]
+        transcriptRows = nil
+        let choices = Self.choiceEntries(choiceSnapshots, modelTitleResolver: environment.modelTitleResolver)
+        panel = TerminalSubAgentDetailPanel(
+            mode: .choosing(
+                entries: choices,
+                focusedIndex: focusedID.flatMap { id in choices.firstIndex { $0.id == id } } ?? 0
+            )
+        )
+        render()
+    }
 
     private func show(agentID: String, snapshot: DirectSubAgentRuntime.AgentSnapshot?) {
         endFollowing()

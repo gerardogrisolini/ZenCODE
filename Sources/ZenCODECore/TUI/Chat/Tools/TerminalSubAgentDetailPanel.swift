@@ -16,7 +16,9 @@ public enum TerminalSubAgentDetailAction: Sendable, Equatable {
     case focusPrevious, focusNext
     /// Opens the agent focused in the list (`Enter`).
     case confirm
-    /// Closes the panel in every mode (`Esc`).
+    /// Closes the panel in every mode (`Esc`), except in the detail of an
+    /// agent (`/subagent`) or of a file (`/artifacts`) that the panel opened
+    /// from its list, where it goes back to the list.
     case close
     /// Closes the agent list only (`q`/`Q` there); an agent's detail ignores
     /// it. It is distinct from ``close`` for the keys typed ahead: the panel

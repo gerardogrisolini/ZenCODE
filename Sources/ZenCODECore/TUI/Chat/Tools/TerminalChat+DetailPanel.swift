@@ -25,13 +25,19 @@ struct TerminalDetailPanel {
         case artifacts
 
         /// The input panel's mode that goes with each routing of the panel
-        /// keys to the panel; none once it is closed.
+        /// keys to the panel; none once it is closed. `detailReturnsToList`
+        /// tells that `Esc` in the detail goes back to the list, because the
+        /// detail was opened from it (an agent of `/subagent`, a file of
+        /// `/artifacts`).
         func panelModeOverride(
-            for mode: TerminalInteractiveLineReader.SubAgentDetailMode
+            for mode: TerminalInteractiveLineReader.SubAgentDetailMode,
+            detailReturnsToList: Bool = false
         ) -> TerminalPanelModeOverride? {
             switch self {
-            case .subAgent: TerminalChat.subAgentPanelModeOverride(for: mode)
-            case .artifacts: TerminalChat.artifactsPanelModeOverride(for: mode)
+            case .subAgent:
+                TerminalChat.subAgentPanelModeOverride(for: mode, detailReturnsToList: detailReturnsToList)
+            case .artifacts:
+                TerminalChat.artifactsPanelModeOverride(for: mode, detailReturnsToList: detailReturnsToList)
             }
         }
 
@@ -51,6 +57,16 @@ struct TerminalDetailPanel {
         switch content {
         case .subAgent: .subAgent
         case .artifacts: .artifacts
+        }
+    }
+
+    /// Whether the panel opened on its list, so that `Esc` in a detail goes
+    /// back to it instead of closing the panel.
+    @ChatSessionActor
+    var detailReturnsToList: Bool {
+        switch content {
+        case let .subAgent(controller): controller.returnsToList
+        case let .artifacts(controller): controller.returnsToList
         }
     }
 }
@@ -120,27 +136,34 @@ extension TerminalChat {
 
     /// Routes the panel keys to the panel as `mode` says, shows the panel
     /// mode of `kind` that goes with it
-    /// (``TerminalDetailPanel/Kind/panelModeOverride(for:)``) and redraws the
-    /// input panel.
+    /// (``TerminalDetailPanel/Kind/panelModeOverride(for:detailReturnsToList:)``)
+    /// and redraws the input panel.
     func setDetailPanelMode(
         _ mode: TerminalInteractiveLineReader.SubAgentDetailMode,
-        kind: TerminalDetailPanel.Kind
+        kind: TerminalDetailPanel.Kind,
+        detailReturnsToList: Bool = false
     ) async {
         interactiveReader.setSubAgentDetailMode(
             mode,
-            panelModeOverride: kind.panelModeOverride(for: mode)
+            panelModeOverride: kind.panelModeOverride(for: mode, detailReturnsToList: detailReturnsToList)
         )
         await interactiveReader.refreshPanel()
     }
 
     /// Routes the panel keys and shows the panel mode of the list or of the
-    /// detail, while the panel opened in `session` is still the one open.
+    /// detail, while the panel opened in `session` is still the one open. The
+    /// detail of a panel that opened on its list shows that `Esc` goes back to
+    /// it.
     func detailPanelModeDidChange(
         isChoosing: Bool,
         session: TerminalModalSession
     ) async {
         guard let panel = detailPanel, panel.session === session else { return }
-        await setDetailPanelMode(isChoosing ? .list : .detail, kind: panel.kind)
+        await setDetailPanelMode(
+            isChoosing ? .list : .detail,
+            kind: panel.kind,
+            detailReturnsToList: panel.detailReturnsToList
+        )
     }
 
     /// Closes the open panel, if any, and gives the terminal back: it stops

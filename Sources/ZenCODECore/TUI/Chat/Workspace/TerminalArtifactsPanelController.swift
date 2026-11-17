@@ -23,6 +23,12 @@ import ToolCore
 /// the interval elapsed. A read is applied only when no later read was, so an
 /// earlier read never replaces a newer one.
 ///
+/// The list shows each file on one row, whose columns line up from one row to
+/// the next (``choiceEntries(_:standardErrorIsTerminal:)``). In the diff of a
+/// file picked from the list `Esc` goes back to the list, focused on that
+/// file, and closes the panel from there; in the diff the panel opened on
+/// directly (the only file) `Esc` closes the panel.
+///
 /// A read keeps the list's focus on the entry it was on (by ``Entry/id``) and
 /// a diff's scroll position. A file's diff opens at its first rows and never
 /// follows its end, so a read that changes the diff leaves the rows the
@@ -127,6 +133,10 @@ final class TerminalArtifactsPanelController {
     private(set) var panel = TerminalSubAgentDetailPanel(title: TerminalArtifactsPanelController.title)
     /// The entries of the latest snapshot applied.
     private(set) var entries: [Entry] = []
+    /// Whether the panel opened on the list (``open(choosing:)``), so that
+    /// `Esc` in a file's diff goes back to it. `false` for a panel that opened
+    /// directly on a file (``open(entryID:in:)``), which `Esc` closes.
+    private(set) var returnsToList = false
     /// The id of the file shown; `nil` while the operator chooses one.
     private(set) var entryID: String?
     /// The latest entry of the file shown. It stays when a read no longer
@@ -159,37 +169,34 @@ final class TerminalArtifactsPanelController {
     // MARK: - Opening and closing
 
     /// Shows the list of the files of `snapshot` (``entries(_:)``), focused on
-    /// the first. Does nothing after ``stop()``.
+    /// the first; a file's diff opened from it goes back to it with `Esc`.
+    /// Does nothing after ``stop()``.
     func open(choosing snapshot: ChatFileArtifactSnapshot) {
         guard !isStopped else { return }
         entries = Self.entries(snapshot)
-        entryID = nil
-        entry = nil
-        panel = TerminalSubAgentDetailPanel(
-            mode: .choosing(
-                entries: Self.choiceEntries(entries, standardErrorIsTerminal: environment.standardErrorIsTerminal),
-                focusedIndex: 0
-            ),
-            availability: .available,
-            title: Self.title
-        )
-        render()
+        returnsToList = true
+        showList(focusing: nil)
         watchViewport()
     }
 
-    /// Shows the diff of the file `entryID` of `snapshot`. Does nothing after
+    /// Shows the diff of the file `entryID` of `snapshot`; `Esc` closes the
+    /// panel there, which has no list to go back to. Does nothing after
     /// ``stop()``.
     func open(entryID: String, in snapshot: ChatFileArtifactSnapshot) {
         guard !isStopped else { return }
         entries = Self.entries(snapshot)
+        returnsToList = false
         show(entryID: entryID)
         watchViewport()
     }
 
     /// Applies a key of the panel. In the file list ↑/↓ move the focus,
     /// Enter shows the focused file and Esc/`q` close; in a file's diff the
-    /// scrolling keys scroll and Esc closes (the panel leaves `q` and Enter to
-    /// the prompt there). The list's `q` (``TerminalSubAgentDetailAction/closeList``)
+    /// scrolling keys scroll and Esc goes back to the list when the panel
+    /// opened on it (``returnsToList``, with the focus on that file, and
+    /// ``Environment/modeDidChange`` told), otherwise, or when no file is
+    /// listed any more, it closes (the panel leaves `q` and Enter to the
+    /// prompt there). The list's `q` (``TerminalSubAgentDetailAction/closeList``)
     /// that reaches a file's diff was typed ahead of the switch to it and is
     /// ignored. Every other key is ignored, and so is every key after
     /// ``stop()``.
@@ -221,7 +228,12 @@ final class TerminalArtifactsPanelController {
                 panel.isFollowing = false
                 render()
             case .close:
-                await close(reason: .dismissed)
+                guard returnsToList, !entries.isEmpty else {
+                    await close(reason: .dismissed)
+                    return
+                }
+                showList(focusing: entryID)
+                await environment.modeDidChange(true)
             case .focusPrevious, .focusNext, .confirm, .closeList:
                 return
             }
@@ -273,6 +285,24 @@ final class TerminalArtifactsPanelController {
     }
 
     // MARK: - Reads
+
+    /// Draws the list of the current entries, focused on the entry
+    /// `focusedID` (the first when `nil` or no longer listed), and leaves the
+    /// file's diff.
+    private func showList(focusing focusedID: String?) {
+        entryID = nil
+        entry = nil
+        let choices = Self.choiceEntries(entries, standardErrorIsTerminal: environment.standardErrorIsTerminal)
+        panel = TerminalSubAgentDetailPanel(
+            mode: .choosing(
+                entries: choices,
+                focusedIndex: focusedID.flatMap { id in choices.firstIndex { $0.id == id } } ?? 0
+            ),
+            availability: .available,
+            title: Self.title
+        )
+        render()
+    }
 
     private func show(entryID: String) {
         self.entryID = entryID
@@ -444,24 +474,54 @@ final class TerminalArtifactsPanelController {
         return entries
     }
 
-    /// The list's entries, one block per entry: the file's title
-    /// (``titleText(_:standardErrorIsTerminal:)``), then, indented, its turn
-    /// (``turnText(_:standardErrorIsTerminal:)``) and, when the artifact
-    /// explains itself, the explanation on one row.
+    /// The list's entries: one row per file, without detail rows. The rows
+    /// are the lines of a table whose columns are completed to the widest cell
+    /// of the list, so that each column starts at the same place in every row:
+    ///
+    /// - the turn (``turnText(_:standardErrorIsTerminal:)``), first because the
+    ///   list is ordered by it;
+    /// - the file's status (`added`, `modified`, `deleted`, `unknown`);
+    /// - the `+`/`-` counts, their numbers aligned on the right; blank for a
+    ///   file whose evidence has none, and no column when no file has them;
+    /// - the file's path, last, followed by ` (binary)` for a binary file: a
+    ///   row wider than the panel loses the end of its path, never a column.
+    ///
+    /// What an artifact explains of itself is not listed: it heads the file's
+    /// detail (``headerRows(_:width:standardErrorIsTerminal:)``).
     nonisolated static func choiceEntries(
         _ entries: [Entry],
         standardErrorIsTerminal: Bool
     ) -> [TerminalSubAgentDetailPanel.ChoiceEntry] {
-        entries.map { entry in
-            var details = [turnText(entry, standardErrorIsTerminal: standardErrorIsTerminal)]
-            if let explanation = explanationText(entry.artifact) {
-                details.append(muted(explanation, standardErrorIsTerminal: standardErrorIsTerminal))
+        let turns = entries.map { turnText($0, standardErrorIsTerminal: standardErrorIsTerminal) }
+        let turnWidth = turns.map(TerminalANSIText.visibleWidth).max() ?? 0
+        let statusWidth = entries.map { $0.artifact.status.rawValue.count }.max() ?? 0
+        let counted = entries.map(\.artifact).filter(\.hasLineCounts)
+        let additionsWidth = counted.map { additionsText($0).count }.max() ?? 0
+        let deletionsWidth = counted.map { deletionsText($0).count }.max() ?? 0
+
+        func leading(_ text: String, width: Int) -> String {
+            String(repeating: " ", count: max(0, width - text.count))
+        }
+        func countsCell(_ artifact: FileChangeArtifact) -> String {
+            guard artifact.hasLineCounts else {
+                return String(repeating: " ", count: additionsWidth + 1 + deletionsWidth)
             }
-            return TerminalSubAgentDetailPanel.ChoiceEntry(
-                id: entry.id,
-                title: titleText(entry.artifact, standardErrorIsTerminal: standardErrorIsTerminal),
-                details: details
-            )
+            return leading(additionsText(artifact), width: additionsWidth)
+                + styledAdditions(artifact, standardErrorIsTerminal: standardErrorIsTerminal)
+                + " "
+                + leading(deletionsText(artifact), width: deletionsWidth)
+                + styledDeletions(artifact, standardErrorIsTerminal: standardErrorIsTerminal)
+        }
+        return zip(entries, turns).map { entry, turn in
+            var cells = [
+                TerminalCheckboxMenu.padded(turn, width: turnWidth),
+                TerminalCheckboxMenu.padded(entry.artifact.status.rawValue, width: statusWidth),
+            ]
+            if additionsWidth > 0 {
+                cells.append(countsCell(entry.artifact))
+            }
+            cells.append(pathText(entry.artifact))
+            return TerminalSubAgentDetailPanel.ChoiceEntry(id: entry.id, title: cells.joined(separator: "  "))
         }
     }
 
@@ -512,23 +572,53 @@ final class TerminalArtifactsPanelController {
         _ artifact: FileChangeArtifact,
         standardErrorIsTerminal: Bool
     ) -> String {
-        let path = InlineTextTruncation.inlineText(artifact.displayPath.nilIfBlank ?? artifact.absolutePath)
-        var text = "\(artifact.status.rawValue) \(path.nilIfBlank ?? "(unknown path)")"
+        var text = "\(artifact.status.rawValue) \(displayedPath(artifact))"
         if artifact.hasLineCounts {
-            let additions = "+\(artifact.additions)"
-            let deletions = "-\(artifact.deletions)"
-            if standardErrorIsTerminal {
-                let palette = TerminalMarkdownPalette.detected
-                let reset = TerminalStyle.reset
-                text += "  \(palette.diffAddition)\(additions)\(reset) \(palette.diffRemoval)\(deletions)\(reset)"
-            } else {
-                text += "  \(additions) \(deletions)"
-            }
+            text += "  \(styledAdditions(artifact, standardErrorIsTerminal: standardErrorIsTerminal))"
+                + " \(styledDeletions(artifact, standardErrorIsTerminal: standardErrorIsTerminal))"
         }
         if artifact.isBinary {
             text += " (binary)"
         }
         return text
+    }
+
+    /// The artifact's displayed path on one line; `(unknown path)` when it has
+    /// none.
+    private nonisolated static func displayedPath(_ artifact: FileChangeArtifact) -> String {
+        let path = InlineTextTruncation.inlineText(artifact.displayPath.nilIfBlank ?? artifact.absolutePath)
+        return path.nilIfBlank ?? "(unknown path)"
+    }
+
+    /// The displayed path, followed by ` (binary)` for a binary file.
+    private nonisolated static func pathText(_ artifact: FileChangeArtifact) -> String {
+        displayedPath(artifact) + (artifact.isBinary ? " (binary)" : "")
+    }
+
+    private nonisolated static func additionsText(_ artifact: FileChangeArtifact) -> String {
+        "+\(artifact.additions)"
+    }
+
+    private nonisolated static func deletionsText(_ artifact: FileChangeArtifact) -> String {
+        "-\(artifact.deletions)"
+    }
+
+    /// ``additionsText(_:)``, green on a terminal as in a chat artifact's header.
+    private nonisolated static func styledAdditions(
+        _ artifact: FileChangeArtifact,
+        standardErrorIsTerminal: Bool
+    ) -> String {
+        guard standardErrorIsTerminal else { return additionsText(artifact) }
+        return "\(TerminalMarkdownPalette.detected.diffAddition)\(additionsText(artifact))\(TerminalStyle.reset)"
+    }
+
+    /// ``deletionsText(_:)``, red on a terminal as in a chat artifact's header.
+    private nonisolated static func styledDeletions(
+        _ artifact: FileChangeArtifact,
+        standardErrorIsTerminal: Bool
+    ) -> String {
+        guard standardErrorIsTerminal else { return deletionsText(artifact) }
+        return "\(TerminalMarkdownPalette.detected.diffRemoval)\(deletionsText(artifact))\(TerminalStyle.reset)"
     }
 
     /// `turn N`, muted, followed by `· in progress` for the turn in progress.

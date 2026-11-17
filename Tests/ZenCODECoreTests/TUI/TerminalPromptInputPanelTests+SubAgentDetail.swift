@@ -92,6 +92,43 @@ extension TerminalPromptInputPanelTests {
         #expect(TerminalDetailPanel.Kind.subAgent.consentClosedMessage == "Sub-agent detail closed: a tool asks for consent.\n")
     }
 
+    /// The diff that the `/artifacts` panel opened from its list says that Esc
+    /// goes back; the list and the closed panel do not change.
+    @Test
+    func theArtifactsDiffOpenedFromTheListSaysThatEscGoesBack() {
+        let back = TerminalChat.artifactsListDetailPanelOverride
+        #expect(back.modeText == "Artifacts")
+        #expect(back.helpText == "↑↓ PgUp PgDn Home End scroll · Esc back")
+        #expect(TerminalChat.artifactsPanelModeOverride(for: .detail, detailReturnsToList: true) == back)
+        #expect(TerminalDetailPanel.Kind.artifacts.panelModeOverride(for: .detail, detailReturnsToList: true) == back)
+        #expect(TerminalChat.artifactsPanelModeOverride(for: .detail, detailReturnsToList: false)
+            == TerminalChat.artifactsDetailPanelOverride)
+        #expect(TerminalChat.artifactsPanelModeOverride(for: .list, detailReturnsToList: true)
+            == TerminalChat.artifactsListPanelOverride)
+        #expect(TerminalChat.artifactsPanelModeOverride(for: .closed, detailReturnsToList: true) == nil)
+    }
+
+    /// The detail that `/subagent` opened from its agent list says that Esc
+    /// goes back; the detail opened directly, the list, and the closed panel
+    /// do not change.
+    @Test
+    func theSubAgentDetailOpenedFromTheListSaysThatEscGoesBack() {
+        let back = TerminalChat.subAgentListDetailPanelOverride
+        #expect(back.modeText == "Sub-agent")
+        #expect(back.helpText == "↑↓ PgUp PgDn Home End scroll · Esc back")
+        #expect(TerminalChat.subAgentPanelModeOverride(for: .detail, detailReturnsToList: true) == back)
+        #expect(TerminalDetailPanel.Kind.subAgent.panelModeOverride(for: .detail, detailReturnsToList: true) == back)
+        #expect(TerminalChat.subAgentPanelModeOverride(for: .detail, detailReturnsToList: false)
+            == TerminalChat.subAgentDetailPanelOverride)
+        #expect(TerminalChat.subAgentPanelModeOverride(for: .detail) == TerminalChat.subAgentDetailPanelOverride)
+        #expect(TerminalChat.subAgentDetailPanelOverride.helpText == "↑↓ PgUp PgDn Home End scroll · Esc close")
+        #expect(TerminalChat.subAgentPanelModeOverride(for: .list, detailReturnsToList: true)
+            == TerminalChat.subAgentListPanelOverride)
+        #expect(TerminalChat.subAgentPanelModeOverride(for: .closed, detailReturnsToList: true) == nil)
+        // Both panels say the same thing in their own mode.
+        #expect(TerminalChat.artifactsListDetailPanelOverride.helpText == back.helpText)
+    }
+
     /// While the `/subagent` agent list is open every key it binds becomes a
     /// detail action, and none of them reaches the draft or history.
     @Test

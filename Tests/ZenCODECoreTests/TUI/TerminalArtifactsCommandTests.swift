@@ -72,11 +72,21 @@ struct TerminalArtifactsCommandTests {
             onClosed: { [weak terminal] reason in
                 await terminal?.closeDetailPanel(reason: reason)
             },
+            modeDidChange: { [weak terminal] isChoosing in
+                await terminal?.detailPanelModeDidChange(isChoosing: isChoosing, session: session)
+            },
             standardErrorIsTerminal: false,
             subscribeResize: { _ in {} }
         ))
         terminal.detailPanel = TerminalDetailPanel(content: .artifacts(controller), session: session)
         return controller
+    }
+
+    private func changedFile(_ path: String) -> FileChangeArtifact {
+        FileChangeArtifact(
+            absolutePath: "/repo/\(path)", displayPath: path, status: .modified,
+            additions: 1, deletions: 1, oldText: "let value = 1\n", newText: "let value = 2\n"
+        )
     }
 
     private func continuesTheChat(_ action: TerminalSubmittedLineAction) -> Bool {
@@ -182,6 +192,82 @@ struct TerminalArtifactsCommandTests {
         #expect(text.contains(TerminalChat.renderFileArtifacts(turns, includeHistoryHeadings: true).trimmingCharacters(in: .newlines)))
         #expect(!terminal.isDetailPanelOpen)
         #expect(await terminal.chatSession.fileArtifactHistory.snapshot() == turns)
+    }
+
+    // MARK: - Panel keys
+
+    /// Esc in the diff of a file picked from the list goes back to the list,
+    /// and the input panel's mode and help follow each step; Esc in the list
+    /// closes the panel.
+    @Test
+    func escInTheDiffGoesBackToTheListAndTheInputPanelFollows() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let terminal = try makeTerminal(directory, renderer: makeRenderer())
+        let snapshot = ChatFileArtifactSnapshot(
+            turns: [
+                .init(number: 1, artifacts: [changedFile("A.swift")]),
+                .init(number: 2, artifacts: [changedFile("B.swift")]),
+            ],
+            activeTurnNumber: nil
+        )
+        let controller = openArtifacts(on: terminal) { snapshot }
+        func routing() -> TerminalInteractiveLineReader.SubAgentDetailMode {
+            terminal.interactiveReader.withPanelLock { $0.panelSubAgentDetailMode }
+        }
+        func panelMode() -> TerminalPanelModeOverride? {
+            terminal.interactiveReader.withPanelLock { $0.panelOverlayOverride }
+        }
+        await terminal.setDetailPanelMode(.list, kind: .artifacts)
+        controller.open(choosing: snapshot)
+        #expect(routing() == .list)
+        #expect(panelMode() == TerminalChat.artifactsListPanelOverride)
+
+        await terminal.handleDetailPanelAction(.confirm)
+        #expect(routing() == .detail)
+        #expect(panelMode() == TerminalChat.artifactsListDetailPanelOverride)
+        #expect(controller.entryID == "2:/repo/B.swift")
+
+        await terminal.handleDetailPanelAction(.close)
+        #expect(terminal.isDetailPanelOpen)
+        #expect(!controller.isStopped)
+        #expect(routing() == .list)
+        #expect(panelMode() == TerminalChat.artifactsListPanelOverride)
+        #expect(controller.entryID == nil)
+
+        // Another round, then Esc in the list closes the panel and gives the
+        // keys back.
+        await terminal.handleDetailPanelAction(.confirm)
+        await terminal.handleDetailPanelAction(.close)
+        #expect(terminal.isDetailPanelOpen)
+        await terminal.handleDetailPanelAction(.close)
+        #expect(!terminal.isDetailPanelOpen)
+        #expect(controller.isStopped)
+        #expect(routing() == .closed)
+        #expect(panelMode() == nil)
+    }
+
+    /// The only file opens directly on its diff, whose Esc closes the panel,
+    /// as the help says.
+    @Test
+    func escInTheDiffOfTheOnlyFileClosesThePanel() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let terminal = try makeTerminal(directory, renderer: makeRenderer())
+        let snapshot = ChatFileArtifactSnapshot(
+            turns: [.init(number: 1, artifacts: [changedFile("Only.swift")])],
+            activeTurnNumber: nil
+        )
+        let controller = openArtifacts(on: terminal) { snapshot }
+        await terminal.setDetailPanelMode(.detail, kind: .artifacts)
+        controller.open(entryID: "1:/repo/Only.swift", in: snapshot)
+        #expect(terminal.interactiveReader.withPanelLock { $0.panelOverlayOverride }
+            == TerminalChat.artifactsDetailPanelOverride)
+
+        await terminal.handleDetailPanelAction(.close)
+        #expect(!terminal.isDetailPanelOpen)
+        #expect(controller.isStopped)
+        #expect(terminal.interactiveReader.withPanelLock { $0.panelSubAgentDetailMode } == .closed)
     }
 
     // MARK: - Presenter

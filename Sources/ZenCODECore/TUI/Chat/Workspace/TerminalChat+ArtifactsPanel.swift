@@ -16,6 +16,14 @@ extension TerminalChat {
         helpText: subAgentDetailPanelOverride.helpText
     )
 
+    /// The input panel's mode while the `/artifacts` panel shows a file's
+    /// diff that it opened from the list of the files: `Esc` goes back to the
+    /// list instead of closing the panel.
+    nonisolated static let artifactsListDetailPanelOverride = TerminalPanelModeOverride(
+        modeText: "Artifacts",
+        helpText: subAgentListDetailPanelOverride.helpText
+    )
+
     /// The input panel's mode while the `/artifacts` panel lists the changed
     /// files, which own every key of the panel until one is opened.
     nonisolated static let artifactsListPanelOverride = TerminalPanelModeOverride(
@@ -25,15 +33,17 @@ extension TerminalChat {
 
     /// The input panel's mode that goes with each routing of the panel keys
     /// to the `/artifacts` panel: ``artifactsListPanelOverride`` for the file
-    /// list, ``artifactsDetailPanelOverride`` for a file's diff, none once
-    /// the panel is closed.
+    /// list, ``artifactsDetailPanelOverride`` for a file's diff (or
+    /// ``artifactsListDetailPanelOverride`` when `detailReturnsToList`: the diff
+    /// was opened from the list), none once the panel is closed.
     nonisolated static func artifactsPanelModeOverride(
-        for mode: TerminalInteractiveLineReader.SubAgentDetailMode
+        for mode: TerminalInteractiveLineReader.SubAgentDetailMode,
+        detailReturnsToList: Bool = false
     ) -> TerminalPanelModeOverride? {
         switch mode {
         case .closed: nil
         case .list: artifactsListPanelOverride
-        case .detail: artifactsDetailPanelOverride
+        case .detail: detailReturnsToList ? artifactsListDetailPanelOverride : artifactsDetailPanelOverride
         }
     }
 

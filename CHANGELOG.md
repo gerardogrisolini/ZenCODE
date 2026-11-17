@@ -21,6 +21,22 @@ Release tags follow the strict `vX.Y.Z` contract described in
   (QwenCloud), and Qwen Token Plan, with the provider keys `xai`, `kimi-code`,
   `qwen`, and `qwen-token-plan`. Grok can be configured only with an xAI API
   key.
+- `/artifacts` in the terminal chat lists each changed file on a single row
+  with aligned columns (its turn, `in progress` for the turn in progress, then
+  its status, its `+`/`-` counts, and its path), instead of a title and a
+  second, misaligned row; the artifact's explanation stays in the header of
+  the file's diff. `Esc` in a file's diff now goes back to the list, on that
+  file, when the diff was opened from the list (the input panel's help says
+  `Esc back`); the list's `Esc` and `q` still close the panel, and so does
+  `Esc` in the diff that opens directly for a single changed file.
+- `/subagent` in the terminal chat: `Esc` in the detail of a sub-agent picked
+  from the list now goes back to the list, focused on that agent, instead of
+  closing the panel (the input panel's help says `Esc back`). The list's `Esc`
+  and `q` still close the panel, and so does `Esc` in the detail that opens
+  directly, for the sub-agent named in the command or the only one in
+  progress. The list keeps its layout and, as before, does not follow live
+  updates: it comes back as it was opened, and the agent is followed again
+  only when you open it.
 
 ### Fixed
 

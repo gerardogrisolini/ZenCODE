@@ -342,7 +342,7 @@ struct TerminalArtifactsPanelControllerTests {
         #expect(Controller.entries(ChatFileArtifactSnapshot(turns: [], activeTurnNumber: nil)).isEmpty)
     }
 
-    @Test func theEntriesShowTheFileItsTurnAndItsExplanation() {
+    @Test func theListHasOneRowPerFileAndTheHeaderShowsTheFileItsTurnAndItsExplanation() {
         let explained = artifact(
             "Big.swift",
             additions: 12,
@@ -354,24 +354,25 @@ struct TerminalArtifactsPanelControllerTests {
             turns: [turn(2, [binary]), turn(3, [explained])],
             activeTurnNumber: 3
         ))
+
+        // One row per file, the columns completed to the widest cell: the turn,
+        // the status, the counts (blank for the file that has none), the path.
+        // The explanation is not listed: it heads the file's detail.
         let plainEntries = Controller.choiceEntries(listed, standardErrorIsTerminal: false)
         #expect(plainEntries == [
-            .init(
-                id: "3:/repo/Big.swift",
-                title: "modified Big.swift  +12 -3",
-                details: ["turn 3 · in progress", "The diff is longer than the budget."]
-            ),
-            .init(id: "2:/repo/Logo.png", title: "modified Logo.png (binary)", details: ["turn 2"]),
+            .init(id: "3:/repo/Big.swift", title: "turn 3 · in progress  modified  +12 -3  Big.swift"),
+            .init(id: "2:/repo/Logo.png", title: "turn 2                modified          Logo.png (binary)"),
         ])
+        #expect(plainEntries.allSatisfy { $0.details.isEmpty })
 
         // On a terminal the counts take the colors of the chat's artifact
-        // header; the text is the same.
+        // header; the text, and so the alignment, is the same.
         let styled = Controller.choiceEntries(listed, standardErrorIsTerminal: true)
         let palette = TerminalMarkdownPalette.detected
         let reset = TerminalStyle.reset
-        #expect(styled[0].title.hasSuffix("  \(palette.diffAddition)+12\(reset) \(palette.diffRemoval)-3\(reset)"))
+        #expect(styled[0].title.contains("\(palette.diffAddition)+12\(reset) \(palette.diffRemoval)-3\(reset)"))
         #expect(styled.map { TerminalANSIText.stripANSI($0.title) } == plainEntries.map(\.title))
-        #expect(styled.map { $0.details.map(TerminalANSIText.stripANSI) } == plainEntries.map(\.details))
+        #expect(styled.allSatisfy { $0.details.isEmpty })
 
         // The header of a file's diff: its title, its turn, then its
         // explanation wrapped at the width.
@@ -381,6 +382,42 @@ struct TerminalArtifactsPanelControllerTests {
         #expect(Controller.headerRows(listed[1], width: 20, standardErrorIsTerminal: false) == [
             "modified Logo.png (binary)", "turn 2",
         ])
+    }
+
+    @Test func theColumnsOfTheListLineUpWhateverTheFiles() {
+        let listed = Controller.entries(ChatFileArtifactSnapshot(
+            turns: [
+                turn(2, [
+                    artifact("Sources/Deep/Path/Added.swift", status: .added, additions: 120, deletions: 0),
+                    artifact("Removed.swift", status: .deleted, additions: 0, deletions: 8),
+                    artifact("Unknown.swift", status: .unknown, hasLineCounts: false, old: nil, new: nil),
+                ]),
+                turn(10, [artifact("Changed.swift", additions: 3, deletions: 15)]),
+            ],
+            activeTurnNumber: 10
+        ))
+        let rows = Controller.choiceEntries(listed, standardErrorIsTerminal: false)
+        #expect(rows.map(\.title) == [
+            "turn 10 · in progress  modified    +3 -15  Changed.swift",
+            "turn 2                 added     +120  -0  Sources/Deep/Path/Added.swift",
+            "turn 2                 deleted     +0  -8  Removed.swift",
+            "turn 2                 unknown             Unknown.swift",
+        ])
+
+        // Each column starts at the same offset in every row, and the counts
+        // end at the same one.
+        func offset(of text: String, in row: String) -> Int? {
+            row.range(of: text).map { row.distance(from: row.startIndex, to: $0.lowerBound) }
+        }
+        let titles = rows.map(\.title)
+        let statuses = zip(titles, ["modified", "added", "deleted", "unknown"]).map { offset(of: $1, in: $0) }
+        #expect(Set(statuses.map { $0 ?? -1 }).count == 1)
+        let paths = zip(titles, ["Changed.swift", "Sources/", "Removed.swift", "Unknown.swift"]).map { offset(of: $1, in: $0) }
+        #expect(Set(paths.map { $0 ?? -1 }).count == 1)
+        let countEnds = zip(titles.prefix(3), ["-15", "-0", "-8"]).compactMap { row, text in
+            offset(of: text, in: row).map { $0 + text.count }
+        }
+        #expect(countEnds.count == 3 && Set(countEnds).count == 1)
     }
 
     // MARK: List
@@ -399,15 +436,14 @@ struct TerminalArtifactsPanelControllerTests {
         let frame = harness.frames[0]
         #expect(frame.count == 20)
         #expect(plain(frame).first?.hasPrefix("╭─ 🪬 Artifacts ─") == true)
-        #expect(Array(listContents(frame).prefix(9)) == [
-            "▸ modified C.swift  +1 -1",
-            "┃   turn 3 · in progress",
+        // One row per file, none of them with a second line.
+        #expect(Array(listContents(frame).prefix(7)) == [
+            "▸ turn 3 · in progress  modified  +1 -1  C.swift",
             "",
-            "  modified B.swift  +1 -1",
-            "    turn 2",
+            "  turn 2                modified  +1 -1  B.swift",
             "",
-            "  modified A.swift  +1 -1",
-            "    turn 1",
+            "  turn 1                modified  +1 -1  A.swift",
+            "",
             "",
         ])
         controller.stop()
@@ -449,6 +485,12 @@ struct TerminalArtifactsPanelControllerTests {
         await controller.handle(.focusNext)
         #expect(!controller.isStopped)
         #expect(controller.entryID == "2:/repo/B.swift")
+
+        // Esc goes back to the list, on the file just read, and closes it.
+        await controller.handle(.close)
+        #expect(!controller.isStopped)
+        #expect(harness.closeReasons.isEmpty)
+        #expect(focusedIndex(controller) == 1)
         await controller.handle(.close)
         #expect(harness.closeReasons == [.dismissed])
         #expect(controller.isStopped)
