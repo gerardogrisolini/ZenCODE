@@ -14,15 +14,22 @@ let package = Package(
     ],
     dependencies: [
         // zencode:package-path
-        .package(name: "ZenCODE", path: "../../..")
+        .package(name: "ZenCODE", path: "/Users/gerardo/Projects/ZenCODE")
     ],
     targets: [
         .executableTarget(
             name: "figma-tools-feature",
             dependencies: [
                 .product(name: "FeatureKit", package: "ZenCODE"),
-                .product(name: "ToolCore", package: "ZenCODE"),
-                .product(name: "FeatureMCPBridgeKit", package: "ZenCODE")
+                .product(name: "ToolCore", package: "ZenCODE")
+            ],
+            swiftSettings: memberImportVisibilitySettings
+        ),
+        .testTarget(
+            name: "FigmaToolsFeatureTests",
+            dependencies: [
+                "figma-tools-feature",
+                .product(name: "ToolCore", package: "ZenCODE")
             ],
             swiftSettings: memberImportVisibilitySettings
         )

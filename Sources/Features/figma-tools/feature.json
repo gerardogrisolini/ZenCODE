@@ -1,0 +1,29 @@
+{
+  "build" : {
+    "configuration" : "release",
+    "executablePath" : ".build/release/figma-tools-feature",
+    "packagePath" : ".",
+    "product" : "figma-tools-feature",
+    "system" : "swiftpm"
+  },
+  "description" : "Inspect Figma files, frames, and design data.",
+  "discoversToolsAtRuntime" : true,
+  "displayName" : "Figma",
+  "enabled" : true,
+  "executable" : ".build/release/figma-tools-feature",
+  "generated" : {
+    "adoptedFrom" : "figma-tools",
+    "by" : "ZenCODE",
+    "createdAt" : "2026-11-05T16:21:22Z"
+  },
+  "id" : "figma-tools",
+  "invocationTimeoutSeconds" : 660,
+  "schemaVersion" : 2,
+  "supportsPersistentSession" : false,
+  "toolNamePrefixes" : [
+    "figma."
+  ],
+  "tools" : [
+
+  ]
+}
