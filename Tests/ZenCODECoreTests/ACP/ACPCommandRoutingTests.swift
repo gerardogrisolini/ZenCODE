@@ -38,8 +38,9 @@ struct ACPCommandRoutingTests {
         )
         let names = await fixture.bridge.commandNamesForGoalTesting(sessionID: fixture.sessionID)
         // Without the sub-agent tools `/review` and `/plan` stay hidden; `/tasks`
-        // reads and controls the graph either way.
-        #expect(names == ["goal", "tasks"])
+        // reads and controls the graph either way, and the workspace commands
+        // `/changes` and `/undo` follow it.
+        #expect(names == ["goal", "tasks", "changes", "undo"])
         try await fixture.bridge.prompt(id: .number(1), params: [
             "sessionId": fixture.sessionID, "prompt": "/goal Preserve direct objective"
         ])
@@ -56,7 +57,8 @@ struct ACPCommandRoutingTests {
         #expect(resumed.id == graph.id)
         #expect(resumed.workflow?.originalGoal == graph.workflow?.originalGoal)
         #expect(resumed.workflow?.state == .awaitingUser)
-        #expect(await fixture.bridge.commandNamesForGoalTesting(sessionID: fixture.sessionID) == ["goal", "tasks"])
+        #expect(await fixture.bridge.commandNamesForGoalTesting(sessionID: fixture.sessionID)
+            == ["goal", "tasks", "changes", "undo"])
         let expectedGrant = ChatTurnPurpose.workflow(originalGoal: "", graphID: graph.id)
             .additionalToolNames(activePlan: nil)
             .union(["local.readFile"])
@@ -132,8 +134,9 @@ struct ACPCommandRoutingTests {
         )
         let bridge = fixture.bridge
         let sessionID = fixture.sessionID
-        // Without the sub-agent tools the catalog holds exactly these two.
-        #expect(await bridge.commandNamesForGoalTesting(sessionID: sessionID) == ["goal", "tasks"])
+        // Without the sub-agent tools the catalog holds exactly these four.
+        #expect(await bridge.commandNamesForGoalTesting(sessionID: sessionID)
+            == ["goal", "tasks", "changes", "undo"])
 
         _ = try await bridge.sessionRunner.taskOrchestrator.createTasks(
             sessionID: sessionID,

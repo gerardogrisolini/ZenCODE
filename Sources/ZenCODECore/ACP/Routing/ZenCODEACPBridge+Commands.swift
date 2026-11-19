@@ -52,6 +52,7 @@ enum ACPCommandNoticeContext: Sendable {
     case goal
     case review
     case tasks
+    case workspace
     case approvalReply
     case plannerReply
     case workflowReply
@@ -119,6 +120,19 @@ extension ZenCODEACPBridge {
         // the client's Tasks section (see `routeACPTasksCommand`).
         if ChatCommandRegistry.commandToken(from: routedPromptText) == Self.tasksCommandToken {
             return try await routeACPTasksCommand(
+                routedPromptText,
+                sessionID: sessionID,
+                epoch: epoch,
+                promptID: promptID,
+                fence: fence
+            )
+        }
+
+        // `/changes` and `/undo` are not coordinator commands either: they are
+        // answered here, with the file changes of the last turn, and never reach
+        // the model (see `routeACPWorkspaceCommand`).
+        if Self.isWorkspaceCommand(routedPromptText) {
+            return try await routeACPWorkspaceCommand(
                 routedPromptText,
                 sessionID: sessionID,
                 epoch: epoch,

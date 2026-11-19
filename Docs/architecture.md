@@ -134,12 +134,17 @@ channel runs itself answer `.channelCommand`, for the channel to run: the
 terminal's `/telegram`, `/voice`, `/ds4`, `/feature`, `/cron`, and
 `/exit`, which its registry declares with the `.channel` scope, and
 `/tools logs`, which the shared `/tools` leaves to the channel. ACP runs
-`/telegram` itself too, and does the same with `/tasks`, both of them before the
-controller's dispatch of the shared commands: the shared `runTasksCommand` runs
-the action, and ACP reads the graph and answers it twice, as the text the
-terminal renders (`TerminalTaskGraphLayout`, without colors) and as the standard
-ACP `plan` update that is a client's Tasks section
-(`ACP/Routing/ZenCODEACPBridge+TasksCommand.swift`).
+`/telegram` itself too, and does the same with `/tasks`, `/changes`, and
+`/undo`, all of them before the controller's dispatch of the shared commands.
+The shared `runTasksCommand` runs the action, and ACP reads the graph and
+answers it twice, as the text the terminal renders (`TerminalTaskGraphLayout`,
+without colors) and as the standard ACP `plan` update that is a client's Tasks
+section (`ACP/Routing/ZenCODEACPBridge+TasksCommand.swift`). The workspace
+commands call the shared `runChangesCommand` and `runUndoCommand` under the
+prompt's command fence (`ACP/Routing/ZenCODEACPBridge+WorkspaceCommands.swift`).
+ACP adds the patches of `/changes diff` as Markdown `diff` blocks; the neutral
+`FileChanges/FileChangeArtifactDiff.swift` produces their unified diff and
+Markdown fence, and the terminal uses it for its numbered artifact blocks too.
 
 The plan is not only the answer of a command: every incarnation keeps an
 observer of its graph events (`ACP/Updates/ACPTaskGraphObserver.swift`), so the
@@ -152,6 +157,16 @@ starts with the graph the session already has, and reconciles the graph of a tur
 that ended by cancellation. All of them share the session's
 `ACPTaskPresentation`, which sends a section once per change and refuses a plan
 built from a graph older than one already written.
+
+An ACP prompt turn publishes its file-change Summary after that final plan, as
+the last text section before the prompt's reply
+(`ACP/Updates/ACPFileChangeSummaryPresentation.swift`). The eager presenter
+callback stays silent because the controller reports the Summary while the turn
+is still running; the bridge takes it from the turn result, or from the failure
+that ended the turn, and writes it through the turn's pipeline and admission
+fence. Thus an error or a provider cancellation can still report the files it
+changed, while an explicit `session/cancel`, a close, or a shutdown admits no
+late Summary. The controller keeps it for `/changes` and `/undo` either way.
 
 The terminal places its commands after anchors among the shared ones and adds
 its own facts to the context (`.telegramEnabled` and `.ds4Model`, next to

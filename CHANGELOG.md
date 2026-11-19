@@ -10,6 +10,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- ACP: a turn that changed files now ends with the same Summary as the terminal
+  and Telegram, as the last `agent_message_chunk` before the prompt's reply.
+  ACP also advertises and answers `/changes` and `/undo` without sending them
+  to the model: `/changes diff` includes each file's patch in a Markdown `diff`
+  block, built from the same artifact evidence and unified-diff rendering as
+  the terminal, and `/undo` reverts the changes of the last turn. A turn ended
+  by an error or a provider cancellation still presents its Summary; an
+  explicit `session/cancel` fences it as a late update, while `/changes` and
+  `/undo` retain access to the changes.
+
 ### Changed
 
 - Figma: the bundled `figma-tools` feature now talks to the Figma cloud REST

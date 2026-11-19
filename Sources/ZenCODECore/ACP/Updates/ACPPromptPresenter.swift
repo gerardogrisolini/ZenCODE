@@ -138,10 +138,13 @@ struct ACPPromptPresenter: ChatSessionPresenter {
         await finishThought()
     }
 
-    /// ACP shows no final file-change summary: file edits reach the client as
-    /// `diff` content of their tool calls, and ACP has no `/undo` or
-    /// `/changes` command. The turn still collects the summary
-    /// (``ChatTurnResult/fileChangeSummary``); nothing reaches the wire.
+    /// Writes nothing: the controller reports the Summary while the turn is
+    /// still running, before the turn's final plan, and the Summary must be
+    /// the last text section of the turn. The bridge presents it once the turn
+    /// has ended, from ``ChatTurnResult/fileChangeSummary`` or
+    /// ``ChatTurnFailure/fileChangeSummary``, after the final plan and before
+    /// the reply of the prompt
+    /// (``ZenCODEACPBridge/publishFileChangeSummary(_:for:pipeline:)``).
     func presentFileChangeSummary(_ summary: TurnFileChangeSummary) async {}
 }
 

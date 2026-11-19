@@ -120,8 +120,12 @@ extension ZenCODEACPBridge {
         try await registerPromptTurnTask(activePromptTask, turn, session: session, presentation: presentation)
 
         let outcome: ACPPromptTurnOutcome
+        // The files the turn changed, from its result or from the failure that
+        // ended it (an error or a cancellation carries them too).
+        var fileChangeSummary: TurnFileChangeSummary?
         do {
             let completion = try await activePromptTask.value
+            fileChangeSummary = completion.fileChangeSummary
             if case .planning = commandPurpose {
                 await Self.sendPromptUpdate(
                     Self.textChunkJSONUpdate(kind: "agent_message_chunk", text: completion.text),
@@ -137,6 +141,7 @@ extension ZenCODEACPBridge {
                case let .planning(collectionID) = commandPurpose {
                 await clearACPPlanBrainstorming(sessionID: turn.sessionID, epoch: turn.epoch, expectedCollectionID: collectionID)
             }
+            fileChangeSummary = (error as? ChatTurnFailure)?.fileChangeSummary
             let underlying = (error as? ChatTurnFailure)?.underlying ?? error
             outcome = underlying is CancellationError
                 ? .stopped(stopReason: "cancelled")
@@ -144,7 +149,12 @@ extension ZenCODEACPBridge {
         }
         // Settled once the outcome is known, after the planning text or the
         // brainstorming cleanup it may owe: the order the turn always had.
-        await settlePromptTurn(turn, presentation, preservingAllowedToolNames: session.allowedToolNames)
+        await settlePromptTurn(
+            turn,
+            presentation,
+            fileChangeSummary: fileChangeSummary,
+            preservingAllowedToolNames: session.allowedToolNames
+        )
         return outcome
     }
 
@@ -218,8 +228,17 @@ extension ZenCODEACPBridge {
     }
 
     /// Ends the turn's presentation: the task-graph observer stops, the last
-    /// task graph is published through the turn's pipeline, and the pipeline
-    /// flushes and drains.
+    /// task graph is published through the turn's pipeline, then the Summary of
+    /// the files the turn changed (if any), and the pipeline flushes and
+    /// drains.
+    ///
+    /// The Summary is the last text section of the turn: it follows the
+    /// final plan and the text the turn owed (the planning answer), and the
+    /// reply of the prompt follows it. It is presented here, once the turn's
+    /// task has ended, and not when the controller reports it to the presenter,
+    /// which happens before the final plan. It goes through the same fence as
+    /// the plan, so a turn that lost its incarnation to `session/cancel`, a
+    /// close, or a shutdown writes neither.
     ///
     /// The turn gives its pipeline back only once all of that is written. Until
     /// then the session's own observer stays silent (see
@@ -228,12 +247,14 @@ extension ZenCODEACPBridge {
     /// turn still has buffered.
     private func finishPromptTurnPresentation(
         _ turn: ACPPromptTurn,
-        _ presentation: ACPPromptTurnPresentation
+        _ presentation: ACPPromptTurnPresentation,
+        fileChangeSummary: TurnFileChangeSummary? = nil
     ) async {
         presentation.graphObserver.cancel()
         await presentation.graphObserver.value
         await publishTaskPresentation(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID,
                                       presentation: presentation.taskPresentation, pipeline: presentation.pipeline)
+        await publishFileChangeSummary(fileChangeSummary, for: turn, pipeline: presentation.pipeline)
         await Self.flushPromptUpdates(through: presentation.pipeline)
         await presentation.pipeline.drain()
         if liveSession(id: turn.sessionID, epoch: turn.epoch)?.promptUpdatePipeline === presentation.pipeline {
@@ -277,14 +298,15 @@ extension ZenCODEACPBridge {
         }
     }
 
-    /// Settles the turn: its task presentation, its buffered updates, and
-    /// the session snapshot.
+    /// Settles the turn: its task presentation and Summary, its buffered
+    /// updates, and the session snapshot.
     private func settlePromptTurn(
         _ turn: ACPPromptTurn,
         _ presentation: ACPPromptTurnPresentation,
+        fileChangeSummary: TurnFileChangeSummary?,
         preservingAllowedToolNames allowedToolNames: Set<String>?
     ) async {
-        await finishPromptTurnPresentation(turn, presentation)
+        await finishPromptTurnPresentation(turn, presentation, fileChangeSummary: fileChangeSummary)
         await refreshSessionStateIfAvailable(
             sessionID: turn.sessionID,
             preservingAllowedToolNames: allowedToolNames,

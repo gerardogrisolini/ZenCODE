@@ -29,6 +29,15 @@ extension ZenCODEACPBridge {
             "description": .string("Show the session task graph, and retry, cancel, or clear its tasks"),
             "input": .object(["hint": .string("status, show <id>, retry <id>, cancel <id>, or clear")])
         ]))
+        commands.append(.object([
+            "name": .string("changes"),
+            "description": .string("Show the files changed by the last turn, with their patches on request"),
+            "input": .object(["hint": .string("diff to include the patches")])
+        ]))
+        commands.append(.object([
+            "name": .string("undo"),
+            "description": .string("Revert the file changes of the last turn")
+        ]))
         if Self.isTelegramCommandVisible() {
             commands.append(.object([
                 "name": .string("telegram"),
