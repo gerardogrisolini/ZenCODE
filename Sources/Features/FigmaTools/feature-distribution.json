@@ -3,9 +3,11 @@
   "discoversToolsAtRuntime": true,
   "distributionSchemaVersion": 1,
   "id": "figma-tools",
-  "isInstalledOnLinux": false,
+  "invocationTimeoutSeconds": 660,
+  "isInstalledOnLinux": true,
   "platforms": [
-    "macOS"
+    "macOS",
+    "linux"
   ],
   "productName": "figma-tools-feature",
   "sourceRelativePath": "Sources/Features/FigmaTools",

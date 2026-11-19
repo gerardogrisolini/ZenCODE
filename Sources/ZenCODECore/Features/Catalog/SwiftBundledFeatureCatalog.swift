@@ -139,7 +139,10 @@ enum SwiftBundledFeatureCatalog {
                 sourceRelativePath: figma.sourceRelativePath,
                 tools: [],
                 toolNamePrefixes: ["figma."],
-                discoversToolsAtRuntime: true
+                discoversToolsAtRuntime: true,
+                // Sign-in can wait up to 600 s for the user; stay under the
+                // feature's own login timeout with headroom.
+                invocationTimeoutSeconds: 660
             ),
             SwiftFeatureRuntime.BundledFeatureDefinition(
                 id: desktop.id,

@@ -28,7 +28,8 @@
       "description" : "Inspect Figma files, frames, and design data.",
       "discoversToolsAtRuntime" : true,
       "id" : "figma-tools",
-      "isInstalledOnLinux" : false,
+      "invocationTimeoutSeconds" : 660,
+      "isInstalledOnLinux" : true,
       "productName" : "figma-tools-feature",
       "sourceRelativePath" : "Sources/Features/FigmaTools",
       "toolNamePrefixes" : [

@@ -1,5 +1,9 @@
 import FeatureKit
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+import Synchronization
 import Testing
 import ToolCore
 @testable import figma_tools_feature
@@ -392,9 +396,50 @@ struct FigmaScreenshotTests {
     }
 }
 
-#if os(macOS)
+/// Socket layers the sign-in server can run on. `.nio` is also exercised on
+/// macOS, where the platform default is the Network framework.
+enum FigmaLoginTestTransport: String, CaseIterable, Sendable, CustomTestStringConvertible {
+    case platformDefault
+    case nio
+
+    static var available: [FigmaLoginTestTransport] {
+        #if os(macOS)
+        [.platformDefault, .nio]
+        #else
+        [.platformDefault]
+        #endif
+    }
+
+    var testDescription: String { rawValue }
+
+    func makeServer(
+        reason: FigmaLoginReason = .notSignedIn,
+        validate: @escaping FigmaLoginServer.Validator
+    ) throws -> FigmaLoginServer {
+        switch self {
+        case .platformDefault:
+            return try FigmaLoginServer(reason: reason, validate: validate)
+        case .nio:
+            return try FigmaLoginServer(reason: reason, transport: FigmaLoginNIOTransport(), validate: validate)
+        }
+    }
+}
+
+private final class FigmaLoginCallCounter: Sendable {
+    private let value = Mutex(0)
+
+    func increment() { value.withLock { $0 += 1 } }
+    var count: Int { value.withLock { $0 } }
+}
+
 @Suite
 struct FigmaLoginServerFlowTests {
+    private func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 5
+        return URLSession(configuration: configuration)
+    }
+
     private func post(
         port: UInt16,
         fields: String,
@@ -405,19 +450,19 @@ struct FigmaLoginServerFlowTests {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.setValue(origin, forHTTPHeaderField: "Origin")
         request.httpBody = Data(fields.utf8)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await makeSession().data(for: request)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, String(decoding: data, as: UTF8.self))
     }
 
-    @Test
-    func signInPageAcceptsOnlyItsOwnFormAndResolvesWithTheVerifiedLogin() async throws {
+    @Test(arguments: FigmaLoginTestTransport.available)
+    func signInPageAcceptsOnlyItsOwnFormAndResolvesWithTheVerifiedLogin(transport: FigmaLoginTestTransport) async throws {
         let expected = FigmaStoredCredential(
             accessToken: "figd_good",
             accountHandle: "Gerardo",
             accountEmail: nil,
             signedInAt: Date(timeIntervalSince1970: 1_800_000_000)
         )
-        let server = try FigmaLoginServer(reason: .notSignedIn) { token in
+        let server = try transport.makeServer { token in
             token == "figd_good"
                 ? .success(expected)
                 : .failure(FigmaLoginValidationError(message: "Figma did not accept this token."))
@@ -426,7 +471,7 @@ struct FigmaLoginServerFlowTests {
         let port = try await server.start()
         let origin = "http://127.0.0.1:\(port)"
 
-        let (pageData, _) = try await URLSession.shared.data(from: URL(string: "\(origin)/")!)
+        let (pageData, _) = try await makeSession().data(from: URL(string: "\(origin)/")!)
         let page = String(decoding: pageData, as: UTF8.self)
         #expect(page.contains("Sign in to Figma"))
         #expect(page.contains("value=\"\(server.formToken)\""))
@@ -452,5 +497,57 @@ struct FigmaLoginServerFlowTests {
         let result = try await server.waitForResult(timeout: 5)
         #expect(result == expected)
     }
+
+    @Test(arguments: FigmaLoginTestTransport.available)
+    func oversizedRequestsNeverReachTheSignInFlow(transport: FigmaLoginTestTransport) async throws {
+        let calls = FigmaLoginCallCounter()
+        let server = try transport.makeServer { _ in
+            calls.increment()
+            return .failure(FigmaLoginValidationError(message: "unexpected"))
+        }
+        defer { server.stop() }
+        let port = try await server.start()
+
+        let padding = String(repeating: "a", count: FigmaLoginServer.maximumRequestSize * 2)
+        do {
+            let response = try await post(
+                port: port,
+                fields: "state=\(server.formToken)&token=\(padding)",
+                origin: "http://127.0.0.1:\(port)"
+            )
+            #expect(response.status == 413)
+        } catch {
+            // The server may close the connection while the client is still
+            // sending; what matters is that nothing was verified.
+        }
+        #expect(calls.count == 0)
+    }
+
+    @Test(arguments: FigmaLoginTestTransport.available)
+    func stoppingTheServerClosesTheListenerAndFailsTheWaiter(transport: FigmaLoginTestTransport) async throws {
+        let server = try transport.makeServer { _ in
+            .failure(FigmaLoginValidationError(message: "unexpected"))
+        }
+        defer { server.stop() }
+        let port = try await server.start()
+        let url = URL(string: "http://127.0.0.1:\(port)/")!
+        let session = makeSession()
+
+        let (_, reachable) = try await session.data(from: url)
+        #expect((reachable as? HTTPURLResponse)?.statusCode == 200)
+
+        let waiter = Task { try await server.waitForResult(timeout: 30) }
+        server.stop()
+        await #expect(throws: CancellationError.self) { try await waiter.value }
+
+        var isClosed = false
+        for _ in 0 ..< 50 {
+            if (try? await session.data(from: url)) == nil {
+                isClosed = true
+                break
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        #expect(isClosed, "The listener still accepted connections after stop().")
+    }
 }
-#endif

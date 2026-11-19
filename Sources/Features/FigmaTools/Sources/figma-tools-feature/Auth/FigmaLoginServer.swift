@@ -7,12 +7,15 @@
 //  served and come from a loopback origin, so another website open in the
 //  same browser (or a DNS-rebinding page) cannot plant a foreign login.
 //
+//  Everything that decides what the server answers (request limit, Host and
+//  Origin checks, form token, single verification at a time, result and
+//  timeout) is platform-neutral and lives here, shared by every transport.
+//  A transport only owns the sockets: `FigmaLoginNetworkTransport` (Network
+//  framework, macOS) and `FigmaLoginNIOTransport` (SwiftNIO, Linux).
+//
 
 import Foundation
 import Synchronization
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
 import ToolCore
 
 struct FigmaLoginValidationError: LocalizedError, Sendable {
@@ -23,12 +26,85 @@ struct FigmaLoginValidationError: LocalizedError, Sendable {
 
 /// Request parsing and origin checks of the sign-in server (platform-neutral).
 enum FigmaLoginHTTP {
+    /// Upper bound of one request (headers plus form body) read from a connection.
+    static let maximumRequestSize = 64 * 1024
+
     struct Request {
         let method: String
         let path: String
         let headers: [String: String]
         let body: Data
         let isComplete: Bool
+    }
+
+    /// What the server writes back before closing the connection.
+    struct Response: Sendable, Equatable {
+        let statusCode: Int
+        let html: String
+
+        static let notFound = Response(statusCode: 404, html: FigmaLoginPage.notFound)
+        static let forbidden = Response(statusCode: 403, html: FigmaLoginPage.notFound)
+        static let requestTooLarge = Response(statusCode: 413, html: FigmaLoginPage.notFound)
+
+        /// The complete HTTP/1.1 message: status line, headers, and body.
+        func serialized() -> Data {
+            let body = Data(html.utf8)
+            let header = [
+                "HTTP/1.1 \(statusCode) \(Self.reasonPhrase(statusCode))",
+                "Content-Type: text/html; charset=utf-8",
+                "Content-Length: \(body.count)",
+                // The page embeds the one-time form token: never cache it. With
+                // `same-origin` the form POST keeps a loopback Origin header.
+                "Cache-Control: no-store",
+                "Referrer-Policy: same-origin",
+                "X-Content-Type-Options: nosniff",
+                "X-Frame-Options: DENY",
+                "Connection: close",
+                "",
+                ""
+            ].joined(separator: "\r\n")
+            var payload = Data(header.utf8)
+            payload.append(body)
+            return payload
+        }
+
+        private static func reasonPhrase(_ statusCode: Int) -> String {
+            switch statusCode {
+            case 200: return "OK"
+            case 403: return "Forbidden"
+            case 404: return "Not Found"
+            case 405: return "Method Not Allowed"
+            case 409: return "Conflict"
+            case 413: return "Content Too Large"
+            default: return "Status \(statusCode)"
+            }
+        }
+    }
+
+    /// Accumulates the bytes of one connection until they form a complete
+    /// request, enforcing the request size limit before anything is parsed.
+    struct RequestReader {
+        enum Outcome {
+            case incomplete
+            case request(Request)
+            case tooLarge
+        }
+
+        private var buffer = Data()
+        private let limit: Int
+
+        init(limit: Int = FigmaLoginHTTP.maximumRequestSize) {
+            self.limit = limit
+        }
+
+        mutating func append(_ data: Data) -> Outcome {
+            buffer.append(data)
+            if buffer.count > limit { return .tooLarge }
+            if let request = FigmaLoginHTTP.parse(buffer), request.isComplete {
+                return .request(request)
+            }
+            return .incomplete
+        }
     }
 
     static func parse(_ data: Data) -> Request? {
@@ -131,85 +207,142 @@ enum FigmaLoginHTTP {
     }
 }
 
-#if os(macOS)
-import Network
-
-final class FigmaLoginServer: Sendable {
+/// Routing and security rules of the sign-in page, independent of how the
+/// bytes reach it: both transports hand every complete request to `handle`.
+final class FigmaLoginFlow: Sendable {
     typealias Validator = @Sendable (String) async -> Result<FigmaStoredCredential, FigmaLoginValidationError>
 
-    static let maximumRequestSize = 64 * 1024
-    static let startTimeout: TimeInterval = 5
-
-    private let queue = DispatchQueue(label: "FigmaTools.FigmaLoginServer")
-    private let listener: NWListener
+    let formToken: String
+    let state = FigmaLoginState()
     private let reason: FigmaLoginReason
     private let validate: Validator
-    private let state = FigmaLoginState()
-    let formToken: String
 
-    init(reason: FigmaLoginReason, validate: @escaping Validator) throws {
+    init(reason: FigmaLoginReason, validate: @escaping Validator) {
         self.reason = reason
         self.validate = validate
         self.formToken = FigmaLoginHTTP.makeFormToken()
+    }
 
-        let parameters = NWParameters.tcp
-        parameters.requiredInterfaceType = .loopback
-        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
-        parameters.acceptLocalOnly = true
-        parameters.allowLocalEndpointReuse = true
-        do {
-            self.listener = try NWListener(using: parameters)
-        } catch {
-            throw FigmaToolsError.loginFailed("unable to start the local sign-in page. \(error.localizedDescription)")
+    /// Answers one complete request. `respond` is called at most once, from
+    /// any thread, and only when the connection should still be answered.
+    func handle(
+        _ request: FigmaLoginHTTP.Request,
+        respond: @escaping @Sendable (FigmaLoginHTTP.Response) -> Void
+    ) {
+        guard request.path == "/" else {
+            respond(.notFound)
+            return
         }
+        guard FigmaLoginHTTP.isLoopbackHost(request.headers["host"]) else {
+            respond(.forbidden)
+            return
+        }
+
+        switch request.method {
+        case "GET":
+            respond(formResponse(error: nil, statusCode: 200))
+        case "POST":
+            let fields = FigmaLoginHTTP.parseFormURLEncoded(request.body)
+            guard FigmaLoginHTTP.isLoopbackOrigin(request.headers["origin"]),
+                  FigmaLoginHTTP.constantTimeEquals(fields["state"] ?? "", formToken) else {
+                respond(formResponse(
+                    error: "The submission did not come from this sign-in page. Reload the page and try again.",
+                    statusCode: 403
+                ))
+                return
+            }
+            guard state.beginSubmission() else {
+                respond(formResponse(error: "A sign-in is already being verified. Please wait.", statusCode: 409))
+                return
+            }
+            let token = fields["token"] ?? ""
+            let validate = self.validate
+            let task = Task(name: "FigmaLogin.validate") { [weak self] in
+                guard let self else { return }
+                let result = await validate(token)
+                guard let completion = self.state.finishSubmission(with: result) else { return }
+                // Answer the browser before the waiter is released: the waiter
+                // stops the transport, which must not cut this response short.
+                switch result {
+                case let .success(credential):
+                    respond(.init(statusCode: 200, html: FigmaLoginPage.success(accountLabel: credential.accountLabel)))
+                case let .failure(error):
+                    respond(self.formResponse(error: error.localizedDescription, statusCode: 200))
+                }
+                completion.deliver()
+            }
+            state.setSubmissionTask(task)
+        default:
+            respond(formResponse(error: nil, statusCode: 405))
+        }
+    }
+
+    private func formResponse(error: String?, statusCode: Int) -> FigmaLoginHTTP.Response {
+        FigmaLoginHTTP.Response(
+            statusCode: statusCode,
+            html: FigmaLoginPage.form(reason: reason, error: error, formToken: formToken)
+        )
+    }
+}
+
+/// Socket layer of the sign-in server. A transport binds `127.0.0.1` on an
+/// ephemeral port, reads one request per connection (at most
+/// `FigmaLoginHTTP.maximumRequestSize` bytes, via `RequestReader`), passes it
+/// to the flow, writes the response, and closes the connection.
+protocol FigmaLoginTransport: Sendable {
+    /// Starts accepting loopback connections and returns the bound port.
+    func start(flow: FigmaLoginFlow) async throws -> UInt16
+    /// Stops accepting connections. Safe to call more than once.
+    func stop()
+}
+
+final class FigmaLoginServer: Sendable {
+    typealias Validator = FigmaLoginFlow.Validator
+
+    static let maximumRequestSize = FigmaLoginHTTP.maximumRequestSize
+
+    /// Internal so tests can drive requests without a socket.
+    let flow: FigmaLoginFlow
+    private let transport: any FigmaLoginTransport
+
+    var formToken: String { flow.formToken }
+
+    /// `transport` defaults to the platform's own: Network on macOS, SwiftNIO elsewhere.
+    init(
+        reason: FigmaLoginReason,
+        transport: (any FigmaLoginTransport)? = nil,
+        validate: @escaping Validator
+    ) throws {
+        self.flow = FigmaLoginFlow(reason: reason, validate: validate)
+        self.transport = try transport ?? Self.makePlatformTransport()
+    }
+
+    private static func makePlatformTransport() throws -> any FigmaLoginTransport {
+        #if os(macOS)
+        return try FigmaLoginNetworkTransport()
+        #else
+        return FigmaLoginNIOTransport()
+        #endif
     }
 
     /// Starts the listener and returns the bound loopback port once ready.
     func start() async throws -> UInt16 {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            queue.async { [weak self] in
-                guard let self else {
-                    continuation.resume(throwing: FigmaToolsError.loginFailed("the sign-in page was stopped."))
-                    return
-                }
-                let state = self.state
-                let timeout = Task(name: "FigmaLogin.start-timeout") {
-                    try? await Task.sleep(nanoseconds: UInt64(Self.startTimeout * 1_000_000_000))
-                    guard !Task.isCancelled else { return }
-                    state.resumeReadiness(with: .failure(
-                        FigmaToolsError.loginFailed("the local sign-in page did not become ready in time.")
-                    ))
-                }
-                state.setReadiness(continuation, timeout: timeout)
-                listener.stateUpdateHandler = { [weak self] listenerState in
-                    self?.handleListenerState(listenerState)
-                }
-                listener.newConnectionHandler = { [weak self] connection in
-                    self?.handle(connection: connection)
-                }
-                listener.start(queue: queue)
-            }
-        }
-        guard let port = listener.port?.rawValue else {
-            throw FigmaToolsError.loginFailed("the local sign-in page did not report a port.")
-        }
-        return port
+        try await transport.start(flow: flow)
     }
 
     func stop() {
-        state.stop()
-        queue.async {
-            self.listener.cancel()
-        }
+        flow.state.stop()
+        transport.stop()
     }
 
     /// Waits for the first token Figma accepted, or fails after `timeout`.
     func waitForResult(timeout: TimeInterval) async throws -> FigmaStoredCredential {
-        try await withThrowingTaskGroup(of: FigmaStoredCredential.self) { group in
+        let state = flow.state
+        return try await withThrowingTaskGroup(of: FigmaStoredCredential.self) { group in
             group.addTask(name: "FigmaLogin.waitForResult") {
                 try await withTaskCancellationHandler {
                     try await withCheckedThrowingContinuation { continuation in
-                        if let buffered = self.state.takeResult(orRegister: continuation) {
+                        if let buffered = state.takeResult(orRegister: continuation) {
                             continuation.resume(with: buffered)
                         }
                     }
@@ -219,6 +352,9 @@ final class FigmaLoginServer: Sendable {
             }
             group.addTask(name: "FigmaLogin.waitForResult-timeout") {
                 try await Task.sleep(nanoseconds: UInt64(max(timeout, 1) * 1_000_000_000))
+                // Resolve the wait as timed out first: stopping resolves it as
+                // cancelled, and that must not win the race with this error.
+                state.resumeResult(with: .failure(FigmaToolsError.loginTimedOut))
                 self.stop()
                 throw FigmaToolsError.loginTimedOut
             }
@@ -227,134 +363,9 @@ final class FigmaLoginServer: Sendable {
             return result
         }
     }
-
-    private func handleListenerState(_ listenerState: NWListener.State) {
-        switch listenerState {
-        case .ready:
-            state.resumeReadiness(with: .success(()))
-        case let .failed(error):
-            let wrapped = FigmaToolsError.loginFailed("the local sign-in page failed. \(error.localizedDescription)")
-            state.resumeReadiness(with: .failure(wrapped))
-            state.resumeResult(with: .failure(wrapped))
-        case .cancelled:
-            let stopped = FigmaToolsError.loginFailed("the sign-in page was stopped.")
-            state.resumeReadiness(with: .failure(stopped))
-            state.resumeResult(with: .failure(stopped))
-        default:
-            break
-        }
-    }
-
-    private func handle(connection: NWConnection) {
-        connection.start(queue: queue)
-        receiveRequest(on: connection, accumulated: Data())
-    }
-
-    private func receiveRequest(on connection: NWConnection, accumulated: Data) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
-            guard let self else { return }
-            var buffer = accumulated
-            if let data { buffer.append(data) }
-            if error != nil {
-                connection.cancel()
-                return
-            }
-            if buffer.count > Self.maximumRequestSize {
-                self.sendHTML(FigmaLoginPage.notFound, statusCode: 413, on: connection)
-                return
-            }
-            if let request = FigmaLoginHTTP.parse(buffer), request.isComplete {
-                self.route(request, on: connection)
-                return
-            }
-            if isComplete {
-                connection.cancel()
-                return
-            }
-            self.receiveRequest(on: connection, accumulated: buffer)
-        }
-    }
-
-    private func route(_ request: FigmaLoginHTTP.Request, on connection: NWConnection) {
-        guard request.path == "/" else {
-            sendHTML(FigmaLoginPage.notFound, statusCode: 404, on: connection)
-            return
-        }
-        guard FigmaLoginHTTP.isLoopbackHost(request.headers["host"]) else {
-            sendHTML(FigmaLoginPage.notFound, statusCode: 403, on: connection)
-            return
-        }
-
-        switch request.method {
-        case "GET":
-            sendHTML(formPage(error: nil), statusCode: 200, on: connection)
-        case "POST":
-            let fields = FigmaLoginHTTP.parseFormURLEncoded(request.body)
-            guard FigmaLoginHTTP.isLoopbackOrigin(request.headers["origin"]),
-                  FigmaLoginHTTP.constantTimeEquals(fields["state"] ?? "", formToken) else {
-                sendHTML(
-                    formPage(error: "The submission did not come from this sign-in page. Reload the page and try again."),
-                    statusCode: 403,
-                    on: connection
-                )
-                return
-            }
-            guard state.beginSubmission() else {
-                sendHTML(
-                    formPage(error: "A sign-in is already being verified. Please wait."),
-                    statusCode: 409,
-                    on: connection
-                )
-                return
-            }
-            let token = fields["token"] ?? ""
-            let validate = self.validate
-            let task = Task(name: "FigmaLogin.validate") { [weak self] in
-                guard let self else { return }
-                let result = await validate(token)
-                guard self.state.finishSubmission(with: result) else { return }
-                switch result {
-                case let .success(credential):
-                    self.sendHTML(FigmaLoginPage.success(accountLabel: credential.accountLabel), statusCode: 200, on: connection)
-                case let .failure(error):
-                    self.sendHTML(self.formPage(error: error.localizedDescription), statusCode: 200, on: connection)
-                }
-            }
-            state.setSubmissionTask(task)
-        default:
-            sendHTML(formPage(error: nil), statusCode: 405, on: connection)
-        }
-    }
-
-    private func formPage(error: String?) -> String {
-        FigmaLoginPage.form(reason: reason, error: error, formToken: formToken)
-    }
-
-    private func sendHTML(_ html: String, statusCode: Int, on connection: NWConnection) {
-        let body = Data(html.utf8)
-        let header = [
-            "HTTP/1.1 \(statusCode) \(HTTPURLResponse.localizedString(forStatusCode: statusCode).capitalized)",
-            "Content-Type: text/html; charset=utf-8",
-            "Content-Length: \(body.count)",
-            // The page embeds the one-time form token: never cache it. With
-            // `same-origin` the form POST keeps a loopback Origin header.
-            "Cache-Control: no-store",
-            "Referrer-Policy: same-origin",
-            "X-Content-Type-Options: nosniff",
-            "X-Frame-Options: DENY",
-            "Connection: close",
-            "",
-            ""
-        ].joined(separator: "\r\n")
-        var payload = Data(header.utf8)
-        payload.append(body)
-        connection.send(content: payload, completion: .contentProcessed { _ in
-            connection.cancel()
-        })
-    }
 }
 
-/// Continuation storage shared by the listener queue and the awaiting task.
+/// Continuation storage shared by the transport and the awaiting task.
 final class FigmaLoginState: Sendable {
     private struct State: Sendable {
         var readinessContinuation: CheckedContinuation<Void, Error>?
@@ -366,6 +377,19 @@ final class FigmaLoginState: Sendable {
         var isStopped = false
         var isValidatingSubmission = false
         var submissionTask: Task<Void, Never>?
+    }
+
+    /// Outcome of a verification that still counts: the browser gets an
+    /// answer, and `deliver` then releases the waiter when the login was accepted.
+    struct Completion: Sendable {
+        fileprivate let continuation: CheckedContinuation<FigmaStoredCredential, Error>?
+        fileprivate let credential: FigmaStoredCredential?
+
+        func deliver() {
+            if let continuation, let credential {
+                continuation.resume(returning: credential)
+            }
+        }
     }
 
     private let state = Mutex(State())
@@ -444,25 +468,23 @@ final class FigmaLoginState: Sendable {
     }
 
     /// Only an accepted token resolves the flow; a rejected one allows a new
-    /// attempt. Results arriving after stop or timeout are ignored.
-    func finishSubmission(with result: Result<FigmaStoredCredential, FigmaLoginValidationError>) -> Bool {
-        let completion = state.withLock { state -> (CheckedContinuation<FigmaStoredCredential, Error>?, Bool) in
+    /// attempt. Results arriving after stop or timeout are ignored (`nil`).
+    func finishSubmission(with result: Result<FigmaStoredCredential, FigmaLoginValidationError>) -> Completion? {
+        state.withLock { state -> Completion? in
             state.isValidatingSubmission = false
             state.submissionTask = nil
-            guard !state.isStopped, !state.didResumeResult else { return (nil, false) }
-            guard case let .success(credential) = result else { return (nil, true) }
+            guard !state.isStopped, !state.didResumeResult else { return nil }
+            guard case let .success(credential) = result else {
+                return Completion(continuation: nil, credential: nil)
+            }
             state.didResumeResult = true
             if let continuation = state.resultContinuation {
                 state.resultContinuation = nil
-                return (continuation, true)
+                return Completion(continuation: continuation, credential: credential)
             }
             state.pendingResult = .success(credential)
-            return (nil, true)
+            return Completion(continuation: nil, credential: nil)
         }
-        if case let .success(credential) = result {
-            completion.0?.resume(returning: credential)
-        }
-        return completion.1
     }
 
     func stop() {
@@ -477,4 +499,3 @@ final class FigmaLoginState: Sendable {
         resumeResult(with: .failure(CancellationError()))
     }
 }
-#endif

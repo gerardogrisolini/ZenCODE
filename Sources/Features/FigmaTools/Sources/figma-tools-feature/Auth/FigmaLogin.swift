@@ -39,7 +39,6 @@ enum FigmaLogin {
 
     /// Runs the browser sign-in and stores the verified login.
     static func signIn(reason: FigmaLoginReason, store: FigmaCredentialStore) async throws -> FigmaStoredCredential {
-        #if os(macOS)
         let server = try FigmaLoginServer(reason: reason) { token in
             await verify(token: token)
         }
@@ -47,8 +46,11 @@ enum FigmaLogin {
         do {
             let port = try await server.start()
             let url = URL(string: "http://127.0.0.1:\(port)/")!
-            log("Figma login: sign in on the page opened in your browser (\(url.absoluteString)).")
-            openBrowser(url)
+            if FigmaBrowserLauncher.open(url) {
+                log("Figma login: sign in on the page opened in your browser (\(url.absoluteString)).")
+            } else {
+                log("Figma login: no browser could be opened here. Open \(url.absoluteString) in a browser on this machine to sign in.")
+            }
             credential = try await server.waitForResult(timeout: timeout)
         } catch is CancellationError {
             server.stop()
@@ -63,9 +65,6 @@ enum FigmaLogin {
         try store.save(credential)
         log("Figma login: signed in as \(credential.accountLabel).")
         return credential
-        #else
-        throw FigmaToolsError.loginUnavailable
-        #endif
     }
 
     /// Checks a submitted token against Figma without touching local state.
@@ -103,19 +102,6 @@ enum FigmaLogin {
     private static func log(_ message: String) {
         FileHandle.standardError.write(Data((message + "\n").utf8))
     }
-
-    #if os(macOS)
-    private static func openBrowser(_ url: URL) {
-        let openURL = URL(fileURLWithPath: "/usr/bin/open")
-        guard FileManager.default.isExecutableFile(atPath: openURL.path) else { return }
-        let process = Process()
-        process.executableURL = openURL
-        process.arguments = [url.absoluteString]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try? process.run()
-    }
-    #endif
 }
 
 /// Runs Figma API work with the stored login, signing in first when needed

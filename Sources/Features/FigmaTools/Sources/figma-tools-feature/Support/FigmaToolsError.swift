@@ -15,7 +15,6 @@ enum FigmaToolsError: LocalizedError, Equatable {
     case invalidCredentialStore(String)
     case loginTimedOut
     case loginFailed(String)
-    case loginUnavailable
     case missingFileReference
     case missingNodeID(tool: String)
     case invalidReference(String)
@@ -36,8 +35,6 @@ enum FigmaToolsError: LocalizedError, Equatable {
             return "Figma login was not completed within 10 minutes. Run figma.login to try again."
         case let .loginFailed(message):
             return "Figma login failed: \(message)"
-        case .loginUnavailable:
-            return "Figma login needs the browser sign-in page, which is available only on macOS."
         case .missingFileReference:
             return "Pass a Figma link as url (for example from Copy link to selection) or a fileKey."
         case let .missingNodeID(tool):

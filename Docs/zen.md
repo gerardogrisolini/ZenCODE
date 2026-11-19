@@ -2138,6 +2138,6 @@ tries again. It does not restart it after an intentional stop (status `0`).
 - **Optional feature tools are missing**: install the package with `zen --install-features <id>` (or choose it in setup), then enable/select it with `/tools`.
 - **`/plan` or `/review` needs sub-agents**: enable `sub-agents` with `/tools` or switch profile. `/goal` does not require sub-agents; delegation is optional.
 - **Xcode tools missing**: make sure Xcode is running. See [xcode.md](xcode.md).
-- **Figma tools missing**: make sure the Figma desktop MCP server is enabled.
+- **Figma tools missing**: install the bundled `figma-tools` feature and sign in with `figma.login`. The sign-in page opens in the system browser on macOS and Linux; if no browser can be opened, run `figma-tools-feature --login` in a terminal and open the address it prints in a browser on the same machine.
 - **Voice mode or Telegram voice messages do not work**: see the troubleshooting table in [voice.md](voice.md#troubleshooting).
 - **A scheduled prompt fails, never runs, or sends no mail**: see [Errors and fixes](#errors-and-fixes) for `/cron`.

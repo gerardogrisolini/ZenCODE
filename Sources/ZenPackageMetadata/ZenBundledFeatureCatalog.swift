@@ -37,7 +37,7 @@ public enum ZenBundledFeatureCatalog {
             id: "figma-tools",
             productName: "figma-tools-feature",
             sourceRelativePath: "Sources/Features/FigmaTools",
-            isInstalledOnLinux: false,
+            isInstalledOnLinux: true,
         ),
         ZenBundledFeatureMetadata(
             id: "git-tools",

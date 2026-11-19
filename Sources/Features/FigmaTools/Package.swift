@@ -14,14 +14,18 @@ let package = Package(
     ],
     dependencies: [
         // zencode:package-path
-        .package(name: "ZenCODE", path: "/Users/gerardo/Projects/ZenCODE")
+        .package(name: "ZenCODE", path: "../../.."),
+        // The Linux sign-in server runs on SwiftNIO, already pinned by ZenCODE.
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0")
     ],
     targets: [
         .executableTarget(
             name: "figma-tools-feature",
             dependencies: [
                 .product(name: "FeatureKit", package: "ZenCODE"),
-                .product(name: "ToolCore", package: "ZenCODE")
+                .product(name: "ToolCore", package: "ZenCODE"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio")
             ],
             swiftSettings: memberImportVisibilitySettings
         ),

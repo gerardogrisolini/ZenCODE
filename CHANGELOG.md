@@ -10,6 +10,33 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- Figma: the bundled `figma-tools` feature now talks to the Figma cloud REST
+  API (`api.figma.com`) directly instead of requiring the Figma desktop app's
+  MCP server, so it works without the Figma app running and is installable on
+  Linux too. Authentication is managed by the feature: `figma.login` opens a
+  local sign-in page where you paste a Figma personal access token with the
+  `current_user:read` and `file_content:read` scopes. The token is verified
+  with Figma and stored in the support directory with owner-only permissions,
+  never in environment variables or hand-written token files. The tools start
+  the sign-in automatically when no login is stored or Figma rejects the
+  stored one, and `figma.logout` deletes the stored login (revoke the token
+  on Figma to invalidate it). The sign-in page is served only on `127.0.0.1`
+  and opens in the system browser on macOS (`open`) and Linux (`wslview`,
+  then `xdg-open`); when no browser can be opened the address is logged so it
+  can be opened by hand. A terminal entry point
+  (`figma-tools-feature --login`) starts the same sign-in on both platforms.
+
+### Removed
+
+- **Breaking:** Figma: the desktop-MCP tools that the new REST implementation
+  does not cover are gone (Code Connect, design-system rules, FigJam, and
+  acting on the app's current selection). Tools now take a Figma URL, or a
+  `fileKey` plus `nodeId`, instead of the current selection, and
+  `figma.get_design_context` returns a textual layer tree instead of
+  generated code.
+
 ## [6.1.2] - 2026-11-17
 
 ### Added
