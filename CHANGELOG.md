@@ -37,6 +37,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `figma.get_design_context` returns a textual layer tree instead of
   generated code.
 
+### Fixed
+
+- `zen --setup`: a model configured through the Kimi Code preset now stores
+  at most a 256K-token context window instead of the 1M tokens the `/models`
+  catalog advertises for `k3.1-pro`. A standard Kimi Code plan rejects
+  requests above 256K with an HTTP 400 before the model can reply, so a
+  freshly configured Kimi Code session failed on its first turn. Other
+  providers are unchanged, saved configurations are not rewritten, and the
+  metadata prompt of a reconfiguration can raise the limit on plans that
+  support 1M.
+
 ## [6.1.2] - 2026-11-17
 
 ### Added

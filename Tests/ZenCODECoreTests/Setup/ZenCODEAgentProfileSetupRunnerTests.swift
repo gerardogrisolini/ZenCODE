@@ -45,6 +45,37 @@ struct ZenCODEAgentProfileSetupRunnerTests {
     }
 
     @Test
+    func kimiCodeSetupCapsAdvertisedContextWindowAtPlanLimit() {
+        // The Kimi Code catalog advertises 1M tokens for k3.1-pro, but a
+        // standard plan rejects requests above 256K before the model can
+        // reply, so newly configured Kimi Code models start at 256K.
+        for contextLength in [1_048_576, 262_144, 131_072] {
+            let manifest = ZenCODESetupRunner.remoteModelManifest(
+                from: OpenRouterModelInfo(
+                    id: "k3.1-pro", name: "k3.1-pro", contextLength: contextLength,
+                    pricing: nil, thinkingSupport: nil
+                ),
+                providerID: "kimi-code", providerName: "Kimi Code",
+                baseURL: "https://api.kimi.ai/coding/v1", chatEndpoint: .chatCompletions
+            )
+            #expect(manifest.configuredContextWindowLimit == min(contextLength, 256_000))
+        }
+        // The Kimi pay-as-you-go API and every other provider keep the
+        // advertised context window unchanged.
+        for providerID in ["moonshot", "openrouter"] {
+            let manifest = ZenCODESetupRunner.remoteModelManifest(
+                from: OpenRouterModelInfo(
+                    id: "k3.1-pro", name: "k3.1-pro", contextLength: 1_048_576,
+                    pricing: nil, thinkingSupport: nil
+                ),
+                providerID: providerID, providerName: "Other",
+                baseURL: "https://api.moonshot.ai/v1", chatEndpoint: .chatCompletions
+            )
+            #expect(manifest.configuredContextWindowLimit == 1_048_576)
+        }
+    }
+
+    @Test
     func deepSeekSetupDoesNotInferUnknownOrRoutedModelCapabilities() {
         for modelID in ["deepseek-future", "deepseek-chat", "deepseek-reasoner", "deepseek/deepseek-flash"] {
             #expect(ZenCODESetupRunner.directDeepSeekThinkingSupport(

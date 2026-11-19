@@ -23,11 +23,30 @@ extension ZenCODESetupRunner {
             providerName: providerName,
             baseURL: baseURL,
             chatEndpoint: chatEndpoint,
-            configuredContextWindowLimit: model.contextLength,
+            configuredContextWindowLimit: model.contextLength.map {
+                kimiCodeContextWindowLimit($0, providerID: providerID)
+            },
             generationParameterOverrides: model.generationParameterOverrides,
             thinkingSupport: directDeepSeekThinkingSupport(modelID: model.id, baseURL: baseURL)
                 ?? model.thinkingSupport
         )
+    }
+
+    /// The `/models` catalog of Kimi Code advertises the full 1M context of
+    /// `k3.1-pro`, but a standard Kimi Code plan rejects requests above 256K
+    /// with an HTTP 400 before the model can reply. Newly configured Kimi Code
+    /// models therefore start at 256K; the setup metadata prompt can raise the
+    /// limit for plans that support 1M. Every other provider keeps the
+    /// advertised context window unchanged.
+    static func kimiCodeContextWindowLimit(
+        _ contextLength: Int,
+        providerID: String
+    ) -> Int {
+        guard AgentRemoteProvider.normalizedProviderID(providerID)
+            == AgentRemoteProvider.kimiCodeProviderID else {
+            return contextLength
+        }
+        return min(contextLength, 256_000)
     }
 
     /// Capability metadata only: /models remains authoritative for discovery.
