@@ -160,6 +160,7 @@ struct ZenConversationList: View {
     /// Changes when the view must jump to the bottom and follow it again
     /// (the operator sent a line).
     let followToken: Int
+    @Binding var search: ZenTranscriptSearchState
 
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var isFollowing = true
@@ -173,58 +174,79 @@ struct ZenConversationList: View {
         let rows = rowCache.rows(for: transcript)
         let isLoadingSavedSession = session.loadingSavedSessionName != nil
         let showsJumpToLatest = !isFollowing && isFarFromBottom && !isLoadingSavedSession
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 10) {
-                if transcript.isEmpty {
-                    ZenWelcomeSlot(session: session)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if transcript.isEmpty {
+                        ZenWelcomeSlot(session: session)
+                    }
+                    ZenTranscriptRowList(
+                        rows: rows,
+                        durations: durations,
+                        selectedRowID: search.selectedMatchID
+                    )
+                    ZenLiveRows(session: session, search: $search)
+                    ZenOverviewCards(session: session)
                 }
-                ZenTranscriptRowList(rows: rows, durations: durations)
-                ZenLiveRows(session: session)
-                ZenOverviewCards(session: session)
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 12)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 16)
-            .padding(.bottom, 12)
-        }
-        .scrollPosition($position)
-        .defaultScrollAnchor(.bottom, for: .initialOffset)
-        .scrollEdgeEffectStyle(.soft, for: .bottom)
-        .onScrollGeometryChange(for: ZenScrollMetrics.self, of: ZenScrollMetrics.init) { old, new in
-            follow(old: old, new: new)
-        }
-        .onChange(of: followToken) { _, _ in
-            jumpToLatest(animated: false)
-        }
-        // A new or loaded session starts at its latest row.
-        .onChange(of: session.epoch) { _, _ in
-            jumpToLatest(animated: false)
-        }
-        // A loaded session's rows may come after its epoch (a first load
-        // switches the incarnation before the model preload ends): its first
-        // rows jump to the latest one again, as when both come together.
-        // Following the content as it grows does not reach the end of a long
-        // list whose rows are not measured yet.
-        .onChange(of: transcript.isEmpty) { wasEmpty, isEmpty in
-            if wasEmpty, !isEmpty {
+            .scrollPosition($position)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .scrollEdgeEffectStyle(.soft, for: .bottom)
+            .onScrollGeometryChange(for: ZenScrollMetrics.self, of: ZenScrollMetrics.init) { old, new in
+                follow(old: old, new: new)
+            }
+            .onChange(of: followToken) { _, _ in
                 jumpToLatest(animated: false)
             }
-        }
-        .opacity(isLoadingSavedSession ? 0 : 1)
-        .allowsHitTesting(!isLoadingSavedSession)
-        .accessibilityHidden(isLoadingSavedSession)
-        .overlay {
-            ZenSavedSessionLoadingSlot(session: session)
-        }
-        .overlay(alignment: .bottom) {
-            if showsJumpToLatest {
-                ZenJumpToLatestButton {
-                    jumpToLatest(animated: true)
+            // A new or loaded session starts at its latest row.
+            .onChange(of: session.epoch) { _, _ in
+                jumpToLatest(animated: false)
+            }
+            // A loaded session's rows may come after its epoch (a first load
+            // switches the incarnation before the model preload ends): its first
+            // rows jump to the latest one again, as when both come together.
+            // Following the content as it grows does not reach the end of a long
+            // list whose rows are not measured yet.
+            .onChange(of: transcript.isEmpty) { wasEmpty, isEmpty in
+                if wasEmpty, !isEmpty {
+                    jumpToLatest(animated: false)
                 }
-                .padding(.bottom, 10)
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
+            .onChange(of: search.selectedMatchID) { _, id in
+                guard let id else { return }
+                isFollowing = false
+                withAnimation(.easeOut(duration: 0.15)) {
+                    proxy.scrollTo(id, anchor: .center)
+                }
+            }
+            .opacity(isLoadingSavedSession ? 0 : 1)
+            .allowsHitTesting(!isLoadingSavedSession)
+            .accessibilityHidden(isLoadingSavedSession)
+            .overlay {
+                ZenSavedSessionLoadingSlot(session: session)
+            }
+            .overlay(alignment: .bottom) {
+                if showsJumpToLatest {
+                    ZenJumpToLatestButton {
+                        jumpToLatest(animated: true)
+                    }
+                    .padding(.bottom, 10)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: showsJumpToLatest)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if search.isPresented {
+                ZenTranscriptSearchBar(state: $search)
             }
         }
-        .animation(.easeOut(duration: 0.15), value: showsJumpToLatest)
+        .onChange(of: rows, initial: true) { _, rows in
+            search.update(rows: rows)
+        }
     }
 
     private func follow(old: ZenScrollMetrics, new: ZenScrollMetrics) {

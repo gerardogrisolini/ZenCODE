@@ -12,6 +12,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
+- macOS app: the sessions sidebar filters saved sessions by name or model, and
+  **Find in Transcript…** (⌘F) searches the visible conversation and live
+  response, with previous/next navigation, a highlighted current match, and
+  Esc to close.
+
 - ACP: a turn that changed files now ends with the same Summary as the terminal
   and Telegram, as the last `agent_message_chunk` before the prompt's reply.
   ACP also advertises and answers `/changes` and `/undo` without sending them
@@ -23,6 +28,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `/undo` retain access to the changes.
 
 ### Changed
+
+- macOS app: the light theme uses readable text and status colors with at
+  least 4.5:1 contrast on their surfaces, while the dark theme is unchanged.
+  Streaming coalesces visual updates of the current block, syntax highlighting
+  runs off the main actor, and image attachments use downsampled thumbnails
+  decoded off the main actor. Session and attachment controls that would be
+  refused while a line runs are now disabled in advance.
 
 - Figma: the bundled `figma-tools` feature now talks to the Figma cloud REST
   API (`api.figma.com`) directly instead of requiring the Figma desktop app's

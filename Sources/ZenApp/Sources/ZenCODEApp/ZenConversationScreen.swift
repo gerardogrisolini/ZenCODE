@@ -76,11 +76,16 @@ struct ZenConversationScreen: View {
     @FocusState private var isComposerFocused: Bool
     /// Bumped when the operator sends a line: the list follows the bottom.
     @State private var followToken = 0
+    @State private var transcriptSearch = ZenTranscriptSearchState()
 
     var body: some View {
         let isChatSelected = session.selectedTab == .chat
         ZStack {
-            ZenConversationList(session: session, followToken: followToken)
+            ZenConversationList(
+                session: session,
+                followToken: followToken,
+                search: $transcriptSearch
+            )
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     ZenBottomChrome(session: session, focus: $isComposerFocused) {
                         followToken &+= 1
@@ -119,6 +124,13 @@ struct ZenConversationScreen: View {
             perform(escapeAction)
         }
         .modifier(ZenWindowToolbarModifier(session: session))
+        .focusedSceneValue(
+            \.zenTranscriptSearchAction,
+            ZenTranscriptSearchAction {
+                session.selectTab(.chat)
+                transcriptSearch.present()
+            }
+        )
         .defaultFocus($isComposerFocused, true)
         .onAppear {
             isComposerFocused = true
@@ -132,6 +144,11 @@ struct ZenConversationScreen: View {
         // unless a request waits: its sheet or its popover has it.
         .onChange(of: session.selectedTab) { _, tab in
             if tab == .chat, session.pendingRequest == nil {
+                isComposerFocused = true
+            }
+        }
+        .onChange(of: transcriptSearch.isPresented) { _, isPresented in
+            if !isPresented, session.selectedTab == .chat {
                 isComposerFocused = true
             }
         }
@@ -253,6 +270,7 @@ struct ZenWindowComposer: View {
             draft: $session.draft,
             isBusy: session.isBusy,
             isSpeaking: session.voiceState.isSpeaking && session.isVoiceWindow,
+            attachmentsEnabled: session.canAttachFiles,
             commands: session.commandDescriptors,
             mentions: session.mentionSuggestions,
             queued: session.queuedLines.map { ZenComposerQueuedItem(id: $0.id, text: $0.text) },

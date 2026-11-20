@@ -17,6 +17,34 @@ import ZenCODECore
 @MainActor
 @Suite(.serialized)
 struct ZenWindowSessionTests {
+    @Test("session and attachment controls are available only when their operations are admitted")
+    func controlAvailability() async throws {
+        try await withRuntime { runtime, _, workspace in
+            let window = try await runtime.openWindow(workspace: workspace)
+            #expect(window.canManageSessions)
+            #expect(window.canAttachFiles)
+
+            window.isBusy = true
+            #expect(!window.canManageSessions)
+            #expect(!window.canAttachFiles)
+            window.isBusy = false
+            window.queuedLines = [ZenQueuedLine(text: "next")]
+            #expect(!window.canManageSessions)
+            window.queuedLines = []
+            window.adoptedTelegramPromptID = UUID()
+            #expect(!window.canManageSessions)
+            #expect(!window.canAttachFiles)
+            window.adoptedTelegramPromptID = nil
+            window.isDrivenFromTelegram = true
+            #expect(!window.canManageSessions)
+            #expect(!window.canAttachFiles)
+            window.isDrivenFromTelegram = false
+            #expect(window.canManageSessions)
+            #expect(window.canAttachFiles)
+            await runtime.shutdown()
+        }
+    }
+
     @Test("Sub-agent tabs open only when asked, once each, follow their agent, and close to the adjacent tab")
     func subAgentTabsOpenSelectAndClose() async throws {
         try await withRuntime { runtime, backend, workspace in

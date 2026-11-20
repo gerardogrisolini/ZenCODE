@@ -19,6 +19,8 @@ struct ZenSessionSidebar: View {
     let session: ZenWindowSession
 
     @Environment(\.zenPalette) private var palette
+    /// The text that filters the saved sessions by name or model.
+    @State private var query = ""
     /// The saved session the delete confirmation asks about.
     @State private var pendingDeletion: String?
 
@@ -28,9 +30,9 @@ struct ZenSessionSidebar: View {
                 currentRow
             }
             Section("Saved sessions") {
-                let saved = Self.sortedSavedSessions(session.savedSessions)
+                let saved = Self.filteredSavedSessions(session.savedSessions, query: query)
                 if saved.isEmpty {
-                    Text("No saved sessions")
+                    Text(query.isEmpty ? "No saved sessions" : "No matching saved sessions")
                         .foregroundStyle(palette.textMuted)
                 } else {
                     ForEach(saved, id: \.name) { summary in
@@ -40,6 +42,7 @@ struct ZenSessionSidebar: View {
             }
         }
         .listStyle(.sidebar)
+        .searchable(text: $query, placement: .sidebar, prompt: "Filter saved sessions")
         .toolbar {
             actions
         }
@@ -118,15 +121,20 @@ struct ZenSessionSidebar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Load \(summary.name)")
+        .disabled(!session.canManageSessions)
+        .help(session.canManageSessions
+            ? "Load \(summary.name)"
+            : "Wait for the current line to finish before loading a session")
         .contextMenu {
             Button("Load") {
                 session.loadSavedSession(named: summary.name)
             }
+            .disabled(!session.canManageSessions)
             Divider()
             Button("Delete…", role: .destructive) {
                 pendingDeletion = summary.name
             }
+            .disabled(!session.canManageSessions)
         }
     }
 
@@ -143,12 +151,14 @@ struct ZenSessionSidebar: View {
                 Label("New Session", systemImage: "square.and.pencil")
             }
             .help("Start a new session (/sessions new)")
+            .disabled(!session.canManageSessions)
             Button {
                 session.saveSession()
             } label: {
                 Label("Save", systemImage: "square.and.arrow.down")
             }
             .help("Save the current session (/sessions save)")
+            .disabled(!session.canManageSessions)
         }
     }
 
@@ -170,6 +180,20 @@ struct ZenSessionSidebar: View {
     }
 
     // MARK: - Formatting
+
+    /// The saved sessions matching `query` by name or model, most recently
+    /// saved first. A blank query does not filter.
+    static func filteredSavedSessions(
+        _ sessions: [ChatSavedSessionSummary],
+        query: String
+    ) -> [ChatSavedSessionSummary] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filtered = query.isEmpty ? sessions : sessions.filter { summary in
+            summary.name.localizedStandardContains(query)
+                || summary.modelID?.localizedStandardContains(query) == true
+        }
+        return sortedSavedSessions(filtered)
+    }
 
     /// The saved sessions, most recently saved first.
     static func sortedSavedSessions(_ sessions: [ChatSavedSessionSummary]) -> [ChatSavedSessionSummary] {

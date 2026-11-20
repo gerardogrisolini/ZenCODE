@@ -80,17 +80,34 @@ enum ZenMarkdownCodePresentation: Equatable, Sendable {
 
 /// A fenced code block.
 struct ZenMarkdownCodeBlockView: View {
+    struct Request: Equatable, Hashable, Sendable {
+        var language: String?
+        var code: String
+        var isStreaming: Bool
+    }
+
     let language: String?
     let code: String
     @Environment(\.zenPalette) private var palette
     @Environment(\.zenMarkdownIsStreaming) private var isStreaming
     @State private var copied = false
     @State private var viewportWidth: CGFloat = 0
+    @State private var presentation: ZenMarkdownCodePresentation?
+    @State private var presentedRequest: Request?
 
     var body: some View {
-        let presentation = ZenMarkdownCodePresentation.make(language: language, code: code, isStreaming: isStreaming)
+        let request = Request(language: language, code: code, isStreaming: isStreaming)
+        // A cached result renders immediately. Otherwise plain source stays
+        // visible while highlighting runs off the main actor.
+        let presentation = presentedRequest == request
+            ? presentation
+            : ZenMarkdownCodePresentation.cachedPresentation(
+                language: language,
+                code: code,
+                isStreaming: isStreaming
+            )
         VStack(alignment: .leading, spacing: 0) {
-            header(isDiff: presentation.isDiff)
+            header(isDiff: presentation?.isDiff ?? ZenMarkdownCodePresentation.isDiff(language: language, code: code))
             ScrollView(.horizontal) {
                 content(presentation)
                     .padding(.vertical, 8)
@@ -100,12 +117,33 @@ struct ZenMarkdownCodeBlockView: View {
             .onGeometryChange(for: CGFloat.self) { proxy in
                 proxy.size.width
             } action: { width in
-                viewportWidth = width
+                if viewportWidth != width {
+                    viewportWidth = width
+                }
             }
         }
         .background(palette.codeBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: request) {
+            guard !Task.isCancelled else { return }
+            let computed = await Self.makePresentation(for: request)
+            guard !Task.isCancelled else { return }
+            presentedRequest = request
+            self.presentation = computed
+        }
+    }
+
+    /// Computes highlighting away from the caller's actor. SwiftUI cancels the
+    /// task when the block disappears or its source changes; the cache keeps
+    /// the latest completed result available to the next render.
+    @concurrent
+    nonisolated static func makePresentation(for request: Request) async -> ZenMarkdownCodePresentation {
+        ZenMarkdownCodePresentation.make(
+            language: request.language,
+            code: request.code,
+            isStreaming: request.isStreaming
+        )
     }
 
     private func header(isDiff: Bool) -> some View {
@@ -136,7 +174,7 @@ struct ZenMarkdownCodeBlockView: View {
     }
 
     @ViewBuilder
-    private func content(_ presentation: ZenMarkdownCodePresentation) -> some View {
+    private func content(_ presentation: ZenMarkdownCodePresentation?) -> some View {
         switch presentation {
         case let .source(tokens):
             Text(ZenSyntaxHighlighter.attributedString(for: tokens, palette: palette))
@@ -151,6 +189,13 @@ struct ZenMarkdownCodeBlockView: View {
                     diffRow(lines[index])
                 }
             }
+        case nil:
+            Text(code)
+                .font(Self.codeFont)
+                .foregroundStyle(palette.codeForeground)
+                .fixedSize(horizontal: true, vertical: true)
+                .padding(.horizontal, 12)
+                .frame(minWidth: viewportWidth, alignment: .leading)
         }
     }
 

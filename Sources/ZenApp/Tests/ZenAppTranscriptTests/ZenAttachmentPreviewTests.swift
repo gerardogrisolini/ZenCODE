@@ -53,8 +53,8 @@ struct ZenAttachmentPreviewTests {
         return permissions.intValue & 0o777
     }
 
-    @Test("an image shows from its bytes, or else from its file")
-    func imageOfAttachment() throws {
+    @Test("an image thumbnail shows from its bytes, or else from its file")
+    func imageOfAttachment() async throws {
         let png = try ZenTestImages.png(width: 300, height: 150)
         let directory = try Self.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -62,29 +62,39 @@ struct ZenAttachmentPreviewTests {
         try png.write(to: file)
         let missing = directory.appending(path: "missing.png")
 
-        let fromData = ZenAttachmentPreviewView.image(of: AgentRuntimeAttachment(
+        let fromData = await ZenAttachmentPreviewView.thumbnail(of: AgentRuntimeAttachment(
             kind: .image, fileURL: missing, data: png, originalFilename: "image.png"
         ))
-        #expect(fromData?.size == CGSize(width: 300, height: 150))
-        let fromFile = ZenAttachmentPreviewView.image(of: AgentRuntimeAttachment(
+        #expect(fromData.map { CGSize(width: $0.width, height: $0.height) } == CGSize(width: 300, height: 150))
+        let fromFile = await ZenAttachmentPreviewView.thumbnail(of: AgentRuntimeAttachment(
             kind: .image, fileURL: file, data: Data([0, 1, 2]), originalFilename: "image.png"
         ))
-        #expect(fromFile?.size == CGSize(width: 300, height: 150))
+        #expect(fromFile.map { CGSize(width: $0.width, height: $0.height) } == CGSize(width: 300, height: 150))
     }
 
     @Test("nothing to show keeps the chip")
-    func nothingToShow() throws {
+    func nothingToShow() async throws {
         let directory = try Self.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        #expect(ZenAttachmentPreviewView.image(of: AgentRuntimeAttachment(
+        #expect(await ZenAttachmentPreviewView.thumbnail(of: AgentRuntimeAttachment(
             kind: .image, fileURL: directory.appending(path: "missing.png"), originalFilename: "missing.png"
         )) == nil)
-        #expect(ZenAttachmentPreviewView.image(of: AgentRuntimeAttachment(
+        #expect(await ZenAttachmentPreviewView.thumbnail(of: AgentRuntimeAttachment(
             kind: .image, originalFilename: "none.png"
         )) == nil)
-        #expect(ZenAttachmentPreviewView.image(of: AgentRuntimeAttachment(
+        #expect(await ZenAttachmentPreviewView.thumbnail(of: AgentRuntimeAttachment(
             kind: .video, data: try ZenTestImages.png(width: 2, height: 2), originalFilename: "clip.mov"
         )) == nil)
+    }
+
+    @Test("a large image is downsampled to the Retina preview size")
+    func downsampling() async throws {
+        let image = await ZenAttachmentPreviewView.thumbnail(of: AgentRuntimeAttachment(
+            kind: .image,
+            data: try ZenTestImages.png(width: 2_000, height: 1_000),
+            originalFilename: "large.png"
+        ))
+        #expect(image.map { CGSize(width: $0.width, height: $0.height) } == CGSize(width: 640, height: 320))
     }
 
     @Test("Quick Look shows the file when it exists, else the bytes")

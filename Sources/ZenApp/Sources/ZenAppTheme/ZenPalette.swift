@@ -149,9 +149,39 @@ public struct ZenPalette: Sendable, Equatable {
         // Text and surfaces, adapted to a light background.
         palette.textPrimary = ZenXTerm256.color(235)
         palette.textSecondary = ZenXTerm256.color(238)
-        palette.textSubtle = ZenXTerm256.color(242)
+        palette.textMuted = ZenXTerm256.color(240)
+        palette.textSubtle = ZenXTerm256.color(238)
+        palette.systemMessage = ZenXTerm256.color(60)
+        palette.operationalMessage = ZenXTerm256.color(25)
+        palette.failureMessage = ZenXTerm256.color(124)
         palette.filePath = ZenXTerm256.color(235)
-        // `TerminalStyle` aliases these to `Text.subtle`, which is 242 here.
+        // Text and status colors need at least 4.5:1 on the light surfaces;
+        // the brighter terminal colors remain unchanged in the dark palette.
+        palette.accent = ZenXTerm256.color(94)
+        palette.accentCount = ZenXTerm256.color(25)
+        palette.statusQueued = ZenXTerm256.color(94)
+        palette.statusActive = palette.accent
+        palette.statusSuccess = ZenXTerm256.color(22)
+        palette.statusFailure = ZenXTerm256.color(124)
+        palette.statusInactive = palette.textMuted
+        palette.fileSummaryHeader = palette.accent
+        palette.fileCount = palette.accentCount
+        palette.fileMetadata = palette.textMuted
+        palette.fileHunk = ZenXTerm256.color(90)
+        palette.fileAddition = palette.statusSuccess
+        palette.fileDeletion = palette.statusFailure
+        palette.toolTitle = palette.accent
+        palette.toolLabel = ZenXTerm256.color(60)
+        palette.toolValue = palette.accent
+        palette.toolDuration = palette.textMuted
+        palette.codeGutter = palette.textMuted
+        palette.permissionTitle = palette.accent
+        palette.permissionMarker = palette.accent
+        palette.permissionChoice = palette.accentCount
+        palette.permissionMetadata = palette.textMuted
+        palette.thinking = palette.textMuted
+        palette.suggestion = palette.textMuted
+        // `TerminalStyle` aliases these to `Text.subtle`, which is 238 here.
         palette.fileHint = palette.textSubtle
         palette.toolParameter = palette.textSubtle
         palette.surface = ZenXTerm256.color(254)
@@ -163,27 +193,31 @@ public struct ZenPalette: Sendable, Equatable {
         palette.chatTitle = ZenXTerm256.color(59)
         palette.chatBody = ZenXTerm256.color(235)
 
-        // TerminalStyle.Markdown.lightPalette.
+        // TerminalStyle.Markdown.lightPalette, with readable text variants.
+        palette.markdownDim = palette.textMuted
+        palette.markdownBullet = palette.textMuted
+        palette.markdownLink = ZenXTerm256.color(25)
+        palette.markdownTableHeader = palette.accentCount
         palette.inlineCodeForeground = ZenXTerm256.color(94)
         palette.inlineCodeBackground = ZenXTerm256.color(254)
         palette.codeForeground = ZenXTerm256.color(235)
         palette.codeBackground = ZenXTerm256.color(254)
-        palette.codeHeaderForeground = ZenXTerm256.color(25)
+        palette.codeHeaderForeground = ZenXTerm256.color(235)
         palette.codeHeaderBackground = ZenXTerm256.color(252)
-        palette.headings = [25, 31, 61, 61, 60, 59].map { ZenXTerm256.color($0) }
+        palette.headings = [25, 25, 60, 60, 60, 59].map { ZenXTerm256.color($0) }
         palette.syntaxKeyword = ZenXTerm256.color(90)
         palette.syntaxType = ZenXTerm256.color(24)
-        palette.syntaxString = ZenXTerm256.color(28)
-        palette.syntaxComment = ZenXTerm256.color(242)
-        palette.syntaxNumber = ZenXTerm256.color(130)
-        palette.syntaxAttribute = ZenXTerm256.color(130)
+        palette.syntaxString = ZenXTerm256.color(22)
+        palette.syntaxComment = palette.textMuted
+        palette.syntaxNumber = ZenXTerm256.color(94)
+        palette.syntaxAttribute = ZenXTerm256.color(94)
         palette.syntaxFunction = ZenXTerm256.color(25)
-        palette.syntaxProperty = ZenXTerm256.color(30)
-        palette.diffAddition = ZenXTerm256.color(28)
+        palette.syntaxProperty = ZenXTerm256.color(24)
+        palette.diffAddition = palette.statusSuccess
         palette.diffRemoval = ZenXTerm256.color(124)
         palette.diffAdditionBackground = ZenXTerm256.color(194)
         palette.diffRemovalBackground = ZenXTerm256.color(224)
-        palette.diffHunk = ZenXTerm256.color(25)
+        palette.diffHunk = palette.accentCount
         palette.diffHeader = ZenXTerm256.color(94)
 
         return palette

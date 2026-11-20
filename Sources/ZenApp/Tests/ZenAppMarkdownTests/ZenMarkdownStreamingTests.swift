@@ -314,4 +314,24 @@ struct ZenMarkdownCodePresentationCachingTests {
         #expect(ZenMarkdownCodePresentation.cachedPresentation(language: "swift", code: growing) == nil)
         #expect(ZenMarkdownCodePresentation.cachedPresentation(language: "swift", code: growing, isStreaming: true) != nil)
     }
+
+    @Test("the asynchronous view path returns the same highlighted presentation")
+    func asynchronousPresentation() async {
+        let request = ZenMarkdownCodeBlockView.Request(
+            language: "swift",
+            code: "let answer = 42 // computed",
+            isStreaming: true
+        )
+        let presentation = await ZenMarkdownCodeBlockView.makePresentation(for: request)
+        #expect(presentation == ZenMarkdownCodePresentation.make(
+            language: request.language,
+            code: request.code,
+            isStreaming: request.isStreaming
+        ))
+        #expect(ZenMarkdownCodePresentation.cachedPresentation(
+            language: request.language,
+            code: request.code,
+            isStreaming: true
+        ) == presentation)
+    }
 }

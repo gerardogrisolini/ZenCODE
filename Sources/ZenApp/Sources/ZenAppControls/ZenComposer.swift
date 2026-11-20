@@ -96,6 +96,7 @@ public struct ZenComposer: View {
     private let isBusy: Bool
     private let isSpeaking: Bool
     private let isEnabled: Bool
+    private let attachmentsEnabled: Bool
     private let commands: [ChatCommandDescriptor]
     private let mentions: [SharedChatMentionParser.Suggestion]
     let queued: [ZenComposerQueuedItem]
@@ -129,6 +130,8 @@ public struct ZenComposer: View {
     ///     names it while nothing generates.
     ///   - isEnabled: `false` disables the field, attach and Send (Stop stays
     ///     available while busy).
+    ///   - attachmentsEnabled: `false` disables the picker and file drops while
+    ///     leaving the field and Send available for queued prompts.
     ///   - commands: The slash commands the operator can run, in display order.
     ///   - mentions: The live `@mention` catalogue (`@coordinator`, `@all`, the
     ///     active agents), in display order; refreshed by the owner on
@@ -148,6 +151,7 @@ public struct ZenComposer: View {
         isBusy: Bool,
         isSpeaking: Bool = false,
         isEnabled: Bool = true,
+        attachmentsEnabled: Bool = true,
         commands: [ChatCommandDescriptor] = [],
         mentions: [SharedChatMentionParser.Suggestion] = [],
         queued: [ZenComposerQueuedItem] = [],
@@ -161,6 +165,7 @@ public struct ZenComposer: View {
         self.isBusy = isBusy
         self.isSpeaking = isSpeaking
         self.isEnabled = isEnabled
+        self.attachmentsEnabled = attachmentsEnabled
         self.commands = commands
         self.mentions = mentions
         self.queued = queued
@@ -272,11 +277,11 @@ public struct ZenComposer: View {
         }
         .dropDestination(for: URL.self) { urls, _ in
             let files = ZenComposerLogic.droppedFiles(urls)
-            guard isEnabled, !files.isEmpty else { return false }
+            guard isEnabled, attachmentsEnabled, !files.isEmpty else { return false }
             actions.dropFiles(files)
             return true
         } isTargeted: { targeted in
-            isDropTargeted = targeted && isEnabled
+            isDropTargeted = targeted && isEnabled && attachmentsEnabled
         }
     }
 
@@ -332,8 +337,10 @@ public struct ZenComposer: View {
         .buttonBorderShape(.circle)
         .controlSize(.large)
         .foregroundStyle(palette.textSecondary)
-        .disabled(!isEnabled)
-        .help("Attach an image or a movie")
+        .disabled(!isEnabled || !attachmentsEnabled)
+        .help(attachmentsEnabled
+            ? "Attach an image or a movie"
+            : "Attachments are available when the current line finishes")
         .accessibilityLabel("Attach")
     }
 

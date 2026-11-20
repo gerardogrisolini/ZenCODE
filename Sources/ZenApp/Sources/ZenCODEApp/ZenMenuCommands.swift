@@ -38,6 +38,7 @@ import ZenCODECore
 /// (``ZenWindowSession/run(_:)``), and have no shortcut.
 struct ZenMenuCommands: Commands {
     @FocusedValue(\.zenWindowSession) private var session
+    @FocusedValue(\.zenTranscriptSearchAction) private var transcriptSearch
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
@@ -53,7 +54,15 @@ struct ZenMenuCommands: Commands {
                 session?.startNewSession()
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
-            .disabled(session == nil)
+            .disabled(session?.canManageSessions != true)
+        }
+
+        CommandGroup(after: .textEditing) {
+            Button("Find in Transcript…") {
+                transcriptSearch?.present()
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            .disabled(transcriptSearch == nil)
         }
 
         CommandGroup(replacing: .saveItem) {
@@ -61,7 +70,7 @@ struct ZenMenuCommands: Commands {
                 session?.saveSession()
             }
             .keyboardShortcut("s", modifiers: .command)
-            .disabled(session == nil)
+            .disabled(session?.canManageSessions != true)
         }
 
         CommandMenu("Session") {

@@ -147,8 +147,9 @@ The transcript shows what the terminal shows:
   Planner continuation) are hidden, as in the terminal; a reply you type to
   one of them shows as your prompt.
 - Assistant text as Markdown: headings, lists, quotes, tables, task lists,
-  links, and fenced code with syntax highlighting. Fences marked `diff` or
-  `patch` show the added and removed lines in color.
+  links, and fenced code with syntax highlighting computed off the main
+  actor. Fences marked `diff` or `patch` show the added and removed lines in
+  color.
 - The model's reasoning, as a `Thinking` block that is open while it streams
   and collapses to a one-line preview when it ends.
 - Tool calls, one line each with the tool, its target, and, for the calls
@@ -177,10 +178,17 @@ The list follows the bottom while a response streams, and its end stays above
 the composer and the bars under it. Scroll up to stop following; once more
 than a screenful of chat (the height shown between the bars) is left under
 the view, a button scrolls back to the latest message. Scroll back to the
-bottom to follow it again. An empty session shows, as the terminal's startup
-summary does, the version, the agent (when one is selected), the active tools,
-the active skills, and the working directory, then the commands the window
-runs.
+bottom to follow it again. The visible block coalesces rapid token updates
+while the session keeps applying every snapshot. An empty session shows, as
+the terminal's startup summary does, the version, the agent (when one is
+selected), the active tools, the active skills, and the working directory,
+then the commands the window runs.
+
+**Find in Transcript…** (⌘F) opens a search bar above the conversation. It
+searches the visible rows and the live block, including attachment names, tool
+targets and output, notices, and task titles. Return or the down arrow selects
+the next match, the up arrow selects the previous one, and Esc closes the
+search. The current match is highlighted and centered in the list.
 
 The artifacts sidebar, on the right of the window, shows the file artifacts
 of the session: the files each turn created, modified, or deleted, the ones
@@ -275,8 +283,10 @@ The composer is at the bottom of the window.
   `/telegram on` (see [Telegram](#telegram)). A message to the chat is never
   queued either: it is sent at once.
 - The paperclip opens the attachment picker (images and movies), and files
-  dropped on the composer are attached, one `/attach` each. `/attach list` and
-  `/attach delete` work as in the terminal.
+  dropped on the composer are attached, one `/attach` each. While a line runs
+  or Telegram drives the window, the paperclip and drops are disabled instead
+  of adding a refusal to the conversation. `/attach list` and `/attach delete`
+  work as in the terminal.
 - **Stop** (Esc in the Chat tab, ⌘., or the stop button) cancels the turn and
   refuses the open requests. The queue is kept. While a consent sheet shows,
   Esc denies the call instead. While voice mode is on, Esc also stops the
@@ -586,18 +596,20 @@ first one:
 
 The sidebar lists the current session and the saved sessions of the
 workspace, the newest first, with the age, the number of messages, and the
-model. Click a saved session to load it, or use its context menu to load or
-delete it (a confirmation asks first). While a saved session loads from the
+model. Its search field filters the saved sessions by name or model. Click a
+saved session to load it, or use its context menu to load or delete it (a
+confirmation asks first). While a saved session loads from the
 sidebar, a large spinner takes the place of the conversation, centered in
 the chat, with the session's name and the step the load is at (reading the
 saved session, closing the current session, loading the model and tools,
 restoring the conversation), until the restored conversation, or the
 failure of the load, appears. **New Session** (⇧⌘N) and **Save**
-(⌘S) run `/sessions new` and `/sessions save`, and are refused while a line
-runs. A new session keeps the agent, model, thinking level, tools, and skills
-of the current session. They, and loading or deleting a saved session, select
-the Chat tab first. The rest of `/sessions` (a named snapshot, `compact`,
-`restore`) is typed in the composer.
+(⌘S) run `/sessions new` and `/sessions save`; these controls and the saved
+session's load and delete actions are disabled while a line runs or Telegram
+drives the window. A new session keeps the agent, model, thinking level, tools,
+and skills of the current session. They, and loading or deleting a saved
+session, select the Chat tab first. The rest of `/sessions` (a named snapshot,
+`compact`, `restore`) is typed in the composer.
 
 ## Telegram
 
@@ -730,6 +742,7 @@ starts in the default mode.
 | ⌘. | Window | Stops the turn, from any tab |
 | ←, →, Return, Esc | Consent sheet | Moves the focus, chooses the focused button, denies |
 | ↑, ↓, Space, Return, Esc | Menu popover | Moves, toggles or chooses, confirms, cancels |
+| ⌘F | Menu bar | Finds text in the transcript; Return selects the next match and Esc closes the search |
 | ⌘O | Menu bar | Opens a folder in a window |
 | ⇧⌘N | Menu bar | Starts a new session |
 | ⌘S | Menu bar | Saves the session |
@@ -767,8 +780,8 @@ terminal:
 - There is no `.app` bundle: the app runs as the bare executable that
   `zen --ui` installs in `~/.zencode/app/current`, from `swift run`, or from a
   release build.
-- Files are attached while no turn runs: the picker and a drop are refused
-  during one.
+- Files are attached while no turn runs: the paperclip and composer drops are
+  disabled during one.
 
 ## Package layout and tests
 

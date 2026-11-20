@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import Testing
 
@@ -97,10 +98,64 @@ struct ZenPaletteTests {
         #expect(light.chatBorder == ZenXTerm256.color(59))
         #expect(light.diffAdditionBackground == ZenXTerm256.color(194))
         #expect(light.diffRemovalBackground == ZenXTerm256.color(224))
-        #expect(light.headings == [25, 31, 61, 61, 60, 59].map { ZenXTerm256.color($0) })
-        // Unlisted colors are shared with the dark palette.
-        #expect(light.accent == ZenPalette.dark.accent)
+        #expect(light.headings == [25, 25, 60, 60, 60, 59].map { ZenXTerm256.color($0) })
+        #expect(light.accent == ZenXTerm256.color(94))
+        #expect(light.textMuted == ZenXTerm256.color(240))
+        #expect(light.statusSuccess == ZenXTerm256.color(22))
+        // Decorative borders still share the terminal's dark values.
         #expect(light.promptBorder == ZenPalette.dark.promptBorder)
+    }
+
+    @Test("light text and status colors have readable contrast on their surfaces")
+    func lightContrast() throws {
+        let light = ZenPalette.light
+        let onSurface = [
+            light.textPrimary, light.textSecondary, light.textMuted, light.textSubtle,
+            light.systemMessage, light.operationalMessage, light.failureMessage,
+            light.accent, light.accentCount, light.statusQueued, light.statusActive,
+            light.statusSuccess, light.statusFailure, light.statusInactive,
+            light.fileSummaryHeader, light.fileCount, light.fileMetadata,
+            light.fileHunk, light.filePath, light.fileHint, light.toolTitle,
+            light.toolLabel, light.toolValue, light.toolParameter, light.toolDuration,
+            light.chatTitle, light.chatBody, light.permissionTitle,
+            light.permissionMarker, light.permissionChoice, light.permissionMetadata,
+            light.thinking, light.suggestion, light.markdownDim, light.markdownBullet,
+            light.markdownLink, light.markdownTableHeader,
+        ] + light.headings
+        for foreground in onSurface {
+            #expect(try Self.contrastRatio(foreground, light.surface) >= 4.5)
+        }
+        let onCode = [
+            light.codeForeground, light.codeGutter, light.inlineCodeForeground,
+            light.syntaxKeyword, light.syntaxType, light.syntaxString,
+            light.syntaxComment, light.syntaxNumber, light.syntaxAttribute,
+            light.syntaxFunction, light.syntaxProperty, light.diffHunk, light.diffHeader,
+        ]
+        for foreground in onCode {
+            #expect(try Self.contrastRatio(foreground, light.codeBackground) >= 4.5)
+        }
+        #expect(try Self.contrastRatio(light.codeHeaderForeground, light.codeHeaderBackground) >= 4.5)
+        #expect(try Self.contrastRatio(light.diffAddition, light.diffAdditionBackground) >= 4.5)
+        #expect(try Self.contrastRatio(light.diffRemoval, light.diffRemovalBackground) >= 4.5)
+    }
+
+    private static func contrastRatio(_ foreground: Color, _ background: Color) throws -> Double {
+        let foreground = try #require(NSColor(foreground).usingColorSpace(.sRGB))
+        let background = try #require(NSColor(background).usingColorSpace(.sRGB))
+        let first = luminance(foreground)
+        let second = luminance(background)
+        return (max(first, second) + 0.05) / (min(first, second) + 0.05)
+    }
+
+    private static func luminance(_ color: NSColor) -> Double {
+        func linear(_ component: Double) -> Double {
+            component <= 0.04045
+                ? component / 12.92
+                : pow((component + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linear(color.redComponent)
+            + 0.7152 * linear(color.greenComponent)
+            + 0.0722 * linear(color.blueComponent)
     }
 
     @Test("the color scheme selects the palette")

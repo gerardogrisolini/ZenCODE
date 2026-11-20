@@ -10,6 +10,7 @@
 
 import AppKit
 import Foundation
+import ImageIO
 import QuickLook
 import SwiftUI
 import ZenAppTheme
@@ -38,39 +39,51 @@ struct ZenAttachmentPreviewView: View {
     @State private var quickLookURL: URL?
     /// The temporary copy of the bytes that Quick Look shows, if any.
     @State private var temporaryURL: URL?
+    @State private var thumbnail: NSImage?
     @Environment(\.zenPalette) private var palette
 
     var body: some View {
-        if Self.quickLookSource(of: attachment) != nil {
-            Button {
-                open()
-            } label: {
-                content
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint(attachment.kind == .video
-                ? "Plays the video in Quick Look"
-                : "Shows the image larger in Quick Look")
-            .quickLookPreview($quickLookURL)
-            .onChange(of: quickLookURL) { _, url in
-                // Quick Look closed, or shows another file.
-                if url != temporaryURL {
+        Group {
+            if Self.quickLookSource(of: attachment) != nil {
+                Button {
+                    open()
+                } label: {
+                    content
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(attachment.kind == .video
+                    ? "Plays the video in Quick Look"
+                    : "Shows the image larger in Quick Look")
+                .quickLookPreview($quickLookURL)
+                .onChange(of: quickLookURL) { _, url in
+                    // Quick Look closed, or shows another file.
+                    if url != temporaryURL {
+                        discardTemporaryFile()
+                    }
+                }
+                .onDisappear {
                     discardTemporaryFile()
                 }
+            } else {
+                content
             }
-            .onDisappear {
-                discardTemporaryFile()
-            }
-        } else {
-            content
+        }
+        .task {
+            guard attachment.kind == .image else { return }
+            let image = await Self.thumbnail(of: attachment)
+            guard !Task.isCancelled, let image else { return }
+            thumbnail = NSImage(
+                cgImage: image,
+                size: NSSize(width: image.width, height: image.height)
+            )
         }
     }
 
     @ViewBuilder
     private var content: some View {
-        if let image = Self.image(of: attachment) {
-            let size = Self.fittedSize(image.size)
-            Image(nsImage: image)
+        if let thumbnail {
+            let size = Self.fittedSize(thumbnail.size)
+            Image(nsImage: thumbnail)
                 .resizable()
                 .scaledToFill()
                 .frame(width: size.width, height: size.height)
@@ -140,23 +153,48 @@ struct ZenAttachmentPreviewView: View {
     }
 
     /// The local file of `attachment`, if it has one.
-    static func fileURL(of attachment: AgentRuntimeAttachment) -> URL? {
+    nonisolated static func fileURL(of attachment: AgentRuntimeAttachment) -> URL? {
         guard let url = attachment.fileURL, url.isFileURL else {
             return nil
         }
         return url
     }
 
-    /// The image of an image attachment: from its bytes, or else from its
-    /// file. `nil` for a video, or when neither can be read.
-    static func image(of attachment: AgentRuntimeAttachment) -> NSImage? {
-        guard attachment.kind == .image else {
-            return nil
-        }
-        if let data = attachment.data, let image = NSImage(data: data) {
+    /// The thumbnail of an image attachment, decoded and downsampled away
+    /// from the caller's actor. Bytes take precedence, with the local file as
+    /// a fallback when they cannot be decoded. The maximum pixel dimension is
+    /// twice the largest preview dimension, enough for a Retina display.
+    @concurrent
+    nonisolated static func thumbnail(
+        of attachment: AgentRuntimeAttachment,
+        maxPixelSize: Int = 640
+    ) async -> CGImage? {
+        guard attachment.kind == .image else { return nil }
+        if let data = attachment.data, let image = thumbnail(data: data, maxPixelSize: maxPixelSize) {
             return image
         }
-        return fileURL(of: attachment).flatMap(NSImage.init(contentsOf:))
+        guard let url = fileURL(of: attachment) else { return nil }
+        return thumbnail(file: url, maxPixelSize: maxPixelSize)
+    }
+
+    private nonisolated static func thumbnail(data: Data, maxPixelSize: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return thumbnail(source: source, maxPixelSize: maxPixelSize)
+    }
+
+    private nonisolated static func thumbnail(file: URL, maxPixelSize: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(file as CFURL, nil) else { return nil }
+        return thumbnail(source: source, maxPixelSize: maxPixelSize)
+    }
+
+    private nonisolated static func thumbnail(source: CGImageSource, maxPixelSize: Int) -> CGImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceThumbnailMaxPixelSize: max(1, maxPixelSize),
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCache: false,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }
 
     /// `size` scaled down to fit `bounds`, keeping its proportions; a size

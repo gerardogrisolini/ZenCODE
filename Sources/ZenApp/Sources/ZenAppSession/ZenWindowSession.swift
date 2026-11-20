@@ -273,6 +273,17 @@ public final class ZenWindowSession: Identifiable {
         runtime?.shell.savedSessions[workspace.standardizedFileURL] ?? []
     }
 
+    /// Whether the sidebar's session operations are currently admitted.
+    public var canManageSessions: Bool {
+        !isClosed && !isLineRunningOrWaiting && !isDrivenFromTelegram
+    }
+
+    /// Whether the composer can pick or drop attachments. Prompts still queue
+    /// while a line runs; attachments deliberately do not.
+    public var canAttachFiles: Bool {
+        !isClosed && !isLineRunning && !isDrivenFromTelegram
+    }
+
     /// The tabs of the window: ``ZenWindowTab/chat``, then the open sub-agent
     /// tabs, in the order they were opened.
     public var tabs: [ZenWindowTab] {
@@ -329,9 +340,8 @@ public final class ZenWindowSession: Identifiable {
 
     /// Telegram drives the window's slot: the window is dormant. Read from the
     /// host after each `/telegram on` and `/telegram off`, the only lines that
-    /// change it. No view reads it; a test sets it to make a window dormant
-    /// without a link.
-    @ObservationIgnored var isDrivenFromTelegram = false
+    /// change it. Views read it to disable operations that would be refused.
+    var isDrivenFromTelegram = false
     /// The prompt of the turn from Telegram that `/telegram off` adopted,
     /// while it is still reserved: the window treats the turn as its line
     /// meanwhile (``watchAdoptedTelegramTurn(_:)``).

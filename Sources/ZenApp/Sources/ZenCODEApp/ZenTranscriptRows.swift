@@ -79,15 +79,23 @@ final class ZenConversationRowCache {
 struct ZenTranscriptRowList: View, Equatable {
     let rows: [ZenConversationRow]
     let durations: ZenToolDurations
+    var selectedRowID: String?
 
     var body: some View {
         ForEach(rows) { row in
-            ZenConversationRowView(row: row, durations: durations)
+            ZenConversationRowView(
+                row: row,
+                durations: durations,
+                isSearchSelected: row.id == selectedRowID
+            )
+            .id(row.id)
         }
     }
 
     nonisolated static func == (lhs: ZenTranscriptRowList, rhs: ZenTranscriptRowList) -> Bool {
-        lhs.durations === rhs.durations && lhs.rows == rhs.rows
+        lhs.durations === rhs.durations
+            && lhs.selectedRowID == rhs.selectedRowID
+            && lhs.rows == rhs.rows
     }
 }
 
@@ -97,11 +105,38 @@ struct ZenTranscriptRowList: View, Equatable {
 /// its scroll geometry.
 struct ZenLiveRows: View {
     let session: ZenWindowSession
+    @Binding var search: ZenTranscriptSearchState
+    @State private var coalescer = ZenLiveTranscriptCoalescer()
+    @Environment(\.zenPalette) private var palette
+
+    private var input: ZenLiveTranscriptInput {
+        ZenLiveTranscriptInput(
+            items: session.liveItems,
+            isGenerating: session.isGenerating,
+            blockID: session.liveBlockID
+        )
+    }
 
     var body: some View {
-        ForEach(session.liveItems) { item in
+        ForEach(coalescer.items) { item in
             ZenTranscriptItemView(content: item.content, toolDuration: nil)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    if item.id == search.selectedMatchID {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(palette.accent.opacity(0.12))
+                    }
+                }
+                .id(item.id)
+        }
+        .onChange(of: input, initial: true) { _, input in
+            coalescer.update(input)
+        }
+        .onChange(of: coalescer.items, initial: true) { _, items in
+            search.update(liveItems: items)
+        }
+        .onDisappear {
+            coalescer.stop()
         }
     }
 }
@@ -110,6 +145,7 @@ struct ZenLiveRows: View {
 struct ZenConversationRowView: View {
     let row: ZenConversationRow
     let durations: ZenToolDurations
+    var isSearchSelected = false
 
     @Environment(\.zenPalette) private var palette
 
@@ -126,6 +162,12 @@ struct ZenConversationRowView: View {
             ZenTranscriptItemView(content: row.item.content, toolDuration: durations.duration(for: row.item))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            if isSearchSelected {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(palette.accent.opacity(0.12))
+            }
+        }
     }
 }
 
