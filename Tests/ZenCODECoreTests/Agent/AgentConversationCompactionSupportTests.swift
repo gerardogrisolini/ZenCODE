@@ -222,6 +222,26 @@ struct AgentConversationCompactionSupportTests {
     }
 
     @Test
+    func triggerCompactsFromNinetyFivePercentUpward() {
+        let budget = 256_000
+        let trigger = AgentConversationCompactionPolicy.triggerTokenCount(for: budget)
+        #expect(trigger == 243_200)
+        func compacts(_ usedTokens: Int) -> Bool {
+            AgentConversationCompactionPolicy.shouldCompactHistory(
+                usedTokens: usedTokens,
+                maxTokens: budget,
+                messageCount: AgentConversationCompactionPolicy.minimumRecentMessageCount + 1
+            )
+        }
+        #expect(!compacts(trigger - 1))
+        // Exactly 95% compacts too, and so does every level past it.
+        #expect(compacts(trigger))
+        #expect(compacts(249_200))
+        #expect(compacts(budget))
+        #expect(compacts(budget * 2))
+    }
+
+    @Test
     func midSizeWindowCompactsDownToThirtyPercentOfItsPromptBudget() throws {
         // A 256k window whose tokenizer charges 1.6 tokens per estimated token (the
         // DS4 path passes the exact count): 160k estimated tokens of prompt budget.

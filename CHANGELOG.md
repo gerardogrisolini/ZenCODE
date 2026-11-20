@@ -71,6 +71,14 @@ Release tags follow the strict `vX.Y.Z` contract described in
   providers are unchanged, saved configurations are not rewritten, and the
   metadata prompt of a reconfiguration can raise the limit on plans that
   support 1M.
+- Remote providers with an API key (Chat Completions, Responses, Anthropic
+  Messages) now compact the conversation automatically as it reaches the
+  context limit, deciding with the prompt tokens the provider reports, and
+  retry once with the compacted history when the provider rejects a request
+  for its context length. Before, only the subscription providers and DS4 did
+  this, so a Kimi Code session grew to 256K and was then rejected. For every
+  provider, automatic compaction now also starts at exactly 95% of the budget,
+  not only above it, and applies to any level past it.
 
 ## [6.1.2] - 2026-11-17
 

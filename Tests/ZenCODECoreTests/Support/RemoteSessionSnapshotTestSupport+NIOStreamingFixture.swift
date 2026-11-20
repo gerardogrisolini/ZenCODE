@@ -51,6 +51,7 @@ final class RemoteNIOStreamingFixture: @unchecked Sendable {
         responseBody: Data,
         responseSequence: [Data] = [],
         responseStatus: Int = 200,
+        responseStatusSequence: [Int] = [],
         responseHeaders: [RemoteHTTPHeader] = [
             RemoteHTTPHeader(name: "content-type", value: "text/event-stream")
         ],
@@ -63,6 +64,7 @@ final class RemoteNIOStreamingFixture: @unchecked Sendable {
             responseBody: responseBody,
             responseSequence: responseSequence,
             responseStatus: responseStatus,
+            responseStatusSequence: responseStatusSequence,
             responseHeaders: responseHeaders,
             bodyChunks: bodyChunks,
             failuresBeforeHead: failuresBeforeHead,
@@ -156,6 +158,7 @@ private final class RemoteNIOStreamingScript: @unchecked Sendable {
     private let responseBody: Data
     private var responseSequence: [Data]
     private let responseStatus: Int
+    private var responseStatusSequence: [Int]
     private let responseHeaders: [RemoteHTTPHeader]
     private let bodyChunks: [Data]?
     private let closeAfterHead: Bool
@@ -167,6 +170,7 @@ private final class RemoteNIOStreamingScript: @unchecked Sendable {
         responseBody: Data,
         responseSequence: [Data],
         responseStatus: Int,
+        responseStatusSequence: [Int],
         responseHeaders: [RemoteHTTPHeader],
         bodyChunks: [Data]?,
         failuresBeforeHead: Int,
@@ -175,6 +179,7 @@ private final class RemoteNIOStreamingScript: @unchecked Sendable {
         self.responseBody = responseBody
         self.responseSequence = responseSequence
         self.responseStatus = responseStatus
+        self.responseStatusSequence = responseStatusSequence
         self.responseHeaders = responseHeaders
         self.bodyChunks = bodyChunks
         self.failuresBeforeHead = max(0, failuresBeforeHead)
@@ -211,8 +216,13 @@ private final class RemoteNIOStreamingScript: @unchecked Sendable {
             return .closeBeforeHead
         }
         let selectedBody = responseSequence.isEmpty ? responseBody : responseSequence.removeFirst()
+        // Like the bodies, the statuses are consumed one per response; the
+        // fixed status answers once the sequence is exhausted.
+        let selectedStatus = responseStatusSequence.isEmpty
+            ? responseStatus
+            : responseStatusSequence.removeFirst()
         let response = RemoteNIOStreamingFixtureResponse(
-            status: responseStatus,
+            status: selectedStatus,
             headers: responseHeaders,
             bodyChunks: bodyChunks ?? [selectedBody],
             closeAfterHead: closeAfterHead

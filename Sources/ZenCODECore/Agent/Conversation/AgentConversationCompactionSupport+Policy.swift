@@ -77,6 +77,8 @@ public enum AgentConversationCompactionPolicy {
         return min(max(characters, 0), maximumSummaryCharacters)
     }
 
+    /// A level, not an edge: any history at or above the trigger compacts, on
+    /// every check, however far past it the history already is.
     public static func shouldCompactHistory(
         usedTokens: Int,
         maxTokens: Int,
@@ -87,7 +89,8 @@ public enum AgentConversationCompactionPolicy {
         return force
             || (
                 messageCount > minimumRecentMessageCount
-                    && usedTokens > triggerTokenCount(for: maxTokens)
+                    && usedTokens > 0
+                    && usedTokens >= triggerTokenCount(for: maxTokens)
             )
     }
 }

@@ -56,27 +56,41 @@ extension RemoteGenerationClient {
         var generationStats: [RemoteGenerationStats] = []
         var didRetryWithoutImages = false
         var didRetryInvalidToolArguments = false
+        var didRetryAfterContextLimit = false
         for round in 0..<configuration.maxToolRounds {
             // Re-read shared state at the start of each round so changes applied
             // by concurrent operations between rounds are not lost.
             guard let session = currentSession(for: lease) else {
                 throw RemoteGenerationClientError.missingSession
             }
-            let expectsPromptCache = Self.messagesExpectPromptCache(session.messages)
+            var expectsPromptCache = Self.messagesExpectPromptCache(session.messages)
             // Every tool round rebuilds the outgoing payload from the fresh
             // value of `session.messages`, so each prompt carries the memory
             // block of its own turn on each round's request — exactly once,
             // because the block is never written into the content of a
             // session message. That keeps it out of the conversation text and
             // the cache key; the prompt-cache expectation above is
-            // deliberately computed from the unmodified array.
+            // deliberately computed from the unmodified array. A compaction in
+            // this round rewrites the prompt prefix, so it clears the expectation.
             let outputRelay = RemoteRoundOutputRelay()
             let roundEvents: @Sendable (DirectAgentEvent) async -> Void = { event in
                 await outputRelay.forward(event, to: onEvent)
             }
+            // The preflight may compact a bounded number of times per round.
+            var preflightCompactionAttempts = 0
             let streamResult: RemoteStreamResult
             while true {
                 try Task.checkCancellation()
+                if ds4Generation == nil,
+                   let result = try compactSessionBeforeRequest(
+                       lease: lease,
+                       attempts: &preflightCompactionAttempts
+                   ) {
+                    expectsPromptCache = false
+                    await onEvent(.diagnostic(
+                        SubscriptionCompactionSupport.compactionDiagnostic(from: result)
+                    ))
+                }
                 guard let activeSession = currentSession(for: lease) else {
                     throw RemoteGenerationClientError.missingSession
                 }
@@ -122,6 +136,13 @@ extension RemoteGenerationClient {
                             )
                         }
                     }
+                    // Calibrated against the session array this request was
+                    // built from; the outgoing copy also carries the turn memory.
+                    recordContextCalibration(
+                        for: lease,
+                        messages: activeSession.messages,
+                        usage: streamResult.stats.usage
+                    )
                     break
                 } catch {
                     try Task.checkCancellation()
@@ -148,8 +169,34 @@ extension RemoteGenerationClient {
                         }) else {
                             throw RemoteGenerationClientError.missingSession
                         }
+                        // Stripped images change what the provider counts.
+                        contextCalibrationBySessionID[lease.id] = nil
                         await onEvent(.diagnostic(
                             "\(provider.displayTitle) does not support image input with the selected model. Retrying without attached images."
+                        ))
+                        continue
+                    }
+                    if ds4Generation == nil,
+                       !didRetryAfterContextLimit,
+                       Self.isContextLimitRejection(error) {
+                        // One retry per turn: the provider refused the prompt
+                        // for its length, so a second refusal is surfaced.
+                        didRetryAfterContextLimit = true
+                        guard let result = try compactSessionForContextLimitRetry(lease: lease) else {
+                            await onEvent(.diagnostic(
+                                SubscriptionCompactionSupport.contextLimitRetryUnavailableDiagnostic(
+                                    provider: provider.displayTitle
+                                )
+                            ))
+                            throw error
+                        }
+                        expectsPromptCache = false
+                        await outputRelay.beginRetry()
+                        await onEvent(.diagnostic(
+                            SubscriptionCompactionSupport.contextLimitRetryDiagnostic(
+                                provider: provider.displayTitle,
+                                from: result
+                            )
                         ))
                         continue
                     }

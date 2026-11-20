@@ -50,6 +50,12 @@ public actor RemoteGenerationClient: LeasedSessionRuntimeBackend {
     let ds4Generation: DS4LocalGeneration?
     /// Per-client bookkeeping of the DS4 path.
     var ds4State = DS4ClientState()
+    /// Provider-reported prompt size against the shared estimate of the same
+    /// messages, per session, measured on the last successful HTTP round and
+    /// used to size the next automatic compaction
+    /// (`RemoteGenerationClient+Compaction.swift`). Cleared whenever the
+    /// session messages are rewritten or replaced.
+    var contextCalibrationBySessionID: [String: ContextCalibration] = [:]
 
     public init(
         configuration: AgentRuntimeConfiguration,
@@ -189,11 +195,14 @@ public actor RemoteGenerationClient: LeasedSessionRuntimeBackend {
         session.thinkingSelection = thinkingSelection
         session.preserveThinking = preserveThinking
         sessions[id] = session
+        // The system prompt and tool selection changed what a request carries.
+        contextCalibrationBySessionID[id] = nil
     }
 
     public func shutdown() async {
         sessions.removeAll()
         sessionGenerations.removeAll()
+        contextCalibrationBySessionID.removeAll()
         await releaseDS4EngineSessions()
         await toolExecutor.shutdown()
         if ownsTransport {
@@ -252,23 +261,37 @@ public actor RemoteGenerationClient: LeasedSessionRuntimeBackend {
         force: Bool,
         exactTokenCount: Int?
     ) async -> AgentRuntimeSessionCompactionResult? {
+        guard let result = compactSessionMessages(
+            id: id,
+            force: force,
+            exactTokenCount: exactTokenCount
+        ), let snapshot = snapshotSession(id: id) else {
+            return nil
+        }
+        return AgentRuntimeSessionCompactionResult(
+            snapshot: snapshot,
+            compactionResult: result
+        )
+    }
+
+    /// The synchronous core of ``compactSession(id:force:exactTokenCount:)``:
+    /// compacts and stores the session, and returns the shared policy result
+    /// (`nil` when nothing was compacted). The prompt loop uses it directly
+    /// to report the same diagnostic as the subscription clients.
+    func compactSessionMessages(
+        id: String,
+        force: Bool,
+        exactTokenCount: Int?
+    ) -> AgentConversationCompactionResult? {
         guard var session = sessions[id] else {
             return nil
         }
         let runtimeMessages = Self.agentRuntimeMessages(from: session.messages)
-        var inflationFactor = 1.0
-        if let exactTokenCount, exactTokenCount > 0 {
-            let estimated = AgentConversationCompactionSupport.estimatedTokenCount(for: runtimeMessages)
-            if estimated > 0 {
-                inflationFactor = Double(exactTokenCount) / Double(estimated)
-            }
-        }
         let result = AgentConversationCompactionSupport.compactedMessagesIfNeeded(
             runtimeMessages,
-            budget: AgentConversationCompactionBudget(
-                contextWindowTokens: configuration.configuredContextWindowLimit,
-                maxOutputTokens: configuration.maxOutputTokens,
-                conversationInflationFactor: inflationFactor
+            budget: compactionBudget(
+                for: runtimeMessages,
+                exactTokenCount: exactTokenCount
             ),
             force: force
         )
@@ -281,22 +304,19 @@ public actor RemoteGenerationClient: LeasedSessionRuntimeBackend {
             preservingRecentFrom: session.messages
         )
         sessions[id] = session
+        // The calibration described the history that was just rewritten.
+        contextCalibrationBySessionID[id] = nil
         // The compacted context forgot the `/ds4 hints` instructions and its tail
         // may still hold an old on/off note: the next boundary states it again.
         ds4State.hintsBySessionID[id]?.contextCompacted()
-        guard let snapshot = snapshotSession(id: id) else {
-            return nil
-        }
-        return AgentRuntimeSessionCompactionResult(
-            snapshot: snapshot,
-            compactionResult: result
-        )
+        return result
     }
 
     private func installSession(_ session: AgentSession, id: String) {
         nextSessionGeneration &+= 1
         sessionGenerations[id] = nextSessionGeneration
         sessions[id] = session
+        contextCalibrationBySessionID[id] = nil
         // A replaced transcript may hold hints notes of an earlier context.
         ds4State.hintsBySessionID[id]?.contextCompacted()
     }
@@ -307,6 +327,7 @@ public actor RemoteGenerationClient: LeasedSessionRuntimeBackend {
         nextSessionGeneration &+= 1
         sessionGenerations[id] = nextSessionGeneration
         sessions.removeValue(forKey: id)
+        contextCalibrationBySessionID[id] = nil
     }
 
     public static func agentRuntimeMessages(
