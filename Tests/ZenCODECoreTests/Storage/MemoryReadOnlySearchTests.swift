@@ -10,11 +10,14 @@
 //     save errored.
 //  2. Memory tests must not depend on the real `ZENCODE_MEMORY_EMBEDDING_ENDPOINT`
 //     environment variables. A task-local seam (`MemoryEmbedding.withProvider`)
-//     lets tests force "no provider" (no network) or inject a specific provider
-//     without mutating the process-global environment.
+//     lets tests force "no provider" (no network) or inject a specific provider,
+//     and `MemoryEmbedding.provider(isRunningUnderTestHarness:manifest:environment:)`
+//     lets the harness guard be tested with injected inputs. Neither mutates
+//     the process-global environment.
 //
 
 import Foundation
+import Synchronization
 @testable import ZenCODECore
 @testable import ZenCODERuntime
 import Testing
@@ -208,38 +211,102 @@ struct MemoryEmbeddingIsolationTests {
     // MARK: - Environment resolution (controlled isolation)
 
     @Test
-    func defaultProviderIsNilUnderTestHarnessEvenWithRealEnv() async throws {
-        // Simulate the developer's shell exporting real embedding env vars.
-        // Under the test harness, provider() must still return nil: no
-        // environment lookup, no network call.
-        await withScopedEmbeddingEndpoint(
-            "https://embeddings.example.com/v1/embeddings"
-        ) {
-            let resolved = MemoryEmbedding.provider()
-            #expect(resolved == nil)
-        }
+    func defaultProviderIsNilUnderTestHarnessEvenWithRealEnv() {
+        // Simulate a shell that exports a real embedding endpoint. Under the
+        // test harness the resolver must still return nil, and must not even
+        // look: neither the persisted manifest nor the environment is read, so
+        // there is no lookup and no network call. The environment is injected,
+        // never mutated with setenv, so concurrent tests cannot observe it.
+        let manifestReads = CallCounter()
+        let environmentReads = CallCounter()
+
+        let resolved = MemoryEmbedding.provider(
+            isRunningUnderTestHarness: true,
+            manifest: {
+                manifestReads.record()
+                return nil
+            },
+            environment: {
+                environmentReads.record()
+                return [MemoryEmbedding.environmentEndpointKey: Self.exampleEndpoint]
+            }
+        )
+
+        #expect(resolved == nil)
+        #expect(manifestReads.count == 0)
+        #expect(environmentReads.count == 0)
+        // The public entry point applies the same guard with the real harness
+        // detection: this process is a test harness, so it resolves to nil
+        // whatever the shell exports.
+        #expect(MemoryEmbedding.provider() == nil)
     }
+
+    @Test
+    func sameEnvironmentResolvesAProviderOutsideTheTestHarness() throws {
+        // Control for the test above: with the guard lifted the very same
+        // inputs do resolve the endpoint, so the nil there comes from the
+        // harness guard and not from an environment that never mattered.
+        // Resolution only builds the provider; the endpoint is contacted by
+        // `embed(_:)`, which is never called here.
+        let manifestReads = CallCounter()
+        let environmentReads = CallCounter()
+
+        let resolved = MemoryEmbedding.provider(
+            isRunningUnderTestHarness: false,
+            manifest: {
+                manifestReads.record()
+                return nil
+            },
+            environment: {
+                environmentReads.record()
+                return [MemoryEmbedding.environmentEndpointKey: Self.exampleEndpoint]
+            }
+        )
+
+        let provider = try #require(resolved as? OpenAICompatibleEmbeddingProvider)
+        #expect(provider.endpoint.absoluteString == Self.exampleEndpoint)
+        #expect(manifestReads.count == 1)
+        #expect(environmentReads.count == 1)
+    }
+
+    @Test
+    func taskLocalOverrideTakesPrecedenceOverTheHarnessGuardWithoutReadingInputs() async {
+        let manifestReads = CallCounter()
+        let environmentReads = CallCounter()
+        let forced = DeterministicHashEmbeddingProvider(modelID: "forced-v1")
+
+        let resolved = await MemoryEmbedding.withProvider(forced) {
+            MemoryEmbedding.provider(
+                isRunningUnderTestHarness: true,
+                manifest: {
+                    manifestReads.record()
+                    return nil
+                },
+                environment: {
+                    environmentReads.record()
+                    return [:]
+                }
+            )
+        }
+
+        #expect(resolved?.modelID == "forced-v1")
+        #expect(manifestReads.count == 0)
+        #expect(environmentReads.count == 0)
+    }
+
+    private static let exampleEndpoint = "https://embeddings.example.com/v1/embeddings"
 }
 
-/// Sets the legacy `ZENCODE_MEMORY_EMBEDDING_ENDPOINT` env var for the duration of
-/// `operation`, restoring the original values on exit.
-///
-/// This is safe because under the test harness `provider()` never reads the
-/// environment (it returns nil before reaching `providerFromEnvironment`), so
-/// the setenv cannot leak into a concurrently running test's resolution.
-private func withScopedEmbeddingEndpoint(
-    _ endpoint: String,
-    _ operation: () async throws -> Void
-) async rethrows {
-    let key = MemoryEmbedding.environmentEndpointKey
-    let original = ProcessInfo.processInfo.environment[key]
-    setenv(key, endpoint, 1)
-    defer {
-        if let original {
-            setenv(key, original, 1)
-        } else {
-            unsetenv(key)
-        }
+/// Counts how many times an injected closure ran. `Sendable` so the seam's
+/// closures can capture it regardless of the isolation they run under.
+private final class CallCounter: Sendable {
+    private let calls = Mutex(0)
+
+    func record() {
+        calls.withLock { $0 += 1 }
     }
-    try await operation()
+
+    var count: Int {
+        calls.withLock { $0 }
+    }
 }

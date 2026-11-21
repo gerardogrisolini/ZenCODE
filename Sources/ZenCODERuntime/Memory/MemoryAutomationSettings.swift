@@ -143,8 +143,37 @@ enum MemoryAutomationSettings {
         return min(max(parsed, minimum), maximum)
     }
 
+    /// Task-local replacement for the process environment, bound only by
+    /// ``withEnvironment(_:operation:)``. `nil` (unbound) is production: the
+    /// settings read the real process environment.
+    @TaskLocal private static var scopedEnvironment: [String: String]?
+
+    /// Runs `operation` with `environment` standing in for the process
+    /// environment as far as these recall settings are concerned.
+    ///
+    /// The dictionary *replaces* the environment rather than overlaying it: a
+    /// key that is absent from `environment` reads as unset, even when the
+    /// developer's shell exports it. A test therefore depends only on what it
+    /// declares, and a variable that the shell happens to export cannot change
+    /// its outcome.
+    ///
+    /// This is the seam that spares tests a global `setenv`, which mutates the
+    /// whole process and races with every test running concurrently. The value
+    /// is task-local: it is visible to `operation` and to the child tasks it
+    /// spawns, and to nothing else, so concurrent tests each see their own
+    /// settings. Work that does not inherit the task context (`Task.detached`)
+    /// reads the real environment.
+    static func withEnvironment<T>(
+        _ environment: [String: String],
+        operation: () async throws -> T
+    ) async rethrows -> T {
+        try await $scopedEnvironment.withValue(environment) {
+            try await operation()
+        }
+    }
+
     private static var environment: [String: String] {
-        ProcessInfo.processInfo.environment
+        scopedEnvironment ?? ProcessInfo.processInfo.environment
     }
 
     /// Accepts the usual shell spellings. An unrecognized value falls back to

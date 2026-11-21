@@ -130,10 +130,8 @@ extension MemoryAutomationFlowTests {
                 content: "Summary: the quantum flange calibrates every frobnicator.",
                 target: .global
             ).entry
-            try await scopedEnv([
-                MemoryAutomationSettings.environmentAutoRecallKey: "1",
-                MemoryAutomationSettings.environmentRecallTimeoutKey: nil,
-                MemoryAutomationSettings.environmentSemanticRecallTimeoutKey: nil
+            try await MemoryAutomationSettings.withEnvironment([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1"
             ]) {
                 try await MemoryEmbedding.withProvider(nil) {
                     _ = try await MemoryGraphStoreRegistry.shared.store(graphURL: MemoryGraphLocation.globalGraphURL())
@@ -170,15 +168,28 @@ extension MemoryAutomationFlowTests {
     func recallReturnsNilWhenAutoRecallDisabled() async throws {
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
-        await workspace.withIsolatedSupport {
-            await scopedEnv([MemoryAutomationSettings.environmentAutoRecallKey: "0"]) {
-                let block = await MemoryTurnCoordinator.shared.memoryBlock(
-                    sessionID: "disabled-\(UUID().uuidString)",
-                    graphTarget: .workspace(workspace.workspaceURL),
-                    prompt: "anything"
+        try await workspace.withIsolatedSupport {
+            try await MemoryEmbedding.withProvider(nil) {
+                // Seed an entry that recall would inject if it ran: on an empty
+                // graph a nil block could not tell a disabled recall from an
+                // enabled one, and the setting under test would go unchecked.
+                _ = try await MemoryService().writeEntry(
+                    content: "Summary: the quantum flange calibrates every frobnicator.",
+                    target: .workspace(workspace.workspaceURL)
                 )
+
+                let block = await MemoryAutomationSettings.withEnvironment([
+                    MemoryAutomationSettings.environmentAutoRecallKey: "0"
+                ]) {
+                    await MemoryTurnCoordinator.shared.memoryBlock(
+                        sessionID: "disabled-\(UUID().uuidString)",
+                        graphTarget: .workspace(workspace.workspaceURL),
+                        prompt: "how do I calibrate the frobnicator"
+                    )
+                }
                 #expect(block == nil)
             }
+            await MemoryGraphStoreRegistry.shared.reset()
         }
     }
 
@@ -201,7 +212,7 @@ extension MemoryAutomationFlowTests {
             )
             try await JSONMemoryPersistence(url: workspace.graphURL()).save(graph)
 
-            try await scopedEnv([
+            try await MemoryAutomationSettings.withEnvironment([
                 MemoryAutomationSettings.environmentAutoRecallKey: "1",
                 MemoryAutomationSettings.environmentRecallTimeoutKey: "100"
             ]) {
@@ -282,31 +293,5 @@ private struct DelayedMemoryEmbeddingProvider: EmbeddingProvider {
     func embed(_ text: String) async throws -> [Float] {
         try await Task.sleep(for: delay)
         return text.isEmpty ? [0] : [1]
-    }
-}
-
-/// Applies a set of environment mutations for the duration of `operation`,
-/// restoring the original value of every key on exit.
-private func scopedEnv(
-    _ mutations: [String: String?],
-    _ operation: () async throws -> Void
-) async rethrows {
-    let originals = mutations.keys.map { ($0, ProcessInfo.processInfo.environment[$0]) }
-    for (key, value) in mutations {
-        setEnv(key, value)
-    }
-    defer {
-        for (key, original) in originals {
-            setEnv(key, original)
-        }
-    }
-    try await operation()
-}
-
-private func setEnv(_ key: String, _ value: String?) {
-    if let value {
-        setenv(key, value, 1)
-    } else {
-        unsetenv(key)
     }
 }

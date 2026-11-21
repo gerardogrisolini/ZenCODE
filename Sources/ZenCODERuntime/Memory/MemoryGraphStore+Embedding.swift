@@ -45,17 +45,36 @@ package enum MemoryEmbedding {
     /// precedence. Under a test harness the real process environment is never
     /// consulted; use the override or the `provider(manifest:environment:)` seam.
     package static func provider() -> (any EmbeddingProvider)? {
+        provider(
+            isRunningUnderTestHarness: AppStorageDirectory.isRunningUnderTestHarness,
+            manifest: { AgentSettingsManifestStore.load() },
+            environment: { ProcessInfo.processInfo.environment }
+        )
+    }
+
+    /// The unbound-resolution policy behind ``provider()``, with its three
+    /// process-level inputs injected so the test-harness guard can be exercised
+    /// without a real harness, a real manifest or a mutated environment.
+    ///
+    /// Precedence is the one of ``provider()``: a bound task-local override
+    /// wins over everything; otherwise a test harness resolves to `nil` without
+    /// calling `manifest` or `environment` (no persisted-settings read, no
+    /// environment lookup, no network); otherwise the manifest/environment
+    /// resolution of ``provider(manifest:environment:)`` applies. The closures
+    /// are evaluated at most once, and only on that last path.
+    static func provider(
+        isRunningUnderTestHarness: Bool,
+        manifest: () -> AgentSettingsManifest?,
+        environment: () -> [String: String]
+    ) -> (any EmbeddingProvider)? {
         switch override {
-        case .none:
-            guard !AppStorageDirectory.isRunningUnderTestHarness else {
-                return nil
-            }
-            return provider(
-                manifest: AgentSettingsManifestStore.load(),
-                environment: ProcessInfo.processInfo.environment
-            )
         case .some(let forced):
             return forced
+        case .none:
+            guard !isRunningUnderTestHarness else {
+                return nil
+            }
+            return providerFromSettings(manifest(), environment())
         }
     }
 

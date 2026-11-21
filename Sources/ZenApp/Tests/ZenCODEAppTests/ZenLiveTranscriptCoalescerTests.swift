@@ -16,6 +16,23 @@ struct ZenLiveTranscriptCoalescerTests {
         )
     }
 
+    /// Waits until `condition` holds, for at most `timeout`; records an issue
+    /// when the deadline passes.
+    private func waitUntil(
+        timeout: Duration = .seconds(10),
+        sourceLocation: SourceLocation = #_sourceLocation,
+        _ condition: () -> Bool
+    ) async {
+        let deadline = ContinuousClock.now + timeout
+        while !condition() {
+            guard ContinuousClock.now < deadline else {
+                Issue.record("condition not met within \(timeout)", sourceLocation: sourceLocation)
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
     private func input(
         _ text: String,
         blockID: String? = "block",
@@ -38,7 +55,10 @@ struct ZenLiveTranscriptCoalescerTests {
         coalescer.update(input("abc"))
         #expect(coalescer.items.first?.content == .assistantText("a", isStreaming: true))
 
-        try? await Task.sleep(for: .milliseconds(40))
+        // The deferred publish runs on the main actor after `interval`; under a
+        // loaded parallel run that can take longer than any fixed sleep, so
+        // wait for it with a generous deadline.
+        await waitUntil { coalescer.items.first?.content == .assistantText("abc", isStreaming: true) }
         #expect(coalescer.items.first?.content == .assistantText("abc", isStreaming: true))
         coalescer.stop()
     }

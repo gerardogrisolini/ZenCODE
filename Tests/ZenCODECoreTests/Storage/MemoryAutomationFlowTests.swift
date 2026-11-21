@@ -5,8 +5,15 @@
 //  Covers runtime invariants of automatic memory recall that request-assembly
 //  unit tests cannot reach: timeout/failure degradation, escaping and budgets,
 //  session isolation, history purity, sub-agent visibility, and recall health.
-//  The suite is serialized because recall settings are process-environment
-//  values. Recall is local BM25; no test contacts a network.
+//  The suite stays serialized as a conservative choice, for reasons that do
+//  not involve the environment: several tests call
+//  `MemoryGraphStoreRegistry.shared.reset()`, which drops the cached stores
+//  of the whole process, and the recall tests assert wall-clock bounds (a
+//  100 ms deadline, elapsed times under 1 s and 5 s) that CPU contention from
+//  sibling tests would make flaky. Recall settings are no longer a reason:
+//  they are injected with `MemoryAutomationSettings.withEnvironment`, a
+//  task-local, never with the process environment. Recall is local BM25; no
+//  test contacts a network.
 //
 
 import Foundation
