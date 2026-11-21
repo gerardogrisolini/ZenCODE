@@ -28,13 +28,14 @@ struct DS4SetupModelCandidate: Equatable, Hashable {
 enum DS4SetupAuxiliaryKind: Equatable, Hashable, Sendable {
     /// Vision projector (`vision_path`).
     case vision
-    /// MTP / DSpark support model (`mtp_path`).
-    case mtp
+    /// DSpark support model of a DeepSeek model (`mtp_path`, `--mtp-model`).
+    /// Choosing one turns DSpark on; none leaves it off.
+    case dspark
 
     var title: String {
         switch self {
         case .vision: return "vision projector"
-        case .mtp: return "MTP / DSpark support model"
+        case .dspark: return "DSpark support model"
         }
     }
 }
@@ -42,7 +43,7 @@ enum DS4SetupAuxiliaryKind: Equatable, Hashable, Sendable {
 /// Test seam of the optional-file question. Receives the model, what the file
 /// is for, the GGUFs offered (every `.gguf` of the DS4 folder except the model
 /// itself) and the saved choice of that model (`nil` means none); returns the
-/// relative path of the chosen file, or `nil` for none.
+/// relative path of the chosen file, or `nil` for none (for DSpark: off).
 typealias DS4SetupAuxiliaryFileSelector = (
     DS4SetupModelCandidate,
     DS4SetupAuxiliaryKind,
@@ -78,7 +79,8 @@ struct DS4SetupEngineOptions {
 
 /// What the DS4 setup section does when DS4 is already configured.
 enum DS4SetupAction: Hashable, Sendable {
-    /// The complete flow: folder, models, backend and tuning.
+    /// The folder, then the "DS4 models" menu: configure, add or delete one
+    /// model at a time.
     case reconfigure
     /// Recompiles the engine library of the configured models and changes no
     /// setting.
@@ -109,7 +111,10 @@ extension ZenCODESetupRunner {
     /// manifest unchanged.
     ///
     /// When DS4 is already configured the section first asks what to do
-    /// (``DS4SetupAction``). Rebuilding the engine recompiles the libraries of
+    /// (``DS4SetupAction``). Managing the models opens the "DS4 models" menu,
+    /// where each model is configured, added or deleted on its own (see
+    /// ``stageDS4Provider(existingProvider:existingModels:existingAPIKey:reservedModelIDs:scanner:catalog:prompts:engine:)``).
+    /// Rebuilding the engine recompiles the libraries of
     /// the configured models and returns the input manifest unchanged; Esc at
     /// that question (or any error of `selectAction`) does the same without
     /// building. Without a DS4 configuration the question is not asked.
@@ -184,8 +189,8 @@ extension ZenCODESetupRunner {
             items: [
                 TerminalCheckboxMenuItem(
                     value: DS4SetupAction.reconfigure,
-                    title: "Reconfigure DS4 models",
-                    detail: "folder, models, backend and tuning"
+                    title: "Manage DS4 models",
+                    detail: "configure, add or delete one model at a time"
                 ),
                 TerminalCheckboxMenuItem(
                     value: DS4SetupAction.rebuildEngine,
@@ -248,8 +253,8 @@ extension ZenCODESetupRunner {
     }
 
     /// Every GGUF in the DS4 folder, shards of split models included: the
-    /// vision projector and the MTP/DSpark support model are plain GGUFs that
-    /// the model list does not necessarily show.
+    /// vision projector and the DSpark support model are plain GGUFs that the
+    /// model list does not necessarily show.
     static func ds4SetupAuxiliaryCandidates(
         installation: DS4InstallationSnapshot,
         catalog: DS4ModelCatalog
@@ -365,9 +370,34 @@ extension ZenCODESetupRunner {
         )
     }
 
-    /// Menu summary: each DS4 model with its own launch parameters (including
-    /// the paired vision, MTP and steering files and the state of the engine
-    /// library for its backend), then the shared DS4 folder.
+    /// Launch settings of one DS4 model that setup asks, for the setup menus:
+    /// backend, context window, SSD streaming, MTP or DSpark (with its support
+    /// model) and the vision projector.
+    static func ds4RuntimeSummary(_ runtime: AgentDS4RuntimeManifest) -> [String] {
+        var settings = [runtime.backend.rawValue, "ctx \(runtime.contextWindow)"]
+        if runtime.ssdStreaming {
+            settings.append("SSD streaming")
+        }
+        if runtime.mtp {
+            settings.append("MTP")
+        }
+        if runtime.dspark {
+            settings.append("DSpark \(ds4FileName(runtime.mtpRelativePath))")
+        }
+        settings.append("vision \(ds4FileName(runtime.visionRelativePath))")
+        return settings
+    }
+
+    /// ``ds4RuntimeSummary(_:)`` of a model, joined for a menu detail.
+    static func ds4ModelSummary(_ model: AgentSettingsModelManifest) -> String? {
+        (model.ds4Runtime ?? model.provider?.ds4Runtime).map {
+            ds4RuntimeSummary($0).joined(separator: ", ")
+        }
+    }
+
+    /// Menu summary: each DS4 model with its own launch settings (see
+    /// ``ds4RuntimeSummary(_:)``) and the state of the engine library for its
+    /// backend, then the shared DS4 folder.
     static func ds4RuntimeSetupDetail(
         _ manifest: AgentSettingsManifest?,
         supportDirectory: URL? = nil
@@ -382,22 +412,7 @@ extension ZenCODESetupRunner {
             guard let modelRuntime = model.ds4Runtime ?? model.provider?.ds4Runtime else {
                 continue
             }
-            var settings = [modelRuntime.backend.rawValue]
-            if modelRuntime.ssdStreaming {
-                settings.append("SSD streaming")
-            }
-            if modelRuntime.mtp {
-                settings.append("MTP")
-            }
-            if modelRuntime.dspark {
-                settings.append("DSpark")
-            }
-            settings.append("power \(modelRuntime.power)")
-            settings.append("ctx \(modelRuntime.contextWindow)")
-            settings.append("vision \(ds4FileName(modelRuntime.visionRelativePath))")
-            settings.append("MTP model \(ds4FileName(modelRuntime.mtpRelativePath))")
-            settings.append("steer \(ds4FileName(modelRuntime.steeringRelativePath))")
-
+            var settings = ds4RuntimeSummary(modelRuntime)
             let target = DS4EngineTarget(runtime: modelRuntime)
             let engineState: String
             if let known = engineStates[target] {

@@ -56,6 +56,32 @@ final class FakeEngineBuilder: DS4EngineBuilding {
     }
 }
 
+/// Seam of the "DS4 models" menu: answers with the scripted choices in order
+/// and records what each visit showed. Once the script ends it answers Esc.
+final class ScriptedDS4ModelMenu {
+    private var choices: [DS4SetupModelMenuChoice]
+    /// The ids of the models shown at each visit.
+    private(set) var shown: [[String]] = []
+    /// Whether Add models was offered at each visit.
+    private(set) var offeredAdd: [Bool] = []
+
+    init(_ choices: [DS4SetupModelMenuChoice]) {
+        self.choices = choices
+    }
+
+    func select(
+        _ models: [AgentSettingsModelManifest],
+        _ canAdd: Bool
+    ) throws -> DS4SetupModelMenuChoice {
+        shown.append(models.map(\.id))
+        offeredAdd.append(canAdd)
+        guard !choices.isEmpty else {
+            throw ZenCODESetupError.cancelled
+        }
+        return choices.removeFirst()
+    }
+}
+
 @Suite("ZenCODE setup DS4", .serialized)
 struct ZenCODESetupDS4Tests {
     static let qwenPath = "gguf/Qwen3.8-Flash-Next-Q2.gguf"
@@ -153,11 +179,18 @@ struct ZenCODESetupDS4Tests {
             defaultThinkingSelection: .enabled
         )
 
+        let menu = ScriptedDS4ModelMenu([.add, .done])
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: Self.savedDS4Manifest(models: [qwen, deepSeek]),
             prompts: DS4SetupPrompts(
                 promptFolder: { _ in fixture.root.path },
-                selectFiles: { candidates, _ in Set(candidates.map(\.relativePath)) },
+                selectFiles: { candidates, preselected in
+                    // Only the GGUF that no model uses yet can be added.
+                    #expect(candidates.map(\.relativePath) == [Self.customPath])
+                    #expect(preselected.isEmpty)
+                    return Set(candidates.map(\.relativePath))
+                },
+                selectModelMenu: menu.select,
                 selectBackend: { _, backend in backend },
                 selectAuxiliaryFile: Self.keepAuxiliary,
                 promptTuning: { _, tuning in tuning }
@@ -166,6 +199,7 @@ struct ZenCODESetupDS4Tests {
             engine: Self.engine(fixture)
         )
 
+        #expect(menu.shown.count == 2)
         let updated = try #require(result)
         #expect(updated.models.count == 3)
         // The levels the user already has, even if they differ from the family's.
@@ -215,15 +249,22 @@ struct ZenCODESetupDS4Tests {
         ]
         #expect(models.allSatisfy { !$0.supportsThinking })
 
+        // Done right away: the saved models are not asked anything, but they
+        // still get the levels of their family.
+        let menu = ScriptedDS4ModelMenu([.done])
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: Self.savedDS4Manifest(models: models),
             prompts: DS4SetupPrompts(
                 promptFolder: { _ in fixture.root.path },
-                selectFiles: { candidates, preselected in
-                    #expect(preselected.count == 3)
-                    return Set(candidates.map(\.relativePath))
+                selectFiles: { _, _ in
+                    Issue.record("Nothing is added")
+                    return nil
                 },
-                selectBackend: { _, backend in backend },
+                selectModelMenu: menu.select,
+                selectBackend: { _, backend in
+                    Issue.record("No model is configured")
+                    return backend
+                },
                 selectAPIModelID: { _ in
                     Issue.record("The saved API id must be reused")
                     return "glm-5.2"
@@ -235,6 +276,7 @@ struct ZenCODESetupDS4Tests {
             engine: Self.engine(fixture)
         )
 
+        #expect(menu.shown == [["my-qwen", "my-ds41", "my-mystery"]])
         let updated = try #require(result)
         #expect(updated.models.count == 3)
         let qwen = try #require(updated.models.first { $0.id == "my-qwen" })
@@ -269,16 +311,17 @@ struct ZenCODESetupDS4Tests {
     }
 
     /// A DS4 model as a previous setup saved it, for the GGUF at `path`.
-    private static func savedDS4Model(
+    static func savedDS4Model(
         id: String,
         apiModelID: String,
         path: String,
         in fixture: Fixture,
         title: String? = nil,
         thinkingOptions: [AgentThinkingSelection]? = nil,
-        defaultThinkingSelection: AgentThinkingSelection? = nil
+        defaultThinkingSelection: AgentThinkingSelection? = nil,
+        runtime: AgentDS4RuntimeManifest? = nil
     ) throws -> AgentSettingsModelManifest {
-        let runtime = try AgentDS4RuntimeManifest(
+        let runtime = try runtime ?? AgentDS4RuntimeManifest(
             rootDirectory: AgentDS4PathGuard.canonicalRootDirectory(fixture.root.path),
             modelRelativePath: path
         )
@@ -295,7 +338,7 @@ struct ZenCODESetupDS4Tests {
     }
 
     /// A manifest with the DS4 provider and the given saved DS4 models.
-    private static func savedDS4Manifest(
+    static func savedDS4Manifest(
         models: [AgentSettingsModelManifest]
     ) -> AgentSettingsManifest {
         let provider = AgentSettingsProviderManifest(

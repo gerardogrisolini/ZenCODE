@@ -37,6 +37,28 @@ Release tags follow the strict `vX.Y.Z` contract described in
   presentation changes: the runtime, `DirectAgentToolCallPreview`, and the
   persisted formats are unchanged.
 
+### Changed
+
+- DS4 setup: when DS4 models are already configured, **Manage DS4 models**
+  (formerly **Reconfigure DS4 models**) opens a **DS4 models** menu instead of
+  asking the questions of every model again. Each model is configured or
+  deleted on its own, **Add models** offers only the GGUF files that no model
+  uses yet, and **Done** keeps the result. Esc inside a step discards that step
+  only; Esc on the menu discards every change. Done needs at least one model:
+  DS4 itself is still removed by deleting its provider. The first
+  configuration still goes straight to the GGUF selection.
+- DS4 setup asks fewer questions per model: backend, context window, SSD
+  streaming, the vision projector, and the speculative decoding of the model
+  family. A DeepSeek model gets DSpark, turned on by choosing its support GGUF
+  (and MTP off); the GLM and Qwen models get their built-in MTP (`--mtp`, and
+  DSpark off, with no support file). The CUDA or ROCm architecture is still
+  asked for those backends. Power, quality mode, warm weights, CPU threads,
+  prefill chunk, MTP draft tokens and margin, directional steering, engine
+  sessions, and extra engine arguments are no longer asked: a model keeps the
+  values it has, and the `ds4Runtime` format is unchanged. When a different
+  DS4 folder is entered, the saved models whose GGUF it holds move to it with
+  their settings.
+
 ### Fixed
 
 - ACP (`zen --acp`, as launched by Xcode): a new or restored session without a

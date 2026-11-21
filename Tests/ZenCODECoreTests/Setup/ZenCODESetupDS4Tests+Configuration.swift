@@ -4,7 +4,7 @@
 //
 //  Tests of the DS4 setup that create and reconfigure the provider manifest:
 //  inferred identifiers, preserved entries, launch parameters per file,
-//  unselecting a file, cancellation and the providers path.
+//  deleting a model, cancellation and the providers path.
 //  Tests of this serialized suite run in file-name order: keep the name.
 //
 
@@ -224,6 +224,7 @@ extension ZenCODESetupDS4Tests {
             remoteAPIKeysByProviderID: remote.remoteAPIKeysByProviderID
         )
 
+        let menu = ScriptedDS4ModelMenu([.configure("my-qwen"), .add, .done])
         let result = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: original,
             prompts: DS4SetupPrompts(
@@ -232,9 +233,11 @@ extension ZenCODESetupDS4Tests {
                     return fixture.root.path
                 },
                 selectFiles: { candidates, preselected in
-                    #expect(preselected == [Self.qwenPath])
+                    #expect(candidates.map(\.relativePath) == [Self.customPath])
+                    #expect(preselected.isEmpty)
                     return Set(candidates.map(\.relativePath))
                 },
+                selectModelMenu: menu.select,
                 selectBackend: { candidate, defaultBackend in
                     // Defaults come from the model's own saved runtime only.
                     if candidate.relativePath == Self.qwenPath {
@@ -262,6 +265,11 @@ extension ZenCODESetupDS4Tests {
         )
 
         let updated = try #require(result)
+        #expect(menu.shown == [
+            ["my-qwen"],
+            ["my-qwen"],
+            ["my-qwen", "ds4:deepseek-v4.1-flash-custom-iq3_xxs"]
+        ])
         let updatedProvider = try #require(updated.providers.first { $0.id == providerID })
         #expect(updatedProvider.baseURL == "http://127.0.0.1:9000/v1")
         #expect(updatedProvider.name == "Existing DS4")
@@ -292,7 +300,7 @@ extension ZenCODESetupDS4Tests {
     }
 
     @Test
-    func unselectingAFileRemovesItAndFallsBackToFirstDS4Model() async throws {
+    func deletingAModelRemovesItAndFallsBackToFirstDS4Model() async throws {
         let fixture = try Fixture.make(files: [Self.qwenPath, Self.customPath])
         defer { fixture.remove() }
         let first = try await ZenCODESetupRunner.configureDS4Runtime(
@@ -316,12 +324,20 @@ extension ZenCODESetupDS4Tests {
             selectedModelID: selectedID
         )
 
+        let menu = ScriptedDS4ModelMenu([.delete(selectedID), .done])
         let second = try await ZenCODESetupRunner.configureDS4Runtime(
             existingManifest: selected,
             prompts: DS4SetupPrompts(
                 promptFolder: { _ in fixture.root.path },
-                selectFiles: { _, _ in [Self.qwenPath] },
-                selectBackend: { _, backend in backend },
+                selectFiles: { _, _ in
+                    Issue.record("Nothing is added")
+                    return nil
+                },
+                selectModelMenu: menu.select,
+                selectBackend: { _, backend in
+                    Issue.record("Deleting a model asks nothing about the others")
+                    return backend
+                },
                 selectAuxiliaryFile: Self.keepAuxiliary,
                 promptTuning: { _, tuning in tuning }
             ),
@@ -329,6 +345,8 @@ extension ZenCODESetupDS4Tests {
             engine: Self.engine(fixture)
         )
         let updated = try #require(second)
+        #expect(menu.shown.count == 2)
+        #expect(menu.shown[1].count == 1)
         #expect(updated.models.count == 1)
         #expect(updated.models[0].ds4Runtime?.modelRelativePath == Self.qwenPath)
         #expect(updated.selectedModelID == updated.models[0].id)
@@ -446,9 +464,11 @@ extension ZenCODESetupDS4Tests {
             prompts: DS4SetupPrompts(
                 promptFolder: { _ in fixture.root.path },
                 selectFiles: { candidates, preselected in
-                    #expect(preselected == [Self.qwenPath])
+                    #expect(candidates.map(\.relativePath) == [Self.customPath])
+                    #expect(preselected.isEmpty)
                     return Set(candidates.map(\.relativePath))
                 },
+                selectModelMenu: ScriptedDS4ModelMenu([.add, .done]).select,
                 selectBackend: { _, backend in backend },
                 selectAuxiliaryFile: Self.keepAuxiliary,
                 promptTuning: { _, tuning in tuning }

@@ -2,9 +2,9 @@
 //  ZenCODESetupRunner+DS4Models.swift
 //  ZenCODE
 //
-//  Pure steps of the DS4 stage: the ids a new model cannot take, the next free
-//  model id, the runtime manifest of one model and the model manifest built
-//  from it. They ask nothing and touch no file.
+//  Pure steps of the DS4 stage: the next free model id, the runtime manifest
+//  of one model, a saved runtime moved to another DS4 folder and the model
+//  manifest built from a runtime. They ask nothing and touch no file.
 //
 
 import Foundation
@@ -21,29 +21,6 @@ extension ZenCODESetupRunner {
         }
     }
 
-    /// The ids no new model can take: the `reservedModelIDs` plus the id of
-    /// every saved model whose GGUF is among the `selected` ones, which keeps
-    /// it. They are taken before any id is generated, so a kept id wins over a
-    /// generated one whatever the order of the selection. A saved model that is
-    /// not selected takes nothing.
-    ///
-    /// The flow then gives each new model its id one at a time, when it gets
-    /// to it (see ``uniqueDS4ModelID(_:used:)``): a model the flow skips does
-    /// not take one.
-    static func ds4PreservedModelIDs(
-        for selected: [DS4SetupModelCandidate],
-        existingModels: [AgentSettingsModelManifest],
-        reservedModelIDs: Set<String>
-    ) -> Set<String> {
-        var usedIDs = reservedModelIDs
-        for candidate in selected {
-            if let previous = ds4PreviousModel(for: candidate, in: existingModels) {
-                usedIDs.insert(previous.id)
-            }
-        }
-        return usedIDs
-    }
-
     /// `base` when no id in `used` is `base`, otherwise `base-2`, `base-3`, …
     /// with the first suffix that is free; the id returned is added to `used`.
     static func uniqueDS4ModelID(_ base: String, used: inout Set<String>) -> String {
@@ -57,16 +34,31 @@ extension ZenCODESetupRunner {
         return candidate
     }
 
+    /// Whether a model uses DSpark rather than MTP for speculative decoding.
+    /// DSpark is the speculative decoding of the DeepSeek models and needs
+    /// their support GGUF; the other families (GLM, Qwen) use the MTP block
+    /// built into their own GGUF.
+    static func ds4UsesDSpark(apiModelID: String) -> Bool {
+        apiModelID.lowercased().hasPrefix("deepseek-")
+    }
+
     /// Runtime of one model: the answers of the setup plus, from the previous
     /// runtime of the same GGUF, the SSD streaming cache values that setup
     /// does not ask. Throws when a value is not valid for the manifest.
+    ///
+    /// The speculative decoding follows the family of the model. A DeepSeek
+    /// model (`usesDSpark`) gets DSpark on exactly when it has a support model
+    /// (`dsparkRelativePath`), which is stored as its MTP file, and MTP off.
+    /// Any other model gets the MTP of `tuning`, DSpark off and no MTP file.
+    /// Every other value comes from `tuning`.
     static func ds4RuntimeManifest(
         rootDirectory: String,
         candidate: DS4SetupModelCandidate,
         previousRuntime: AgentDS4RuntimeManifest?,
         backend: AgentDS4RuntimeBackend,
         visionRelativePath: String?,
-        mtpRelativePath: String?,
+        dsparkRelativePath: String?,
+        usesDSpark: Bool,
         tuning: AgentDS4RuntimeTuning
     ) throws -> AgentDS4RuntimeManifest {
         try AgentDS4RuntimeManifest(
@@ -79,12 +71,12 @@ extension ZenCODESetupRunner {
             ssdStreamingCacheBytes: previousRuntime?.ssdStreamingCacheBytes,
             ssdStreamingPreloadExperts: previousRuntime?.ssdStreamingPreloadExperts,
             ssdStreamingCold: previousRuntime?.ssdStreamingCold ?? false,
-            mtp: tuning.mtp,
+            mtp: !usesDSpark && tuning.mtp,
             power: tuning.power,
             visionRelativePath: visionRelativePath,
-            mtpRelativePath: mtpRelativePath,
+            mtpRelativePath: usesDSpark ? dsparkRelativePath : nil,
             steeringRelativePath: tuning.steeringRelativePath,
-            dspark: tuning.dspark,
+            dspark: usesDSpark && dsparkRelativePath != nil,
             mtpDraftTokens: tuning.mtpDraftTokens,
             mtpMargin: tuning.mtpMargin,
             quality: tuning.quality,
@@ -97,6 +89,56 @@ extension ZenCODESetupRunner {
             rocmArch: tuning.rocmArch,
             engineSessions: tuning.engineSessions,
             extraEngineArguments: tuning.extraEngineArguments
+        )
+    }
+
+    /// `runtime` in the DS4 folder `rootDirectory`, with every other value
+    /// unchanged. In the same folder the runtime is returned as it is. In
+    /// another folder, the vision projector and the MTP / DSpark file that
+    /// the new folder does not hold (`auxiliaryPaths`, its GGUFs) are dropped,
+    /// and DSpark goes off without its support model.
+    static func ds4Runtime(
+        _ runtime: AgentDS4RuntimeManifest,
+        movedTo rootDirectory: String,
+        auxiliaryPaths: Set<String>
+    ) throws -> AgentDS4RuntimeManifest {
+        guard runtime.rootDirectory != rootDirectory else {
+            return runtime
+        }
+        let visionRelativePath = runtime.visionRelativePath.flatMap {
+            auxiliaryPaths.contains($0) ? $0 : nil
+        }
+        let mtpRelativePath = runtime.mtpRelativePath.flatMap {
+            auxiliaryPaths.contains($0) ? $0 : nil
+        }
+        return try AgentDS4RuntimeManifest(
+            rootDirectory: rootDirectory,
+            modelRelativePath: runtime.modelRelativePath,
+            backend: runtime.backend,
+            contextWindow: runtime.contextWindow,
+            ssdStreaming: runtime.ssdStreaming,
+            ssdStreamingCacheExperts: runtime.ssdStreamingCacheExperts,
+            ssdStreamingCacheBytes: runtime.ssdStreamingCacheBytes,
+            ssdStreamingPreloadExperts: runtime.ssdStreamingPreloadExperts,
+            ssdStreamingCold: runtime.ssdStreamingCold,
+            mtp: runtime.mtp,
+            power: runtime.power,
+            visionRelativePath: visionRelativePath,
+            mtpRelativePath: mtpRelativePath,
+            steeringRelativePath: runtime.steeringRelativePath,
+            dspark: runtime.dspark && mtpRelativePath != nil,
+            mtpDraftTokens: runtime.mtpDraftTokens,
+            mtpMargin: runtime.mtpMargin,
+            quality: runtime.quality,
+            threads: runtime.threads,
+            prefillChunk: runtime.prefillChunk,
+            warmWeights: runtime.warmWeights,
+            steeringFFN: runtime.steeringFFN,
+            steeringAttn: runtime.steeringAttn,
+            cudaArch: runtime.cudaArch,
+            rocmArch: runtime.rocmArch,
+            engineSessions: runtime.engineSessions,
+            extraEngineArguments: runtime.extraEngineArguments
         )
     }
 

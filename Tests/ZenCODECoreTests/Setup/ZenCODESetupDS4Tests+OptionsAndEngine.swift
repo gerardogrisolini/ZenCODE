@@ -18,7 +18,7 @@ extension ZenCODESetupDS4Tests {
     // MARK: Optional files and launch options
 
     @Test
-    func optionalFilesAndLaunchOptionsArePersistedPerModel() async throws {
+    func visionForEveryModelDSparkForDeepSeekAndMTPForTheOthers() async throws {
         let shardPath = "gguf/DeepSeek-V4-Pro-Q4K-Layers00-30.gguf"
         let fixture = try Fixture.make(
             files: [Self.qwenPath, Self.customPath, Self.visionPath, Self.mtpPath, shardPath, Self.steeringPath]
@@ -44,29 +44,20 @@ extension ZenCODESetupDS4Tests {
                     // Five GGUFs in the folder, minus the model itself; the steering file is no GGUF.
                     #expect(pairable.count == 4)
                     #expect(!pairable.contains { $0.relativePath == Self.steeringPath })
-                    guard model.relativePath == Self.qwenPath else { return nil }
-                    return kind == .vision ? Self.visionPath : Self.mtpPath
+                    switch (model.relativePath, kind) {
+                    case (Self.qwenPath, .vision): return Self.visionPath
+                    case (Self.customPath, .dspark): return Self.mtpPath
+                    default: return nil
+                    }
                 },
                 promptTuning: { candidate, defaults in
                     #expect(defaults == AgentDS4RuntimeTuning())
-                    guard candidate.relativePath == Self.qwenPath else { return defaults }
+                    // MTP and DSpark answered for both: the family decides.
                     return AgentDS4RuntimeTuning(
-                        contextWindow: 32_768,
+                        contextWindow: candidate.relativePath == Self.qwenPath ? 32_768 : 65_536,
+                        ssdStreaming: true,
                         mtp: true,
-                        dspark: true,
-                        mtpDraftTokens: 4,
-                        mtpMargin: 2.5,
-                        quality: true,
-                        threads: 12,
-                        prefillChunk: 512,
-                        warmWeights: true,
-                        steeringRelativePath: Self.steeringPath,
-                        steeringFFN: 1.5,
-                        steeringAttn: -0.25,
-                        cudaArch: "sm_120",
-                        rocmArch: "gfx1100",
-                        engineSessions: 4,
-                        extraEngineArguments: ["--gpu-devices", "0,1"]
+                        dspark: true
                     )
                 }
             ),
@@ -74,45 +65,73 @@ extension ZenCODESetupDS4Tests {
         )
 
         let manifest = try #require(result)
+        // DSpark is asked for the DeepSeek model only.
         #expect(Set(asked) == [
-            "\(Self.qwenPath)|vision", "\(Self.qwenPath)|mtp",
-            "\(Self.customPath)|vision", "\(Self.customPath)|mtp"
+            "\(Self.qwenPath)|vision",
+            "\(Self.customPath)|vision", "\(Self.customPath)|dspark"
         ])
         let qwen = try #require(manifest.models.first { $0.ds4Runtime?.modelRelativePath == Self.qwenPath })
         let runtime = try #require(qwen.ds4Runtime)
+        #expect(runtime.contextWindow == 32_768)
+        #expect(runtime.ssdStreaming)
         #expect(runtime.visionRelativePath == Self.visionPath)
-        #expect(runtime.mtpRelativePath == Self.mtpPath)
-        #expect(runtime.steeringRelativePath == Self.steeringPath)
-        #expect(runtime.mtp)
-        #expect(runtime.dspark)
-        #expect(runtime.mtpDraftTokens == 4)
-        #expect(runtime.mtpMargin == 2.5)
-        #expect(runtime.quality)
-        #expect(runtime.threads == 12)
-        #expect(runtime.prefillChunk == 512)
-        #expect(runtime.warmWeights)
-        #expect(runtime.steeringFFN == 1.5)
-        #expect(runtime.steeringAttn == -0.25)
-        #expect(runtime.cudaArch == "sm_120")
-        #expect(runtime.rocmArch == "gfx1100")
-        #expect(runtime.engineSessions == 4)
-        #expect(runtime.extraEngineArguments == ["--gpu-devices", "0,1"])
         #expect(try runtime.resolvedVisionURL()?.lastPathComponent == "vision-projector.gguf")
+        // Qwen: built-in MTP, no DSpark and no support file.
+        #expect(runtime.mtp)
+        #expect(!runtime.dspark)
+        #expect(runtime.mtpRelativePath == nil)
 
-        // The other model keeps the standard defaults and no optional file.
+        // DeepSeek: DSpark with its support model, no MTP.
         let custom = try #require(manifest.models.first { $0.ds4Runtime?.modelRelativePath == Self.customPath })
         let customRuntime = try #require(custom.ds4Runtime)
+        #expect(customRuntime.dspark)
+        #expect(customRuntime.mtpRelativePath == Self.mtpPath)
+        #expect(!customRuntime.mtp)
         #expect(customRuntime.visionRelativePath == nil)
-        #expect(customRuntime.mtpRelativePath == nil)
-        #expect(customRuntime.steeringRelativePath == nil)
-        #expect(customRuntime.engineSessions == 2)
-        #expect(customRuntime.extraEngineArguments.isEmpty)
+        #expect(customRuntime.ssdStreaming)
 
         let decoded = try JSONDecoder().decode(
             AgentSettingsManifest.self,
             from: JSONEncoder().encode(manifest)
         )
         #expect(decoded.models.first { $0.id == qwen.id }?.ds4Runtime == runtime)
+        #expect(decoded.models.first { $0.id == custom.id }?.ds4Runtime == customRuntime)
+    }
+
+    @Test
+    func aDeepSeekModelWithoutASupportModelHasDSparkOff() async throws {
+        let fixture = try Fixture.make(files: [Self.customPath, Self.mtpPath])
+        defer { fixture.remove() }
+
+        let result = try await ZenCODESetupRunner.configureDS4Runtime(
+            existingManifest: nil,
+            prompts: DS4SetupPrompts(
+                promptFolder: { _ in fixture.root.path },
+                selectFiles: { _, _ in [Self.customPath] },
+                selectBackend: { _, backend in backend },
+                selectAuxiliaryFile: { _, _, _, _ in nil },
+                promptTuning: { _, defaults in
+                    AgentDS4RuntimeTuning(contextWindow: defaults.contextWindow, mtp: true, dspark: true)
+                }
+            ),
+            engine: Self.engine(fixture)
+        )
+
+        let manifest = try #require(result)
+        let runtime = try #require(manifest.models.first?.ds4Runtime)
+        #expect(!runtime.dspark)
+        #expect(!runtime.mtp)
+        #expect(runtime.mtpRelativePath == nil)
+    }
+
+    @Test
+    func onlyDeepSeekModelsUseDSpark() {
+        for id in ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4.1-flash", "DeepSeek-V4.1-Flash"] {
+            #expect(ZenCODESetupRunner.ds4UsesDSpark(apiModelID: id))
+        }
+        for id in ["qwen3.8-flash-next", "glm-5.2", "glm-5.3-flash"] {
+            #expect(!ZenCODESetupRunner.ds4UsesDSpark(apiModelID: id))
+        }
     }
 
     // MARK: Engine build

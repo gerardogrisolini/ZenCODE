@@ -120,26 +120,38 @@ files.
 1. Run `zen --setup` and select **DS4 local runtime (in-process engine)**, or
    reconfigure the DS4 provider from **Providers and models**. Both use the same
    flow and never call `/models`, because setup never loads the engine. When DS4
-   is already configured, the section first asks whether to reconfigure the
-   models or to rebuild the engine; see
+   is already configured, the section first asks whether to manage the models
+   or to rebuild the engine; see
    [Rebuild the DS4 engine](#rebuild-the-ds4-engine).
 2. Enter the absolute path of the DS4 checkout. A previously configured folder
    is offered as the default.
-3. ZenCODE scans only `<folder>/*.gguf` and `<folder>/gguf/*.gguf`, read-only,
-   and shows every regular GGUF in a multi-select menu. Configured files are
-   preselected. Each selected file becomes one model of the DS4 provider. An
-   empty selection or cancelling leaves the settings unchanged.
-4. For each selected model:
+3. ZenCODE scans only `<folder>/*.gguf` and `<folder>/gguf/*.gguf`, read-only.
+   Each model of the DS4 provider is one of these GGUF files.
+   - When no model is configured in the folder yet, setup shows every regular
+     GGUF in a multi-select menu and asks the questions of each file you
+     select. An empty selection or cancelling leaves the settings unchanged.
+   - Otherwise setup opens the **DS4 models** menu, where you work on one model
+     at a time; see [Manage the DS4 models](#manage-the-ds4-models).
+
+   Saved models whose GGUF is not in the folder are removed (setup prints a
+   note for each one). When you enter a different folder, the other saved
+   models move to it with their settings, without their vision projector or
+   DSpark support model when the new folder lacks that file.
+4. For each model that you add or configure:
    - choose the backend from `metal`, `cuda`, `rocm`, and `cpu` (default: the
      model's previous backend, otherwise `metal` on macOS and `cpu` elsewhere);
-   - optionally choose a vision projector and an MTP/DSpark support GGUF from
-     the other GGUF files of the folder;
    - set the runtime tuning (listed below);
+   - optionally choose a vision projector from the other GGUF files of the
+     folder;
+   - for a DeepSeek model, choose its DSpark support GGUF to turn DSpark on, or
+     **Off**. Only a support model that DSpark already used is proposed again.
+     The other families (GLM and Qwen) use their built-in MTP instead, asked in
+     the tuning;
    - the API model id is never typed. Setup takes it from the catalog of known
      models, then from the file name, then from the id already saved for the
      model when it is a served id. Only when none of the three identifies it,
      setup asks you to pick it from a menu of the ids that DS4 serves.
-5. Setup checks the engine library of each selected model. A library that is
+5. Setup checks the engine library of each model. A library that is
    built needs nothing. A library that is missing, or that must be rebuilt, is
    built after you answer **Build the DS4 engine now?** (default: yes). Setup
    asks this once for all the libraries to build; they are deduplicated by
@@ -158,9 +170,9 @@ files.
    detail of the provider.
 6. Finish setup normally. Only the final setup transaction writes settings.
    Non-DS4 providers, models, API keys, and unrelated settings are kept.
-   Re-running the flow replaces the DS4 models with the new selection and keeps
-   the id, title, parameter overrides, and thinking options of the models whose
-   file is still selected. Setup also assigns each DS4 model the `/think`
+   The models you did not configure keep their settings, and every model
+   keeps its id, title, parameter overrides, and thinking options. Setup also
+   assigns each DS4 model the `/think`
    levels of its family, without asking anything (see
    [Thinking](#thinking-think)); a model that already has saved levels keeps
    them, and a model configured earlier without levels gets them when you run
@@ -170,13 +182,32 @@ Setup never downloads a checkout or model weights, probes the hardware, loads a
 model, or calls `/models`. Each model keeps its own launch parameters. A new
 model starts from the defaults and never inherits the settings of another model.
 
+### Manage the DS4 models
+
+The **DS4 models** menu lists the configured models with their backend,
+context, SSD streaming, MTP or DSpark, and vision projector.
+
+- Select a model, then **Configure** to answer its questions again (step 4) or
+  **Delete** to remove it. The other models are not asked anything.
+- **Add models** lists the GGUF files of the folder that no model uses yet.
+  Setup asks the questions of each file you select. A file that had a model
+  before this setup starts from that model's settings.
+- **Done** keeps the models as they are in the menu and goes on to the engine
+  build. At least one model must remain: to remove DS4, delete its provider in
+  **Providers and models**.
+
+Esc inside **Configure** or **Add models** discards only that step and returns
+to the menu. Esc on the menu discards every change made in it and leaves the
+settings unchanged.
+
 ### Rebuild the DS4 engine
 
 When DS4 is already configured, the **DS4 local runtime (in-process engine)**
 section first shows a menu with two entries. Esc leaves the settings unchanged
 and builds nothing.
 
-- **Reconfigure DS4 models** runs the flow above.
+- **Manage DS4 models** asks for the folder, then opens the
+  [DS4 models](#manage-the-ds4-models) menu.
 - **Rebuild the DS4 engine** recompiles the library of every configured model in
   place. It rebuilds each library even when setup reports it as built, it does
   not ask **Build the DS4 engine now?** (choosing the entry is the confirmation),
@@ -196,27 +227,27 @@ until it restarts.
 ### Runtime tuning asked by setup
 
 Each value is asked per model and defaults to the saved value of that model.
-Cancelling any prompt leaves the settings unchanged.
+Esc on any prompt discards the answers for that model: in the DS4 models menu
+you return to the menu, otherwise the settings stay unchanged.
 
 | Prompt | Setting | Range and default |
 | --- | --- | --- |
 | Context window | `--ctx` (`contextWindow`) | 1 to 1,048,576 tokens; 65,536 |
 | SSD streaming | `--ssd-streaming` | Off |
-| MTP | `--mtp` (internal GLM multi-token prediction) | Off |
-| Power | `--power` (`power`) | 1 to 100; 100 |
-| Quality mode | `--quality` | Off |
-| Warm weights | `--warm-weights` | Off |
-| CPU threads | `-t` (`threads`) | Optional; `none` lets DS4 decide |
-| Prefill chunk | `--prefill-chunk` (`prefillChunk`) | Optional; `none` uses the DS4 default |
-| DSpark | `--dspark` | Off |
-| MTP draft tokens and margin | `--mtp-draft`, `--mtp-margin` | Asked when MTP, DSpark, or an MTP/DSpark support model is set: 1 to 16, and 0 to 1000 |
-| Steering file and scales | `--dir-steering-file`, `--dir-steering-ffn`, `--dir-steering-attn` | Scales from -100 to 100, asked when a file is set |
+| MTP | `--mtp` (multi-token prediction built into the GGUF) | GLM and Qwen only; off. DeepSeek models use DSpark instead and always get MTP off |
 | CUDA or ROCm architecture | `cudaArch` or `rocmArch` | Asked for `cuda` or `rocm` only |
-| Engine sessions | `engineSessions` | 1 to 8; 2 |
-| Extra engine arguments | `extraEngineArguments` | Advanced; see below |
 
-The SSD cache and preload options and cold streaming are not asked by setup. A
-model keeps the values it already has.
+The vision projector and, for DeepSeek, the DSpark support model are chosen
+from the GGUF files of the folder (step 4). Choosing a DSpark support model
+sets `dspark` and stores the file as `mtpRelativePath`; the other families get
+`dspark` off and no `mtpRelativePath`.
+
+Setup does not ask power, quality mode, warm weights, CPU threads, prefill
+chunk, MTP draft tokens and margin, directional steering, engine sessions,
+extra engine arguments, or the SSD cache, preload, and cold options. A model
+keeps the values it already has, and a new model gets the defaults: power 100,
+2 engine sessions, the DS4 defaults for the others. They remain in the settings
+file (see below).
 
 ## What is persisted
 
@@ -231,9 +262,9 @@ unchanged.
 | `backend` | `metal`, `cuda`, `rocm`, or `cpu` |
 | `contextWindow` | Context window (`--ctx`) and the context size ZenCODE uses for the model |
 | `ssdStreaming`, `ssdStreamingCacheExperts`, `ssdStreamingCacheBytes`, `ssdStreamingPreloadExperts`, `ssdStreamingCold` | SSD streaming and its cache, preload, and cold options |
-| `mtp`, `power` | Internal GLM MTP and the power duty cycle (1 to 100) |
+| `mtp`, `power` | Built-in MTP of the GLM and Qwen GGUFs and the power duty cycle (1 to 100) |
 | `visionRelativePath` | Vision projector GGUF, relative to the checkout |
-| `mtpRelativePath` | MTP/DSpark support GGUF, relative to the checkout |
+| `mtpRelativePath` | MTP/DSpark support GGUF, relative to the checkout; setup stores the DSpark support model of a DeepSeek model here |
 | `steeringRelativePath`, `steeringFFN`, `steeringAttn` | Directional steering file and its FFN and attention scales (-100 to 100) |
 | `dspark`, `mtpDraftTokens`, `mtpMargin` | DSpark, draft tokens (1 to 16), and MTP margin (0 to 1000) |
 | `quality`, `threads`, `prefillChunk`, `warmWeights` | Engine options |
