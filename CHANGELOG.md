@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [6.1.3] - 2026-11-21
+
 ### Added
 
 - macOS app: the sessions sidebar filters saved sessions by name or model, and
@@ -6281,7 +6283,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.2...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.3...HEAD
+[6.1.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.2...v6.1.3
 [6.1.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.1...v6.1.2
 [6.1.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.0...v6.1.1
 [6.1.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.0.1...v6.1.0
