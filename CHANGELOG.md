@@ -24,6 +24,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
   the free text of such an ACP or Telegram error) now name
   `ZenCODERuntime.<Type>` instead of `ZenCODECore.<Type>` for the types that
   moved; schemas and error codes are unchanged.
+- With the in-process DS4 engine, the terminal chat now draws `local.multiEdit`
+  live as well, while the model is still writing the call, next to
+  `local.writeFile`, `local.append`, `local.editFile`, and `local.replace`. The
+  `old` and `new` text of every item of `edits` is shown with the `- ` and `+ `
+  markers of an edit, in order and without a separator, and repainted in color
+  at the end of each row as for `local.editFile`; the JSON of the argument is
+  decoded as it streams and is not shown, and the drawing of the argument stops
+  if the JSON is malformed. The compact tool block follows as before, and omits
+  its header and target when it comes right after the preview of the same call.
+  `local.applyPatch` still shows only its compact block. Only the terminal
+  presentation changes: the runtime, `DirectAgentToolCallPreview`, and the
+  persisted formats are unchanged.
 
 ### Fixed
 

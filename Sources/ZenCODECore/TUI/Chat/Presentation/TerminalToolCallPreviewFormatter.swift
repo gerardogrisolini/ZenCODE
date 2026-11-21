@@ -11,7 +11,10 @@ import ZenCODERuntime
 /// Draws a file write or edit while the model is still writing its tool call,
 /// as ds4-agent does: a header row naming the canonical tool with the target
 /// path, then the source text printed as it arrives and repainted in color one
-/// row at a time.
+/// row at a time. The old and new text of every edit of a `local.multiEdit`
+/// call arrive inside the JSON of its `edits` argument: they are decoded as
+/// they stream (see ``EditListDecoder``) and drawn one after the other, as the
+/// separate arguments of `local.editFile` are, without the JSON around them.
 ///
 /// A pure state machine: it takes the ``DirectAgentToolCallPreview`` fragments
 /// in stream order and returns the exact text to write, without any I/O.
@@ -37,6 +40,10 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         case path
         /// Source text; each of its rows starts with `marker` when there is one.
         case code(marker: CodeMarker?)
+        /// A JSON array of edits: the `old` and `new` strings of its objects are
+        /// source text with the markers of an edit, in order and without a
+        /// separator; the rest of the JSON is not drawn.
+        case editList
     }
 
     /// The diff marker that starts every row of an edit's old or new text. It
@@ -86,10 +93,15 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         "new": .code(marker: .addition)
     ]
 
+    private static let multiEditParameters: [String: ParameterRole] = [
+        "path": .path,
+        "file_path": .path,
+        "edits": .editList
+    ]
+
     /// The drawn tool named `name`, compared on letters and digits only and
     /// without case, so `local_writeFile` is `local.writeFile`; `nil` for any
-    /// tool that is not drawn (`local.multiEdit` and `local.applyPatch`
-    /// included).
+    /// tool that is not drawn (`local.applyPatch` included).
     static func drawnTool(named name: String) -> DrawnTool? {
         switch normalizedToolName(name) {
         case "localwritefile":
@@ -100,6 +112,8 @@ struct TerminalToolCallPreviewFormatter: Sendable {
             DrawnTool(name: "local.editFile", parameters: editParameters)
         case "localreplace":
             DrawnTool(name: "local.replace", parameters: editParameters)
+        case "localmultiedit":
+            DrawnTool(name: "local.multiEdit", parameters: multiEditParameters)
         default:
             nil
         }
@@ -130,6 +144,9 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     /// The open argument when it is drawn; `nil` between arguments and inside
     /// an argument that is not drawn.
     private var parameter: ParameterRole?
+    /// The reading of the open argument when it is an edit list: it keeps its
+    /// place in the JSON across fragments, and across an interruption.
+    private var editList = EditListDecoder()
     private var pathIsShown = false
     private var path = ""
     private var language: String?
@@ -269,12 +286,14 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         case .path:
             path = ""
             pathIsShown = false
-        case .code:
+        case .code, .editList:
             output += closeHeader()
             // Content that arrives before any path is highlighted with the
             // generic profile, like an unknown extension.
             language = path.isEmpty ? nil : ToolLanguageHint.hint(forPath: path)
             resetRow()
+            // An edit list is read from the first scalar of its JSON.
+            editList = EditListDecoder()
         case nil:
             break
         }
@@ -296,6 +315,10 @@ struct TerminalToolCallPreviewFormatter: Sendable {
             for scalar in text.unicodeScalars {
                 output += appendCode(scalar, marker: marker, columns: columns)
             }
+        case .editList:
+            for scalar in text.unicodeScalars {
+                output += appendEdit(scalar, columns: columns)
+            }
         }
         // A call that stays suspended took only line breaks that complete
         // the row its interruption ended: they write nothing.
@@ -304,9 +327,17 @@ struct TerminalToolCallPreviewFormatter: Sendable {
 
     /// Whether `text` of the open argument writes anything. Every scalar of a
     /// path is shown; in source text only the line breaks that complete a row
-    /// already ended on screen write nothing.
+    /// already ended on screen write nothing. The text of an edit list is
+    /// decoded first, on a copy of the reading, and only the source text it
+    /// decodes to counts: the JSON around it, and the end of a string, write
+    /// nothing.
     private func draws(_ text: String) -> Bool {
-        guard case .code = parameter else {
+        switch parameter {
+        case .code:
+            break
+        case .editList:
+            return drawsEdit(text)
+        case .path, nil:
             return !text.isEmpty
         }
         var scalars = text.unicodeScalars[...]
@@ -321,6 +352,34 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         return !scalars.isEmpty
     }
 
+    /// ``draws(_:)`` for an edit list: the decoded scalars go through the
+    /// same line-break rules as ``appendEdit(_:columns:)``, on copies of the
+    /// state they change.
+    private func drawsEdit(_ text: String) -> Bool {
+        var decoder = editList
+        var rowWasEnded = rowWasEndedByInterruption
+        var pairsLineFeed = swallowsLineFeed
+        for scalar in text.unicodeScalars {
+            for event in decoder.consume(scalar) {
+                switch event {
+                case let .scalar(decoded, _):
+                    if !Self.absorbsLineBreak(
+                        decoded,
+                        rowWasEnded: &rowWasEnded,
+                        pairsLineFeed: &pairsLineFeed
+                    ) {
+                        return true
+                    }
+                case .stringEnded:
+                    // The end of a string closes its row and its line-break state.
+                    rowWasEnded = false
+                    pairsLineFeed = false
+                }
+            }
+        }
+        return false
+    }
+
     private mutating func endParameter(columns: () -> Int) -> String {
         let output = closeRow(columns: columns)
         parameter = nil
@@ -328,9 +387,23 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         return output
     }
 
-    /// Repaints and ends the current source row, if there is one.
+    /// Repaints and ends the current source row, if there is one, with the
+    /// marker of the argument open now: the one of its text, or the one of the
+    /// string of an edit list that is open.
     private mutating func closeRow(columns: () -> Int) -> String {
-        guard case let .code(marker) = parameter, !row.isEmpty else {
+        switch parameter {
+        case let .code(marker):
+            return closeRow(marker: marker, columns: columns)
+        case .editList:
+            return closeRow(marker: editList.openMarker, columns: columns)
+        case .path, nil:
+            resetRow()
+            return ""
+        }
+    }
+
+    private mutating func closeRow(marker: CodeMarker?, columns: () -> Int) -> String {
+        guard !row.isEmpty else {
             resetRow()
             return ""
         }
@@ -390,8 +463,11 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         headerIsOpen = true
         pathIsShown = false
         var output = headerTitle() + showPath(path)
-        if case .code = parameter {
+        switch parameter {
+        case .code, .editList:
             output += closeHeader()
+        case .path, nil:
+            break
         }
         return output
     }
@@ -411,24 +487,65 @@ struct TerminalToolCallPreviewFormatter: Sendable {
 
     // MARK: - Source rows
 
+    /// One scalar of an edit list: the source text it decodes to is drawn row
+    /// by row with the marker of its string, and the end of a string closes
+    /// its row, as the end of the `old` or `new` argument of `local.editFile`
+    /// does. Edits follow one another without a separator.
+    private mutating func appendEdit(
+        _ scalar: Unicode.Scalar,
+        columns: () -> Int
+    ) -> String {
+        var output = ""
+        for event in editList.consume(scalar) {
+            switch event {
+            case let .scalar(decoded, marker):
+                output += appendCode(decoded, marker: marker, columns: columns)
+            case let .stringEnded(marker):
+                output += closeRow(marker: marker, columns: columns)
+            }
+        }
+        return output
+    }
+
+    /// Whether `scalar` is a line break that completes a row already ended on
+    /// screen, and so writes nothing: the line break right after an
+    /// interruption that ended a row, or the line feed of a CRLF whose carriage
+    /// return ended the row. `rowWasEnded` and `pairsLineFeed` are the state of
+    /// ``rowWasEndedByInterruption`` and ``swallowsLineFeed``, updated as the
+    /// scalar changes them.
+    private static func absorbsLineBreak(
+        _ scalar: Unicode.Scalar,
+        rowWasEnded: inout Bool,
+        pairsLineFeed: inout Bool
+    ) -> Bool {
+        if rowWasEnded {
+            rowWasEnded = false
+            if scalar == "\n" || scalar == "\r" {
+                // The interruption already broke this row on screen.
+                pairsLineFeed = scalar == "\r"
+                return true
+            }
+        }
+        if pairsLineFeed {
+            pairsLineFeed = false
+            if scalar == "\n" {
+                return true
+            }
+        }
+        return false
+    }
+
     private mutating func appendCode(
         _ scalar: Unicode.Scalar,
         marker: CodeMarker?,
         columns: () -> Int
     ) -> String {
-        if rowWasEndedByInterruption {
-            rowWasEndedByInterruption = false
-            if scalar == "\n" || scalar == "\r" {
-                // The interruption already broke this row on screen.
-                swallowsLineFeed = scalar == "\r"
-                return ""
-            }
-        }
-        if swallowsLineFeed {
-            swallowsLineFeed = false
-            if scalar == "\n" {
-                return ""
-            }
+        if Self.absorbsLineBreak(
+            scalar,
+            rowWasEnded: &rowWasEndedByInterruption,
+            pairsLineFeed: &swallowsLineFeed
+        ) {
+            return ""
         }
         switch scalar {
         case "\n", "\r":
@@ -521,6 +638,7 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         headerIsOpen = false
         headerValueStyleIsOpen = false
         parameter = nil
+        editList = EditListDecoder()
         pathIsShown = false
         path = ""
         language = nil

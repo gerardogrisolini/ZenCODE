@@ -369,29 +369,35 @@ differ from the defaults of ds4-agent.
   tags between the parameters, and the end of a value), as in ds4-agent. The
   content of the parameter values is sampled normally.
 - While the model writes a call to `local.writeFile`, `local.append`,
-  `local.editFile`, or `local.replace`, the terminal draws it live, as ds4-agent
-  does, with one difference in the header row: ds4-agent labels it with a short
-  word (`write`, `append`, `edit`, `replace`), while ZenCODE names the tool
-  canonically (`local.writeFile`, `local.append`, `local.editFile`,
-  `local.replace`). The header carries the target path, then the text follows as
-  it is generated.
-  The old and new text of an edit start with `- ` and `+ `. A finished row is
-  repainted with the syntax colors of the file's extension when it is plain
+  `local.editFile`, `local.replace`, or `local.multiEdit`, the terminal draws it
+  live, as ds4-agent does, with one difference in the header row: ds4-agent
+  labels its calls with a short word (`write`, `append`, `edit`, `replace`),
+  while ZenCODE names the tool canonically (`local.writeFile`, `local.append`,
+  `local.editFile`, `local.replace`, `local.multiEdit`). The header carries the
+  target path, then the text follows as it is generated.
+  The old and new text of an edit start with `- ` and `+ `. For
+  `local.multiEdit`, every `old` and `new` of `edits` is shown the same way, in
+  order and without a separator between the edits, and without the JSON around
+  it: the strings are decoded as they stream, so the quotes, brackets, keys, and
+  escapes are not shown (`\n` is a line break). If the JSON of `edits` is
+  malformed, the drawing of that argument stops where it breaks. A finished row
+  is repainted with the syntax colors of the file's extension when it is plain
   ASCII and narrower than the terminal; any other row stays as written, and
   block comments are colored one row at a time. Nothing is cut: a long file
   scrolls in full. The text is the one the model writes, before any unescaping
-  of the call. When other output lands while a file is being written (a system
-  message, a request for authorization), the preview closes at the end of the
-  row it is on and reopens with its header at the next text of the call. When
-  the call is complete its compact tool block follows. When the preview showed
-  the same tool and path, the block follows it right away (no message,
-  overview, or other output in between), and the channel is an interactive
-  terminal, the block does not repeat the path and keeps only its status row;
-  otherwise it keeps its header and target as for any other tool.
-  Every other tool, `local.multiEdit` and `local.applyPatch` included, shows
-  only its compact block. The preview exists
-  only in the terminal chat: ACP, the headless and JSONL output, Telegram, the
-  macOS app, saved sessions, and sub-agents never receive it.
+  of the call (the JSON strings of `edits` excepted). When other output lands
+  while a file is being written (a system message, a request for authorization),
+  the preview closes at the end of the row it is on and reopens with its header
+  at the next text of the call. When the call is complete its compact tool block
+  follows. When the preview showed the same tool and path, the block follows it
+  right away (no message, overview, or other output in between), and the channel
+  is an interactive terminal, the block does not repeat the path and keeps only
+  its status row; otherwise it keeps its header and target as for any other
+  tool.
+  Every other tool, `local.applyPatch` included, shows only its compact block.
+  The preview exists only in the terminal chat: ACP, the headless and JSONL
+  output, Telegram, the macOS app, saved sessions, and sub-agents never receive
+  it.
 
 ### Context and compaction
 

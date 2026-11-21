@@ -13,7 +13,7 @@ import Testing
 extension TerminalToolCallPreviewFormatterTests {
     // MARK: - Ignored input
 
-    @Test(arguments: ["local.multiEdit", "local.applyPatch", "local.readFile", "local.exec", "agent.create"])
+    @Test(arguments: ["local.applyPatch", "local.readFile", "local.exec", "agent.create"])
     func toolsThatAreNotDrawnProduceNothing(name: String) {
         let events: [DirectAgentToolCallPreview] = [
             .toolStarted(name: name),
@@ -198,7 +198,7 @@ extension TerminalToolCallPreviewFormatterTests {
     func aToolThatIsNotDrawnRecordsNoCall() {
         var formatter = makeFormatter(interactive: false)
         _ = feed([
-            .toolStarted(name: "local.multiEdit"),
+            .toolStarted(name: "local.applyPatch"),
             .parameterStarted(name: "path"),
             .parameterText("A.swift")
         ], to: &formatter)

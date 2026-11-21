@@ -134,9 +134,11 @@ struct TerminalToolCallPreviewFormatterTests {
         ("local.append", "local.append"),
         ("local.editFile", "local.editFile"),
         ("local.replace", "local.replace"),
+        ("local.multiEdit", "local.multiEdit"),
         ("local_writeFile", "local.writeFile"),
         ("LOCAL.EDITFILE", "local.editFile"),
-        ("local-replace", "local.replace")
+        ("local-replace", "local.replace"),
+        ("local_multiEdit", "local.multiEdit")
     ])
     func drawnToolsAreRecognizedByTheirNormalizedName(name: String, canonicalName: String) {
         #expect(TerminalToolCallPreviewFormatter.drawsTool(named: name))

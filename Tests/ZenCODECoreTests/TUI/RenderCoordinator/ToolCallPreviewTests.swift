@@ -75,6 +75,21 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         return presentedToolCall(id: id, name: name, argumentsObject: arguments, argumentsJSON: json)
     }
 
+    /// A call to `local.multiEdit` with `path` as its target, as the executor
+    /// receives it after its preview.
+    private func multiEditCall(id: String, path: String = Self.path) -> DirectAgentToolCall {
+        let arguments: [String: Any] = [
+            "path": path,
+            "edits": [
+                ["old": "let x = 0", "new": "let x = 1"],
+                ["old": "let y = 0", "new": "let y = 1"]
+            ]
+        ]
+        let json = (try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        return presentedToolCall(id: id, name: "local.multiEdit", argumentsObject: arguments, argumentsJSON: json)
+    }
+
     private func screen(
         of renderer: TerminalChatRenderCoordinator,
         width: Int = 80
@@ -109,7 +124,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
 
         await renderer.writeThought("Planning")
         await send([
-            .toolStarted(name: "local.multiEdit"),
+            .toolStarted(name: "local.applyPatch"),
             .parameterStarted(name: "path"),
             .parameterText(Self.path),
             .parameterEnded,
@@ -178,6 +193,54 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         await reference.writeToolCallStarted(toolCall)
         await reference.writeToolCallCompleted(toolCall, result: Self.wroteOneLine)
         #expect(await screen(of: reference, width: columns) == "\n\n🛠️  local.writeFile\n/tmp/Example.swift ✅\n\n")
+    }
+
+    @Test
+    func theToolBlockOfAMultiEditAfterThePreviewKeepsOnlyItsStatus() async {
+        let columns = 80
+        let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
+        let reference = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
+        let toolCall = multiEditCall(id: "multi-1")
+        let applied = DirectAgentToolResult(output: "Applied 2 edits", summary: "Applied 2 edits")
+
+        // The JSON of `edits` arrives cut inside a key: only the old and new
+        // text of each edit is drawn.
+        await send([
+            .toolStarted(name: "local.multiEdit"),
+            .parameterStarted(name: "path"),
+            .parameterText(Self.path),
+            .parameterEnded,
+            .parameterStarted(name: "edits"),
+            .parameterText(#"[{"old": "let x = 0", "ne"#),
+            .parameterText(#"w": "let x = 1"}, {"old": "let y = 0\n", "new": "let y = 1"}]"#),
+            .parameterEnded,
+            .ended
+        ], to: renderer)
+        #expect(await renderer.snapshot().activeToolCallID == nil)
+
+        await renderer.writeToolCallStarted(toolCall)
+        // The preview header already showed the canonical name and the path.
+        #expect(await renderer.snapshot().activeToolRenderedRowCount == 1)
+        #expect(await renderer.previewMergedToolCallID == toolCall.id)
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
+        await renderer.writeToolCallCompleted(toolCall, result: applied)
+
+        let events = await renderer.capturedWriteEvents()
+        let rewrite = events.dropFirst(eventCountBeforeCompletion).first?.text ?? ""
+        #expect(rewrite.hasPrefix("\u{1B}[1A\r"))
+        #expect(rewrite.components(separatedBy: "\u{1B}[2K").count - 1 == 1)
+        let completed = terminalScreenText(events.renderedText(on: .standardError), width: columns)
+        #expect(completed == [
+            "", "", "🛠️  local.multiEdit /tmp/Example.swift",
+            "- let x = 0", "+ let x = 1", "- let y = 0", "+ let y = 1",
+            "✅", "", ""
+        ].joined(separator: "\n"))
+        #expect(completed.components(separatedBy: "local.multiEdit").count - 1 == 1)
+
+        // Without a preview the block keeps its header and its target.
+        await reference.writeToolCallStarted(toolCall)
+        await reference.writeToolCallCompleted(toolCall, result: applied)
+        #expect(await screen(of: reference, width: columns) == "\n\n🛠️  local.multiEdit\n/tmp/Example.swift ✅\n\n")
     }
 
     @Test
