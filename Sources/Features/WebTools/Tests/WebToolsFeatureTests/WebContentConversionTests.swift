@@ -458,7 +458,10 @@ extension WebContentConversionTests {
             }
             let content = try #require(result)
 
-            #expect(elapsed < .seconds(1), "leading blank <pre> lines took \(elapsed)")
+            // Wall-clock bound with headroom for contended CI runners (~0.1 s
+            // idle in debug); quadratic behaviour on 500k blank lines would
+            // still exceed it by far.
+            #expect(elapsed < .seconds(10), "leading blank <pre> lines took \(elapsed)")
             #expect(content.hasPrefix("```\n"))
             #expect(content.contains("x"))
             #expect(content.hasSuffix("\n```"))
