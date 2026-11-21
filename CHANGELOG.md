@@ -29,6 +29,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- ACP: the final file-change Summary is now a visually separate Markdown
+  section, with horizontal rules, a bold heading, and highlighted `/undo` and
+  `/changes diff` actions.
+
 - macOS app: the light theme uses readable text and status colors with at
   least 4.5:1 contrast on their surfaces, while the dark theme is unchanged.
   Streaming coalesces visual updates of the current block, syntax highlighting

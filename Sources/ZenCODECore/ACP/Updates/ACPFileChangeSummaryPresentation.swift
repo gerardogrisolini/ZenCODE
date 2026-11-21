@@ -9,11 +9,12 @@
 import Foundation
 import ToolCore
 
-/// The wire form of a turn's file-change Summary: the text the terminal and
-/// Telegram show (``TurnFileChangeSummaryPresentation``), with the `/undo` and
-/// `/changes` hint, as one standard `agent_message_chunk`. The Summary lives
-/// on the wire only: it is never part of the model's history or the saved
-/// transcript, and `/changes` and `/undo` read it from the controller.
+/// The wire form of a turn's file-change Summary: the same file details the
+/// terminal and Telegram show, formatted as a Markdown section with separators
+/// and highlighted `/undo` and `/changes` actions, as one standard
+/// `agent_message_chunk`. The Summary lives on the wire only: it is never part
+/// of the model's history or the saved transcript, and `/changes` and `/undo`
+/// read it from the controller.
 enum ACPFileChangeSummaryPresentation {
     /// The `agent_message_chunk` that presents `summary`, or `nil` when the
     /// turn changed no file.
@@ -21,8 +22,26 @@ enum ACPFileChangeSummaryPresentation {
         guard let summary, !summary.entries.isEmpty else { return nil }
         return ZenCODEACPBridge.textChunkJSONUpdate(
             kind: "agent_message_chunk",
-            text: TurnFileChangeSummaryPresentation.text(summary, includesCommandHint: true)
+            text: text(for: summary)
         )
+    }
+
+    /// A self-contained Markdown section, so the Summary stays visually
+    /// separate from both the assistant's answer and the next turn.
+    static func text(for summary: TurnFileChangeSummary) -> String {
+        let title = summary.fileCount == 1 ? "1 file" : "\(summary.fileCount) files"
+        var lines = [
+            "---",
+            "**🪬 Summary: \(title)  +\(summary.totalAdditions) -\(summary.totalDeletions)**",
+        ]
+        lines.append(contentsOf: summary.entries.map(TurnFileChangeSummaryPresentation.entry))
+        lines.append(
+            summary.canUndo
+                ? "**`/undo`** to revert · **`/changes diff`** to show patches."
+                : "Undo is not available for this summary."
+        )
+        lines.append("---")
+        return lines.joined(separator: "\n") + "\n"
     }
 }
 

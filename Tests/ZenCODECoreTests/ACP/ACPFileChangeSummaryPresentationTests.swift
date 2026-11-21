@@ -257,11 +257,11 @@ private struct SummaryFixture {
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct ACPFileChangeSummaryPresentationTests {
-    /// The Summary of one new file, `hello\n`, as ACP presents it: the shared
-    /// text with the `/undo` and `/changes` hint.
+    /// The Summary of one new file, `hello\n`, as a separated Markdown section
+    /// with highlighted `/undo` and `/changes` actions.
     private static func summaryText(of name: String) -> String {
-        "\n🪬 Summary: 1 file  +1 -0\n  added \(name)  +1 -0\n"
-            + "Use /undo to revert, /changes diff to show patches.\n"
+        "---\n**🪬 Summary: 1 file  +1 -0**\n  added \(name)  +1 -0\n"
+            + "**`/undo`** to revert · **`/changes diff`** to show patches.\n---\n"
     }
 
     private static func withFixture(
@@ -318,7 +318,7 @@ struct ACPFileChangeSummaryPresentationTests {
     // MARK: - The text
 
     @Test
-    func theSummaryIsTheSharedTextWithTheCommandHintAsAStandardMessageChunk() throws {
+    func theSummaryIsASeparatedMarkdownSectionWithHighlightedCommands() throws {
         func entry(existedBefore: Bool, beforeData: String?) -> TurnFileChangeSummary.Entry {
             .init(
                 path: "Sources/App.swift", additions: 3, deletions: 1, status: .modified,
@@ -331,8 +331,9 @@ struct ACPFileChangeSummaryPresentationTests {
         let update = try #require(ACPFileChangeSummaryPresentation.update(for: undoable))
         #expect(update == ZenCODEACPBridge.textChunkJSONUpdate(
             kind: "agent_message_chunk",
-            text: "\n🪬 Summary: 1 file  +3 -1\n  modified Sources/App.swift  +3 -1\n"
-                + "Use /undo to revert, /changes diff to show patches.\n"
+            text: "---\n**🪬 Summary: 1 file  +3 -1**\n"
+                + "  modified Sources/App.swift  +3 -1\n"
+                + "**`/undo`** to revert · **`/changes diff`** to show patches.\n---\n"
         ))
         #expect(update.objectValue?["sessionUpdate"] == .string("agent_message_chunk"))
 
@@ -342,8 +343,9 @@ struct ACPFileChangeSummaryPresentationTests {
             ACPFileChangeSummaryPresentation.update(for: notUndoable)?
                 .objectValue?["content"]?.objectValue?["text"]?.stringValue
         )
-        #expect(text == TurnFileChangeSummaryPresentation.text(notUndoable, includesCommandHint: true))
-        #expect(text.hasSuffix("Undo is not available for this summary.\n"))
+        #expect(text == "---\n**🪬 Summary: 1 file  +3 -1**\n"
+            + "  modified Sources/App.swift  +3 -1\n"
+            + "Undo is not available for this summary.\n---\n")
 
         // A turn that changed nothing presents nothing.
         #expect(ACPFileChangeSummaryPresentation.update(for: nil) == nil)
