@@ -75,6 +75,19 @@ final class PrimaryScreenCapture: Sendable {
         screen.commitFooter(geometry: .init(rows: rows, columns: columns), reservedRows: 4,
                             sequence: footer(rows: rows, columns: columns), rebuild: rebuild)
     }
+    /// The chrome sequence for `reservedRows` rows, as the bottom panel has it
+    /// when a draft wraps, a dictation preview or command suggestions appear.
+    private func footer(rows: Int, reservedRows: Int) -> String {
+        (0..<reservedRows).map { index in
+            let text = index == 0 ? "PROMPT| draft" : index == reservedRows - 1 ? "STATUS| ready" : "PANEL| row \(index)"
+            return "\u{1B}[\(rows - reservedRows + 1 + index);1H\u{1B}[2K" + text
+        }.joined()
+    }
+    /// Commits the same geometry with a bottom panel of a different height.
+    private func commit(_ screen: TerminalPrimaryScreen, reservedRows: Int, rows: Int = 24, columns: Int = 100) {
+        screen.commitFooter(geometry: .init(rows: rows, columns: columns), reservedRows: reservedRows,
+                            sequence: footer(rows: rows, reservedRows: reservedRows))
+    }
 
     @Test func dedicatedMenuNeverPushesChromeInsteadOfTranscriptIntoHistory() {
         let capture = PrimaryScreenCapture()
@@ -187,6 +200,58 @@ final class PrimaryScreenCapture: Sendable {
         #expect(!screen.removeOwnedTail(rows: 1, expectedAnchor: next))
         #expect(capture.visible.contains("diagnostic must survive"))
         #expect(!screen.removeOwnedTail(rows: 1, expectedAnchor: nil))
+    }
+
+    @Test func ownedTailSurvivesTheBottomPanelGrowingAndShrinking() {
+        let capture = PrimaryScreenCapture(), screen = capture.screen()
+        install(screen)
+        screen.append("stable\n")
+        let first = screen.append("old A\nold B\n")
+        commit(screen, reservedRows: 6)
+        #expect(screen.removeOwnedTail(rows: 2, expectedAnchor: first))
+        #expect(capture.visible.contains("stable"))
+        #expect(!capture.visible.contains("old A"))
+        #expect(!capture.visible.contains("old B"))
+        #expect(capture.visible.contains("PANEL| row 4"))
+        #expect(capture.visible.components(separatedBy: "STATUS|").count == 2)
+
+        let second = screen.append("new A\nnew B\n")
+        commit(screen, reservedRows: 4)
+        #expect(screen.removeOwnedTail(rows: 2, expectedAnchor: second))
+        #expect(capture.visible.contains("stable"))
+        #expect(!capture.visible.contains("new A"))
+        #expect(!capture.visible.contains("new B"))
+        #expect(!capture.visible.contains("PANEL| row 3"))
+        #expect(capture.visible.components(separatedBy: "STATUS|").count == 2)
+    }
+
+    @Test func ownedTailSurvivesAPanelGrowthThatScrollsAFullTranscript() {
+        let capture = PrimaryScreenCapture(), screen = capture.screen()
+        install(screen)
+        for index in 0..<40 { screen.append("line \(index)|\n") }
+        let receipt = screen.append("block A\nblock B\n")
+        #expect(capture.visible.contains("block B"))
+        commit(screen, reservedRows: 7) // the transcript scrolls by the 3 extra rows
+        #expect(screen.removeOwnedTail(rows: 2, expectedAnchor: receipt))
+        #expect(!capture.visible.contains("block A"))
+        #expect(!capture.visible.contains("block B"))
+        #expect(capture.visible.contains("line 39|"))
+        #expect(capture.visible.components(separatedBy: "STATUS|").count == 2)
+    }
+
+    @Test func aResizeStillInvalidatesTheOwnedTail() async throws {
+        let capture = PrimaryScreenCapture(), screen = capture.screen()
+        install(screen)
+        screen.append("stable\n")
+        let receipt = screen.append("old A\nold B\n")
+        capture.resize(rows: 24, columns: 80)
+        #expect(!screen.removeOwnedTail(rows: 2, expectedAnchor: receipt))
+        install(screen, columns: 80, rebuild: true)
+        try await capture.answerReport()
+        #expect(screen.validReceipt != nil)
+        #expect(!screen.removeOwnedTail(rows: 2, expectedAnchor: receipt))
+        #expect(capture.visible.contains("old A"))
+        #expect(capture.visible.contains("old B"))
     }
 
     @Test func secondResizeDuringCPRRequeriesAfterTheStaleReply() async throws {

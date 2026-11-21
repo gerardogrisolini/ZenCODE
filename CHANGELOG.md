@@ -43,6 +43,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
   It was most visible with `/voice on`, which asks the model to comment while
   it works.
 
+- Terminal UI: the Sub-Agents section, and a pending tool block, was sometimes
+  repeated instead of being updated in place when the height of the bottom
+  panel changed (a draft that wraps, typed or dictated with `/voice`, or the
+  command suggestions). It is now updated in place; after the terminal is
+  resized it is still rewritten below.
+
 ## [6.1.3] - 2026-11-21
 
 ### Added

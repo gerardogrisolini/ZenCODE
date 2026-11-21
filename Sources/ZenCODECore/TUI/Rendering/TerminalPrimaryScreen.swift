@@ -268,7 +268,12 @@ final class TerminalPrimaryScreen: @unchecked Sendable {
             cursorRow = max(1, cursorRow - amount)
         }
         output(sequence + margins + surfaces() + park())
-        revision &+= 1
+        // Without a resize the owned tail keeps its geometry: growing the chrome
+        // scrolls the transcript by the same rows `cursorRow` moves, and shrinking
+        // it moves neither. The owned rows stay the ones just above `cursorRow`,
+        // so receipts stay valid. After a resize the terminal reflowed the text
+        // and they no longer are.
+        if afterResize { revision &+= 1 }
     }
 
     /// The receipt is captured INSIDE the write transaction. A later diagnostic
