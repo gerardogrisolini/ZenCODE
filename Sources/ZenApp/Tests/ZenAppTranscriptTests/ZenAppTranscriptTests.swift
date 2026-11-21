@@ -425,6 +425,7 @@ struct ZenStatusRoleTests {
 
 // MARK: - Welcome summary
 
+@MainActor
 @Suite("Welcome summary")
 struct ZenWelcomeSummaryTests {
     private static let workspace = URL(fileURLWithPath: "/tmp/project")

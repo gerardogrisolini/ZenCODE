@@ -98,6 +98,7 @@ struct ZenAttachmentPreviewTests {
     }
 
     @Test("Quick Look shows the file when it exists, else the bytes")
+    @MainActor
     func quickLookSource() throws {
         let directory = try Self.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -239,6 +240,7 @@ struct ZenAttachmentPreviewTests {
     }
 
     @Test("a preview is scaled down to fit, never up")
+    @MainActor
     func fittedSize() {
         #expect(ZenAttachmentPreviewView.fittedSize(CGSize(width: 1280, height: 800)) == CGSize(width: 320, height: 200))
         #expect(ZenAttachmentPreviewView.fittedSize(CGSize(width: 640, height: 1280)) == CGSize(width: 100, height: 200))

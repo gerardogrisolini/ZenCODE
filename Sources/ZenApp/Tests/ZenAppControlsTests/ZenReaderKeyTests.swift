@@ -16,6 +16,12 @@ import Testing
 
 @Suite("Composer reader keys")
 struct ZenReaderKeyTests {
+    /// The function flag the arrow keys carry on a keyboard with a Fn key.
+    /// `EventModifiers.function` is deprecated since macOS 12 (reserved for
+    /// system applications), so the flag comes from its raw value instead of
+    /// naming the deprecated member.
+    private static let functionFlag = EventModifiers(rawValue: 1 << 6)
+
     @Test("the unmodified arrows, Home and End map to the terminal's reader actions")
     func mapping() {
         #expect(ZenComposerLogic.readerKey(for: .leftArrow, modifiers: []) == .previousMessage)
@@ -28,7 +34,10 @@ struct ZenReaderKeyTests {
 
     @Test("Caps Lock and the numeric-pad and function flags the arrow keys carry do not count")
     func ignoredFlags() {
-        let flags: [EventModifiers] = [.capsLock, .numericPad, .function, [.numericPad, .function], [.capsLock, .function]]
+        let flags: [EventModifiers] = [
+            .capsLock, .numericPad, Self.functionFlag,
+            [.numericPad, Self.functionFlag], [.capsLock, Self.functionFlag],
+        ]
         for flag in flags {
             #expect(ZenComposerLogic.readerKey(for: .leftArrow, modifiers: flag) == .previousMessage)
             #expect(ZenComposerLogic.readerKey(for: .rightArrow, modifiers: flag) == .nextMessage)
@@ -45,7 +54,7 @@ struct ZenReaderKeyTests {
         let modifiers: [EventModifiers] = [
             .shift, .option, .command, .control,
             [.shift, .option], [.command, .shift],
-            [.function, .shift], [.numericPad, .function, .option],
+            [Self.functionFlag, .shift], [.numericPad, Self.functionFlag, .option],
         ]
         for key in keys {
             for modifier in modifiers {
