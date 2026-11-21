@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 private struct DetailedToolSnippet {
     let lines: [String]

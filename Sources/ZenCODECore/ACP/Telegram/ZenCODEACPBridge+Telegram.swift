@@ -8,6 +8,7 @@
 import Foundation
 import Synchronization
 import ToolCore
+import ZenCODERuntime
 
 /// The channel hooks of every slot an ACP bridge opens: the composition and
 /// the environment of the turns the slot's Telegram channel runs

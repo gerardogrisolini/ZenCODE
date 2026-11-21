@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// The feature workflow of a delegated Builder: a sub-agent with the `builder`
 /// role whose grant admits `feature.scaffold` receives the "Delegated feature

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 struct TerminalChatBoldBreakState {
     var previousCharacter: Character?

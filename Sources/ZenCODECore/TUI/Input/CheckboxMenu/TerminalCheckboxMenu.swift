@@ -13,6 +13,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import ZenCODERuntime
 
 public struct TerminalCheckboxMenuItem<Value: Hashable> {
     public let value: Value

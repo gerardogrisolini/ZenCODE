@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Shared entry points for launching ZenCODE terminal, Telegram, and ACP runtimes.
 public enum AgentRuntimeLauncher {

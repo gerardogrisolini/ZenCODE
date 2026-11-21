@@ -12,6 +12,7 @@ import Darwin
 import Glibc
 #endif
 import Foundation
+import ZenCODERuntime
 
 extension TerminalChat {
     /// Adapter of ``ChatSessionController/resolveInitialModel()``.

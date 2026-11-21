@@ -8,6 +8,7 @@ import Foundation
 #if canImport(os)
 import os
 #endif
+import ZenCODERuntime
 
 extension TerminalInteractiveLineReader {
     public func setPanelProcessing(_ isProcessing: Bool) async {

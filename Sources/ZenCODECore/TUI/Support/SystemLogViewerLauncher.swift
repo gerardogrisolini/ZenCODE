@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 enum SystemLogViewerLauncher {
     struct Command: Sendable, Equatable {

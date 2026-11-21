@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Assistant and thought stream rendering plus the streaming write-coalescing machinery (leading-edge flush, trailing-edge timer, byte budget).
 extension TerminalChatRenderCoordinator {

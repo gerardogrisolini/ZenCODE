@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension TerminalChat {
     /// The input-panel catalogue combines ordinary slash commands with live

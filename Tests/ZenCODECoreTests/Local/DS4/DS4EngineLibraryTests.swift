@@ -15,6 +15,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
@@ -31,7 +32,7 @@ private enum DS4LibraryFixtures {
             .deletingLastPathComponent() // ZenCODECoreTests
             .deletingLastPathComponent() // Tests
             .deletingLastPathComponent() // repository root
-            .appendingPathComponent("Sources/ZenCODECore/Resources/DS4Engine/zencode_ds4_abi.h")
+            .appendingPathComponent("Sources/ZenCODERuntime/Resources/DS4Engine/zencode_ds4_abi.h")
     }
 
     static func header() throws -> String {

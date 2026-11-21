@@ -7,6 +7,7 @@ import Crypto
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// A throwaway DS4 root (with `ds4.h`) and support directory under a UUID-named
 /// temporary directory. Never touches the real support directory.

@@ -11,6 +11,7 @@ import Darwin
 import Glibc
 #endif
 import Foundation
+import ZenCODERuntime
 import ZenPackageMetadata
 
 /// `zen --telegram`: a session without the TUI, driven only by the linked

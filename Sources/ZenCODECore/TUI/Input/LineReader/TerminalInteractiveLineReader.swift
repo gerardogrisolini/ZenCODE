@@ -16,6 +16,7 @@ import Synchronization
 #if canImport(os)
 import os
 #endif
+import ZenCODERuntime
 
 public final class TerminalInteractiveLineReader: Sendable {
     enum Key: Equatable, Sendable {

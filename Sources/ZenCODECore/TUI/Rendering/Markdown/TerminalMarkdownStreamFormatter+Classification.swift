@@ -7,6 +7,7 @@
 
 import Foundation
 import Markdown
+import ZenCODERuntime
 
 extension TerminalMarkdownStreamFormatter {
     func lineContinuesBlock(_ line: String, trimmed: String) -> Bool {

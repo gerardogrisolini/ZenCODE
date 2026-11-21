@@ -13,6 +13,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import ZenCODERuntime
 
 public enum ZenCODECommandLineRunner {
     /// Meta-commands that keep their normal textual behavior and exit code.

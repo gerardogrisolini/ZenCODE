@@ -14,6 +14,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// `MockDS4Engine` plus a record of every synced transcript and generate call
 /// (a transcript synced from a prepared one is recorded as its operations).

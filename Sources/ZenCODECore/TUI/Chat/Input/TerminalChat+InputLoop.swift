@@ -12,6 +12,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import ZenCODERuntime
 
 extension TerminalChat {
     /// Mirrors staged attachments into the input panel.  `promptAttempt`

@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODEACPBridge {
     public func sendUserMessageChunk(sessionID: String, text: String) async {

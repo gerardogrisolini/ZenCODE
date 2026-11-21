@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Keys accepted by the sub-agent detail panel while it owns the input
 /// panel. Public because `TerminalPromptInputEvent` carries it; the panel

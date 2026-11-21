@@ -5,6 +5,7 @@ import NIOPosix
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("ChatGPTSubscriptionWebSocketPool HTTP teardown", .serialized)
 struct ChatGPTSubscriptionWebSocketPoolHTTPTeardownTests {

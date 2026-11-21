@@ -22,6 +22,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension RemoteTransportCoreTests {
     @Test("WebSocket supports text, binary, ping/pong and close frames")

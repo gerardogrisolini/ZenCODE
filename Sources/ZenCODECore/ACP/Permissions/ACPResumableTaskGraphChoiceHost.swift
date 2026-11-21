@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// ACP host of the startup offer of the task graphs earlier sessions left
 /// incomplete (``ChatSessionController/offerResumableTaskGraphs(choiceHost:)``),

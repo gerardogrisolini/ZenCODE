@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension TerminalChat {
     /// A detailed tool row before terminal rendering. Side-by-side diff cells

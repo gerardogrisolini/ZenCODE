@@ -10,6 +10,7 @@ import Foundation
 import CryptoKit
 #endif
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Testing
 import ToolCore
 

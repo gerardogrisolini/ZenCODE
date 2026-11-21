@@ -8,6 +8,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension TerminalSubAgentDetailController {
     /// One entry per snapshot, made only of what does not go stale while the

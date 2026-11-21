@@ -8,6 +8,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODEACPBridge {
     /// The server ids (`DirectMCPToolRuntime.externalServerID(for:)`) of the

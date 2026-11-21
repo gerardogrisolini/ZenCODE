@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Test func categoryCodableRoundTrip() throws {
     let values: [EngineMemoryCategory] = [.fact, .preference, .entity, .correction, .custom("procedure")]

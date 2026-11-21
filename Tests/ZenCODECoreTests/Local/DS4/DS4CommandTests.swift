@@ -11,6 +11,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("DS4 command", .serialized)
 struct DS4CommandTests {

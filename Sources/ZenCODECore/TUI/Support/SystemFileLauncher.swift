@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Shared, cross-platform launcher for files and URLs opened by terminal commands.
 enum SystemFileLauncher {

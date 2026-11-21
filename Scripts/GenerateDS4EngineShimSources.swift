@@ -24,13 +24,13 @@ enum GenerateDS4EngineShimSources {
         Source(
             fileName: "zencode_ds4_abi.h",
             propertyName: "abiHeader",
-            relativePath: "Sources/ZenCODECore/Resources/DS4Engine/zencode_ds4_abi.h",
+            relativePath: "Sources/ZenCODERuntime/Resources/DS4Engine/zencode_ds4_abi.h",
             summary: "C ABI header of the DS4 engine shim."
         ),
         Source(
             fileName: "zencode_ds4_shim.c",
             propertyName: "shimSource",
-            relativePath: "Sources/ZenCODECore/Resources/DS4Engine/zencode_ds4_shim.c",
+            relativePath: "Sources/ZenCODERuntime/Resources/DS4Engine/zencode_ds4_shim.c",
             summary: "C source of the DS4 engine shim."
         ),
         Source(
@@ -41,7 +41,7 @@ enum GenerateDS4EngineShimSources {
         )
     ]
 
-    static let outputRelativePath = "Sources/ZenCODECore/Local/DS4/Engine/DS4EngineShimSources.generated.swift"
+    static let outputRelativePath = "Sources/ZenCODERuntime/Local/DS4/Engine/DS4EngineShimSources.generated.swift"
 
     static func run() throws {
         let check = CommandLine.arguments.dropFirst() == ["--check"]

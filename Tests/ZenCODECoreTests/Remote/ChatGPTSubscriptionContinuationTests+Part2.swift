@@ -12,6 +12,7 @@
 import Foundation
 import Synchronization
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Testing
 import ToolCore
 

@@ -22,6 +22,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @ChatSessionActor
 @Suite("Telegram channel ingress precedence", .serialized, .timeLimit(.minutes(3)))

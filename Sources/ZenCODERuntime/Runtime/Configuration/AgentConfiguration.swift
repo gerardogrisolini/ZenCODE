@@ -1,0 +1,567 @@
+//
+//  AgentConfiguration.swift
+//  ZenCODE
+//
+//  Created by Gerardo Grisolini on 26/05/26.
+//
+
+#if canImport(Darwin)
+
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
+import Dispatch
+import Foundation
+import ToolCore
+
+public enum AgentRunMode: String, Sendable {
+    case acp
+    case tui
+    case telegram
+    case headless
+}
+
+public enum AgentResolvedRunMode: Sendable {
+    case acp
+    case tui
+    case telegram
+    case headless
+}
+
+/// The Git worktree requested with `--worktree NAME`.
+///
+/// The configuration only records the request: the worktree is created (or
+/// reused) by `AgentWorktreeManager` before the arguments are parsed, and its
+/// directory reaches the parser as the last `--working-directory`.
+public struct AgentWorktree: Sendable, Equatable {
+    /// The worktree name, which is also the name of its branch.
+    public let name: String
+    /// The working directory of the worktree.
+    public let directory: URL
+
+    public init(name: String, directory: URL) {
+        self.name = name
+        self.directory = directory
+    }
+}
+
+public struct AgentConfiguration: Sendable {
+    public static let helpText = """
+    ZenCODE
+
+    Autonomous ZenCODE CLI and ACP agent.
+
+    Usage:
+      zen [--setup] [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--acp] [--agent NAME] [--model MODEL_ID] [--working-directory PATH] [--worktree NAME] [--skills LIST]
+
+    Modes:
+      --tui                  Human terminal chat (default).
+      -p, --prompt PROMPT    Run one headless text prompt.
+      -f PATH                Run one headless prompt read from a file (absolute path). With -p, the file is added as context.
+      --jsonl                Emit headless events and the result as JSON Lines (use with -p/--prompt or -f).
+      --acp                  ACP JSON-RPC over stdio for compatible clients.
+      --telegram             Run the session from the linked Telegram chat, without the TUI (Telegram must be set up and paired with zen --setup).
+      --setup                Open the interactive setup and exit. Requires an interactive terminal; cannot be combined with other options.
+
+    Agent runtime:
+      --agent NAME           Agent profile from ~/.zencode/agents.json. Default is used when omitted.
+      --model MODEL_ID        Configured model id <provider>:<model> (for example openrouter:openrouter/auto or chatgpt:gpt-5) or its model name. Overrides the agent-selected model for this run.
+      --working-directory PATH
+                              Working directory for local tools. Default: current directory, or home when launched from the executable directory.
+      --worktree NAME         Work in the Git worktree NAME of the repository (created in <support>/worktrees on first use); terminal and --ui only.
+      --skills LIST           Initial skill selection by name/number, all, or none. In the TUI use /skills to change or install skills.
+      --max-tool-rounds N     Maximum model/tool loop rounds per prompt. Default: \(AgentToolRoundPolicy.defaultMaxToolRounds).
+      --max-output-tokens N   Maximum generated tokens per model call. Default: model default.
+
+    Tool discovery:
+      In the TUI, use /agents to switch agent profiles without restarting the TUI.
+      In the TUI, use /tools to enable local, shell, search, git, memory, sub-agent, or optional feature tools.
+      In the TUI, use the Builder agent to create and manage generated Swift feature packages with /feature.
+      In the TUI, use /skills to select prompt skills installed by the app or install a skill from GitHub or a local folder.
+      In the TUI, use /attach to add image or video files to the next prompt.
+      In the TUI, use /changes to review tracked file changes and /undo to revert the latest tracked changes.
+      In the TUI, delegated sub-agent status is shown automatically in the chat flow.
+      In ACP mode, clients pass the enabled tools to the agent runtime.
+      Figma MCP tools are added when the local Figma desktop MCP server exposes tools.
+
+    Environment:
+      ZENCODE_AGENT_NAME           Agent profile from ~/.zencode/agents.json. Default is used when omitted.
+      ZENCODE_AGENT_MODEL          Configured model id <provider>:<model> or its model name. Overrides the agent-selected model for this run.
+      ZENCODE_AGENT_CWD            Working directory for local tools.
+      ZENCODE_AGENT_SKILLS         Initial chat skill selection by name/number, all, or none.
+
+    With -p or -f, piped stdin is supplied as additional context.
+    In ACP mode stdout contains only ACP JSON-RPC messages. In headless mode stdout contains only the final assistant text, unless `--jsonl` is supplied.
+    `--jsonl` is ignored with `--help`, `--version`, `--doctor`, and `--install-features`; those meta-commands keep their normal textual output and exit code.
+
+    Example:
+      zen --jsonl -p "Summarize the current changes"
+    """
+
+    public let modelID: String?
+    public let agentName: String?
+    /// The agent profile name explicitly requested (`--agent`, `ZENCODE_AGENT`,
+    /// or the hosted `agentName`), trimmed; `nil` when none was requested and
+    /// the project's default developer was used instead.
+    public let requestedAgentName: String?
+    public let selectedAgent: AgentProfile?
+    public let effectiveModelID: String?
+    /// The mode the options select (`--tui`, `--telegram`, `--acp`, `-p`/`--prompt`,
+    /// `-f`, `--jsonl`). Without a mode option it is `.tui`, or `.acp` when
+    /// the configuration is built with `appModeOverride: true`.
+    public let runMode: AgentRunMode
+    /// Enables the machine-readable JSON Lines headless output protocol.
+    public let jsonl: Bool
+    /// Inline prompt supplied by `-p`; nil is invalid for a headless turn unless
+    /// `headlessPromptFile` is set.
+    public let headlessPrompt: String?
+    /// Absolute path of the prompt file supplied by `-f`, exactly as given. The
+    /// file is read when the headless run starts, not when arguments are parsed.
+    public let headlessPromptFile: String?
+    public let workingDirectory: URL
+    /// The Git worktree requested with `--worktree`, whose directory is
+    /// `workingDirectory`; `nil` when none was requested.
+    public let worktree: AgentWorktree?
+    public let initialSkillSelection: String?
+    public let maxToolRounds: Int
+    public let maxOutputTokens: Int?
+    public let appMode: Bool
+    public let printHelp: Bool
+    public let printVersion: Bool
+    public let printDoctor: Bool
+    public let hostedAgentProfiles: [AgentProfile]?
+    public let hostedModels: [AgentSettingsModelManifest]?
+
+    public init(
+        arguments rawArguments: [String],
+        appModeOverride: Bool? = nil
+    ) throws {
+        try self.init(
+            arguments: rawArguments,
+            appModeOverride: appModeOverride,
+            loadPersistedConfiguration: true
+        )
+    }
+
+    /// Validates command-line syntax without requiring settings or agent files.
+    /// The executable uses this before the setup gate, so an unknown option is
+    /// reported as such even while ZenCODE is not configured.
+    public static func validateArguments(_ rawArguments: [String]) throws {
+        _ = try Self(
+            arguments: rawArguments,
+            appModeOverride: false,
+            loadPersistedConfiguration: false
+        )
+    }
+
+    /// Builds a configuration from command-line arguments alone, without reading
+    /// any persisted settings or agent profile. The arguments get the same
+    /// validation as `validateArguments(_:)`.
+    ///
+    /// Used by `zen --acp` while ZenCODE is not set up yet: the ACP bridge must
+    /// still answer `initialize` so the client can offer the terminal setup
+    /// method. The resulting configuration has no manifest, so
+    /// `effectiveModelID` is `nil` unless `--model` is given.
+    package static func withoutPersistedConfiguration(
+        arguments rawArguments: [String]
+    ) throws -> AgentConfiguration {
+        try AgentConfiguration(
+            arguments: rawArguments,
+            appModeOverride: false,
+            loadPersistedConfiguration: false
+        )
+    }
+
+    private init(
+        arguments rawArguments: [String],
+        appModeOverride: Bool?,
+        loadPersistedConfiguration: Bool
+    ) throws {
+        let arguments = ZenCODECommandLineArgumentSanitizer.sanitized(rawArguments)
+        let environment = ProcessInfo.processInfo.environment
+        func agentEnvironmentValue(_ key: String) -> String? {
+            environment["ZENCODE_AGENT_\(key)"]
+        }
+
+        var rawAgentName = environment["ZENCODE_AGENT"]
+            ?? agentEnvironmentValue("NAME")
+            ?? agentEnvironmentValue("AGENT")
+        var rawModelID = agentEnvironmentValue("MODEL")
+        var requestedRunMode: AgentRunMode?
+        var rawHeadlessPrompt: String?
+        var rawHeadlessPromptFile: String?
+        var rawJSONL = false
+        let environmentWorkingDirectory = agentEnvironmentValue("CWD")?.nilIfBlank
+        var hasExplicitWorkingDirectory = environmentWorkingDirectory != nil
+        var rawWorkingDirectory = Self.defaultWorkingDirectoryRawPath(environment: environment)
+        var rawInitialSkillSelection = agentEnvironmentValue("SKILLS")
+        var rawMaxToolRounds = agentEnvironmentValue("MAX_TOOL_ROUNDS")
+        var rawMaxOutputTokens = agentEnvironmentValue("MAX_OUTPUT_TOKENS")
+        var shouldPrintHelp = false
+        var shouldPrintVersion = false
+        var shouldPrintDoctor = false
+        var requestedModeFlag: String?
+        var explicitlyRequestedInlinePrompt = false
+        var requestedWorktreeName: String?
+
+        var index = 1
+        while index < arguments.count {
+            let argument = arguments[index]
+            switch argument {
+            case "--help", "-h":
+                shouldPrintHelp = true
+            case "--version":
+                shouldPrintVersion = true
+            case "--doctor":
+                shouldPrintDoctor = true
+            case "--model":
+                index += 1
+                guard index < arguments.count else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                rawModelID = arguments[index]
+            case "--agent":
+                index += 1
+                guard index < arguments.count else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                rawAgentName = arguments[index]
+            case "--tui", "--telegram", "--acp":
+                // The mode flags exclude each other and every headless option.
+                // Repeating the same flag is harmless.
+                if let seenModeFlag = requestedModeFlag, seenModeFlag != argument {
+                    throw AgentConfigurationError.conflictingOptions(argument, seenModeFlag)
+                }
+                guard !explicitlyRequestedInlinePrompt else {
+                    throw AgentConfigurationError.conflictingOptions(argument, "-p/--prompt")
+                }
+                guard rawHeadlessPromptFile == nil else {
+                    throw AgentConfigurationError.conflictingOptions(argument, "-f")
+                }
+                guard !rawJSONL else {
+                    throw AgentConfigurationError.conflictingOptions(argument, "--jsonl")
+                }
+                // A worktree is for the terminal chat only.
+                guard argument == "--tui" || requestedWorktreeName == nil else {
+                    throw AgentConfigurationError.conflictingOptions("--worktree", argument)
+                }
+                requestedModeFlag = argument
+                switch argument {
+                case "--tui": requestedRunMode = .tui
+                case "--telegram": requestedRunMode = .telegram
+                default: requestedRunMode = .acp  // --acp
+                }
+            case "--jsonl":
+                if let modeFlag = requestedModeFlag {
+                    // `--acp` keeps its original wording; the other mode flags
+                    // are named first, like with `-p` and `-f`.
+                    throw modeFlag == "--acp"
+                        ? AgentConfigurationError.conflictingOptions(argument, modeFlag)
+                        : AgentConfigurationError.conflictingOptions(modeFlag, argument)
+                }
+                guard requestedWorktreeName == nil else {
+                    throw AgentConfigurationError.conflictingOptions("--worktree", argument)
+                }
+                rawJSONL = true
+                requestedRunMode = .headless
+            case "-p", "--prompt":
+                if let modeFlag = requestedModeFlag {
+                    throw AgentConfigurationError.conflictingOptions(modeFlag, "-p/--prompt")
+                }
+                guard requestedWorktreeName == nil else {
+                    throw AgentConfigurationError.conflictingOptions("--worktree", "-p/--prompt")
+                }
+                guard !explicitlyRequestedInlinePrompt else {
+                    throw AgentConfigurationError.conflictingOptions(argument, "-p/--prompt")
+                }
+                explicitlyRequestedInlinePrompt = true
+                requestedRunMode = .headless
+                index += 1
+                guard index < arguments.count else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                let prompt = arguments[index]
+                guard prompt != "-" else {
+                    throw AgentConfigurationError.invalidValue(argument, prompt)
+                }
+                guard !prompt.hasPrefix("-") else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                rawHeadlessPrompt = prompt
+            case "-f":
+                if let modeFlag = requestedModeFlag {
+                    throw AgentConfigurationError.conflictingOptions(modeFlag, argument)
+                }
+                guard requestedWorktreeName == nil else {
+                    throw AgentConfigurationError.conflictingOptions("--worktree", argument)
+                }
+                guard rawHeadlessPromptFile == nil else {
+                    throw AgentConfigurationError.conflictingOptions(argument, argument)
+                }
+                requestedRunMode = .headless
+                index += 1
+                guard index < arguments.count else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                let path = arguments[index]
+                guard path != "-" else {
+                    throw AgentConfigurationError.invalidValue(argument, path)
+                }
+                guard !path.hasPrefix("-") else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                guard ZenCODEPromptFile.isAbsolutePath(path) else {
+                    throw AgentConfigurationError.invalidValue(argument, path)
+                }
+                rawHeadlessPromptFile = path
+            case "--working-directory":
+                index += 1
+                guard index < arguments.count else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                rawWorkingDirectory = arguments[index]
+                hasExplicitWorkingDirectory = true
+            case "--worktree":
+                // The terminal chat only: no ACP, Telegram or headless run.
+                // `--worktree` is named first whatever the order. Repeating
+                // it is allowed and the last name wins.
+                if let modeFlag = requestedModeFlag, modeFlag != "--tui" {
+                    throw AgentConfigurationError.conflictingOptions(argument, modeFlag)
+                }
+                guard !explicitlyRequestedInlinePrompt else {
+                    throw AgentConfigurationError.conflictingOptions(argument, "-p/--prompt")
+                }
+                guard rawHeadlessPromptFile == nil else {
+                    throw AgentConfigurationError.conflictingOptions(argument, "-f")
+                }
+                guard !rawJSONL else {
+                    throw AgentConfigurationError.conflictingOptions(argument, "--jsonl")
+                }
+                index += 1
+                guard index < arguments.count else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                let name = arguments[index]
+                guard Self.isValidWorktreeName(name) else {
+                    throw AgentConfigurationError.invalidValue(argument, name)
+                }
+                requestedWorktreeName = name
+            case "--skills":
+                index += 1
+                guard index < arguments.count else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                rawInitialSkillSelection = arguments[index]
+            case "--max-tool-rounds":
+                index += 1
+                guard index < arguments.count else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                rawMaxToolRounds = arguments[index]
+            case "--max-output-tokens":
+                index += 1
+                guard index < arguments.count else {
+                    throw AgentConfigurationError.missingValue(argument)
+                }
+                rawMaxOutputTokens = arguments[index]
+            default:
+                throw AgentConfigurationError.unknownArgument(argument)
+            }
+            index += 1
+        }
+
+        if rawJSONL,
+           rawHeadlessPrompt == nil,
+           rawHeadlessPromptFile == nil,
+           !shouldPrintHelp,
+           !shouldPrintVersion,
+           !shouldPrintDoctor {
+            throw AgentConfigurationError.missingValue("--prompt")
+        }
+
+        let workingDirectory = Self.resolvedWorkingDirectory(
+            rawValue: rawWorkingDirectory,
+            applyLaunchDirectoryFallback: !hasExplicitWorkingDirectory
+        )
+        let worktree = requestedWorktreeName.map {
+            AgentWorktree(name: $0, directory: workingDirectory)
+        }
+        let maxToolRounds = try Self.maxToolRounds(
+            rawMaxToolRounds,
+            argument: "--max-tool-rounds"
+        )
+        let maxOutputTokens = try Self.positiveInt(rawMaxOutputTokens, argument: "--max-output-tokens")
+        let appMode = appModeOverride ?? false
+        // Without a mode option, the terminal chat runs, or the ACP bridge
+        // when the app hosts the configuration.
+        let runMode = requestedRunMode ?? (appMode ? .acp : .tui)
+        let requestedAgentName = rawAgentName?.nilIfBlank
+        let settingsManifest: AgentSettingsManifest?
+        let selectedAgent: AgentProfile?
+        let agentName: String?
+        if shouldPrintHelp || shouldPrintVersion || shouldPrintDoctor || !loadPersistedConfiguration {
+            settingsManifest = nil
+            selectedAgent = nil
+            agentName = requestedAgentName
+        } else {
+            let snapshot = try PersistedAgentConfigurationSnapshot.loadRequired()
+            let manifest = snapshot.settings
+            settingsManifest = manifest
+            let availableAgents = snapshot.profiles
+            selectedAgent = try Self.selectedAgent(
+                named: requestedAgentName,
+                availableAgents: availableAgents,
+                workingDirectory: workingDirectory
+            )
+            agentName = requestedAgentName ?? selectedAgent?.displayName
+        }
+        let modelID = rawModelID?.nilIfBlank
+        let effectiveModelID = AgentSettingsStore.resolvedEffectiveModelID(
+            explicitModelID: modelID,
+            agentModelID: selectedAgent?.modelID,
+            manifest: settingsManifest
+        )
+
+        self.modelID = modelID
+        self.agentName = agentName
+        self.requestedAgentName = requestedAgentName
+        self.selectedAgent = selectedAgent
+        self.effectiveModelID = effectiveModelID
+        self.runMode = runMode
+        self.jsonl = rawJSONL
+        self.headlessPrompt = rawHeadlessPrompt
+        self.headlessPromptFile = rawHeadlessPromptFile
+        self.workingDirectory = workingDirectory
+        self.worktree = worktree
+        self.initialSkillSelection = rawInitialSkillSelection?.nilIfBlank
+        self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)
+        self.maxOutputTokens = maxOutputTokens
+        self.appMode = appMode
+        self.printHelp = shouldPrintHelp
+        self.printVersion = shouldPrintVersion
+        self.printDoctor = shouldPrintDoctor
+        self.hostedAgentProfiles = nil
+        self.hostedModels = nil
+    }
+
+    public init(
+        hostedModelID: String,
+        explicitModelID rawModelID: String? = nil,
+        agentName rawAgentName: String? = nil,
+        availableAgents: [AgentProfile] = AgentProfileStore.defaultProfiles(),
+        availableModels: [AgentSettingsModelManifest] = [],
+        cacheAgentProfiles: Bool = true,
+        runMode: AgentRunMode = .tui,
+        jsonl: Bool = false,
+        workingDirectory: URL,
+        initialSkillSelection: String? = nil,
+        maxToolRounds: Int = AgentToolRoundPolicy.defaultMaxToolRounds,
+        maxOutputTokens: Int? = nil,
+        appMode: Bool = false
+    ) throws {
+        let requestedAgentName = rawAgentName?.nilIfBlank
+        let selectedAgent = try Self.selectedAgent(
+            named: requestedAgentName,
+            availableAgents: availableAgents,
+            workingDirectory: workingDirectory
+        )
+        let normalizedModelID = hostedModelID.nilIfBlank
+        let requestedModelID = rawModelID?.nilIfBlank
+        let hostedManifest = AgentSettingsManifest(
+            models: availableModels,
+            selectedModelID: normalizedModelID
+        )
+        let effectiveModelID = AgentSettingsStore.resolvedEffectiveModelID(
+            explicitModelID: requestedModelID,
+            agentModelID: nil,
+            manifest: hostedManifest
+        ) ?? normalizedModelID
+
+        self.modelID = requestedModelID
+        self.agentName = requestedAgentName ?? selectedAgent?.displayName
+        self.requestedAgentName = requestedAgentName
+        self.selectedAgent = selectedAgent
+        self.effectiveModelID = effectiveModelID
+        self.runMode = runMode
+        self.jsonl = jsonl
+        self.headlessPrompt = nil
+        self.headlessPromptFile = nil
+        self.workingDirectory = workingDirectory
+        self.worktree = nil
+        self.initialSkillSelection = initialSkillSelection?.nilIfBlank
+        self.maxToolRounds = AgentToolRoundPolicy.normalizedMaxToolRounds(maxToolRounds)
+        self.maxOutputTokens = maxOutputTokens.map { max(1, $0) }
+        self.appMode = appMode
+        self.printHelp = false
+        self.printVersion = false
+        self.printDoctor = false
+        self.hostedAgentProfiles = cacheAgentProfiles ? availableAgents : nil
+        self.hostedModels = availableModels
+    }
+
+    public func resolvedRunMode(stdinIsTerminal _: Bool) -> AgentResolvedRunMode {
+        switch runMode {
+        case .acp:
+            return .acp
+        case .tui:
+            return .tui
+        case .telegram:
+            return .telegram
+        case .headless:
+            return .headless
+        }
+    }
+
+    private static func maxToolRounds(_ rawValue: String?, argument: String) throws -> Int {
+        guard let rawValue = rawValue?.nilIfBlank else {
+            return AgentToolRoundPolicy.defaultMaxToolRounds
+        }
+        guard let value = Int(rawValue),
+              AgentToolRoundPolicy.isValidMaxToolRounds(value) else {
+            throw AgentConfigurationError.invalidValue(argument, rawValue)
+        }
+        return AgentToolRoundPolicy.normalizedMaxToolRounds(value)
+    }
+
+    private static func positiveInt(_ rawValue: String?, argument: String) throws -> Int? {
+        guard let rawValue = rawValue?.nilIfBlank else {
+            return nil
+        }
+        guard let value = Int(rawValue), value > 0 else {
+            throw AgentConfigurationError.invalidValue(argument, rawValue)
+        }
+        return value
+    }
+
+    private static func selectedAgent(
+        named rawAgentName: String?,
+        availableAgents: [AgentProfile],
+        workingDirectory: URL
+    ) throws -> AgentProfile? {
+        guard let rawAgentName else {
+            return try AgentProfileStore.developerProfile(
+                in: availableAgents,
+                workspaceRootURL: workingDirectory
+            )
+        }
+
+        let normalizedName = TextUtilities.normalizedLookupValue(rawAgentName)
+        guard !normalizedName.isEmpty else {
+            return nil
+        }
+
+        if let agent = availableAgents.first(where: { agent in
+            TextUtilities.normalizedLookupValue(agent.id) == normalizedName
+                || TextUtilities.normalizedLookupValue(agent.name) == normalizedName
+        }) {
+            return agent
+        }
+
+        throw AgentConfigurationError.unknownAgent(
+            rawAgentName,
+            availableAgents.map(\.displayName)
+        )
+    }
+
+}

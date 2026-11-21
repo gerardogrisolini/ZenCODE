@@ -12,6 +12,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import ZenCODERuntime
 
 /// Serializes ordinary and shared-chat-generated turns in the blocking input
 /// fallback. Unlike the interactive panel, that loop has no event queue whose

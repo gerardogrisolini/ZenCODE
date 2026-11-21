@@ -2,6 +2,7 @@
 //
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// Runtime projection only; the session owns one instance per incarnation and
 /// the orchestrator remains the sole DAG owner. The projection reads one graph

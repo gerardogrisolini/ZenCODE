@@ -14,6 +14,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension ChatCommandDispatchTests {
     // MARK: - Unknown, hidden, and channel commands

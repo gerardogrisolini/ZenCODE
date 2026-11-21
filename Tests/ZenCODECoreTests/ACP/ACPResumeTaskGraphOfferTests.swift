@@ -21,6 +21,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite(.serialized, .timeLimit(.minutes(2)))
 struct ACPResumeTaskGraphOfferTests {

@@ -14,6 +14,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Records every JSON-RPC message the bridge writes, as the ordered trace a
 /// client observes.

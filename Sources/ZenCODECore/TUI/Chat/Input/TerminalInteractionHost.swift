@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Operator interactions of the terminal chat.
 ///

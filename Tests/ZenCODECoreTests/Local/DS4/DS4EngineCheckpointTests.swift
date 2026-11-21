@@ -13,6 +13,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// `.ds4kv` files (and their temporary files) below `directory`.
 func ds4CheckpointFiles(in directory: URL) -> [String] {

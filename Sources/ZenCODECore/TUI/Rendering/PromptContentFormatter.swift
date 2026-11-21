@@ -13,6 +13,7 @@ import Glibc
 import Dispatch
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 public enum PromptContentFormatter {
     public static func renderPromptText(from blocks: [Any]) -> String {

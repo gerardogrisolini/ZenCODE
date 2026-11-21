@@ -6,6 +6,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Characterization of the settings v14 -> v15 migration from provider UUIDs
 /// to stable provider keys. Every test works in its own temporary directory

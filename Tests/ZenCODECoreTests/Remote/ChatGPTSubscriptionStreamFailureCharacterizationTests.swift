@@ -13,6 +13,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 private struct ChatGPTStreamFailureTurn {
     let response: DirectAgentResponse?

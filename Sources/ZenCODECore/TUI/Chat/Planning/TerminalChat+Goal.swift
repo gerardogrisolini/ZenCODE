@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension TerminalChat {
     nonisolated static func workflowStillOpenMessage(

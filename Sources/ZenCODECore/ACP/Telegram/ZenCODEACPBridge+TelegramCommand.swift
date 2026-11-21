@@ -8,6 +8,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 // MARK: - /telegram
 

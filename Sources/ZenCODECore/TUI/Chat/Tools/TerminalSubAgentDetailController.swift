@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// Drives the `/subagent` detail panel (``TerminalSubAgentDetailPanel``): it
 /// lets the operator pick an agent, follows the selected agent, reads its

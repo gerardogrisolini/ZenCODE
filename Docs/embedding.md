@@ -1,10 +1,13 @@
 # Embedding ZenCODECore in a Host App
 
 This guide is for an app that drives ZenCODE chat sessions through the
-`ZenCODECore` library, for example the macOS app, which lives in a separate
-repository and depends on a release tag. The app is one more channel of the
-shared chat session, next to the terminal, ACP, and the headless runner (see
-the shared chat session controller under
+`ZenCODECore` library, for example the macOS app, which lives in this
+repository as the standalone package `Sources/ZenApp`: it depends on the root
+package by path (`path: "../.."`), and the `zenapp-package` CI job builds and
+tests it. A host outside this repository depends on a release tag instead (see
+[Dependency](#dependency)). The app is one more channel of the shared chat
+session, next to the terminal, ACP, and the headless runner (see the shared
+chat session controller under
 [Compatibility Contract](architecture.md#compatibility-contract)).
 
 Every symbol used here is public. The examples use the same composition path
@@ -18,12 +21,38 @@ contract of [release.md](release.md).
 
 ```swift
 // Package.swift of the app
-.package(url: "https://github.com/gerardogrisolini/ZenCODE.git", from: "6.0.0"),
+.package(url: "https://github.com/gerardogrisolini/ZenCODE.git", from: "6.1.3"),
 // in the target
 .product(name: "ZenCODECore", package: "ZenCODE"),
 ```
 
 The package uses Swift tools 6.4 and requires macOS 26.
+
+`6.1.3` is the latest published release (`ZenPackageMetadata.version`). A host
+that followed `from: "6.0.0"` met removals in 6.1.0, which removed the unused
+public Chat API as an announced exception (see "Announced migration: unused
+Chat API" under [Compatibility Contract](architecture.md#compatibility-contract)),
+and in 6.1.1 and 6.1.2, which removed public symbols of `ZenCODECore` outside
+Chat. The semantic versioning promised by that contract covers only the public
+API of `Sources/ZenCODERuntime/Chat`. The guide also uses symbols outside it,
+for example `AppStorageDirectory`, `AgentConfiguration`, `AgentProfileStore`,
+and `AgentSettingsModelManifest`: the contract does not version them, and
+removals of such symbols are listed in the [CHANGELOG](../CHANGELOG.md) as
+**Breaking** entries.
+
+Two library products expose the runtime. `ZenCODECore` is the complete one: the
+terminal UI, the interactive setup, ACP, and the CLI launcher, and it
+re-exports `ZenCODERuntime`, so `import ZenCODECore` sees the whole public API
+of the runtime. `ZenCODERuntime` is only the shared runtime, for an integrator
+that needs none of those. It is on `main` but in no published release yet (see
+`## [Unreleased]` in the [CHANGELOG](../CHANGELOG.md)), so no release up to
+`6.1.3` has it; once released it is
+`.product(name: "ZenCODERuntime", package: "ZenCODE")`. The macOS app still
+imports `ZenCODECore`, because it uses public helpers of the terminal UI:
+`TerminalSubAgentSnapshotMailbox` (with `TerminalSubAgentLifecycle` and
+`TerminalSubAgentReloadKey`), `TerminalGitStatusSummary`,
+`ToolMutationClassifier`, and static helpers of `TerminalChat`. See
+[Target Layout](architecture.md#target-layout).
 
 ## Composition
 
@@ -121,8 +150,9 @@ func makeSession(
 
 `makeSessionRunner` uses `ChatSessionRuntimeFactory.productionBackendFactory`
 unless the app passes another `backendFactory`. That property is the one place
-of Core that chooses a backend; the app, like `zen`, is a composition root
-that injects it. A `ChatSessionController` can still be built by hand with
+of the runtime (`ZenCODERuntime`) that chooses a backend; the app, like `zen`,
+is a composition root that injects it. A `ChatSessionController` can still be
+built by hand with
 `ChatSessionController(sessionID:managementRuntime:environment:workingDirectory:presenter:host:authorizer:)`
 over the same runner, as the headless runner does: such a controller runs on
 its own, outside any slot, and switches session in place.
@@ -1113,7 +1143,9 @@ switch.
 
 ## Compatibility
 
-The public API of `Sources/ZenCODECore/Chat` follows semantic versioning (see
+The public API of `Sources/ZenCODERuntime/Chat`, exposed both by
+`ZenCODERuntime` and, through the re-export, by `ZenCODECore`, follows
+semantic versioning (see
 [Compatibility Contract](architecture.md#compatibility-contract)). From 6.0.0
 it comprises:
 

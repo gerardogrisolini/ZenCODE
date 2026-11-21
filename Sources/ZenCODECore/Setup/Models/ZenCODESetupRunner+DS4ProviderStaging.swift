@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension ZenCODESetupRunner {
     /// Non-throwing wrapper: a failed discovery, an invalid folder and an

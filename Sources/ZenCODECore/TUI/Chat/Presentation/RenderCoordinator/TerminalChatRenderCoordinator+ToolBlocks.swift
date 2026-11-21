@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Tool block lifecycle rendering, including in-place row ownership, redraw safety fuses, and bounded pending rows.
 extension TerminalChatRenderCoordinator {

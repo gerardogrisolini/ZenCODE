@@ -5,6 +5,7 @@
 
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Testing
 
 /// Covers the Core-owned auto-trigger: monitoring, drain batching and the

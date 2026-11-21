@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// The terminal's live file artifacts: they are recorded, deduplicated and
 /// presented as before, and an open `/artifacts` panel shows them, but the

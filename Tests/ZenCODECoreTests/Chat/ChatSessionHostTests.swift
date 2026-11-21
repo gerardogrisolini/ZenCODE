@@ -19,6 +19,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// A runtime backend whose turns stream one content event and answer, and
 /// whose model preload can be made to fail.

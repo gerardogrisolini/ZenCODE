@@ -10,6 +10,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)

@@ -11,6 +11,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension ChatSessionHostTests {
     /// Runs one turn on `incarnation` through its controller, as a channel does.

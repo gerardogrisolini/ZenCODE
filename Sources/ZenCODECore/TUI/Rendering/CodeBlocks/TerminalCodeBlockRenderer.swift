@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 enum TerminalCodeBlockRenderer {
     static let reset = TerminalStyle.reset

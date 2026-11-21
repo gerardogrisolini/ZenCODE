@@ -13,6 +13,7 @@ import Glibc
 import Dispatch
 import Foundation
 import Synchronization
+import ZenCODERuntime
 
 private struct TerminalPromptExecutionTasks {
     var promptTask: Task<TerminalChatGenerationSuccess, Error>?

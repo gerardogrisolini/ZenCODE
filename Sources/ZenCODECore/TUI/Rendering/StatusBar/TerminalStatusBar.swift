@@ -12,6 +12,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import ZenCODERuntime
 
 public struct TerminalGitStatusSummary: Equatable, Sendable {
     public let changedFileCount: Int

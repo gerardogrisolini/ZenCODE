@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension TerminalChat {
     /// What `/subagent <name|id>` found among the sub-agents in progress.

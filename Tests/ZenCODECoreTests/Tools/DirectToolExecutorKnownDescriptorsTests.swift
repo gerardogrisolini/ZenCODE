@@ -9,6 +9,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// The descriptors read without discovery
 /// (`DirectToolExecutor.descriptors(discoversFeatureTools: false)`, behind

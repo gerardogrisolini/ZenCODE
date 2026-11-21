@@ -12,6 +12,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// How many calls are in flight, and the most that were at once.
 private final class InFlightCounter: Sendable {

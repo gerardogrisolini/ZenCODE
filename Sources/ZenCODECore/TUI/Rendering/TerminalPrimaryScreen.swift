@@ -3,6 +3,7 @@
 // TerminalPrimaryScreen.swift
 import Foundation
 import Synchronization
+import ZenCODERuntime
 
 /// Owns ONLY the reserved tail. Transcript output uses native LF/DECSTBM
 /// scrolling; resize never clears or replays transcript/history. All state and

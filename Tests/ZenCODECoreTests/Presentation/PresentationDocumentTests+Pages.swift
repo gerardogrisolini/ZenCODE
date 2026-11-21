@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// The split of a document into ordered pages within a budget
 /// (`PresentationDocument.pages(within:)`), and the cut of a plain text into

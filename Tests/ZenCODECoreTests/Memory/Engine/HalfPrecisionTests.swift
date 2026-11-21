@@ -11,6 +11,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite struct HalfPrecisionTests {
     @Test func knownValuesConvertToTheirBinary16Patterns() {

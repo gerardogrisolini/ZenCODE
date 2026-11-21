@@ -15,6 +15,7 @@ import Foundation
 #if canImport(os)
 import os
 #endif
+import ZenCODERuntime
 
 extension TerminalStatusBar {
     func configureTerminalLocked(state: inout State) -> Bool {

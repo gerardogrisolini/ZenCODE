@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// One engine library the setup may have to build: DS4 checkout, backend and
 /// GPU architecture. Models that share all three share one library.

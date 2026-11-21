@@ -8,6 +8,7 @@
 import FeatureMCPBridgeKit
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// Thrown by `ensureNotShutDown()` once `shutdown()` latched.
 ///

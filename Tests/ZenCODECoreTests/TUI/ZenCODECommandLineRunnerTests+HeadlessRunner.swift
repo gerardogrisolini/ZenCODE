@@ -9,6 +9,7 @@
 
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Synchronization
 import Testing
 import ToolCore

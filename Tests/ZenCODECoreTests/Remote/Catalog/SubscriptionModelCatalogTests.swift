@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif

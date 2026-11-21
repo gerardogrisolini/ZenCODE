@@ -2,20 +2,18 @@
 //  TerminalSubAgentOverviewLayout+Activity.swift
 //  ZenCODE
 //
-//  Activity, detail and response rows of the sub-agent overview: the current
-//  tool or thinking line, the latest error and the completed Markdown
-//  responses.
+//  Activity and detail rows of the terminal's sub-agent overview: the current
+//  tool with its canonical rows or the thinking line with its rendered
+//  paragraph, and the latest error. The inline activity and the completed
+//  Markdown responses live with the layout in ZenCODERuntime.
 //
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension TerminalSubAgentOverviewLayout {
     // MARK: - Activity and detail
-
-    private static var thinkingPlaceholderLine: Line {
-        .regular(colorText(TerminalChat.thinkingPlaceholder, code: TerminalStyle.Thinking.title), maxWrappedLines: 1)
-    }
 
     static func activityLines(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
@@ -151,38 +149,6 @@ extension TerminalSubAgentOverviewLayout {
         return lines
     }
 
-    /// Compatibility projection used before a lossless lifecycle event arrives
-    /// (and by non-terminal/static snapshot consumers).
-    private static func toolFallbackLine(
-        name: String,
-        target: String?,
-        density: Density
-    ) -> Line {
-        let tool = colorText(InlineTextTruncation.inlineText(name), code: TerminalStyle.Tool.title)
-        let parameter = (target?.nilIfBlank).map {
-            colorText(" \(InlineTextTruncation.inlineText($0))", code: TerminalStyle.Tool.value)
-        } ?? ""
-        let text = "🛠️  \(tool)\(parameter)"
-        return density == .full
-            ? entryLine(text, density: density)
-            : .regular(
-                text,
-                maxWrappedLines: 1,
-                clipsOverflowWithoutEllipsis: true
-            )
-    }
-
-    /// Builds one activity or detail line at the requested density: unbounded
-    /// for the full presentation, single-row for the denser variants.
-    private static func entryLine(
-        _ text: String,
-        density: Density
-    ) -> Line {
-        density.maximumEntryRows == .max
-            ? .complete(text)
-            : .regular(text, maxWrappedLines: density.maximumEntryRows)
-    }
-
     static func detailLine(
         _ snapshot: DirectSubAgentRuntime.AgentSnapshot,
         density: Density = .full
@@ -191,74 +157,5 @@ extension TerminalSubAgentOverviewLayout {
             return nil
         }
         return entryLine("❌ \(InlineTextTruncation.inlineText(latestError))", density: density)
-    }
-
-    // MARK: - Responses
-
-    /// Extracts completed model responses from the snapshot presentation. The
-    /// surrounding overview remains pre-rendered terminal text, while each
-    /// response stays as source Markdown so the coordinator can format it with
-    /// the same renderer used for normal assistant messages.
-    static func markdownResponses(
-        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
-    ) -> [TerminalChatRenderCoordinator.SubAgentMarkdownResponse] {
-        snapshots.compactMap { snapshot in
-            guard !snapshot.pending,
-                  snapshot.latestError?.nilIfBlank == nil,
-                  let output = snapshot.latestContentPreview?.nilIfBlank
-                    ?? snapshot.latestOutput?.nilIfBlank else {
-                return nil
-            }
-            let name = snapshot.name.nilIfBlank ?? snapshot.id
-            return TerminalChatRenderCoordinator.SubAgentMarkdownResponse(
-                token: responseToken(snapshot: snapshot, output: output),
-                heading: "   ✅ Response from \(InlineTextTruncation.inlineText(name)):\n",
-                markdown: output
-            )
-        }
-    }
-
-    /// Extracts the same completed assistant blocks shown as 💬 activity rows.
-    /// Content appears here only after the runtime reaches a tool boundary, so
-    /// Telegram receives semantic partial responses rather than token deltas.
-    static func partialResponses(
-        _ snapshots: [DirectSubAgentRuntime.AgentSnapshot]
-    ) -> [TerminalChatRenderCoordinator.SubAgentPartialResponse] {
-        snapshots.compactMap { snapshot in
-            guard snapshot.currentActivityKind == .content,
-                  let content = snapshot.currentActivity?.nilIfBlank else {
-                return nil
-            }
-            let name = snapshot.name.nilIfBlank ?? snapshot.id
-            return TerminalChatRenderCoordinator.SubAgentPartialResponse(
-                token: [
-                    snapshot.id,
-                    "partial",
-                    String(snapshot.currentActivityRevision)
-                ].joined(separator: "\u{1F}"),
-                heading: "💬 \(InlineTextTruncation.inlineText(name)):",
-                markdown: content
-            )
-        }
-    }
-
-    /// Produces a compact deterministic identity for one completion. Runtime
-    /// snapshots carry a monotonic completion revision, so metadata-only changes
-    /// (for example closing an agent) cannot make an old response appear new.
-    /// The digest is a fallback for manually constructed legacy snapshots.
-    private static func responseToken(
-        snapshot: DirectSubAgentRuntime.AgentSnapshot,
-        output: String
-    ) -> String {
-        if snapshot.latestOutputRevision > 0 {
-            return [snapshot.id, String(snapshot.latestOutputRevision)].joined(separator: "\u{1F}")
-        }
-
-        var digest: UInt64 = 14_695_981_039_346_656_037
-        for byte in output.utf8 {
-            digest ^= UInt64(byte)
-            digest &*= 1_099_511_628_211
-        }
-        return [snapshot.id, String(digest, radix: 16)].joined(separator: "\u{1F}")
     }
 }

@@ -7,12 +7,13 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension TerminalChat {
     /// Stable affordance shown while an agent is reasoning but has no
-    /// renderable paragraph yet. Presentation owns this string: the runtime
-    /// reports the thinking phase through `currentActivityKind`.
-    nonisolated static let thinkingPlaceholder = "🤔 thinking…"
+    /// renderable paragraph yet
+    /// (``TerminalSubAgentOverviewLayout/thinkingPlaceholder``).
+    nonisolated static let thinkingPlaceholder = TerminalSubAgentOverviewLayout.thinkingPlaceholder
 
     /// Formats the replaceable reasoning value with the coordinator's Markdown
     /// and muted thinking styles, bounded by the existing overview width.

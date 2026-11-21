@@ -1,0 +1,195 @@
+//
+//  AgentProfileRole.swift
+//  ZenCODE
+//
+//  Role of an agent profile: the only property that determines which kind of
+//  agent a profile is. A profile's ID and name carry no meaning.
+//
+
+import Foundation
+
+/// The fixed list of agent roles. Every profile has exactly one, persisted in
+/// the required `role` field of `agents.json`.
+///
+/// - `developer`: the default agent when none is selected.
+/// - `builder`: owns `/feature` and the feature-management tools.
+/// - `generic`, `reporter`, `organizer`, `tester`: no runtime
+///   semantics beyond their profile's own configuration. `generic` is the
+///   neutral role for custom agents that fit none of the other roles; it has
+///   no recommended profile.
+/// - `planner`: `/plan` delegates to it and its core tools are forced
+///   read-only.
+/// - `reviewer`: `/review` delegates to it.
+///
+/// The recommended (system) profile of each role has the role as its ID; see
+/// ``AgentProfile/isSystemProfile``.
+public enum AgentProfileRole: String, Codable, Sendable, CaseIterable, Hashable {
+    case developer
+    case builder
+    case generic
+    case planner
+    case reviewer
+    case reporter
+    case organizer
+    case tester
+
+    /// Human-readable title.
+    public var title: String {
+        switch self {
+        case .developer: "Developer"
+        case .builder: "Builder"
+        case .generic: "Generic"
+        case .planner: "Planner"
+        case .reviewer: "Reviewer"
+        case .reporter: "Reporter"
+        case .organizer: "Organizer"
+        case .tester: "Tester"
+        }
+    }
+
+    /// Short description shown by `zen --setup` and `/agents`.
+    public var summary: String {
+        switch self {
+        case .developer: "General software development; the default agent"
+        case .builder: "/feature and the feature-management tools"
+        case .generic: "Neutral role for custom agents; no runtime effect"
+        case .planner: "/plan delegates to it; core tools are forced read-only"
+        case .reviewer: "/review delegates to it"
+        case .reporter: "Evidence-based code analysis reports"
+        case .organizer: "Personal assistant with macOS apps, memory, and delegation"
+        case .tester: "Runs builds, tests, and checks and reports the results without editing files"
+        }
+    }
+
+    /// Comma-separated list of every valid persisted value.
+    static var allowedValuesDescription: String {
+        allCases.map(\.rawValue).joined(separator: ", ")
+    }
+
+    /// Whether a session running this role keeps its memory in the global
+    /// graph instead of the one owned by the current workspace.
+    public var usesGlobalMemory: Bool {
+        self == .organizer
+    }
+
+    /// Whether a session running this role delegates to sub-agents by role
+    /// rather than by profile ID.
+    public var delegatesByRole: Bool {
+        self == .organizer
+    }
+}
+
+/// Decoding failure of a profile's required `role` field. The manifest that
+/// contains it is invalid.
+public enum AgentProfileRoleDecodingError: LocalizedError, Equatable {
+    case missing(profile: String)
+    case invalid(profile: String, value: String?)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .missing(profile):
+            return "profile '\(profile)' is missing the required \"role\" field "
+                + "(one of: \(AgentProfileRole.allowedValuesDescription))."
+        case let .invalid(profile, value):
+            let shown = value.map { " '\($0)'" } ?? ""
+            return "profile '\(profile)' has an invalid \"role\" value\(shown) "
+                + "(one of: \(AgentProfileRole.allowedValuesDescription))."
+        }
+    }
+}
+
+extension AgentProfileStore {
+    /// Every profile with `role`, in their order.
+    public static func roleProfiles(
+        _ role: AgentProfileRole,
+        in profiles: [AgentProfile]
+    ) -> [AgentProfile] {
+        profiles.filter { $0.role == role }
+    }
+
+    /// Profiles a role-driven command (`/plan`, `/review`) may delegate to:
+    /// every profile with `role` that is visible to the project (see
+    /// ``ProjectAgentSelectionStore/filter(_:selection:)``). With several, the
+    /// model chooses among them. An empty result means the command must stop.
+    static func roleDelegationCandidates(
+        _ role: AgentProfileRole,
+        in profiles: [AgentProfile],
+        projectSelection: Set<String>?
+    ) -> [AgentProfile] {
+        roleProfiles(
+            role,
+            in: ProjectAgentSelectionStore.filter(profiles, selection: projectSelection)
+        )
+    }
+
+    static func roleDelegationCandidates(
+        _ role: AgentProfileRole,
+        in profiles: [AgentProfile],
+        workspaceRootURL: URL,
+        fileManager: FileManager = .default
+    ) -> [AgentProfile] {
+        roleDelegationCandidates(
+            role,
+            in: profiles,
+            projectSelection: ProjectAgentSelectionStore.load(
+                workspaceRootURL: workspaceRootURL,
+                fileManager: fileManager
+            )
+        )
+    }
+
+    /// The default agent of a project: the preferred developer among the
+    /// profiles visible to it (see
+    /// ``ProjectAgentSelectionStore/filter(_:selection:)``), that is the system
+    /// developer when visible, otherwise the first visible developer in
+    /// manifest order. A project with no visible developer falls back to the
+    /// global ``developerProfile(in:)``, so this only throws when `agents` has
+    /// no developer at all.
+    public static func developerProfile(
+        in agents: [AgentProfile],
+        projectSelection: Set<String>?
+    ) throws -> AgentProfile {
+        let visibleAgents = ProjectAgentSelectionStore.filter(agents, selection: projectSelection)
+        if let agent = preferredDeveloper(in: visibleAgents) {
+            return agent
+        }
+        return try developerProfile(in: agents)
+    }
+
+    /// The default agent of the project rooted at `workspaceRootURL`, using
+    /// the selection saved for it (see
+    /// ``ProjectAgentSelectionStore/load(workspaceRootURL:fileManager:)``).
+    public static func developerProfile(
+        in agents: [AgentProfile],
+        workspaceRootURL: URL,
+        fileManager: FileManager = .default
+    ) throws -> AgentProfile {
+        try developerProfile(
+            in: agents,
+            projectSelection: ProjectAgentSelectionStore.load(
+                workspaceRootURL: workspaceRootURL,
+                fileManager: fileManager
+            )
+        )
+    }
+
+    /// Error shown when no profile visible to the project has the role a
+    /// command needs.
+    static func roleUnavailableForProjectMessage(_ role: AgentProfileRole) -> String {
+        "ZenCODE: no agent profile with the \(role.rawValue) role is available for this project. "
+            + "Tick one with /agents."
+    }
+
+    /// Profile clause of a hidden delegation prompt. A single candidate keeps
+    /// the historical `profile "<id>"` wording; several candidates are all
+    /// listed and the model may use any of them.
+    package static func delegationProfileClause(_ profiles: [AgentProfile]) -> String {
+        guard profiles.count > 1 else {
+            return "profile \"\(profiles.first?.id ?? "")\""
+        }
+        let candidates = profiles
+            .map { "\"\($0.id)\" (\($0.displayName))" }
+            .joined(separator: ", ")
+        return "one of these profiles (any of them is acceptable): \(candidates)"
+    }
+}

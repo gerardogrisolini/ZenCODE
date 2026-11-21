@@ -12,6 +12,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @ChatSessionActor
 @Suite("DS4 engine checkpoint session commands", .serialized)

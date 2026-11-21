@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension TerminalChat {
     public func writeMetricsStatus(_ metrics: DirectAgentGenerationMetrics) async {

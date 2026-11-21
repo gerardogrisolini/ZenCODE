@@ -5,6 +5,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODEACPBridge {
     public func promptBlocks(from params: [String: Any]) -> [Any] {

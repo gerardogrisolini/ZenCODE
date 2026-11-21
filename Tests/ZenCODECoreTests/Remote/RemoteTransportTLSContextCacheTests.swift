@@ -2,6 +2,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// One TLS context per trust configuration, rebuilt after its time to live.
 @Suite

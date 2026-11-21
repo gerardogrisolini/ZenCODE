@@ -12,6 +12,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// A non-DS4 root backend (a remote provider or a subscription client). It
 /// only answers prompts; these tests look at the engine, not at its output.

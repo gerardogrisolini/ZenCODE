@@ -10,6 +10,7 @@
 
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// An isolated support directory + workspace pair for one memory graph test.
 struct MemoryTestWorkspace {

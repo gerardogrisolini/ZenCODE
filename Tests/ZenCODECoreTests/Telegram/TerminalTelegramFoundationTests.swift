@@ -7,6 +7,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Foundation tests for phase 1: typed error envelope, rate governor,
 /// presence lease lifecycle, command registry, and pairing grant.

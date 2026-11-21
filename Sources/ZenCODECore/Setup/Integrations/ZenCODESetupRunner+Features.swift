@@ -9,6 +9,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODESetupRunner {
     /// One selectable row of the Features step.

@@ -8,6 +8,7 @@
 import Foundation
 import Synchronization
 import ToolCore
+import ZenCODERuntime
 
 public final class ACPPromptUpdateBuffer: Sendable {
     /// Minimal deterministic time seam. Production keeps wall-clock `Date()`;

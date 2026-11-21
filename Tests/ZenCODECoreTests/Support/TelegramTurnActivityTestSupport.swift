@@ -14,6 +14,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// One wire effect of a reporter, in the order its drain ran it.
 enum TelegramTurnActivityEffect: Equatable, Sendable {

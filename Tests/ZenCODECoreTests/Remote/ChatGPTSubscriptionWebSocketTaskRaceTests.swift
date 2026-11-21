@@ -9,6 +9,7 @@ import Foundation
 import Dispatch
 import Synchronization
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Testing
 
 @Suite("ChatGPT WebSocket task lifecycle")

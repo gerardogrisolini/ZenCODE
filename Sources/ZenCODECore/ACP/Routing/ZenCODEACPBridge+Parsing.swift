@@ -8,6 +8,7 @@
 import FeatureMCPBridgeKit
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODEACPBridge {
     public struct ACPMCPServerDefinition: Sendable {

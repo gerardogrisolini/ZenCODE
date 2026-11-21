@@ -10,6 +10,21 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- `ZenCODERuntime`, a new library product with the shared runtime (chat
+  sessions, agents, remote providers, tools, memory, sessions, Telegram, voice,
+  and features) without the terminal UI, the interactive setup, ACP, and the
+  CLI composition, for integrators that need none of them. `ZenCODECore` is
+  unchanged: it keeps the TUI, setup, ACP, and `Runtime/Launcher`, depends on
+  `ZenCODERuntime`, and re-exports it, so `import ZenCODECore` still sees every
+  public symbol with the same name, signature, and isolation. The fallback
+  diagnostic texts (the system log of tool executions, and the
+  `localizedDescription` of errors without a description of their own, so also
+  the free text of such an ACP or Telegram error) now name
+  `ZenCODERuntime.<Type>` instead of `ZenCODECore.<Type>` for the types that
+  moved; schemas and error codes are unchanged.
+
 ## [6.1.3] - 2026-11-21
 
 ### Added

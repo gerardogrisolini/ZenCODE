@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension TerminalChat {
     /// `/tools`: `/tools logs` opens the system log viewer; everything else

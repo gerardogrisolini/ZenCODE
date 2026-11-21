@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// A parsed `/ds4` line.
 enum TerminalDS4CommandAction: Sendable, Equatable {

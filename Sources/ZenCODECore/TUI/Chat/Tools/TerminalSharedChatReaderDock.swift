@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Terminal-local, bounded shared-chat history used exclusively by the input
 /// panel reader. It is intentionally absent from session snapshots.

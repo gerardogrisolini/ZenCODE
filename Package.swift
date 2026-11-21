@@ -15,6 +15,13 @@ let products: [Product] = [
         name: "ZenCODECore",
         targets: ["ZenCODECore"]
     ),
+    // The shared runtime without the terminal UI, interactive setup, ACP, and
+    // CLI composition. `ZenCODECore` re-exports it, so existing integrators
+    // keep importing `ZenCODECore` unchanged.
+    .library(
+        name: "ZenCODERuntime",
+        targets: ["ZenCODERuntime"]
+    ),
     .library(
         name: "FeatureKit",
         targets: ["FeatureKit"]
@@ -53,14 +60,14 @@ let targets: [Target] = [
         swiftSettings: memberImportVisibilitySettings
     ),
     .target(
-        name: "ZenCODECore",
+        name: "ZenCODERuntime",
         dependencies: [
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "Markdown", package: "swift-markdown"),
             // The remote-generation substrate owns HTTP/SSE and WebSocket
             // transport directly on SwiftNIO. Keep this deliberately narrower
             // than AsyncHTTPClient/WebSocketKit: no HTTP/2, tracing, or Apple-
-            // only transport-services graph is needed by the shared Core API.
+            // only transport-services graph is needed by the shared runtime API.
             .product(name: "NIOCore", package: "swift-nio"),
             .product(name: "NIOHTTP1", package: "swift-nio"),
             .product(name: "NIOPosix", package: "swift-nio"),
@@ -77,6 +84,19 @@ let targets: [Target] = [
             "ZenPackageMetadata"
         ],
         exclude: ["Resources/DS4Engine"],
+        swiftSettings: memberImportVisibilitySettings
+    ),
+    // Terminal UI, interactive setup, ACP, and the CLI launcher composed over
+    // `ZenCODERuntime`, which this target re-exports.
+    .target(
+        name: "ZenCODECore",
+        dependencies: [
+            "ZenCODERuntime",
+            .product(name: "Markdown", package: "swift-markdown"),
+            "FeatureMCPBridgeKit",
+            "ToolCore",
+            "ZenPackageMetadata"
+        ],
         swiftSettings: memberImportVisibilitySettings
     ),
     .target(
@@ -119,6 +139,7 @@ let targets: [Target] = [
         name: "ZenCODECoreTests",
         dependencies: [
             "ZenCODECore",
+            "ZenCODERuntime",
             "zen",
             "MemoryPersistenceTestHelper",
             "FeatureMCPBridgeKit",
@@ -130,7 +151,7 @@ let targets: [Target] = [
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "Markdown", package: "swift-markdown"),
             // Local deterministic transport tests host small NIO HTTP and
-            // WebSocket servers; production dependencies remain Core-only.
+            // WebSocket servers; production dependencies remain runtime-only.
             .product(name: "NIOCore", package: "swift-nio"),
             .product(name: "NIOHTTP1", package: "swift-nio"),
             .product(name: "NIOPosix", package: "swift-nio"),

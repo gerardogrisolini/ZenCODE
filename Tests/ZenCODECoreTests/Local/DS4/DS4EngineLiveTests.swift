@@ -22,6 +22,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("DS4 engine live", .serialized)
 struct DS4EngineLiveTests {

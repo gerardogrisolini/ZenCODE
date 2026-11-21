@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// `/tasks` in an ACP session: the graph (`status`, `list`, `ls`, the
 /// default), one task (`show`, `get`), the lifecycle (`retry`, `cancel`), and

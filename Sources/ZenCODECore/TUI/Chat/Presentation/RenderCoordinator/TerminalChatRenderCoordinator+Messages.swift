@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Transcript message writers (prompts, failures, summaries, operational and interleaved output) plus the external terminal-prompt suspension guard.
 extension TerminalChatRenderCoordinator {

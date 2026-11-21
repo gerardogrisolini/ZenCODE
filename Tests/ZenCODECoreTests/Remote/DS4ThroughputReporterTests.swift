@@ -11,6 +11,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// A clock the test moves by hand.
 private final class ManualClock: Sendable {

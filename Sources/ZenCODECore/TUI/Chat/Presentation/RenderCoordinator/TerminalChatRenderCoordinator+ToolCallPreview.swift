@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Live drawing of a file write or edit while the model is still writing its
 /// tool call. The rows are append-only transcript on the tool-block channel.

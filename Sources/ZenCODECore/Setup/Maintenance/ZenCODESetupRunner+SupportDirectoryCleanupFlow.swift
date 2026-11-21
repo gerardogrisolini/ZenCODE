@@ -12,6 +12,7 @@ import Darwin
 import Glibc
 #endif
 import Foundation
+import ZenCODERuntime
 
 extension ZenCODESetupRunner {
     // MARK: - Menu and report

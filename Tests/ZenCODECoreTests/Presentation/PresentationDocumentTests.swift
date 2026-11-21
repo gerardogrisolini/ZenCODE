@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// The Markdown-to-presentation-tree conversion and its plain-text projection,
 /// the text the Telegram fallback sends, for every construct the parser

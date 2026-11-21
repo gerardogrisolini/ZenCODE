@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 enum TerminalFeatureCommandResult: Sendable {
     case none

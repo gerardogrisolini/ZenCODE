@@ -10,6 +10,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension TerminalPromptEditorTests {
     @Test

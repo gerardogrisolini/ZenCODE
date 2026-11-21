@@ -2,6 +2,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension RemoteSessionSnapshotTests {
     private func subscriptionRecoveryCredentials() async throws -> CodexAgentCredentials {

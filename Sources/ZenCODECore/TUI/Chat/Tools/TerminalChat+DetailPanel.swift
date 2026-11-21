@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// The panel open in the terminal above the prompt, `/subagent`'s detail or
 /// `/artifacts`'s files, with the modal session it is drawn in.

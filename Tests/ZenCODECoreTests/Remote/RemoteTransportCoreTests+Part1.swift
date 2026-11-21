@@ -22,6 +22,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension RemoteTransportCoreTests {
     @Test("HTTP exposes status and headers before parsing incremental SSE")

@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// The sessions `session/list` lists: the saved sessions that ACP saved by
 /// itself (``TerminalSavedSession/acpAutosaveChannel``), exactly the ones

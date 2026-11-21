@@ -8,6 +8,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Concatenates the text events of each channel; consumed tags carry no text.
 private func render(_ events: [DS4ThinkSplitter.Event]) -> (content: String, thought: String) {

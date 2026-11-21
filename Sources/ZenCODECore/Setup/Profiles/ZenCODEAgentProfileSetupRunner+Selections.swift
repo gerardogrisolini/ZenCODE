@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODEAgentProfileSetupRunner {
     /// The tools of the agent being added or edited. Esc throws

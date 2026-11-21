@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// What a tuning question needs besides the model and its defaults. The
 /// interactive question uses it; the injected seam of tests ignores it.

@@ -2,6 +2,7 @@
 //
 // TerminalStreamingText.swift
 import Foundation
+import ZenCODERuntime
 
 /// Retains only the unfinished paragraph, not terminal history. Bytes are
 /// emitted on every append; only an incomplete escape is withheld. The final

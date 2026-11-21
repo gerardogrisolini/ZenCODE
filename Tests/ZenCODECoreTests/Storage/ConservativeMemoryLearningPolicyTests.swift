@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite struct ConservativeMemoryLearningPolicyTests {
     private let root = URL(fileURLWithPath: "/tmp/memory-policy-project")
@@ -60,7 +61,7 @@ import Testing
         #expect(!MemoryLearningPrivacy.accepts("password=plaintext", limit: 100))
         #expect(!MemoryLearningPrivacy.accepts("Bearer abc123", limit: 100))
         #expect(!MemoryLearningPrivacy.accepts("{\"password\":\"plaintext\"}", limit: 100))
-        #expect(MemoryLearningPrivacy.accepts("Sources/ZenCODECore/Agent/Core/Coordinator/SessionRunner/AgentCoreSessionRunner+PromptTurn.swift", limit: 300))
+        #expect(MemoryLearningPrivacy.accepts("Sources/ZenCODERuntime/Agent/Core/Coordinator/SessionRunner/AgentCoreSessionRunner+PromptTurn.swift", limit: 300))
         #expect(MemoryLearningPrivacy.accepts(String(repeating: "ab12", count: 10), limit: 100))
         #expect(!MemoryLearningPrivacy.accepts(String(repeating: "x", count: 1001), limit: 1000))
         let permit = MemoryLearningPermit()

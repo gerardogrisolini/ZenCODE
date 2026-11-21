@@ -13,6 +13,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 private final class OrderRecorder: Sendable {
     private let state = Mutex<(order: [Int], active: Int, maxActive: Int)>(([], 0, 0))

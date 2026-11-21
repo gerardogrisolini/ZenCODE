@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Draws a file write or edit while the model is still writing its tool call,
 /// as ds4-agent does: a header row naming the canonical tool with the target

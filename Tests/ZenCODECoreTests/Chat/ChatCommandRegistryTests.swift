@@ -10,6 +10,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("Chat command registry")
 struct ChatCommandRegistryTests {

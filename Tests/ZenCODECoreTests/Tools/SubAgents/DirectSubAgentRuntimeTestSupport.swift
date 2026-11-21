@@ -1,5 +1,6 @@
 import Synchronization
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 // Shared only by this suite's thematic files. Domain-specific fixtures remain
 // private beside the scenarios that use them.

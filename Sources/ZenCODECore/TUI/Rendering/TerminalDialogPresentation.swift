@@ -2,6 +2,8 @@
 //
 // TerminalDialogPresentation.swift
 
+import ZenCODERuntime
+
 /// An already-rendered single-key dialog, not a list of selectable menu items.
 /// The caller owns its card/chrome; the primary screen only places these rows
 /// in the shared modal area. In particular, it must not add another border.

@@ -8,6 +8,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODESetupRunner {
     /// Reads one new provider. A provider is identified by its stable key and

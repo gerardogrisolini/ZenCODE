@@ -237,7 +237,8 @@ schedules, mail, and troubleshooting.
 - `Sources/FeatureMCPBridgeKit`: generic MCP feature integration, transports, and injectable local-transport policies.
 - `Sources/LocalToolsSupport`: reusable local file, search, text, and patch tooling.
 - `Sources/ZenPackageMetadata`: internal bundled-feature distribution metadata and catalog parity support.
-- `Sources/ZenCODECore`: reusable agent runtime, interactive setup, TUI, tools, skills, ACP, config, memory, sessions, and feature management.
+- `Sources/ZenCODERuntime`: the shared runtime: chat sessions, agents, remote providers, tools, skills, config, memory, sessions, Telegram, voice, and feature management.
+- `Sources/ZenCODECore`: the terminal UI, interactive setup, ACP, and the CLI launcher; it re-exports `ZenCODERuntime`.
 - `Sources/zen`: the `zen` composition root and command-line dispatch.
 - `Sources/ZenCRON`: the standalone SwiftPM package of ZenCRON, the program that cron runs for scheduled prompts. It has no dependencies, is outside the root graph, and is built by `zen --setup`, not by the installers.
 - `Sources/ZenApp`: the standalone SwiftPM package of ZenCODE for macOS, a native SwiftUI app that replicates the terminal chat. It is outside the root graph and is not built by the installers; see [Docs/app.md](Docs/app.md).

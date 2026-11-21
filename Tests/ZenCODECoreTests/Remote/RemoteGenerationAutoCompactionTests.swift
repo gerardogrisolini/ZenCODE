@@ -12,6 +12,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// The three HTTP protocols of the non-DS4 path, each with the provider that
 /// selects it and the stream a scripted response is written in.

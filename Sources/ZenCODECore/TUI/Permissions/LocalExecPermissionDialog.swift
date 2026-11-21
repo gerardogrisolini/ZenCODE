@@ -1,0 +1,354 @@
+//
+//  LocalExecPermissionDialog.swift
+//  ZenCODE
+//
+//  Created by Gerardo Grisolini on 30/05/26.
+//
+
+import Dispatch
+import Foundation
+import Synchronization
+import ZenCODERuntime
+
+/// Reads a single consent answer for a given prompt. Abstracted so the
+/// terminal authorizer can present consent without owning the terminal reader,
+/// letting the TUI route consent through its existing (single) interactive
+/// reader and tests supply deterministic answers.
+typealias ConsentKeyReader = @Sendable (String) async -> String?
+
+final class ConsentReadCancellationFlag: Sendable {
+    private let state = Mutex(false)
+
+    func cancel() {
+        state.withLock { $0 = true }
+    }
+
+    func isCancelled() -> Bool {
+        state.withLock { $0 }
+    }
+}
+
+/// Terminal implementation of the consent host: renders the authorization card
+/// and reads the operator's key, either from an injected reader or from the
+/// controlling terminal.
+///
+/// The terminal is one input surface shared by every dialog, so the host
+/// declares ``ChatChannelCapabilities/serialConsentDialogs`` and the shared
+/// authorizer queues requests instead of presenting them concurrently. The
+/// terminal card has no "never" choice, hence no deny-always decision.
+final class TerminalConsentHost: ChatInteractionHost {
+    /// Injected single-key reader for consent prompts. When nil, the default
+    /// terminal reader is used.
+    private let reader = Mutex<ConsentKeyReader?>(nil)
+
+    var capabilities: ChatChannelCapabilities {
+        [.toolConsent, .serialConsentDialogs]
+    }
+
+    func setConsentReader(_ newReader: ConsentKeyReader?) {
+        reader.withLock { $0 = newReader }
+    }
+
+    func requestToolConsent(
+        _ request: AgentToolAuthorizationRequest
+    ) async -> ChatConsentDecision? {
+        guard let decision = await presentDialog(for: request) else {
+            return nil
+        }
+        switch decision {
+        case .allowOnce:
+            return .allowOnce
+        case .allowAlways:
+            return .allowAlways
+        case .deny:
+            return .denyOnce
+        }
+    }
+
+    /// Presents consent on the terminal itself, so the same flow works on
+    /// macOS, Linux, and WSL — including over SSH, where a GUI `osascript`
+    /// dialog would never reach the operator's screen.
+    func presentDialog(
+        for request: AgentToolAuthorizationRequest
+    ) async -> LocalExecPermissionAuthorizer.PermissionDecision? {
+        let reader = reader.withLock { $0 }
+
+        // Only the default terminal reader needs the headless diagnostic: an
+        // injected reader (TUI panel path or tests) owns its own availability
+        // and must not be bypassed by this check.
+        if reader == nil, !TerminalRawInput.supportsInteractiveInput() {
+            AgentOutput.standardError.writeString(
+                LocalExecPermissionAuthorizer.nonInteractiveConsentMessage(for: request)
+            )
+            return nil
+        }
+
+        let readKey: ConsentKeyReader = reader ?? { prompt in
+            await LocalExecPermissionAuthorizer.readTerminalKey(prompt: prompt)
+        }
+
+        // Claim the terminal for the whole prompt, retries included. Otherwise a
+        // concurrent reader on the same TTY (the Esc-to-stop monitor polls it
+        // during generation) can win the `read` and silently drop the operator's
+        // `r`/`a`/`c`, leaving the card waiting for a key that was consumed.
+        await TerminalConsentInputOwnership.beginConsent()
+        defer { TerminalConsentInputOwnership.endConsent() }
+
+        var firstAttempt = true
+        while true {
+            let prompt = firstAttempt
+                ? LocalExecPermissionAuthorizer.terminalPrompt(for: request)
+                : LocalExecPermissionAuthorizer.terminalRetryPrompt()
+            firstAttempt = false
+            guard let answer = await readKey(prompt) else {
+                // EOF / Ctrl+D: no consent obtainable.
+                return nil
+            }
+            if let decision = LocalExecPermissionAuthorizer.permissionDecision(
+                forTerminalAnswer: answer
+            ) {
+                return decision
+            }
+        }
+    }
+}
+
+extension LocalExecPermissionAuthorizer {
+    /// Reads a single key from the terminal on a non-cooperative thread, so the
+    /// authorizer actor (and its cooperative executor) is not blocked while the
+    /// operator decides.
+    static func readTerminalKey(prompt: String) async -> String? {
+        guard TerminalRawInput.supportsInteractiveInput() else {
+            return nil
+        }
+        let cancellation = ConsentReadCancellationFlag()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global().async {
+                    continuation.resume(
+                        returning: TerminalInteractiveLineReader().readSingleKey(
+                            prompt: prompt,
+                            shouldCancel: cancellation.isCancelled
+                        )
+                    )
+                }
+            }
+        } onCancel: {
+            cancellation.cancel()
+        }
+    }
+
+    static func nonInteractiveConsentMessage(for request: AgentToolAuthorizationRequest) -> String {
+        LocalExecPermissionPolicy.nonInteractiveConsentMessage(for: request)
+    }
+
+    static func terminalPrompt(
+        for request: AgentToolAuthorizationRequest,
+        terminalColumns: Int? = nil
+    ) -> String {
+        let useColor = AgentOutput.standardErrorIsTerminal
+        let columns = terminalColumns ?? TerminalWidth.current(
+            descriptors: [AgentOutput.standardError.fileDescriptor],
+            fallback: 100,
+            forceRefresh: true
+        )
+
+        let directory = Self.abbreviatedHomePath(
+            Self.singleLined(Self.sanitizedForTerminal(request.workingDirectory))
+        )
+        let command = ChatConsentCommandLine(request: request)
+        let hint = Self.compactAlwaysHint(forToolName: request.toolName)
+
+        let commandLine = Self.commandLine(command, colored: useColor)
+        let directoryPlain = "⊙ \(directory)"
+
+        // The top border already identifies this as an authorization request;
+        // the command itself is the primary body content, so repeating the
+        // request title here would duplicate the same action in most prompts.
+        // `renderConsentBox` measures visible terminal cells, excluding ANSI
+        // escapes, and reflows these rows before it draws either border.
+        let innerLines = [
+            commandLine,
+            Self.wrap(directoryPlain, code: Self.ansiDim, colored: useColor),
+            Self.wrap(hint, code: Self.ansiDim, colored: useColor)
+        ]
+
+        // The run/always/cancel options and their compact key hint form the card
+        // footer, set off from the command details by a divider rule. Keeping
+        // `(r/a/c)` here avoids repeating the available choices below the box.
+        // Non-bold cyan/gray palette for the footer choices: cyan marks the
+        // option keys ([R], [A], [C]).
+        let footer = "\(Self.ansiCyan)[R]\(Self.ansiDim)un once / \(Self.ansiCyan)[A]\(Self.ansiDim)lways / \(Self.ansiCyan)[C]\(Self.ansiDim)ancel\(Self.ansiReset)"
+        let box = Self.renderConsentBox(
+            title: "Authorization",
+            innerLines: innerLines,
+            footer: footer,
+            colored: useColor,
+            terminalColumns: columns
+        )
+        // `readSingleKey` echoes the selected key followed by a newline. End the
+        // box with a newline so that echo gets its own physical row and the TUI
+        // resumes below the card instead of overwriting its bottom rows.
+        return "\n\(box)\n"
+    }
+
+    /// ANSI accents reused across the consent card. They are aliases of the
+    /// shared TUI style so this dialog stays consistent with other surfaces.
+    private static let ansiBorder = TerminalStyle.Permission.border
+    private static let ansiTitle = TerminalStyle.Permission.title
+    private static let ansiMarker = TerminalStyle.Permission.marker
+    private static let ansiCyan = TerminalStyle.Permission.choice
+    private static let ansiCyanBold = TerminalStyle.Permission.emphasizedChoice
+    private static let ansiDim = TerminalStyle.Permission.metadata
+    private static let ansiReset = TerminalStyle.reset
+
+    private static func wrap(_ text: String, code: String, colored: Bool) -> String {
+        colored ? "\(code)\(text)\(Self.ansiReset)" : text
+    }
+
+    /// Compact one-line summary of the "Always" scope so the card stays tight.
+    /// The longer explanation still lives in `LocalExecPermissionPolicy.alwaysChoiceHint` for the headless
+    /// (non-interactive) message; the substrings here keep the prompt tests green.
+    private static func compactAlwaysHint(forToolName toolName: String) -> String {
+        toolName == "local.exec"
+            ? "always · remembered across sessions"
+            : "always · this session only"
+    }
+
+    /// Collapses newlines, tabs, and repeated whitespace so untrusted fields
+    /// become one logical line before the width-aware card renderer reflows them.
+    private static func singleLined(_ text: String) -> String {
+        text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
+
+    /// Replaces the user's home-directory prefix with `~` so paths stay short.
+    /// `zen --ui` prints its workspace with it too, over an injected home.
+    static func abbreviatedHomePath(_ path: String, homeDirectory: String = NSHomeDirectory()) -> String {
+        LocalExecPermissionPolicy.abbreviatedHomePath(path, homeDirectory: homeDirectory)
+    }
+
+    /// The `❯ ` marker followed by the command, with every executable the
+    /// consent covers in bold cyan (``ChatConsentCommandLine``), so the
+    /// operator can spot what would actually run, and the rest plain.
+    static func commandLine(_ command: ChatConsentCommandLine, colored: Bool) -> String {
+        Self.wrap("❯ ", code: Self.ansiMarker, colored: colored)
+            + command.runs.map { run in
+                run.isExecutable
+                    ? Self.wrap(run.text, code: Self.ansiCyanBold, colored: colored)
+                    : run.text
+            }.joined()
+    }
+
+    /// Builds the dimmed-blue-bordered card at the same full row width as the prompt
+    /// panel, regardless of content length, then explicitly reflows its content.
+    /// The primary-screen compositor disables autowrap while painting dialog
+    /// rows, just as it does for the prompt and docked Chat surfaces.
+    private static func renderConsentBox(
+        title: String,
+        innerLines: [String],
+        footer: String?,
+        colored: Bool,
+        terminalColumns: Int
+    ) -> String {
+        // A box row is `│ <content> │`, i.e. four visible cells of chrome.
+        let rowWidth = max(4, terminalColumns)
+        let innerWidth = max(1, rowWidth - 4)
+        let rule = String(repeating: "─", count: innerWidth + 2)
+        let border = { Self.wrap($0, code: Self.ansiBorder, colored: colored) }
+
+        // Top border embeds the title (`╭─ Title ────╮`), padded to the content
+        // width so the title is the card heading, not a body row. On unusually
+        // narrow terminals, fit the title itself before drawing the border.
+        // The title text is styled separately from the dimmed frame so it
+        // renders in the full-intensity orange of the command marker.
+        let topMiddleWidth = innerWidth + 1
+        let titleFits = TerminalANSIText.visibleWidth(" \(title) ") <= topMiddleWidth
+        let titleText = titleFits ? title : TerminalANSIText.truncate(title, to: topMiddleWidth)
+        let titlePadding = titleFits ? " " : ""
+        let titleSuffix = String(
+            repeating: "─",
+            count: max(
+                0,
+                topMiddleWidth - TerminalANSIText.visibleWidth(titleText) - 2 * titlePadding.count
+            )
+        )
+        let topBorder = border("╭─\(titlePadding)")
+            + Self.wrap(titleText, code: Self.ansiTitle, colored: colored)
+            + border("\(titlePadding)\(titleSuffix)╮")
+        var rows: [String] = [topBorder]
+        for line in Self.wrappedConsentRows(innerLines, width: innerWidth) {
+            let padding = String(
+                repeating: " ",
+                count: max(0, innerWidth - TerminalANSIText.visibleWidth(line))
+            )
+            let body = " \(line)\(padding) "
+            rows.append(border("│") + body + border("│"))
+        }
+        if let footer {
+            rows.append(border("├\(rule)┤"))
+            for line in Self.wrappedConsentRows([footer], width: innerWidth) {
+                let padding = String(
+                    repeating: " ",
+                    count: max(0, innerWidth - TerminalANSIText.visibleWidth(line))
+                )
+                let body = " \(line)\(padding) "
+                rows.append(border("│") + body + border("│"))
+            }
+        }
+        rows.append(border("╰\(rule)╯"))
+        return rows.joined(separator: "\n")
+    }
+
+    /// Reflows rendered content without counting ANSI escape sequences as cells.
+    /// Whitespace is retained verbatim because this is a shell command preview;
+    /// long unbroken arguments are split rather than allowed to overflow the
+    /// border.
+    private static func wrappedConsentRows(_ lines: [String], width: Int) -> [String] {
+        lines.flatMap { TerminalANSIText.wrapPreservingWhitespace($0, width: width) }
+    }
+
+    static func terminalRetryPrompt() -> String {
+        Self.colorChoiceLine("Please choose [R]un once / [A]lways / [C]ancel")
+    }
+
+    /// Accent-colors the run/always/cancel choice line so the consent decision
+    /// stands out, mirroring the cyan accent used for `/undo`. Color is applied
+    /// only when standard error is an interactive terminal — the same gate the
+    /// rest of the TUI uses — so pipes and captured output keep the plain,
+    /// log-readable text. The whole line is colored as one unit so the option
+    /// text stays contiguous.
+    static func colorChoiceLine(_ line: String) -> String {
+        guard AgentOutput.standardErrorIsTerminal else {
+            return line
+        }
+        let accent = Self.ansiCyanBold
+        let reset = Self.ansiReset
+        return "\(accent)\(line)\(reset)"
+    }
+
+    /// Maps a single-key terminal answer to a permission decision. A genuine
+    /// Enter (empty input) defaults to run-once, mirroring the previous macOS
+    /// dialog's default button. Whitespace and unrecognized keys yield no
+    /// decision so the prompt re-asks, rather than silently authorizing.
+    static func permissionDecision(forTerminalAnswer answer: String) -> PermissionDecision? {
+        if answer.isEmpty {
+            return .allowOnce
+        }
+        switch answer.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "r":
+            return .allowOnce
+        case "a":
+            return .allowAlways
+        case "c":
+            return .deny
+        default:
+            return nil
+        }
+    }
+
+    /// Strips terminal control characters from untrusted request fields
+    /// (``LocalExecPermissionPolicy/sanitizedForTerminal(_:)``).
+    static func sanitizedForTerminal(_ text: String) -> String {
+        LocalExecPermissionPolicy.sanitizedForTerminal(text)
+    }
+}

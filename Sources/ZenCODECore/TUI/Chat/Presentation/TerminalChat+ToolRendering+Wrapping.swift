@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension TerminalChat {
     /// Reflows detailed tool rows before they are rendered in an in-place

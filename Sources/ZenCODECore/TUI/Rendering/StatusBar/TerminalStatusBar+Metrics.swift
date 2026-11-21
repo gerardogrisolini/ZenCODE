@@ -15,6 +15,7 @@ import Foundation
 #if canImport(os)
 import os
 #endif
+import ZenCODERuntime
 
 extension TerminalStatusBar {
     /// The widest agent name the status row shows, in visible columns.

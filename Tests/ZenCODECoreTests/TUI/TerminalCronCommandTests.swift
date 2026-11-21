@@ -7,6 +7,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// In-memory crontab that records every access. No test uses the system
 /// `crontab`: the real one is never read or written.

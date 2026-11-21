@@ -7,6 +7,7 @@
 
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Testing
 
 extension AgentConfigurationTests {

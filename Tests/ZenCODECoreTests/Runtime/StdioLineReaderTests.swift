@@ -15,6 +15,7 @@ import Glibc
 #endif
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Testing
 
 @Suite(.timeLimit(.minutes(1)))

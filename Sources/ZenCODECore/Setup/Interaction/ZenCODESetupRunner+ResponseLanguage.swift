@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension ZenCODESetupRunner {
     /// Prompts for the natural-language response language, defaulting to the

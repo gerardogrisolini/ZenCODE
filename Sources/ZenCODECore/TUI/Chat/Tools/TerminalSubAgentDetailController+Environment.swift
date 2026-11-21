@@ -8,6 +8,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension TerminalSubAgentDetailController {
     /// Everything the controller reads, waits for, and draws through.

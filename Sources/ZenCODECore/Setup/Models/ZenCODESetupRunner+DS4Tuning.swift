@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension ZenCODESetupRunner {
     /// Asks the launch options of one model. Optional values are answered with

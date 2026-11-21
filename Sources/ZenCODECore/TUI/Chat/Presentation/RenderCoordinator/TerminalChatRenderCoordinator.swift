@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Serializes every stateful chat render operation.
 ///
@@ -51,23 +52,13 @@ actor TerminalChatRenderCoordinator {
         let text: String
     }
 
-    /// One completed sub-agent response waiting to be presented. `token` is a
-    /// stable identity for that completion, allowing the overview metadata to
-    /// be refreshed without printing the same model-authored response again.
-    struct SubAgentMarkdownResponse: Sendable, Equatable {
-        let token: String
-        let heading: String
-        let markdown: String
-    }
+    /// One completed sub-agent response waiting to be presented
+    /// (``TerminalSubAgentMarkdownResponse``, shared with Telegram).
+    typealias SubAgentMarkdownResponse = TerminalSubAgentMarkdownResponse
 
-    /// One assistant block that a sub-agent completed before starting a tool.
-    /// The same block is shown as a 💬 row in the live overview, consumed once
-    /// even when later refreshes redraw that row.
-    struct SubAgentPartialResponse: Sendable, Equatable {
-        let token: String
-        let heading: String
-        let markdown: String
-    }
+    /// One assistant block that a sub-agent completed before starting a tool
+    /// (``TerminalSubAgentPartialResponse``, shared with Telegram).
+    typealias SubAgentPartialResponse = TerminalSubAgentPartialResponse
 
     struct Snapshot: Sendable, Equatable {
         let activeToolCallID: String?

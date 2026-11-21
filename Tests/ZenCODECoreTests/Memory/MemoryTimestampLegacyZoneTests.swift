@@ -9,6 +9,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite struct MemoryTimestampLegacyZoneTests {
     @Test

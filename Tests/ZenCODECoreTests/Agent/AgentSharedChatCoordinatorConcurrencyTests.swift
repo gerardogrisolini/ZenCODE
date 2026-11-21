@@ -5,6 +5,7 @@
 
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Testing
 
 /// Interleaving, lifecycle and API-compatibility coverage for the Core

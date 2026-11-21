@@ -16,6 +16,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @ChatSessionActor
 @Suite("Telegram channel topics", .serialized, .timeLimit(.minutes(2)))

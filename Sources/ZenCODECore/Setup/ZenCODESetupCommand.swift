@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Interactive `zen --setup` command.
 ///

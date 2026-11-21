@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Overview arbitration (signatures, revisions, deferral, publication suspension) and the sub-agent in-place section.
 extension TerminalChatRenderCoordinator {

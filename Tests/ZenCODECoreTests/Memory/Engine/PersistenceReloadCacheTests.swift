@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite struct PersistenceReloadCacheTests {
     private static func graphJSON(id: String = "mem_1", content: String = "Swift runs on Linux") -> String {

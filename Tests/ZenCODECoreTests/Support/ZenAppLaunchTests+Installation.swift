@@ -14,6 +14,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension ZenAppLaunchTests {
     // MARK: - Parsing

@@ -13,6 +13,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Alpha and beta, two terminal sessions in `/tmp/project`, whose channels
 /// are attached in topic mode to one bot: one dispatcher polls it, one router

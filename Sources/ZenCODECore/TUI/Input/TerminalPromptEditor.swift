@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Effect a key produced on the draft, reported to the owner of the terminal.
 ///

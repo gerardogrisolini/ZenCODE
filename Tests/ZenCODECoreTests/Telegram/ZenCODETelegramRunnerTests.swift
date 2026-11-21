@@ -31,6 +31,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// The lines a ``ZenCODETelegramLog`` wrote, in the +01:00 time zone.
 private final class TelegramRunnerLogRecorder: Sendable {

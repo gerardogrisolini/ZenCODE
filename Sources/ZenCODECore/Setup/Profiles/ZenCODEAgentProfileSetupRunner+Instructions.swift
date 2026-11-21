@@ -8,6 +8,7 @@
 import Dispatch
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODEAgentProfileSetupRunner {
     /// The instructions of the agent being added or edited. With existing

@@ -10,6 +10,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension TelegramChannelIngressPrecedenceTests {
     /// The receipt the card seam answers with.

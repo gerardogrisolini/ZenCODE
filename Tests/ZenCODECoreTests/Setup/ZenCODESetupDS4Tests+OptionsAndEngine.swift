@@ -12,6 +12,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension ZenCODESetupDS4Tests {
     // MARK: Optional files and launch options

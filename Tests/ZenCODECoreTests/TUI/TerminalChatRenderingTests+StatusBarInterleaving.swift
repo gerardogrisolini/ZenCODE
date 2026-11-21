@@ -11,6 +11,7 @@ import Foundation
 import Markdown
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Deterministic gate for testing the refresh-tick drain. `wait()` suspends
 /// the caller until `release()` is invoked, allowing tests to control exactly

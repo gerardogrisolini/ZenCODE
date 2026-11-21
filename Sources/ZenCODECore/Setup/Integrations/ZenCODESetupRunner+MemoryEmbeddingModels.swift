@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension ZenCODESetupRunner {
     /// One embedding model offered by the OpenRouter preset submenu.

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension TerminalCodeBlockRenderer {
     static func profile(for language: String?) -> SyntaxProfile {

@@ -7,6 +7,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// End-to-end coverage of the shared-chat path with real components and a mock
 /// model backend. The bus (`AgentSharedChat`), the child executor

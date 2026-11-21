@@ -33,6 +33,7 @@ swift build --target ZenCODECore          # fast shared-runtime compile
 swift test --no-parallel                  # full non-live suite and release/CI gate
 swift build -c release --product zen      # release product
 swift test --package-path Sources/ZenCRON # ZenCRON package; only when ZenCRON changes
+swift test --package-path Sources/ZenApp  # macOS app; when ZenApp or the ZenCODECore API it uses changes
 bash -n Scripts/*.sh                      # shell syntax
 git diff --check                          # whitespace hygiene
 ```
@@ -48,6 +49,11 @@ ZenCRON (`Sources/ZenCRON`) is a standalone package outside the root graph, so
 `swift test` at the root does not run its tests. The CI job `zencron-package`
 runs them, and builds ZenCRON, on macOS and Linux.
 
+ZenApp (`Sources/ZenApp`) is likewise a standalone package outside the root
+graph; it builds the root package through a path dependency. `swift test` at the
+root does not run its tests. The CI job `zenapp-package` builds and tests it on
+macOS only, because the app requires macOS 26 and SwiftUI.
+
 Live provider checks are opt-in through `ZENCODE_RUN_LIVE_*` environment
 variables. Leave them unset for ordinary verification; CI never runs them.
 
@@ -56,8 +62,15 @@ variables. Leave them unset for ordinary verification; CI never runs them.
 [`Docs/architecture.md`](Docs/architecture.md) is the compatibility and
 dependency-direction contract, and it is authoritative. In short:
 
-- `Sources/ZenCODECore` owns the shared agent runtime, remote providers, tools,
-  ACP, TUI, context, memory, and file-change tracking.
+- `Sources/ZenCODERuntime` (product `ZenCODERuntime`) owns the shared agent
+  runtime: chat sessions, remote providers, tools, Telegram, voice, context,
+  memory, sessions, and file-change tracking. It never depends on
+  `Sources/ZenCODECore`.
+- `Sources/ZenCODECore` (product `ZenCODECore`) owns the TUI, the interactive
+  setup, ACP, and the CLI composition (`Runtime/Launcher`). It re-exports
+  `ZenCODERuntime`, so `import ZenCODECore` keeps the whole public API. Runtime
+  symbols that only it uses are `package`, never `public`, and each of its
+  files that uses the runtime imports `ZenCODERuntime` explicitly.
 - `Sources/ToolCore` holds dependency-light wire and descriptor types; keep
   Xcode-specific behavior out of it.
 - `Sources/FeatureKit` owns executable-feature contracts; keep

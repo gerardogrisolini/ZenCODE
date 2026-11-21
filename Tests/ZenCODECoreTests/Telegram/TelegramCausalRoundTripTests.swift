@@ -15,6 +15,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Recorded wire request with its decoded JSON body fields of interest.
 private struct RecordedTelegramRequest: Sendable {

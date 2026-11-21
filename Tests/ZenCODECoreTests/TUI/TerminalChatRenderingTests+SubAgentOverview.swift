@@ -10,6 +10,7 @@ import Foundation
 import Markdown
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension TerminalChatRenderingTests {
     @Test

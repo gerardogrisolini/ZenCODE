@@ -7,6 +7,7 @@
 
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite
 struct RemoteGenerationRoundTextTests {

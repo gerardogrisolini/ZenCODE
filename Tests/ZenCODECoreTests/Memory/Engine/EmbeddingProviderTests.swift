@@ -8,6 +8,7 @@ import Foundation
 import FoundationNetworking
 #endif
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Testing
 
 @Test

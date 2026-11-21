@@ -7,6 +7,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension AgentDelegationRoutingTests {
     @Test(arguments: [false, true])

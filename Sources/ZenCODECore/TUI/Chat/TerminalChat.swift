@@ -13,6 +13,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import ZenCODERuntime
 
 /// TerminalChat coordinates session state; all stateful terminal rendering is isolated by `renderCoordinator`.
 ///

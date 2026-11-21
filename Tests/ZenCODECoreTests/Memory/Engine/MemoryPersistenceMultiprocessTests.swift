@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Two independent engine actors model separate `zen` processes. Their shared
 /// JSON persistence must reload the graph under the OS-level lock, otherwise

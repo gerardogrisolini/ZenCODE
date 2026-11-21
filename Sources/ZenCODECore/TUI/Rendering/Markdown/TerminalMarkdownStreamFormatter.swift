@@ -7,6 +7,7 @@
 
 import Foundation
 import Markdown
+import ZenCODERuntime
 
 public struct TerminalMarkdownStreamFormatter {
     private static let reset = TerminalStyle.reset

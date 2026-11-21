@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension TerminalGitStatusSummary {
     /// The time limit of each git command of the summary.

@@ -17,6 +17,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("RemoteTransportCore", .serialized)
 struct RemoteTransportCoreTests {

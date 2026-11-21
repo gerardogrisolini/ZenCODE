@@ -6,6 +6,7 @@
 //
 
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODEACPBridge {
     /// ACP's `/review` prompt.

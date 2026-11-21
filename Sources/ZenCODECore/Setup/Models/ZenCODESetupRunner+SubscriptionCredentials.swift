@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension ZenCODESetupRunner {
     static func isChatGPTSubscriptionProvider(

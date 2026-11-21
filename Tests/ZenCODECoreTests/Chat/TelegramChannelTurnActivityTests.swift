@@ -25,6 +25,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("Telegram channel turn activity", .serialized, .timeLimit(.minutes(2)))
 struct TelegramChannelTurnActivityTests {

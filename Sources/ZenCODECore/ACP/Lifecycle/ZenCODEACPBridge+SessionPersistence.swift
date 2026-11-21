@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// The saved session an ACP session is saved as, remembered by the live
 /// incarnation (``ZenCODEACPBridge/SessionState/savedSessionLink``) so that

@@ -11,6 +11,7 @@
 
 import Foundation
 import Synchronization
+import ZenCODERuntime
 
 extension TerminalChat {
     static let voiceRequiresInteractiveTerminalMessage = "ZenCODE: /voice is available only in the interactive terminal.\n"

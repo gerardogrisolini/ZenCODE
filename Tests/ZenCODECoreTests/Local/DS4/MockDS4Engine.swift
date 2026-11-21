@@ -45,6 +45,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 final class MockDS4Engine: DS4Engine {
     /// Payload of a prepared transcript: counts its release.

@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 public enum ZenCODEAgentProfileSetupRunner {
     enum AgentSetupModelChoice: Hashable {

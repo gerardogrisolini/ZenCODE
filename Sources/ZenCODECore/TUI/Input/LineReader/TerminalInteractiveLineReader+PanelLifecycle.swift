@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension TerminalInteractiveLineReader {
     /// Ownership of the terminal by the input panel.

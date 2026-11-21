@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// Presents one ACP prompt turn as `session/update` notifications.
 ///

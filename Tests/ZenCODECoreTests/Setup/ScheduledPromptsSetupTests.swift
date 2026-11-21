@@ -7,6 +7,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// The "Scheduled prompts (ZenCRON)" setup section. The build and the process
 /// execution are replaced by fakes: no test runs `swift build`, starts a real

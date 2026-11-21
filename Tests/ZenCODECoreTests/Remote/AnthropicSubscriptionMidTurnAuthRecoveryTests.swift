@@ -13,6 +13,7 @@ import NIOPosix
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("Anthropic Subscription mid-turn auth recovery", .serialized)
 struct AnthropicSubscriptionMidTurnAuthRecoveryTests {

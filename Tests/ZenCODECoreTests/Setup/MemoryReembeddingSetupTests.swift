@@ -10,6 +10,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 private struct NamedEmbeddingProvider: EmbeddingProvider {
     let modelID: String

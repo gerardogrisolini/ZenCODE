@@ -16,6 +16,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @ChatSessionActor
 @Suite("Terminal chat in a session host", .serialized, .timeLimit(.minutes(2)))

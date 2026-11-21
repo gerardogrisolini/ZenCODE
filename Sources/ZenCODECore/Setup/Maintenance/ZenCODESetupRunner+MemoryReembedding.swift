@@ -13,6 +13,7 @@
 
 import Foundation
 import Synchronization
+import ZenCODERuntime
 
 extension ZenCODESetupRunner {
     /// Where a re-embedding was started; only the wording differs.

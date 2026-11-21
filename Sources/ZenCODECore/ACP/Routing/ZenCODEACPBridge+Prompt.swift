@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// The identity of one `session/prompt` turn: the request it answers, the
 /// session incarnation it runs on, and the prompt reservation it holds

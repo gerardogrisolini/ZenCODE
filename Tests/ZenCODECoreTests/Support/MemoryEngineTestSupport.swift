@@ -9,6 +9,7 @@
 
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension MemoryEngine {
     /// An engine over the graph `persistence` loads.

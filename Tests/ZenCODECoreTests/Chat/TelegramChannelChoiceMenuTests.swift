@@ -19,6 +19,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @ChatSessionActor
 @Suite("Telegram channel choice menus", .serialized, .timeLimit(.minutes(2)))

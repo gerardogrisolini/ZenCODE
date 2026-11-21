@@ -12,6 +12,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("Chat session task-graph resumption", .serialized)
 struct ChatSessionResumeTaskGraphTests {

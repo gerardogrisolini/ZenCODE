@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Shared startup gate for the executable composition root. A decodable
 /// manifest is not sufficient by itself: the runtime also needs at least one

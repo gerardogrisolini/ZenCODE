@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// Drives the `/artifacts` panel on the layout of the `/subagent` detail
 /// (``TerminalSubAgentDetailPanel``, titled ``title``): it lets the operator

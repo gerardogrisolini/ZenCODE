@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// The stable machine-readable protocol for one headless JSONL run.
 ///

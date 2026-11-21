@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Low-level channel primitives: measured writes, spacing/line-inset state, shared-cursor topology, and direct terminal emission.
 extension TerminalChatRenderCoordinator {

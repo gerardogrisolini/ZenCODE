@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// The facts of the terminal chat that hide some of its own commands. They
 /// occupy bits 16 and 17 of ``ChatCommandContext``, above the facts Chat

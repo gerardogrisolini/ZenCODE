@@ -13,6 +13,7 @@ import Glibc
 import Dispatch
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension TerminalChat {
     func generateResponse(

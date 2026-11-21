@@ -21,6 +21,7 @@
 import Foundation
 import Synchronization
 import ToolCore
+import ZenCODERuntime
 
 final class ACPPromptUpdatePipeline: Sendable {
     /// One serialized unit of work that ends in zero or more writer calls.

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Minimal lifecycle surface used by the headless turn executor. Production
 /// delegates to `AgentCoreSessionRunner`; tests can supply a controlled actor

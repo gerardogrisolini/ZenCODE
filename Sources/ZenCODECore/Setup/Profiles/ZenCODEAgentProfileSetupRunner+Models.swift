@@ -9,6 +9,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODEAgentProfileSetupRunner {
     enum AgentModelBindingMenuAction: Hashable {

@@ -10,6 +10,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 enum ACPCommandPromptPurpose: Sendable {
     case normal

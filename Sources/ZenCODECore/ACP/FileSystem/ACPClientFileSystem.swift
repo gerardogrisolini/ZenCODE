@@ -2,6 +2,7 @@
 //
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// ACP owns the RPCs; the neutral runtime sees only transient text operations.
 /// A client read is not an atomic snapshot of a later client write. We serialize
@@ -149,7 +150,7 @@ final class ACPClientFileSystem: Sendable {
         var params: [String: JSONValue] = ["sessionId": .string(sessionID), "path": .string(path)]
         if let contents { params["content"] = .string(contents) }
         let payload = JSONValue.object(params)
-        return try await withThrowingTaskGroup(of: JSONValue?.self) { group in
+        return try await withThrowingTaskGroup(of: Optional<JSONValue>.self) { group in
             group.addTask(name: "ACP client filesystem request") {
                 try Task.checkCancellation()
                 guard await isValid() else { throw CancellationError() }

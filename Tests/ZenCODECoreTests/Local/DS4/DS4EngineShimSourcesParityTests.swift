@@ -10,6 +10,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite
 struct DS4EngineShimSourcesParityTests {
@@ -27,8 +28,8 @@ struct DS4EngineShimSourcesParityTests {
         return try Data(contentsOf: url)
     }
 
-    private static let abiHeaderPath = "Sources/ZenCODECore/Resources/DS4Engine/zencode_ds4_abi.h"
-    private static let shimSourcePath = "Sources/ZenCODECore/Resources/DS4Engine/zencode_ds4_shim.c"
+    private static let abiHeaderPath = "Sources/ZenCODERuntime/Resources/DS4Engine/zencode_ds4_abi.h"
+    private static let shimSourcePath = "Sources/ZenCODERuntime/Resources/DS4Engine/zencode_ds4_shim.c"
     private static let buildScriptPath = "Scripts/build-ds4-engine.sh"
 
     @Test

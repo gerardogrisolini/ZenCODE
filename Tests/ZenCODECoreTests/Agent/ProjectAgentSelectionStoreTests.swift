@@ -6,6 +6,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Runs `body` with a throwaway support directory and a throwaway workspace,
 /// so a test never reads or writes the real `~/.zencode`.

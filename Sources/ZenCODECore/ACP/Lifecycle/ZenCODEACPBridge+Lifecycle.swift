@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODEACPBridge {
     public func newSession(id: JSONValue?, params: [String: Any]) async throws {

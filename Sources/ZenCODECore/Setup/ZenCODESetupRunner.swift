@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 public enum ZenCODESetupRunner {
     /// Runs the interactive setup of `zen --setup`.

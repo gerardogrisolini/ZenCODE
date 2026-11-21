@@ -7,6 +7,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Covers ownership, bounding, and cancellation of remote (Telegram) voice
 /// transcriptions, which used to be unowned fire-and-forget tasks.

@@ -7,6 +7,7 @@
 
 import Foundation
 import Markdown
+import ZenCODERuntime
 
 extension TerminalChat {
     /// Glyphs shared with the plain setup summary where applicable.

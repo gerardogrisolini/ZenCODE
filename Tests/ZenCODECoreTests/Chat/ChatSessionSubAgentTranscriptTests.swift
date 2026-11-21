@@ -9,6 +9,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// The live sub-agent transcript through the whole public chain:
 /// `ChatSessionController` → `AgentCoreSessionRunner` → `AgentCoreBackend` →

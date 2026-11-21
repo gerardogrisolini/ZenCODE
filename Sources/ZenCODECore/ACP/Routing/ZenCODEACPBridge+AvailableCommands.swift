@@ -8,6 +8,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODEACPBridge {
     func availableCommandsUpdate(for session: SessionState) -> JSONValue {

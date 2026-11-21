@@ -9,6 +9,7 @@
 import FeatureMCPBridgeKit
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODEACPBridge {
     public func handleLine(_ line: String) async {

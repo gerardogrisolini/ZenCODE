@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// The incarnation's observer of the session's task-graph events.
 ///

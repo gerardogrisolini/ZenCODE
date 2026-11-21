@@ -10,6 +10,7 @@
 import Foundation
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Testing
 
 extension MemoryServiceTests {

@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// `/telegram` in the terminal: the slot's handover to Telegram and back.
 ///

@@ -13,6 +13,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 private struct RecordedTelegramRequest: Sendable {
     let url: URL

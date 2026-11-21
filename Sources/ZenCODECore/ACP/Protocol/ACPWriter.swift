@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 public actor ACPWriter {
     /// Sink for encoded JSON-RPC messages. Injectable so tests can observe the

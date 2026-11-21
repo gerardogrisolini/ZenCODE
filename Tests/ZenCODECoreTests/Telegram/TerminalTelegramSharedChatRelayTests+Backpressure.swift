@@ -11,6 +11,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Records cards behind a gate the test opens explicitly, so the window between
 /// "a card was handed to the transport" and "the transport answered" is a state

@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// ACP implementation of the consent host: asks the client with a
 /// `session/request_permission` request and maps the selected option.

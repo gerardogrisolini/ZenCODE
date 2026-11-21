@@ -11,6 +11,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Fake session handles: records creations, configurations and frees.
 private final class FakeSessions {

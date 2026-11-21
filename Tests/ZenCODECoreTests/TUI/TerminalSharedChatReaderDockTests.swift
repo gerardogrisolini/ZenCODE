@@ -7,6 +7,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Drives `TerminalSharedChatObservationSupervisor` through the same seam the
 /// blocking input loop uses in production: real `AsyncStream` observations that

@@ -8,6 +8,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension TerminalSubAgentOverviewLayout {
     // MARK: - Physical rows

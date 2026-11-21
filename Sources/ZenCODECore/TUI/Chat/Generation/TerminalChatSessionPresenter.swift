@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// Renders the shared chat-turn pipeline in the terminal chat.
 ///

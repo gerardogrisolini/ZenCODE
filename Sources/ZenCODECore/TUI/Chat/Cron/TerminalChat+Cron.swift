@@ -5,6 +5,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// `/cron`: schedules headless prompts in the user's crontab.
 ///
@@ -253,7 +254,7 @@ extension TerminalChat {
         case "default":
             value = nil
         default:
-            value = try Self.validatedCronMailTo(arguments)
+            value = try ZenCrontabDocument.validatedCronMailTo(arguments)
         }
 
         var document = try await readCronDocument()
@@ -454,17 +455,6 @@ extension TerminalChat {
             throw ZenCrontabError.invalidPromptFile(reason: "its path contains a line break")
         }
         return path
-    }
-
-    /// An address cron can place on a `MAILTO=` line: no whitespace of any
-    /// kind and no double quote.
-    nonisolated static func validatedCronMailTo(_ address: String) throws -> String {
-        let isValid = !address.isEmpty
-            && !address.unicodeScalars.contains { $0.properties.isWhitespace || $0 == "\"" }
-        guard isValid else {
-            throw ZenCrontabError.invalidMailTo(address)
-        }
-        return address
     }
 
     // MARK: - Rendering

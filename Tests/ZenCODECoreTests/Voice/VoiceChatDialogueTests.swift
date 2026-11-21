@@ -8,6 +8,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("Voice chat dialogue")
 struct VoiceChatDialogueTests {

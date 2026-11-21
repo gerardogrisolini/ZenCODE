@@ -1,5 +1,6 @@
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Testing
 
 @Suite("Package root resolution")

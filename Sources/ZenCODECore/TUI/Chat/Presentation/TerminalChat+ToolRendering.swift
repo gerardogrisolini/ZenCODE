@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension TerminalChat {
     /// The syntax-highlighting language of a file, chosen strictly from its

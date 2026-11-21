@@ -5,6 +5,7 @@
 
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Covers the actor-isolated mention catalogue: readable handles derived from
 /// display names, unique disambiguation, non-recycled aliases, session reset,

@@ -6,6 +6,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import ToolCore
 
 /// Closes review findings 2 (room-ID one-to-one), 4 (mailbox→pending

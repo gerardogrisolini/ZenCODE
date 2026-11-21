@@ -11,6 +11,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// A host whose `readLine` waits until the test answers it, recording what
 /// it is asked and the cancellations it sees. A cancellation answers `nil`,

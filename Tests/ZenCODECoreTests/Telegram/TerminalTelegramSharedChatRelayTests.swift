@@ -7,6 +7,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 // Test-only compatibility surface. Production has no nil-scoped relay API:
 // every operation below is translated to an explicit synthetic lease.

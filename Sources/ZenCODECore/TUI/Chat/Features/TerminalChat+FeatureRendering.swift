@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension TerminalChat {
     public nonisolated static func renderFeatureCommandUsage() -> String {

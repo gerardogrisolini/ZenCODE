@@ -8,6 +8,7 @@
 import FeatureMCPBridgeKit
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Testing
 import ToolCore
 

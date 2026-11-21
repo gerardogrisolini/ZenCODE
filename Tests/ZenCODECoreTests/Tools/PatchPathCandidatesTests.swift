@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// The three ZenCODECore consumers of the shared `PatchFileHeaders` rule must
 /// ignore hunk-body lines that merely look like file headers.

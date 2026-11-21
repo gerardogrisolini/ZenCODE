@@ -1,5 +1,6 @@
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import ToolCore
 import ZenPackageMetadata
 import Testing
@@ -70,7 +71,7 @@ struct BundledFeatureCatalogParityTests {
         )
         #expect(!rootManifest.contains("XcodeToolsFeature"))
 
-        let coreRoot = packageRoot.appendingPathComponent("Sources/ZenCODECore", isDirectory: true)
+        let coreRoot = packageRoot.appendingPathComponent("Sources/ZenCODERuntime", isDirectory: true)
         for relativePath in [
             "ZenCODE/Support/LinuxXcodeToolCompatibility.swift",
             "Support/Compatibility/LinuxXcodeToolCompatibility.swift"
@@ -95,6 +96,7 @@ struct BundledFeatureCatalogParityTests {
 
         let rootSourceDirectories = [
             "Sources/ZenCODECore",
+            "Sources/ZenCODERuntime",
             "Sources/ZenPackageMetadata",
             "Sources/zen",
             "Sources/FeatureKit",

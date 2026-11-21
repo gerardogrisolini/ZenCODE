@@ -10,6 +10,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// A voice controller that listens until stopped, never speaks for real and
 /// records every call.

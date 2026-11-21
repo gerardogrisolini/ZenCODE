@@ -10,6 +10,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension DS4ToolCallPreviewTests {
     typealias Preview = DirectAgentToolCallPreview

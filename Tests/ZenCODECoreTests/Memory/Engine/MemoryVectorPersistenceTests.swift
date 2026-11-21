@@ -12,6 +12,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Vectors no binary16 value represents exactly, so a missed rounding shows.
 private struct FineGrainedEmbeddingProvider: EmbeddingProvider {

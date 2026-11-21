@@ -15,6 +15,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension SwiftFeatureRuntime {
     /// Registers `featureID` as built by a Builder that `sessionID`

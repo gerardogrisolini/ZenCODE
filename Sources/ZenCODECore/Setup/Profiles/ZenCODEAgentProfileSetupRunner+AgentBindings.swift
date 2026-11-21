@@ -8,6 +8,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODEAgentProfileSetupRunner {
     // MARK: - Per-agent binding configuration

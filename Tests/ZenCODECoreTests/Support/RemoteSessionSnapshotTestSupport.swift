@@ -15,6 +15,7 @@ import NIOHTTP1
 import NIOPosix
 import Synchronization
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Testing
 import ToolCore
 

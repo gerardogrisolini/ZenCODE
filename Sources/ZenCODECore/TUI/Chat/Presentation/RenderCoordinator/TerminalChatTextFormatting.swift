@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Stateless text-formatting helpers used by ``TerminalChatRenderCoordinator``.
 enum TerminalChatTextFormatting {

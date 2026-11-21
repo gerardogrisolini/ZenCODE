@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension ZenCODEAgentProfileSetupRunner {
     static func printAgents(_ agents: [AgentProfile]) {

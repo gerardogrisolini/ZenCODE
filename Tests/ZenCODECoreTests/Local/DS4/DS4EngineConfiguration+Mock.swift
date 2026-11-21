@@ -9,6 +9,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension DS4EngineConfiguration {
     /// Configuration for tests (the library is never loaded by the mocks).

@@ -9,6 +9,7 @@
 
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import FeatureKit
 import FeatureMCPBridgeKit
 import LocalToolsSupport

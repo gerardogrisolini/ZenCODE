@@ -12,6 +12,7 @@
 
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Testing
 
 /// Answers a menu with each scripted value in turn, then with `nil` forever,

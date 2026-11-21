@@ -8,6 +8,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Exercises `ChatSessionController` against a scripted `ChatSessionRuntime`,
 /// a recording presenter, and a scripted interaction host. No model, network,

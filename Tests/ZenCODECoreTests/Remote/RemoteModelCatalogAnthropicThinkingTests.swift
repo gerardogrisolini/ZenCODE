@@ -5,6 +5,7 @@
 
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import Testing
 
 /// Anthropic API-key setup: `/v1/models` `capabilities` must produce the wire

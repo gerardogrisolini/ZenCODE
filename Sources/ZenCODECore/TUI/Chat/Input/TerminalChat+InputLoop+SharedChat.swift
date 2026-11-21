@@ -12,6 +12,7 @@ import Glibc
 #endif
 import Dispatch
 import Foundation
+import ZenCODERuntime
 
 /// Keeps exactly one live shared-chat observation attached for the blocking
 /// input fallback.

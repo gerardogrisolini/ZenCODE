@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 enum TerminalSubmittedLineAction {
     case continueChat

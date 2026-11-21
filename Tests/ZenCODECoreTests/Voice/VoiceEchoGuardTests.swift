@@ -5,6 +5,7 @@
 
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("Voice echo guard")
 struct VoiceEchoGuardTests {

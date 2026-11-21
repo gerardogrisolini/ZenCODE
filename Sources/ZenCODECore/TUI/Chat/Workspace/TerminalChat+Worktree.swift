@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension TerminalChat {
     /// Asks how to close the worktree of a `--worktree` launch, then closes

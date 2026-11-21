@@ -8,6 +8,7 @@
 
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension AgentPermissionsManifestStore {
     /// Writes `manifest` to `url` as it is, under the same lock and with the

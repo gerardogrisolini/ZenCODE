@@ -13,6 +13,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("Chat workspace commands", .serialized)
 struct ChatWorkspaceCommandsTests {

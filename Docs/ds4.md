@@ -108,8 +108,8 @@ The shim sources and the build script are embedded in the binary, so an
 installed `zen` can build the library without the repository. Three files are
 embedded: `zencode_ds4_abi.h`, `zencode_ds4_shim.c`, and `build-ds4-engine.sh`.
 Their canonical copies are
-`Sources/ZenCODECore/Resources/DS4Engine/zencode_ds4_abi.h`,
-`Sources/ZenCODECore/Resources/DS4Engine/zencode_ds4_shim.c`, and
+`Sources/ZenCODERuntime/Resources/DS4Engine/zencode_ds4_abi.h`,
+`Sources/ZenCODERuntime/Resources/DS4Engine/zencode_ds4_shim.c`, and
 `Scripts/build-ds4-engine.sh`. `Scripts/GenerateDS4EngineShimSources.swift`
 generates the embedded copy (`DS4EngineShimSources.generated.swift`). Run it with
 `--check` to confirm that the copy is current; a parity test compares all three

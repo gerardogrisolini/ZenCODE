@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// The lifecycle of a sub-agent in a snapshot: its status, whether it is
 /// pending, and its execution revision. A change of it is applied, and the

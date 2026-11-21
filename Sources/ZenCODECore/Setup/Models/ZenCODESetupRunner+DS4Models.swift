@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension ZenCODESetupRunner {
     /// The saved model of the same GGUF as `candidate`, if there is one.

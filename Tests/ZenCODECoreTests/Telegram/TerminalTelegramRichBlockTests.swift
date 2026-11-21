@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// The exact `InputRichBlock` wire the Telegram adapter derives from the
 /// presentation tree. Keys are sorted so each expectation is one literal.

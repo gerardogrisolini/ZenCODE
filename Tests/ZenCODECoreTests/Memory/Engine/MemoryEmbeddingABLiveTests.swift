@@ -50,6 +50,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("Memory embedding A/B (live, opt-in)", .serialized)
 struct MemoryEmbeddingABLiveTests {

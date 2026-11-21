@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// Reads the arguments of a tool call the way the terminal's tool rows need
 /// them: verbatim payloads, array-of-object payloads, and path-shaped metadata

@@ -10,6 +10,7 @@ import Synchronization
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Regressions for the canonical delegatable catalog: stale bindings and two
 /// providers exposing the same raw model slug.

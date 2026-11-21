@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// The live workspace checkpoint: a read-only core tool with no file change
 /// launches no Git, any other tool does, and the repository root is looked

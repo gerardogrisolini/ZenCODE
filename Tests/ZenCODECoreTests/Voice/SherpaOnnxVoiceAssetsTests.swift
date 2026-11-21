@@ -7,6 +7,7 @@ import Crypto
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("Sherpa-onnx voice assets")
 struct SherpaOnnxVoiceAssetsTests {

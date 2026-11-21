@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 struct TerminalFeatureListPayload: Decodable {
     let features: [SwiftFeatureStatus]

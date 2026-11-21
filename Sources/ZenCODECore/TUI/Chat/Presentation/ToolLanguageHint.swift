@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// Chooses the syntax-highlighting language of the source a tool call shows.
 /// The choice is made strictly from the extension of the target file; text,

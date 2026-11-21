@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite struct EmbeddingEncodingPersistenceTests {
     private static func graphJSON(

@@ -14,6 +14,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("Turn memory prefix stability", .serialized)
 struct TurnMemoryPrefixStabilityTests {

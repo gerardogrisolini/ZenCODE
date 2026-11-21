@@ -6,6 +6,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 import ToolCore
 
 /// Covers the priority shared-chat delivery contract. A coordinator or delegated

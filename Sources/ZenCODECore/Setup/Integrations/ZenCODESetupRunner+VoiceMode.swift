@@ -12,6 +12,7 @@
 
 import Foundation
 import Synchronization
+import ZenCODERuntime
 
 extension ZenCODESetupRunner {
     enum VoiceModeAction: Hashable {

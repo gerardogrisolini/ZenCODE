@@ -11,6 +11,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// A flag set once, readable from any task.
 private final class Flag: Sendable {

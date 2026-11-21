@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension TerminalInteractiveLineReader {
     struct RenderLayout: Equatable {

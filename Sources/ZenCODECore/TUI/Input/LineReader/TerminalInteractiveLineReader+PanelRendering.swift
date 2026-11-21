@@ -1,4 +1,5 @@
 import Foundation
+import ZenCODERuntime
 
 extension TerminalInteractiveLineReader {
     /// Enqueues a redraw without making the caller wait for terminal I/O.

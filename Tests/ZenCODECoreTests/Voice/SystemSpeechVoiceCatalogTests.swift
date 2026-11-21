@@ -6,6 +6,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 #if canImport(AVFAudio)
 import AVFAudio
 #endif

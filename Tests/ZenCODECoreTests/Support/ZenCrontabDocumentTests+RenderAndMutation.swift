@@ -9,6 +9,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension ZenCrontabDocumentTests {
     // MARK: - Block errors

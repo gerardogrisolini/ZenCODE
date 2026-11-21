@@ -5,7 +5,7 @@ This guide is part of the compatibility contract in
 durable memory storage, retrieval, embedding, recall, and persisted formats.
 
 Project memory is owned by the internal `ZenMemory` engine at
-`Sources/ZenCODECore/Memory/Engine`; ZenCODECore's public `Memory`
+`Sources/ZenCODERuntime/Memory/Engine`; ZenCODECore's public `Memory`
 domain is a thin async facade over it (`MemoryService` →
 `MemoryGraphStore` → `ZenMemory` actor). The authoritative store is the
 per-workspace graph file at

@@ -382,3 +382,42 @@ jobs:
             echo "::error::ZenCRON --zencron-version must print exactly one line matching $pattern."
             exit 1
           fi
+
+  zenapp-package:
+    name: ZenApp package (macOS)
+    # macOS only: the app requires macOS 26 and SwiftUI, so there is no Linux leg.
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcodebuild -version || true
+
+      # ZenApp is outside the root graph and has its own Package.resolved. It
+      # compiles the root package through a path dependency, so a change to the
+      # root dependencies can make this lockfile drift.
+      - name: Resolve dependencies from the immutable lockfile
+        run: |
+          swift package --package-path Sources/ZenApp resolve --only-use-versions-from-resolved-file
+          if ! git diff --exit-code -- Sources/ZenApp/Package.resolved; then
+            echo "::error::Sources/ZenApp/Package.resolved is out of date. Run 'swift package --package-path Sources/ZenApp resolve' and commit the result."
+            exit 1
+          fi
+
+      # No SwiftPM cache: a cold build and test run took under a minute on a
+      # developer machine, and the 2 GB build directory would compete with the
+      # macOS and Linux caches for the repository cache quota.
+      - name: Build ZenApp
+        run: swift build --package-path Sources/ZenApp
+
+      - name: Test ZenApp package
+        # Unlike the root suite, no --no-parallel. That flag guards the suites
+        # that exercise Foundation.Process, whose exit coordination is
+        # process-global. ZenApp and its tests spawn no processes and leave the
+        # environment, working directory, and signals alone; the suites that
+        # share state are already marked .serialized.
+        run: swift test --package-path Sources/ZenApp

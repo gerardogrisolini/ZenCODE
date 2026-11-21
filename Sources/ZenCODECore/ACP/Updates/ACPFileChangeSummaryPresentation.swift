@@ -8,6 +8,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// The wire form of a turn's file-change Summary: the same file details the
 /// terminal and Telegram show, formatted as a Markdown section with separators

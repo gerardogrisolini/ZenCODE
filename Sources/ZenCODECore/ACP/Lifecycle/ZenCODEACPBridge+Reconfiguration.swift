@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 extension ZenCODEACPBridge {
     /// Reserves, in the host, the reconfiguration of the incarnation `session`

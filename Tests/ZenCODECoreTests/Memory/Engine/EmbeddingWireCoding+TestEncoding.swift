@@ -8,6 +8,7 @@
 
 import Foundation
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension EmbeddingWireCoding {
     /// The version 3 wire form of `values`: the base64 string of

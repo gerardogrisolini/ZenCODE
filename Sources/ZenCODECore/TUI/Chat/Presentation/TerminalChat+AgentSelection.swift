@@ -13,6 +13,7 @@ import Glibc
 #endif
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension TerminalChat {
     public func availableAgents() throws -> [AgentProfile] {

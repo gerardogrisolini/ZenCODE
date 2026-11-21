@@ -11,6 +11,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension RemoteSessionSnapshotTests {
     private static let batchCancellationIDs = ["batch_0", "batch_1", "batch_2"]

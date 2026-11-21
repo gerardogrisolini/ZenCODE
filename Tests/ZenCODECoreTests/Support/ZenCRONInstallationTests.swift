@@ -6,6 +6,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// `ZenCRONInstallation`: locations, version parsing, the replacement policy and
 /// the atomic installation. Every executable is a throw-away script in a UUID

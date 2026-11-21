@@ -11,6 +11,7 @@ import Foundation
 import Synchronization
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 private final class LineCollector: Sendable {
     private let storage = Mutex<[String]>([])

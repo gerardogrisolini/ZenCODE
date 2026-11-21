@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// A blocking input owner publishes presentation snapshots; it never owns a
 /// second screen or writes cursor/erase commands over the persistent footer.

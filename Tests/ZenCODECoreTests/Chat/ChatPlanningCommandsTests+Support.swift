@@ -11,6 +11,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension ChatPlanningCommandsTests {
     /// A Planner discussion waiting for the operator's answer.

@@ -6,6 +6,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("DS4 local generation configuration")
 struct DS4LocalGenerationTests {

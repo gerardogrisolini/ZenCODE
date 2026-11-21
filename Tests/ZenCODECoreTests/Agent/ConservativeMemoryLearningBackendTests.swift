@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite struct ConservativeMemoryLearningBackendTests {
     private func toolCall(id: String, name: String, args: [String: Any]) throws -> DirectAgentToolCall {

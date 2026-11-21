@@ -11,6 +11,7 @@ import Foundation
 import Network
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("ChatGPT Subscription callback server", .serialized)
 struct ChatGPTSubscriptionCallbackServerTests {

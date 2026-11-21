@@ -13,6 +13,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite(.timeLimit(.minutes(1)))
 struct ChatTaskGraphOverviewTests {

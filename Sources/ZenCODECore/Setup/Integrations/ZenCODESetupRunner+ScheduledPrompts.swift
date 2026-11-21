@@ -16,6 +16,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODESetupRunner {
     // MARK: - Status

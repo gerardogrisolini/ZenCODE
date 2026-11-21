@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 struct TerminalAttachmentPickerEntry: Hashable, Sendable {
     enum Kind: String, Sendable {

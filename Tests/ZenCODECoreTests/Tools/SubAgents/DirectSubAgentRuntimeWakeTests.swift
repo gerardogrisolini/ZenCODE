@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// `agent.wait` and the `awaitReply` wait are woken by the event they wait
 /// for, not by their polling interval: with a long interval both still

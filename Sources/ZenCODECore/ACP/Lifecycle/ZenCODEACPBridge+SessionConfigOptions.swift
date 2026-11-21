@@ -9,6 +9,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 extension ZenCODEACPBridge {
     public func setMode(id: JSONValue?, params: [String: Any]) async throws {

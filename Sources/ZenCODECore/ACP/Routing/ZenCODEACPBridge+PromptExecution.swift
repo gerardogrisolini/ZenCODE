@@ -8,6 +8,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// The presentation of a running prompt turn: its update pipeline and the
 /// observer of its task graph.

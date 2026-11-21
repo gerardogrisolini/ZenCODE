@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import ZenCODERuntime
 
 /// A GGUF found in the DS4 folder that setup can offer as a model.
 struct DS4SetupModelCandidate: Equatable, Hashable {

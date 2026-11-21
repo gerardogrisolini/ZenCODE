@@ -7,6 +7,7 @@
 
 import Foundation
 import Markdown
+import ZenCODERuntime
 
 struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
     typealias Result = String

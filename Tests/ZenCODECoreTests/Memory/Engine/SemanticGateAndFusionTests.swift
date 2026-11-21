@@ -11,6 +11,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 @Suite("Semantic gate and rank fusion")
 struct SemanticGateAndFusionTests {

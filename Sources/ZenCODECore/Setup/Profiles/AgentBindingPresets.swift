@@ -9,6 +9,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// Operator-authored model binding presets, grouped by provider.
 ///

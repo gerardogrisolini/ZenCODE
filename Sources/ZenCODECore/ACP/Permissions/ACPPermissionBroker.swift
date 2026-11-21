@@ -7,6 +7,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// Channel adapter of ACP over the channel-neutral ``ChatToolConsentAuthorizer``.
 ///

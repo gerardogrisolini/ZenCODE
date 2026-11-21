@@ -11,6 +11,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// Fixed embedder whose vectors are the first component of the text: entries
 /// and queries that share the same "topic" word embed identically.

@@ -12,6 +12,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension ChatSessionOperationsTests {
     private static func contents(_ messages: [AgentRuntimeMessage]) -> [String] {

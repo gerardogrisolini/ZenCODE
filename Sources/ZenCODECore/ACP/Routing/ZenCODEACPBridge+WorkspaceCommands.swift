@@ -8,6 +8,7 @@
 
 import Foundation
 import ToolCore
+import ZenCODERuntime
 
 /// `/changes` and `/undo` in an ACP session, on the shared commands
 /// (``ChatSessionController/runChangesCommand(line:)``,
@@ -63,7 +64,7 @@ extension ZenCODEACPBridge {
                 ? await controller.runUndoCommand(line: trimmed)
                 : await controller.runChangesCommand(line: trimmed)
         }
-        return .immediate(Self.workspaceText(for: outcome, workingDirectory: controller.workingDirectory))
+        return .immediate(Self.workspaceText(for: outcome, workingDirectory: controller.nonisolatedWorkingDirectory))
     }
 
     /// Runs `operation`, a shared workspace command, only while `fence` holds

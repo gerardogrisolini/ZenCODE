@@ -20,6 +20,7 @@
 import Foundation
 import Testing
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 /// What a stored message of a client session says about its generated tokens
 /// (a `Sendable` copy of the private keys; the messages themselves cannot
