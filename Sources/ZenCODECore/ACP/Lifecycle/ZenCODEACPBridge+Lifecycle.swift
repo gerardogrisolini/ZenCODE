@@ -24,15 +24,16 @@ extension ZenCODEACPBridge {
             applyLaunchDirectoryFallback: false
         ).path
         try ensureLifecycleOperationLive(operation)
-        let requestedModelID = Self.modelID(from: params)
-        let modelID = requestedModelID
-            ?? defaultSessionModelID()
-
         let workingDirectoryURL = URL(fileURLWithPath: cwd)
         let selectedAgent = try resolvedACPAgentProfile(
             from: params,
             workingDirectory: workingDirectoryURL
         )
+        // The session's agent is resolved first: without a client model, its
+        // default binding is the session's model.
+        let requestedModelID = Self.modelID(from: params)
+        let modelID = requestedModelID
+            ?? defaultSessionModelID(for: selectedAgent)
         let sessionID = "swift-agent-\(UUID().uuidString.lowercased())"
         // The session's own tool grant, resolved before its MCP servers are
         // installed: it tells which of them a feature of the session replaces.
@@ -486,7 +487,7 @@ extension ZenCODEACPBridge {
             : nil
         let modelID = requestedModelID
             ?? savedModelID
-            ?? defaultSessionModelID()
+            ?? defaultSessionModelID(for: selectedAgent)
         let requestedAllowedToolNames = Self.allowedToolNames(from: params)
             ?? selectedAgent?.allowedToolNames()
         let resolvedRequestedAllowedToolNames = await resolvedAllowedToolNames(

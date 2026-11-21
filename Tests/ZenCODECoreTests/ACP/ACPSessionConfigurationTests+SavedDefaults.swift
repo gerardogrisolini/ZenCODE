@@ -396,4 +396,81 @@ extension ACPCompatibilityTests {
             await launchBridge.shutdown()
         }
     }
+
+    /// `zen --acp` launched by Xcode: the launch directory has no project
+    /// selection, so the launch agent is the system developer, while each
+    /// session resolves the developer of its own working directory. Without a
+    /// client model, that developer's default binding is the session's model,
+    /// not the model selected in the settings.
+    @Test
+    func sessionsDefaultToTheBindingOfTheDeveloperOfTheirWorkingDirectory() async throws {
+        let primary = Self.primaryConfiguredModel
+        let secondary = Self.secondaryConfiguredModel
+        let systemDeveloper = AgentProfile(
+            id: "developer",
+            name: "Developer",
+            role: .developer,
+            tools: []
+        )
+        let projectDeveloper = AgentProfile(
+            id: "project-developer",
+            name: "Project Developer",
+            role: .developer,
+            tools: [],
+            modelBindings: [
+                AgentModelBinding(modelID: secondary.id, thinkingSelection: .off),
+            ]
+        )
+        try await withConfiguredSettings(
+            models: [primary, secondary],
+            selectedModelID: primary.id
+        ) { _, workspace in
+            try AgentProfileStore.save([systemDeveloper, projectDeveloper])
+            try ProjectAgentSelectionStore.save(
+                agentIDs: [projectDeveloper.id],
+                workspaceRootURL: workspace
+            )
+            let launchDirectory = workspace
+                .deletingLastPathComponent()
+                .appendingPathComponent("launch", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: launchDirectory,
+                withIntermediateDirectories: true
+            )
+            // `--model` is passed empty so an ambient `ZENCODE_AGENT_MODEL`
+            // cannot stand in for the explicit model.
+            let configuration = try AgentConfiguration(arguments: [
+                "zen", "--acp",
+                "--model", "",
+                "--working-directory", launchDirectory.path,
+            ])
+            #expect(configuration.hostedModels == nil)
+            #expect(configuration.selectedAgent?.id == systemDeveloper.id)
+            let bridge = ZenCODEACPBridge(
+                configuration: configuration,
+                writer: ACPWriter(sink: { _ in }),
+                backendFactory: { _, _ in CapturingACPBackend() }
+            )
+
+            let created = try await newSessionConfiguration(on: bridge, cwd: workspace.path)
+            #expect(created.agentID == projectDeveloper.id)
+            #expect(created.modelID == secondary.id)
+            #expect(created.thinkingSelection == .off)
+
+            let restored = try await restoredSessionConfiguration(on: bridge, cwd: workspace.path)
+            #expect(restored.agentID == projectDeveloper.id)
+            #expect(restored.modelID == secondary.id)
+            #expect(restored.thinkingSelection == .off)
+
+            // The client's `modelId` still wins over the agent's binding.
+            let explicit = try await newSessionConfiguration(
+                on: bridge,
+                cwd: workspace.path,
+                modelID: primary.id
+            )
+            #expect(explicit.agentID == projectDeveloper.id)
+            #expect(explicit.modelID == primary.id)
+            await bridge.shutdown()
+        }
+    }
 }

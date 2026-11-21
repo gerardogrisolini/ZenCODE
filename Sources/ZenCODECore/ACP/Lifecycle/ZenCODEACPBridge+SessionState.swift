@@ -16,15 +16,19 @@ extension ZenCODEACPBridge {
         ChatModelCatalog(hostedModels: configuration.hostedModels)
     }
 
-    /// The model a new session defaults to (see
+    /// The model a new session of `selectedAgent` (or, without one, of the
+    /// launch agent) defaults to (see
     /// ``ChatModelCatalog/defaultModelID(explicitModelID:agentModelID:launchModelID:)``):
     /// with hosted models the launch-time model, otherwise `--model`, the
-    /// launch agent's model, then the selected model, read from the settings
-    /// now, so a model saved by `set_model` becomes the next default.
-    func defaultSessionModelID() -> String? {
+    /// agent's default binding, then the selected model, read from the
+    /// settings now, so a model saved by `set_model` becomes the next default.
+    /// A session resolves its own agent (the developer of its working
+    /// directory, for one), so it passes that agent: its binding, not the
+    /// launch agent's, is the session's default.
+    func defaultSessionModelID(for selectedAgent: AgentProfile? = nil) -> String? {
         modelCatalog.defaultModelID(
             explicitModelID: configuration.modelID,
-            agentModelID: configuration.selectedAgent?.modelID,
+            agentModelID: (selectedAgent ?? configuration.selectedAgent)?.modelID,
             launchModelID: configuration.effectiveModelID
         )
     }

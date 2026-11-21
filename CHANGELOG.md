@@ -25,6 +25,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `ZenCODERuntime.<Type>` instead of `ZenCODECore.<Type>` for the types that
   moved; schemas and error codes are unchanged.
 
+### Fixed
+
+- ACP (`zen --acp`, as launched by Xcode): a new or restored session without a
+  client model now starts on the default model binding of its own agent, the
+  developer associated with the session's working directory, instead of the
+  launch agent's binding or the model selected in the settings. The session
+  already picked the right agent, but its model was resolved before the
+  agent. A model the client sends, a model saved with a
+  restored session, `--model`, and the host's model for hosted configurations
+  still win as before.
+
 ## [6.1.3] - 2026-11-21
 
 ### Added
