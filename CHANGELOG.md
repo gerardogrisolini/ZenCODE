@@ -36,6 +36,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
   restored session, `--model`, and the host's model for hosted configurations
   still win as before.
 
+- With a Responses API provider (for example OpenRouter), a comment or answer
+  that the stream and the completed text reported with different whitespace
+  (for example a trailing newline) was shown twice. A snapshot that repeats
+  the text already shown, apart from whitespace, is no longer emitted again.
+  It was most visible with `/voice on`, which asks the model to comment while
+  it works.
+
 ## [6.1.3] - 2026-11-21
 
 ### Added

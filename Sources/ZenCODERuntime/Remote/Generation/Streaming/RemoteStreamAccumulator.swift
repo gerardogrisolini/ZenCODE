@@ -273,6 +273,12 @@ public struct RemoteStreamAccumulator {
         if accumulatedText.hasSuffix(snapshot) {
             return ""
         }
+        if let delta = contentDeltaIgnoringWhitespace(
+            fromSnapshot: snapshot,
+            accumulatedText: accumulatedText
+        ) {
+            return delta
+        }
 
         let maximumOverlap = min(snapshot.count, accumulatedText.count)
         guard maximumOverlap > 0 else {
@@ -290,6 +296,47 @@ public struct RemoteStreamAccumulator {
             }
         }
         return snapshot
+    }
+
+    /// Reconciles a snapshot with the accumulated text when they differ only
+    /// by whitespace. Some providers (for example OpenRouter on the Responses
+    /// API) normalize spacing in the completed text compared with the deltas,
+    /// such as a trailing newline or the join between separate messages, so an
+    /// exact comparison would emit the same text twice. Returns `nil` when the
+    /// non-whitespace characters do not relate, leaving the decision to the
+    /// caller. Runs in linear time.
+    private static func contentDeltaIgnoringWhitespace(
+        fromSnapshot snapshot: String,
+        accumulatedText: String
+    ) -> String? {
+        let snapshotCharacters = Array(snapshot)
+        let snapshotCore = snapshotCharacters.filter { !$0.isWhitespace }
+        let accumulatedCore: [Character] = accumulatedText.filter { !$0.isWhitespace }
+        guard !snapshotCore.isEmpty, !accumulatedCore.isEmpty else {
+            return nil
+        }
+
+        if accumulatedCore.count >= snapshotCore.count,
+           accumulatedCore.suffix(snapshotCore.count).elementsEqual(snapshotCore) {
+            return ""
+        }
+        guard snapshotCore.starts(with: accumulatedCore) else {
+            return nil
+        }
+
+        var remainingCoreCount = accumulatedCore.count
+        var restStart = snapshotCharacters.startIndex
+        while remainingCoreCount > 0 {
+            if !snapshotCharacters[restStart].isWhitespace {
+                remainingCoreCount -= 1
+            }
+            restStart += 1
+        }
+        var rest = snapshotCharacters[restStart...]
+        if accumulatedText.last?.isWhitespace == true {
+            rest = rest.drop(while: { $0.isWhitespace })
+        }
+        return String(rest)
     }
 
     public static func firstReasoningClosingMarker(

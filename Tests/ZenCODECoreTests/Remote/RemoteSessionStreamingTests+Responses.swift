@@ -3,7 +3,8 @@
 //  ZenCODE
 //
 //  Responses API streaming tests: output item text after reasoning, reasoning
-//  capture and replay, generic endpoint metadata, multipart deduplication,
+//  capture and replay, generic endpoint metadata, multipart deduplication
+//  (also when the completed text differs from the deltas only by whitespace),
 //  incomplete responses and tool outputs without a call ID.
 //  Tests of this serialized suite run in file-name order: keep the name.
 //
@@ -237,6 +238,96 @@ extension RemoteSessionSnapshotTests {
 
         #expect(result.text == "AB")
         #expect(capturedEvents.contentText() == "AB")
+    }
+
+    @Test
+    func streamResponsesDoesNotDuplicateCompletedTextThatDiffersOnlyByTrailingWhitespace() async throws {
+        let response = """
+        data: {"type":"response.output_text.delta","delta":"Hai ragione.\\n"}
+
+        data: {"type":"response.output_text.done","text":"Hai ragione."}
+
+        data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","content":[{"type":"output_text","text":"Hai ragione."}]}}
+
+        data: {"type":"response.completed","response":{"output_text":"Hai ragione.","output":[]}}
+
+        """
+        let fixture = try await RemoteNIOStreamingFixture.start(
+            responseBody: Data(response.utf8)
+        )
+        defer {
+            fixture.beginShutdown()
+        }
+        let client = RemoteGenerationClient(
+            configuration: remoteStreamingConfiguration(),
+            provider: AgentRemoteProvider(
+                name: "Unit Test",
+                baseURL: "https://unit.test/v1",
+                modelID: "unit-model",
+                chatEndpoint: .responses
+            ),
+            apiKey: nil,
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
+        )
+        let capturedEvents = CapturedDirectAgentEvents()
+
+        let result = try await client.streamResponses(
+            messages: [["role": "user", "content": "hi"]],
+            sessionID: "session-completed-whitespace-dedup",
+            allowedToolNames: [],
+            thinkingSelection: nil,
+            onEvent: { event in
+                capturedEvents.append(event)
+            }
+        )
+
+        #expect(result.text == "Hai ragione.\n")
+        #expect(capturedEvents.contentText() == "Hai ragione.\n")
+    }
+
+    @Test
+    func streamResponsesDoesNotDuplicateCompletedMultipartMessagesWithWhitespaceBetweenDeltas() async throws {
+        let response = """
+        data: {"type":"response.output_text.delta","delta":"A\\n"}
+
+        data: {"type":"response.output_text.delta","delta":"B"}
+
+        data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"A"}]},{"type":"message","content":[{"type":"output_text","text":"B"}]}]}}
+
+        """
+        let fixture = try await RemoteNIOStreamingFixture.start(
+            responseBody: Data(response.utf8)
+        )
+        defer {
+            fixture.beginShutdown()
+        }
+        let client = RemoteGenerationClient(
+            configuration: remoteStreamingConfiguration(),
+            provider: AgentRemoteProvider(
+                name: "Unit Test",
+                baseURL: "https://unit.test/v1",
+                modelID: "unit-model",
+                chatEndpoint: .responses
+            ),
+            apiKey: nil,
+            transport: fixture.transport,
+            streamEndpointBaseURLOverride: fixture.baseURL
+        )
+        let capturedEvents = CapturedDirectAgentEvents()
+
+        let result = try await client.streamResponses(
+            messages: [["role": "user", "content": "hi"]],
+            sessionID: "session-completed-multipart-whitespace-dedup",
+            allowedToolNames: [],
+            thinkingSelection: nil,
+            onEvent: { event in
+                capturedEvents.append(event)
+            }
+        )
+
+        #expect(result.text == "A\nB")
+        #expect(capturedEvents.contentText() == "A\nB")
     }
 
     @Test
