@@ -273,7 +273,9 @@ final class ZenCODETelegramSession {
             channelHooks: channelHooks,
             defaultOrigin: .telegram,
             publishesState: false,
-            sessionIDPrefix: ZenCODETelegramRunner.sessionIDPrefix
+            sessionIDPrefix: ZenCODETelegramRunner.sessionIDPrefix,
+            // `/sessions new` keeps the selection, as in the terminal.
+            keepsSelectionOnNewSession: true
         )
         let incarnation = try host.openSlot(
             descriptor,

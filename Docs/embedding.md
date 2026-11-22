@@ -170,8 +170,8 @@ exception for the selection: every new session (`/sessions new`,
 replaces (agent, model, thinking level, tools, and skills) instead of the
 launch profile; a load still restores the selection saved with the session,
 and the first session of the slot and the one after `closeSession(in:)`
-start from the launch profile. The option is `false` by default; the macOS
-app sets it for its windows. Follow the slot with `incarnations(in:)`, which
+start from the launch profile. The option is `false` by default; the
+terminal, `zen --telegram`, and the macOS app set it for their slots. Follow the slot with `incarnations(in:)`, which
 yields the current incarnation at once and then each new one, or read it with
 `incarnation(in:)`. `closeSession(in:)` ends a slot's session, `closeSlot(_:)`
 ends the slot, and `shutdown()` ends every slot and the runner.

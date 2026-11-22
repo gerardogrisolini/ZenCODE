@@ -83,6 +83,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
   the preview header could not show the path. The same conditions as before
   apply (same call, no output in between, an interactive terminal); in every
   other case the block keeps its header and target.
+- Terminal and `zen --telegram`: `/sessions new` now keeps the agent, model,
+  thinking level, tools, and skills of the session it replaces, as **New
+  Session** does in the macOS app, instead of starting over from the launch
+  profile. The conversation, the file artifacts, the saved-session link, the
+  plan, and the `/goal` workflow are still cleared. `/sessions load` still
+  restores the selection saved with the session, and the first session of a
+  launch still starts from the launch profile. ACP is unchanged.
 
 ### Fixed
 

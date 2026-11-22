@@ -275,7 +275,10 @@ public final class TerminalChat {
             // on demand while Telegram drives the slot.
             publishesState: false,
             // `/sessions new` mints `terminal-<uuid>`, as `newTerminalSessionID()`.
-            sessionIDPrefix: Self.sessionIDPrefix
+            sessionIDPrefix: Self.sessionIDPrefix,
+            // `/sessions new` keeps the agent, model, thinking level, tools,
+            // and skills of the session it replaces.
+            keepsSelectionOnNewSession: true
         )
         do {
             currentIncarnation = try host.openSlot(

@@ -3,7 +3,7 @@
 //  ZenCODE
 //
 //  The terminal as one slot of a `ChatSessionHost`: the slot it opens, the
-//  incarnation it follows, `/sessions new` from the launch profile and
+//  incarnation it follows, `/sessions new` with the selection it replaces and
 //  `/sessions load` with the saved selection, the slot's Telegram channel
 //  that follows the slot with its topic renamed, the session id adopted in
 //  place, the shell of the host with the slot Telegram drives,
@@ -222,7 +222,7 @@ struct TerminalChatSessionHostTests {
     // MARK: - New and loaded sessions
 
     @Test
-    nonisolated func aNewSessionIsANewIncarnationFromTheLaunchProfileThatTheTerminalFollows() async throws {
+    nonisolated func aNewSessionIsANewIncarnationWithTheSelectionItReplacesThatTheTerminalFollows() async throws {
         try await withEnvironment { environment in
             let terminal = try environment.makeTerminal()
             let host = terminal.sessionHost
@@ -233,25 +233,31 @@ struct TerminalChatSessionHostTests {
             let previousSessionID = terminal.sessionID
             #expect(previous.taskGraphObserver.observerTask != nil)
 
-            // The operator changes the selection; the new session starts over.
+            // The operator changes the selection (agent, model, thinking,
+            // tools, skills); the new session keeps it and clears the rest.
+            let tester = try #require(AgentProfileStore.defaultProfiles().first { $0.role == .tester })
+            terminal.selectedAgent = tester
             terminal.chatSession.selection.modelIDOverride = "other-model"
             terminal.chatSession.selection.thinkingOverride = .high
-            terminal.selectedToolKeys = ["local"]
+            terminal.selectedToolKeys = ["files"]
             terminal.chatSession.selection.skillNames = ["skill"]
             terminal.chatSession.history = [AgentRuntimeMessage(role: .user, content: "Before")]
+            let kept = terminal.chatSession.selection
+            #expect(kept != launchSelection)
             await terminal.writeSessionNotices(terminal.chatSession.newSessionCommand().notices)
 
             let next = terminal.chatSession
             #expect(next !== previous)
             #expect(terminal.sessionID != previousSessionID)
             #expect(terminal.sessionID.hasPrefix("terminal-"))
-            #expect(next.selection == launchSelection)
-            #expect(terminal.chatSession.selection.modelIDOverride == launchSelection.modelIDOverride)
-            #expect(terminal.chatSession.selection.thinkingOverride == nil)
-            #expect(terminal.selectedToolKeys.isEmpty)
-            #expect(terminal.chatSession.selection.skillNames.isEmpty)
+            #expect(next.selection == kept)
+            #expect(terminal.selectedAgent?.id == tester.id)
+            #expect(terminal.chatSession.selection.modelIDOverride == "other-model")
+            #expect(terminal.chatSession.selection.thinkingOverride == .high)
+            #expect(terminal.selectedToolKeys == ["files"])
+            #expect(terminal.chatSession.selection.skillNames == ["skill"])
             #expect(terminal.chatSession.history.isEmpty)
-            #expect(previous.selection.modelIDOverride == "other-model")
+            #expect(previous.selection == kept)
             // The slot is the same and runs the new incarnation; the Telegram
             // channel and the routing of the sub-agent tool events follow it.
             #expect(terminal.terminalSlotID == slot)
