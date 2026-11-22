@@ -404,8 +404,10 @@ differ from the defaults of ds4-agent.
   live, as ds4-agent does, with one difference in the header row: ds4-agent
   labels its calls with a short word (`write`, `append`, `edit`, `replace`),
   while ZenCODE names the tool canonically (`local.writeFile`, `local.append`,
-  `local.editFile`, `local.replace`, `local.multiEdit`). The header carries the
-  target path, then the text follows as it is generated.
+  `local.editFile`, `local.replace`, `local.multiEdit`). The header shows only
+  the icon and the canonical tool name, never the path, whichever order the
+  model writes its arguments in (the path before the text, or after it as in
+  `new`, `old`, then `path`); the text follows as it is generated.
   The old and new text of an edit start with `- ` and `+ `. For
   `local.multiEdit`, every `old` and `new` of `edits` is shown the same way, in
   order and without a separator between the edits, and without the JSON around
@@ -419,13 +421,14 @@ differ from the defaults of ds4-agent.
   of the call (the JSON strings of `edits` excepted). When other output lands
   while a file is being written (a system message, a request for authorization),
   the preview closes at the end of the row it is on and reopens with its header
-  at the next text of the call. When the call is complete its compact tool block
+  (the tool name alone) at the next text of the call; a path that streams in
+  the meantime writes nothing. When the call is complete its compact tool block
   follows. When the block follows the preview of the same tool and path right
   away (no message, overview, or other output in between), and the channel is
   an interactive terminal, the block does not repeat the header and keeps only
   its status row under the last row of the preview, without a blank row: the
-  path and the status (`/tmp/Example.swift ✅ 1.38ms`), whether the path
-  reached the preview header or the model wrote it after the text. Otherwise
+  path and the status (`/tmp/Example.swift ✅ 1.38ms`). The path appears only
+  there, whichever order the model wrote its arguments in. Otherwise
   it keeps its header and target as for any other tool.
   Every other tool, `local.applyPatch` included, shows only its compact block.
   The preview exists only in the terminal chat: ACP, the headless and JSONL

@@ -94,13 +94,14 @@ extension TerminalChatRenderCoordinator {
     }
 
     /// Whether the preview of this call ended with its rows on screen, its
-    /// header showed the canonical tool name, it received the call's path, no
-    /// output was emitted since, and the terminal can rewrite the block in
-    /// place, so the block draws only its status row, with the target and the
-    /// status wherever the model wrote the path. The drawing is consumed once,
-    /// and its call keeps the decision for its completion and for a start
-    /// republished after a bottom-overlay transition. A channel that cannot
-    /// rewrite keeps the full block: its completion is append-only.
+    /// header showed the canonical tool name (the header never shows the path),
+    /// it received the call's path, no output was emitted since, and the
+    /// terminal can rewrite the block in place, so the block draws only its
+    /// status row, with the target and the status, whichever order the model
+    /// wrote the path in. The drawing is consumed once, and its call keeps the
+    /// decision for its completion and for a start republished after a
+    /// bottom-overlay transition. A channel that cannot rewrite keeps the full
+    /// block: its completion is append-only.
     func previewAlreadyShowedHeader(for toolCall: DirectAgentToolCall) -> Bool {
         if previewMergedToolCallID == toolCall.id {
             return true

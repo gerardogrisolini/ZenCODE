@@ -9,12 +9,16 @@ import Foundation
 import ZenCODERuntime
 
 /// Draws a file write or edit while the model is still writing its tool call,
-/// as ds4-agent does: a header row naming the canonical tool with the target
-/// path, then the source text printed as it arrives and repainted in color one
-/// row at a time. The old and new text of every edit of a `local.multiEdit`
-/// call arrive inside the JSON of its `edits` argument: they are decoded as
-/// they stream (see ``EditListDecoder``) and drawn one after the other, as the
-/// separate arguments of `local.editFile` are, without the JSON around them.
+/// as ds4-agent does: a header row naming the canonical tool, then the source
+/// text printed as it arrives and repainted in color one row at a time. The
+/// header never carries the target path, whichever order the model writes its
+/// arguments in: the path is only read, to choose the language and to identify
+/// the call (``DrawnCall``), and the compact tool block that follows the
+/// preview shows it on its status row. The old and new text of every edit of a
+/// `local.multiEdit` call arrive inside the JSON of its `edits` argument: they
+/// are decoded as they stream (see ``EditListDecoder``) and drawn one after the
+/// other, as the separate arguments of `local.editFile` are, without the JSON
+/// around them.
 ///
 /// A pure state machine: it takes the ``DirectAgentToolCallPreview`` fragments
 /// in stream order and returns the exact text to write, without any I/O.
@@ -30,13 +34,15 @@ import ZenCODERuntime
 /// and no line number.
 ///
 /// Other output interrupts a call without ending it (``interrupt(columns:)``):
-/// its rows are closed, but the call is remembered, and its next drawn text
-/// reopens the header with the path received so far and goes on from a new
-/// row, as a streamed thought reopens its title.
+/// its rows are closed, but the call is remembered, and its next drawn source
+/// text reopens the header with the tool name alone and goes on from a new
+/// row, as a streamed thought reopens its title. A path that streams while the
+/// call is suspended writes nothing, so it reopens nothing.
 struct TerminalToolCallPreviewFormatter: Sendable {
     /// What one argument of a drawn tool shows.
     enum ParameterRole: Sendable, Equatable {
-        /// The target path, appended to the header row.
+        /// The target path: it selects the language of the source text and
+        /// identifies the call, but it is never drawn.
         case path
         /// Source text; each of its rows starts with `marker` when there is one.
         case code(marker: CodeMarker?)
@@ -138,17 +144,12 @@ struct TerminalToolCallPreviewFormatter: Sendable {
 
     private var tool: DrawnTool?
     private var headerIsOpen = false
-    /// The value color of the path stays open across its fragments, so the
-    /// written text does not depend on how the stream was split; the header's
-    /// end closes it.
-    private var headerValueStyleIsOpen = false
     /// The open argument when it is drawn; `nil` between arguments and inside
     /// an argument that is not drawn.
     private var parameter: ParameterRole?
     /// The reading of the open argument when it is an edit list: it keeps its
     /// place in the JSON across fragments, and across an interruption.
     private var editList = EditListDecoder()
-    private var pathIsShown = false
     private var path = ""
     private var language: String?
     /// The terminal-safe text written on the current source row, without the
@@ -233,12 +234,13 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     }
 
     /// Ends the call, whatever its state. An open call's current source row
-    /// is repainted when it can be and closed, the header row is closed, and
-    /// the cursor is left at the start of a row; a suspended call has nothing
-    /// open and is forgotten without output. Returns the text to write and
-    /// what the call drew, or `nil` when no drawn call was open or suspended;
-    /// other output followed the header of a suspended call, so that header
-    /// is not recorded as on screen.
+    /// is repainted when it can be and closed, the header row (the tool name
+    /// alone) is closed, and the cursor is left at the start of a row; a
+    /// suspended call has nothing open and is forgotten without output.
+    /// Returns the text to write and what the call drew (its path included,
+    /// which the preview itself never draws), or `nil` when no drawn call was
+    /// open or suspended; other output followed the header of a suspended
+    /// call, so that header is not recorded as on screen.
     mutating func finish(columns: () -> Int) -> (text: String, drawn: DrawnCall?) {
         guard let tool else {
             return ("", nil)
@@ -255,8 +257,9 @@ struct TerminalToolCallPreviewFormatter: Sendable {
 
     /// Closes the open call's rows before other output, with the same text as
     /// ``finish(columns:)``, but suspends the call instead of ending it: its
-    /// tool, the path received so far, the language, and the open argument
-    /// with its role are kept for its next drawn text.
+    /// tool, the path received so far (which still selects the language and
+    /// identifies the call), and the open argument with its role are kept for
+    /// its next drawn text.
     mutating func interrupt(columns: () -> Int) -> String {
         guard isOpen else {
             return ""
@@ -287,7 +290,6 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         switch parameter {
         case .path:
             path = ""
-            pathIsShown = false
         case .code, .editList:
             output += closeHeader()
             // Content that arrives before any path is highlighted with the
@@ -327,12 +329,12 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         return isSuspended ? "" : output
     }
 
-    /// Whether `text` of the open argument writes anything. Every scalar of a
-    /// path is shown; in source text only the line breaks that complete a row
-    /// already ended on screen write nothing. The text of an edit list is
-    /// decoded first, on a copy of the reading, and only the source text it
-    /// decodes to counts: the JSON around it, and the end of a string, write
-    /// nothing.
+    /// Whether `text` of the open argument writes anything. A path is never
+    /// drawn, so its text writes nothing; in source text only the line breaks
+    /// that complete a row already ended on screen write nothing. The text of
+    /// an edit list is decoded first, on a copy of the reading, and only the
+    /// source text it decodes to counts: the JSON around it, and the end of a
+    /// string, write nothing.
     private func draws(_ text: String) -> Bool {
         switch parameter {
         case .code:
@@ -340,7 +342,7 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         case .editList:
             return drawsEdit(text)
         case .path, nil:
-            return !text.isEmpty
+            return false
         }
         var scalars = text.unicodeScalars[...]
         if rowWasEndedByInterruption, let first = scalars.first, first == "\n" || first == "\r" {
@@ -416,37 +418,14 @@ struct TerminalToolCallPreviewFormatter: Sendable {
 
     // MARK: - Header
 
-    /// The path joins the header row while it streams, on that single row:
-    /// a line break in it is shown as a control picture. Once the header is
-    /// closed by source text the path still selects the language but is no
-    /// longer shown, until an interruption reopens the header with it.
+    /// The path is only accumulated: it selects the language of the source
+    /// text and identifies the call, but the header stays the tool name alone,
+    /// so it is the same whether the path arrives before or after the source
+    /// text, and nothing is written. The compact tool block shows the path on
+    /// its status row.
     private mutating func appendPath(_ text: String) -> String {
         path += text
-        guard headerIsOpen else {
-            return ""
-        }
-        return showPath(text)
-    }
-
-    /// Writes `text` of the path on the open header row.
-    private mutating func showPath(_ text: String) -> String {
-        var shown = ""
-        for scalar in text.unicodeScalars {
-            shown += TerminalCodeBlockRenderer.terminalSafeSourceLine(String(scalar))
-        }
-        guard !shown.isEmpty else {
-            return ""
-        }
-        var output = ""
-        if !pathIsShown {
-            output += " "
-            pathIsShown = true
-        }
-        if isInteractive, !headerValueStyleIsOpen {
-            output += TerminalStyle.Tool.value
-            headerValueStyleIsOpen = true
-        }
-        return output + shown
+        return ""
     }
 
     private func headerTitle() -> String {
@@ -457,21 +436,13 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         return styled(title, TerminalStyle.Tool.title)
     }
 
-    /// Reopens the header of the suspended call with the path received so
-    /// far. A path still streaming goes on at its end; source text goes on
-    /// from the row after it.
+    /// Reopens the header of the suspended call with the tool name alone and
+    /// closes it at once: only source text reopens a call, and it goes on from
+    /// the row after the header.
     private mutating func reopen() -> String {
         isSuspended = false
         headerIsOpen = true
-        pathIsShown = false
-        var output = headerTitle() + showPath(path)
-        switch parameter {
-        case .code, .editList:
-            output += closeHeader()
-        case .path, nil:
-            break
-        }
-        return output
+        return headerTitle() + closeHeader()
     }
 
     private mutating func closeHeader() -> String {
@@ -479,12 +450,7 @@ struct TerminalToolCallPreviewFormatter: Sendable {
             return ""
         }
         headerIsOpen = false
-        var output = ""
-        if headerValueStyleIsOpen {
-            output += TerminalStyle.reset
-            headerValueStyleIsOpen = false
-        }
-        return output + "\n"
+        return "\n"
     }
 
     // MARK: - Source rows
@@ -638,10 +604,8 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         tool = nil
         isSuspended = false
         headerIsOpen = false
-        headerValueStyleIsOpen = false
         parameter = nil
         editList = EditListDecoder()
-        pathIsShown = false
         path = ""
         language = nil
         resetRow()

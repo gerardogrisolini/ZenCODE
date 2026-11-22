@@ -9,15 +9,16 @@
 //  repaint as a terminal and the primary screen show it.
 //
 //  The tool block merges into the preview (only its status row, without the
-//  header, and without the target too when the path reached the header) when
-//  the record of the ended call shows the same canonical tool and target, its
-//  rows were still on screen, nothing was written in between, and the
-//  terminal can rewrite the block in place; the merge survives a
-//  bottom-overlay transition, whose writes stay in the footer. Every other
-//  case keeps the full block: another call drawn after it, interleaved
-//  output, a suspended call, a turn boundary, a different tool, a different
-//  path, a channel that cannot rewrite, and a completion that lost the
-//  block's rows.
+//  header; the preview header is the tool name alone, so the status row is the
+//  only place that shows the target, whichever order the model wrote the
+//  arguments in) when the record of the ended call shows the same canonical
+//  tool and target, its rows were still on screen, nothing was written in
+//  between, and the terminal can rewrite the block in place; the merge
+//  survives a bottom-overlay transition, whose writes stay in the footer.
+//  Every other case keeps the full block: another call drawn after it,
+//  interleaved output, a suspended call, a turn boundary, a different tool, a
+//  different path, a channel that cannot rewrite, and a completion that lost
+//  the block's rows.
 //
 
 import Foundation
@@ -144,7 +145,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         await send(writePreview(content: ["let x = 1\n", "\u{1B}[2Jy\n"]), to: renderer)
 
         let stderr = await renderer.capturedText(on: .standardError)
-        #expect(stderr == "🛠️  local.writeFile /tmp/Example.swift\nlet x = 1\n␛[2Jy\n")
+        #expect(stderr == "🛠️  local.writeFile\nlet x = 1\n␛[2Jy\n")
     }
 
     @Test
@@ -154,7 +155,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         await send(writePreview(content: ["a\n\n\n\nb\n"]), to: renderer)
 
         #expect(await renderer.capturedText(on: .standardError)
-            == "🛠️  local.writeFile /tmp/Example.swift\na\n\n\n\nb\n")
+            == "🛠️  local.writeFile\na\n\n\n\nb\n")
     }
 
     // MARK: - Tool block after the preview
@@ -173,8 +174,8 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         await renderer.writeToolCallStarted(toolCall)
         let started = await renderer.snapshot()
         #expect(started.activeToolCallID == toolCall.id)
-        // The preview header already showed the canonical name and the path:
-        // the block owns one status row and no separator.
+        // The preview header already showed the canonical name: the block
+        // owns one status row, which carries the target, and no separator.
         #expect(started.activeToolRenderedRowCount == 1)
         let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
         await renderer.writeToolCallCompleted(toolCall, result: Self.wroteOneLine)
@@ -187,7 +188,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         #expect(await renderer.previewMergedToolCallID == nil)
 
         let completed = terminalScreenText(events.renderedText(on: .standardError), width: columns)
-        #expect(completed == "\n\n🛠️  local.writeFile /tmp/Example.swift\nlet x = 1\n/tmp/Example.swift ✅\n\n")
+        #expect(completed == "\n\n🛠️  local.writeFile\nlet x = 1\n/tmp/Example.swift ✅\n\n")
         #expect(!completed.contains("⏳"))
 
         // Without a preview the block keeps its header and its target.
@@ -220,7 +221,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         #expect(await renderer.snapshot().activeToolCallID == nil)
 
         await renderer.writeToolCallStarted(toolCall)
-        // The preview header already showed the canonical name and the path.
+        // The preview header already showed the canonical name.
         #expect(await renderer.snapshot().activeToolRenderedRowCount == 1)
         #expect(await renderer.previewMergedToolCallID == toolCall.id)
         let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
@@ -232,7 +233,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         #expect(rewrite.components(separatedBy: "\u{1B}[2K").count - 1 == 1)
         let completed = terminalScreenText(events.renderedText(on: .standardError), width: columns)
         #expect(completed == [
-            "", "", "🛠️  local.multiEdit /tmp/Example.swift",
+            "", "", "🛠️  local.multiEdit",
             "- let x = 0", "+ let x = 1", "- let y = 0", "+ let y = 1",
             "/tmp/Example.swift ✅", "", ""
         ].joined(separator: "\n"))
@@ -245,7 +246,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
     }
 
     @Test
-    func aBlockWhosePathThePreviewDidNotShowKeepsItsOwnHeader() async {
+    func aBlockWhoseTargetDiffersFromThePreviewedPathKeepsItsOwnHeader() async {
         let columns = 80
         let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
         let toolCall = fileCall(id: "write-1")
@@ -258,7 +259,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
 
         let shown = await screen(of: renderer, width: columns)
         #expect(shown == [
-            "", "", "🛠️  local.writeFile /tmp/Other.swift", "let x = 1",
+            "", "", "🛠️  local.writeFile", "let x = 1",
             "", "🛠️  local.writeFile", "/tmp/Example.swift ✅", "", ""
         ].joined(separator: "\n"))
     }
@@ -269,11 +270,12 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
         let toolCall = fileCall(id: "write-1")
 
-        // The content arrived before the path, so the header closed without it.
+        // The content arrived before the path: the header is the one of a
+        // path that came first, the tool name alone.
         await send(writeWithContentBeforeThePath(path: Self.path), to: renderer)
         await renderer.writeToolCallStarted(toolCall)
         // The header named the tool: the block owns only its status row,
-        // which keeps the target the header could not show.
+        // which keeps the target.
         #expect(await renderer.snapshot().activeToolRenderedRowCount == 1)
         #expect(await renderer.previewMergedToolCallID == toolCall.id)
         #expect(await screen(of: renderer, width: columns)
@@ -355,6 +357,44 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
     }
 
     @Test
+    func theScreenIsTheSameWhateverTheOrderOfTheArguments() async {
+        let columns = 80
+        let toolCall = fileCall(id: "edit-1", name: "local.editFile")
+        let path: [DirectAgentToolCallPreview] = [
+            .parameterStarted(name: "path"), .parameterText(Self.path), .parameterEnded
+        ]
+        let text: [DirectAgentToolCallPreview] = [
+            .parameterStarted(name: "new"), .parameterText("let x = 1\n"), .parameterEnded,
+            .parameterStarted(name: "old"), .parameterText("let x = 0\n"), .parameterEnded
+        ]
+        var started: [String] = []
+        var completed: [String] = []
+
+        for events in [path + text, text + path] {
+            let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
+            await send([.toolStarted(name: "local.editFile")] + events + [.ended], to: renderer)
+            await renderer.writeToolCallStarted(toolCall)
+            #expect(await renderer.snapshot().activeToolRenderedRowCount == 1)
+            started.append(await screen(of: renderer, width: columns))
+            await renderer.writeToolCallCompleted(toolCall, result: Self.wroteOneLine)
+            completed.append(await screen(of: renderer, width: columns))
+        }
+
+        // The header is the tool name alone; the path is only in the status row.
+        #expect(started[0] == started[1])
+        #expect(started[0] == [
+            "", "", "🛠️  local.editFile", "+ let x = 1", "- let x = 0",
+            "/tmp/Example.swift ⏳", ""
+        ].joined(separator: "\n"))
+        #expect(completed[0] == completed[1])
+        #expect(completed[0] == [
+            "", "", "🛠️  local.editFile", "+ let x = 1", "- let x = 0",
+            "/tmp/Example.swift ✅", "", ""
+        ].joined(separator: "\n"))
+        #expect(completed[0].components(separatedBy: "/tmp/Example.swift").count - 1 == 1)
+    }
+
+    @Test
     func aSuspendedCallWhosePathArrivedLastKeepsTheFullBlock() async {
         let columns = 80
         let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
@@ -390,7 +430,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         #expect(await renderer.snapshot().activeToolRenderedRowCount == 1)
         #expect(await renderer.previewMergedToolCallID == toolCall.id)
         #expect(await screen(of: renderer, width: columns)
-            == "\n\n🛠️  local.writeFile /tmp/Example.swift\nlet x = 1\n/tmp/Example.swift ⏳\n")
+            == "\n\n🛠️  local.writeFile\nlet x = 1\n/tmp/Example.swift ⏳\n")
     }
 
     @Test
@@ -419,8 +459,8 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
 
         let shown = await screen(of: renderer, width: columns)
         #expect(shown == [
-            "", "", "🛠️  local.writeFile /tmp/A.swift", "let x = 1",
-            "", "🛠️  local.editFile /tmp/B.swift", "+ let x = 1",
+            "", "", "🛠️  local.writeFile", "let x = 1",
+            "", "🛠️  local.editFile", "+ let x = 1",
             "", "🛠️  local.writeFile", "/tmp/A.swift ⏳",
             "", "🛠️  local.editFile", "/tmp/B.swift ⏳", ""
         ].joined(separator: "\n"))
@@ -440,7 +480,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
 
         let shown = await screen(of: renderer, width: columns)
         #expect(shown == [
-            "", "", "🛠️  local.writeFile /tmp/Example.swift", "let x = 1", "Note",
+            "", "", "🛠️  local.writeFile", "let x = 1", "Note",
             "", "🛠️  local.writeFile", "/tmp/Example.swift ✅", "", ""
         ].joined(separator: "\n"))
     }
@@ -460,7 +500,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
 
         let shown = await screen(of: renderer, width: columns)
         #expect(shown == [
-            "", "", "🛠️  local.writeFile /tmp/Example.swift", "let x = 1", "Note",
+            "", "", "🛠️  local.writeFile", "let x = 1", "Note",
             "", "🛠️  local.writeFile", "/tmp/Example.swift ✅", "", ""
         ].joined(separator: "\n"))
     }
@@ -482,7 +522,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         #expect(await renderer.previewMergedToolCallID == nil)
         let shown = await screen(of: renderer, width: columns)
         #expect(shown == [
-            "", "", "🛠️  local.writeFile /tmp/Example.swift", "let x = 1", "/tmp/Example.swift ⏳", "", "Note",
+            "", "", "🛠️  local.writeFile", "let x = 1", "/tmp/Example.swift ⏳", "", "Note",
             "🛠️  local.writeFile", "/tmp/Example.swift ✅", "", ""
         ].joined(separator: "\n"))
     }
@@ -514,7 +554,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
 
         let shown = await screen(of: renderer, width: columns)
         #expect(shown == [
-            "", "", "🛠️  local.writeFile /tmp/Example.swift", "let x = 1",
+            "", "", "🛠️  local.writeFile", "let x = 1",
             "", "🛠️  local.append", "/tmp/Example.swift ✅", "", ""
         ].joined(separator: "\n"))
     }
@@ -534,7 +574,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         #expect(await renderer.previewMergedToolCallID == nil)
         let shown = await screen(of: renderer)
         #expect(shown == [
-            "🛠️  local.writeFile /tmp/Example.swift", "let x = 1",
+            "🛠️  local.writeFile", "let x = 1",
             "🛠️  local.writeFile", "/tmp/Example.swift ⏳",
             "🛠️  local.writeFile", "/tmp/Example.swift ✅", "", ""
         ].joined(separator: "\n"))
@@ -558,7 +598,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
 
         await renderer.writeToolCallCompleted(toolCall, result: Self.wroteOneLine, maximumInPlaceRows: 6)
         #expect(await screen(of: renderer, width: columns)
-            == "\n\n🛠️  local.writeFile /tmp/Example.swift\nlet x = 1\n/tmp/Example.swift ✅\n\n")
+            == "\n\n🛠️  local.writeFile\nlet x = 1\n/tmp/Example.swift ✅\n\n")
     }
 
     @Test
@@ -581,7 +621,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         await renderer.writeToolCallCompleted(toolCall, result: Self.wroteOneLine, maximumInPlaceRows: 6)
 
         let shown = await screen(of: renderer, width: columns)
-        #expect(shown == "\n\n🛠️  local.writeFile /tmp/Example.swift\nlet x = 1\n/tmp/Example.swift ✅\n\n")
+        #expect(shown == "\n\n🛠️  local.writeFile\nlet x = 1\n/tmp/Example.swift ✅\n\n")
     }
 
     // MARK: - Repaint on screen
@@ -606,7 +646,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         #expect(stderr.components(separatedBy: "\r").count - 1 == 2)
 
         let rows = [
-            " 🛠️  local.writeFile /tmp/Example.swift",
+            " 🛠️  local.writeFile",
             " let x = 1",
             " x = y",
             " let s = \"é\"",

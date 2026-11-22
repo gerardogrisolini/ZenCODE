@@ -16,10 +16,9 @@ import Testing
 
 extension TerminalToolCallPreviewFormatterTests {
     private static let multiEditTitle = TerminalStyle.Tool.title
-    private static let multiEditValue = TerminalStyle.Tool.value
     private static let minus = "\(TerminalMarkdownPalette.dark.diffRemoval)- \(TerminalStyle.reset)"
     private static let plus = "\(TerminalMarkdownPalette.dark.diffAddition)+ \(TerminalStyle.reset)"
-    private static let plainHeader = "🛠️  local.multiEdit Sources/A.swift\n"
+    private static let plainHeader = "🛠️  local.multiEdit\n"
 
     /// `let x = <value>` as the Swift highlighter of the dark palette colors it.
     private static func highlightedLetX(_ value: Int) -> String {
@@ -71,8 +70,7 @@ extension TerminalToolCallPreviewFormatterTests {
     func theOldAndNewTextOfEveryEditIsDrawnInOrderAndRepaintedInColor() {
         let json = #"[{"old": "let x = 1\nlet x = 2", "new": "let x = 3"}, {"old": "let x = 4\n", "new": "let x = 5"}]"#
         let text = rendered(multiEdit([json]))
-        let header = "\(Self.multiEditTitle)🛠️  local.multiEdit\(Self.reset) "
-            + "\(Self.multiEditValue)Sources/A.swift\(Self.reset)\n"
+        let header = "\(Self.multiEditTitle)🛠️  local.multiEdit\(Self.reset)\n"
 
         // No separator between the edits and no JSON around the text.
         #expect(text == header
@@ -82,7 +80,7 @@ extension TerminalToolCallPreviewFormatterTests {
             + Self.repaintedRow(Self.minus, 4)
             + Self.repaintedRow(Self.plus, 5))
         #expect(multiEditScreen(text) == [
-            " 🛠️  local.multiEdit Sources/A.swift",
+            " 🛠️  local.multiEdit",
             " - let x = 1",
             " - let x = 2",
             " + let x = 3",
@@ -277,8 +275,7 @@ extension TerminalToolCallPreviewFormatterTests {
     @Test
     func theMarkerOfTheOpenStringIsRepaintedAtTheInterruptionAndAtTheEnd() {
         var formatter = makeFormatter()
-        let header = "\(Self.multiEditTitle)🛠️  local.multiEdit\(Self.reset) "
-            + "\(Self.multiEditValue)Sources/A.swift\(Self.reset)\n"
+        let header = "\(Self.multiEditTitle)🛠️  local.multiEdit\(Self.reset)\n"
         let start = feed(multiEdit([#"[{"old": "let x = 1"#], ends: false), to: &formatter)
 
         #expect(start == header + "\(Self.minus)let x = 1")

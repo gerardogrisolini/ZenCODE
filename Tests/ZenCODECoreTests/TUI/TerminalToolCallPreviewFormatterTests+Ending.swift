@@ -75,7 +75,7 @@ extension TerminalToolCallPreviewFormatterTests {
         let hostile = "a\u{1B}[2J\u{1B}]8;;x\u{07}b\u{08}\u{7F}\u{9B}c\u{202E}d\u{200D}e\n"
         for interactive in [true, false] {
             let text = rendered(write(content: [hostile]), interactive: interactive)
-            let body = String(text[try #require(text.range(of: "A.swift")).upperBound...])
+            let body = String(text[try #require(text.range(of: "local.writeFile")).upperBound...])
 
             #expect(body.contains("a␛[2J␛]8;;x␇b␈␡�c�d�e\n"))
             #expect(!body.contains("\u{07}"))
@@ -137,7 +137,7 @@ extension TerminalToolCallPreviewFormatterTests {
             .ended
         ]
 
-        #expect(outputs(events).last == "\(Self.reset)\n")
+        #expect(outputs(events).last == "\n")
     }
 
     @Test
@@ -157,7 +157,7 @@ extension TerminalToolCallPreviewFormatterTests {
             .ended
         ]
 
-        #expect(rendered(events, interactive: false) == "🛠️  local.writeFile A.swift\na\n🛠️  local.editFile\n- b\n")
+        #expect(rendered(events, interactive: false) == "🛠️  local.writeFile\na\n🛠️  local.editFile\n- b\n")
     }
 
     @Test
@@ -187,7 +187,7 @@ extension TerminalToolCallPreviewFormatterTests {
     }
 
     @Test
-    func aPathThatNeverReachedTheHeaderIsStillRecorded() {
+    func aPathThatArrivesAfterTheSourceTextIsStillRecorded() {
         var formatter = makeFormatter(interactive: false)
         _ = feed(Array(writeWithContentBeforeThePath(path: "Late.swift").dropLast(2)), to: &formatter)
         let drawn = formatter.finish(columns: { 80 }).drawn
@@ -216,8 +216,8 @@ extension TerminalToolCallPreviewFormatterTests {
         #expect(formatter.interrupt(columns: { 80 }) == "\n")
         let ended = formatter.finish(columns: { 80 })
 
-        // Other output followed the header that showed the path: the record
-        // keeps the path, but not the header as on screen.
+        // Other output followed the header: the record keeps the path, but
+        // not the header as on screen.
         #expect(ended.text == "")
         #expect(ended.drawn == DrawnCall(
             toolName: "local.writeFile", path: "/tmp/A.swift", endedOnScreen: false
@@ -225,7 +225,7 @@ extension TerminalToolCallPreviewFormatterTests {
     }
 
     @Test
-    func aPathStillStreamingOnTheHeaderIsRecorded() {
+    func aPathStillStreamingWhenTheCallEndsIsRecorded() {
         var formatter = makeFormatter(interactive: false)
         _ = feed([
             .toolStarted(name: "local.writeFile"),

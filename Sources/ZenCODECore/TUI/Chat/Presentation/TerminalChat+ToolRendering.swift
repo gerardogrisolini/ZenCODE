@@ -16,8 +16,9 @@ extension TerminalChat {
         /// Nothing: the block keeps its header and its target.
         case none
         /// The header: the preview header named the canonical tool, so the
-        /// block keeps only its status row, with the target as always,
-        /// wherever the model wrote the path.
+        /// block keeps only its status row, with the target as always, the
+        /// only place where the path is shown, whichever order the model wrote
+        /// its arguments in.
         case header
     }
 

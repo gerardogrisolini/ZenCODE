@@ -40,9 +40,9 @@ extension TerminalChatRenderCoordinator {
             maximumInPlaceRows: maximumInPlaceRows
         )
         if previewAlreadyShowedHeader(for: toolCall) {
-            // The preview header already showed the canonical tool name (and
-            // the path, when it reached the header): the status row follows
-            // the source rows without a separator.
+            // The preview header already showed the canonical tool name (never
+            // the path): the status row, which carries the target, follows the
+            // source rows without a separator.
             flushChatOutput()
         } else {
             prepareForToolOutput()

@@ -29,7 +29,7 @@ extension TerminalChatToolCallPreviewTests {
 
         let screen = terminalScreenText(await renderer.capturedText(), width: 80)
         #expect(screen == [
-            "", "", "🛠️  local.writeFile /tmp/Example.swift", "let x", "💬 Done.", ""
+            "", "", "🛠️  local.writeFile", "let x", "💬 Done.", ""
         ].joined(separator: "\n"))
     }
 
@@ -42,11 +42,11 @@ extension TerminalChatToolCallPreviewTests {
 
         #expect(await !renderer.isStreamingToolCallPreview)
         #expect(await renderer.capturedText(on: .standardError)
-            == "🛠️  local.writeFile /tmp/Example.swift\nlet x = 1\nlet y\n")
+            == "🛠️  local.writeFile\nlet x = 1\nlet y\n")
     }
 
     @Test
-    func anInterleavedMessageSuspendsThePreviewAndThePathGoesOnInTheReopenedHeader() async {
+    func aPathStreamingDuringAnInterleavedMessageWritesNothingAndSourceTextReopensTheToolNameAlone() async {
         let renderer = makeRenderer(standardErrorIsTerminal: false)
 
         await send([.toolStarted(name: "local.editFile"), .parameterStarted(name: "path"), .parameterText("Sources/")],
@@ -55,12 +55,17 @@ extension TerminalChatToolCallPreviewTests {
         // The call is only suspended: none of its rows is open.
         #expect(await !renderer.isStreamingToolCallPreview)
         await renderer.writeToolCallPreview(.parameterText("A.swift"))
+        // The rest of the path writes nothing, so it does not reopen the header.
+        #expect(await !renderer.isStreamingToolCallPreview)
+        #expect(await renderer.capturedText(on: .standardError) == "🛠️  local.editFile\nNote\n")
+        await send([.parameterEnded, .parameterStarted(name: "new"), .parameterText("let x = 1\n")], to: renderer)
+        // Source text does, with the tool name alone.
         #expect(await renderer.isStreamingToolCallPreview)
         await send([.parameterEnded, .ended], to: renderer)
 
         #expect(await !renderer.isStreamingToolCallPreview)
         #expect(await renderer.capturedText(on: .standardError)
-            == "🛠️  local.editFile Sources/\nNote\n🛠️  local.editFile Sources/A.swift\n")
+            == "🛠️  local.editFile\nNote\n🛠️  local.editFile\n+ let x = 1\n")
     }
 
     @Test
@@ -73,9 +78,9 @@ extension TerminalChatToolCallPreviewTests {
                    to: renderer)
 
         #expect(await renderer.capturedText(on: .standardError) == [
-            "🛠️  local.writeFile /tmp/Example.swift", "let a = 1", "let b",
+            "🛠️  local.writeFile", "let a = 1", "let b",
             "Note",
-            "🛠️  local.writeFile /tmp/Example.swift", " = 2", "let c = 3", "let d = 4", ""
+            "🛠️  local.writeFile", " = 2", "let c = 3", "let d = 4", ""
         ].joined(separator: "\n"))
     }
 
@@ -94,12 +99,12 @@ extension TerminalChatToolCallPreviewTests {
         #expect(containsOnlySGREscapes(stderr))
         let screen = terminalScreenText(stderr, width: columns)
         let rows = screen.components(separatedBy: "\n")
-        #expect(rows.filter { $0 == "🛠️  local.writeFile /tmp/Example.swift" }.count == 2)
+        #expect(rows.filter { $0 == "🛠️  local.writeFile" }.count == 2)
         for row in ["let a = 1", "let b = 2", "let c = 3", "Note"] {
             #expect(rows.filter { $0 == row }.count == 1, "\(row)")
         }
         let note = try #require(rows.firstIndex(of: "Note"))
-        let reopened = try #require(rows.lastIndex(of: "🛠️  local.writeFile /tmp/Example.swift"))
+        let reopened = try #require(rows.lastIndex(of: "🛠️  local.writeFile"))
         #expect(note < reopened)
         // The tool separator before the reopened header, the rest of the file
         // right below it.
@@ -137,14 +142,14 @@ extension TerminalChatToolCallPreviewTests {
         await ended.writeSystemMessage("Note\n")
         await ended.finishStreamingOutput()
         await ended.writeToolCallPreview(.parameterText("let y = 2\n"))
-        #expect(await ended.capturedText(on: .standardError) == "🛠️  local.writeFile /tmp/Example.swift\nlet x = 1\nNote\n")
+        #expect(await ended.capturedText(on: .standardError) == "🛠️  local.writeFile\nlet x = 1\nNote\n")
 
         let next = makeRenderer(standardErrorIsTerminal: false)
         await send(writePreview(content: ["let x = 1\n"], ends: false), to: next)
         await next.writeSystemMessage("Note\n")
         await next.beginTranscriptTurn()
         await next.writeToolCallPreview(.parameterText("let y = 2\n"))
-        #expect(await next.capturedText(on: .standardError) == "🛠️  local.writeFile /tmp/Example.swift\nlet x = 1\nNote\n")
+        #expect(await next.capturedText(on: .standardError) == "🛠️  local.writeFile\nlet x = 1\nNote\n")
 
         // A call still open at a new turn is closed as an interruption would,
         // then forgotten.
@@ -153,7 +158,7 @@ extension TerminalChatToolCallPreviewTests {
         await open.beginTranscriptTurn()
         #expect(await !open.isStreamingToolCallPreview)
         await open.writeToolCallPreview(.parameterText(" = 1\n"))
-        #expect(await open.capturedText(on: .standardError) == "🛠️  local.writeFile /tmp/Example.swift\nlet x\n")
+        #expect(await open.capturedText(on: .standardError) == "🛠️  local.writeFile\nlet x\n")
     }
 
     @Test
@@ -193,9 +198,9 @@ extension TerminalChatToolCallPreviewTests {
         let later = try #require(stdout.range(of: "Later"))
         #expect(plan.upperBound <= later.lowerBound)
         #expect(await renderer.capturedText(on: .standardError) == [
-            "🛠️  local.writeFile /tmp/Example.swift", "let x = 1",
+            "🛠️  local.writeFile", "let x = 1",
             "Note",
-            "🛠️  local.writeFile /tmp/Example.swift", "let y = 2", ""
+            "🛠️  local.writeFile", "let y = 2", ""
         ].joined(separator: "\n"))
     }
 }

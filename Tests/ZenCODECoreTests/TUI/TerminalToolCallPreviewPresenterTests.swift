@@ -112,16 +112,17 @@ struct TerminalToolCallPreviewPresenterTests {
         let text = await plainText(fixture.renderer)
         #expect(text.components(separatedBy: Self.commentary).count - 1 == 1)
         let commentary = try #require(text.range(of: Self.commentary))
-        let header = try #require(text.range(of: "🛠️  local.writeFile A.swift"))
+        let header = try #require(text.range(of: "🛠️  local.writeFile\n"))
         #expect(commentary.upperBound <= header.lowerBound)
         // The tool block that follows the preview of the same call merges into
-        // its header: the tool is named once and the status row closes it.
+        // its header: the tool is named once and the status row, with the
+        // target, closes it.
         #expect(text.components(separatedBy: "local.writeFile").count - 1 == 1)
         let screen = terminalScreenText(
             await fixture.renderer.capturedText(on: .standardError),
             width: 100
         )
-        #expect(screen == "\n\n🛠️  local.writeFile A.swift\nlet x = 1\nA.swift ⏳\n")
+        #expect(screen == "\n\n🛠️  local.writeFile\nlet x = 1\nA.swift ⏳\n")
         #expect(await fixture.buffer.takePending() == "")
         #expect(await offeredCommentaries(fixture.voiceQueue) == [Self.commentary])
     }
@@ -195,8 +196,8 @@ struct TerminalToolCallPreviewPresenterTests {
         let text = await plainText(fixture.renderer)
         #expect(text.components(separatedBy: Self.commentary).count - 1 == 1)
         let commentary = try #require(text.range(of: Self.commentary))
-        let first = try #require(text.range(of: "🛠️  local.writeFile A.swift\nlet a = 1\n"))
-        let second = try #require(text.range(of: "🛠️  local.editFile B.swift\n+ let b = 2\n"))
+        let first = try #require(text.range(of: "🛠️  local.writeFile\nlet a = 1\n"))
+        let second = try #require(text.range(of: "🛠️  local.editFile\n+ let b = 2\n"))
         #expect(commentary.upperBound <= first.lowerBound)
         #expect(first.upperBound <= second.lowerBound)
         #expect(await fixture.buffer.takePending() == "")
