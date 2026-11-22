@@ -121,7 +121,7 @@ struct TerminalToolCallPreviewPresenterTests {
             await fixture.renderer.capturedText(on: .standardError),
             width: 100
         )
-        #expect(screen == "\n\n🛠️  local.writeFile A.swift\nlet x = 1\n⏳\n")
+        #expect(screen == "\n\n🛠️  local.writeFile A.swift\nlet x = 1\nA.swift ⏳\n")
         #expect(await fixture.buffer.takePending() == "")
         #expect(await offeredCommentaries(fixture.voiceQueue) == [Self.commentary])
     }

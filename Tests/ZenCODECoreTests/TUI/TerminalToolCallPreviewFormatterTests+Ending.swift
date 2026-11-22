@@ -180,21 +180,20 @@ extension TerminalToolCallPreviewFormatterTests {
 
         #expect(ended.text == "")
         #expect(ended.drawn == DrawnCall(
-            toolName: "local.writeFile", path: "/tmp/A.swift", endedOnScreen: true, pathWasShown: true
+            toolName: "local.writeFile", path: "/tmp/A.swift", endedOnScreen: true
         ))
         // The record belongs to the call that ended: finishing again has none.
         #expect(formatter.finish(columns: { 80 }).drawn == nil)
     }
 
     @Test
-    func aPathThatNeverReachedTheHeaderIsRecordedAsNotShown() {
+    func aPathThatNeverReachedTheHeaderIsStillRecorded() {
         var formatter = makeFormatter(interactive: false)
         _ = feed(Array(writeWithContentBeforeThePath(path: "Late.swift").dropLast(2)), to: &formatter)
         let drawn = formatter.finish(columns: { 80 }).drawn
 
-        #expect(drawn?.pathWasShown == false)
         #expect(drawn?.path == "Late.swift")
-        // The rows are still on screen: the block can omit the header alone.
+        // The rows are still on screen: the block can omit the header.
         #expect(drawn?.endedOnScreen == true)
     }
 
@@ -211,22 +210,22 @@ extension TerminalToolCallPreviewFormatterTests {
     }
 
     @Test
-    func aSuspendedCallThatEndsRecordsItsPathAsNotShown() {
+    func aSuspendedCallThatEndsRecordsItsRowsAsNotOnScreen() {
         var formatter = makeFormatter(interactive: false)
         _ = feed(Array(write(path: "/tmp/A.swift", content: ["let x"]).dropLast(2)), to: &formatter)
         #expect(formatter.interrupt(columns: { 80 }) == "\n")
         let ended = formatter.finish(columns: { 80 })
 
         // Other output followed the header that showed the path: the record
-        // keeps the path, but neither the header nor the path as on screen.
+        // keeps the path, but not the header as on screen.
         #expect(ended.text == "")
         #expect(ended.drawn == DrawnCall(
-            toolName: "local.writeFile", path: "/tmp/A.swift", endedOnScreen: false, pathWasShown: false
+            toolName: "local.writeFile", path: "/tmp/A.swift", endedOnScreen: false
         ))
     }
 
     @Test
-    func aPathStillStreamingOnTheHeaderIsRecordedAsShown() {
+    func aPathStillStreamingOnTheHeaderIsRecorded() {
         var formatter = makeFormatter(interactive: false)
         _ = feed([
             .toolStarted(name: "local.writeFile"),
@@ -237,7 +236,7 @@ extension TerminalToolCallPreviewFormatterTests {
 
         #expect(ended.text == "\n")
         #expect(ended.drawn == DrawnCall(
-            toolName: "local.writeFile", path: "A.swi", endedOnScreen: true, pathWasShown: true
+            toolName: "local.writeFile", path: "A.swi", endedOnScreen: true
         ))
     }
 
@@ -262,6 +261,6 @@ extension TerminalToolCallPreviewFormatterTests {
         ], to: &formatter)
 
         #expect(formatter.finish(columns: { 80 }).drawn
-            == DrawnCall(toolName: "local.editFile", path: "A.swift", endedOnScreen: true, pathWasShown: true))
+            == DrawnCall(toolName: "local.editFile", path: "A.swift", endedOnScreen: true))
     }
 }

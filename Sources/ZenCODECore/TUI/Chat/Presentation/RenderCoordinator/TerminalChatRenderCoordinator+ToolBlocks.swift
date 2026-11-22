@@ -224,13 +224,13 @@ extension TerminalChatRenderCoordinator {
                 && block.columnWidth == columnWidth
                 && block.rows <= maximumReplaceableRows
         } ?? false)
-        // A completion omits the header (and the target) only when it rewrites
-        // the merged start in place; an append-only completion is drawn in full.
+        // A completion omits the header only when it rewrites the merged start
+        // in place; an append-only completion is drawn in full.
         let mergesIntoPreview = lifecycle.isCompletion
             ? (previewMergedToolCallID == toolCall.id && shouldRewriteActiveBlock)
             : previewMergedToolCallID == toolCall.id
         let previewMerge: TerminalChat.CompactToolPreviewMerge = mergesIntoPreview
-            ? (previewMergedToolCallOmitsTarget ? .headerAndTarget : .header)
+            ? .header
             : .none
         let renderRows = toolBlockRows(
             for: toolCall,

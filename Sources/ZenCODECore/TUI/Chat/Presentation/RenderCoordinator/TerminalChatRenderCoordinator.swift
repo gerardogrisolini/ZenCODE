@@ -124,8 +124,8 @@ actor TerminalChatRenderCoordinator {
     /// the fragments it draws.
     var toolCallPreviewFormatter: TerminalToolCallPreviewFormatter
     /// The drawn call whose preview just ended, kept only while no output has
-    /// been emitted since: its block may then omit the header, and the target
-    /// when the preview header showed it too.
+    /// been emitted since: its block may then omit the header, keeping the
+    /// target on its status row.
     var pendingToolCallPreviewDrawing: TerminalToolCallPreviewFormatter.DrawnCall?
     /// The write sequence after that preview ended; the block merges only if no
     /// output was emitted since.
@@ -133,10 +133,6 @@ actor TerminalChatRenderCoordinator {
     /// The call whose block is drawn without its header, so a completion and
     /// a republished start keep the same layout.
     var previewMergedToolCallID: String?
-    /// Whether that call's block omits its target too: the path reached the
-    /// preview header. Read only for the call named by
-    /// ``previewMergedToolCallID``.
-    var previewMergedToolCallOmitsTarget = false
     /// A submitted prompt starts a transcript turn. The first prompt remains
     /// unadorned; every later one receives exactly one visual turn separator.
     var hasWrittenSubmittedPrompt = false

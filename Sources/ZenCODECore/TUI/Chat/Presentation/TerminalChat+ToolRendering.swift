@@ -15,13 +15,10 @@ extension TerminalChat {
     enum CompactToolPreviewMerge: Sendable, Equatable {
         /// Nothing: the block keeps its header and its target.
         case none
-        /// The header: the preview header named the canonical tool, but its
-        /// path arrived after the source rows, so the status row keeps the
-        /// target.
+        /// The header: the preview header named the canonical tool, so the
+        /// block keeps only its status row, with the target as always,
+        /// wherever the model wrote the path.
         case header
-        /// The header and the target: the preview header showed both, so only
-        /// the status is left.
-        case headerAndTarget
     }
 
     /// The syntax-highlighting language of a file, chosen strictly from its
@@ -143,10 +140,9 @@ extension TerminalChat {
 
     /// Builds the compact rows of a call. `previewMerge` drops what the live
     /// preview of a file write or edit already showed: the header with the
-    /// canonical tool name, and the target from the status row when the path
-    /// reached the preview header too. The block then follows the source rows
-    /// with its status row only. The merge is ignored when the call has no
-    /// target: the block then stays complete.
+    /// canonical tool name. The block then follows the source rows with its
+    /// status row only, which keeps the target as always. The merge is
+    /// ignored when the call has no target: the block then stays complete.
     nonisolated static func compactToolLines(
         for toolCall: DirectAgentToolCall,
         statusIcon: String,
@@ -159,12 +155,9 @@ extension TerminalChat {
         let header = "\(ToolCallPresentation.toolIcon(for: toolCall.name))  \(title)"
         let target = ToolCallPresentation.displayToolTarget(for: toolCall)
             .flatMap(ToolArgumentReader.sanitizedMetadataText)
-        let omitsHeader = previewMerge != .none && target != nil
-        let statusTarget = omitsHeader && previewMerge == .headerAndTarget
-            ? ""
-            : (target ?? header)
+        let omitsHeader = previewMerge == .header && target != nil
         let statusLine = compactToolStatusLine(
-            target: statusTarget,
+            target: target ?? header,
             statusIcon: statusIcon,
             statusDetail: statusDetail,
             collapsesTargetWhitespace: target != nil,

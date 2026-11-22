@@ -398,7 +398,7 @@ extension TerminalChatRenderingTests {
     }
 
     @Test
-    func aCompactBlockWhoseHeaderThePreviewShowedKeepsOnlyItsStatus() {
+    func aCompactBlockWhoseHeaderThePreviewShowedKeepsTheTargetAndItsStatus() {
         let toolCall = presentedToolCall(
             id: "call_1",
             name: "local.writeFile",
@@ -417,56 +417,43 @@ extension TerminalChatRenderingTests {
             statusIcon: "✅",
             statusDetail: "1.38ms",
             columnWidth: 80,
-            previewMerge: .headerAndTarget
+            previewMerge: .header
         )
 
         #expect(withHeader == ["🛠️  local.writeFile", "/tmp/Example.swift ✅ 1.38ms"])
-        #expect(merged == ["✅ 1.38ms"])
+        // The preview header named the tool: only the header is left out, and
+        // the status row keeps the target before the status, as always.
+        #expect(merged == ["/tmp/Example.swift ✅ 1.38ms"])
 
-        // A preview header that named the tool without the path leaves only
-        // the header out: the status row keeps the target.
-        #expect(TerminalChat.compactToolLines(
-            for: toolCall,
-            statusIcon: "✅",
-            statusDetail: "1.38ms",
-            columnWidth: 80,
-            previewMerge: .header
-        ) == ["/tmp/Example.swift ✅ 1.38ms"])
-        #expect(TerminalChat.compactToolLines(
-            for: toolCall,
-            statusIcon: "⏳",
-            columnWidth: 80,
-            previewMerge: .header
-        ) == ["/tmp/Example.swift ⏳"])
-
-        // Every status the block shows keeps only its status row.
+        // Every status the block shows keeps the target and its status.
         for icon in ["⏳", "⚠️"] {
             #expect(TerminalChat.compactToolLines(
                 for: toolCall,
                 statusIcon: icon,
                 columnWidth: 80,
-                previewMerge: .headerAndTarget
-            ) == [icon])
+                previewMerge: .header
+            ) == ["/tmp/Example.swift \(icon)"])
         }
         let warning = TerminalChat.compactToolLines(
             for: toolCall,
             statusIcon: "⚠️",
             statusDetail: "1.38ms",
             columnWidth: 80,
-            previewMerge: .headerAndTarget
+            previewMerge: .header
         )
-        #expect(warning == ["⚠️  1.38ms"])
+        #expect(warning == ["/tmp/Example.swift ⚠️  1.38ms"])
 
         // On a narrow terminal the status row still fits one row: the detail
-        // that does not fit is dropped, the icon stays.
+        // that does not fit is dropped, the icon stays, and the target is cut
+        // to the columns left.
         #expect(TerminalChat.compactToolLines(
             for: toolCall,
             statusIcon: "✅",
             statusDetail: "1.38ms",
             contentInsetWidth: 1,
             columnWidth: 8,
-            previewMerge: .headerAndTarget
-        ) == ["✅"])
+            previewMerge: .header
+        ) == ["/tm ✅"])
 
         // A call without a target shows its header on its only row: the merge
         // is ignored and the block stays complete.
@@ -483,15 +470,13 @@ extension TerminalChatRenderingTests {
             columnWidth: 80
         )
         #expect(complete == ["🛠️  local.writeFile ✅ 1.38ms"])
-        for merge in [TerminalChat.CompactToolPreviewMerge.header, .headerAndTarget] {
-            #expect(TerminalChat.compactToolLines(
-                for: untargeted,
-                statusIcon: "✅",
-                statusDetail: "1.38ms",
-                columnWidth: 80,
-                previewMerge: merge
-            ) == complete)
-        }
+        #expect(TerminalChat.compactToolLines(
+            for: untargeted,
+            statusIcon: "✅",
+            statusDetail: "1.38ms",
+            columnWidth: 80,
+            previewMerge: .header
+        ) == complete)
     }
 
     func ansiStripped(_ text: String) -> String {

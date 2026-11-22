@@ -423,10 +423,10 @@ differ from the defaults of ds4-agent.
   follows. When the block follows the preview of the same tool and path right
   away (no message, overview, or other output in between), and the channel is
   an interactive terminal, the block does not repeat the header and keeps only
-  its status row under the last row of the preview, without a blank row: just
-  the status when the path reached the preview header, or the path and the
-  status when the model wrote the path after the text, so the header could not
-  show it. Otherwise it keeps its header and target as for any other tool.
+  its status row under the last row of the preview, without a blank row: the
+  path and the status (`/tmp/Example.swift ✅ 1.38ms`), whether the path
+  reached the preview header or the model wrote it after the text. Otherwise
+  it keeps its header and target as for any other tool.
   Every other tool, `local.applyPatch` included, shows only its compact block.
   The preview exists only in the terminal chat: ACP, the headless and JSONL
   output, Telegram, the macOS app, saved sessions, and sub-agents never receive

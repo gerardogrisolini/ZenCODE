@@ -384,14 +384,14 @@ extension TerminalToolCallPreviewFormatterTests {
 
             #expect(ended.text == "")
             #expect(ended.drawn == DrawnCall(
-                toolName: "local.multiEdit", path: "Sources/A.swift", endedOnScreen: true, pathWasShown: true
+                toolName: "local.multiEdit", path: "Sources/A.swift", endedOnScreen: true
             ))
             #expect(formatter.finish(columns: { 80 }).drawn == nil)
         }
     }
 
     @Test
-    func theFilePathAliasIsRecordedAndAPathAfterTheEditsIsNotShown() {
+    func theFilePathAliasAndAPathAfterTheEditsAreRecorded() {
         var aliased = makeFormatter(interactive: false)
         _ = feed([
             .toolStarted(name: "local.multiEdit"),
@@ -402,7 +402,7 @@ extension TerminalToolCallPreviewFormatterTests {
             .parameterText(#"[{"new": "b"}]"#)
         ], to: &aliased)
         #expect(aliased.finish(columns: { 80 }).drawn
-            == DrawnCall(toolName: "local.multiEdit", path: "B.swift", endedOnScreen: true, pathWasShown: true))
+            == DrawnCall(toolName: "local.multiEdit", path: "B.swift", endedOnScreen: true))
 
         var late = makeFormatter(interactive: false)
         _ = feed([
@@ -415,7 +415,7 @@ extension TerminalToolCallPreviewFormatterTests {
             .parameterEnded
         ], to: &late)
         #expect(late.finish(columns: { 80 }).drawn
-            == DrawnCall(toolName: "local.multiEdit", path: "Late.swift", endedOnScreen: true, pathWasShown: false))
+            == DrawnCall(toolName: "local.multiEdit", path: "Late.swift", endedOnScreen: true))
     }
 
     @Test
@@ -426,7 +426,7 @@ extension TerminalToolCallPreviewFormatterTests {
 
         #expect(ended.text == "\r \(Self.plus)\(Self.highlightedLetX(1))\(Self.reset)\n")
         #expect(ended.drawn == DrawnCall(
-            toolName: "local.multiEdit", path: "Sources/A.swift", endedOnScreen: true, pathWasShown: true
+            toolName: "local.multiEdit", path: "Sources/A.swift", endedOnScreen: true
         ))
         #expect(!formatter.isOpen)
         #expect(plainMultiEdit(#"[{"old": "a", "new": "b"#) == Self.plainHeader + "- a\n+ b\n")

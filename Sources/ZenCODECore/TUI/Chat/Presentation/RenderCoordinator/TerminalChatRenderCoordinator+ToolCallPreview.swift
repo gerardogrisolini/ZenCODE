@@ -11,9 +11,8 @@ import ZenCODERuntime
 /// Live drawing of a file write or edit while the model is still writing its
 /// tool call. The rows are append-only transcript on the tool-block channel.
 /// When the compact block follows the preview of the same call right away, it
-/// omits the header the preview already showed, and the target too when the
-/// path reached the preview header; otherwise it is drawn exactly as without
-/// a preview.
+/// omits the header the preview already showed and keeps the target on its
+/// status row; otherwise it is drawn exactly as without a preview.
 extension TerminalChatRenderCoordinator {
     // MARK: - Tool-call preview
 
@@ -97,12 +96,11 @@ extension TerminalChatRenderCoordinator {
     /// Whether the preview of this call ended with its rows on screen, its
     /// header showed the canonical tool name, it received the call's path, no
     /// output was emitted since, and the terminal can rewrite the block in
-    /// place, so the block draws only its status row: without the target when
-    /// the path reached the preview header, with it when the path arrived
-    /// after the source rows. The drawing is consumed once, and its call keeps
-    /// the decision for its completion and for a start republished after a
-    /// bottom-overlay transition. A channel that cannot rewrite keeps the full
-    /// block: its completion is append-only.
+    /// place, so the block draws only its status row, with the target and the
+    /// status wherever the model wrote the path. The drawing is consumed once,
+    /// and its call keeps the decision for its completion and for a start
+    /// republished after a bottom-overlay transition. A channel that cannot
+    /// rewrite keeps the full block: its completion is append-only.
     func previewAlreadyShowedHeader(for toolCall: DirectAgentToolCall) -> Bool {
         if previewMergedToolCallID == toolCall.id {
             return true
@@ -123,7 +121,6 @@ extension TerminalChatRenderCoordinator {
             return false
         }
         previewMergedToolCallID = toolCall.id
-        previewMergedToolCallOmitsTarget = drawing.pathWasShown
         return true
     }
 
