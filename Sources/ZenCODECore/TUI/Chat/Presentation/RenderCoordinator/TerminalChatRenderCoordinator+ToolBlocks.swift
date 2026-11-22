@@ -40,8 +40,9 @@ extension TerminalChatRenderCoordinator {
             maximumInPlaceRows: maximumInPlaceRows
         )
         if previewAlreadyShowedHeader(for: toolCall) {
-            // The preview header already showed the canonical tool name and the
-            // path: the status row follows the source rows without a separator.
+            // The preview header already showed the canonical tool name (and
+            // the path, when it reached the header): the status row follows
+            // the source rows without a separator.
             flushChatOutput()
         } else {
             prepareForToolOutput()
@@ -223,17 +224,20 @@ extension TerminalChatRenderCoordinator {
                 && block.columnWidth == columnWidth
                 && block.rows <= maximumReplaceableRows
         } ?? false)
-        // A completion omits the header and target only when it rewrites the
-        // merged start in place; an append-only completion is drawn in full.
-        let omitsHeaderAndTarget = lifecycle.isCompletion
+        // A completion omits the header (and the target) only when it rewrites
+        // the merged start in place; an append-only completion is drawn in full.
+        let mergesIntoPreview = lifecycle.isCompletion
             ? (previewMergedToolCallID == toolCall.id && shouldRewriteActiveBlock)
             : previewMergedToolCallID == toolCall.id
+        let previewMerge: TerminalChat.CompactToolPreviewMerge = mergesIntoPreview
+            ? (previewMergedToolCallOmitsTarget ? .headerAndTarget : .header)
+            : .none
         let renderRows = toolBlockRows(
             for: toolCall,
             lifecycle: lifecycle,
             contentInsetWidth: contentInsetWidth,
             columnWidth: columnWidth,
-            omitsHeaderAndTarget: omitsHeaderAndTarget
+            previewMerge: previewMerge
         )
         let pendingOwnership: (rows: Int, cursorState: CursorState)?
         if lifecycle.isCompletion {
@@ -282,7 +286,7 @@ extension TerminalChatRenderCoordinator {
             renderRows,
             for: toolCall,
             lifecycle: lifecycle,
-            titleRowCount: omitsHeaderAndTarget
+            titleRowCount: previewMerge != .none
                 && ToolCallPresentation.displayToolTarget(for: toolCall) != nil ? 0 : 1
         )
         if let pendingOwnership {
@@ -315,7 +319,7 @@ extension TerminalChatRenderCoordinator {
         lifecycle: ToolBlockLifecycle,
         contentInsetWidth: Int,
         columnWidth: Int,
-        omitsHeaderAndTarget: Bool
+        previewMerge: TerminalChat.CompactToolPreviewMerge
     ) -> TerminalChat.ToolPresentationRows {
         let result: DirectAgentToolResult?
         switch lifecycle {
@@ -333,7 +337,7 @@ extension TerminalChatRenderCoordinator {
             // Both lifecycles stay compact. Captured source evidence is shown
             // only on demand by /artifacts, never from mutation arguments.
             includesSourceChanges: false,
-            omitsHeaderAndTarget: omitsHeaderAndTarget
+            previewMerge: previewMerge
         )
     }
 

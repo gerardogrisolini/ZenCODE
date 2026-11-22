@@ -70,11 +70,14 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     }
 
     /// What a drawn call showed when it ended: the canonical tool name, the
-    /// path it received, and whether that path reached the header row. The
-    /// tool block that follows the call uses it to avoid repeating the path.
+    /// path it received, whether its rows were still open on screen (no other
+    /// output followed its header), and whether that path reached the header
+    /// row. The tool block that follows the call uses it to avoid repeating
+    /// the header and, when it was shown, the path.
     struct DrawnCall: Sendable, Equatable {
         let toolName: String
         let path: String
+        let endedOnScreen: Bool
         let pathWasShown: Bool
     }
 
@@ -236,7 +239,8 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     /// the cursor is left at the start of a row; a suspended call has nothing
     /// open and is forgotten without output. Returns the text to write and
     /// what the call drew, or `nil` when no drawn call was open or suspended;
-    /// the path of a suspended call is not on screen, so it is never shown.
+    /// other output followed the header of a suspended call, so neither that
+    /// header nor its path is recorded as on screen.
     mutating func finish(columns: () -> Int) -> (text: String, drawn: DrawnCall?) {
         guard let tool else {
             return ("", nil)
@@ -245,6 +249,7 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         let drawn = DrawnCall(
             toolName: tool.name,
             path: path,
+            endedOnScreen: !isSuspended,
             pathWasShown: pathIsShown && !isSuspended
         )
         resetCall()

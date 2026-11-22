@@ -74,6 +74,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
   once without tearing or flicker; the others ignore the markers. A
   terminating signal that lands during a frame also ends the mode.
 
+- With the in-process DS4 engine, in the terminal chat, the compact block of a
+  `local.writeFile`, `local.append`, `local.editFile`, `local.replace`, or
+  `local.multiEdit` call whose path the model wrote after the text (for example
+  `new`, `old`, then `path`) no longer adds a blank row and repeats the tool
+  name after the live preview: its status row follows the last row of the
+  preview with the path and the status (`ZenDemoProbe.swift ✅ 1.05ms`), since
+  the preview header could not show the path. The same conditions as before
+  apply (same call, no output in between, an interactive terminal); in every
+  other case the block keeps its header and target.
+
 ### Fixed
 
 - ACP (`zen --acp`, as launched by Xcode): a new or restored session without a

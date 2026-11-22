@@ -179,7 +179,9 @@ extension TerminalToolCallPreviewFormatterTests {
         let ended = formatter.finish(columns: { 80 })
 
         #expect(ended.text == "")
-        #expect(ended.drawn == DrawnCall(toolName: "local.writeFile", path: "/tmp/A.swift", pathWasShown: true))
+        #expect(ended.drawn == DrawnCall(
+            toolName: "local.writeFile", path: "/tmp/A.swift", endedOnScreen: true, pathWasShown: true
+        ))
         // The record belongs to the call that ended: finishing again has none.
         #expect(formatter.finish(columns: { 80 }).drawn == nil)
     }
@@ -192,6 +194,8 @@ extension TerminalToolCallPreviewFormatterTests {
 
         #expect(drawn?.pathWasShown == false)
         #expect(drawn?.path == "Late.swift")
+        // The rows are still on screen: the block can omit the header alone.
+        #expect(drawn?.endedOnScreen == true)
     }
 
     @Test
@@ -214,9 +218,11 @@ extension TerminalToolCallPreviewFormatterTests {
         let ended = formatter.finish(columns: { 80 })
 
         // Other output followed the header that showed the path: the record
-        // keeps the path, but not as shown.
+        // keeps the path, but neither the header nor the path as on screen.
         #expect(ended.text == "")
-        #expect(ended.drawn == DrawnCall(toolName: "local.writeFile", path: "/tmp/A.swift", pathWasShown: false))
+        #expect(ended.drawn == DrawnCall(
+            toolName: "local.writeFile", path: "/tmp/A.swift", endedOnScreen: false, pathWasShown: false
+        ))
     }
 
     @Test
@@ -230,7 +236,9 @@ extension TerminalToolCallPreviewFormatterTests {
         let ended = formatter.finish(columns: { 80 })
 
         #expect(ended.text == "\n")
-        #expect(ended.drawn == DrawnCall(toolName: "local.writeFile", path: "A.swi", pathWasShown: true))
+        #expect(ended.drawn == DrawnCall(
+            toolName: "local.writeFile", path: "A.swi", endedOnScreen: true, pathWasShown: true
+        ))
     }
 
     @Test
@@ -254,6 +262,6 @@ extension TerminalToolCallPreviewFormatterTests {
         ], to: &formatter)
 
         #expect(formatter.finish(columns: { 80 }).drawn
-            == DrawnCall(toolName: "local.editFile", path: "A.swift", pathWasShown: true))
+            == DrawnCall(toolName: "local.editFile", path: "A.swift", endedOnScreen: true, pathWasShown: true))
     }
 }

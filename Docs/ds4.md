@@ -420,11 +420,13 @@ differ from the defaults of ds4-agent.
   while a file is being written (a system message, a request for authorization),
   the preview closes at the end of the row it is on and reopens with its header
   at the next text of the call. When the call is complete its compact tool block
-  follows. When the preview showed the same tool and path, the block follows it
-  right away (no message, overview, or other output in between), and the channel
-  is an interactive terminal, the block does not repeat the path and keeps only
-  its status row; otherwise it keeps its header and target as for any other
-  tool.
+  follows. When the block follows the preview of the same tool and path right
+  away (no message, overview, or other output in between), and the channel is
+  an interactive terminal, the block does not repeat the header and keeps only
+  its status row under the last row of the preview, without a blank row: just
+  the status when the path reached the preview header, or the path and the
+  status when the model wrote the path after the text, so the header could not
+  show it. Otherwise it keeps its header and target as for any other tool.
   Every other tool, `local.applyPatch` included, shows only its compact block.
   The preview exists only in the terminal chat: ACP, the headless and JSONL
   output, Telegram, the macOS app, saved sessions, and sub-agents never receive

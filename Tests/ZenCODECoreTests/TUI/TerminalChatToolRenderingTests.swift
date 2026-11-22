@@ -417,11 +417,27 @@ extension TerminalChatRenderingTests {
             statusIcon: "✅",
             statusDetail: "1.38ms",
             columnWidth: 80,
-            omitsHeaderAndTarget: true
+            previewMerge: .headerAndTarget
         )
 
         #expect(withHeader == ["🛠️  local.writeFile", "/tmp/Example.swift ✅ 1.38ms"])
         #expect(merged == ["✅ 1.38ms"])
+
+        // A preview header that named the tool without the path leaves only
+        // the header out: the status row keeps the target.
+        #expect(TerminalChat.compactToolLines(
+            for: toolCall,
+            statusIcon: "✅",
+            statusDetail: "1.38ms",
+            columnWidth: 80,
+            previewMerge: .header
+        ) == ["/tmp/Example.swift ✅ 1.38ms"])
+        #expect(TerminalChat.compactToolLines(
+            for: toolCall,
+            statusIcon: "⏳",
+            columnWidth: 80,
+            previewMerge: .header
+        ) == ["/tmp/Example.swift ⏳"])
 
         // Every status the block shows keeps only its status row.
         for icon in ["⏳", "⚠️"] {
@@ -429,7 +445,7 @@ extension TerminalChatRenderingTests {
                 for: toolCall,
                 statusIcon: icon,
                 columnWidth: 80,
-                omitsHeaderAndTarget: true
+                previewMerge: .headerAndTarget
             ) == [icon])
         }
         let warning = TerminalChat.compactToolLines(
@@ -437,7 +453,7 @@ extension TerminalChatRenderingTests {
             statusIcon: "⚠️",
             statusDetail: "1.38ms",
             columnWidth: 80,
-            omitsHeaderAndTarget: true
+            previewMerge: .headerAndTarget
         )
         #expect(warning == ["⚠️  1.38ms"])
 
@@ -449,10 +465,10 @@ extension TerminalChatRenderingTests {
             statusDetail: "1.38ms",
             contentInsetWidth: 1,
             columnWidth: 8,
-            omitsHeaderAndTarget: true
+            previewMerge: .headerAndTarget
         ) == ["✅"])
 
-        // A call without a target shows its header on its only row: the flag
+        // A call without a target shows its header on its only row: the merge
         // is ignored and the block stays complete.
         let untargeted = DirectAgentToolCall(
             id: "call_2",
@@ -467,13 +483,15 @@ extension TerminalChatRenderingTests {
             columnWidth: 80
         )
         #expect(complete == ["🛠️  local.writeFile ✅ 1.38ms"])
-        #expect(TerminalChat.compactToolLines(
-            for: untargeted,
-            statusIcon: "✅",
-            statusDetail: "1.38ms",
-            columnWidth: 80,
-            omitsHeaderAndTarget: true
-        ) == complete)
+        for merge in [TerminalChat.CompactToolPreviewMerge.header, .headerAndTarget] {
+            #expect(TerminalChat.compactToolLines(
+                for: untargeted,
+                statusIcon: "✅",
+                statusDetail: "1.38ms",
+                columnWidth: 80,
+                previewMerge: merge
+            ) == complete)
+        }
     }
 
     func ansiStripped(_ text: String) -> String {

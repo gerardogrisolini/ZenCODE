@@ -9,6 +9,21 @@ import Foundation
 import ZenCODERuntime
 
 extension TerminalChat {
+    /// What the compact rows of a call leave out because the live preview of
+    /// its file write or edit, drawn right above them, already showed it. A
+    /// call without a target ignores it: its block stays complete.
+    enum CompactToolPreviewMerge: Sendable, Equatable {
+        /// Nothing: the block keeps its header and its target.
+        case none
+        /// The header: the preview header named the canonical tool, but its
+        /// path arrived after the source rows, so the status row keeps the
+        /// target.
+        case header
+        /// The header and the target: the preview header showed both, so only
+        /// the status is left.
+        case headerAndTarget
+    }
+
     /// The syntax-highlighting language of a file, chosen strictly from its
     /// extension (`swift`, `python`, `typescript`, …); see
     /// ``ToolLanguageHint/hint(forPath:)``. A host app uses it to color a file
@@ -27,7 +42,7 @@ extension TerminalChat {
         contentInsetWidth: Int,
         columnWidth: Int,
         includesSourceChanges: Bool = true,
-        omitsHeaderAndTarget: Bool = false
+        previewMerge: CompactToolPreviewMerge = .none
     ) -> ToolPresentationRows {
         let safeContentWidth = max(1, columnWidth - contentInsetWidth - 1)
         let statusIcon = result.map { result in
@@ -41,7 +56,7 @@ extension TerminalChat {
                 statusDetail: statusDetail,
                 contentInsetWidth: contentInsetWidth,
                 columnWidth: columnWidth,
-                omitsHeaderAndTarget: omitsHeaderAndTarget
+                previewMerge: previewMerge
             ).map(DetailedToolRow.text),
             detailRows: includesSourceChanges
                 ? safelyWrappedDetailedToolRows(
@@ -126,25 +141,28 @@ extension TerminalChat {
         return "\(baseColor)\(renderCompactToolDuration(in: line, restoring: baseColor))"
     }
 
-    /// Builds the compact rows of a call. `omitsHeaderAndTarget` drops both the
-    /// header and the target from the status row: the live preview of a file
-    /// write or edit already showed the canonical tool name and the path, so
-    /// the block that follows it keeps only its status. The flag is ignored
-    /// when the call has no target: the block then stays complete.
+    /// Builds the compact rows of a call. `previewMerge` drops what the live
+    /// preview of a file write or edit already showed: the header with the
+    /// canonical tool name, and the target from the status row when the path
+    /// reached the preview header too. The block then follows the source rows
+    /// with its status row only. The merge is ignored when the call has no
+    /// target: the block then stays complete.
     nonisolated static func compactToolLines(
         for toolCall: DirectAgentToolCall,
         statusIcon: String,
         statusDetail: String? = nil,
         contentInsetWidth: Int = 0,
         columnWidth: Int? = nil,
-        omitsHeaderAndTarget: Bool = false
+        previewMerge: CompactToolPreviewMerge = .none
     ) -> [String] {
         let title = ToolArgumentReader.sanitizedMetadataText(toolCall.name) ?? "tool"
         let header = "\(ToolCallPresentation.toolIcon(for: toolCall.name))  \(title)"
         let target = ToolCallPresentation.displayToolTarget(for: toolCall)
             .flatMap(ToolArgumentReader.sanitizedMetadataText)
-        let omitsHeader = omitsHeaderAndTarget && target != nil
-        let statusTarget = omitsHeader ? "" : (target ?? header)
+        let omitsHeader = previewMerge != .none && target != nil
+        let statusTarget = omitsHeader && previewMerge == .headerAndTarget
+            ? ""
+            : (target ?? header)
         let statusLine = compactToolStatusLine(
             target: statusTarget,
             statusIcon: statusIcon,

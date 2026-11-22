@@ -8,14 +8,15 @@
 //  while its rows are open, the compact tool block that follows it, and the
 //  repaint as a terminal and the primary screen show it.
 //
-//  The tool block merges into the preview (only its status row, without
-//  header and target) when the record of the ended call shows the same
-//  canonical tool and target, the path reached the header, nothing was
-//  written in between, and the terminal can rewrite the block in place; the
-//  merge survives a bottom-overlay transition, whose writes stay in the
-//  footer. Every other case keeps the full block: another call drawn after
-//  it, interleaved output, a suspended call, a turn boundary, a different
-//  tool, a channel that cannot rewrite, and a completion that lost the
+//  The tool block merges into the preview (only its status row, without the
+//  header, and without the target too when the path reached the header) when
+//  the record of the ended call shows the same canonical tool and target, its
+//  rows were still on screen, nothing was written in between, and the
+//  terminal can rewrite the block in place; the merge survives a
+//  bottom-overlay transition, whose writes stay in the footer. Every other
+//  case keeps the full block: another call drawn after it, interleaved
+//  output, a suspended call, a turn boundary, a different tool, a different
+//  path, a channel that cannot rewrite, and a completion that lost the
 //  block's rows.
 //
 
@@ -263,19 +264,116 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
     }
 
     @Test
-    func aBlockKeepsItsTargetWhenThePreviewNeverShowedThePath() async {
-        let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { 80 })
+    func aBlockWhosePathArrivedAfterTheTextKeepsItsTargetWithoutTheHeader() async {
+        let columns = 80
+        let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
         let toolCall = fileCall(id: "write-1")
 
         // The content arrived before the path, so the header closed without it.
         await send(writeWithContentBeforeThePath(path: Self.path), to: renderer)
         await renderer.writeToolCallStarted(toolCall)
-        #expect(await renderer.snapshot().activeToolRenderedRowCount == 2)
+        // The header named the tool: the block owns only its status row,
+        // which keeps the target the header could not show.
+        #expect(await renderer.snapshot().activeToolRenderedRowCount == 1)
+        #expect(await renderer.previewMergedToolCallID == toolCall.id)
+        #expect(await screen(of: renderer, width: columns)
+            == "\n\n🛠️  local.writeFile\nlet x = 1\n/tmp/Example.swift ⏳\n")
+        let eventCountBeforeCompletion = await renderer.capturedWriteEvents().count
         await renderer.writeToolCallCompleted(toolCall, result: Self.wroteOneLine)
 
-        let shown = await screen(of: renderer)
+        let events = await renderer.capturedWriteEvents()
+        let rewrite = events.dropFirst(eventCountBeforeCompletion).first?.text ?? ""
+        #expect(rewrite.hasPrefix("\u{1B}[1A\r"))
+        #expect(rewrite.components(separatedBy: "\u{1B}[2K").count - 1 == 1)
+        #expect(await renderer.previewMergedToolCallID == nil)
+        let shown = terminalScreenText(events.renderedText(on: .standardError), width: columns)
         #expect(shown == [
             "", "", "🛠️  local.writeFile", "let x = 1",
+            "/tmp/Example.swift ✅", "", ""
+        ].joined(separator: "\n"))
+        #expect(shown.components(separatedBy: "local.writeFile").count - 1 == 1)
+    }
+
+    @Test
+    func anEditWrittenWithThePathLastIsNotFollowedByASecondHeader() async {
+        let columns = 80
+        let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
+        let toolCall = fileCall(id: "edit-1", name: "local.editFile")
+
+        // The arguments in alphabetical order, as DS4 models may write them.
+        await send([
+            .toolStarted(name: "local.editFile"),
+            .parameterStarted(name: "new"),
+            .parameterText("let x = 1\n"),
+            .parameterEnded,
+            .parameterStarted(name: "old"),
+            .parameterText("let x = 0\n"),
+            .parameterEnded,
+            .parameterStarted(name: "path"),
+            .parameterText(Self.path),
+            .parameterEnded,
+            .ended
+        ], to: renderer)
+        await renderer.writeToolCallStarted(toolCall)
+        #expect(await renderer.snapshot().activeToolRenderedRowCount == 1)
+        await renderer.writeToolCallCompleted(toolCall, result: Self.wroteOneLine)
+
+        let shown = await screen(of: renderer, width: columns)
+        #expect(shown == [
+            "", "", "🛠️  local.editFile", "+ let x = 1", "- let x = 0",
+            "/tmp/Example.swift ✅", "", ""
+        ].joined(separator: "\n"))
+        #expect(shown.components(separatedBy: "local.editFile").count - 1 == 1)
+    }
+
+    @Test
+    func aMultiEditWrittenWithThePathLastIsNotFollowedByASecondHeader() async {
+        let columns = 80
+        let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
+        let toolCall = multiEditCall(id: "multi-1")
+        let applied = DirectAgentToolResult(output: "Applied 2 edits", summary: "Applied 2 edits")
+
+        await send([
+            .toolStarted(name: "local.multiEdit"),
+            .parameterStarted(name: "edits"),
+            .parameterText(#"[{"new": "let x = 1", "old": "let x = 0"}]"#),
+            .parameterEnded,
+            .parameterStarted(name: "path"),
+            .parameterText(Self.path),
+            .parameterEnded,
+            .ended
+        ], to: renderer)
+        await renderer.writeToolCallStarted(toolCall)
+        #expect(await renderer.snapshot().activeToolRenderedRowCount == 1)
+        await renderer.writeToolCallCompleted(toolCall, result: applied)
+
+        let shown = await screen(of: renderer, width: columns)
+        #expect(shown == [
+            "", "", "🛠️  local.multiEdit", "+ let x = 1", "- let x = 0",
+            "/tmp/Example.swift ✅", "", ""
+        ].joined(separator: "\n"))
+    }
+
+    @Test
+    func aSuspendedCallWhosePathArrivedLastKeepsTheFullBlock() async {
+        let columns = 80
+        let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
+        let toolCall = fileCall(id: "write-1")
+
+        // A message lands after the whole call but before its end: the call
+        // ends suspended, so the rows above the block are not the preview's.
+        let events = writeWithContentBeforeThePath(path: Self.path)
+        await send(Array(events.dropLast()), to: renderer)
+        await renderer.writeSystemMessage("Note\n")
+        await renderer.writeToolCallPreview(.ended)
+        await renderer.writeToolCallStarted(toolCall)
+        #expect(await renderer.snapshot().activeToolRenderedRowCount == 2)
+        #expect(await renderer.previewMergedToolCallID == nil)
+        await renderer.writeToolCallCompleted(toolCall, result: Self.wroteOneLine)
+
+        let shown = await screen(of: renderer, width: columns)
+        #expect(shown == [
+            "", "", "🛠️  local.writeFile", "let x = 1", "Note",
             "", "🛠️  local.writeFile", "/tmp/Example.swift ✅", "", ""
         ].joined(separator: "\n"))
     }
