@@ -69,7 +69,7 @@ ZenCODE supports several ways to run the model, all selected with `zen --setup`:
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install.sh" \
-  | bash -s -- --ref v6.1.3
+  | bash -s -- --ref v6.2.0
 ```
 
 `--ref` pins the source checkout to the release tag. Replace it with the latest
@@ -93,7 +93,7 @@ requirements; confirm the selected compiler with `swift --version`.
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/gerardogrisolini/ZenCODE/main/Scripts/install-linux.sh" \
-  | bash -s -- --ref v6.1.3
+  | bash -s -- --ref v6.2.0
 ```
 
 For a development build from the moving `main` branch:

@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [6.2.0] - 2026-11-22
+
 ### Added
 
 - `ZenCODERuntime`, a new library product with the shared runtime (chat
@@ -6461,6 +6463,7 @@ First stable release.
 - Removed the dedicated Xcode agent profile.
 
 [Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.3...HEAD
+[6.2.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.3...v6.2.0
 [6.1.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.2...v6.1.3
 [6.1.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.1...v6.1.2
 [6.1.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.0...v6.1.1
