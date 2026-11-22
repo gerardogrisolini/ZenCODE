@@ -62,6 +62,28 @@ import Testing
         #expect(TerminalDialogPresentation(prompt: "\n\n").lines.isEmpty)
     }
 
+    /// Why the chat does not draw a tool start behind a `/subagent` or
+    /// `/artifacts` panel: a dialog that fills its viewport leaves the
+    /// transcript too few rows to take back the rows drawn beside it.
+    @Test(arguments: [true, false])
+    func `a dialog filling its viewport leaves no owned tail to rewrite`(covered: Bool) {
+        let capture = PrimaryScreenCapture(), screen = capture.screen()
+        install(screen)
+        for index in 0..<30 { screen.append("line \(index)|\n") }
+        let modal = TerminalModalSession(screen: screen)
+        defer { modal.close() }
+        if covered {
+            let rows = modal.dialogViewport().rows
+            modal.updateDialog(TerminalDialogPresentation(
+                prompt: (0..<rows).map { "PANEL \($0)" }.joined(separator: "\n")
+            ))
+        }
+        screen.append("\n\n")
+        let receipt = screen.append("tool\ntarget ⏳\n")
+
+        #expect(screen.removeOwnedTail(rows: 2, expectedAnchor: receipt) == !covered)
+    }
+
     @Test(arguments: ["r", "a", "c", ""])
     func `single key reader uses the dialog path and retains answers`(key: String) {
         let capture = PrimaryScreenCapture(), screen = capture.screen()

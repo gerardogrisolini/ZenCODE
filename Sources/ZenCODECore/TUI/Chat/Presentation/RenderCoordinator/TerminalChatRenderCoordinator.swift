@@ -164,6 +164,13 @@ actor TerminalChatRenderCoordinator {
     /// and nested-reader cases from flushing an inner prompt prematurely.
     var externalTerminalPromptDepth = 0
     var externalTerminalPromptWrites: [PendingWrite] = []
+    /// Tool starts that arrived while an external prompt held the terminal.
+    /// A `/subagent` or `/artifacts` panel stays open while tools keep running
+    /// and leaves the transcript too few rows to rewrite a pending block in
+    /// place: drawing the start would leave its hourglass row above the
+    /// completion. The completion is drawn as the call's only block; a call
+    /// still running when the prompt ends is drawn then, rewritable as usual.
+    var externalTerminalPromptDeferredToolStarts: [DeferredToolStart] = []
 
     init(
         stdinIsTerminal: Bool,

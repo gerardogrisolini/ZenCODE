@@ -48,6 +48,7 @@ extension TerminalChatRenderCoordinator {
         // A tool call of an earlier turn never reopens in this one.
         endToolCallPreview()
         clearToolCallPreviewDrawings()
+        externalTerminalPromptDeferredToolStarts.removeAll(keepingCapacity: true)
     }
 
     @discardableResult

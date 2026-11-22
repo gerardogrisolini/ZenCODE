@@ -96,6 +96,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- Terminal UI: while the `/subagent` or `/artifacts` panel was open, every tool
+  the turn ran was written twice below the chat, first running (⏳) and then
+  completed (✅), instead of being updated in place: the panel leaves the
+  transcript too few rows to rewrite it. While a panel or an authorization
+  card is open, a tool is now written once, when it completes; a tool still
+  running when the panel closes is shown then and updated in place as usual.
+
 - ACP (`zen --acp`, as launched by Xcode): a new or restored session without a
   client model now starts on the default model binding of its own agent, the
   developer associated with the session's working directory, instead of the

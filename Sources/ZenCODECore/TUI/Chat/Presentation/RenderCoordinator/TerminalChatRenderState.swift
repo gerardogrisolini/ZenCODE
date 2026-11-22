@@ -124,6 +124,13 @@ extension TerminalChatRenderCoordinator {
         let requiredRows: Int?
     }
 
+    /// A tool start held while an external terminal prompt covers the
+    /// transcript (``TerminalChatRenderCoordinator/externalTerminalPromptDeferredToolStarts``).
+    struct DeferredToolStart: Sendable {
+        let toolCall: DirectAgentToolCall
+        let maximumInPlaceRows: Int?
+    }
+
     struct CursorState: Sendable {
         var spacing = TerminalChatTextFormatting.ChatSpacingState()
         var lineInset = TerminalChatTextFormatting.ChatLineInsetState()

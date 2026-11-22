@@ -21,6 +21,19 @@ extension TerminalChatRenderCoordinator {
         guard !ToolRenderingPolicy.shouldSuppressToolRendering(for: toolCall.name) else {
             return
         }
+        guard externalTerminalPromptDepth == 0 else {
+            externalTerminalPromptDeferredToolStarts.append(
+                DeferredToolStart(toolCall: toolCall, maximumInPlaceRows: maximumInPlaceRows)
+            )
+            return
+        }
+        drawToolCallStarted(toolCall, maximumInPlaceRows: maximumInPlaceRows)
+    }
+
+    private func drawToolCallStarted(
+        _ toolCall: DirectAgentToolCall,
+        maximumInPlaceRows: Int?
+    ) {
         let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
         if isBottomOverlayTransitionActive {
             bottomOverlayDeferredToolRenders.append(
@@ -65,13 +78,16 @@ extension TerminalChatRenderCoordinator {
         }
         let isSubAgentTool = DirectSubAgentRuntime.isSubAgentToolName(toolCall.name)
         let lifecycle = ToolBlockLifecycle.completed(for: toolCall, result: result)
+        // A start held behind an external prompt was never drawn: this
+        // completion is the call's only block and opens it as the start would.
+        let startWasDeferred = takeExternalTerminalPromptDeferredToolStart(id: toolCall.id)
         if isBottomOverlayTransitionActive {
             bottomOverlayDeferredToolRenders.append(
                 DeferredToolRender(
                     toolCall: toolCall,
                     lifecycle: lifecycle,
                     isSubAgentTool: isSubAgentTool,
-                    preparesOutput: false,
+                    preparesOutput: startWasDeferred,
                     requiredRows: nil
                 )
             )
@@ -82,6 +98,9 @@ extension TerminalChatRenderCoordinator {
         clearOwnedSubAgentOverviewBeforeInterleavedOutput(
             maximumInPlaceRows: maximumInPlaceRows
         )
+        if startWasDeferred {
+            prepareForToolOutput()
+        }
 
         // A stale completion must never take ownership from a newer active
         // block; it is rendered append-only below.
@@ -91,6 +110,27 @@ extension TerminalChatRenderCoordinator {
             maximumInPlaceRows: maximumInPlaceRows
         )
         flushToolAdjacentSystemMessagesIfPossible()
+    }
+
+    private func takeExternalTerminalPromptDeferredToolStart(id: String) -> Bool {
+        guard let index = externalTerminalPromptDeferredToolStarts.firstIndex(where: {
+            $0.toolCall.id == id
+        }) else {
+            return false
+        }
+        externalTerminalPromptDeferredToolStarts.remove(at: index)
+        return true
+    }
+
+    /// Draws the starts held behind an external prompt whose calls are still
+    /// running, in arrival order, now that the prompt gives the transcript
+    /// back: the newest owns the rewrite slot, as if it had just started.
+    func drawToolStartsDeferredByExternalTerminalPrompt() {
+        let starts = externalTerminalPromptDeferredToolStarts
+        externalTerminalPromptDeferredToolStarts.removeAll(keepingCapacity: true)
+        for start in starts {
+            drawToolCallStarted(start.toolCall, maximumInPlaceRows: start.maximumInPlaceRows)
+        }
     }
 
     /// Records the latest delegated call for each agent without writing a
@@ -140,6 +180,7 @@ extension TerminalChatRenderCoordinator {
     func writeToolAdjacentSystemMessage(_ text: String) {
         guard !text.isEmpty else { return }
         guard toolState.activeBlock == nil,
+              externalTerminalPromptDeferredToolStarts.isEmpty,
               !isBottomOverlayTransitionActive else {
             if pendingToolAdjacentSystemMessages.count
                 == Self.maximumPendingToolAdjacentSystemMessages {
@@ -161,6 +202,7 @@ extension TerminalChatRenderCoordinator {
 
     private func flushToolAdjacentSystemMessagesIfPossible() {
         guard toolState.activeBlock == nil,
+              externalTerminalPromptDeferredToolStarts.isEmpty,
               !isBottomOverlayTransitionActive,
               !pendingToolAdjacentSystemMessages.isEmpty else {
             return

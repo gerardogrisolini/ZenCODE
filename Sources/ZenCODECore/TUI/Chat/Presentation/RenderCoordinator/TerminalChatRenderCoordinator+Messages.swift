@@ -204,6 +204,10 @@ extension TerminalChatRenderCoordinator {
         // tool bytes that were accumulated earlier in the authorization wait.
         flushPendingStreamingWrites()
         overviewState.isSuspended = false
+        // Still inside the phase, so on a channel that holds its output the
+        // starts follow the held bytes; an overview waits behind them as it
+        // waits behind any running tool.
+        drawToolStartsDeferredByExternalTerminalPrompt()
         renderPendingOverviewsIfIdle()
         flushPendingStreamingWrites()
         externalTerminalPromptDepth = 0
