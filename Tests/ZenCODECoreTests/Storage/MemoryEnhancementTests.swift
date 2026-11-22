@@ -341,9 +341,11 @@ struct MemoryEnhancementTests {
     }
 
     @Test
-    func hybridRecallSurfacesRelatedEntriesThroughSharedTags() async throws {
-        // The "related" entry shares no query term with the query; it is only
-        // reachable because the graph cascades through the shared tag edge.
+    func searchDoesNotSurfaceEntriesOnlyReachableThroughSharedTags() async throws {
+        // The "related" entry shares no query term with the query and only a
+        // tag with the direct hit. The retrieval no longer expands on the graph
+        // by default (`maxDepth` 0, see Docs/memory.md), so the tag stays on the
+        // entries but does not pull its sibling into the results.
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
         try await workspace.withIsolatedSupport {
@@ -372,7 +374,7 @@ struct MemoryEnhancementTests {
             let ids = Set(matches.map(\.id))
 
             #expect(ids.contains(direct.id))
-            #expect(ids.contains(related.id))
+            #expect(!ids.contains(related.id))
             #expect(!ids.contains(unrelated.id))
         }
     }

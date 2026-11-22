@@ -80,15 +80,21 @@ package actor MemoryGraphStore {
     // Store-level reads use one coherent snapshot per request: the engine
     // reloads the durable graph under its write lock, overlays local pending
     // recall maintenance onto the copy, and never persists.
+    //
+    // Every read and mutation takes a `visibility`: the entries one profile
+    // owns (see `MemoryAuthorScope`). Reads run on the snapshot restricted to
+    // it, mutations treat any other entry as missing. `nil` addresses the whole
+    // graph, for maintenance and tests; sessions always pass a scope.
 
     /// Journal page: newest first, after `offset` matching entries.
     func entries(
         includeArchived: Bool,
         offset: Int,
         limit: Int,
-        filter: MemoryEntryFilter
+        filter: MemoryEntryFilter,
+        visibility: MemoryAuthorScope? = nil
     ) async throws -> [GraphEntry] {
-        let graph = try await engine.freshSnapshotForReadOnly()
+        let graph = try await engine.freshSnapshotForReadOnly().restricted(to: visibility)
         return Self.ordered(graph.memories.values)
             .filter { (includeArchived || $0.active) && filter.matches($0) }
             .dropFirst(max(offset, 0))
@@ -100,16 +106,19 @@ package actor MemoryGraphStore {
         query: String,
         includeArchived: Bool,
         limit: Int,
-        filter: MemoryEntryFilter = .none
+        filter: MemoryEntryFilter = .none,
+        visibility: MemoryAuthorScope? = nil
     ) async throws -> [GraphEntry] {
         let cappedLimit = max(limit, 0)
         // Read-only: `memory.search` must not mutate retrievalCount/confidence/links
         // or fail on a save error, so it skips the maintenance `recall` applies.
         // One coherent snapshot serves both the active pipeline and the archived
-        // section below.
-        let fresh = try await engine.freshSnapshotForReadOnly()
+        // section below, restricted once: the ranking statistics are those of
+        // the visible entries.
+        let fresh = try await engine.freshSnapshotForReadOnly().restricted(to: visibility)
         // An explicit lookup returns the ranked candidates — lexical/semantic
-        // hits plus their graph neighbourhood — up to the requested limit. The
+        // hits, plus their graph neighbourhood only when the cascade is turned
+        // on (`maxDepth`, off by default) — up to the requested limit. The
         // recall selector's relative threshold is a guard for what gets injected
         // unasked into a turn; a caller that asked for N results judges them.
         let recalled = try await engine.searchReadOnlyDetailed(
@@ -150,8 +159,8 @@ package actor MemoryGraphStore {
             .map { $0 }
     }
 
-    func entry(id: String) async throws -> GraphEntry? {
-        try await engine.freshSnapshotForReadOnly().memories[id]
+    func entry(id: String, visibility: MemoryAuthorScope? = nil) async throws -> GraphEntry? {
+        try await engine.freshSnapshotForReadOnly().restricted(to: visibility).memories[id]
     }
 
     // MARK: - Mutations
@@ -197,11 +206,16 @@ package actor MemoryGraphStore {
     /// - Parameter generatedTimestamp: `true` only when the caller prepended the
     ///   `Timestamp:` annotation itself; the sole case where that line is ignored
     ///   for duplicate detection.
+    /// - Parameter visibility: the writing profile's scope: the duplicate check,
+    ///   `similar` and `tagHints` only consider its entries, and a created entry
+    ///   carries its author. Another author's identical entry is not a
+    ///   duplicate.
     func writeDetailed(
         content: String,
         category: GraphCategory,
         tags: [String],
-        generatedTimestamp: Bool = false
+        generatedTimestamp: Bool = false,
+        visibility: MemoryAuthorScope? = nil
     ) async throws -> WriteResult {
         let normalizedContent = MemoryContent.normalized(content)
         guard !normalizedContent.isEmpty else {
@@ -215,7 +229,8 @@ package actor MemoryGraphStore {
         // transaction; the check inside the transaction is authoritative.
         if let existing = Self.activeDuplicate(
             matching: duplicationKey,
-            in: await engine.snapshot()
+            in: await engine.snapshot(),
+            visibility: visibility
         ) {
             return WriteResult(entry: existing, created: false, similar: [], tagHints: [])
         }
@@ -228,7 +243,7 @@ package actor MemoryGraphStore {
         )
         let id = MemoryIdentifier.makeNew()
         let (entry, created) = try await engine.transaction { graph -> (GraphEntry, Bool) in
-            if let existing = Self.activeDuplicate(matching: duplicationKey, in: graph) {
+            if let existing = Self.activeDuplicate(matching: duplicationKey, in: graph, visibility: visibility) {
                 return (existing, false)
             }
             var entry = GraphEntry(
@@ -241,7 +256,8 @@ package actor MemoryGraphStore {
                 scope: .project,
                 embedding: embedded.values,
                 embeddingModel: embedded.model,
-                autoGeneratedTimestamp: generatedTimestamp
+                autoGeneratedTimestamp: generatedTimestamp,
+                author: visibility?.author
             )
             entry.refreshSearchText()
             graph.addMemory(entry)
@@ -250,8 +266,9 @@ package actor MemoryGraphStore {
         guard created else {
             return WriteResult(entry: entry, created: false, similar: [], tagHints: [])
         }
-        // Outside the lock, on the graph that now contains the new entry.
-        let snapshot = await engine.snapshot()
+        // Outside the lock, on the graph that now contains the new entry,
+        // restricted to the writer's entries.
+        let snapshot = await engine.snapshot().restricted(to: visibility)
         return WriteResult(
             entry: entry,
             created: true,
@@ -329,19 +346,24 @@ package actor MemoryGraphStore {
     /// The async embedding cannot be computed inside the transaction and depends
     /// on the stored text (the preserved `Timestamp`), so it is predicted from a
     /// snapshot, verified by the transaction, and re-embedded on a mismatch.
+    ///
+    /// An entry `visibility` does not allow is not found. The author is never
+    /// changed: an entry without one keeps none (see `MemoryAuthorScope`).
     func update(
         id rawIdentifier: String,
         content: String,
         tags: [String]?,
         updatedAt: Date,
-        timeZone: TimeZone
+        timeZone: TimeZone,
+        visibility: MemoryAuthorScope? = nil
     ) async throws -> GraphEntry {
         let id = try MemoryIdentifier.validated(rawIdentifier)
         let normalizedContent = MemoryContent.normalized(content)
         guard !normalizedContent.isEmpty else {
             throw MemoryServiceError.missingField("content")
         }
-        guard let current = await engine.snapshot().memories[id] else {
+        guard let current = await engine.snapshot().memories[id],
+              visibility?.allows(current) ?? true else {
             throw MemoryServiceError.entryNotFound(rawIdentifier)
         }
 
@@ -362,7 +384,8 @@ package actor MemoryGraphStore {
             // user-visible update; it degrades ranking, never corrupts content.
             let acceptsStaleEmbedding = attempt == Self.maximumUpdateAttempts - 1
             let outcome = try await engine.transaction { graph -> UpdateOutcome in
-                guard var entry = graph.memories[id] else {
+                guard var entry = graph.memories[id],
+                      visibility?.allows(entry) ?? true else {
                     return .missing
                 }
                 let finalContent = MemoryService.contentWithUpdateMetadata(
@@ -414,12 +437,17 @@ package actor MemoryGraphStore {
     /// reported like any other mutation fallback — and never fails the
     /// restore. It is saved in a second transaction, only if the entry is still
     /// active, has the content that was embedded and still has no compatible
-    /// vector.
-    func setArchived(_ isArchived: Bool, id rawIdentifier: String) async throws -> GraphEntry {
+    /// vector. An entry `visibility` does not allow is not found.
+    func setArchived(
+        _ isArchived: Bool,
+        id rawIdentifier: String,
+        visibility: MemoryAuthorScope? = nil
+    ) async throws -> GraphEntry {
         let id = try MemoryIdentifier.validated(rawIdentifier)
         let updatedAt = Date()
         let entry = try await engine.transaction { graph in
-            guard var entry = graph.memories[id] else {
+            guard var entry = graph.memories[id],
+                  visibility?.allows(entry) ?? true else {
                 throw MemoryServiceError.entryNotFound(rawIdentifier)
             }
             // Only the archive flag is touched, so an update that commits
@@ -483,9 +511,16 @@ package actor MemoryGraphStore {
         }
     }
 
-    func delete(id rawIdentifier: String) async throws {
+    func delete(id rawIdentifier: String, visibility: MemoryAuthorScope? = nil) async throws {
         let id = try MemoryIdentifier.validated(rawIdentifier)
-        guard try await engine.forget(id: id) != nil else {
+        let removed = try await engine.transaction { graph -> Bool in
+            guard let entry = graph.memories[id], visibility?.allows(entry) ?? true else {
+                return false
+            }
+            graph.removeMemory(id: id)
+            return true
+        }
+        guard removed else {
             throw MemoryServiceError.entryNotFound(rawIdentifier)
         }
     }
@@ -575,12 +610,16 @@ package actor MemoryGraphStore {
 
     /// The active entry a write would duplicate, if any: newest-first (deterministic
     /// when nodes share content) and case-insensitive; what may be ignored is
-    /// decided by the key (see ``MemoryDeduplicationKey``).
+    /// decided by the key (see ``MemoryDeduplicationKey``). Only entries
+    /// `visibility` allows count.
     private static func activeDuplicate(
         matching key: MemoryDeduplicationKey,
-        in graph: MemoryGraph
+        in graph: MemoryGraph,
+        visibility: MemoryAuthorScope?
     ) -> GraphEntry? {
-        ordered(graph.memories.values).first { $0.active && key.matches($0) }
+        ordered(graph.memories.values).first { entry in
+            entry.active && key.matches(entry) && (visibility?.allows(entry) ?? true)
+        }
     }
 
     /// Journal order: newest first, with a stable tie-break.

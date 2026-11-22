@@ -53,7 +53,7 @@ public final class MemoryService: @unchecked Sendable {
         Saved-session pointers are maintained programmatically in the sessions index when a session is saved; do not duplicate them with memory tools.
         At the end of a substantial project turn, before the final answer, decide whether project memory should be created, updated, archived, or left unchanged. When a trigger above produced a completed, verified durable fact and mutation tools are available, perform the appropriate mutation before finishing; do not record intentions, unimplemented plans, or unverified results.
         A project journal entry should be concise and structured with `Summary` (the durable milestone or change), `State` (the current verified state and relevant caveats), and `Next` (the next useful open step, or `None currently`).
-        Add `tags` when writing so related entries link together and later retrieval can follow those links.
+        Add `tags` when writing so related entries stay linked in the graph and can be filtered with the `tags` argument of `memory.read` and `memory.search`.
         Do not write every command or tool call, raw outputs, detailed logs, large diffs, temporary task state, guesses, speculative plans, transient chatter, or facts already obvious from current files.
         """
     }
@@ -63,18 +63,31 @@ public final class MemoryService: @unchecked Sendable {
     }
 
     // MARK: - Reads
+    //
+    // Every operation runs as `author`, the `name` of the calling agent profile
+    // (`nil`: no profile, which reads and writes as
+    // `MemoryAuthorScope.fallbackAuthor`): it sees and changes only that
+    // profile's entries, and another profile's entry is not found.
 
     /// Journal page of the graph addressed by `target`: newest first,
     /// skipping `offset` matching entries, narrowed by `filter`.
     public func readEntries(
         target: MemoryGraphTarget?,
+        author: String? = nil,
         includeArchived: Bool = false,
         offset: Int = 0,
         limit: Int,
         filter: MemoryEntryFilter = .none
     ) async throws -> [MemoryEntry] {
-        try await store(for: target)
-            .entries(includeArchived: includeArchived, offset: offset, limit: limit, filter: filter)
+        let (store, visibility) = try await scoped(target, author: author)
+        return try await store
+            .entries(
+                includeArchived: includeArchived,
+                offset: offset,
+                limit: limit,
+                filter: filter,
+                visibility: visibility
+            )
             .map { MemoryEntry($0) }
     }
 
@@ -82,6 +95,7 @@ public final class MemoryService: @unchecked Sendable {
     public func searchEntries(
         query: String,
         target: MemoryGraphTarget?,
+        author: String? = nil,
         includeArchived: Bool = false,
         limit: Int,
         filter: MemoryEntryFilter = .none
@@ -90,37 +104,43 @@ public final class MemoryService: @unchecked Sendable {
         guard !normalizedQuery.isEmpty else {
             throw MemoryServiceError.missingField("query")
         }
-        return try await store(for: target).search(
+        let (store, visibility) = try await scoped(target, author: author)
+        return try await store.search(
             query: normalizedQuery,
             includeArchived: includeArchived,
             limit: limit,
-            filter: filter
+            filter: filter,
+            visibility: visibility
         ).map { MemoryEntry($0) }
     }
 
     public func entry(
         id: String,
-        target: MemoryGraphTarget?
+        target: MemoryGraphTarget?,
+        author: String? = nil
     ) async throws -> MemoryEntry? {
-        try await store(for: target)
-            .entry(id: MemoryIdentifier.validated(id))
+        let (store, visibility) = try await scoped(target, author: author)
+        return try await store
+            .entry(id: MemoryIdentifier.validated(id), visibility: visibility)
             .map { MemoryEntry($0) }
     }
 
     // MARK: - Mutations
 
     /// Writes an entry in the graph addressed by `target`; a write that
-    /// duplicates an active entry returns that entry.
+    /// duplicates an active entry of the same author returns that entry.
     @discardableResult
     public func writeEntry(
         content: String,
         target: MemoryGraphTarget?,
+        author: String? = nil,
         category: MemoryCategory = .fact,
         tags: [String] = []
     ) async throws -> MemoryEntry {
         try await writeEntryOutcome(
             content: content,
             target: target,
+            author: author,
             category: category,
             tags: tags
         ).entry
@@ -141,15 +161,18 @@ public final class MemoryService: @unchecked Sendable {
     func writeEntryOutcome(
         content: String,
         target: MemoryGraphTarget?,
+        author: String? = nil,
         category: MemoryCategory = .fact,
         tags: [String] = [],
         generatedTimestamp: Bool = false
     ) async throws -> MemoryWriteOutcome {
-        let result = try await store(for: target).writeDetailed(
+        let (store, visibility) = try await scoped(target, author: author)
+        let result = try await store.writeDetailed(
             content: content,
             category: category.engineCategory,
             tags: tags,
-            generatedTimestamp: generatedTimestamp
+            generatedTimestamp: generatedTimestamp,
+            visibility: visibility
         )
         if result.created {
             Self.notifyMemoryEntriesChanged()
@@ -170,21 +193,25 @@ public final class MemoryService: @unchecked Sendable {
     }
 
     /// Replaces the content of an entry of the graph addressed by `target`.
+    /// The entry keeps its author.
     @discardableResult
     public func updateEntry(
         id: String,
         content: String,
         target: MemoryGraphTarget?,
+        author: String? = nil,
         tags: [String]? = nil,
         updatedAt: Date = Date(),
         timeZone: TimeZone = .current
     ) async throws -> MemoryEntry {
-        let entry = try await store(for: target).update(
+        let (store, visibility) = try await scoped(target, author: author)
+        let entry = try await store.update(
             id: id,
             content: content,
             tags: tags,
             updatedAt: updatedAt,
-            timeZone: timeZone
+            timeZone: timeZone,
+            visibility: visibility
         )
         Self.notifyMemoryEntriesChanged()
         return MemoryEntry(entry)
@@ -194,34 +221,42 @@ public final class MemoryService: @unchecked Sendable {
     public func setArchived(
         _ isArchived: Bool,
         id: String,
-        target: MemoryGraphTarget?
+        target: MemoryGraphTarget?,
+        author: String? = nil
     ) async throws -> MemoryEntry {
-        let entry = try await store(for: target)
-            .setArchived(isArchived, id: id)
+        let (store, visibility) = try await scoped(target, author: author)
+        let entry = try await store.setArchived(isArchived, id: id, visibility: visibility)
         Self.notifyMemoryEntriesChanged()
         return MemoryEntry(entry)
     }
 
     public func deleteEntry(
         id: String,
-        target: MemoryGraphTarget?
+        target: MemoryGraphTarget?,
+        author: String? = nil
     ) async throws {
-        try await store(for: target).delete(id: id)
+        let (store, visibility) = try await scoped(target, author: author)
+        try await store.delete(id: id, visibility: visibility)
         Self.notifyMemoryEntriesChanged()
     }
 
     // MARK: - Store resolution
 
-    private func store(for target: MemoryGraphTarget?) async throws -> MemoryGraphStore {
+    /// The store of `target` and the scope `author` works in there.
+    private func scoped(
+        _ target: MemoryGraphTarget?,
+        author: String?
+    ) async throws -> (store: MemoryGraphStore, visibility: MemoryAuthorScope) {
         guard let target else {
             throw MemoryServiceError.scopeUnavailable("project")
         }
-        return try await MemoryGraphStoreRegistry.shared.store(
+        let store = try await MemoryGraphStoreRegistry.shared.store(
             graphURL: MemoryGraphLocation.graphURL(
                 for: target,
                 fileManager: fileManager
             )
         )
+        return (store, MemoryAuthorScope(profileName: author, graphTarget: target))
     }
 
     // MARK: - Journal metadata

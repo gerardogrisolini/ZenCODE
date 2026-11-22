@@ -341,7 +341,7 @@ struct MemoryEmbeddingABLiveTests {
         } else {
             report += "- relation pruning: off (set ZENCODE_AB_PRUNE_RELATIONS=1 to apply the 12-per-entry cap to the copy)\n"
         }
-        report += "- A = BM25 + graph cascade (no embedder); Bn = BM25 + semantic, see variants; automatic-recall configuration, scope .all, read-only `retrieveAndSelect`\n"
+        report += "- A = BM25 + engine defaults (no embedder; no graph cascade, `maxDepth` 0); Bn = BM25 + semantic, see variants; automatic-recall configuration, scope .all, read-only `retrieveAndSelect`\n"
         report += "- metrics: MRR over the ranked candidates, recall@5 = |relevant ∩ top-5| / min(5, |relevant|), hit@1, misses = queries with no relevant entry in the top-5, exact-regressions = lexically exact queries whose relevant top-1 was displaced, Jaccard = top-5 overlap with A\n\n"
 
         var reembedSection = "## Embedding model and re-embedding\n\n"

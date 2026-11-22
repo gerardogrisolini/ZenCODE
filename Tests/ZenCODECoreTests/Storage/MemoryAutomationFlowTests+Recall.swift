@@ -160,6 +160,199 @@ extension MemoryAutomationFlowTests {
         }
     }
 
+    // MARK: - Stale-path notes: a recalled bullet that cites paths missing from
+    // the checkout carries a neutral note, attached to the bullet before the
+    // block is escaped and budgeted.
+
+    /// A workspace whose checkout holds `Sources/Kept/Real.swift` and nothing
+    /// else, so `Sources` anchors a relative path and `Sources/Gone/…` is missing.
+    private func makeCheckout() throws -> MemoryTestWorkspace {
+        let workspace = try MemoryTestWorkspace()
+        let kept = workspace.workspaceURL.appendingPathComponent("Sources/Kept", isDirectory: true)
+        try FileManager.default.createDirectory(at: kept, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: kept.appendingPathComponent("Real.swift"))
+        return workspace
+    }
+
+    private static let missingFlangeNote =
+        "Not found in the current checkout (verify before relying on this entry): `Sources/Gone/Flange.swift`."
+
+    @Test
+    func workspaceRecallNotesMissingCitedPathsRightAfterTheirBullet() async throws {
+        let workspace = try makeCheckout()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let stale = try await service.writeEntry(
+                content: "Summary: the quantum flange calibrates every frobnicator in Sources/Gone/Flange.swift:12.",
+                target: .workspace(workspace.workspaceURL)
+            )
+            let fresh = try await service.writeEntry(
+                content: "Summary: the quantum flange calibrates every frobnicator in Sources/Kept/Real.swift:12.",
+                target: .workspace(workspace.workspaceURL)
+            )
+            try await MemoryAutomationSettings.withEnvironment([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1"
+            ]) {
+                try await MemoryEmbedding.withProvider(nil) {
+                    _ = try await MemoryGraphStoreRegistry.shared.store(graphURL: workspace.graphURL())
+                    let coordinator = MemoryTurnCoordinator(visibleWarning: { _ in })
+
+                    let block = try #require(await coordinator.memoryBlock(
+                        sessionID: "stale-paths-\(UUID().uuidString)",
+                        graphTarget: .workspace(workspace.workspaceURL),
+                        prompt: "how do I calibrate the frobnicator"
+                    ))
+                    let lines = block.components(separatedBy: "\n")
+                    let staleIndex = try #require(lines.firstIndex(where: {
+                        $0.hasPrefix("- [id: \(stale.id.uuidString)]")
+                    }))
+                    let freshIndex = try #require(lines.firstIndex(where: {
+                        $0.hasPrefix("- [id: \(fresh.id.uuidString)]")
+                    }))
+
+                    // The note is the indented continuation line of the stale bullet…
+                    #expect(lines[staleIndex + 1] == "  \(Self.missingFlangeNote)")
+                    // …and only of it: the bullet whose path exists has none.
+                    #expect(block.components(separatedBy: "Not found in the current checkout").count == 2)
+                    #expect(!lines[freshIndex + 1].contains("Not found"))
+                    // The container header is untouched.
+                    #expect(block.hasPrefix("<project-memory>\nDurable project memory retrieved automatically for this turn."))
+                    #expect(block.hasSuffix(MemoryTurnCoordinator.blockClosingTag))
+                }
+            }
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
+    @Test
+    func workspaceRecallAddsNothingWhenEveryCitedPathExists() async throws {
+        let workspace = try makeCheckout()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let entry = try await MemoryService().writeEntry(
+                content: "Summary: the quantum flange calibrates every frobnicator in Sources/Kept/Real.swift:12.",
+                target: .workspace(workspace.workspaceURL)
+            )
+            try await MemoryAutomationSettings.withEnvironment([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1"
+            ]) {
+                try await MemoryEmbedding.withProvider(nil) {
+                    _ = try await MemoryGraphStoreRegistry.shared.store(graphURL: workspace.graphURL())
+                    let block = try #require(await MemoryTurnCoordinator(visibleWarning: { _ in }).memoryBlock(
+                        sessionID: "fresh-paths-\(UUID().uuidString)",
+                        graphTarget: .workspace(workspace.workspaceURL),
+                        prompt: "how do I calibrate the frobnicator"
+                    ))
+                    #expect(block.contains("- [id: \(entry.id.uuidString)] Summary: the quantum flange calibrates every frobnicator in Sources/Kept/Real.swift:12."))
+                    #expect(!block.contains("Not found in the current checkout"))
+                }
+            }
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+    }
+
+    @Test
+    func globalRecallIsNeverAnnotatedWithCheckoutNotes() async throws {
+        let workspace = try makeCheckout()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let entry = try await MemoryService().writeEntryOutcome(
+                content: "Summary: the quantum flange calibrates every frobnicator in Sources/Gone/Flange.swift:12.",
+                target: .global
+            ).entry
+            try await MemoryAutomationSettings.withEnvironment([
+                MemoryAutomationSettings.environmentAutoRecallKey: "1"
+            ]) {
+                try await MemoryEmbedding.withProvider(nil) {
+                    _ = try await MemoryGraphStoreRegistry.shared.store(graphURL: MemoryGraphLocation.globalGraphURL())
+                    let block = try #require(await MemoryTurnCoordinator(visibleWarning: { _ in }).memoryBlock(
+                        sessionID: "global-paths-\(UUID().uuidString)",
+                        graphTarget: .global,
+                        prompt: "how do I calibrate the frobnicator"
+                    ))
+                    #expect(block.contains("- [id: \(entry.id.uuidString)] Summary: the quantum flange calibrates every frobnicator in Sources/Gone/Flange.swift:12."))
+                    #expect(!block.contains("Not found in the current checkout"))
+                }
+            }
+            await MemoryGraphStoreRegistry.shared.reset()
+        }
+
+        let raw = "Relevant memory:\n- [id: A] Summary: moved from Sources/Gone/Flange.swift."
+        #expect(MemoryTurnCoordinator.annotatingMissingPaths(raw, graphTarget: .global) == raw)
+    }
+
+    @Test
+    func annotationKeepsTheNoteAfterTheLastContinuationLineOfItsBullet() throws {
+        let workspace = try makeCheckout()
+        defer { workspace.remove() }
+        let raw = """
+        Relevant memory:
+        - [id: A] Summary: first entry.
+          State: moved away from Sources/Gone/Flange.swift:12-20.
+          Next: none.
+        - [id: B] Summary: second entry, see Sources/Kept/Real.swift.
+        Trailing line that is not a bullet.
+        """
+
+        let annotated = MemoryTurnCoordinator.annotatingMissingPaths(
+            raw,
+            graphTarget: .workspace(workspace.workspaceURL)
+        )
+
+        #expect(annotated.components(separatedBy: "\n") == [
+            "Relevant memory:",
+            "- [id: A] Summary: first entry.",
+            "  State: moved away from Sources/Gone/Flange.swift:12-20.",
+            "  Next: none.",
+            "  \(Self.missingFlangeNote)",
+            "- [id: B] Summary: second entry, see Sources/Kept/Real.swift.",
+            "Trailing line that is not a bullet."
+        ])
+        // Nothing missing: the text comes back byte for byte.
+        let intact = "Relevant memory:\n- [id: B] Summary: second entry, see Sources/Kept/Real.swift."
+        #expect(MemoryTurnCoordinator.annotatingMissingPaths(
+            intact,
+            graphTarget: .workspace(workspace.workspaceURL)
+        ) == intact)
+    }
+
+    @Test
+    func theNoteCountsInTheBudgetAndStaysWithItsBullet() throws {
+        let workspace = try makeCheckout()
+        defer { workspace.remove() }
+        let raw = """
+        Relevant memory:
+        - [id: A] Summary: first cites Sources/GoneA/a.swift.
+        - [id: B] Summary: second cites Sources/GoneB/b.swift.
+        - [id: C] Summary: third cites Sources/GoneC/c.swift.
+        """
+        let annotated = MemoryTurnCoordinator.annotatingMissingPaths(
+            raw,
+            graphTarget: .workspace(workspace.workspaceURL)
+        )
+        let lines = annotated.components(separatedBy: "\n")
+        #expect(lines.count == 7)
+
+        // A budget that holds exactly the heading and the first bullet with
+        // its note: the second and third bullet go, each with its own note.
+        let budget = lines.prefix(3).joined(separator: "\n").count
+        let tight = try #require(MemoryTurnCoordinator.formattedBlock(annotated, budgetCharacters: budget))
+        #expect(tight.contains(lines[1]))
+        #expect(tight.contains(lines[2]))
+        #expect(lines[2].contains("`Sources/GoneA/a.swift`"))
+        #expect(!tight.contains("[id: B]"))
+        #expect(!tight.contains("GoneB"))
+        #expect(!tight.contains("[id: C]"))
+        #expect(tight.contains("2 more entries omitted to fit the per-turn memory budget"))
+        #expect(tight.components(separatedBy: "Not found in the current checkout").count == 2)
+
+        // The same budget on the text without notes would have kept the
+        // second bullet: the notes are what the budget is spent on.
+        let plain = try #require(MemoryTurnCoordinator.formattedBlock(raw, budgetCharacters: budget))
+        #expect(plain.contains("[id: B]"))
+    }
+
     // MARK: - Recall degradation paths. Store/cold-open failures never break the
     // turn; a slow semantic endpoint uses an already-prepared BM25 block when
     // available. `memoryBlock` remains non-throwing by construction.

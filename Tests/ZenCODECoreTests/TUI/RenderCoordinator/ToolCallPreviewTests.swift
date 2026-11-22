@@ -15,8 +15,9 @@
 //  tool and target, its rows were still on screen, nothing was written in
 //  between, and the terminal can rewrite the block in place; the merge
 //  survives a bottom-overlay transition, whose writes stay in the footer.
-//  Every other case keeps the full block: another call drawn after it,
-//  interleaved output, a suspended call, a turn boundary, a different tool, a
+//  Every other case keeps the full block: another call drawn after it or in
+//  the same tool-call block (also of the same tool and path), interleaved
+//  output, a suspended call, a turn boundary, a different tool, a
 //  different path, a channel that cannot rewrite, and a completion that lost
 //  the block's rows.
 //
@@ -75,6 +76,30 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         let json = (try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]))
             .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         return presentedToolCall(id: id, name: name, argumentsObject: arguments, argumentsJSON: json)
+    }
+
+    /// The preview of a `local.editFile` call on `path`; `ends` closes its
+    /// tool-call block.
+    private func editPreview(
+        path: String = Self.path,
+        ends: Bool
+    ) -> [DirectAgentToolCallPreview] {
+        var events: [DirectAgentToolCallPreview] = [
+            .toolStarted(name: "local.editFile"),
+            .parameterStarted(name: "path"),
+            .parameterText(path),
+            .parameterEnded,
+            .parameterStarted(name: "old"),
+            .parameterText("let x = 0\n"),
+            .parameterEnded,
+            .parameterStarted(name: "new"),
+            .parameterText("let x = 1\n"),
+            .parameterEnded
+        ]
+        if ends {
+            events.append(.ended)
+        }
+        return events
     }
 
     /// A call to `local.multiEdit` with `path` as its target, as the executor
@@ -464,6 +489,62 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
             "", "🛠️  local.writeFile", "/tmp/A.swift ⏳",
             "", "🛠️  local.editFile", "/tmp/B.swift ⏳", ""
         ].joined(separator: "\n"))
+    }
+
+    @Test
+    func drawnCallsOfOneBlockOnTheSameFileKeepTheirOwnHeaders() async {
+        let columns = 80
+        let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
+        let first = fileCall(id: "edit-1", name: "local.editFile")
+        let second = fileCall(id: "edit-2", name: "local.editFile")
+
+        // Both calls name the same tool and path and are drawn before either
+        // runs: the preview on screen is the second one's, so the block of the
+        // first call must not merge into it.
+        await send(editPreview(ends: false) + editPreview(ends: true), to: renderer)
+        await renderer.writeToolCallStarted(first)
+        #expect(await renderer.snapshot().activeToolRenderedRowCount == 2)
+        #expect(await renderer.previewMergedToolCallID == nil)
+        await renderer.writeToolCallCompleted(first, result: Self.wroteOneLine)
+        await renderer.writeToolCallStarted(second)
+        #expect(await renderer.snapshot().activeToolRenderedRowCount == 2)
+        #expect(await renderer.previewMergedToolCallID == nil)
+        await renderer.writeToolCallCompleted(second, result: Self.wroteOneLine)
+
+        let shown = await screen(of: renderer, width: columns)
+        #expect(shown == [
+            "", "", "🛠️  local.editFile", "- let x = 0", "+ let x = 1",
+            "", "🛠️  local.editFile", "- let x = 0", "+ let x = 1",
+            "", "🛠️  local.editFile", "/tmp/Example.swift ✅",
+            "", "🛠️  local.editFile", "/tmp/Example.swift ✅", "", ""
+        ].joined(separator: "\n"))
+    }
+
+    @Test
+    func aLaterBlockThatDrawsOneCallMergesAgain() async {
+        let columns = 80
+        let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
+        let calls = (1...3).map { fileCall(id: "edit-\($0)", name: "local.editFile") }
+
+        await send(editPreview(ends: false) + editPreview(ends: true), to: renderer)
+        for call in calls.prefix(2) {
+            await renderer.writeToolCallStarted(call)
+            await renderer.writeToolCallCompleted(call, result: Self.wroteOneLine)
+        }
+
+        // The next round draws one call, next to a call that is not drawn:
+        // the calls of the earlier block no longer count, and its block merges.
+        await send(editPreview(ends: false) + [.toolStarted(name: "local.exec"), .ended], to: renderer)
+        await renderer.writeToolCallStarted(calls[2])
+        #expect(await renderer.snapshot().activeToolRenderedRowCount == 1)
+        #expect(await renderer.previewMergedToolCallID == calls[2].id)
+        await renderer.writeToolCallCompleted(calls[2], result: Self.wroteOneLine)
+
+        let shown = await screen(of: renderer, width: columns)
+        #expect(shown.hasSuffix([
+            "🛠️  local.editFile", "- let x = 0", "+ let x = 1",
+            "/tmp/Example.swift ✅", "", ""
+        ].joined(separator: "\n")))
     }
 
     @Test

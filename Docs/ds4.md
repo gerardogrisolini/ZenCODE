@@ -424,12 +424,17 @@ differ from the defaults of ds4-agent.
   (the tool name alone) at the next text of the call; a path that streams in
   the meantime writes nothing. When the call is complete its compact tool block
   follows. When the block follows the preview of the same tool and path right
-  away (no message, overview, or other output in between), and the channel is
-  an interactive terminal, the block does not repeat the header and keeps only
+  away (no message, overview, or other output in between), the tool-call block
+  the model wrote drew only that call, and the channel is an interactive
+  terminal, the block does not repeat the header and keeps only
   its status row under the last row of the preview, without a blank row: the
   path and the status (`/tmp/Example.swift ✅ 1.38ms`). The path appears only
   there, whichever order the model wrote its arguments in. Otherwise
-  it keeps its header and target as for any other tool.
+  it keeps its header and target as for any other tool. The calls of one
+  tool-call block run only after the model has written the whole block, so
+  when it draws several calls (for example many `local.editFile` calls on the
+  same file) all the previews come first, and then every call shows its full
+  compact block, in order.
   Every other tool, `local.applyPatch` included, shows only its compact block.
   The preview exists only in the terminal chat: ACP, the headless and JSONL
   output, Telegram, the macOS app, saved sessions, and sub-agents never receive

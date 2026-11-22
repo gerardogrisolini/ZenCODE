@@ -120,7 +120,8 @@ extension AgentCoreSessionRunner {
         let memoryBlock = await MemoryTurnCoordinator.shared.memoryBlock(
             sessionID: configuration.sessionID,
             graphTarget: configuration.memoryGraphTarget,
-            prompt: prompt
+            prompt: prompt,
+            author: configuration.agentName
         )
         let turnRecorder = AgentCorePromptTurnRecorder(
             initialSnapshot: initialSnapshot,

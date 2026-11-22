@@ -112,6 +112,11 @@ enum MemoryCleanup {
     /// A plan that changes nothing returns the original graph untouched, so
     /// normalizations of an already consistent graph never make a no-op look
     /// like a change.
+    ///
+    /// The plan covers the whole graph, every author included, but no rule
+    /// merges or deduplicates entries: each one is kept, archived or removed
+    /// on its own, so an entry never takes over another author's content and
+    /// keeps its `author` (see `MemoryAuthorScope`).
     static func plan(
         _ graph: MemoryGraph,
         policy: MemoryCleanupPolicy,

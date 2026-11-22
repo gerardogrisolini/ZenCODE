@@ -12,15 +12,21 @@ public struct MemoryToolContext: Sendable {
     /// The graph every memory tool addresses; `nil` when none is available, in
     /// which case the tools fail with `scopeUnavailable`.
     public let graphTarget: MemoryGraphTarget?
+    /// The `name` of the executing agent profile, `nil` without one: the tools
+    /// see and change only that profile's entries, and new entries carry it
+    /// (see `MemoryAuthorScope`).
+    public let author: String?
     public let currentDate: Date
     public let currentTimeZone: TimeZone
 
     public init(
         graphTarget: MemoryGraphTarget?,
+        author: String? = nil,
         currentDate: Date = Date(),
         currentTimeZone: TimeZone = .current
     ) {
         self.graphTarget = graphTarget
+        self.author = author
         self.currentDate = currentDate
         self.currentTimeZone = currentTimeZone
     }
@@ -105,6 +111,7 @@ public enum MemoryTool {
         // One extra entry tells whether the journal continues past this page.
         let page = try await memoryService.readEntries(
             target: context.graphTarget,
+            author: context.author,
             includeArchived: includeArchived,
             offset: offset,
             limit: limit + 1,
@@ -113,7 +120,12 @@ public enum MemoryTool {
         let hasMore = page.count > limit
         let resolvedEntries = Array(page.prefix(limit))
 
-        var text = renderEntries(resolvedEntries, detail: detail)
+        var text = renderEntries(
+            resolvedEntries,
+            detail: detail,
+            workspaceRoot: citedPathsRoot(for: context, detail: detail),
+            showsAuthor: true
+        )
         if hasMore {
             text += "\nMore entries follow: call memory.read again with offset \(offset + limit)."
         }
@@ -148,15 +160,17 @@ public enum MemoryTool {
         let entries = try await memoryService.searchEntries(
             query: query,
             target: context.graphTarget,
+            author: context.author,
             includeArchived: includeArchived,
             limit: limit,
             filter: filter
         )
 
+        let pathsRoot = citedPathsRoot(for: context, detail: detail)
         return ToolExecutionOutput(
             text: """
             Query: \(query)
-            \(renderEntries(entries, detail: detail))
+            \(renderEntries(entries, detail: detail, workspaceRoot: pathsRoot, showsAuthor: true))
             """,
             rawResult: .object([
                 "query": .string(query),
@@ -179,12 +193,17 @@ public enum MemoryTool {
         }
         guard let entry = try await memoryService.entry(
             id: rawIdentifier,
-            target: context.graphTarget
+            target: context.graphTarget,
+            author: context.author
         ) else {
             throw MemoryServiceError.entryNotFound(rawIdentifier)
         }
         return ToolExecutionOutput(
-            text: renderEntry(entry),
+            text: renderEntry(
+                entry,
+                workspaceRoot: citedPathsRoot(for: context, detail: .full),
+                showsAuthor: true
+            ),
             rawResult: .object([
                 "found": .bool(true),
                 "entry": memoryJSONValue(entry)
@@ -208,6 +227,7 @@ public enum MemoryTool {
         let outcome = try await memoryService.writeEntryOutcome(
             content: stamped.content,
             target: context.graphTarget,
+            author: context.author,
             category: parsedCategory(from: arguments),
             tags: parsedTags(from: arguments) ?? [],
             // Only a stamp this call generated may be ignored by the duplicate
@@ -294,6 +314,7 @@ public enum MemoryTool {
             id: rawIdentifier,
             content: content,
             target: context.graphTarget,
+            author: context.author,
             tags: parsedTags(from: arguments),
             updatedAt: context.currentDate,
             timeZone: context.currentTimeZone
@@ -325,7 +346,8 @@ public enum MemoryTool {
         let entry = try await memoryService.setArchived(
             true,
             id: entryID,
-            target: context.graphTarget
+            target: context.graphTarget,
+            author: context.author
         )
 
         return ToolExecutionOutput(
@@ -354,7 +376,8 @@ public enum MemoryTool {
         let entry = try await memoryService.setArchived(
             false,
             id: entryID,
-            target: context.graphTarget
+            target: context.graphTarget,
+            author: context.author
         )
 
         return ToolExecutionOutput(

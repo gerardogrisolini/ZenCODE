@@ -133,6 +133,14 @@ actor TerminalChatRenderCoordinator {
     /// The call whose block is drawn without its header, so a completion and
     /// a republished start keep the same layout.
     var previewMergedToolCallID: String?
+    /// The drawn calls of the tool-call block that is streaming or that ended
+    /// last. The calls of a block run only after the whole block, so the
+    /// preview on screen is the last drawn call's while the first call runs
+    /// first: only a block that drew a single call merges its tool block.
+    var toolCallPreviewBlockDrawnCallCount = 0
+    /// A call of the current tool-call block started and the block's `ended`
+    /// has not arrived yet.
+    var toolCallPreviewBlockIsOpen = false
     /// A submitted prompt starts a transcript turn. The first prompt remains
     /// unadorned; every later one receives exactly one visual turn separator.
     var hasWrittenSubmittedPrompt = false

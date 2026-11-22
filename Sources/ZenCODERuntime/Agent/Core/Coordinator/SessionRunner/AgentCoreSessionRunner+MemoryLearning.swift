@@ -25,7 +25,17 @@ extension AgentCoreSessionRunner {
             let store = try await memoryGraphStoreRegistry.store(
                 graphURL: MemoryGraphLocation.graphURL(for: workspaceRootURL)
             )
-            guard let snapshot = try await store.learningSnapshot(query: evidence.map { $0.location + " " + $0.detail }.joined(separator: " ")), permit.canPropose else { return }
+            // The writer works as the session's profile: it is shown, and
+            // deduplicates against, only that profile's entries, and what it
+            // writes carries the profile's name.
+            let visibility = MemoryAuthorScope(
+                profileName: configuration.agentName,
+                graphTarget: .workspace(workspaceRootURL)
+            )
+            guard let snapshot = try await store.learningSnapshot(
+                query: evidence.map { $0.location + " " + $0.detail }.joined(separator: " "),
+                visibility: visibility
+            ), permit.canPropose else { return }
             struct Existing: Encodable { let id: String; let content: String }
             struct Input: Encodable {
                 let project: String

@@ -18,12 +18,14 @@ extension MemoryGraphStore {
     /// `MemoryGraphStoreRegistry` shares one engine per workspace across every
     /// session, sub-agent and tool call, so overlapping turns would hand one
     /// session another's memories. This per-call path keeps each retrieval
-    /// bound to the prompt that asked.
+    /// bound to the prompt that asked. `visibility` restricts the recall to the
+    /// entries one profile owns (see `MemoryAuthorScope`).
     func context(
         for prompt: String,
-        scope: GraphScope = .all
+        scope: GraphScope = .all,
+        visibility: MemoryAuthorScope? = nil
     ) async throws -> String {
-        try await engine.context(for: prompt, scope: scope)
+        try await engine.context(for: prompt, scope: scope, visibility: visibility)
     }
 
     /// Same memory block using only local ranking: the deadline fallback for
@@ -32,13 +34,14 @@ extension MemoryGraphStore {
     /// recall cannot double-apply retrieval maintenance.
     func lexicalFallbackContext(
         for prompt: String,
-        scope: GraphScope = .all
+        scope: GraphScope = .all,
+        visibility: MemoryAuthorScope? = nil
     ) async throws -> String? {
         guard embedder != nil else { return nil }
         return try await engine.lexicalContextReadOnly(
             for: prompt,
             scope: scope,
-            graph: try await engine.freshSnapshotForReadOnly()
+            graph: try await engine.freshSnapshotForReadOnly().restricted(to: visibility)
         )
     }
 
@@ -53,6 +56,9 @@ extension MemoryGraphStore {
     struct LearningSnapshot: Sendable {
         let entries: [GraphEntry]
         let comparison: [String: String]
+        /// The scope the snapshot was taken in: the commit compares, deduplicates
+        /// and writes in the same one.
+        var visibility: MemoryAuthorScope? = nil
     }
 
     /// Term-coverage score used by the automatic writer to pick the lexically
@@ -88,8 +94,15 @@ extension MemoryGraphStore {
         return score
     }
 
-    func learningSnapshot(query: String = "") async throws -> LearningSnapshot? {
-        let graph = try await engine.freshSnapshotForReadOnly()
+    /// The entries the automatic writer shows the model for deduplication and
+    /// the comparison set its commit rechecks, both limited to the entries
+    /// `visibility` allows: another profile's notes are neither shown nor
+    /// treated as duplicates.
+    func learningSnapshot(
+        query: String = "",
+        visibility: MemoryAuthorScope? = nil
+    ) async throws -> LearningSnapshot? {
+        let graph = try await engine.freshSnapshotForReadOnly().restricted(to: visibility)
         let active = graph.memories.values.filter(\.active)
         let comparison = Dictionary(uniqueKeysWithValues: active.map { ($0.id, $0.content) })
         let scored: [(entry: GraphEntry, score: Int)] = active.map { entry in
@@ -110,7 +123,7 @@ extension MemoryGraphStore {
             entries.append(entry)
             characters += entry.content.count
         }
-        return LearningSnapshot(entries: entries, comparison: comparison)
+        return LearningSnapshot(entries: entries, comparison: comparison, visibility: visibility)
     }
 
     /// Atomic current-state/dedup recheck, including manual writes performed
@@ -124,11 +137,14 @@ extension MemoryGraphStore {
     ) async throws -> Bool {
         guard MemoryLearningPrivacy.accepts(content, limit: 1000), permit.canPropose else { return false }
         let expected = snapshot.comparison
+        let visibility = snapshot.visibility
         if let existingID, !snapshot.entries.contains(where: { $0.id == existingID }) { return false }
         try Task.checkCancellation()
         return try await engine.transaction { graph in
             try Task.checkCancellation()
-            let current = Dictionary(uniqueKeysWithValues: graph.memories.values.filter(\.active).map { ($0.id, $0.content) })
+            let current = Dictionary(uniqueKeysWithValues: graph.memories.values
+                .filter { $0.active && (visibility?.allows($0) ?? true) }
+                .map { ($0.id, $0.content) })
             guard current == expected else { return false }
             let key = Self.learningComparisonKey(content)
             if current.values.contains(where: { Self.learningComparisonKey($0) == key }) { return false }
@@ -142,7 +158,7 @@ extension MemoryGraphStore {
             }
             var updatedContent = content
             if let existingID, let entry = graph.memories[existingID] {
-                guard entry.active, entry.scope == .project else { return false }
+                guard entry.active, entry.scope == .project, visibility?.allows(entry) ?? true else { return false }
                 // Automatic updates only enrich: never erase manually authored
                 // information to fit the budget. An overlong merge is a no-op.
                 guard !Self.learningComparisonKey(entry.content).contains(key) else { return false }
@@ -153,7 +169,8 @@ extension MemoryGraphStore {
             }
             guard permit.reserve(event: event) else { return false }
             if let existingID {
-                guard var entry = graph.memories[existingID], entry.active, entry.scope == .project else { return false }
+                guard var entry = graph.memories[existingID], entry.active, entry.scope == .project,
+                      visibility?.allows(entry) ?? true else { return false }
                 entry.content = updatedContent
                 entry.updatedAt = Date()
                 entry.autoGeneratedTimestamp = false
@@ -163,7 +180,8 @@ extension MemoryGraphStore {
             } else {
                 var entry = GraphEntry(id: MemoryIdentifier.makeNew(), category: .fact,
                                        content: content, tags: ["automatic", "verified-project"],
-                                       source: MemorySource.learn, trust: .medium, scope: .project)
+                                       source: MemorySource.learn, trust: .medium, scope: .project,
+                                       author: visibility?.author)
                 entry.refreshSearchText()
                 graph.addMemory(entry)
             }

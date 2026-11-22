@@ -95,6 +95,9 @@ public nonisolated struct MemoryEntry: Identifiable, Codable, Hashable, Sendable
     public var accessCount: UInt32
     public var embedding: [Float]?
     public var embeddingModel: String?
+    /// The `name` of the agent profile that wrote the entry; `nil` for an
+    /// entry written before authors existed (see `MemoryAuthorScope`).
+    public var author: String?
 
     public init(
         content: String,
@@ -110,7 +113,8 @@ public nonisolated struct MemoryEntry: Identifiable, Codable, Hashable, Sendable
         confidence: Float = 1.0,
         accessCount: UInt32 = 0,
         embedding: [Float]? = nil,
-        embeddingModel: String? = nil
+        embeddingModel: String? = nil,
+        author: String? = nil
     ) {
         self.id = id
         self.scope = scope
@@ -126,6 +130,7 @@ public nonisolated struct MemoryEntry: Identifiable, Codable, Hashable, Sendable
         self.accessCount = accessCount
         self.embedding = embedding
         self.embeddingModel = embeddingModel
+        self.author = author
     }
 
     public var title: String {
@@ -157,6 +162,7 @@ public nonisolated struct MemoryEntry: Identifiable, Codable, Hashable, Sendable
         self.accessCount = engine.accessCount
         self.embedding = engine.embedding
         self.embeddingModel = engine.embeddingModel
+        self.author = engine.author
     }
 }
 
@@ -171,7 +177,7 @@ extension MemoryEntry {
     private enum CodingKeys: String, CodingKey {
         case id, scope, content, isArchived, category, tags
         case source, trust, createdAt, updatedAt, confidence, accessCount
-        case embedding, embeddingModel
+        case embedding, embeddingModel, author
     }
 
     public init(from decoder: Decoder) throws {
@@ -191,6 +197,7 @@ extension MemoryEntry {
         accessCount = try c.decodeIfPresent(UInt32.self, forKey: .accessCount) ?? 0
         embedding = try c.decodeIfPresent([Float].self, forKey: .embedding)
         embeddingModel = try c.decodeIfPresent(String.self, forKey: .embeddingModel)
+        author = try c.decodeIfPresent(String.self, forKey: .author)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -209,5 +216,6 @@ extension MemoryEntry {
         try c.encode(accessCount, forKey: .accessCount)
         try c.encodeIfPresent(embedding, forKey: .embedding)
         try c.encodeIfPresent(embeddingModel, forKey: .embeddingModel)
+        try c.encodeIfPresent(author, forKey: .author)
     }
 }

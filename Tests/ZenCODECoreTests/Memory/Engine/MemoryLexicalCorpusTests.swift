@@ -117,6 +117,79 @@ struct MemoryLexicalCorpusTests {
         ])
     }
 
+    // MARK: - The retrieval shared by the ranking and the evidence
+
+    @Test
+    func sharedRetrievalRankingsEqualTheBM25IndexSearchBitForBit() async throws {
+        // The corpus the engine builds once per retrieval ranks with the k1/b of
+        // the index: same entries, same Float scores, same order as the index.
+        for (k1, b) in [(Float(1.2), Float(0.75)), (Float(2), Float(0.3)), (Float(0.5), Float(1))] {
+            let index = BM25MemoryIndex(k1: k1, b: b)
+            for scope in [EngineMemoryScope.all, .project, .global] {
+                for limit in [0, 1, 3, 40] {
+                    let expected = try await index.search(
+                        queries: Self.queries,
+                        memories: Self.memories,
+                        scope: scope,
+                        limit: limit
+                    )
+                    let shared = MemoryLexicalRetrieval(memories: Self.memories, queries: Self.queries, scope: scope)
+                        .rankings(limit: limit, k1: k1, b: b)
+                    #expect(shared == expected, "k1=\(k1) b=\(b) scope=\(scope) limit=\(limit)")
+                    #expect(shared.count == Self.queries.count)
+                }
+            }
+        }
+        // Not trivially empty: queries rank entries, and a score is not 0/1.
+        let ranked = MemoryLexicalRetrieval(memories: Self.memories, queries: Self.queries, scope: .all)
+            .rankings(limit: 10, k1: 1.2, b: 0.75)
+        #expect(ranked.contains { $0.count > 1 })
+        #expect(ranked.flatMap { $0 }.contains { $0.score != 0 && $0.score != 1 })
+    }
+
+    @Test
+    func sharedRetrievalEvidenceEqualsTheSeparateComputation() {
+        let everyID = Set(Self.memories.map(\.id))
+        let queryGroups = [
+            Self.queries,
+            ["session memory"],
+            ["memory memory memory", "tests tests"],
+            ["!!!", "arm64 release"]
+        ]
+        var withEvidence = 0
+        for scope in [EngineMemoryScope.all, .project, .global] {
+            for queries in queryGroups {
+                let terms = Set(queries.flatMap(MemorySearch.tokens))
+                let expected = MemoryLexicalCorpus(memories: Self.memories, scope: scope)
+                    .lexicalEvidence(terms: terms, ids: everyID)
+                let shared = MemoryLexicalRetrieval(memories: Self.memories, queries: queries, scope: scope)
+                    .evidence(ids: everyID)
+                #expect(shared == expected, "scope=\(scope) queries=\(queries)")
+                if shared.values.contains(where: { $0 > 0 }) { withEvidence += 1 }
+            }
+        }
+        // Not trivially zero: most of the cases do share a term with an entry.
+        #expect(withEvidence >= 8)
+    }
+
+    @Test
+    func sharedRetrievalWithoutQueryTokensBuildsNoCorpus() {
+        let retrieval = MemoryLexicalRetrieval(memories: Self.memories, queries: ["!!!", "", "  "])
+        #expect(retrieval.corpus == nil)
+        #expect(retrieval.queryTokens == [[], [], []])
+        #expect(retrieval.rankings(limit: 10, k1: 1.2, b: 0.75) == [[], [], []])
+        #expect(retrieval.evidence(ids: ["runner"]).isEmpty)
+
+        // One query with tokens is enough to build it, once, for all of them.
+        let some = MemoryLexicalRetrieval(memories: Self.memories, queries: ["!!!", "session memory"])
+        #expect(some.corpus != nil)
+        #expect(some.corpus?.documents.count == Self.memories.filter(\.active).count)
+        let rankings = some.rankings(limit: 10, k1: 1.2, b: 0.75)
+        #expect(rankings.count == 2)
+        #expect(rankings[0].isEmpty)
+        #expect(!rankings[1].isEmpty)
+    }
+
     @Test
     func metadataRankingMatchesTheReference() {
         let cases: [(tags: [String], entities: [String])] = [

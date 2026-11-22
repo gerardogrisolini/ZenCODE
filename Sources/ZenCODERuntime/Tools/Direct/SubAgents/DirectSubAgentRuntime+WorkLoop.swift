@@ -123,7 +123,9 @@ extension DirectSubAgentRuntime {
                             profileRole: agents[agentID]?.profileRole,
                             workingDirectory: workspaceRootURL
                         ),
-                        prompt: work.prompt
+                        prompt: work.prompt,
+                        // Only the entries the agent's own profile wrote.
+                        author: agents[agentID]?.profileName
                     )
                 } else {
                     // No snapshot means no resolvable workspace graph, so the

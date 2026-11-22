@@ -11,7 +11,9 @@ import ToolCore
 extension MemoryTool {
     static func renderEntries(
         _ entries: [MemoryEntry],
-        detail: RenderDetail
+        detail: RenderDetail,
+        workspaceRoot: URL? = nil,
+        showsAuthor: Bool = false
     ) -> String {
         guard !entries.isEmpty else {
             return "No memory entries matched."
@@ -20,7 +22,7 @@ extension MemoryTool {
         let renderedEntries = entries.enumerated().map { index, entry in
             let renderedEntry = detail == .index
                 ? renderIndexEntry(entry)
-                : renderEntry(entry)
+                : renderEntry(entry, workspaceRoot: workspaceRoot, showsAuthor: showsAuthor)
             return "\(index + 1). \(renderedEntry)"
         }
         .joined(separator: "\n\n")
@@ -34,13 +36,50 @@ extension MemoryTool {
         """
     }
 
-    static func renderEntry(_ entry: MemoryEntry) -> String {
-        var lines = [
-            "[\(entry.scope.rawValue)] \(entry.content)",
-            "ID: \(entry.id)"
-        ]
+    /// The workspace root whose checkout the cited paths of a rendered entry are
+    /// verified against: only for `detail == .full` (the index shows titles, not
+    /// content) and only for a workspace graph (the global graph is not tied to
+    /// a checkout). `nil` renders no stale-path note.
+    static func citedPathsRoot(
+        for context: MemoryToolContext,
+        detail: RenderDetail
+    ) -> URL? {
+        guard detail == .full,
+              case let .workspace(root)? = context.graphTarget else {
+            return nil
+        }
+        return root
+    }
+
+    /// Renders one entry as `[scope] content`, then, when `workspaceRoot` is set
+    /// and the content cites paths missing from that checkout, the neutral note
+    /// of ``MemoryCitedPaths`` on its own line, then `ID:` and the remaining
+    /// metadata. The note sits right after the content it qualifies and before
+    /// the `ID:` line, which stays the first line of the metadata. Callers that
+    /// pass no root (write, update, archive, restore) render exactly as before.
+    /// `showsAuthor` (get, and the full read and search) adds `Author:` after
+    /// the tags for an entry that records one.
+    static func renderEntry(
+        _ entry: MemoryEntry,
+        workspaceRoot: URL? = nil,
+        showsAuthor: Bool = false
+    ) -> String {
+        var lines = ["[\(entry.scope.rawValue)] \(entry.content)"]
+        if let workspaceRoot,
+           let note = MemoryCitedPaths.note(
+               forMissing: MemoryCitedPaths.missing(
+                   in: entry.content,
+                   workspaceRoot: workspaceRoot
+               )
+           ) {
+            lines.append(note)
+        }
+        lines.append("ID: \(entry.id)")
         if !entry.tags.isEmpty {
             lines.append("Tags: \(entry.tags.joined(separator: ", "))")
+        }
+        if showsAuthor, let author = entry.author?.nilIfBlank {
+            lines.append("Author: \(author)")
         }
         if entry.isArchived {
             lines.append("Archived: true")
@@ -83,6 +122,9 @@ extension MemoryTool {
         ]
         if detail == .full {
             result["content"] = .string(entry.content)
+        }
+        if let author = entry.author?.nilIfBlank {
+            result["author"] = .string(author)
         }
         return .object(result)
     }

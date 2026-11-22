@@ -76,10 +76,13 @@ actor MemoryTurnCoordinator {
 
     /// Resolves the memory block for one turn against the graph addressed by
     /// `graphTarget`, or `nil` when there is nothing safe and timely to inject.
+    /// `author` is the `name` of the session's agent profile (`nil`: none);
+    /// only that profile's entries are recalled (see `MemoryAuthorScope`).
     func memoryBlock(
         sessionID: String,
         graphTarget: MemoryGraphTarget,
-        prompt: String
+        prompt: String,
+        author: String? = nil
     ) async -> String? {
         guard MemoryAutomationSettings.isAutoRecallEnabled else {
             return nil
@@ -95,6 +98,7 @@ actor MemoryTurnCoordinator {
             return nil
         }
 
+        let visibility = MemoryAuthorScope(profileName: author, graphTarget: graphTarget)
         let outcome = await Self.racingDeadline(
             local: MemoryAutomationSettings.recallTimeout,
             semantic: MemoryAutomationSettings.semanticRecallTimeout,
@@ -102,10 +106,10 @@ actor MemoryTurnCoordinator {
                 try await Self.store(graphTarget: graphTarget)
             },
             operation: { store in
-                try await store.context(for: normalizedPrompt)
+                try await store.context(for: normalizedPrompt, visibility: visibility)
             },
             fallback: { store in
-                try await store.lexicalFallbackContext(for: normalizedPrompt)
+                try await store.lexicalFallbackContext(for: normalizedPrompt, visibility: visibility)
             }
         )
 
@@ -120,8 +124,12 @@ actor MemoryTurnCoordinator {
             noteDeadlineFallback(key, semantic: outcome.storeHasEmbedder == true)
         }
 
-        // An empty selection is a successful query, not a failure.
-        guard let block = Self.formattedBlock(raw) else {
+        // An empty selection is a successful query, not a failure. Stale-path
+        // notes are added to the raw bullets, before escaping and budgeting, so
+        // each note stays attached to its entry and counts in the budget.
+        guard let block = Self.formattedBlock(
+            Self.annotatingMissingPaths(raw, graphTarget: graphTarget)
+        ) else {
             return nil
         }
         ZenLogger.debug(
@@ -234,6 +242,41 @@ actor MemoryTurnCoordinator {
             resolution: resolution,
             storeHasEmbedder: await latch.storeHasEmbedder
         )
+    }
+
+    /// Adds, to every recalled bullet that cites repository paths no longer in
+    /// the checkout, an indented continuation line with the neutral note from
+    /// ``MemoryCitedPaths/note(forMissing:limit:)``. The note is part of its
+    /// bullet, so the budget keeps or drops them together. Only a workspace
+    /// graph is annotated: the global graph is not tied to any checkout. The
+    /// heading and every other line are returned as they were.
+    static func annotatingMissingPaths(
+        _ raw: String,
+        graphTarget: MemoryGraphTarget,
+        fileManager: FileManager = .default
+    ) -> String {
+        guard case let .workspace(root) = graphTarget else {
+            return raw
+        }
+        return entryUnits(of: raw).map { unit in
+            guard unit.hasPrefix("- "),
+                  let note = MemoryCitedPaths.note(
+                      forMissing: MemoryCitedPaths.missing(
+                          in: unit,
+                          workspaceRoot: root,
+                          fileManager: fileManager
+                      )
+                  ) else {
+                return unit
+            }
+            // After the last non-blank line, so trailing blank continuation
+            // lines (a content ending in a newline) stay last.
+            var lines = unit.components(separatedBy: "\n")
+            let insertionIndex = (lines.lastIndex { $0.nilIfBlank != nil } ?? lines.count - 1) + 1
+            lines.insert("  \(note)", at: insertionIndex)
+            return lines.joined(separator: "\n")
+        }
+        .joined(separator: "\n")
     }
 
     /// Wraps the engine's formatted bullet list in an explicitly labelled,

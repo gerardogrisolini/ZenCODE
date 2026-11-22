@@ -258,4 +258,162 @@ struct MemoryToolSurfaceTests {
             #expect(active.first?.isArchived == false)
         }
     }
+
+    // MARK: - Stale-path notes on full renderings of a workspace graph
+
+    private static let missingPathsNote =
+        "Not found in the current checkout (verify before relying on this entry): "
+        + "`Sources/Gone/Sensor.swift`, `Docs/removed.md`."
+
+    /// A workspace whose checkout holds `Sources/Kept/Real.swift` and an empty
+    /// `Docs`, so both anchor a relative path while `Sources/Gone/…` and
+    /// `Docs/removed.md` are missing.
+    private static func makeCheckout() throws -> MemoryTestWorkspace {
+        let workspace = try MemoryTestWorkspace()
+        let fileManager = FileManager.default
+        let kept = workspace.workspaceURL.appendingPathComponent("Sources/Kept", isDirectory: true)
+        try fileManager.createDirectory(at: kept, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: kept.appendingPathComponent("Real.swift"))
+        try fileManager.createDirectory(
+            at: workspace.workspaceURL.appendingPathComponent("Docs", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        return workspace
+    }
+
+    @Test
+    func fullReadSearchAndGetNoteCitedPathsMissingFromTheWorkspace() async throws {
+        let workspace = try Self.makeCheckout()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let stale = try await service.writeEntry(
+                content: """
+                Summary: the zeta sensor lives in Sources/Gone/Sensor.swift:42.
+                State: documented in Docs/removed.md, see also Sources/Kept/Real.swift.
+                """,
+                target: .workspace(workspace.workspaceURL)
+            )
+            let fresh = try await service.writeEntry(
+                content: "Summary: the zeta sensor also reads Sources/Kept/Real.swift:7.",
+                target: .workspace(workspace.workspaceURL)
+            )
+            // The note sits right after the content and before the `ID:` line.
+            let staleRendering = "\(stale.content)\n\(Self.missingPathsNote)\nID: \(stale.id.uuidString)"
+            let freshRendering = "\(fresh.content)\nID: \(fresh.id.uuidString)"
+
+            let read = try await Self.execute("memory.read", [:], in: workspace, service: service)
+            #expect(read.text.contains(staleRendering))
+            #expect(read.text.contains(freshRendering))
+
+            let searched = try await Self.execute("memory.search", [
+                "query": .string("zeta sensor")
+            ], in: workspace, service: service)
+            #expect(searched.text.contains(staleRendering))
+            #expect(searched.text.contains(freshRendering))
+            #expect(searched.text.components(separatedBy: "Not found in the current checkout").count == 2)
+
+            let fetched = try await Self.execute("memory.get", [
+                "id": .string(stale.id.uuidString)
+            ], in: workspace, service: service)
+            #expect(fetched.text.contains(staleRendering))
+            let fetchedFresh = try await Self.execute("memory.get", [
+                "id": .string(fresh.id.uuidString)
+            ], in: workspace, service: service)
+            #expect(fetchedFresh.text.contains(freshRendering))
+            #expect(!fetchedFresh.text.contains("Not found"))
+
+            // The structured result carries the stored content, never the note.
+            guard case let .object(payload)? = fetched.result["entry"] else {
+                Issue.record("Expected an entry payload.")
+                return
+            }
+            #expect(payload["content"] == .string(stale.content))
+            guard case let .array(entries)? = searched.result["entries"] else {
+                Issue.record("Expected search entries.")
+                return
+            }
+            for case let .object(entry) in entries {
+                guard case let .string(content)? = entry["content"] else {
+                    Issue.record("Expected entry content.")
+                    return
+                }
+                #expect(!content.contains("Not found"))
+            }
+        }
+    }
+
+    @Test
+    func indexDetailAndMutatingToolsAddNoStalePathNote() async throws {
+        let workspace = try Self.makeCheckout()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let stale = try await service.writeEntry(
+                content: "Summary: the zeta sensor lives in Sources/Gone/Sensor.swift:42.",
+                target: .workspace(workspace.workspaceURL)
+            )
+
+            let readIndex = try await Self.execute("memory.read", [
+                "detail": .string("index")
+            ], in: workspace, service: service)
+            #expect(readIndex.text.contains(stale.id.uuidString))
+            #expect(!readIndex.text.contains("Not found"))
+
+            let searchIndex = try await Self.execute("memory.search", [
+                "query": .string("zeta sensor"), "detail": .string("index")
+            ], in: workspace, service: service)
+            #expect(searchIndex.text.contains(stale.id.uuidString))
+            #expect(!searchIndex.text.contains("Not found"))
+
+            // Write, update, archive and restore render as before.
+            let written = try await Self.execute("memory.write", [
+                "content": .string("Summary: the omega probe lives in Sources/Gone/Probe.swift.")
+            ], in: workspace, service: service)
+            #expect(!written.text.contains("Not found"))
+            let updated = try await Self.execute("memory.update", [
+                "id": .string(stale.id.uuidString),
+                "content": .string("Summary: the zeta sensor lives in Sources/Gone/Sensor.swift:43.")
+            ], in: workspace, service: service)
+            #expect(!updated.text.contains("Not found"))
+            let archived = try await Self.execute("memory.archive", [
+                "id": .string(stale.id.uuidString)
+            ], in: workspace, service: service)
+            #expect(!archived.text.contains("Not found"))
+            let restored = try await Self.execute("memory.restore", [
+                "id": .string(stale.id.uuidString)
+            ], in: workspace, service: service)
+            #expect(!restored.text.contains("Not found"))
+        }
+    }
+
+    @Test
+    func globalGraphRenderingsAddNoStalePathNote() async throws {
+        let workspace = try Self.makeCheckout()
+        defer { workspace.remove() }
+        try await workspace.withIsolatedSupport {
+            let service = MemoryService()
+            let entry = try await service.writeEntry(
+                content: "Summary: the zeta sensor lives in Sources/Gone/Sensor.swift:42.",
+                target: .global
+            )
+            let context = MemoryToolContext(graphTarget: .global)
+
+            let fetched = try await Self.execute("memory.get", [
+                "id": .string(entry.id.uuidString)
+            ], context: context, service: service)
+            #expect(fetched.text.contains(entry.id.uuidString))
+            #expect(!fetched.text.contains("Not found"))
+
+            let searched = try await Self.execute("memory.search", [
+                "query": .string("zeta sensor")
+            ], context: context, service: service)
+            #expect(searched.text.contains(entry.id.uuidString))
+            #expect(!searched.text.contains("Not found"))
+
+            let read = try await Self.execute("memory.read", [:], context: context, service: service)
+            #expect(read.text.contains(entry.id.uuidString))
+            #expect(!read.text.contains("Not found"))
+        }
+    }
 }

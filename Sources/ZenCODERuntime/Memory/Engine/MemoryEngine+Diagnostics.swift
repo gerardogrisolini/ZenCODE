@@ -44,9 +44,79 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
     public var maxAnalyzedQueries: Int
     public var maxSemanticQueries: Int
     public var maxCandidateResults: Int
+    /// Edges the graph cascade follows from a retrieval seed; `0` (default)
+    /// turns the expansion off, the graph itself stays persisted and maintained.
+    /// On a real graph depth 2 added 41 graph-only selections, none relevant:
+    /// depth 0 gave precision 0.25 (was 0.16) and MRR 0.57 (was 0.55); see
+    /// Docs/memory.md.
     public var maxDepth: Int
     public var maxResults: Int
     public var edgeDecay: Float
+    /// Whether the graph cascade may raise the score of an entry that is
+    /// already a retrieval seed. `false` keeps every seed at its own score:
+    /// only entries reached solely through the graph take a propagated one.
+    /// Inert while ``maxDepth`` is `0` (nothing is propagated); kept as a
+    /// measurable reference for a cascade that is turned back on.
+    public var cascadeRaisesSeeds: Bool
+    /// Upper bound on the entries *selected* that are not retrieval seeds
+    /// (reached only through the graph, also via a shared tag or cluster);
+    /// `nil` is unbounded. The candidates are not affected: the cap acts on
+    /// the selection only, and freed slots go to the next candidates.
+    /// Inert while ``maxDepth`` is `0` (every candidate is a seed); kept as a
+    /// measurable reference for a cascade that is turned back on.
+    public var maxGraphOnlySelections: Int?
+    /// Minimum lexical evidence a retrieval seed needs to be *selected*, as a
+    /// fraction of the strongest evidence a single query term can give in the
+    /// corpus the BM25 ranks: the effective threshold is
+    /// `ratio × idfMax(n)`, where `idfMax(n)` is the BM25 IDF of a term found
+    /// in a single one of the `n` active entries of the retrieval scope (see
+    /// ``MemoryLexicalCorpus/maximumInverseDocumentFrequency(documentCount:)``)
+    /// and the evidence of an entry is the sum of the IDF of the distinct query
+    /// terms it contains (``MemoryCandidateEvidence/lexical``).
+    ///
+    /// It is relative because an absolute IDF depends on the size of the
+    /// corpus: a term in one entry is worth 5.46 among 353 entries but at most
+    /// 2.64 among 20, so a fixed threshold of 3 would empty the recall of any
+    /// small project. The default `0.55` is about 3 on a 353-entry graph. With
+    /// no active entry in the scope (`n = 0`) the lexical rule selects nothing.
+    ///
+    /// `nil` asks only for some shared term (evidence > 0). Acts on the
+    /// selection only; the candidates are not affected. With this and the two
+    /// cosine thresholds all `nil` (the cosine ones count as `nil` for a model
+    /// outside ``recallSemanticThresholdModels``) the recall gate is off.
+    public var recallMinimumLexicalEvidenceRatio: Float?
+    /// Minimum raw cosine to the first query embedding a seed needs to be
+    /// *selected* through the semantic path. `nil` accepts the hits that passed
+    /// the semantic gate (z-score). The default `0.55` was measured on
+    /// `qwen/qwen3-embedding-8b` only: it applies when the embedder's model is
+    /// in ``recallSemanticThresholdModels`` and counts as `nil` otherwise.
+    /// Ignored when no semantic search ran for the prompt (no embedder,
+    /// `includeSemantic` off, endpoint failure).
+    public var recallMinimumSemanticSimilarity: Float?
+    /// Minimum raw cosine a *lexically supported* seed needs to be selected:
+    /// an entry with enough lexical evidence (``recallMinimumLexicalEvidenceRatio``)
+    /// is kept only if its cosine to the first query embedding is at least
+    /// this value, so a lot of shared vocabulary cannot carry an entry that
+    /// sits far from the query in the embedding space. An entry whose cosine
+    /// reaches ``recallMinimumSemanticSimilarity`` (or, with none, that passed
+    /// the semantic gate) is selected regardless of this value. `nil` puts no
+    /// floor on the cosine of a lexically supported entry. Like the other
+    /// cosine threshold the default `0.45` was measured on
+    /// `qwen/qwen3-embedding-8b` only and counts as `nil` for a model outside
+    /// ``recallSemanticThresholdModels``. It only applies to an entry that has
+    /// a vector of the embedder's model while the semantic search ran for the
+    /// prompt: otherwise the lexical evidence alone decides.
+    public var recallLexicalSupportMinimumSimilarity: Float?
+    /// The embedding models whose raw cosines the two cosine thresholds
+    /// (``recallMinimumSemanticSimilarity``, ``recallLexicalSupportMinimumSimilarity``)
+    /// were measured on, compared case-insensitively with the embedder's
+    /// `modelID`. For any other model the raw cosine scale is different (an
+    /// anisotropic baseline of 0.35–0.45 for one model may be 0.7 for
+    /// another), so both thresholds count as `nil` and a hit that passed the
+    /// semantic z-score gate is what counts as semantic support. An empty set
+    /// means *never*; to apply the thresholds to every model use an explicit
+    /// `["*"]`. Default `["qwen/qwen3-embedding-8b"]`.
+    public var recallSemanticThresholdModels: Set<String>
     public var rrfRankConstant: Float
     public var boostSelectedBy: Float
     /// Permanent confidence loss for a candidate that was retrieved but not
@@ -68,6 +138,29 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
     /// as part of their own immediate transaction.
     public var recallMaintenanceCheckpointSize: Int
 
+    /// The measured defaults of the recall evidence gate (see
+    /// ``recallMinimumLexicalEvidenceRatio``, ``recallMinimumSemanticSimilarity``,
+    /// ``recallLexicalSupportMinimumSimilarity`` and ``recallSemanticThresholdModels``).
+    public static let defaultRecallMinimumLexicalEvidenceRatio: Float = 0.55
+    public static let defaultRecallMinimumSemanticSimilarity: Float = 0.55
+    public static let defaultRecallLexicalSupportMinimumSimilarity: Float = 0.45
+    public static let defaultRecallSemanticThresholdModels: Set<String> = ["qwen/qwen3-embedding-8b"]
+    /// The entry of ``recallSemanticThresholdModels`` that matches every model.
+    public static let anyEmbeddingModel = "*"
+
+    /// Whether the cosine thresholds apply to an embedder whose model is
+    /// `modelID`: it must be in ``recallSemanticThresholdModels``
+    /// (case-insensitive, surrounding whitespace ignored) or the set must
+    /// contain ``anyEmbeddingModel``. An empty set never applies them.
+    func appliesSemanticThresholds(toModelID modelID: String?) -> Bool {
+        guard let modelID else { return false }
+        let wanted = modelID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return recallSemanticThresholdModels.contains { entry in
+            let normalized = entry.trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalized == Self.anyEmbeddingModel || normalized.lowercased() == wanted
+        }
+    }
+
     public init(
         similarityThreshold: Float = 0.4,
         semanticMinimumZScore: Float = 2.5,
@@ -77,9 +170,15 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
         maxAnalyzedQueries: Int = 4,
         maxSemanticQueries: Int = 1,
         maxCandidateResults: Int = 20,
-        maxDepth: Int = 2,
+        maxDepth: Int = 0,
         maxResults: Int = 8,
         edgeDecay: Float = 0.7,
+        cascadeRaisesSeeds: Bool = true,
+        maxGraphOnlySelections: Int? = nil,
+        recallMinimumLexicalEvidenceRatio: Float? = Self.defaultRecallMinimumLexicalEvidenceRatio,
+        recallMinimumSemanticSimilarity: Float? = Self.defaultRecallMinimumSemanticSimilarity,
+        recallLexicalSupportMinimumSimilarity: Float? = Self.defaultRecallLexicalSupportMinimumSimilarity,
+        recallSemanticThresholdModels: Set<String> = Self.defaultRecallSemanticThresholdModels,
         rrfRankConstant: Float = 60,
         boostSelectedBy: Float = 0.02,
         decayRejectedBy: Float = 0,
@@ -101,6 +200,12 @@ struct MemoryEngineConfiguration: Sendable, Equatable {
         self.maxDepth = max(0, maxDepth)
         self.maxResults = max(0, maxResults)
         self.edgeDecay = edgeDecay
+        self.cascadeRaisesSeeds = cascadeRaisesSeeds
+        self.maxGraphOnlySelections = maxGraphOnlySelections.map { max(0, $0) }
+        self.recallMinimumLexicalEvidenceRatio = recallMinimumLexicalEvidenceRatio.map { max(0, $0) }
+        self.recallMinimumSemanticSimilarity = recallMinimumSemanticSimilarity
+        self.recallLexicalSupportMinimumSimilarity = recallLexicalSupportMinimumSimilarity
+        self.recallSemanticThresholdModels = recallSemanticThresholdModels
         self.rrfRankConstant = rrfRankConstant
         self.boostSelectedBy = boostSelectedBy
         self.decayRejectedBy = decayRejectedBy

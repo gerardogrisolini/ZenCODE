@@ -12,7 +12,9 @@ import ZenCODERuntime
 /// tool call. The rows are append-only transcript on the tool-block channel.
 /// When the compact block follows the preview of the same call right away, it
 /// omits the header the preview already showed and keeps the target on its
-/// status row; otherwise it is drawn exactly as without a preview.
+/// status row; otherwise it is drawn exactly as without a preview. The calls
+/// of a tool-call block run only after the whole block is drawn, so only a
+/// block that drew a single call can merge it.
 extension TerminalChatRenderCoordinator {
     // MARK: - Tool-call preview
 
@@ -24,15 +26,23 @@ extension TerminalChatRenderCoordinator {
         case let .toolStarted(name):
             // A new call ends the previous one even when it is not drawn.
             endToolCallPreview()
+            if !toolCallPreviewBlockIsOpen {
+                // The first call of a block: the calls of the previous block
+                // no longer count.
+                toolCallPreviewBlockIsOpen = true
+                toolCallPreviewBlockDrawnCallCount = 0
+            }
             guard TerminalToolCallPreviewFormatter.drawsTool(named: name) else {
                 return
             }
+            toolCallPreviewBlockDrawnCallCount += 1
             prepareForToolCallPreview(maximumInPlaceRows: maximumInPlaceRows)
             if let header = toolCallPreviewFormatter.begin(toolNamed: name) {
                 writeToolCallPreviewText(header)
             }
         case .ended:
             endToolCallPreview()
+            toolCallPreviewBlockIsOpen = false
         case .parameterStarted, .parameterText, .parameterEnded:
             guard toolCallPreviewFormatter.isOpen || toolCallPreviewFormatter.isSuspended else {
                 return
@@ -91,12 +101,15 @@ extension TerminalChatRenderCoordinator {
         pendingToolCallPreviewDrawing = nil
         pendingToolCallPreviewDrawingSequence = nil
         previewMergedToolCallID = nil
+        toolCallPreviewBlockDrawnCallCount = 0
+        toolCallPreviewBlockIsOpen = false
     }
 
     /// Whether the preview of this call ended with its rows on screen, its
     /// header showed the canonical tool name (the header never shows the path),
-    /// it received the call's path, no output was emitted since, and the
-    /// terminal can rewrite the block in place, so the block draws only its
+    /// it received the call's path, no output was emitted since, its tool-call
+    /// block drew no other call, and the terminal can rewrite the block in
+    /// place, so the block draws only its
     /// status row, with the target and the status, whichever order the model
     /// wrote the path in. The drawing is consumed once, and its call keeps the
     /// decision for its completion and for a start republished after a
@@ -110,7 +123,11 @@ extension TerminalChatRenderCoordinator {
         let sequence = pendingToolCallPreviewDrawingSequence
         pendingToolCallPreviewDrawing = nil
         pendingToolCallPreviewDrawingSequence = nil
+        // Several drawn calls in one block run only after the whole block:
+        // the drawing on screen is the last one's, never the first call's,
+        // even when both name the same tool and path.
         guard let drawing,
+              toolCallPreviewBlockDrawnCallCount == 1,
               drawing.endedOnScreen,
               standardErrorIsTerminal,
               sequence == emittedWriteCount,

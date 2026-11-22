@@ -375,13 +375,15 @@ extension DirectToolExecutor {
         )
         // The executing agent's profile role selects the graph: organizer
         // addresses the global graph, every other role its workspace graph.
+        // Its profile name is the author the tools see and write as.
         let output = try await MemoryTool.executeAsync(
             request,
             context: MemoryToolContext(
                 graphTarget: MemoryGraphTarget.resolved(
                     profileRole: toolExecutionContext.profileRole,
                     workingDirectory: workingDirectory
-                )
+                ),
+                author: toolExecutionContext.profileName
             )
         ).text
         return .handled(DirectToolExecutionOutput(output: output))

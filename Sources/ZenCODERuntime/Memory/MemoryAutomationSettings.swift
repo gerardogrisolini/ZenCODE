@@ -14,14 +14,15 @@ import ToolCore
 ///
 /// Recall runs over the session's memory graph inline before each turn: the
 /// workspace graph, or the global graph for an organizer profile. With no
-/// embedding endpoint configured it is pure lexical BM25 plus graph expansion,
-/// which is local and bounded by the recall timeout. When an endpoint is
-/// configured, semantic similarity adds a bounded HTTP call to that endpoint —
-/// but never a second LLM call: a maintenance-free BM25 result is prepared in
-/// parallel and becomes the turn's context if the semantic call misses its own,
-/// longer, semantic bound. The selected block is folded into the main turn's
-/// outgoing request, so the timeouts and the character budget protect turn
-/// latency and prompt size independently of the configured chat provider.
+/// embedding endpoint configured it is pure lexical BM25 (the graph expansion
+/// is off by default), which is local and bounded by the recall timeout. When
+/// an endpoint is configured, semantic similarity adds a bounded HTTP call to
+/// that endpoint — but never a second LLM call: a maintenance-free BM25 result
+/// is prepared in parallel and becomes the turn's context if the semantic call
+/// misses its own, longer, semantic bound. The selected block is folded into
+/// the main turn's outgoing request, so the timeouts and the character budget
+/// protect turn latency and prompt size independently of the configured chat
+/// provider.
 enum MemoryAutomationSettings {
     /// Enables automatic recall. Absent ⇒ true.
     static let environmentAutoRecallKey = "ZENCODE_MEMORY_AUTO_RECALL"

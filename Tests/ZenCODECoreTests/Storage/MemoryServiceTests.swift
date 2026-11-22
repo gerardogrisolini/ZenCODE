@@ -51,7 +51,7 @@ struct MemoryServiceTests {
             "decide whether project memory should be created, updated, archived, or left unchanged",
             "do not record intentions, unimplemented plans, or unverified results",
             "`Summary` (the durable milestone or change)",
-            "Add `tags` when writing",
+            "Add `tags` when writing so related entries stay linked in the graph and can be filtered with the `tags` argument of `memory.read` and `memory.search`",
             "Do not write every command or tool call",
         ] {
             #expect(full.contains(rule), "missing rule: \(rule)")
@@ -66,6 +66,9 @@ struct MemoryServiceTests {
         ] {
             #expect(!full.contains(duplicate), "duplicate kept: \(duplicate)")
         }
+        // Retrieval no longer expands over the graph links (`maxDepth` 0): the
+        // guidance must not promise it.
+        #expect(!full.contains("follow those links"))
 
         let readOnly = MemoryService.toolUsagePromptSection(readOnly: true)
         #expect(readOnly.contains("Without a configured embedding endpoint, retrieval and recall use BM25 keyword matching."))
@@ -82,8 +85,9 @@ struct MemoryServiceTests {
         #expect(try description("memory.archive").contains("is not deleted; memory.restore brings it back"))
         #expect(try description("memory.write").contains("Timestamp is added when missing"))
         #expect(try description("memory.search").contains(
-            "BM25 keyword ranking, semantic similarity when an embedding endpoint is configured, and graph-related entries"
+            "BM25 keyword ranking and, when an embedding endpoint is configured, semantic similarity."
         ))
+        #expect(try !description("memory.search").contains("graph-related"))
         #expect(try description("memory.search").contains("tags (all required) or category narrow them"))
         #expect(try description("memory.read").contains("offset pages through the journal"))
         #expect(try description("memory.read").contains("tags (all required) or category narrow it"))

@@ -58,11 +58,28 @@ private actor BlockingSelector: MemorySelector {
     }
 }
 
+// MARK: - Configuration
+
+/// These tests are about re-validation and the cancellation windows, not about
+/// the evidence gate: entries that share a common term (`swift` in every one)
+/// would leave nothing selectable under the default gate, so the blocking
+/// selector would never be reached and the window never open. The gate is
+/// turned off explicitly (the three thresholds `nil`).
+private func configurationWithoutEvidenceGate(checkpointSize: Int? = nil) -> MemoryEngineConfiguration {
+    var configuration = MemoryEngineConfiguration(
+        recallMinimumLexicalEvidenceRatio: nil,
+        recallMinimumSemanticSimilarity: nil,
+        recallLexicalSupportMinimumSimilarity: nil
+    )
+    if let checkpointSize { configuration.recallMaintenanceCheckpointSize = checkpointSize }
+    return configuration
+}
+
 // MARK: - Recall re-validation under concurrent mutation
 
 @Test func recallRevalidatesAfterConcurrentForgetAndArchive() async throws {
     let selector = BlockingSelector()
-    let memory = MemoryEngine(selector: selector)
+    let memory = MemoryEngine(selector: selector, configuration: configurationWithoutEvidenceGate())
 
     _ = try await memory.remember("alpha fact about swift actors", tags: ["swift"], id: "alpha")
     _ = try await memory.remember("beta fact about swift structs", tags: ["swift"], id: "beta")
@@ -139,7 +156,8 @@ private actor BlockingSelector: MemorySelector {
     let selector = BlockingSelector()
     let reader = try await MemoryEngine.open(
         persistence: JSONMemoryPersistence(url: file),
-        selector: selector
+        selector: selector,
+        configuration: configurationWithoutEvidenceGate()
     )
     let recallTask = Task<MemoryRecallResult, Error> {
         try await reader.recallDetailed("actors")
@@ -261,8 +279,7 @@ private func waitUntil(
     defer { try? FileManager.default.removeItem(at: directory) }
     let file = directory.appendingPathComponent("memory.json")
     let selector = BlockingSelector()
-    var configuration = MemoryEngineConfiguration()
-    configuration.recallMaintenanceCheckpointSize = 1
+    let configuration = configurationWithoutEvidenceGate(checkpointSize: 1)
     let memory = try await MemoryEngine.open(
         persistence: JSONMemoryPersistence(url: file),
         selector: selector,
@@ -313,10 +330,9 @@ private func waitUntil(
 @Test func recallCancelledInsideMaintenanceTransactionRollsBackCompletely() async throws {
     let selector = BlockingSelector()
     let persistence = GatedTransactionalPersistence()
-    var configuration = MemoryEngineConfiguration()
     // Stay below the checkpoint threshold: the failure this guards against is
     // an in-memory intent surviving, not a premature save.
-    configuration.recallMaintenanceCheckpointSize = 8
+    let configuration = configurationWithoutEvidenceGate(checkpointSize: 8)
     let memory = try await MemoryEngine.open(
         persistence: persistence,
         selector: selector,

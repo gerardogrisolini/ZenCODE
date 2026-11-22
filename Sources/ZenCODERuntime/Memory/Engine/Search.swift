@@ -22,6 +22,49 @@ struct MemoryCandidate: Sendable, Equatable {
     }
 }
 
+/// The evidence a retrieval candidate carries for the query, as the minimum
+/// evidence recall gate (``MemoryEngineConfiguration/recallMinimumLexicalEvidenceRatio``,
+/// ``MemoryEngineConfiguration/recallMinimumSemanticSimilarity``,
+/// ``MemoryEngineConfiguration/recallLexicalSupportMinimumSimilarity``) and a
+/// measurement see it. It describes the candidate, it never scores it.
+struct MemoryCandidateEvidence: Sendable, Equatable {
+    /// Sum of the BM25 IDF of the distinct query terms the entry contains, over
+    /// the active entries of the retrieval scope (`0` when it shares no term).
+    /// It is the absolute value: the gate compares it with `ratio × idfMax(n)`
+    /// (the maximum evidence of the corpus, reported with the retrieval).
+    var lexical: Float
+    /// Raw cosine between the first query embedding and the entry vector;
+    /// `nil` when the semantic search did not run for this prompt or the entry
+    /// has no vector of the same model and size.
+    var semantic: Float?
+    /// Whether a retrieval seed (a fused lexical/semantic/metadata hit) rather
+    /// than an entry reached only through the graph cascade.
+    var isSeed: Bool
+}
+
+/// The scale the lexical evidence of a retrieval is judged on: `n`, the
+/// active entries of the retrieval scope the BM25 corpus is made of, and
+/// `idfMax(n)`, the evidence of an entry that contains one term found in no
+/// other entry. The relative lexical threshold of the recall gate
+/// (``MemoryEngineConfiguration/recallMinimumLexicalEvidenceRatio``) is a
+/// fraction of it.
+struct MemoryLexicalScale: Sendable, Equatable {
+    /// `n`: documents of the corpus; `0` when it was not built (no query token).
+    let documentCount: Int
+    /// `idfMax(n)`; `0` for an empty corpus.
+    let maximumEvidence: Float
+
+    init(documentCount: Int) {
+        self.documentCount = max(0, documentCount)
+        maximumEvidence = MemoryLexicalCorpus.maximumInverseDocumentFrequency(documentCount: documentCount)
+    }
+
+    static let empty = MemoryLexicalScale(documentCount: 0)
+
+    /// The effective absolute threshold of `ratio`: `ratio × idfMax(n)`.
+    func threshold(ratio: Float) -> Float { ratio * maximumEvidence }
+}
+
 enum MemorySearch {
     public static func cosineSimilarity(_ lhs: [Float], _ rhs: [Float]) -> Float {
         guard lhs.count == rhs.count, !lhs.isEmpty else { return 0 }
@@ -123,16 +166,31 @@ enum MemorySearch {
         modelID: String,
         scope: EngineMemoryScope
     ) -> [ScoredMemoryID] {
-        let dimensions = queryEmbedding.count
-        guard dimensions > 0 else { return [] }
+        guard !queryEmbedding.isEmpty else { return [] }
         return graph.memories.values.compactMap { entry in
             guard entry.active,
                   scopeAllows(entry.scope, requested: scope),
-                  entry.embeddingMatches(model: modelID),
-                  let embedding = entry.embedding,
-                  embedding.count == dimensions else { return nil }
-            return ScoredMemoryID(id: entry.id, score: cosineSimilarity(queryEmbedding, embedding))
+                  let similarity = semanticSimilarity(of: entry, to: queryEmbedding, modelID: modelID) else {
+                return nil
+            }
+            return ScoredMemoryID(id: entry.id, score: similarity)
         }
+    }
+
+    /// Raw cosine of `entry`'s vector to the query vector, or `nil` when the
+    /// entry has no vector of `modelID` with the query's dimensions. The one
+    /// definition of semantic eligibility shared by the ranking and by the
+    /// candidate evidence.
+    static func semanticSimilarity(
+        of entry: EngineMemoryEntry,
+        to queryEmbedding: [Float],
+        modelID: String
+    ) -> Float? {
+        guard !queryEmbedding.isEmpty,
+              entry.embeddingMatches(model: modelID),
+              let embedding = entry.embedding,
+              embedding.count == queryEmbedding.count else { return nil }
+        return cosineSimilarity(queryEmbedding, embedding)
     }
 
     /// BM25 over `memories`. Inactive entries are skipped unless
@@ -325,18 +383,68 @@ struct MemoryLexicalCorpus: Sendable {
             : Float(documents.reduce(0) { $0 + $1.length }) / Float(documents.count)
     }
 
+    /// The BM25 inverse document frequency of a term found in
+    /// `documentFrequency` of `documentCount` documents. The single definition
+    /// of the formula: the BM25 score and the candidate lexical evidence both
+    /// use it.
+    static func inverseDocumentFrequency(documentCount n: Float, documentFrequency df: Float) -> Float {
+        logf(1 + (n - df + 0.5) / (df + 0.5))
+    }
+
+    /// `idfMax(n)`: the largest IDF a single term can have in a corpus of
+    /// `documentCount` documents, that of a term found in exactly one of them
+    /// (`ln(1 + (n - 0.5) / 1.5)`: 5.46 for 353 documents, 2.64 for 20). The
+    /// scale the relative lexical threshold of the recall gate is taken on
+    /// (``MemoryEngineConfiguration/recallMinimumLexicalEvidenceRatio``); `0`
+    /// for an empty corpus, where no term has an IDF.
+    static func maximumInverseDocumentFrequency(documentCount: Int) -> Float {
+        guard documentCount > 0 else { return 0 }
+        return inverseDocumentFrequency(documentCount: Float(documentCount), documentFrequency: 1)
+    }
+
+    /// How many documents contain each of `terms`; a term in no document is
+    /// absent from the result.
+    func documentFrequencies(of terms: Set<String>) -> [String: Int] {
+        var documentFrequency: [String: Int] = [:]
+        for document in documents {
+            for term in terms where document.termFrequencies[term] != nil {
+                documentFrequency[term, default: 0] += 1
+            }
+        }
+        return documentFrequency
+    }
+
+    /// Lexical evidence of the documents `ids` for the query `terms`: for each
+    /// document, the sum of the IDF (over this corpus) of the distinct terms it
+    /// contains. A document with no term — or an id outside the corpus — gets
+    /// `0`. The terms are summed in sorted order so the value does not depend
+    /// on the run's hash seed.
+    func lexicalEvidence(terms: Set<String>, ids: Set<String>) -> [String: Float] {
+        var evidence: [String: Float] = Dictionary(uniqueKeysWithValues: ids.map { ($0, Float(0)) })
+        guard !terms.isEmpty, !documents.isEmpty else { return evidence }
+
+        let n = Float(documents.count)
+        let documentFrequency = documentFrequencies(of: terms)
+        let weighted: [(term: String, idf: Float)] = terms.sorted().compactMap { term in
+            guard let df = documentFrequency[term] else { return nil }
+            return (term, Self.inverseDocumentFrequency(documentCount: n, documentFrequency: Float(df)))
+        }
+        for document in documents where ids.contains(document.id) {
+            var sum: Float = 0
+            for (term, idf) in weighted where document.termFrequencies[term] != nil {
+                sum += idf
+            }
+            evidence[document.id] = sum
+        }
+        return evidence
+    }
+
     /// BM25 of the already tokenized query over the documents, best first,
     /// ties broken by id.
     func bm25(queryTokens: [String], limit: Int, k1: Float, b: Float) -> [ScoredMemoryID] {
         guard limit > 0, !queryTokens.isEmpty, !documents.isEmpty, averageLength > 0 else { return [] }
 
-        let querySet = Set(queryTokens)
-        var documentFrequency: [String: Int] = [:]
-        for document in documents {
-            for token in querySet where document.termFrequencies[token] != nil {
-                documentFrequency[token, default: 0] += 1
-            }
-        }
+        let documentFrequency = documentFrequencies(of: Set(queryTokens))
 
         let n = Float(documents.count)
         return documents.compactMap { document -> ScoredMemoryID? in
@@ -345,7 +453,7 @@ struct MemoryLexicalCorpus: Sendable {
             for token in queryTokens {
                 guard let tfValue = document.termFrequencies[token], tfValue > 0 else { continue }
                 let df = Float(documentFrequency[token] ?? 0)
-                let idf = logf(1 + (n - df + 0.5) / (df + 0.5))
+                let idf = Self.inverseDocumentFrequency(documentCount: n, documentFrequency: df)
                 let tf = Float(tfValue)
                 let dl = Float(document.length)
                 let denominator = tf + k1 * (1 - b + b * dl / averageLength)
@@ -359,5 +467,61 @@ struct MemoryLexicalCorpus: Sendable {
         }
         .prefix(limit)
         .map { $0 }
+    }
+}
+
+/// The queries of one retrieval, tokenized once, together with the corpus they
+/// rank. The default BM25 rankings and the lexical evidence of the recall gate
+/// both read it, so a retrieval tokenizes and stems the memories a single time
+/// instead of once for the ranking and once more for the evidence (the pass
+/// that dominates the cost of a lexical retrieval).
+///
+/// The rankings are those of ``MemorySearch/lexicalBM25(memories:queries:scope:limit:k1:b:requireActive:)``
+/// (the same corpus function, so identical scores and order) and the evidence
+/// that of ``MemoryLexicalCorpus/lexicalEvidence(terms:ids:)`` over the union
+/// of the query terms. Transient, like the corpus.
+struct MemoryLexicalRetrieval: Sendable {
+    /// The tokens of each query, in order; empty for a query with none.
+    let queryTokens: [[String]]
+    /// The documents of the eligible memories. `nil` when no query has tokens:
+    /// nothing can then rank or be evidenced, and the memories are not
+    /// tokenized at all.
+    let corpus: MemoryLexicalCorpus?
+
+    init(
+        memories: [EngineMemoryEntry],
+        queries: [String],
+        scope: EngineMemoryScope = .all,
+        requireActive: Bool = true
+    ) {
+        let queryTokens = queries.map(MemorySearch.tokens)
+        self.queryTokens = queryTokens
+        corpus = queryTokens.contains { !$0.isEmpty }
+            ? MemoryLexicalCorpus(memories: memories, scope: scope, requireActive: requireActive)
+            : nil
+    }
+
+    /// BM25 of every query over the shared corpus: one ranking per query, in
+    /// order, empty for a query without tokens.
+    func rankings(limit: Int, k1: Float, b: Float) -> [[ScoredMemoryID]] {
+        queryTokens.map { tokens in
+            guard let corpus, !tokens.isEmpty else { return [] }
+            return corpus.bm25(queryTokens: tokens, limit: limit, k1: k1, b: b)
+        }
+    }
+
+    /// The lexical evidence of the documents `ids` for the union of the distinct
+    /// terms of all the queries; empty when the queries have no term.
+    func evidence(ids: Set<String>) -> [String: Float] {
+        let terms = Set(queryTokens.joined())
+        guard let corpus, !terms.isEmpty else { return [:] }
+        return corpus.lexicalEvidence(terms: terms, ids: ids)
+    }
+
+    /// The scale the evidence is judged on: the size of the corpus it is taken
+    /// over and the largest evidence a single term can give there. Empty when
+    /// no query has tokens and the corpus was not built.
+    var scale: MemoryLexicalScale {
+        MemoryLexicalScale(documentCount: corpus?.documents.count ?? 0)
     }
 }

@@ -180,11 +180,20 @@ actor MemoryEngine {
     /// checkpoint (``flushRecallMaintenance()`` or the checkpoint threshold). For
     /// a lookup that must never mutate or fail on save use
     /// ``searchReadOnlyDetailed(_:scope:graph:limit:)``.
+    ///
+    /// `visibility` restricts the recall to the entries one profile owns (see
+    /// ``MemoryAuthorScope``); `nil` recalls from the whole graph. Maintenance
+    /// only touches the candidates, which all come from the restricted graph.
     public func recallDetailed(
         _ prompt: String,
-        scope: EngineMemoryScope = .all
+        scope: EngineMemoryScope = .all,
+        visibility: MemoryAuthorScope? = nil
     ) async throws -> MemoryRecallResult {
-        let (plan, candidates, selected) = try await retrieveAndSelect(prompt, scope: scope)
+        let (plan, candidates, selected) = try await retrieveAndSelect(
+            prompt,
+            scope: scope,
+            visibility: visibility
+        )
         // Maintenance is visible in memory at once and recorded as a replayable
         // intent, so it neither clobbers a concurrent write nor becomes
         // un-retryable when persistence is down. `retrieveAndSelect` awaited the
@@ -297,8 +306,12 @@ actor MemoryEngine {
 
     /// Returns the exact memory block that can be injected into a model prompt.
     /// An empty string means the analyzer/selector found nothing worth injecting.
-    public func context(for prompt: String, scope: EngineMemoryScope = .all) async throws -> String {
-        let result = try await recallDetailed(prompt, scope: scope)
+    public func context(
+        for prompt: String,
+        scope: EngineMemoryScope = .all,
+        visibility: MemoryAuthorScope? = nil
+    ) async throws -> String {
+        let result = try await recallDetailed(prompt, scope: scope, visibility: visibility)
         return contextFormatter.format(result.selected)
     }
 

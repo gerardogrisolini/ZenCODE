@@ -270,12 +270,17 @@ package struct MemoryGraph: Codable, Sendable, Equatable {
     public func outgoingEdges(from id: String) -> [MemoryEdge] { edges[id] ?? [] }
     public func incomingNodes(to id: String) -> [String] { reverseEdges[id] ?? [] }
 
+    /// Expands `seeds` through the graph, decaying the score along each edge.
+    /// With `raisesSeeds == false` the score of an entry present in `seeds` is
+    /// never modified by the propagation; only entries outside the seeds take a
+    /// propagated score.
     public mutating func cascadeRetrieve(
         seeds: [ScoredMemoryID],
         maxDepth: Int = 2,
         maxResults: Int = 10,
         edgeDecay: Float = 0.7,
-        scope: EngineMemoryScope = .all
+        scope: EngineMemoryScope = .all,
+        raisesSeeds: Bool = true
     ) -> [ScoredMemoryID] {
         metadata.retrievalCount &+= 1
         guard maxResults > 0 else { return [] }
@@ -304,6 +309,14 @@ package struct MemoryGraph: Codable, Sendable, Equatable {
             results[seed.id] = max(results[seed.id] ?? -.infinity, seed.score)
         }
 
+        /// With `raisesSeeds == false` a seed keeps its own score: the
+        /// propagation never overwrites it. The seeds are already queued at
+        /// depth 0, so traversal through them is unaffected.
+        let pinnedSeeds: Set<String> = raisesSeeds ? [] : Set(results.keys)
+        func improves(_ id: String, with score: Float) -> Bool {
+            !pinnedSeeds.contains(id) && score > (results[id] ?? -.infinity)
+        }
+
         while cursor < queue.count {
             let item = queue[cursor]
             cursor += 1
@@ -319,12 +332,12 @@ package struct MemoryGraph: Codable, Sendable, Equatable {
 
                 if target.hasPrefix("tag:") || target.hasPrefix("cluster:") {
                     for sourceID in incomingNodes(to: target) where isRetrievable(sourceID) && !visited.contains(sourceID) {
-                        if newScore > (results[sourceID] ?? -.infinity) {
+                        if improves(sourceID, with: newScore) {
                             results[sourceID] = newScore
                             queue.append(.init(id: sourceID, score: newScore, depth: item.depth + 1))
                         }
                     }
-                } else if isRetrievable(target), newScore > (results[target] ?? -.infinity) {
+                } else if isRetrievable(target), improves(target, with: newScore) {
                     results[target] = newScore
                     queue.append(.init(id: target, score: newScore, depth: item.depth + 1))
                 }

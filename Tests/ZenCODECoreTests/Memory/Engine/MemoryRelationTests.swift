@@ -356,13 +356,25 @@ struct MemoryRecallRelationTests {
 
         let ids = numbered("m", 0..<16)
         // Three-way selections in a non-ranking order, repeated pairs, a hub
-        // that overflows the cap: all of it must replay identically.
+        // that overflows the cap: all of it must replay identically. Only ten
+        // of the sixteen entries are lexical hits (`maxLexicalHits`): the
+        // script picks the others from the candidates the cascade reaches
+        // through the shared tag, so this scenario turns the cascade on. The test
+        // is about replaying the maintenance, not about the evidence gate (every
+        // entry shares the common word `swift` with the prompt, so the default
+        // gate would select none): the gate is turned off explicitly.
         var script: [[String]] = ids.dropFirst().map { ["m00", $0] }
         script += [["m05", "m02", "m09"], ["m09", "m05"], ["m02", "m15", "m00"]]
         let memory = try await MemoryEngine.open(
             persistence: JSONMemoryPersistence(url: file),
             selector: ScriptedSelector(script),
-            configuration: MemoryEngineConfiguration(recallMaintenanceCheckpointSize: 100)
+            configuration: MemoryEngineConfiguration(
+                maxDepth: 2,
+                recallMinimumLexicalEvidenceRatio: nil,
+                recallMinimumSemanticSimilarity: nil,
+                recallLexicalSupportMinimumSimilarity: nil,
+                recallMaintenanceCheckpointSize: 100
+            )
         )
         for id in ids {
             _ = try await memory.remember("note \(id) about swift", tags: ["swift"], id: id)

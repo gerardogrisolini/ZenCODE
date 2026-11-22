@@ -38,7 +38,7 @@ extension MemoryTool {
     private static let searchDescriptor = ToolDescriptor(
             name: "memory.search",
             title: "Memory Search",
-            description: "Searches the durable project journal: BM25 keyword ranking, semantic similarity when an embedding endpoint is configured, and graph-related entries. Results are ranked by relevance; limit (1-50, default 8) caps them, includeArchived reserves up to half of the limit for archived matches, and tags (all required) or category narrow them.",
+            description: "Searches the durable project journal: BM25 keyword ranking and, when an embedding endpoint is configured, semantic similarity. Results are ranked by relevance; limit (1-50, default 8) caps them, includeArchived reserves up to half of the limit for archived matches, and tags (all required) or category narrow them.",
             inputSchema: """
             {
               "type": "object",

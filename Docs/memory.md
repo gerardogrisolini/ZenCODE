@@ -213,8 +213,9 @@ pluggable `MemoryIndex` protocol (default `BM25MemoryIndex`; the engine ranks
 all the queries of one retrieval through the batch `search(queries:…)`
 requirement, whose default implementation searches query by query, so the BM25
 index tokenizes the corpus once per retrieval) and uses those hits
-as seeds, then a breadth-first relation cascade with depth decay and a
-per-retrieval confidence boost of the selected entries. Lexical tokens come
+as seeds; a breadth-first relation cascade with depth decay (`maxDepth`, off by
+default: see below) can expand them, and a per-retrieval confidence boost of the
+selected entries follows. Lexical tokens come
 from `MemoryTokenizer`, applied identically to stored text and queries at
 retrieval time (nothing derived from it is persisted): words are cut on
 non-alphanumerics and on camel-case humps — `AgentCoreSessionRunner` yields
@@ -238,8 +239,9 @@ stored `confidence` scales the whole. The discount is applied to each ranking
 *before* fusion — each stage over-fetches and re-sorts by
 relevance × freshness, so a slightly older but better match keeps its rank,
 whereas applying it after fusion would act on near-flat rank scores and sort
-by age alone — and, after the cascade, only to the graph neighbours that
-inherited a seed's decayed score, so every entry is weighted exactly once.
+by age alone — and, when the cascade is turned on, only to the graph
+neighbours that inherited a seed's decayed score, so every entry is weighted
+exactly once.
 `memory.search` is strictly read-only: the
 store's `search` runs the engine's `searchReadOnlyDetailed` path over a fresh
 read-only snapshot of the graph, which shares the same
@@ -249,7 +251,8 @@ fail on a save error — while automatic recall (`context(for:)`) keeps its
 maintenance-bearing path unchanged. The two differ in what they return: an
 explicit search widens every retrieval stage (lexical, semantic and cascade
 caps) to the requested `limit` (1–50, default 8) and returns the ranked
-candidates — direct hits plus the graph neighbours the cascade reached — up
+candidates — the direct hits, plus the graph neighbours only when the cascade
+is turned on, which it is not by default — up
 to that limit, whereas recall injects only the selector's thresholded subset
 (see `ScoreThresholdMemorySelector` below), which guards what enters a turn
 unasked. With `includeArchived`, archived entries are ranked with the same
@@ -296,8 +299,34 @@ entry in the top-5; the previous RRF + absolute-threshold pipeline 0.86 / 0.65 /
 with none displaced. Centering the vectors on the corpus centroid was also
 measured and rejected (it lowered the pure-cosine rank of the relevant entries).
 
+The graph expansion is **off by default**: `MemoryEngineConfiguration.maxDepth`
+is 0, so retrieval returns the lexical and semantic hits and no entry that is
+reachable only through a `relates_to` edge, a shared tag or a cluster. It was
+measured on 2026-11-22 on a copy of the real graph (353 active entries,
+`qwen3-embedding-8b` vectors, the 14 judged queries plus 10 conversational
+prompts, hybrid mode, all variants in the same run):
+
+| Hybrid retrieval | MRR | recall@5 | queries with a relevant selected entry | precision of the selected | selected per query | graph-only selected (relevant) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `maxDepth` 2 (previous default) | 0.55 | 0.46 | 12/14 | 0.16 | 8.0 | 41 (0) |
+| `maxDepth` 0 (default) | 0.57 | 0.48 | 12/14 | 0.25 | 5.4 | 0 |
+
+With lexical retrieval alone MRR (0.44) and recall@5 (0.35) were identical in
+every variant, and the expansion reached a single relevant entry that no query
+hit found. So the
+injected block is smaller and more precise with no measurable loss of recall.
+On the conversational prompts ("ok", "procedi", …) hybrid retrieval went from
+8.0 to 7.1 selected entries: the noise that remains comes from semantic seeds,
+not from the graph. Nothing is removed from the graph: tags, `relates_to` edges
+and the co-relevance links (`strengthenCoRelevantLinks`) are still persisted and
+maintained, the file formats are unchanged, and `cascadeRaisesSeeds` and
+`maxGraphOnlySelections` stay in the configuration as references that are inert
+at depth 0. `MemoryGraph.cascadeRetrieve` keeps its own default depth of 2, so
+the expansion comes back with `maxDepth: 2`.
+
 Embeddings are opt-in and off by default. With no provider configured, entries
-carry no vector and retrieval is pure BM25 plus graph expansion. The persisted
+carry no vector and retrieval is pure BM25 (the graph expansion is off by
+default, see above). The persisted
 settings manifest (`AgentMemoryEmbeddingSettingsManifest`, manifest version 12,
 `settings.json` `memoryEmbedding`) stores a normalized absolute HTTP(S)
 endpoint — plus, optionally, an OpenAI-compatible `model` identifier and a
@@ -364,7 +393,8 @@ Automatic recall is on by default and adds no second LLM call. Before every
 turn — operator and delegated sub-agent alike — `MemoryTurnCoordinator`
 resolves the session's graph (the workspace graph, or the global graph for
 `organizer` sessions) and runs the store's `context(for:scope:)`
-inline: offline BM25 seeds, graph expansion, and selection through
+inline: offline BM25 seeds (no graph expansion by default), the evidence gate
+(below) and selection through
 `ScoreThresholdMemorySelector`. Without an endpoint, retrieval is local BM25
 and costs no extra round trip; with an endpoint, a bounded HTTP call to the
 embedding service adds semantic similarity and fusion. The request is sent
@@ -418,6 +448,71 @@ request itself stays byte-identical. The memory-tool prompt tells the model
 that a missing `<project-memory>` block means either nothing relevant was
 found or recall was unavailable, and to call `memory.search` before concluding
 that no prior context exists.
+
+**Evidence gate.** A prompt with no content of its own ("ok", "procedi", "mi
+spieghi meglio?") used to get a block of entries that merely scored best among
+weak matches. Before the selector sees the candidates, the engine now keeps only
+the retrieval seeds that have evidence for the prompt
+(`MemoryEngineConfiguration.recallMinimumLexicalEvidenceRatio`,
+`recallMinimumSemanticSimilarity`, `recallLexicalSupportMinimumSimilarity`,
+`recallSemanticThresholdModels`; on by default). An entry's *lexical evidence*
+is the sum of the BM25 IDF of the distinct query terms it contains, over the
+same corpus and with the same formula as the BM25 ranking (it is exposed as
+`MemoryCandidateEvidence.lexical`, always as an absolute value). With the
+semantic search run and a raw cosine to the first query embedding available for
+the entry (it has a vector of the embedder's model) the entry is selectable if
+`cos ≥ C || (lexical ≥ L && cos ≥ C2)`; otherwise — no embedder, endpoint
+failure, `includeSemantic` off, an entry without a vector of the model — if
+`lexical ≥ L`. The defaults are `L = 0.55 × idfMax(n)`, `C = 0.55` and
+`C2 = 0.45`; `C2` keeps an entry that merely shares a lot of vocabulary from
+being selected when it sits far from the prompt in the embedding space.
+
+- *Why `L` is relative.* An absolute IDF depends on the size of the corpus: a
+  term found in a single entry is worth `ln(1 + (n − 0.5) / 1.5)` = 5.46
+  among 353 entries but at most 2.64 among 20, so a fixed threshold of 3 would
+  empty the recall of every small project. The threshold is therefore
+  `ratio × idfMax(n)`, with `idfMax(n)` the IDF of a term present in one
+  single document of the BM25 corpus (the active entries of the retrieval
+  scope, `n`); 0.55 is the measured 3 on the 353-entry graph (3.005). With no
+  entry in the scope (`n = 0`) the lexical rule selects nothing. A `nil` ratio
+  asks for any shared term.
+- *Why `C` and `C2` are tied to a model.* Raw cosines are not comparable across
+  embedding models (an unrelated-entry baseline of 0.35–0.45 for one model may
+  be 0.7 for another), and both values were measured on
+  `qwen/qwen3-embedding-8b` only. `recallSemanticThresholdModels` (default
+  `["qwen/qwen3-embedding-8b"]`) lists the models they apply to, compared
+  case-insensitively with the embedder's `modelID`; for any other model `C` and
+  `C2` count as `nil`: a hit that passed the z-score semantic gate is semantic
+  support and a lexically supported entry has no cosine floor. An empty set
+  means *never*; to apply the thresholds to every model use an explicit
+  `["*"]`. Setting `L`, `C` and `C2` all to `nil` (the cosine ones also count as
+  `nil` for a model outside the set) turns the gate off.
+- *What it changes.* It narrows the selection only: the candidates, the
+  ranking, `memory.search` and the persisted formats are unchanged, and an entry
+  reached only through the graph cascade (off by default) is never selectable.
+  When nothing qualifies the selector is not asked and the turn receives no
+  memory block, so a prompt like "ok" or "procedi" no longer pulls in entries at
+  random; the blocks injected on earlier turns stay in the conversation
+  context as they were. It is a floor on evidence, not a classifier of intent: a
+  conversational prompt that shares a specific term with an entry, or sits close
+  to it in the embedding space, still selects it.
+
+Measured on a copy of the real graph (353 active entries,
+`qwen/qwen3-embedding-8b` vectors, hybrid mode, every variant in the same run;
+A = the 14 judged queries, B = 10 short prompts with a judged relevant entry,
+C = 20 conversational prompts with no retrieval intent; the lexical threshold
+was the absolute 3 that `0.55` reproduces on this graph):
+
+| Selection | A: queries with a relevant selected | A: relevant selected | A: precision | A: selected per query | B: prompts with a relevant selected | C: selected per prompt | C: empty blocks | C: distinct entries |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| hybrid, gate off | 12/14 | 19 | 0.25 | 5.5 | 10/10 | 6.90 | 0/20 | 44 |
+| hybrid, `L` 0.55 (3), `C` 0.55, `C2` 0.45 (default) | 12/14 | 20 | 0.29 | 4.93 | 10/10 | 1.05 | 7/20 | 7 |
+| lexical only, gate off | 10/14 | — | — | — | 10/10 | 4.8 | — | — |
+| lexical only, `L` 0.55 (3) | 10/14 | — | — | — | 10/10 | 2.6 | 8/20 | — |
+
+The judged prompts keep every hit and gain one relevant entry, with fewer
+entries selected per query, while the conversational prompts drop from 6.9 to
+1.05 entries on average and seven of the twenty get no block at all.
 
 Recall is deliberately not prefetched one turn ahead.
 `MemoryGraphStoreRegistry` caches exactly one store — and so one engine — per
@@ -527,6 +622,30 @@ not even the first entry fits, it is clipped rather than dropped and the
 notice says so. The fixed header, the tags and the notice are constant
 overhead on top of the budgeted payload.
 
+On a workspace graph, a bullet whose entry cites repository paths that no
+longer exist in the current checkout carries one more indented continuation
+line, added before escaping and budgeting so it is kept or dropped with its
+bullet and counts in the budget: ``Not found in the current checkout (verify
+before relying on this entry): `a`, `b` (+2 more).`` (at most five paths are
+named). The check, `MemoryCitedPaths`, is conservative on purpose: it looks
+only at tokens that contain a `/`, after removing surrounding punctuation, a
+line suffix (`:12`, `:12-20`, `:12:3`) or a `#fragment` (`#L12`) and a leading
+`./`; it ignores URLs, globs, truncated paths (`…`, `...`), `..`, tokens that
+start with `~` or `-`, and anything with a character other than letters,
+digits and `_ - . / +` (so also `@`: `Docs/builder.md@v6.1.1` is a file at a
+tag, not a file of the checkout). An absolute path counts only under the
+workspace root. A relative one counts only when its first component is the
+exact name, capitals included, of an entry listed from the root (`Sources`,
+`Docs`, …) — a case-insensitive file system would otherwise let `tests/29` find
+`Tests` — and, when the token has more than one component, that entry is a
+directory (`Package.swift/Package.resolved` is two files joined by a slash).
+That keeps prose such as `feat/x` or `IT/EN` from being reported. A missing
+path whose last component has no extension is also ignored when its parent
+directory (if it exists) or the root holds an entry with that name before the
+extension: `Docs/architecture` in “Docs/architecture aggiornati” is prose about
+`Docs/architecture.md`. The global graph is never annotated, and neither
+ranking, the persisted graph, nor the system prompt change.
+
 The main model owns durable memory explicitly through the seven `memory.*`
 tools — read-only `memory.read`, `memory.search`, `memory.get`; mutating
 `memory.write`, `memory.update`, `memory.archive`, `memory.restore` — guided by
@@ -541,7 +660,11 @@ reverses it). `memory.read` pages the journal newest-first (`offset`, `limit`,
 all required and case-insensitive; `category`). `memory.get` returns one entry
 by id, archived or not; `memory.restore` reactivates an archived entry and,
 with an embedding provider, gives it a vector when it has none from that model
-(see [Memory re-embedding](#memory-re-embedding)).
+(see [Memory re-embedding](#memory-re-embedding)). On a workspace graph,
+`memory.read`, `memory.search` and `memory.get` with `detail` `full` (the
+default) add the same stale-path note as a line after the entry's content and
+before its `ID:` line; `detail: index`, the structured `rawResult`, the global
+graph and the results of the mutating tools are unchanged.
 `memory.write` never blocks on similarity: after creating an entry it reports
 up to three active entries whose words cover much of the new content —
 scored with the engine's BM25 using the new content as the query, relative to
@@ -560,6 +683,42 @@ state on close/reset/rebuild. The engine has no extraction layer of its own:
 selective product consolidation uses the runner-owned same-backend path
 described below, and opening a store alone never performs an extraction
 request.
+
+## Ownership
+
+Every entry records its author: the `name` of the agent profile that wrote it
+(not its role or id), in the optional `author` field of the entry JSON. The key
+is written only when set, so a graph without authors saves back byte-identical
+and `graph_version` stays 4; the public `MemoryEntry` DTO carries it as well.
+A profile sees and changes only its own entries, names compared without regard
+to case or surrounding whitespace. The rule is `MemoryAuthorScope`, one
+predicate: retrieval (automatic recall, its lexical fallback, `memory.search`)
+runs on the graph restricted to the profile's entries, so the BM25 IDF and the
+`idfMax(n)` of the evidence gate count only those; `memory.read` and
+`memory.get`, the duplicate check and the `similar`/`tagHints` of
+`memory.write`, and `memory.update`/`archive`/`restore` treat another profile's
+entry as not found; the automatic writer is shown, deduplicates against and
+writes only the session profile's entries. Recall maintenance (boosts,
+co-relevance links) touches only the selected, hence visible, entries.
+
+- A session without a selected profile reads and writes as `Developer`.
+- Entries without an author, written before this rule, are attributed on read
+  and never migrated: in a project graph they belong to `Developer`; in the
+  global graph they stay visible to every profile that uses it, while what
+  those profiles write there carries their name and is private.
+- `memory.write` and the automatic writer stamp the resolved profile name, so
+  the same content written by two profiles makes two entries. `memory.update`
+  never changes the author: an entry without one keeps none.
+- Profiles that cannot write memory, the read-only ones such as Planner and
+  Reviewer and those without memory tools, see only their own entries: none,
+  until entries are written under their name.
+- Renaming a profile detaches its entries: they stay in the graph under the old
+  name and come back only under that name.
+- Setup maintenance (**Clean memory**, **Rebuild memory embeddings**) covers the
+  whole graph, every author included; none of its rules merges or deduplicates
+  entries, so an entry never takes over another author's content.
+- `memory.get` and the full `memory.read`/`memory.search` show `Author:` for an
+  entry that records one; the entries of every `rawResult` gain `author`.
 
 ## Memory cleanup
 
@@ -810,7 +969,7 @@ every candidate up to `maxResults`, which would defeat the engine's
 post-retrieval maintenance: every retrieved entry would be boosted (confidence
 flattens toward 1.0), and `selected.count >= 2` would nearly always hold, so
 every recall would link its results pairwise, saturating the
-graph until cascade retrieval degenerates into noise. The threshold selector
+graph until cascade retrieval, where it is turned on, degenerates into noise. The threshold selector
 keeps only candidates scoring at least half of the top hit, limiting the boost
 and co-relevance linking to genuinely strong matches. Even then the links are
 bounded (`MemoryRelationPolicy`, carried by `MemoryEngineConfiguration`, so a
@@ -834,7 +993,7 @@ Rejected candidates are
 left untouched: `decayRejectedBy` defaults to 0, so being retrieved near a
 prompt without being chosen costs an entry nothing, and the boost records the
 access without touching `updatedAt`. It makes no LLM call and no network
-request: BM25/cascade scores have no absolute scale (they depend on corpus
+request: BM25 scores (and cascade scores, where the cascade is on) have no absolute scale (they depend on corpus
 statistics), so the cutoff is relative to each recall's best hit rather than a
 fixed threshold. The engine's `MemoryVerifier` protocol is deprecated in favour
 of `MemorySelector`. The original five `memory.*` tool names are unchanged

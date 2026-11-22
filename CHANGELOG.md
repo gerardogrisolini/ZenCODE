@@ -36,6 +36,17 @@ Release tags follow the strict `vX.Y.Z` contract described in
   `local.applyPatch` still shows only its compact block. Only the terminal
   presentation changes: the runtime, `DirectAgentToolCallPreview`, and the
   persisted formats are unchanged.
+- Memory: when a recalled entry of a workspace graph cites repository paths
+  that no longer exist in the current checkout (for example
+  `Sources/ZenCODECore/Memory/Engine` after the move to `ZenCODERuntime`), its
+  bullet in the `<project-memory>` block now ends with the line `Not found in
+  the current checkout (verify before relying on this entry): …`, and
+  `memory.read`, `memory.search`, and `memory.get` with `detail` `full` add the
+  same line after the entry. Only unmistakable repository paths are checked (a
+  relative one needs its first folder, spelled exactly, in the workspace root),
+  so URLs, globs, and prose such as `feat/x` are left alone. Ranking, the
+  global graph, the `rawResult` of the tools, `detail: index`, the persisted
+  graph, and the system prompt are unchanged.
 
 ### Changed
 
@@ -93,8 +104,59 @@ Release tags follow the strict `vX.Y.Z` contract described in
   plan, and the `/goal` workflow are still cleared. `/sessions load` still
   restores the selection saved with the session, and the first session of a
   launch still starts from the launch profile. ACP is unchanged.
+- Memory: the `<project-memory>` block of automatic recall is smaller and more
+  precise, because retrieval no longer expands over the graph: an entry that
+  no query hit found, and that was only a neighbour of one through a link, a
+  shared tag, or a cluster, is no longer recalled. On a copy of a real graph
+  (353 active entries, 24 prompts, hybrid retrieval), the entries selected per
+  prompt fell from 8.0 to 5.4 and their precision rose from 0.16 to 0.25, with
+  MRR 0.57 (was 0.55) and recall@5 0.48 (was 0.46); none of the 41 entries that
+  only the graph had brought in was relevant. `memory.search` no longer follows
+  links either: it returns the direct hits, and its tool description and the
+  memory guidance in the system prompt no longer say that retrieval follows
+  links. The graph, the tags, and the links are still saved and maintained, and
+  the persisted formats are unchanged.
+- Memory: automatic recall no longer injects entries for prompts that carry no
+  content of their own, such as "ok" or "procedi". Before the selector chooses,
+  an entry must now have evidence for the prompt: a shared term rare enough in
+  the corpus (at least 0.55 × the highest weight a term can have there, so the
+  threshold scales with the number of entries and suits small projects as well
+  as large ones) or, with an embedding provider, a cosine of at least 0.55, or
+  of 0.45 together with that lexical evidence. The two cosine thresholds apply
+  only to `qwen/qwen3-embedding-8b`, the model they were measured on
+  (`recallSemanticThresholdModels`); other models keep the previous semantic
+  gate. On a copy of a real graph (353 active entries, hybrid retrieval) the 14
+  judged queries kept 12/14 hits with one more relevant entry selected
+  (precision 0.25 → 0.29), the 10 short prompts 10/10, and the 20
+  conversational prompts went from 6.9 to 1.05 selected entries, with 7 empty
+  blocks (none before). `memory.search`, the ranking, and the persisted formats
+  are unchanged.
+- **Breaking:** Memory belongs to the agent profile that wrote it. Each entry
+  records its author, the profile's `name` (not its role or id), and a profile
+  sees and changes only its own entries: in automatic recall, in every
+  `memory.*` tool (another profile's entry is not found), in duplicate checks,
+  and in the automatic writer. Names compare without regard to case, and a
+  session without a profile works as `Developer`. Existing entries are not
+  migrated: in a project graph they belong to `Developer`, in the global graph
+  they stay visible to every organizer profile. So every other profile,
+  including read-only ones such as Planner and Reviewer, no longer sees the
+  project's existing notes, and renaming a profile detaches its entries. The
+  format change is additive: an optional `author` key written only when set
+  (`graph_version` stays 4), `MemoryEntry.author`, an `author:` parameter on
+  the `MemoryService` calls, and `Author:` / `author` in the tool results. See
+  [Docs/memory.md](Docs/memory.md#ownership).
 
 ### Fixed
+
+- With the in-process DS4 engine, in the terminal chat, when the model wrote
+  several file writes or edits in one tool-call block (for example many
+  `local.editFile` calls on the same file), the status row of the first call
+  (`/tmp/Example.swift ✅ 1.16ms`) was attached, without its header, under the
+  preview of the last call, and the other calls followed as full blocks. The
+  calls of a block run only after the whole block is written, so the status
+  row now joins the preview only when the block draws a single call; otherwise
+  every call keeps its full compact block, with its header and target, after
+  the previews.
 
 - Terminal UI: while the `/subagent` or `/artifacts` panel was open, every tool
   the turn ran was written twice below the chat, first running (⏳) and then
