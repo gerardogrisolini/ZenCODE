@@ -150,7 +150,7 @@ struct DelegatableAgentsSectionTests {
                 instructions: "Review only; do not edit files.",
                 readOnly: true,
                 role: .reviewer,
-                tools: ["local.readFile"]
+                tools: ["local.read"]
             ),
             AgentProfile(id: "bound", name: "Unavailable", role: .developer, modelID: "missing", capability: 5),
         ]
@@ -163,7 +163,7 @@ struct DelegatableAgentsSectionTests {
                 allowedToolNames: ["agent.create"],
                 snapshot: snapshot
             ))
-            #expect(section.contains("Reviewer [read-only; role: reviewer; tools: local.readFile]: Review only; do not edit files."))
+            #expect(section.contains("Reviewer [read-only; role: reviewer; tools: local.read]: Review only; do not edit files."))
             #expect(section.contains("inherits the main session model"))
             #expect(section.contains("omit `model`"))
             #expect(!section.contains("Unavailable"))

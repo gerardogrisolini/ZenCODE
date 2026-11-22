@@ -103,7 +103,7 @@ struct TerminalSemanticToolRenderingTests {
                 "0.47s"
             ),
             (
-                "local.writeFile",
+                "local.write",
                 ["path": "Sources/App.swift", "content": "struct App {}"],
                 "Write",
                 "Sources/App.swift",

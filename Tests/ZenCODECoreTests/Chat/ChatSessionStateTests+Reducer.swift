@@ -73,7 +73,7 @@ extension ChatSessionStateTests {
     @Test
     @ChatSessionActor
     func aToolCallPreviewChangesNeitherTheReducerSnapshotNorTheOpenBlock() async throws {
-        let call = Self.toolCall(id: "call-write", name: "local.writeFile")
+        let call = Self.toolCall(id: "call-write", name: "local.write")
         let result = DirectAgentToolResult(output: "ok", summary: "ok")
         let plain = Self.reducer()
         let previewed = Self.reducer()
@@ -85,7 +85,7 @@ extension ChatSessionStateTests {
 
         let before = previewed.snapshot
         let fragments: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: "local.writeFile"),
+            .toolStarted(name: "local.write"),
             .parameterStarted(name: "path"),
             .parameterText("Notes.md"),
             .parameterEnded,
@@ -335,7 +335,7 @@ enum BlockScript: CaseIterable, Sendable, CustomTestStringConvertible {
     }
 
     private static let read = DirectAgentToolCall(
-        id: "read", name: "local.readFile", argumentsObject: ["path": "a.swift"], argumentsJSON: "{}"
+        id: "read", name: "local.read", argumentsObject: ["path": "a.swift"], argumentsJSON: "{}"
     )
     private static let list = DirectAgentToolCall(
         id: "list", name: "local.ls", argumentsObject: [:], argumentsJSON: "{}"
@@ -402,10 +402,10 @@ enum BlockScript: CaseIterable, Sendable, CustomTestStringConvertible {
     var expected: [ChatSessionStateTests.TurnEntry] {
         let prompt = ChatSessionStateTests.TurnEntry(turn: 1, entry: .prompt(text: prompt, attachments: []))
         let started = ChatSessionStateTests.RepresentableEntry.toolCallStarted(
-            id: "read", name: "local.readFile", argumentsJSON: #"{"path":"a.swift"}"#
+            id: "read", name: "local.read", argumentsJSON: #"{"path":"a.swift"}"#
         )
         let completed = ChatSessionStateTests.RepresentableEntry.toolCallCompleted(
-            id: "read", name: "local.readFile", output: "ok", attachments: []
+            id: "read", name: "local.read", output: "ok", attachments: []
         )
         let entries: [ChatSessionStateTests.RepresentableEntry]
         switch self {

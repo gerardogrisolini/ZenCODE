@@ -20,7 +20,7 @@ extension SwiftFeatureSessionExposureTests {
     func aDelegatedFeatureMayNotTakeACoreNamespace() async throws {
         let runtime = SwiftFeatureRuntime(features: [])
         let refused: [(tools: [String], aliases: [String], prefixes: [String], entry: String)] = [
-            (["local.readFile"], [], [], "its tool 'local.readFile'"),
+            (["local.read"], [], [], "its tool 'local.read'"),
             (["tasks.exportCSV"], [], [], "its tool 'tasks.exportCSV' falls in the namespace 'tasks.' of the core tools"),
             (["memoryless", "memory.export"], [], [], "its tool 'memory.export' falls in the namespace 'memory.'"),
             (["memory"], [], [], "the namespace 'memory.' of its tool 'memory'"),
@@ -30,10 +30,10 @@ extension SwiftFeatureSessionExposureTests {
             (["fine.run"], [], ["feature.x."], "its tool prefix 'feature.x.'"),
             // A name under a core namespace, which a session allowing the core
             // tool would find relevant through the derived prefix.
-            (["local.readFile.pdf"], [], [], "its tool 'local.readFile.pdf' falls in the namespace 'local.' of the core tools"),
+            (["local.read.pdf"], [], [], "its tool 'local.read.pdf' falls in the namespace 'local.' of the core tools"),
             (["skills.list.x"], [], [], "its tool 'skills.list.x' falls in the namespace 'skills.' of the core tools"),
             (["fine.run"], ["skills.list.x"], [], "its alias 'skills.list.x' falls in the namespace 'skills.'"),
-            (["fine.run"], [], ["local.readFile."], "its tool prefix 'local.readFile.' falls in the namespace 'local.'"),
+            (["fine.run"], [], ["local.read."], "its tool prefix 'local.read.' falls in the namespace 'local.'"),
         ]
         for refusal in refused {
             let error = try await #require(throws: DirectToolError.self) {
@@ -160,14 +160,14 @@ extension SwiftFeatureSessionExposureTests {
             let manifestURL = try #require(rerouted.manifestURL)
             let original = try String(contentsOf: manifestURL, encoding: .utf8)
             try Self.rewriteManifest(at: manifestURL) { manifest in
-                manifest["toolNamePrefixes"] = ["local.readFile."]
+                manifest["toolNamePrefixes"] = ["local.read."]
             }
             // An unrelated reload, by a caller without any delegating session.
             _ = try await runtime.executeManagementTool(toolCall: Self.managementCall("feature.reload", [:]))
 
             // Still loaded, with the new routing, but no longer exposed.
             #expect(await runtime.features.first { $0.id == "rerouted-fixture" }?.toolNamePrefixes
-                == ["local.readFile."])
+                == ["local.read."])
             for sessionID in ["session-a", "session-b"] {
                 #expect(await runtime.exposedFeatureIDs(sessionID: sessionID) == ["kept-fixture"])
                 #expect(await runtime.builderBuiltExecutablePathsBySessionID[sessionID]?.keys.sorted()
@@ -340,7 +340,7 @@ extension SwiftFeatureSessionExposureTests {
     @Test
     func aReloadChecksTheExposedBundleOfTwoLoadedWithOneID() async {
         let clean = Self.bundle(id: "twin", tools: ["twin.first"])
-        let rerouted = Self.bundle(id: "twin", tools: ["local.readFile.extra"])
+        let rerouted = Self.bundle(id: "twin", tools: ["local.read.extra"])
         let runtime = SwiftFeatureRuntime(features: [clean, rerouted])
         await runtime.exposeForTesting("twin", sessionID: "session-a", executableURL: clean.executableURL)
         await runtime.exposeForTesting("twin", sessionID: "session-b", executableURL: rerouted.executableURL)

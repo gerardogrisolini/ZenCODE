@@ -38,7 +38,7 @@ extension TerminalChatRenderCoordinatorTests {
         #expect(!containsCursorUpSequence(output))
         #expect(!output.contains("⏳"))
         let screen = terminalScreenText(output, width: 100)
-        #expect(screen.components(separatedBy: "local.readFile").count - 1 == 3)
+        #expect(screen.components(separatedBy: "local.read").count - 1 == 3)
         #expect(screen.components(separatedBy: "✅").count - 1 == 3)
         #expect(await renderer.snapshot().activeToolCallID == nil)
     }
@@ -68,7 +68,7 @@ extension TerminalChatRenderCoordinatorTests {
         #expect(containsCursorUpSequence(completion))
 
         let screen = terminalScreenText(await renderer.capturedText(on: .standardError), width: 100)
-        #expect(screen.components(separatedBy: "local.readFile").count - 1 == 1)
+        #expect(screen.components(separatedBy: "local.read").count - 1 == 1)
         #expect(!screen.contains("⏳"))
         let completionRange = screen.range(of: "✅")
         let diagnosticRange = screen.range(of: "Adjacent diagnostic")

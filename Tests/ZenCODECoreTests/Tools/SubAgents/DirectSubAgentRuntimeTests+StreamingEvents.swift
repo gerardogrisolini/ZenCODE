@@ -156,7 +156,7 @@ extension DirectSubAgentRuntimeTests {
         await runtime.recordEvent(
             .toolCallStarted(presentedToolCall(
                 id: "read-call",
-                name: "local.readFile",
+                name: "local.read",
                 argumentsObject: ["path": "/tmp/Example.swift"],
                 argumentsJSON: #"{"path":"/tmp/Example.swift"}"#
             )),
@@ -357,7 +357,7 @@ extension DirectSubAgentRuntimeTests {
         let before = try #require(await runtime.snapshots().first)
 
         let fragments: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: "local.writeFile"),
+            .toolStarted(name: "local.write"),
             .parameterStarted(name: "path"),
             .parameterText("Notes.md"),
             .parameterEnded,

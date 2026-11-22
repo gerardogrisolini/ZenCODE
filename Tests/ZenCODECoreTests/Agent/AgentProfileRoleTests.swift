@@ -242,7 +242,7 @@ struct AgentProfileRoleTests {
         #expect(!AgentProfileRole.generic.delegatesByRole)
         #expect(!AgentProfileStore.isPlannerAgent(generic))
         #expect(!AgentProfileStore.isBuilderAgent(generic))
-        #expect(coreNames.contains("local.writeFile"))
+        #expect(coreNames.contains("local.write"))
         #expect(generic.resolvedAllowedToolNames(coreNames) == coreNames)
     }
 

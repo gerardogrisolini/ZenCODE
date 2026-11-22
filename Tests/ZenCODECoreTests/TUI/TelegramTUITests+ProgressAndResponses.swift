@@ -260,7 +260,7 @@ extension TelegramTUITests {
             #expect(!message.contains("Secret reasoning"))
             #expect(!message.contains("thinking"))
             #expect(!message.contains("local.delete"))
-            #expect(!message.contains("local.readFile"))
+            #expect(!message.contains("local.read"))
         }
     }
 

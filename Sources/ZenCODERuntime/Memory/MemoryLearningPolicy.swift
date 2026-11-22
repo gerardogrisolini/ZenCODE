@@ -109,12 +109,12 @@ actor MemoryLearningLedger {
             // Everything else (including swift.run/package and arbitrary aliases)
             // may mutate the workspace: do not infer safety from a blacklist.
             let observations: Set<String> = [
-                "local.readFile", "local.readFiles", "local.inspectFile", "local.ls", "local.pwd",
+                "local.read", "local.multiRead", "local.inspectFile", "local.ls", "local.pwd",
                 "search.glob", "search.grep", "search.locate", "text.head", "text.tail", "text.wc", "text.sort",
                 "git.status", "git.diff", "git.log", "git.show", "git.grep", "git.lsFiles", "git.blame", "git.branch", "git.remote",
                 "swift.outline"
             ]
-            let isCorrection = ["local.editFile", "local.multiEdit", "local.writeFile"].contains(call.name)
+            let isCorrection = ["local.editFile", "local.multiEdit", "local.write"].contains(call.name)
             let isVerification = call.name == "swift.test" || call.name == "swift.build"
             guard observations.contains(call.name) || isCorrection || isVerification else { overflow = true; return }
             // A verification/correction that cannot be interpreted cannot leave
@@ -167,11 +167,11 @@ actor MemoryLearningLedger {
                 } else if header[1].hasPrefix("status: failed (exit "), header[1] != "status: failed (exit 0)" {
                     kind = .failure
                 } else { return }
-            } else if call.name == "local.readFile", !result.isFailure {
+            } else if call.name == "local.read", !result.isFailure {
                 guard !result.output.lowercased().contains("truncated"), result.output.count <= 2400 else { return }
                 kind = .projectFile
                 detail = result.output
-            } else if ["local.editFile", "local.multiEdit", "local.writeFile"].contains(call.name), !result.isFailure {
+            } else if ["local.editFile", "local.multiEdit", "local.write"].contains(call.name), !result.isFailure {
                 kind = .correction
                 detail = call.argumentsJSON
             } else { return }

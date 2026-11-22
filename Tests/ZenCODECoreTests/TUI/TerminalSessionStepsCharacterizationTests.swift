@@ -215,7 +215,7 @@ struct TerminalSessionStepsCharacterizationTests {
             let (directText, throughLogText) = try await Self.renderings(of: transcript, in: environment)
             #expect(directText == throughLogText)
             // The call renders once, completed by the late result.
-            #expect(directText.components(separatedBy: "local.readFile").count == 2)
+            #expect(directText.components(separatedBy: "local.read").count == 2)
         }
     }
 
@@ -270,15 +270,15 @@ struct TerminalSessionStepsCharacterizationTests {
                     AgentRuntimeMessage(
                         role: .assistant,
                         content: "First read.",
-                        toolCalls: [AgentRuntimeToolCall(id: "call-1", name: "local.readFile", argumentsJSON: "{}")]
+                        toolCalls: [AgentRuntimeToolCall(id: "call-1", name: "local.read", argumentsJSON: "{}")]
                     ),
-                    AgentRuntimeMessage(role: .tool, content: "body", toolCallID: "call-1", toolName: "local.readFile"),
+                    AgentRuntimeMessage(role: .tool, content: "body", toolCallID: "call-1", toolName: "local.read"),
                     AgentRuntimeMessage(
                         role: .assistant,
                         content: "Second read.",
-                        toolCalls: [AgentRuntimeToolCall(id: "call-1", name: "local.readFile", argumentsJSON: "{}")]
+                        toolCalls: [AgentRuntimeToolCall(id: "call-1", name: "local.read", argumentsJSON: "{}")]
                     ),
-                    AgentRuntimeMessage(role: .tool, content: "body", toolCallID: "call-1", toolName: "local.readFile"),
+                    AgentRuntimeMessage(role: .tool, content: "body", toolCallID: "call-1", toolName: "local.read"),
                 ]
             case .resultOfAnEarlierTurn:
                 return [
@@ -286,10 +286,10 @@ struct TerminalSessionStepsCharacterizationTests {
                     AgentRuntimeMessage(
                         role: .assistant,
                         content: "Reading.",
-                        toolCalls: [AgentRuntimeToolCall(id: "call-1", name: "local.readFile", argumentsJSON: "{}")]
+                        toolCalls: [AgentRuntimeToolCall(id: "call-1", name: "local.read", argumentsJSON: "{}")]
                     ),
                     AgentRuntimeMessage(role: .user, content: "Go on"),
-                    AgentRuntimeMessage(role: .tool, content: "late body", toolCallID: "call-1", toolName: "local.readFile"),
+                    AgentRuntimeMessage(role: .tool, content: "late body", toolCallID: "call-1", toolName: "local.read"),
                 ]
             }
         }
@@ -314,14 +314,14 @@ struct TerminalSessionStepsCharacterizationTests {
             content: "I will read it.",
             reasoningContent: "The parser is in Sources.",
             toolCalls: [
-                AgentRuntimeToolCall(id: "call-1", name: "local.readFile", argumentsJSON: #"{"path":"Parser.swift"}"#),
+                AgentRuntimeToolCall(id: "call-1", name: "local.read", argumentsJSON: #"{"path":"Parser.swift"}"#),
             ]
         ),
         AgentRuntimeMessage(
             role: .tool,
             content: "struct Parser {}\nextension Parser {}",
             toolCallID: "call-1",
-            toolName: "local.readFile"
+            toolName: "local.read"
         ),
         AgentRuntimeMessage(role: .assistant, content: "", reasoningContent: "Only a thought."),
         AgentRuntimeMessage(role: .assistant, content: "The parser is **fine**.\n\n- one\n- two"),
@@ -361,7 +361,7 @@ struct TerminalSessionStepsCharacterizationTests {
         "standardError: \"\\u{1B}[90m🤔 thinking…\\u{1B}[0m\\n\\u{1B}[90mThe parser is in Sources.\\u{1B}[0m\\n\\n\"",
         "standardOutput: \"💬 I will read it.\\n\"",
         "standardOutput: \"\\n\"",
-        "standardError: \"\\r\\u{1B}[2K\\u{1B}[38;5;208m🛠️  local.readFile ✅\\u{1B}[0m\\n\\n\"",
+        "standardError: \"\\r\\u{1B}[2K\\u{1B}[38;5;208m🛠️  local.read ✅\\u{1B}[0m\\n\\n\"",
         "standardError: \"\\u{1B}[90m🤔 thinking…\\u{1B}[0m\\n\\u{1B}[90mOnly a thought.\\u{1B}[0m\\n\\n\"",
         "standardOutput: \"💬 The parser is \\u{1B}[1mfine\\u{1B}[0m.\\n\\n\\u{1B}[38;5;244m•\\u{1B}[0m one\\n\\u{1B}[38;5;244m•\\u{1B}[0m two\\n\"",
         "standardOutput: \"\\n\"",

@@ -154,7 +154,7 @@ struct ACPDelegatedToolPresentationTests {
         let cwd = try #require(await bridge.delegatedToolTestCWD(sessionID: sessionID))
 
         let write = DirectAgentToolCall(
-            id: "call-1", name: "local.writeFile",
+            id: "call-1", name: "local.write",
             argumentsObject: ["path": "Delegated.swift", "content": "let value = 2\n"],
             argumentsJSON: #"{"path":"Delegated.swift","content":"let value = 2\n"}"#
         )
@@ -245,7 +245,7 @@ struct ACPDelegatedToolPresentationTests {
         let cwd = try #require(await bridge.delegatedToolTestCWD(sessionID: sessionID))
 
         let write = DirectAgentToolCall(
-            id: "call-1", name: "local.writeFile",
+            id: "call-1", name: "local.write",
             argumentsObject: ["path": "Delegated.swift", "content": "let value = 2\n"],
             argumentsJSON: #"{"path":"Delegated.swift","content":"let value = 2\n"}"#
         )

@@ -45,7 +45,7 @@ struct DS4ToolCallPreviewTests {
             expectStreamedPrefixes(run.drains, rawValues: raws)
             let output = try #require(run.output)
             #expect(output.parseError == nil)
-            #expect(output.toolCalls.map(\.name) == ["local.writeFile"])
+            #expect(output.toolCalls.map(\.name) == ["local.write"])
             #expect(try stringArguments(output.toolCalls.first) == ["path": filePath, "content": fileContent])
         }
     }
@@ -54,7 +54,7 @@ struct DS4ToolCallPreviewTests {
     func valueBytesAreReleasedAsSoonAsTheyAreSafe(syntax: DS4ToolSyntax) {
         let markup = Markup(syntax: syntax)
         let chunks = [
-            prose + markup.blockOpen + markup.callOpen("local.writeFile") + markup.parameterOpen("content"),
+            prose + markup.blockOpen + markup.callOpen("local.write") + markup.parameterOpen("content"),
             "line one\n",
             "a <",
             " b",
@@ -65,7 +65,7 @@ struct DS4ToolCallPreviewTests {
         let qwen = syntax == .qwen
         // Qwen holds a newline that may be the one removed before the tag.
         let expected: [[Preview]] = [
-            [.toolStarted(name: "local.writeFile"), .parameterStarted(name: "content")],
+            [.toolStarted(name: "local.write"), .parameterStarted(name: "content")],
             [.parameterText(qwen ? "line one" : "line one\n")],
             [.parameterText(qwen ? "\na " : "a ")],
             [.parameterText("< b")],
@@ -128,7 +128,7 @@ struct DS4ToolCallPreviewTests {
         // it usually writes before the tag.
         let close = syntax == .qwen ? syntax.parameterCloseMarker + "\n" : markup.parameterClose
         for content in ["a <", "<", "x\n<", "a <<"] {
-            let text = markup.blockOpen + markup.callOpen("local.writeFile") + markup.parameterOpen("content")
+            let text = markup.blockOpen + markup.callOpen("local.write") + markup.parameterOpen("content")
                 + content + close + markup.callClose + markup.blockClose
             let raws = rawValues(text, syntax: syntax)
             #expect(raws == [content], "\(content.debugDescription)")
@@ -157,7 +157,7 @@ struct DS4ToolCallPreviewTests {
     func tolerantDSMLClosingTagIsNeverStreamed() {
         for syntax in [DS4ToolSyntax.dsml, .dsml41] {
             let closeName = syntax.dsmlTagName(.parameter)
-            let text = syntax.toolCallOpenMarker + "\n" + syntax.dsmlOpenTag(.invoke) + " name=\"local.writeFile\">\n"
+            let text = syntax.toolCallOpenMarker + "\n" + syntax.dsmlOpenTag(.invoke) + " name=\"local.write\">\n"
                 + syntax.dsmlOpenTag(.parameter) + " name=\"content\" string=\"true\">x </｜DSML｜ y"
                 + "</｜DSML｜\(closeName) \n｜ >\n"
                 + syntax.dsmlCloseTag(.invoke) + "\n" + syntax.dsmlCloseTag(.toolCalls)
@@ -177,7 +177,7 @@ struct DS4ToolCallPreviewTests {
     @Test(arguments: DS4ToolSyntax.allCases)
     func scalarSplitBetweenChunksLeavesWhole(syntax: DS4ToolSyntax) throws {
         let content = "αβ🙂γ"
-        let text = Markup(syntax: syntax).block([("local.writeFile", [("content", content)])])
+        let text = Markup(syntax: syntax).block([("local.write", [("content", content)])])
         let scalar = try #require(lastByteRange(of: "🙂", in: text))
         for cut in scalar.lowerBound + 1..<scalar.upperBound {
             let run = previewRun(splitChunks(text, at: [cut]), syntax: syntax)
@@ -191,7 +191,7 @@ struct DS4ToolCallPreviewTests {
     @Test(arguments: DS4ToolSyntax.allCases)
     func streamParserCutsFragmentsAtScalarBoundaries(syntax: DS4ToolSyntax) {
         let content = "é🙂x"
-        let text = Markup(syntax: syntax).block([("local.writeFile", [("content", content)])])
+        let text = Markup(syntax: syntax).block([("local.write", [("content", content)])])
         var parser = DS4ToolCallStreamParser(syntax: syntax)
         var previews: [Preview] = []
         // A drain after every byte: a scalar is emitted once all its bytes arrived.
@@ -202,7 +202,7 @@ struct DS4ToolCallPreviewTests {
         parser.finish()
         previews += parser.drainPreviews(blockEnded: true)
         #expect(fragments(previews) == ["é", "🙂", "x"])
-        #expect(previews.first == .toolStarted(name: "local.writeFile"))
+        #expect(previews.first == .toolStarted(name: "local.write"))
         #expect(parser.calls.flatMap(\.arguments).map(\.rawValue) == [content])
     }
 
@@ -213,7 +213,7 @@ struct DS4ToolCallPreviewTests {
         let values = ["", "\n", "x", "\nx\n", "\n\nx\n\n", "a\n\nb"]
         for value in values {
             for (open, close) in [("\n", "\n"), ("", ""), ("\n", ""), ("", "\n")] {
-                let text = "<tool_call>\n<function=local.writeFile>\n<parameter=content>" + open + value + close
+                let text = "<tool_call>\n<function=local.write>\n<parameter=content>" + open + value + close
                     + "</parameter>\n</function>\n</tool_call>"
                 let raws = rawValues(text, syntax: .qwen)
                 #expect(raws.count == 1)
@@ -231,17 +231,17 @@ struct DS4ToolCallPreviewTests {
     @Test(arguments: DS4ToolSyntax.allCases)
     func everyCallOfABlockStartsAndTheBlockEndsOnce(syntax: DS4ToolSyntax) throws {
         let text = Markup(syntax: syntax).block([
-            ("local.readFile", [("path", "a.swift")]),
-            ("local.writeFile", [("path", "b.swift"), ("content", "x\n")]),
+            ("local.read", [("path", "a.swift")]),
+            ("local.write", [("path", "b.swift"), ("content", "x\n")]),
         ])
         for chunks in [[text], bytewiseChunks(text)] {
             let run = previewRun(chunks, syntax: syntax)
             #expect(merged(run.previews) == [
-                .toolStarted(name: "local.readFile"),
+                .toolStarted(name: "local.read"),
                 .parameterStarted(name: "path"),
                 .parameterText("a.swift"),
                 .parameterEnded,
-                .toolStarted(name: "local.writeFile"),
+                .toolStarted(name: "local.write"),
                 .parameterStarted(name: "path"),
                 .parameterText("b.swift"),
                 .parameterEnded,
@@ -250,7 +250,7 @@ struct DS4ToolCallPreviewTests {
                 .parameterEnded,
                 .ended,
             ])
-            #expect(try #require(run.output).toolCalls.map(\.name) == ["local.readFile", "local.writeFile"])
+            #expect(try #require(run.output).toolCalls.map(\.name) == ["local.read", "local.write"])
         }
     }
 
@@ -259,18 +259,18 @@ struct DS4ToolCallPreviewTests {
         let cases: [(syntax: DS4ToolSyntax, text: String, expected: [Preview])] = [
             (
                 .dsml,
-                "<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"local.readFile\">\n<｜DSML｜bogus name=\"x\">",
-                [.toolStarted(name: "local.readFile"), .ended]
+                "<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"local.read\">\n<｜DSML｜bogus name=\"x\">",
+                [.toolStarted(name: "local.read"), .ended]
             ),
             (
                 .glm,
-                "<tool_call>local.readFile<arg_key>path</arg_key>oops</tool_call>",
-                [.toolStarted(name: "local.readFile"), .ended]
+                "<tool_call>local.read<arg_key>path</arg_key>oops</tool_call>",
+                [.toolStarted(name: "local.read"), .ended]
             ),
             (
                 .qwen,
-                "<tool_call>\n<function=local.readFile>\n<parameter=path>\na\n</parameter>\n</function>\nnope",
-                [.toolStarted(name: "local.readFile"), .parameterStarted(name: "path"), .parameterText("a"), .parameterEnded, .ended]
+                "<tool_call>\n<function=local.read>\n<parameter=path>\na\n</parameter>\n</function>\nnope",
+                [.toolStarted(name: "local.read"), .parameterStarted(name: "path"), .parameterText("a"), .parameterEnded, .ended]
             ),
             // Malformed before any tool name: nothing was shown, nothing to end.
             (.dsml, "<｜DSML｜tool_calls>\n<｜DSML｜bogus>", []),
@@ -294,19 +294,19 @@ struct DS4ToolCallPreviewTests {
     @Test(arguments: DS4ToolSyntax.allCases)
     func truncatedBlockEndsAtFinishDroppingHeldBytes(syntax: DS4ToolSyntax) throws {
         let markup = Markup(syntax: syntax)
-        let openValue = prose + markup.blockOpen + markup.callOpen("local.writeFile")
+        let openValue = prose + markup.blockOpen + markup.callOpen("local.write")
             + markup.parameterOpen("content") + "partial line\nnext <"
-        let openCall = prose + markup.blockOpen + markup.callOpen("local.writeFile")
+        let openCall = prose + markup.blockOpen + markup.callOpen("local.write")
             + markup.parameterOpen("path") + "a.swift" + markup.parameterClose
         let cases: [(text: String, expected: [Preview])] = [
             (openValue, [
-                .toolStarted(name: "local.writeFile"),
+                .toolStarted(name: "local.write"),
                 .parameterStarted(name: "content"),
                 .parameterText("partial line\nnext "),
                 .ended,
             ]),
             (openCall, [
-                .toolStarted(name: "local.writeFile"),
+                .toolStarted(name: "local.write"),
                 .parameterStarted(name: "path"),
                 .parameterText("a.swift"),
                 .parameterEnded,
@@ -326,7 +326,7 @@ struct DS4ToolCallPreviewTests {
 
     @Test(arguments: DS4ToolSyntax.allCases)
     func toolCallInsideThinkingOrStrayMarkupHasNoPreview(syntax: DS4ToolSyntax) throws {
-        let block = Markup(syntax: syntax).block([("local.readFile", [("path", "a")])])
+        let block = Markup(syntax: syntax).block([("local.read", [("path", "a")])])
         for chunks in [["plan " + block], bytewiseChunks("plan " + block + "</think>")] {
             let run = previewRun(chunks, syntax: syntax, thinking: true)
             #expect(run.previews.isEmpty)
@@ -359,7 +359,7 @@ struct DS4ToolCallPreviewTests {
                 #expect(output.visibleText == visible)
                 #expect(output.rawText == text)
                 #expect(output.parseError == nil)
-                #expect(output.toolCalls.map(\.name) == ["local.writeFile"])
+                #expect(output.toolCalls.map(\.name) == ["local.write"])
             }
         }
     }
@@ -389,7 +389,7 @@ struct DS4ToolCallPreviewTests {
             continuation: continuation
         )
         _ = bridge.consume(
-            "Writing.<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"local.writeFile\">\n"
+            "Writing.<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"local.write\">\n"
                 + "<｜DSML｜parameter name=\"content\" string=\"true\">abc"
         )
         _ = bridge.consume(" def</｜DSML｜parameter>\n</｜DSML｜invoke>\n</｜DSML｜tool_calls>")
@@ -400,7 +400,7 @@ struct DS4ToolCallPreviewTests {
 
         #expect(await collect(stream) == [
             .content("Writing."),
-            .preview(.toolStarted(name: "local.writeFile")),
+            .preview(.toolStarted(name: "local.write")),
             .preview(.parameterStarted(name: "content")),
             .preview(.parameterText("abc")),
             .preview(.parameterText(" def")),
@@ -416,14 +416,14 @@ struct DS4ToolCallPreviewTests {
             parser: DS4GeneratedOutputParser(syntax: .qwen, startsInsideThinking: false),
             continuation: continuation
         )
-        _ = bridge.consume("<tool_call>\n<function=local.writeFile>\n<parameter=content>\nabc\n")
+        _ = bridge.consume("<tool_call>\n<function=local.write>\n<parameter=content>\nabc\n")
         let output = bridge.finish()
         bridge.endOpenToolCallPreview()
         continuation.finish()
 
         #expect(output.parseError?.detail == "incomplete Qwen tool call")
         #expect(await collect(stream) == [
-            .preview(.toolStarted(name: "local.writeFile")),
+            .preview(.toolStarted(name: "local.write")),
             .preview(.parameterStarted(name: "content")),
             .preview(.parameterText("abc")),
             .preview(.ended),
@@ -437,7 +437,7 @@ struct DS4ToolCallPreviewTests {
             parser: DS4GeneratedOutputParser(syntax: .glm, startsInsideThinking: false),
             continuation: continuation
         )
-        _ = bridge.consume("Ok <tool_call>local.writeFile<arg_key>content</arg_key><arg_value>abc</arg_")
+        _ = bridge.consume("Ok <tool_call>local.write<arg_key>content</arg_key><arg_value>abc</arg_")
         // The `catch` around `engine.generate`: once, and only when open.
         bridge.endOpenToolCallPreview()
         bridge.endOpenToolCallPreview()
@@ -445,7 +445,7 @@ struct DS4ToolCallPreviewTests {
 
         #expect(await collect(stream) == [
             .content("Ok "),
-            .preview(.toolStarted(name: "local.writeFile")),
+            .preview(.toolStarted(name: "local.write")),
             .preview(.parameterStarted(name: "content")),
             .preview(.parameterText("abc")),
             .preview(.ended),

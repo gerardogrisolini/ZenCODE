@@ -418,7 +418,7 @@ struct AgentConversationCompactionSupportTests {
                     toolCalls: [
                         AgentRuntimeToolCall(
                             id: "call_\(index)",
-                            name: "local.readFile",
+                            name: "local.read",
                             argumentsJSON: "{\"path\":\"a\(index).swift\"}"
                         )
                     ]
@@ -429,7 +429,7 @@ struct AgentConversationCompactionSupportTests {
                     role: .tool,
                     content: "File contents \(index)",
                     toolCallID: "call_\(index)",
-                    toolName: "local.readFile"
+                    toolName: "local.read"
                 )
             )
             messages.append(
@@ -493,7 +493,7 @@ struct AgentConversationCompactionSupportTests {
                     toolCalls: [
                         AgentRuntimeToolCall(
                             id: "call_\(index)",
-                            name: "local.readFile",
+                            name: "local.read",
                             argumentsJSON: "{\"path\":\"File\(index).swift\"}"
                         )
                     ]
@@ -504,7 +504,7 @@ struct AgentConversationCompactionSupportTests {
                     role: .tool,
                     content: "File \(index)\n" + payload,
                     toolCallID: "call_\(index)",
-                    toolName: "local.readFile"
+                    toolName: "local.read"
                 )
             )
         }

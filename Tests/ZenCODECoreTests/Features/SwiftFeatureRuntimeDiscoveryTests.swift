@@ -136,7 +136,7 @@ extension SwiftFeatureRuntimeTests {
 
         let rendered = try #require(output)
         #expect(rendered.contains("File: \(sourceURL.path)"))
-        #expect(rendered.contains("read_hint: local.readFile"))
+        #expect(rendered.contains("read_hint: local.read"))
         #expect(rendered.contains("mark\tFeature"))
         #expect(rendered.contains("struct\tFeature"))
         #expect(rendered.contains("let\tFeature.title"))

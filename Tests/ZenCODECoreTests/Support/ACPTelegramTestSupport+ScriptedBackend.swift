@@ -29,7 +29,7 @@ actor ACPTelegramScriptedBackend: AgentRuntimeBackend {
         /// Waits until ``release()`` lets the prompt go on.
         case pause
         /// Writes `contents` to `path`, relative to the session's directory,
-        /// through a reported `local.writeFile` tool call.
+        /// through a reported `local.write` tool call.
         case writeFile(path: String, contents: String)
         /// Asks permission to run `command` with `local.exec`, as a gated
         /// tool call would, and records the decision; a prompt cancelled
@@ -186,7 +186,7 @@ actor ACPTelegramScriptedBackend: AgentRuntimeBackend {
             case let .writeFile(path, contents):
                 let write = DirectAgentToolCall(
                     id: "write-\(index)",
-                    name: "local.writeFile",
+                    name: "local.write",
                     argumentsObject: ["path": path, "content": contents],
                     argumentsJSON: "{}"
                 )

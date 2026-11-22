@@ -36,7 +36,7 @@ struct DirectToolExecutorFeatureExposureTests {
             swiftFeatureRuntime: fixture.runtime,
             subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
-        let allowlist: Set<String> = ["local.readFile"]
+        let allowlist: Set<String> = ["local.read"]
 
         #expect(!(await Self.toolNames(executor, allowlist, sessionID: Self.coordinatorSessionID))
             .contains("built.run"))
@@ -88,12 +88,12 @@ struct DirectToolExecutorFeatureExposureTests {
             subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
         let unrestricted = await Self.toolNames(executor, nil, sessionID: Self.coordinatorSessionID)
-        let restrictedWithoutSession = await Self.toolNames(executor, ["local.readFile"], sessionID: nil)
+        let restrictedWithoutSession = await Self.toolNames(executor, ["local.read"], sessionID: nil)
 
         await fixture.runtime.exposeForTesting(FeatureFixture.featureID, sessionID: Self.coordinatorSessionID)
 
         #expect(await Self.toolNames(executor, nil, sessionID: Self.coordinatorSessionID) == unrestricted)
-        #expect(await Self.toolNames(executor, ["local.readFile"], sessionID: nil) == restrictedWithoutSession)
+        #expect(await Self.toolNames(executor, ["local.read"], sessionID: nil) == restrictedWithoutSession)
         await executor.shutdown()
     }
 
@@ -160,7 +160,7 @@ struct DirectToolExecutorFeatureExposureTests {
             swiftFeatureRuntime: runtime,
             subAgentContextualBackendFactory: { _ in SwiftFeatureTestAgentRuntimeBackend() }
         )
-        let allowlist: Set<String> = ["local.readFile"]
+        let allowlist: Set<String> = ["local.read"]
         #expect(!DirectToolExecutor.isAllowed("git.push", allowedToolNames: allowlist))
 
         let denied = await executor.execute(

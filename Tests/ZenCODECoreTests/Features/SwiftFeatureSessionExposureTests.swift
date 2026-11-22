@@ -161,7 +161,7 @@ struct SwiftFeatureSessionExposureTests {
         #expect(await otherExecutable.runtime.exposures(sessionID: "session-a").isEmpty)
         #expect(!(await otherExecutable.runtime.featureToolIsAllowed(
             toolName: "fx-swapped.run",
-            allowedToolNames: ["local.readFile"],
+            allowedToolNames: ["local.read"],
             sessionID: "session-a"
         )))
 

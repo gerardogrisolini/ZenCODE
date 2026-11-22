@@ -267,7 +267,7 @@ struct TerminalChatSessionHostTests {
             // controller, and through it the terminal's delegated tool rows;
             // one of the replaced session is dropped.
             let read = DirectAgentToolCall(
-                id: "read", name: "local.readFile",
+                id: "read", name: "local.read",
                 argumentsObject: ["path": "a.swift"], argumentsJSON: "{}"
             )
             await host.routeSubAgentToolEvent(DirectSubAgentToolEvent(

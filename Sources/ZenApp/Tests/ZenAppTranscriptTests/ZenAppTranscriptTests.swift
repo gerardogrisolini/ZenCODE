@@ -37,21 +37,21 @@ private let localExecPresentation = ToolPresentationDefinition(
 struct ZenToolCallStatusTests {
     @Test("a call without a result is running")
     func running() {
-        #expect(ZenToolCallStatus(call: toolCall("local.readFile"), result: nil) == .running)
+        #expect(ZenToolCallStatus(call: toolCall("local.read"), result: nil) == .running)
     }
 
     @Test("a completed result is completed")
     func completed() {
         let result = DirectAgentToolResult(output: "ok", summary: "ok")
-        #expect(ZenToolCallStatus(call: toolCall("local.readFile"), result: result) == .completed)
+        #expect(ZenToolCallStatus(call: toolCall("local.read"), result: result) == .completed)
     }
 
     @Test("a failed status or a tool-error output is failed")
     func failed() {
         let failed = DirectAgentToolResult(output: "boom", summary: "boom", status: .failed)
         let toolError = DirectAgentToolResult(output: "  Tool error: missing path", summary: "error")
-        #expect(ZenToolCallStatus(call: toolCall("local.readFile"), result: failed) == .failed)
-        #expect(ZenToolCallStatus(call: toolCall("local.readFile"), result: toolError) == .failed)
+        #expect(ZenToolCallStatus(call: toolCall("local.read"), result: failed) == .failed)
+        #expect(ZenToolCallStatus(call: toolCall("local.read"), result: toolError) == .failed)
     }
 
     @Test("a permission denial is its own status, not a plain failure")
@@ -73,7 +73,7 @@ struct ZenToolCallStatusTests {
         #expect(ZenToolCallStatus(call: call, result: zero) == .completed)
         #expect(ZenToolCallStatus(call: call, result: phrase) == .completed)
         // Another tool's output is never read as a process result.
-        #expect(ZenToolCallStatus(call: toolCall("local.readFile"), result: nonZero) == .completed)
+        #expect(ZenToolCallStatus(call: toolCall("local.read"), result: nonZero) == .completed)
     }
 
     @Test("glyphs and color roles follow the brief")

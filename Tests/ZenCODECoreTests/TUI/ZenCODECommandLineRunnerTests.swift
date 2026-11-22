@@ -83,7 +83,7 @@ struct ZenCODECommandLineRunnerTests {
     @Test
     func jsonlProtocolWritesNoRecordForAToolCallPreview() async throws {
         let fragments: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: "local.writeFile"),
+            .toolStarted(name: "local.write"),
             .parameterStarted(name: "path"),
             .parameterText("/tmp/secret.txt"),
             .parameterEnded,
@@ -126,7 +126,7 @@ struct ZenCODECommandLineRunnerTests {
     func jsonlWriterExposesOnlyApprovedToolFieldsAndTerminalError() throws {
         let started = DirectAgentToolCall(
             id: "call-1",
-            name: "local.readFile",
+            name: "local.read",
             argumentsObject: ["path": "/tmp/secret"],
             argumentsJSON: "{\"path\":\"/tmp/secret\"}"
         )

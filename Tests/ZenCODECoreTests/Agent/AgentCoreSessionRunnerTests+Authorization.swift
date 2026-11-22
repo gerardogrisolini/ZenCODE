@@ -35,7 +35,7 @@ extension AgentCoreSessionRunnerTests {
             systemPrompt: nil,
             cacheKey: nil,
             history: [],
-            allowedToolNames: ["local.exec", "local.readFile"]
+            allowedToolNames: ["local.exec", "local.read"]
         )
 
         try await runner.createSession(configuration: configuration)
@@ -65,7 +65,7 @@ extension AgentCoreSessionRunnerTests {
         #expect(await defaultAuthorizer.toolNames() == ["local.exec"])
 
         backendBox.setAuthorizationRequests([
-            Self.authorizationRequest(sessionID: sessionID, toolName: "local.readFile")
+            Self.authorizationRequest(sessionID: sessionID, toolName: "local.read")
         ])
         _ = try await runner.sendPrompt(
             configuration: configuration,
@@ -74,7 +74,7 @@ extension AgentCoreSessionRunnerTests {
             onEvent: { _ in }
         )
         #expect(backendBox.lastAuthorizationResults() == [false])
-        #expect(await defaultAuthorizer.toolNames() == ["local.exec", "local.readFile"])
+        #expect(await defaultAuthorizer.toolNames() == ["local.exec", "local.read"])
 
         #expect(await runner.toggleLocalExecAccessMode() == .standard)
         backendBox.setAuthorizationRequests([
@@ -87,7 +87,7 @@ extension AgentCoreSessionRunnerTests {
             onEvent: { _ in }
         )
         #expect(backendBox.lastAuthorizationResults() == [false])
-        #expect(await defaultAuthorizer.toolNames() == ["local.exec", "local.readFile", "local.exec"])
+        #expect(await defaultAuthorizer.toolNames() == ["local.exec", "local.read", "local.exec"])
 
         backendBox.setAuthorizationRequests([
             Self.authorizationRequest(sessionID: sessionID, toolName: "local.exec")
@@ -103,7 +103,7 @@ extension AgentCoreSessionRunnerTests {
         )
         #expect(backendBox.lastAuthorizationResults() == [true])
         #expect(await approvingPromptAuthorizer.toolNames() == ["local.exec"])
-        #expect(await defaultAuthorizer.toolNames() == ["local.exec", "local.readFile", "local.exec"])
+        #expect(await defaultAuthorizer.toolNames() == ["local.exec", "local.read", "local.exec"])
 
         #expect(await runner.toggleLocalExecAccessMode() == .fullAccess)
         backendBox.setAuthorizationRequests([
@@ -125,7 +125,7 @@ extension AgentCoreSessionRunnerTests {
 
         backendBox.setAuthorizationRequests([
             Self.authorizationRequest(sessionID: sessionID, toolName: "local.exec"),
-            Self.authorizationRequest(sessionID: sessionID, toolName: "local.readFile")
+            Self.authorizationRequest(sessionID: sessionID, toolName: "local.read")
         ])
         _ = try await runner.sendPrompt(
             configuration: configuration,
@@ -137,7 +137,7 @@ extension AgentCoreSessionRunnerTests {
             onEvent: { _ in }
         )
         #expect(backendBox.lastAuthorizationResults() == [true, false])
-        #expect(await promptAuthorizer.toolNames() == ["local.readFile"])
+        #expect(await promptAuthorizer.toolNames() == ["local.read"])
     }
 
     @Test
@@ -190,7 +190,7 @@ extension AgentCoreSessionRunnerTests {
             sessionID: sessionID,
             toolCall: toolCall,
             workingDirectory: rootURL,
-            allowedToolNames: ["local.readFile"]
+            allowedToolNames: ["local.read"]
         )
 
         #expect(result.status == .permissionDenied)
@@ -222,7 +222,7 @@ extension AgentCoreSessionRunnerTests {
             systemPrompt: "updated",
             cacheKey: nil,
             history: [],
-            allowedToolNames: ["local.exec", "local.readFile"]
+            allowedToolNames: ["local.exec", "local.read"]
         )
 
         try await runner.createSession(configuration: baseConfiguration)

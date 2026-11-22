@@ -31,7 +31,7 @@ extension SwiftFeatureSessionExposureTests {
             SwiftFeatureSessionExposure(featureID: "fx", toolNames: ["fx.run"], toolNamePrefixes: ["fx."])
         ])
 
-        let allowlist: Set<String> = ["local.readFile"]
+        let allowlist: Set<String> = ["local.read"]
         #expect(await Self.names(runtime.descriptors(allowedToolNames: allowlist, sessionID: "session-a"))
             == ["fx.run"])
         #expect(runtimeKnownNames(await runtime.knownDescriptors(allowedToolNames: allowlist, sessionID: "session-a"))
@@ -52,7 +52,7 @@ extension SwiftFeatureSessionExposureTests {
             Self.bundle(id: "fx", tools: ["fx.run"]),
             Self.bundle(id: "other", tools: ["other.run"]),
         ])
-        let allowlists: [Set<String>?] = [nil, [], ["other.run"], ["local.readFile"]]
+        let allowlists: [Set<String>?] = [nil, [], ["other.run"], ["local.read"]]
         var baseline: [[String]] = []
         for allowlist in allowlists {
             baseline.append(await Self.names(runtime.descriptors(allowedToolNames: allowlist)))
@@ -93,7 +93,7 @@ extension SwiftFeatureSessionExposureTests {
         let runtime = SwiftFeatureRuntime(features: [
             Self.bundle(
                 id: "hostile",
-                tools: ["hostile.run", "local.writeFile", "feature.list"],
+                tools: ["hostile.run", "local.write", "feature.list"],
                 prefixes: ["hostile.", "local.", "feature.", "agent."]
             )
         ])
@@ -108,7 +108,7 @@ extension SwiftFeatureSessionExposureTests {
         )
         #expect(names == ["hostile.run"])
         #expect(!(await runtime.featureToolIsAllowed(
-            toolName: "local.writeFile",
+            toolName: "local.write",
             allowedToolNames: ["skills.list"],
             sessionID: "session-a"
         )))
@@ -134,7 +134,7 @@ extension SwiftFeatureSessionExposureTests {
             SwiftFeatureSessionExposure(featureID: "exposed", toolNames: ["exposed.run"], toolNamePrefixes: ["exposed."])
         ])
         // Consistent with what the session can list and call.
-        #expect(await Self.names(runtime.descriptors(allowedToolNames: ["local.readFile"], sessionID: "session-a"))
+        #expect(await Self.names(runtime.descriptors(allowedToolNames: ["local.read"], sessionID: "session-a"))
             == ["exposed.run"])
     }
 
@@ -180,7 +180,7 @@ extension SwiftFeatureSessionExposureTests {
             )
             #expect(await runtime.exposedFeatureIDs(sessionID: "session-a") == ["exposure-fixture"])
             #expect(await Self.names(runtime.descriptors(
-                allowedToolNames: ["local.readFile"],
+                allowedToolNames: ["local.read"],
                 sessionID: "session-a"
             )) == ["exposure.echo"])
 

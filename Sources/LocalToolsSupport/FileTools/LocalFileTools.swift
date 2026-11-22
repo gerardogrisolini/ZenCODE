@@ -46,7 +46,7 @@ struct LocalReadFileTool: FeatureTool {
         let limit: Int?
     }
 
-    static let name = "local.readFile"
+    static let name = "local.read"
     static let description = "Reads a UTF-8 text file with line numbers. Use offset and limit for focused reads."
     static let inputSchema = buildInputSchema(
         CommonSchemaProperties.pathAliases + CommonSchemaProperties.offsetLimit,
@@ -74,7 +74,7 @@ struct LocalReadFilesTool: FeatureTool {
         let limit: Int?
     }
 
-    static let name = "local.readFiles"
+    static let name = "local.multiRead"
     static let description = "Reads multiple UTF-8 text files in one call. Each file is returned with a header and line numbers. Use offset and limit for focused reads applied to every file."
     static let inputSchema = buildInputSchema(
         [.array("paths"), .array("file_paths")] + CommonSchemaProperties.offsetLimit,
@@ -148,7 +148,7 @@ struct LocalWriteFileTool: FeatureTool {
         let createDirectories: Bool?
     }
 
-    static let name = "local.writeFile"
+    static let name = "local.write"
     static let description = "Creates or overwrites a UTF-8 text file."
     static let inputSchema = buildInputSchema(
         CommonSchemaProperties.pathAliases + [.string("content"), .boolean("createDirectories")],

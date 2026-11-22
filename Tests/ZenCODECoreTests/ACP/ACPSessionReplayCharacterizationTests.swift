@@ -58,11 +58,11 @@ struct ACPSessionReplayCharacterizationTests {
             content: "\nI will read it.  ",
             reasoningContent: "  The parser is in Sources.  ",
             toolCalls: [
-                AgentRuntimeToolCall(id: "call-1", name: "local.readFile", argumentsJSON: #"{"path":"Parser.swift"}"#),
+                AgentRuntimeToolCall(id: "call-1", name: "local.read", argumentsJSON: #"{"path":"Parser.swift"}"#),
                 AgentRuntimeToolCall(id: nil, name: "local.ls", argumentsJSON: "{}"),
             ]
         ),
-        AgentRuntimeMessage(role: .tool, content: "struct Parser {}\n", toolCallID: "call-1", toolName: "local.readFile"),
+        AgentRuntimeMessage(role: .tool, content: "struct Parser {}\n", toolCallID: "call-1", toolName: "local.read"),
         AgentRuntimeMessage(role: .tool, content: "", toolName: "local.ls"),
         AgentRuntimeMessage(
             role: .tool,
@@ -88,9 +88,9 @@ struct ACPSessionReplayCharacterizationTests {
         AgentRuntimeMessage(
             role: .assistant,
             content: "",
-            toolCalls: [AgentRuntimeToolCall(id: "call-2", name: "local.readFile", argumentsJSON: "{}")]
+            toolCalls: [AgentRuntimeToolCall(id: "call-2", name: "local.read", argumentsJSON: "{}")]
         ),
-        AgentRuntimeMessage(role: .tool, content: "same", toolCallID: "call-2", toolName: "local.readFile"),
+        AgentRuntimeMessage(role: .tool, content: "same", toolCallID: "call-2", toolName: "local.read"),
         AgentRuntimeMessage(role: .assistant, content: "They match.\n\n", reasoningContent: "Compared."),
     ]
 

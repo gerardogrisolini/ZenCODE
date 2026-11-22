@@ -178,7 +178,7 @@ import Testing
     @Test func executorDeniesEvenForgedCallBeforeFilesystemSideEffects() async throws {
         let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let executor = DirectToolExecutor(subAgentContextualBackendFactory: { _ in MemoryProposalMockBackend() })
-        let call = try toolCall(id: UUID().uuidString, name: "local.writeFile",
+        let call = try toolCall(id: UUID().uuidString, name: "local.write",
             args: ["path": path.path, "content": "must not exist"])
         let result = await MemoryConsolidationContext.$isIsolated.withValue(true) {
             await executor.execute(sessionID: "isolated", toolCall: call, workingDirectory: path.deletingLastPathComponent(), allowedToolNames: nil)
@@ -239,7 +239,7 @@ private actor MemoryProposalMockBackend: AgentRuntimeBackend {
                                 recall: MemoryTurnContext.currentTurnMemoryBlock, prompt: prompt,
                                 turnInstruction: AgentTurnInstructionContext.currentTurnInstruction))
         if attemptTool {
-            await onEvent(.toolCallStarted(.init(id: "forged", name: "local.writeFile", argumentsObject: [:], argumentsJSON: "{}")))
+            await onEvent(.toolCallStarted(.init(id: "forged", name: "local.write", argumentsObject: [:], argumentsJSON: "{}")))
         }
         while wait, sessions[sessionID] != nil { try await Task.sleep(for: .milliseconds(5)) }
         try Task.checkCancellation()

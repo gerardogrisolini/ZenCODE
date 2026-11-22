@@ -235,7 +235,7 @@ public actor TurnFileChangeTracker {
 
     func trackedPathCandidates(for request: ToolRequest) -> [String] {
         switch Self.normalizedTrackedToolName(request.name) {
-        case "local.writeFile":
+        case "local.write":
             return compactedPaths([
                 request.arguments["file_path"]?.stringValue,
                 request.arguments["filePath"]?.stringValue,

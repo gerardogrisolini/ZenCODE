@@ -109,7 +109,7 @@ extension TerminalChatRenderingTests {
         let content = String(repeating: "newFilePayload", count: 12)
         let toolCall = presentedToolCall(
             id: "call_write_long_line",
-            name: "local.writeFile",
+            name: "local.write",
             argumentsObject: [
                 "path": "Sources/Generated.swift",
                 "content": content
@@ -136,7 +136,7 @@ extension TerminalChatRenderingTests {
         #expect(rows.allSatisfy { TerminalTextMetrics.displayWidth($0.plainText) <= 79 })
     }
 
-    @Test(arguments: ["local.writeFile", "local.append", "local.editFile", "local.replace", "local.multiEdit"], [40, 52, 80])
+    @Test(arguments: ["local.write", "local.append", "local.editFile", "local.replace", "local.multiEdit"], [40, 52, 80])
     func mutationPreviewsUseNoExtraInsetAndPreserveSourceIndentation(
         toolName: String,
         columns: Int
@@ -145,7 +145,7 @@ extension TerminalChatRenderingTests {
         let new = "    let value = 2\n        value()"
         var arguments: [String: Any] = ["path": "Sources/Example.swift"]
         switch toolName {
-        case "local.writeFile", "local.append":
+        case "local.write", "local.append":
             arguments["content"] = new
         case "local.multiEdit":
             arguments["edits"] = [["old": old, "new": new]]
@@ -200,7 +200,7 @@ extension TerminalChatRenderingTests {
         }
     }
 
-    @Test(arguments: ["local.writeFile", "local.multiEdit"], [40, 80, 81])
+    @Test(arguments: ["local.write", "local.multiEdit"], [40, 80, 81])
     func filePreviewBackgroundStopsAtTheSafeContentWidth(toolName: String, columns: Int) {
         // Exercise blank/short rows, wrapped comments, wide glyphs, empty old
         // payloads, and both unified and side-by-side diffs on the same surface.
@@ -209,7 +209,7 @@ extension TerminalChatRenderingTests {
         for inset in [0, 1, 6] {
             for fileExtension in ["swift", "txt"] {
                 var arguments: [String: Any] = ["path": "Example.\(fileExtension)"]
-                if toolName == "local.writeFile" {
+                if toolName == "local.write" {
                     arguments["content"] = content
                 } else {
                     arguments["edits"] = [["old": "", "new": content]]
@@ -335,7 +335,7 @@ extension TerminalChatRenderingTests {
         func tool(path: String) -> DirectAgentToolCall {
             presentedToolCall(
                 id: path,
-                name: "local.writeFile",
+                name: "local.write",
                 argumentsObject: ["path": path, "content": "let value = true"],
                 argumentsJSON: "{}"
             )
@@ -401,7 +401,7 @@ extension TerminalChatRenderingTests {
     func aCompactBlockWhoseHeaderThePreviewShowedKeepsTheTargetAndItsStatus() {
         let toolCall = presentedToolCall(
             id: "call_1",
-            name: "local.writeFile",
+            name: "local.write",
             argumentsObject: ["path": "/tmp/Example.swift", "content": "let x = 1\n"],
             argumentsJSON: "{}"
         )
@@ -420,7 +420,7 @@ extension TerminalChatRenderingTests {
             previewMerge: .header
         )
 
-        #expect(withHeader == ["🛠️  local.writeFile", "/tmp/Example.swift ✅ 1.38ms"])
+        #expect(withHeader == ["🛠️  local.write", "/tmp/Example.swift ✅ 1.38ms"])
         // The preview header named the tool: only the header is left out, and
         // the status row keeps the target before the status, as always.
         #expect(merged == ["/tmp/Example.swift ✅ 1.38ms"])
@@ -459,7 +459,7 @@ extension TerminalChatRenderingTests {
         // is ignored and the block stays complete.
         let untargeted = DirectAgentToolCall(
             id: "call_2",
-            name: "local.writeFile",
+            name: "local.write",
             argumentsObject: ["path": "/tmp/Example.swift", "content": "let x = 1\n"],
             argumentsJSON: "{}"
         )
@@ -469,7 +469,7 @@ extension TerminalChatRenderingTests {
             statusDetail: "1.38ms",
             columnWidth: 80
         )
-        #expect(complete == ["🛠️  local.writeFile ✅ 1.38ms"])
+        #expect(complete == ["🛠️  local.write ✅ 1.38ms"])
         #expect(TerminalChat.compactToolLines(
             for: untargeted,
             statusIcon: "✅",

@@ -23,7 +23,7 @@ struct TurnFileChangeLiveCheckpointTests {
             let launched = await coordinator.gitInvocationCount()
 
             await harness.controller.publishLiveFileArtifacts(
-                result, callID: "read", toolName: "local.readFile", context: context
+                result, callID: "read", toolName: "local.read", context: context
             )
             #expect(await coordinator.gitInvocationCount() == launched)
 

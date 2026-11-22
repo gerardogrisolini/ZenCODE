@@ -32,7 +32,7 @@ struct OperationFileChangeTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let first = OperationFileChangeRecorder()
         let second = OperationFileChangeRecorder()
-        try await invoke("local.writeFile", ["path": "file", "content": "one"], root: root, recorder: first)
+        try await invoke("local.write", ["path": "file", "content": "one"], root: root, recorder: first)
         try await invoke("local.append", ["path": "file", "content": "two"], root: root, recorder: second)
         #expect(first.changes == [.init(path: root.appendingPathComponent("file").path, oldText: nil, newText: "one")])
         #expect(second.changes == [.init(path: root.appendingPathComponent("file").path, oldText: "one", newText: "onetwo")])
@@ -57,8 +57,8 @@ struct OperationFileChangeTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let first = OperationFileChangeRecorder()
         let second = OperationFileChangeRecorder()
-        async let a: Void = invoke("local.writeFile", ["path": "file", "content": "A"], root: root, recorder: first)
-        async let b: Void = invoke("local.writeFile", ["path": "file", "content": "B"], root: root, recorder: second)
+        async let a: Void = invoke("local.write", ["path": "file", "content": "A"], root: root, recorder: first)
+        async let b: Void = invoke("local.write", ["path": "file", "content": "B"], root: root, recorder: second)
         _ = try await (a, b)
         #expect(first.changes.first?.newText == "A")
         #expect(second.changes.first?.newText == "B")
@@ -186,7 +186,7 @@ extension LocalToolsSerialGroup.OperationFileChangeTests {
         let normalDone = DispatchSemaphore(value: 0)
         let normal = Task.detached {
             defer { normalDone.signal() }
-            try await invoke("local.writeFile", ["path": "ordinary", "content": "independent"], root: root, recorder: normalRecorder)
+            try await invoke("local.write", ["path": "ordinary", "content": "independent"], root: root, recorder: normalRecorder)
         }
         // Measure before connecting either end of the FIFO. The second write
         // must finish while the first operation is still waiting for its peer.

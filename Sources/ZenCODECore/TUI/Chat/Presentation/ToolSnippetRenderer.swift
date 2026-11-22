@@ -54,7 +54,7 @@ enum ToolSnippetRenderer {
 
         let arguments = toolCall.argumentsObject
         switch ToolMutationClassifier.normalizedMutationToolName(toolCall.name) {
-        case "local.writeFile", "local.append":
+        case "local.write", "local.append":
             guard let content = ToolArgumentReader.rawStringArgument(arguments, keys: ["content", "text"]) else {
                 return []
             }

@@ -265,7 +265,7 @@ struct TerminalChatRecoveredLiveArtifactTests {
     }
 
     private func call(_ id: String, path: String) -> DirectAgentToolCall {
-        DirectAgentToolCall(id: id, name: "local.writeFile", argumentsObject: ["path": path], argumentsJSON: "{}")
+        DirectAgentToolCall(id: id, name: "local.write", argumentsObject: ["path": path], argumentsJSON: "{}")
     }
 
     private nonisolated func withTerminal(

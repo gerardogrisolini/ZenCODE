@@ -40,7 +40,7 @@ struct ACPClientFileSystemTests {
         let recorder = OperationFileChangeRecorder()
         let access = harness.client.access(sessionID: "root-session") { true }
         try await ClientTextFileSystem.$current.withValue(access) {
-            let read = try await invoke("local.readFile", ["path": "File.swift"], root: root)
+            let read = try await invoke("local.read", ["path": "File.swift"], root: root)
             #expect(read.contains("before"))
             #expect(!read.contains("DISK"))
             try await OperationFileChangeRecorder.$current.withValue(recorder) {
@@ -71,7 +71,7 @@ struct ACPClientFileSystemTests {
         defer { harness.stop() }
         try await ClientTextFileSystem.$current.withValue(harness.client.access(sessionID: "root") { true }) {
             let lines = try await invoke(
-                "local.readFiles", ["paths": ["File.swift"], "offset": 2, "limit": 1], root: root)
+                "local.multiRead", ["paths": ["File.swift"], "offset": 2, "limit": 1], root: root)
             #expect(lines.contains("2\ttwo"))
             _ = try await invoke("local.replace", ["path": "File.swift", "old": "one", "new": "three"], root: root)
             #expect(await fixture.text(at: file.path) == "three three\ntwo\n")
@@ -96,7 +96,7 @@ struct ACPClientFileSystemTests {
                     ],
                 ], root: root)
             #expect(await fixture.text(at: file.path) == "five\nfour\n")
-            _ = try await invoke("local.writeFile", ["path": "File.swift", "content": "final\n"], root: root)
+            _ = try await invoke("local.write", ["path": "File.swift", "content": "final\n"], root: root)
             #expect(await fixture.text(at: file.path) == "final\n")
         }
         #expect(!FileManager.default.fileExists(atPath: file.path))
@@ -211,7 +211,7 @@ struct ACPClientFileSystemTests {
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
             subAgentContextualBackendFactory: { _ in ClientFileSystemTestBackend() })
         let call = DirectAgentToolCall(
-            id: "write", name: "local.writeFile",
+            id: "write", name: "local.write",
             argumentsObject: ["path": "Local.swift", "content": "local"],
             argumentsJSON: #"{"path":"Local.swift","content":"local"}"#)
         await ClientTextFileSystem.$current.withValue(harness.client.access(sessionID: "root") { true }) {
@@ -221,7 +221,7 @@ struct ACPClientFileSystemTests {
         }
         #expect(await fixture.requests.isEmpty)
         let result = await executor.execute(
-            sessionID: "root", toolCall: call, workingDirectory: root, allowedToolNames: ["local.writeFile"])
+            sessionID: "root", toolCall: call, workingDirectory: root, allowedToolNames: ["local.write"])
         #expect(result.status == .completed)
         #expect(try String(contentsOf: root.appendingPathComponent("Local.swift"), encoding: .utf8) == "local")
         await executor.shutdown()

@@ -345,7 +345,7 @@ struct TelegramTUITests {
         let broker = TerminalTelegramPermissionBroker()
         let lease = Self.telegramPermissionTestLease()
         let request = Self.authorizationRequest(
-            toolName: "local.readFile",
+            toolName: "local.read",
             title: "Read Sources/Main.swift",
             kind: "read",
             command: "read Sources/Main.swift"

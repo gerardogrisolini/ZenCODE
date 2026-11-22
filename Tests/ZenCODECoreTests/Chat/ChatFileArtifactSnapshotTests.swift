@@ -31,7 +31,7 @@ struct ChatFileArtifactSnapshotTests {
     ])
 
     private static func writeCall(path: String) -> DirectAgentToolCall {
-        DirectAgentToolCall(id: "edit", name: "local.writeFile", argumentsObject: ["path": path], argumentsJSON: "{}")
+        DirectAgentToolCall(id: "edit", name: "local.write", argumentsObject: ["path": path], argumentsJSON: "{}")
     }
 
     /// Writes `Value.swift` in the controller's working directory and starts

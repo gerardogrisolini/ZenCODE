@@ -535,7 +535,7 @@
 
       try await bridge.newSession(id: nil, params: [
         "cwd": "/tmp/acp-mcp-feature-not-granted",
-        "allowedTools": ["local.readFile"],
+        "allowedTools": ["local.read"],
         "mcpServers": [fixture.definition]
       ])
       let configuration = try #require(

@@ -24,11 +24,11 @@ struct ZenWindowPresenterSubAgentToolEventTests {
         let refreshes = RefreshCounter()
         presenter.fileMutationHandler = { refreshes.count.withLock { $0 += 1 } }
         let write = DirectAgentToolCall(
-            id: "write", name: "local.writeFile",
+            id: "write", name: "local.write",
             argumentsObject: ["path": "a.swift"], argumentsJSON: "{}"
         )
         let read = DirectAgentToolCall(
-            id: "read", name: "local.readFile",
+            id: "read", name: "local.read",
             argumentsObject: ["path": "a.swift"], argumentsJSON: "{}"
         )
         let result = DirectAgentToolResult(output: "ok", summary: "ok")

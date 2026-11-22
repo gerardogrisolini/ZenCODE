@@ -44,7 +44,7 @@ extension DirectSubAgentRuntimeTests {
         // `nil` is unrestricted; an exact name and a `feature.` prefix grant it.
         for allowedToolNames: Set<String>? in [
             nil,
-            ["feature.scaffold", "local.readFile"],
+            ["feature.scaffold", "local.read"],
             ["feature.", "agent.message"]
         ] {
             let prompt = Self.prompt(profile: builder, allowedToolNames: allowedToolNames)
@@ -100,7 +100,7 @@ extension DirectSubAgentRuntimeTests {
         let profileSection = try #require(builder.promptSection)
 
         for allowedToolNames: Set<String> in [
-            ["local.readFile", "feature.build", "feature.enable"],
+            ["local.read", "feature.build", "feature.enable"],
             ["agent.message"],
             []
         ] {
@@ -132,7 +132,7 @@ extension DirectSubAgentRuntimeTests {
     @Test
     func createdBuilderReceivesTheWorkflowOnlyWhenItsGrantHoldsFeatureScaffold() async throws {
         try await ProjectAgentSelectionTestSupport.withTemporaryProjectAsync { _, workspace in
-            let builder = Self.featureProfile(role: .builder, tools: ["local.readFile"])
+            let builder = Self.featureProfile(role: .builder, tools: ["local.read"])
             try ProjectAgentSelectionStore.save(
                 agentIDs: [builder.id],
                 workspaceRootURL: workspace
@@ -152,7 +152,7 @@ extension DirectSubAgentRuntimeTests {
                         "profile": .string(builder.name)
                     ],
                     workingDirectory: workspace,
-                    parentAllowedToolNames: ["local.readFile"]
+                    parentAllowedToolNames: ["local.read"]
                 )
 
                 let session = try #require(await backend.createdSessions().first)

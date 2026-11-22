@@ -23,7 +23,7 @@ struct AgentCoreSessionIdentityTests {
             cacheKey: "profile-cache",
             sessionRevision: 7,
             history: [AgentRuntimeMessage(role: .user, content: "Inspect the project")],
-            allowedToolNames: ["local.readFile", "external.sessionAddition"],
+            allowedToolNames: ["local.read", "external.sessionAddition"],
             configuredContextWindowLimit: 16_384,
             generationParameterOverrides: AgentGenerationParameterOverrides(
                 maxTokens: 321,
@@ -60,7 +60,7 @@ struct AgentCoreSessionIdentityTests {
             cacheKey: "original-cache",
             sessionRevision: 7,
             history: [],
-            allowedToolNames: ["local.writeFile"],
+            allowedToolNames: ["local.write"],
             configuredContextWindowLimit: 16_384,
             generationParameterOverrides: AgentGenerationParameterOverrides(
                 maxTokens: 321,
@@ -78,7 +78,7 @@ struct AgentCoreSessionIdentityTests {
             dynamicContext: "Recovered context",
             cacheKey: "recovered-cache",
             history: [AgentRuntimeMessage(role: .assistant, content: "Recovered answer")],
-            allowedToolNames: ["local.readFile"],
+            allowedToolNames: ["local.read"],
             thinkingSelection: .high,
             preserveThinking: true
         )
@@ -119,7 +119,7 @@ struct AgentCoreSessionIdentityTests {
             systemPrompt: nil,
             cacheKey: nil,
             history: [],
-            allowedToolNames: ["local.readFile"]
+            allowedToolNames: ["local.read"]
         )
         var store = AgentCoreSessionSnapshotStore()
         let generation = store.begin(configuration)
@@ -161,7 +161,7 @@ struct AgentCoreSessionIdentityTests {
             systemPrompt: "System prompt",
             cacheKey: "role-cache",
             history: [],
-            allowedToolNames: ["local.readFile"]
+            allowedToolNames: ["local.read"]
         )
     }
 

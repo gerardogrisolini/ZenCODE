@@ -172,7 +172,7 @@ struct DynamicPromptContextTests {
         let first = ChatGPTSubscriptionGenerationClient.SessionIdentity(
             configuration: configuration(
                 workingDirectory: "/tmp/one",
-                allowedTools: ["local.readFile", " git.status "],
+                allowedTools: ["local.read", " git.status "],
                 history: [
                     AgentRuntimeMessage(
                         role: .user,
@@ -184,7 +184,7 @@ struct DynamicPromptContextTests {
         let canonicallyEquivalent = ChatGPTSubscriptionGenerationClient.SessionIdentity(
             configuration: configuration(
                 workingDirectory: "/tmp/two",
-                allowedTools: ["git.status", "local.readFile", " local.readFile "],
+                allowedTools: ["git.status", "local.read", " local.read "],
                 history: [
                     AgentRuntimeMessage(
                         role: .user,

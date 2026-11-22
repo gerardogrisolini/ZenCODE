@@ -26,7 +26,7 @@ struct TurnFileChangeNetPeekTests {
         let tracker = TurnFileChangeTracker(baseDirectoryURL: directory)
         for name in ["edited.txt", "reverted.txt", "deleted.txt", "added.txt"] {
             await tracker.captureBaselineIfNeeded(
-                for: ToolRequest(name: "local.writeFile", arguments: ["path": .string(name)])
+                for: ToolRequest(name: "local.write", arguments: ["path": .string(name)])
             )
         }
         #expect(await tracker.peekNetSummary() == nil)
@@ -149,7 +149,7 @@ struct TurnFileChangeNetPeekTests {
         let coordinator = TurnFileChangeCoordinator(baseDirectoryURL: repository)
         await coordinator.prepareForTurn()
         await coordinator.captureBaselineIfNeeded(forAgentToolCall: DirectAgentToolCall(
-            id: "direct", name: "local.writeFile", argumentsObject: ["path": "direct.txt"], argumentsJSON: "{}"
+            id: "direct", name: "local.write", argumentsObject: ["path": "direct.txt"], argumentsJSON: "{}"
         ))
         let direct = OperationFileChange(path: "direct.txt", oldText: nil, newText: "direct\n")
         let steps: [(edit: () throws -> Void, matching: [OperationFileChange])] = [

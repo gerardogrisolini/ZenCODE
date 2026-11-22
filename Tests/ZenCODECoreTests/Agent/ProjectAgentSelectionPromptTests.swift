@@ -136,7 +136,7 @@ struct ProjectAgentSelectionPromptTests {
     @Test
     func roleDelegationIsAbsentWithoutAgentCreateOrWhenTheModelIsLocked() throws {
         #expect(SystemPromptBuilder.roleDelegationSection(
-            allowedToolNames: ["local.readFile"],
+            allowedToolNames: ["local.read"],
             roles: AgentProfileRole.allCases
         ) == nil)
         #expect(SystemPromptBuilder.roleDelegationSection(
@@ -166,7 +166,7 @@ struct ProjectAgentSelectionPromptTests {
 
             let withoutAgentCreate = AgentStandaloneSystemPrompt.promptSections(
                 cwd: workspace.path,
-                allowedToolNames: ["local.readFile"],
+                allowedToolNames: ["local.read"],
                 selectedAgentRole: .organizer
             ).combinedPrompt
             #expect(!withoutAgentCreate.contains("Delegation by role:"))
@@ -212,7 +212,7 @@ struct ProjectAgentSelectionPromptTests {
         #expect(!nothingRoutable.contains("Developing a missing tool"))
 
         // Without agent.create there is no roster at all.
-        #expect(Self.roster([Self.builder], allowedToolNames: ["local.readFile"]) == nil)
+        #expect(Self.roster([Self.builder], allowedToolNames: ["local.read"]) == nil)
     }
 
     @Test
@@ -236,7 +236,7 @@ struct ProjectAgentSelectionPromptTests {
 
         #expect(!section.contains("Developing a missing tool"))
         #expect(SystemPromptBuilder.roleDelegationSection(
-            allowedToolNames: ["local.readFile"],
+            allowedToolNames: ["local.read"],
             roles: [.builder]
         ) == nil)
     }

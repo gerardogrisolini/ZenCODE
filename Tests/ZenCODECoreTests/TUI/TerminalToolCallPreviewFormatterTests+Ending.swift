@@ -13,7 +13,7 @@ import Testing
 extension TerminalToolCallPreviewFormatterTests {
     // MARK: - Ignored input
 
-    @Test(arguments: ["local.applyPatch", "local.readFile", "local.exec", "agent.create"])
+    @Test(arguments: ["local.applyPatch", "local.read", "local.exec", "agent.create"])
     func toolsThatAreNotDrawnProduceNothing(name: String) {
         let events: [DirectAgentToolCallPreview] = [
             .toolStarted(name: name),
@@ -57,7 +57,7 @@ extension TerminalToolCallPreviewFormatterTests {
         var formatter = makeFormatter()
 
         #expect(rendered(orphan) == "")
-        #expect(rendered([.toolStarted(name: "local.readFile")] + orphan) == "")
+        #expect(rendered([.toolStarted(name: "local.read")] + orphan) == "")
         // After its end a call takes no more fragments.
         #expect(rendered(write(content: ["a\n"]) + orphan, interactive: false)
             == rendered(write(content: ["a\n"]), interactive: false))
@@ -75,7 +75,7 @@ extension TerminalToolCallPreviewFormatterTests {
         let hostile = "a\u{1B}[2J\u{1B}]8;;x\u{07}b\u{08}\u{7F}\u{9B}c\u{202E}d\u{200D}e\n"
         for interactive in [true, false] {
             let text = rendered(write(content: [hostile]), interactive: interactive)
-            let body = String(text[try #require(text.range(of: "local.writeFile")).upperBound...])
+            let body = String(text[try #require(text.range(of: "local.write")).upperBound...])
 
             #expect(body.contains("a␛[2J␛]8;;x␇b␈␡�c�d�e\n"))
             #expect(!body.contains("\u{07}"))
@@ -95,7 +95,7 @@ extension TerminalToolCallPreviewFormatterTests {
         let path = "Sources/Feature/Écran.swift"
         let content = "import Foundation\r\n\n\tstruct A {\n    let s = \"é🙂\"\r\n    // \u{1B}[1m\n}\nlast"
         func events(pathChunks: [String], contentChunks: [String]) -> [DirectAgentToolCallPreview] {
-            [.toolStarted(name: "local.writeFile"), .parameterStarted(name: "path")]
+            [.toolStarted(name: "local.write"), .parameterStarted(name: "path")]
                 + pathChunks.map(DirectAgentToolCallPreview.parameterText)
                 + [.parameterEnded, .parameterStarted(name: "content")]
                 + contentChunks.map(DirectAgentToolCallPreview.parameterText)
@@ -118,7 +118,7 @@ extension TerminalToolCallPreviewFormatterTests {
     @Test
     func theEndClosesAnOpenRowAndAnArgumentLeftOpen() {
         let events: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: "local.writeFile"),
+            .toolStarted(name: "local.write"),
             .parameterStarted(name: "content"),
             .parameterText("let x = 1"),
             .ended
@@ -131,7 +131,7 @@ extension TerminalToolCallPreviewFormatterTests {
     @Test
     func theEndClosesAHeaderThatIsStillOpen() {
         let events: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: "local.writeFile"),
+            .toolStarted(name: "local.write"),
             .parameterStarted(name: "path"),
             .parameterText("A.swi"),
             .ended
@@ -143,7 +143,7 @@ extension TerminalToolCallPreviewFormatterTests {
     @Test
     func aNewToolStartEndsThePreviousCall() {
         let events: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: "local.writeFile"),
+            .toolStarted(name: "local.write"),
             .parameterStarted(name: "path"),
             .parameterText("A.swift"),
             .parameterStarted(name: "content"),
@@ -151,13 +151,13 @@ extension TerminalToolCallPreviewFormatterTests {
             .toolStarted(name: "local.editFile"),
             .parameterStarted(name: "old"),
             .parameterText("b"),
-            .toolStarted(name: "local.readFile"),
+            .toolStarted(name: "local.read"),
             .parameterStarted(name: "path"),
             .parameterText("ignored"),
             .ended
         ]
 
-        #expect(rendered(events, interactive: false) == "🛠️  local.writeFile\na\n🛠️  local.editFile\n- b\n")
+        #expect(rendered(events, interactive: false) == "🛠️  local.write\na\n🛠️  local.editFile\n- b\n")
     }
 
     @Test
@@ -180,7 +180,7 @@ extension TerminalToolCallPreviewFormatterTests {
 
         #expect(ended.text == "")
         #expect(ended.drawn == DrawnCall(
-            toolName: "local.writeFile", path: "/tmp/A.swift", endedOnScreen: true
+            toolName: "local.write", path: "/tmp/A.swift", endedOnScreen: true
         ))
         // The record belongs to the call that ended: finishing again has none.
         #expect(formatter.finish(columns: { 80 }).drawn == nil)
@@ -220,7 +220,7 @@ extension TerminalToolCallPreviewFormatterTests {
         // not the header as on screen.
         #expect(ended.text == "")
         #expect(ended.drawn == DrawnCall(
-            toolName: "local.writeFile", path: "/tmp/A.swift", endedOnScreen: false
+            toolName: "local.write", path: "/tmp/A.swift", endedOnScreen: false
         ))
     }
 
@@ -228,7 +228,7 @@ extension TerminalToolCallPreviewFormatterTests {
     func aPathStillStreamingWhenTheCallEndsIsRecorded() {
         var formatter = makeFormatter(interactive: false)
         _ = feed([
-            .toolStarted(name: "local.writeFile"),
+            .toolStarted(name: "local.write"),
             .parameterStarted(name: "path"),
             .parameterText("A.swi")
         ], to: &formatter)
@@ -236,16 +236,16 @@ extension TerminalToolCallPreviewFormatterTests {
 
         #expect(ended.text == "\n")
         #expect(ended.drawn == DrawnCall(
-            toolName: "local.writeFile", path: "A.swi", endedOnScreen: true
+            toolName: "local.write", path: "A.swi", endedOnScreen: true
         ))
     }
 
     @Test
     func theRecordNamesTheCanonicalTool() {
         var formatter = makeFormatter(interactive: false)
-        _ = feed(Array(write(path: "A.swift", content: ["a\n"], tool: "local_writeFile").dropLast(2)), to: &formatter)
+        _ = feed(Array(write(path: "A.swift", content: ["a\n"], tool: "local_write").dropLast(2)), to: &formatter)
 
-        #expect(formatter.finish(columns: { 80 }).drawn?.toolName == "local.writeFile")
+        #expect(formatter.finish(columns: { 80 }).drawn?.toolName == "local.write")
     }
 
     @Test

@@ -187,7 +187,7 @@ extension ChatSessionSelectionTests {
             ))
             // The session never receives the tools the platform refused.
             let digest = try #require(await harness.runtime.calls.first?.digest)
-            #expect(try #require(digest.allowedToolNames).contains("local.readFile") == false)
+            #expect(try #require(digest.allowedToolNames).contains("local.read") == false)
             guard case let .activeTools(summary) = try #require(outcome.notices.first) else {
                 Issue.record("The closing notice reports the active tools")
                 return
@@ -324,7 +324,7 @@ extension ChatSessionSelectionTests {
             let calls = await harness.runtime.calls
             let created = try #require(calls.first { $0.name == "createSession" }?.digest)
             let allowed = try #require(created.allowedToolNames)
-            #expect(allowed.contains("local.readFile"))
+            #expect(allowed.contains("local.read"))
             #expect(!allowed.contains("local.exec"))
             // The skills reach the new session before the model loads.
             #expect(calls.contains(

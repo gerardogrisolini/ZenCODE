@@ -55,7 +55,7 @@ struct DirectToolExecutorFeatureBuildExposureTests {
 
             // The coordinator lists and runs the tool it never selected.
             let names = await coordinator.descriptors(
-                allowedToolNames: ["local.readFile"],
+                allowedToolNames: ["local.read"],
                 sessionID: Self.coordinatorSessionID,
                 discoversFeatureTools: false
             ).map(\.name)
@@ -64,7 +64,7 @@ struct DirectToolExecutorFeatureBuildExposureTests {
                 sessionID: Self.coordinatorSessionID,
                 toolCall: Self.call("changelog.build", ["text": "x"]),
                 workingDirectory: workspace.featuresURL,
-                allowedToolNames: ["local.readFile"]
+                allowedToolNames: ["local.read"]
             )
             #expect(run.status == .completed, "\(run.output)")
             await builder.shutdown()
@@ -329,7 +329,7 @@ struct DirectToolExecutorFeatureBuildExposureTests {
         }
     }
 
-    /// A name under a core namespace (`local.readFile.pdf`, `skills.list.x`),
+    /// A name under a core namespace (`local.read.pdf`, `skills.list.x`),
     /// whose derived prefix a session allowing the core tool would find
     /// relevant, is refused for the Builder before the scaffold writes or the
     /// build runs; the same calls without a Builder identity are unchanged.
@@ -340,7 +340,7 @@ struct DirectToolExecutorFeatureBuildExposureTests {
             let coordinator = workspace.coordinatorExecutor()
             var builtFeatureIDs: [String] = []
             for (id, toolName, namespace) in [
-                ("pdf-reader", "local.readFile.pdf", "local."),
+                ("pdf-reader", "local.read.pdf", "local."),
                 ("skills-extra", "skills.list.x", "skills."),
             ] {
                 let scaffoldCall = Self.call("feature.scaffold", ["id": id, "toolName": toolName])
@@ -403,7 +403,7 @@ struct DirectToolExecutorFeatureBuildExposureTests {
     @Test
     func aBuilderEnableOfAManifestOutsideItsNamespaceIsRefusedBeforeEnabling() async throws {
         try await Workspace.with { workspace in
-            try await workspace.scaffold(id: "pdf-enable", toolName: "local.readFile.pdf", enabled: false)
+            try await workspace.scaffold(id: "pdf-enable", toolName: "local.read.pdf", enabled: false)
             try await workspace.scaffold(id: "own-enable", toolName: "ownenable.run", enabled: false)
             let coordinator = workspace.coordinatorExecutor()
             for id in ["pdf-enable", "own-enable"] {

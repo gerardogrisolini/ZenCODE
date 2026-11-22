@@ -26,7 +26,7 @@ struct ZenCODEHeadlessRunnerToolGrantTests {
             Self.expectBeyondIntrinsicSkillTools(allowed)
             // shell, files, text, memory and sub-agents of the Developer profile.
             for name in [
-                "local.exec", "local.readFile", "text.wc",
+                "local.exec", "local.read", "text.wc",
                 "memory.read", "agent.create", "tasks.create"
             ] {
                 #expect(allowed.contains(name), "Developer headless session must allow \(name)")
@@ -54,7 +54,7 @@ struct ZenCODEHeadlessRunnerToolGrantTests {
                 #expect(allowed.contains(name), "Organizer headless session must allow \(name)")
             }
             // The Organizer has neither shell, files nor text tools.
-            for name in ["local.exec", "local.readFile", "text.wc"] {
+            for name in ["local.exec", "local.read", "text.wc"] {
                 #expect(!allowed.contains(name), "Organizer headless session must not allow \(name)")
             }
             #expect(allowed.isSuperset(of: Self.expectedCoreGrant(forAgentNamed: AgentProfileStore.organizerAgentName)))

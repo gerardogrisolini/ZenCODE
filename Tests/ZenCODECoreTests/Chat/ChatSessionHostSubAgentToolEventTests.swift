@@ -271,7 +271,7 @@ struct ChatSessionHostSubAgentToolEventTests {
         )
     }
 
-    private static func call(_ id: String, name: String = "local.writeFile", path: String) -> DirectAgentToolCall {
+    private static func call(_ id: String, name: String = "local.write", path: String) -> DirectAgentToolCall {
         DirectAgentToolCall(id: id, name: name, argumentsObject: ["path": path], argumentsJSON: "{}")
     }
 
@@ -301,7 +301,7 @@ struct ChatSessionHostSubAgentToolEventTests {
             let before = Data("let value = 1\n".utf8)
             try before.write(to: file)
             let write = Self.call("write", path: "Delegated.swift")
-            let read = Self.call("read", name: "local.readFile", path: "Other.swift")
+            let read = Self.call("read", name: "local.read", path: "Other.swift")
             let liveDuringTurn = Box<[(agentID: String?, paths: [String])]>([])
             let otherSlotLiveDuringTurn = Box<Int>(-1)
             await environment.backend.setScript { sessionID, handler in
@@ -428,7 +428,7 @@ struct ChatSessionHostSubAgentToolEventTests {
                     createdAt: .now, updatedAt: .now
                 ),
             ])
-            let read = Self.call("read", name: "local.readFile", path: "a.swift")
+            let read = Self.call("read", name: "local.read", path: "a.swift")
             for agentID in ["known", "elsewhere", "unknown"] {
                 await environment.backend.emit(DirectSubAgentToolEvent(
                     agentID: agentID, agentName: agentID, toolCall: read, lifecycle: .started

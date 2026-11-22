@@ -143,7 +143,7 @@ struct SubAgentToolRequestCompatibilityParityTests {
         "AGENT.SPAWN", "Agent.Create", "tool_agent_create", "agents.wait.2", "agent_send",
         "external.agent.create", "tasks.stop", "tasks_list", "task.update", "task.create", "task_create",
         "task.list", "task_list", "task.get", "task_get", "task.retry", "task_retry", "task.cancel",
-        "task_cancel", "tasks", "agents", "send_input", "retry_task", "cancel_task", "local.readFile",
+        "task_cancel", "tasks", "agents", "send_input", "retry_task", "cancel_task", "local.read",
         "LOCAL.readFile", "figma.get_code", "git.commit", "remote.tool", "", " ", "tool", "tool_",
         "todo", "todos.list", "subagents.join", "agents.input", "tool_tool_agent_create",
     ]

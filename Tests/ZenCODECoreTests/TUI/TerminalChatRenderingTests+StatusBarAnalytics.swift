@@ -50,7 +50,7 @@ extension TerminalChatRenderingTests {
         )
         let read = DirectAgentToolCall(
             id: "read",
-            name: "local.readFile",
+            name: "local.read",
             argumentsObject: [:],
             argumentsJSON: "{}"
         )

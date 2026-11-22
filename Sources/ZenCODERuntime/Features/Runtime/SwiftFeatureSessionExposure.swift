@@ -384,7 +384,7 @@ extension SwiftFeatureRuntime {
     /// (``toolNamePrefix(from:)``), takes a namespace it does not own:
     /// - the core catalog: the entry is not exposable
     ///   (``isExposableToolName(_:)``), starts with the namespace of a core
-    ///   tool (``coreToolNamespaces``: `local.readFile.pdf`, `skills.list.x`),
+    ///   tool (``coreToolNamespaces``: `local.read.pdf`, `skills.list.x`),
     ///   or, as a prefix, covers a core tool name;
     /// - a name of another loaded feature (one with a different ID): the entry
     ///   is one of its tools or aliases, falls under one of its prefixes, or,

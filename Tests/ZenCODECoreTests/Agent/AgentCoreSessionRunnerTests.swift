@@ -114,7 +114,7 @@ struct AgentCoreSessionRunnerTests {
                 systemPrompt: nil,
                 cacheKey: nil,
                 history: [],
-                allowedToolNames: ["local.readFile"],
+                allowedToolNames: ["local.read"],
                 thinkingSelection: nil,
                 preserveThinking: false
             ),
@@ -123,7 +123,7 @@ struct AgentCoreSessionRunnerTests {
         )
         let toolCall = DirectAgentToolCall(
             id: "call_read",
-            name: "local.readFile",
+            name: "local.read",
             argumentsObject: ["path": "big.swift"],
             argumentsJSON: #"{"path":"big.swift"}"#
         )
@@ -151,7 +151,7 @@ struct AgentCoreSessionRunnerTests {
         #expect(toolMessage.role == .tool)
         #expect(toolMessage.content == "compact output sent back to the model")
         #expect(toolMessage.toolCallID == "call_read")
-        #expect(toolMessage.toolName == "local.readFile")
+        #expect(toolMessage.toolName == "local.read")
         #expect(toolMessage.attachments.count == 1)
         #expect(toolMessage.attachments.first?.data == Data([0x89, 0x50, 0x4E, 0x47]))
     }
@@ -169,7 +169,7 @@ struct AgentCoreSessionRunnerTests {
                 systemPrompt: nil,
                 cacheKey: nil,
                 history: [],
-                allowedToolNames: ["local.readFile"],
+                allowedToolNames: ["local.read"],
                 thinkingSelection: nil,
                 preserveThinking: false
             ),
@@ -179,7 +179,7 @@ struct AgentCoreSessionRunnerTests {
         func toolCall(_ id: String) -> DirectAgentToolCall {
             DirectAgentToolCall(
                 id: id,
-                name: "local.readFile",
+                name: "local.read",
                 argumentsObject: ["path": "\(id).swift"],
                 argumentsJSON: #"{"path":"\#(id).swift"}"#
             )

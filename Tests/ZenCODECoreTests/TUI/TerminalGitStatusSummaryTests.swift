@@ -33,9 +33,9 @@ struct TerminalGitStatusSummaryTests {
 
     @Test("File-mutation tools, whitespace around the name ignored")
     func fileMutationTools() {
-        #expect(ToolMutationClassifier.isFileMutationTool("local.writeFile"))
+        #expect(ToolMutationClassifier.isFileMutationTool("local.write"))
         #expect(ToolMutationClassifier.isFileMutationTool(" local.applyPatch "))
-        #expect(!ToolMutationClassifier.isFileMutationTool("local.readFile"))
+        #expect(!ToolMutationClassifier.isFileMutationTool("local.read"))
         #expect(!ToolMutationClassifier.isFileMutationTool("local.exec"))
     }
 

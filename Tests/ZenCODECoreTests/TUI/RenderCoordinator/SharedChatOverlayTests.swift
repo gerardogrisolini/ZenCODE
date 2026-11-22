@@ -26,7 +26,7 @@ extension TerminalChatRenderCoordinatorTests {
         let completionText = await renderer.capturedText(droppingFirst: eventsBeforeCompletion)
         #expect(completionText.hasPrefix("\u{1B}[3A\r"))
         #expect(completionText.components(separatedBy: "\u{1B}[2K").count - 1 >= 3)
-        #expect(TerminalANSIText.stripANSI(completionText).contains("local.readFile"))
+        #expect(TerminalANSIText.stripANSI(completionText).contains("local.read"))
         #expect(await renderer.snapshot().activeSubAgentOverviewRowCount == 0)
     }
 
@@ -51,7 +51,7 @@ extension TerminalChatRenderCoordinatorTests {
         let replayText = await renderer.capturedText(droppingFirst: eventsBeforeStart)
         #expect(reanchored.activeToolCallID == toolCall.id)
         #expect(reanchored.activeToolRenderedRowCount > 0)
-        #expect(TerminalANSIText.stripANSI(replayText).contains("local.readFile"))
+        #expect(TerminalANSIText.stripANSI(replayText).contains("local.read"))
     }
 
     @Test
@@ -77,7 +77,7 @@ extension TerminalChatRenderCoordinatorTests {
             ) == true
         )
         #expect(!transitionEvents.plainText().contains(
-            "local.readFile"
+            "local.read"
         ))
         #expect(await renderer.snapshot().activeToolCallID == nil)
 
@@ -89,7 +89,7 @@ extension TerminalChatRenderCoordinatorTests {
         )
         let completionText = await renderer.capturedText(droppingFirst: eventsBeforeCompletion)
         #expect(!containsCursorUpSequence(completionText))
-        #expect(TerminalANSIText.stripANSI(completionText).contains("local.readFile"))
+        #expect(TerminalANSIText.stripANSI(completionText).contains("local.read"))
     }
 
     @Test

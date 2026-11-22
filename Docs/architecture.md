@@ -1495,7 +1495,7 @@ the first `agent.*` result of the session that follows announces them once.
   refuses a feature when an entry is not exposable (`isExposableToolName`),
   starts with the namespace of a core catalog tool (`coreToolNamespaces`: each
   core name up to and including its first dot, such as `local.` and `skills.`,
-  so `local.readFile.pdf` and `skills.list.x` are refused), or, as a prefix,
+  so `local.read.pdf` and `skills.list.x` are refused), or, as a prefix,
   covers a core name; or when it collides with another loaded feature (one with
   a different ID): it equals one of its tools or aliases, falls under one of its
   prefixes, or, as a prefix, covers or extends a tool, an alias, or a prefix of
@@ -2253,8 +2253,8 @@ When `initialize.clientCapabilities.fs` advertises boolean `readTextFile` and/or
 the prompt task. Child tasks inherit the root session's access and epoch fence;
 no ACP types enter the neutral runtime and no new model, feature-process or
 persisted DTO is introduced. DirectToolExecutor still enforces the existing tool
-grants. Read capability routes `local.readFile` and `local.readFiles`; write
-capability routes `local.writeFile`; both are required to route `local.editFile`,
+grants. Read capability routes `local.read` and `local.multiRead`; write
+capability routes `local.write`; both are required to route `local.editFile`,
 `local.multiEdit` and `local.replace`. Their model-visible descriptions identify
 them as client-editor tools. Unsupported operations retain the existing local
 implementation; an RPC error never retries the same operation on disk. Directory

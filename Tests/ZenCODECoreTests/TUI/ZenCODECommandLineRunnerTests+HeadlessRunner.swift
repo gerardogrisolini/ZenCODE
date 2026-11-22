@@ -51,7 +51,7 @@ extension ZenCODECommandLineRunnerTests {
         let output = Mutex<[Data]>([])
         let toolCall = DirectAgentToolCall(
             id: "tool-1",
-            name: "local.readFile",
+            name: "local.read",
             argumentsObject: ["path": "/private/input"],
             argumentsJSON: "{\"path\":\"/private/input\"}"
         )

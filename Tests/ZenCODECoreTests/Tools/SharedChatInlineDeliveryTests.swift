@@ -57,7 +57,7 @@ struct SharedChatInlineDeliveryTests {
             default:
                 // Missing required arguments fail in dispatch, not authorization.
                 toolCall = DirectAgentToolCall(
-                    id: branch, name: "local.readFile", argumentsObject: [:], argumentsJSON: "{}"
+                    id: branch, name: "local.read", argumentsObject: [:], argumentsJSON: "{}"
                 )
                 expectedStatus = .failed
             }

@@ -69,8 +69,8 @@ extension AgentConfigurationTests {
         let reporterAllowedToolNames = reporterProfile.allowedToolNames(
             featureStatuses: unavailableOptionalFeatureStatuses
         )
-        #expect(reporterAllowedToolNames.contains("local.readFile"))
-        #expect(!reporterAllowedToolNames.contains("local.writeFile"))
+        #expect(reporterAllowedToolNames.contains("local.read"))
+        #expect(!reporterAllowedToolNames.contains("local.write"))
         #expect(!reporterAllowedToolNames.contains("local.editFile"))
         // Search is a core group: it expands to the in-process `search.*`
         // tools without any installed feature package.
@@ -118,8 +118,8 @@ extension AgentConfigurationTests {
         #expect(!plannerProfile.tools.contains("sub-agents"))
         #expect(!plannerProfile.tools.contains("shell"))
         #expect(!plannerProfile.tools.contains("local.exec"))
-        #expect(!plannerProfile.tools.contains("local.readFile"))
-        #expect(!plannerProfile.tools.contains("local.writeFile"))
+        #expect(!plannerProfile.tools.contains("local.read"))
+        #expect(!plannerProfile.tools.contains("local.write"))
         let optionalFeatureKeys = Set([gitKey, webKey])
         #expect(plannerProfile.tools.filter { !optionalFeatureKeys.contains($0) }.allSatisfy {
             !TerminalToolSelectionCatalog.selectionKeys(for: $0, items: toolSelectionItems).isEmpty
@@ -192,8 +192,8 @@ extension AgentConfigurationTests {
         )
         #expect(organizerAllowedToolNames.contains("memory.write"))
         #expect(organizerAllowedToolNames.contains("agent.create"))
-        #expect(!organizerAllowedToolNames.contains("local.readFile"))
-        #expect(!organizerAllowedToolNames.contains("local.writeFile"))
+        #expect(!organizerAllowedToolNames.contains("local.read"))
+        #expect(!organizerAllowedToolNames.contains("local.write"))
         #expect(!organizerAllowedToolNames.contains("local.exec"))
         #endif
     }
@@ -291,7 +291,7 @@ extension AgentConfigurationTests {
         )
         #expect(broadGrantResolved.contains("linear."))
         #expect(broadGrantResolved.isDisjoint(with: mutableLocalNames))
-        #expect(broadGrantResolved.contains("local.readFile"))
+        #expect(broadGrantResolved.contains("local.read"))
         // `search.` covers only core read tools: a read-only profile keeps them.
         #expect(searchGrantResolved == searchNames)
     }

@@ -51,7 +51,7 @@ struct ChatSessionSelectionTests {
             #expect(calls[0] == .rebuildSession(sessionID))
             let created = try #require(calls[1].digest)
             let allowed = try #require(created.allowedToolNames)
-            #expect(allowed.contains("local.readFile"))
+            #expect(allowed.contains("local.read"))
             #expect(!allowed.contains("local.exec"))
             // The model is told what changed, after the conversation it kept.
             let message = ChatSessionController.toolSelectionChangedMessage(
@@ -290,7 +290,7 @@ struct ChatSessionSelectionTests {
             #expect(await featureRuntime.exposedFeatureIDs(sessionID: controller.sessionID).isEmpty)
             let digest = try #require(await harness.runtime.calls.first?.digest)
             let allowed = try #require(digest.allowedToolNames)
-            #expect(allowed.contains("local.readFile"))
+            #expect(allowed.contains("local.read"))
             #expect(!allowed.contains("built.run"))
             // The menu no longer ticks it.
             #expect(await controller.toolChoices().selectedIDs == ["files"])

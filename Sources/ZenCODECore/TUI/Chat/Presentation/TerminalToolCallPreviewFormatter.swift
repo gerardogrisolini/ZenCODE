@@ -107,12 +107,12 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     ]
 
     /// The drawn tool named `name`, compared on letters and digits only and
-    /// without case, so `local_writeFile` is `local.writeFile`; `nil` for any
+    /// without case, so `local_write` is `local.write`; `nil` for any
     /// tool that is not drawn (`local.applyPatch` included).
     static func drawnTool(named name: String) -> DrawnTool? {
         switch normalizedToolName(name) {
-        case "localwritefile":
-            DrawnTool(name: "local.writeFile", parameters: contentParameters)
+        case "localwrite":
+            DrawnTool(name: "local.write", parameters: contentParameters)
         case "localappend":
             DrawnTool(name: "local.append", parameters: contentParameters)
         case "localeditfile":

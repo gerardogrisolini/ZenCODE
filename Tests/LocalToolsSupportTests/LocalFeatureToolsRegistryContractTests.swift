@@ -8,8 +8,8 @@ struct LocalFeatureToolsRegistryContractTests {
     @Test
     func publicToolGroupsExposeTheExpectedTools() {
         #expect(LocalFeatureTools.fileTools().map(\.descriptor.name) == [
-            "local.pwd", "local.ls", "local.readFile", "local.readFiles",
-            "local.inspectFile", "local.writeFile", "local.replace", "local.editFile",
+            "local.pwd", "local.ls", "local.read", "local.multiRead",
+            "local.inspectFile", "local.write", "local.replace", "local.editFile",
             "local.multiEdit", "local.append", "local.mkdir", "local.delete",
             "local.move", "local.applyPatch"
         ])
@@ -24,10 +24,10 @@ struct LocalFeatureToolsRegistryContractTests {
     @Test
     func fileToolAccessPartitionsAreExplicitAndLossless() {
         let expectedReadOnly = [
-            "local.pwd", "local.ls", "local.readFile", "local.readFiles", "local.inspectFile"
+            "local.pwd", "local.ls", "local.read", "local.multiRead", "local.inspectFile"
         ]
         let expectedMutating = [
-            "local.writeFile", "local.replace", "local.editFile", "local.multiEdit",
+            "local.write", "local.replace", "local.editFile", "local.multiEdit",
             "local.append", "local.mkdir", "local.delete", "local.move", "local.applyPatch"
         ]
 
@@ -43,7 +43,7 @@ struct LocalFeatureToolsRegistryContractTests {
     func fileListInspectAndWriteAdvertiseARequiredPathArgument() throws {
         let descriptors = LocalFeatureTools.fileTools().map(\.descriptor)
 
-        for name in ["local.ls", "local.inspectFile", "local.writeFile"] {
+        for name in ["local.ls", "local.inspectFile", "local.write"] {
             let descriptor = try #require(
                 descriptors.first { $0.name == name }
             )

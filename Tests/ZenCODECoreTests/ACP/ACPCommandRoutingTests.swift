@@ -34,7 +34,7 @@ struct ACPCommandRoutingTests {
     @Test
     func goalWithoutSubAgentsStartsResumesAndIsDiscoverable() async throws {
         let fixture = try await makeFixture(
-            sessionID: "acp-direct-goal-\(UUID().uuidString)", allowedToolNames: ["local.readFile"]
+            sessionID: "acp-direct-goal-\(UUID().uuidString)", allowedToolNames: ["local.read"]
         )
         let names = await fixture.bridge.commandNamesForGoalTesting(sessionID: fixture.sessionID)
         // Without the sub-agent tools `/review` and `/plan` stay hidden; `/tasks`
@@ -61,7 +61,7 @@ struct ACPCommandRoutingTests {
             == ["goal", "tasks", "changes", "undo"])
         let expectedGrant = ChatTurnPurpose.workflow(originalGoal: "", graphID: graph.id)
             .additionalToolNames(activePlan: nil)
-            .union(["local.readFile"])
+            .union(["local.read"])
         let grants = await fixture.backend.recordedToolGrants()
         #expect(grants.contains(expectedGrant))
         #expect(grants.allSatisfy { $0?.isSubset(of: expectedGrant) == true })
@@ -70,7 +70,7 @@ struct ACPCommandRoutingTests {
     @Test
     func directGoalAutomaticallyContinuesUntilGraphCompletionWithoutSubAgents() async throws {
         let fixture = try await makeFixture(
-            sessionID: "acp-direct-complete-\(UUID().uuidString)", allowedToolNames: ["local.readFile"]
+            sessionID: "acp-direct-complete-\(UUID().uuidString)", allowedToolNames: ["local.read"]
         )
         await fixture.backend.completeWorkflowDirectly()
         try await fixture.bridge.prompt(id: .number(1), params: [
@@ -130,7 +130,7 @@ struct ACPCommandRoutingTests {
     @Test
     func tasksCommandAnswersWithTheGraphAndThePlanSectionWithoutReachingTheModel() async throws {
         let fixture = try await makeFixture(
-            sessionID: "acp-tasks-\(UUID().uuidString)", allowedToolNames: ["local.readFile"]
+            sessionID: "acp-tasks-\(UUID().uuidString)", allowedToolNames: ["local.read"]
         )
         let bridge = fixture.bridge
         let sessionID = fixture.sessionID

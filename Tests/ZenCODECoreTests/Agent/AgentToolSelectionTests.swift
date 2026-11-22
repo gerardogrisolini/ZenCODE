@@ -34,7 +34,7 @@ extension AgentConfigurationTests {
 
         #expect(selectedKeys.contains("search"))
         #expect(allowedToolNames.contains("local.exec"))
-        #expect(allowedToolNames.contains("local.readFile"))
+        #expect(allowedToolNames.contains("local.read"))
         #expect(allowedToolNames.contains("local.inspectFile"))
         #expect(allowedToolNames.contains("text.wc"))
         #expect(!allowedToolNames.contains("feature.list"))
@@ -62,7 +62,7 @@ extension AgentConfigurationTests {
             items: coreItems
         )
         #expect(coreAllowedToolNames.contains("local.exec"))
-        #expect(coreAllowedToolNames.contains("local.readFile"))
+        #expect(coreAllowedToolNames.contains("local.read"))
         #expect(coreAllowedToolNames.contains("local.inspectFile"))
         #expect(coreAllowedToolNames.contains("search.glob"))
         #expect(coreAllowedToolNames.contains("search.grep"))
@@ -279,7 +279,7 @@ extension AgentConfigurationTests {
             .subtracting(DirectToolCatalog.coreReadDescriptors.map(\.name))
 
         #expect(allowedToolNames.isDisjoint(with: mutatingCoreNames))
-        #expect(allowedToolNames.contains("local.readFile"))
+        #expect(allowedToolNames.contains("local.read"))
         #expect(allowedToolNames.contains("memory.read"))
         #expect(allowedToolNames.contains("agent.list"))
         #expect(allowedToolNames.contains("tasks.list"))

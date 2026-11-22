@@ -40,7 +40,7 @@ extension DirectToolExecutorRoutingCharacterizationTests {
         ),
         row(
             "local.exec not allowed", "local.exec", #"{"command":"printf core-exec"}"#,
-            allowed: ["local.readFile"],
+            allowed: ["local.read"],
             expect: notEnabled("local.exec"),
             status: .permissionDenied
         ),
@@ -65,46 +65,46 @@ extension DirectToolExecutorRoutingCharacterizationTests {
         ),
         // Core local tools.
         row(
-            "local.readFile, nil allowlist", "local.readFile", #"{"path":"a.txt"}"#,
+            "local.read, nil allowlist", "local.read", #"{"path":"a.txt"}"#,
             allowed: nil,
             expect: .contains("alpha")
         ),
         row(
-            "local.readFile, prefix grant", "local.readFile", #"{"path":"a.txt"}"#,
+            "local.read, prefix grant", "local.read", #"{"path":"a.txt"}"#,
             allowed: ["local."],
             expect: .contains("alpha")
         ),
         row(
-            "local.readFile, grant without dot", "local.readFile", #"{"path":"a.txt"}"#,
+            "local.read, grant without dot", "local.read", #"{"path":"a.txt"}"#,
             allowed: ["local"],
-            expect: notEnabled("local.readFile"),
+            expect: notEnabled("local.read"),
             status: .permissionDenied
         ),
         row(
-            "local.readFile, partial prefix grant", "local.readFile", #"{"path":"a.txt"}"#,
+            "local.read, partial prefix grant", "local.read", #"{"path":"a.txt"}"#,
             allowed: ["loc."],
-            expect: notEnabled("local.readFile"),
+            expect: notEnabled("local.read"),
             status: .permissionDenied
         ),
         row(
-            "local.readFile, uppercase name", "LOCAL.readFile", #"{"path":"a.txt"}"#,
+            "local.read, uppercase name", "LOCAL.readFile", #"{"path":"a.txt"}"#,
             allowed: ["local."],
             expect: notEnabled("LOCAL.readFile"),
             status: .permissionDenied
         ),
         row(
-            "local.readFile claimed by feature and provider, directly allowed", "local.readFile",
+            "local.read claimed by feature and provider, directly allowed", "local.read",
             #"{"path":"a.txt"}"#,
-            allowed: ["local.readFile"],
-            Fixture(featureAliases: ["local.readFile"], providerTools: ["local.readFile"]),
+            allowed: ["local.read"],
+            Fixture(featureAliases: ["local.read"], providerTools: ["local.read"]),
             expect: .contains("alpha")
         ),
         row(
-            "local.readFile claimed by a feature, feature.tools only", "local.readFile",
+            "local.read claimed by a feature, feature.tools only", "local.read",
             #"{"path":"a.txt"}"#,
             allowed: [SwiftFeatureRuntime.featurePackageToolsAllowedName],
-            Fixture(featureAliases: ["local.readFile"]),
-            expect: .exact("feature-handled:local.readFile"),
+            Fixture(featureAliases: ["local.read"]),
+            expect: .exact("feature-handled:local.read"),
             featureInvoked: true
         ),
         // Provider registry.

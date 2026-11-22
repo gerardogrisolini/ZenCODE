@@ -5,7 +5,7 @@
 
 /// The base matching rule of a tool allowlist: an entry grants the tool with
 /// exactly its name, and an entry ending in "." grants every tool whose name
-/// starts with it (`local.` grants `local.readFile`; `local` and `loc.` do
+/// starts with it (`local.` grants `local.read`; `local` and `loc.` do
 /// not). Matching is case-sensitive.
 ///
 /// MCP discovery and the system prompt apply only this rule.

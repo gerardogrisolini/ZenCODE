@@ -148,7 +148,7 @@ public enum ToolCallPresentation {
             seen: &seen,
             locations: &locations
         )
-        if toolCall.name == "local.readFiles" {
+        if toolCall.name == "local.multiRead" {
             appendLocations(
                 pathArrayArguments(from: toolCall.argumentsObject, keys: readFilesPathArrayArgumentKeys),
                 workingDirectory: workingDirectory,

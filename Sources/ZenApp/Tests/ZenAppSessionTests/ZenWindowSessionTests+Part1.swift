@@ -206,7 +206,7 @@ extension ZenWindowSessionTests {
             #expect(!window.transcript.contains { $0.id.contains("-live-") })
             // A tool call closes the block; the next block has another id.
             await reducer.presentToolCallStarted(
-                DirectAgentToolCall(id: "c1", name: "local.readFile", argumentsObject: [:], argumentsJSON: "{}")
+                DirectAgentToolCall(id: "c1", name: "local.read", argumentsObject: [:], argumentsJSON: "{}")
             )
             #expect(await eventually { window.liveBlockID == nil })
             await reducer.presentAssistantContent("More")

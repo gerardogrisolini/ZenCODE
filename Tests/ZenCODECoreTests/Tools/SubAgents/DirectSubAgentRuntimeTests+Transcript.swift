@@ -93,7 +93,7 @@ extension DirectSubAgentRuntimeTests {
                         toolCalls: [
                             AgentRuntimeToolCall(
                                 id: "call-read",
-                                name: "local.readFile",
+                                name: "local.read",
                                 argumentsJSON: #"{"path":"round-0.txt"}"#
                             ),
                             AgentRuntimeToolCall(
@@ -107,7 +107,7 @@ extension DirectSubAgentRuntimeTests {
                         role: .tool,
                         content: "contents of round 0",
                         toolCallID: "call-read",
-                        toolName: "local.readFile"
+                        toolName: "local.read"
                     ),
                     AgentRuntimeMessage(
                         role: .tool,
@@ -118,7 +118,7 @@ extension DirectSubAgentRuntimeTests {
                 ],
                 descriptors: [
                     DirectToolDescriptor(
-                        name: "local.readFile",
+                        name: "local.read",
                         description: "Reads a file.",
                         inputSchema: #"{"type":"object"}"#,
                         title: "Read file",
@@ -126,7 +126,7 @@ extension DirectSubAgentRuntimeTests {
                     ),
                     // A repeated name: the first descriptor wins.
                     DirectToolDescriptor(
-                        name: "local.readFile",
+                        name: "local.read",
                         description: "Shadowed.",
                         inputSchema: #"{"type":"object"}"#,
                         title: "Shadowed read"
@@ -142,9 +142,9 @@ extension DirectSubAgentRuntimeTests {
             #expect(transcriptLabels(transcript.kinds) == [
                 "user:Inspect",
                 "text:Reading.",
-                "start:local.readFile",
+                "start:local.read",
                 "start:custom.unlisted",
-                "done:local.readFile:contents of round 0",
+                "done:local.read:contents of round 0",
                 "done:custom.unlisted:unlisted output",
             ])
             // The descriptors are the sub-agent's own: requested for its
@@ -155,7 +155,7 @@ extension DirectSubAgentRuntimeTests {
             #expect(requests.last == sessionID)
 
             let calls = transcriptToolCalls(transcript.kinds)
-            let readCalls = calls.filter { $0.name == "local.readFile" }
+            let readCalls = calls.filter { $0.name == "local.read" }
             #expect(readCalls.count == 2)
             for call in readCalls {
                 #expect(call.id == "call-read")
@@ -442,8 +442,8 @@ func oneRoundLabels(prompt: String) -> [String] {
         "user:\(prompt)",
         "thought:Round 0 needs the file.",
         "text:Reading round 0.",
-        "start:local.readFile",
-        "done:local.readFile:contents of round 0",
+        "start:local.read",
+        "done:local.read:contents of round 0",
     ]
 }
 

@@ -149,7 +149,7 @@ struct MemoryAutomationFlowTests {
                 id: AgentProfileRole.developer.rawValue,
                 name: "Developer",
                 role: .developer,
-                tools: ["local.readFile"]
+                tools: ["local.read"]
             )
             let executor = DirectToolExecutor(
                 swiftFeatureRuntime: SwiftFeatureRuntime(features: []),

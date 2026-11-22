@@ -35,7 +35,7 @@ struct TurnFileChangeTrackerDiffTests {
         ]
         for name in names {
             await tracker.captureBaselineIfNeeded(
-                for: ToolRequest(name: "local.writeFile", arguments: ["path": .string(name)])
+                for: ToolRequest(name: "local.write", arguments: ["path": .string(name)])
             )
         }
 

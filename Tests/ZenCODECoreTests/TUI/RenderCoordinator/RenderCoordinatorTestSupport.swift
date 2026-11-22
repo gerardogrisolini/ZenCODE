@@ -57,7 +57,7 @@ extension RenderCoordinatorTestSupport {
     func exampleReadFileCall(id: String) -> DirectAgentToolCall {
         presentedToolCall(
             id: id,
-            name: "local.readFile",
+            name: "local.read",
             argumentsObject: ["path": "/tmp/Example.swift"],
             argumentsJSON: #"{"path":"/tmp/Example.swift"}"#
         )

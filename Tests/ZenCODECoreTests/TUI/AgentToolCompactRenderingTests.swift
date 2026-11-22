@@ -231,7 +231,7 @@ extension TerminalChatRenderingTests {
     func nonAgentToolsUseTheirOwnedTargetDefinition() {
         let toolCall = presentedToolCall(
             id: "read",
-            name: "local.readFile",
+            name: "local.read",
             argumentsObject: ["path": "Sources/App.swift"],
             argumentsJSON: "{}"
         )

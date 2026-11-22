@@ -219,7 +219,7 @@ extension ACPCompatibilityTests {
             .subtracting(DirectToolCatalog.coreReadDescriptors.map(\.name))
 
         #expect(allowedToolNames.isDisjoint(with: mutatingCoreNames))
-        #expect(allowedToolNames.contains("local.readFile"))
+        #expect(allowedToolNames.contains("local.read"))
         #expect(allowedToolNames.contains("custom."))
         #expect(allowedToolNames.contains(rawCompatibilityAlias))
         #expect(
@@ -278,7 +278,7 @@ extension ACPCompatibilityTests {
             .subtracting(DirectToolCatalog.coreReadDescriptors.map(\.name))
 
         #expect(allowedToolNames.isDisjoint(with: mutatingCoreNames))
-        #expect(allowedToolNames.contains("local.readFile"))
+        #expect(allowedToolNames.contains("local.read"))
         #expect(configuration.agentRole == reviewer.role)
         #expect(configuration.runtimeConfiguration.profileRole == reviewer.role)
     }

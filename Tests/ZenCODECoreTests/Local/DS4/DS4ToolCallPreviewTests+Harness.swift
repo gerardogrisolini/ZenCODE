@@ -325,12 +325,12 @@ extension DS4ToolCallPreviewTests {
     }
 
     func writeBlock(_ syntax: DS4ToolSyntax, content: String = fileContent) -> String {
-        Markup(syntax: syntax).block([("local.writeFile", [("path", filePath), ("content", content)])])
+        Markup(syntax: syntax).block([("local.write", [("path", filePath), ("content", content)])])
     }
 
     func writePreviews(content: String) -> [Preview] {
         [
-            .toolStarted(name: "local.writeFile"),
+            .toolStarted(name: "local.write"),
             .parameterStarted(name: "path"),
             .parameterText(filePath),
             .parameterEnded,
@@ -349,18 +349,18 @@ extension DS4ToolCallPreviewTests {
             inputs.append((syntax, false, prose + writeBlock(syntax)))
             inputs.append((syntax, true, "plan</think>" + prose + writeBlock(syntax)))
             inputs.append((syntax, false, markup.block([
-                ("local.readFile", [("path", "a.swift")]),
-                ("local.writeFile", [("path", "b.swift"), ("content", "x\n")]),
+                ("local.read", [("path", "a.swift")]),
+                ("local.write", [("path", "b.swift"), ("content", "x\n")]),
             ])))
-            inputs.append((syntax, false, prose + markup.blockOpen + markup.callOpen("local.writeFile")
+            inputs.append((syntax, false, prose + markup.blockOpen + markup.callOpen("local.write")
                 + markup.parameterOpen("content") + "partial line\nnext <"))
-            inputs.append((syntax, true, "plan " + markup.block([("local.readFile", [("path", "a")])])))
+            inputs.append((syntax, true, "plan " + markup.block([("local.read", [("path", "a")])])))
             inputs.append((syntax, false, "a < b | c <thi <｜x <DSM done 🙂"))
         }
-        inputs.append((.dsml, false, "<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"local.readFile\">\n<｜DSML｜bogus name=\"x\">"))
+        inputs.append((.dsml, false, "<｜DSML｜tool_calls>\n<｜DSML｜invoke name=\"local.read\">\n<｜DSML｜bogus name=\"x\">"))
         inputs.append((.dsml, false, "see <DSML｜ and ｜DSML｜ later"))
-        inputs.append((.glm, false, "<tool_call>local.readFile<arg_key>path</arg_key>oops</tool_call>"))
-        inputs.append((.qwen, false, "<tool_call>\n<function=local.readFile>\n<parameter=path>\na\n</parameter>\n</function>\nnope"))
+        inputs.append((.glm, false, "<tool_call>local.read<arg_key>path</arg_key>oops</tool_call>"))
+        inputs.append((.qwen, false, "<tool_call>\n<function=local.read>\n<parameter=path>\na\n</parameter>\n</function>\nnope"))
         return inputs.map { (syntax: $0.0, thinking: $0.1, text: $0.2) }
     }
 

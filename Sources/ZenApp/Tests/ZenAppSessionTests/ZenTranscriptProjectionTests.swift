@@ -64,7 +64,7 @@ struct ZenTranscriptProjectionTests {
 
         // A tool call closes the block; its result fills the call's row, with
         // the time the Core measured for it.
-        let call = toolCall("call-1", "local.readFile")
+        let call = toolCall("call-1", "local.read")
         let result = DirectAgentToolResult(
             output: "contents", summary: "read 1 file", elapsed: .milliseconds(1_250)
         )
@@ -145,7 +145,7 @@ struct ZenTranscriptProjectionTests {
     @Test("A result without a call id completes the oldest open call of its turn")
     func toolResultsWithoutIDMatchFIFO() async {
         let reducer = ChatSessionStateReducer(sessionID: "s", workingDirectory: workspace, defaultOrigin: .app)
-        let first = toolCall("", "local.readFile")
+        let first = toolCall("", "local.read")
         let second = toolCall("", "local.listFiles")
         let firstResult = DirectAgentToolResult(output: "1", summary: "first")
         let secondResult = DirectAgentToolResult(output: "2", summary: "second")
@@ -404,7 +404,7 @@ struct ZenTranscriptProjectionTests {
             await check()
             await reducer.presentAssistantContent("text \(turn)")
             await check()
-            let call = toolCall("call-\(turn)", "local.writeFile")
+            let call = toolCall("call-\(turn)", "local.write")
             await reducer.presentToolCallStarted(call)
             await check()
             let local = ZenLocalTranscriptItem(anchoredIn: await reducer.snapshot, content: .commandLine("/tasks"))

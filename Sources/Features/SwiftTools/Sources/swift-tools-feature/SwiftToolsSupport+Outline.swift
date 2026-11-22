@@ -31,7 +31,7 @@ extension SwiftToolsSupport {
             "File: \(fileURL.path)",
             "lines: \(lines.count)",
             "symbols: \(outline.entries.count)",
-            "read_hint: local.readFile path=\"\(fileURL.path)\" offset=<line> limit=80",
+            "read_hint: local.read path=\"\(fileURL.path)\" offset=<line> limit=80",
             "outline:"
         ]
 

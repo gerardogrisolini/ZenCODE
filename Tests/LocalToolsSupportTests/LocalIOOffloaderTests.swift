@@ -35,7 +35,7 @@ struct LocalIOOffloaderTests {
 
         let gate = TestGate()
         let readFile = try #require(
-            LocalFeatureTools.fileTools().first { $0.descriptor.name == "local.readFile" }
+            LocalFeatureTools.fileTools().first { $0.descriptor.name == "local.read" }
         )
 
         let task = Task<String, Error> {
@@ -64,7 +64,7 @@ struct LocalIOOffloaderTests {
         try "a\nb\nc\nd\ne".write(to: file, atomically: true, encoding: .utf8)
 
         let output = try await Self.invoke(
-            "local.readFile",
+            "local.read",
             arguments: ["path": file.path, "offset": 2, "limit": 2],
             workingDirectory: root
         )
@@ -81,7 +81,7 @@ struct LocalIOOffloaderTests {
         let missing = root.appendingPathComponent("missing.txt")
 
         let output = try await Self.invoke(
-            "local.readFiles",
+            "local.multiRead",
             arguments: ["paths": [present.path, missing.path], "limit": 10],
             workingDirectory: root
         )

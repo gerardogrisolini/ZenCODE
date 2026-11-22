@@ -140,7 +140,7 @@ actor TranscriptRecordingSubAgentBackend: AgentRuntimeBackend {
                 toolCalls: [
                     AgentRuntimeToolCall(
                         id: callID,
-                        name: "local.readFile",
+                        name: "local.read",
                         argumentsJSON: #"{"path":"round-0.txt"}"#
                     ),
                 ]
@@ -152,7 +152,7 @@ actor TranscriptRecordingSubAgentBackend: AgentRuntimeBackend {
                 role: .tool,
                 content: "contents of round 0",
                 toolCallID: callID,
-                toolName: "local.readFile"
+                toolName: "local.read"
             ),
             to: sessionID
         )

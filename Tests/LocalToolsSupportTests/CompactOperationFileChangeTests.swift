@@ -26,7 +26,7 @@ struct CompactOperationFileChangeTests {
         (0..<2200).map { "entry \($0): " + String(repeating: "unchanged text ", count: 5) + "\n" }.joined()
     }
 
-    @Test(arguments: ["local.editFile", "local.replace", "local.multiEdit", "local.writeFile", "local.applyPatch", "local.append"])
+    @Test(arguments: ["local.editFile", "local.replace", "local.multiEdit", "local.write", "local.applyPatch", "local.append"])
     func smallEditsToLargeFilesRetainOnlyExactCompactEvidence(tool: String) async throws {
         let root = try workspace()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -42,7 +42,7 @@ struct CompactOperationFileChangeTests {
         switch tool {
         case "local.applyPatch":
             arguments = ["patch": "*** Begin Patch\n*** Update File: CHANGELOG.md\n@@\n-\(originalLine)\n+\(changedLine)\n*** End Patch"]
-        case "local.writeFile": arguments = ["path": "CHANGELOG.md", "content": new]
+        case "local.write": arguments = ["path": "CHANGELOG.md", "content": new]
         case "local.append": arguments = ["path": "CHANGELOG.md", "content": changedLine + "\n"]
         case "local.multiEdit": arguments = ["path": "CHANGELOG.md", "edits": [["old": originalLine, "new": changedLine]]]
         default: arguments = ["path": "CHANGELOG.md", "old": originalLine, "new": changedLine]
@@ -74,7 +74,7 @@ struct CompactOperationFileChangeTests {
         let recorder = OperationFileChangeRecorder()
         let before = OperationFileChangeRecorder.$current.withValue(recorder) { LocalOperationWrite.snapshot(file) }
         #expect(before == nil)
-        try await invoke("local.writeFile", ["path": "large", "content": huge + "y"], root: root, recorder: recorder)
+        try await invoke("local.write", ["path": "large", "content": huge + "y"], root: root, recorder: recorder)
         #expect(recorder.changes.first?.compactDiff == nil)
         #expect(recorder.changes.first?.explanation?.contains("byte limit") == true)
         #expect(try String(contentsOf: file, encoding: .utf8) == huge + "y")
@@ -95,7 +95,7 @@ struct CompactOperationFileChangeTests {
         for suffix in [Data([0]), Data([0xff])] {
             try (Data(largeText.utf8) + suffix).write(to: file)
             let recorder = OperationFileChangeRecorder()
-            try await invoke("local.writeFile", ["path": "large", "content": largeText + "new\n"], root: root, recorder: recorder)
+            try await invoke("local.write", ["path": "large", "content": largeText + "new\n"], root: root, recorder: recorder)
             #expect(recorder.changes.first?.compactDiff == nil)
             #expect(recorder.changes.first?.explanation?.contains("binary") == true)
         }

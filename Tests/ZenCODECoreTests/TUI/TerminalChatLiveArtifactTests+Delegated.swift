@@ -164,7 +164,7 @@ extension TerminalChatLiveArtifactTests {
                     case "started":
                         let overview = output.components(separatedBy: "👥 Sub-Agents:").last ?? ""
                         #expect(overview.contains("● worker"))
-                        #expect(overview.contains("local.writeFile ⏳"))
+                        #expect(overview.contains("local.write ⏳"))
                     default:
                         let started = await probes.eventCount("started")
                         let completion = TerminalANSIText.stripANSI(
@@ -174,7 +174,7 @@ extension TerminalChatLiveArtifactTests {
                         #expect(completion.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("👥 Sub-Agents:"))
                         #expect(completion.components(separatedBy: "👥 Sub-Agents:").count - 1 == 1)
                         #expect(completion.contains("● worker"))
-                        #expect(completion.contains("local.writeFile ✅"))
+                        #expect(completion.contains("local.write ✅"))
                         #expect(!completion.contains("Delegated.swift"))
                         #expect(!completion.contains("delegated source"))
                         #expect(!completion.contains("│ +"))
@@ -216,7 +216,7 @@ private actor LiveArtifactBackend: AgentRuntimeBackend {
     func activeToolDescriptors() -> [DirectToolDescriptor] { [] }
 
     func sendPrompt(sessionID: String, prompt: String, attachments: [AgentRuntimeAttachment], onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void) async throws -> DirectAgentResponse {
-        let call = DirectAgentToolCall(id: "shared-call", name: "local.writeFile", argumentsObject: ["path": "Live.swift"], argumentsJSON: "{}")
+        let call = DirectAgentToolCall(id: "shared-call", name: "local.write", argumentsObject: ["path": "Live.swift"], argumentsJSON: "{}")
         let root = DirectAgentToolResult(output: "Updated", summary: "Updated", fileChanges: [
             .init(path: "Live.swift", oldText: nil, newText: "root source\n")
         ])
@@ -235,7 +235,7 @@ private actor LiveArtifactBackend: AgentRuntimeBackend {
         await handler?(.init(agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .started, rootSessionID: sessionID))
         await handler?(event)
         await handler?(event)
-        let next = DirectAgentToolCall(id: "next-call", name: "local.writeFile", argumentsObject: ["path": "Live.swift"], argumentsJSON: "{}")
+        let next = DirectAgentToolCall(id: "next-call", name: "local.write", argumentsObject: ["path": "Live.swift"], argumentsJSON: "{}")
         await handler?(.init(agentID: "worker", agentName: "worker", toolCall: next, lifecycle: .completed(
             DirectAgentToolResult(output: "Updated", summary: "Updated", fileChanges: [
                 .init(path: "Live.swift", oldText: "delegated source\n", newText: "next source\n")
@@ -343,7 +343,7 @@ private actor DelegatedOverviewBackend: AgentRuntimeBackend {
             modelID: nil,
             currentActivity: nil,
             currentActivityKind: nil,
-            currentToolName: "local.writeFile",
+            currentToolName: "local.write",
             currentToolIsRunning: true,
             latestMetrics: nil,
             latestEventAt: date,
@@ -358,7 +358,7 @@ private actor DelegatedOverviewBackend: AgentRuntimeBackend {
     func sendPrompt(sessionID: String, prompt: String, attachments: [AgentRuntimeAttachment], onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void) async throws -> DirectAgentResponse {
         let wait = DirectAgentToolCall(id: "wait", name: "agent.wait", argumentsObject: [:], argumentsJSON: "{}")
         await onEvent(.toolCallStarted(wait))
-        let call = DirectAgentToolCall(id: "delegated-write", name: "local.writeFile", argumentsObject: ["path": "Delegated.swift"], argumentsJSON: "{}")
+        let call = DirectAgentToolCall(id: "delegated-write", name: "local.write", argumentsObject: ["path": "Delegated.swift"], argumentsJSON: "{}")
         await handler?(.init(agentID: "worker", agentName: "worker", toolCall: call, lifecycle: .started, rootSessionID: sessionID))
         await probe?("started")
         let result = DirectAgentToolResult(output: "Updated", summary: "Updated", fileChanges: [

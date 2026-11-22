@@ -26,7 +26,7 @@ extension DirectSubAgentRuntimeTests {
                     argumentsJSON: #"{"name":"worker","prompt":"Do the delegated work"}"#
                 ),
                 workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
-                allowedToolNames: ["local.readFile", "local.writeFile"]
+                allowedToolNames: ["local.read", "local.write"]
             )
         }
         #expect(await backend.createdSessions().isEmpty)
@@ -39,7 +39,7 @@ extension DirectSubAgentRuntimeTests {
             id: AgentProfileRole.developer.rawValue,
             name: "Developer",
             role: .developer,
-            tools: ["local.readFile", "local.writeFile"]
+            tools: ["local.read", "local.write"]
         )
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
@@ -58,7 +58,7 @@ extension DirectSubAgentRuntimeTests {
 
         let session = try #require(await backend.createdSessions().first)
         #expect(session.allowedToolNames == [
-            "local.readFile", "local.writeFile", "skills.list", "skills.read",
+            "local.read", "local.write", "skills.list", "skills.read",
             "agent.list", "agent.get", "agent.message"
         ])
         await runtime.shutdown()
@@ -70,7 +70,7 @@ extension DirectSubAgentRuntimeTests {
             id: AgentProfileRole.developer.rawValue,
             name: "Developer",
             role: .developer,
-            tools: ["local.readFile", "local.writeFile"]
+            tools: ["local.read", "local.write"]
         )
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
@@ -87,16 +87,16 @@ extension DirectSubAgentRuntimeTests {
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
             parentAllowedToolNames: [
-                "local.readFile", "external.sessionAddition", "skills.list"
+                "local.read", "external.sessionAddition", "skills.list"
             ]
         )
 
         let session = try #require(await backend.createdSessions().first)
         #expect(session.allowedToolNames == [
-            "local.readFile", "external.sessionAddition", "skills.list", "skills.read",
+            "local.read", "external.sessionAddition", "skills.list", "skills.read",
             "agent.list", "agent.get", "agent.message"
         ])
-        #expect(!session.allowedToolNames!.contains("local.writeFile"))
+        #expect(!session.allowedToolNames!.contains("local.write"))
         await runtime.shutdown()
     }
 
@@ -106,7 +106,7 @@ extension DirectSubAgentRuntimeTests {
             id: AgentProfileRole.developer.rawValue,
             name: "Developer",
             role: .developer,
-            tools: ["local.readFile", "local.writeFile"]
+            tools: ["local.read", "local.write"]
         )
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
@@ -136,7 +136,7 @@ extension DirectSubAgentRuntimeTests {
             id: "child-profile",
             name: "coordinator-profile",
             role: .developer,
-            tools: ["local.writeFile"]
+            tools: ["local.write"]
         )
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
@@ -155,13 +155,13 @@ extension DirectSubAgentRuntimeTests {
                     "profile": .string(profile.name)
                 ],
                 workingDirectory: workingDirectory,
-                parentAllowedToolNames: ["local.readFile"]
+                parentAllowedToolNames: ["local.read"]
             )
         }
 
         let session = try #require(await backend.createdSessions().first)
-        #expect(session.allowedToolNames?.contains("local.writeFile") == true)
-        #expect(session.allowedToolNames?.contains("local.readFile") == false)
+        #expect(session.allowedToolNames?.contains("local.write") == true)
+        #expect(session.allowedToolNames?.contains("local.read") == false)
         await runtime.shutdown()
     }
 
@@ -171,7 +171,7 @@ extension DirectSubAgentRuntimeTests {
             id: AgentProfileRole.developer.rawValue,
             name: "Developer",
             role: .developer,
-            tools: ["local.writeFile"]
+            tools: ["local.write"]
         )
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
@@ -186,12 +186,12 @@ extension DirectSubAgentRuntimeTests {
                 "profile": .string(developer.id)
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
-            parentAllowedToolNames: ["local.readFile"]
+            parentAllowedToolNames: ["local.read"]
         )
 
         let session = try #require(await backend.createdSessions().first)
-        #expect(session.allowedToolNames?.contains("local.readFile") == true)
-        #expect(session.allowedToolNames?.contains("local.writeFile") == false)
+        #expect(session.allowedToolNames?.contains("local.read") == true)
+        #expect(session.allowedToolNames?.contains("local.write") == false)
         await runtime.shutdown()
     }
 
@@ -201,7 +201,7 @@ extension DirectSubAgentRuntimeTests {
             id: AgentProfileRole.developer.rawValue,
             name: "Developer",
             role: .developer,
-            tools: ["local.readFile", "local.writeFile"]
+            tools: ["local.read", "local.write"]
         )
         let backend = CapturingSubAgentRuntimeBackend()
         let runtime = DirectSubAgentRuntime(
@@ -216,7 +216,7 @@ extension DirectSubAgentRuntimeTests {
                 arguments: [
                     "name": .string("implementation-worker"),
                     "profile": .string("Developer"),
-                    "toolNames": .array([.string("local.writeFile")])
+                    "toolNames": .array([.string("local.write")])
                 ],
                 workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
                 parentAllowedToolNames: ["git.status"]
@@ -249,7 +249,7 @@ extension DirectSubAgentRuntimeTests {
                 "profile": .string("Minimal")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
-            parentAllowedToolNames: ["local.readFile", "local.writeFile"]
+            parentAllowedToolNames: ["local.read", "local.write"]
         )
 
         let session = try #require(await backend.createdSessions().first)
@@ -265,7 +265,7 @@ extension DirectSubAgentRuntimeTests {
             id: AgentProfileRole.reporter.rawValue,
             name: "Reporter",
             role: .reporter,
-            tools: ["local.readFile"]
+            tools: ["local.read"]
         )
         let orchestrator = SessionTaskOrchestrator()
         _ = try await orchestrator.createGraph(
@@ -303,7 +303,7 @@ extension DirectSubAgentRuntimeTests {
 
         let session = try #require(await backend.createdSessions().first)
         #expect(session.allowedToolNames == [
-            "local.readFile", "tasks.list", "tasks.get", "tasks.update",
+            "local.read", "tasks.list", "tasks.get", "tasks.update",
             "skills.list", "skills.read", "agent.list", "agent.get", "agent.message"
         ])
         await runtime.shutdown()
@@ -343,7 +343,7 @@ extension DirectSubAgentRuntimeTests {
                 "taskID": .string("review")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-profile-tool-tests"),
-            parentAllowedToolNames: ["local.writeFile"],
+            parentAllowedToolNames: ["local.write"],
             rootSessionID: "root"
         )
 
@@ -354,7 +354,7 @@ extension DirectSubAgentRuntimeTests {
             .subtracting(["agent.message"])
 
         #expect(allowedToolNames.isDisjoint(with: mutatingCoreNames))
-        #expect(allowedToolNames.contains("local.readFile"))
+        #expect(allowedToolNames.contains("local.read"))
         #expect(allowedToolNames.contains("tasks.list"))
         #expect(allowedToolNames.contains("tasks.get"))
         #expect(allowedToolNames.contains("tasks.update"))
@@ -400,7 +400,7 @@ extension DirectSubAgentRuntimeTests {
                 "profile": .string("Worker")
             ],
             workingDirectory: URL(fileURLWithPath: "/tmp/ZenCODE-skill-propagation-tests"),
-            parentAllowedToolNames: ["local.readFile", "local.writeFile"]
+            parentAllowedToolNames: ["local.read", "local.write"]
         )
 
         // The intrinsic prompt-skill tools must be present in every

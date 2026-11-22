@@ -12,6 +12,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- Renamed the core file tools: `local.readFile` is now `local.read`,
+  `local.writeFile` is now `local.write`, and `local.readFiles` is now
+  `local.multiRead`. The argument schemas are unchanged (`path`/`file_path`,
+  `offset`/`limit`, `content`, `createDirectories`); prompts, tool routing,
+  presentation, docs, and the recorded-tool JSONL now use the new names.
+
 - In the macOS app, the toolbar buttons whose command does not run while a
   prompt is running (agent, model, thinking level, tools, and skills), and the
   Changes menu, now appear disabled until the running line ends, instead of

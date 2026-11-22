@@ -92,7 +92,7 @@ struct DirectToolDestructiveGatingTests {
 
         #expect(DirectToolExecutor.destructiveAuthorizationRequest(
             sessionID: "s",
-            toolCall: toolCall(name: "local.readFile", arguments: ["path": "a.swift"]),
+            toolCall: toolCall(name: "local.read", arguments: ["path": "a.swift"]),
             workingDirectory: cwd
         ) == nil)
     }

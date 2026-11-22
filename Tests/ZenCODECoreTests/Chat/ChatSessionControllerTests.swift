@@ -22,7 +22,7 @@ struct ChatSessionControllerTests {
     func presenterReceivesEventsInRuntimeOrderAndFinalBlockFollowsTheLastTool() async throws {
         try await withHarness { harness in
             await harness.runtime.append { call in
-                let read = scriptedToolCall(id: "tool-read", name: "local.readFile")
+                let read = scriptedToolCall(id: "tool-read", name: "local.read")
                 let list = scriptedToolCall(id: "tool-list", name: "local.ls")
                 let output = DirectAgentToolResult(output: "ok", summary: "ok")
                 await call.onEvent(.thought("Planning the reads. "))
@@ -89,7 +89,7 @@ struct ChatSessionControllerTests {
     @Test
     func aToolCallPreviewReachesThePresenterInStreamOrderAndLeavesNoTraceInTheSession() async throws {
         let preview: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: "local.writeFile"),
+            .toolStarted(name: "local.write"),
             .parameterStarted(name: "path"),
             .parameterText("Notes"),
             .parameterText(".md"),
@@ -144,7 +144,7 @@ struct ChatSessionControllerTests {
             let observer = RecordingChatPresenter(name: "observer", log: log)
             harness.controller.addObserver(observer)
             await harness.runtime.append { call in
-                await call.onEvent(.toolCallPreview(.toolStarted(name: "local.writeFile")))
+                await call.onEvent(.toolCallPreview(.toolStarted(name: "local.write")))
                 await call.onEvent(.toolCallPreview(.ended))
                 await call.onEvent(.turnEnded(.completed))
                 return DirectAgentResponse(text: "", stopReason: "end_turn", modelID: "scripted-model")
@@ -156,8 +156,8 @@ struct ChatSessionControllerTests {
                 if case .toolPreview = $0.event { true } else { false }
             }
             #expect(previews == [
-                .init(presenter: "observer", event: .toolPreview(.toolStarted(name: "local.writeFile"))),
-                .init(presenter: "primary", event: .toolPreview(.toolStarted(name: "local.writeFile"))),
+                .init(presenter: "observer", event: .toolPreview(.toolStarted(name: "local.write"))),
+                .init(presenter: "primary", event: .toolPreview(.toolStarted(name: "local.write"))),
                 .init(presenter: "observer", event: .toolPreview(.ended)),
                 .init(presenter: "primary", event: .toolPreview(.ended)),
             ])
@@ -190,7 +190,7 @@ struct ChatSessionControllerTests {
             harness.controller.addObserver(first)
             harness.controller.addObserver(second)
             await harness.runtime.append { call in
-                let read = scriptedToolCall(id: "tool-read", name: "local.readFile")
+                let read = scriptedToolCall(id: "tool-read", name: "local.read")
                 await call.onEvent(.content("Reading."))
                 await call.onEvent(.toolCallStarted(read))
                 await call.onEvent(.toolCallCompleted(read, DirectAgentToolResult(output: "ok", summary: "ok")))
@@ -506,7 +506,7 @@ private func observeWriteTurn(
         await harness.runtime.append { call in
             let write = DirectAgentToolCall(
                 id: "tool-write",
-                name: "local.writeFile",
+                name: "local.write",
                 argumentsObject: ["path": "Notes.md", "content": "# Title\n"],
                 argumentsJSON: "{\"content\":\"# Title\\n\",\"path\":\"Notes.md\"}"
             )

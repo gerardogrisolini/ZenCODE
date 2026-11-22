@@ -74,7 +74,7 @@ struct TerminalToolCallPreviewFormatterTests {
     func write(
         path: String? = "Sources/A.swift",
         content: [String],
-        tool: String = "local.writeFile"
+        tool: String = "local.write"
     ) -> [DirectAgentToolCallPreview] {
         var events: [DirectAgentToolCallPreview] = [.toolStarted(name: tool)]
         if let path {
@@ -108,7 +108,7 @@ struct TerminalToolCallPreviewFormatterTests {
     @Test
     func theHeaderIsTheToolNameAloneWhileThePathStreams() {
         let events: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: "local.writeFile"),
+            .toolStarted(name: "local.write"),
             .parameterStarted(name: "path"),
             .parameterText("Sources/"),
             .parameterText("A.swift"),
@@ -117,12 +117,12 @@ struct TerminalToolCallPreviewFormatterTests {
         ]
 
         #expect(outputs(events) == [
-            "\(Self.title)🛠️  local.writeFile\(Self.reset)",
+            "\(Self.title)🛠️  local.write\(Self.reset)",
             "", "", "", "",
             "\n"
         ])
         #expect(outputs(events, interactive: false) == [
-            "🛠️  local.writeFile", "", "", "", "", "\n"
+            "🛠️  local.write", "", "", "", "", "\n"
         ])
     }
 
@@ -138,13 +138,13 @@ struct TerminalToolCallPreviewFormatterTests {
             ]
             return [.toolStarted(name: "local.editFile")] + (pathFirst ? path + text : text + path) + [.ended]
         }
-        let header = "\(Self.title)🛠️  local.writeFile\(Self.reset)\n"
+        let header = "\(Self.title)🛠️  local.write\(Self.reset)\n"
 
         // The same rows, written in the same way, whichever order the model used.
         #expect(rendered(write(content: ["let x = 1\n"]), interactive: false)
-            == "🛠️  local.writeFile\nlet x = 1\n")
+            == "🛠️  local.write\nlet x = 1\n")
         #expect(rendered(writeWithContentBeforeThePath(path: "Sources/A.swift"), interactive: false)
-            == "🛠️  local.writeFile\nlet x = 1\n")
+            == "🛠️  local.write\nlet x = 1\n")
         #expect(rendered(edit(pathFirst: true), interactive: false)
             == rendered(edit(pathFirst: false), interactive: false))
         #expect(rendered(edit(pathFirst: true), interactive: false)
@@ -158,12 +158,12 @@ struct TerminalToolCallPreviewFormatterTests {
     }
 
     @Test(arguments: [
-        ("local.writeFile", "local.writeFile"),
+        ("local.write", "local.write"),
         ("local.append", "local.append"),
         ("local.editFile", "local.editFile"),
         ("local.replace", "local.replace"),
         ("local.multiEdit", "local.multiEdit"),
-        ("local_writeFile", "local.writeFile"),
+        ("local_write", "local.write"),
         ("LOCAL.EDITFILE", "local.editFile"),
         ("local-replace", "local.replace"),
         ("local_multiEdit", "local.multiEdit")
@@ -176,13 +176,13 @@ struct TerminalToolCallPreviewFormatterTests {
     @Test
     func thePathIsNeverWrittenWhateverItContains() {
         let text = rendered([
-            .toolStarted(name: "local.writeFile"),
+            .toolStarted(name: "local.write"),
             .parameterStarted(name: "file_path"),
             .parameterText("a\nb\u{1B}[2Jc\td"),
             .ended
         ], interactive: false)
 
-        #expect(text == "🛠️  local.writeFile\n")
+        #expect(text == "🛠️  local.write\n")
     }
 
     // MARK: - Source rows
@@ -192,7 +192,7 @@ struct TerminalToolCallPreviewFormatterTests {
         let events = write(content: ["let", " x = 1", "\n"])
 
         #expect(outputs(events) == [
-            "\(Self.title)🛠️  local.writeFile\(Self.reset)",
+            "\(Self.title)🛠️  local.write\(Self.reset)",
             "",
             "",
             "",
@@ -210,7 +210,7 @@ struct TerminalToolCallPreviewFormatterTests {
         let text = terminalText(rendered(write(content: ["let x = 1\nlet y = 2\n"])))
 
         #expect(terminalScreenText(text, width: 80) == [
-            " 🛠️  local.writeFile",
+            " 🛠️  local.write",
             " let x = 1",
             " let y = 2",
             ""
@@ -298,7 +298,7 @@ struct TerminalToolCallPreviewFormatterTests {
         let text = rendered(writeWithContentBeforeThePath(path: "Late.swift"))
         let generic = TerminalCodeBlockRenderer.renderLine("let x = 1", language: nil, palette: .dark)
 
-        #expect(text == "\(Self.title)🛠️  local.writeFile\(Self.reset)\nlet x = 1\r \(generic)\(Self.reset)\n")
+        #expect(text == "\(Self.title)🛠️  local.write\(Self.reset)\nlet x = 1\r \(generic)\(Self.reset)\n")
         #expect(!text.contains("Late.swift"))
     }
 
@@ -368,7 +368,7 @@ struct TerminalToolCallPreviewFormatterTests {
         let start = feed(Array(write(content: ["let a = 1\nlet b"]).dropLast(2)), to: &formatter)
         let interruption = formatter.interrupt(columns: { 80 })
 
-        #expect(start == "🛠️  local.writeFile\nlet a = 1\nlet b")
+        #expect(start == "🛠️  local.write\nlet a = 1\nlet b")
         #expect(interruption == "\n")
         #expect(!formatter.isOpen)
         #expect(formatter.isSuspended)
@@ -379,7 +379,7 @@ struct TerminalToolCallPreviewFormatterTests {
 
         // The row broken by the interruption goes on from a new row.
         let resumed = feed([.parameterText(" = 2\n"), .parameterText("let c = 3\n")], to: &formatter)
-        #expect(resumed == "🛠️  local.writeFile\n = 2\nlet c = 3\n")
+        #expect(resumed == "🛠️  local.write\n = 2\nlet c = 3\n")
         #expect(formatter.isOpen)
         #expect(!formatter.isSuspended)
         #expect(feed([.parameterEnded, .ended], to: &formatter) == "")
@@ -389,7 +389,7 @@ struct TerminalToolCallPreviewFormatterTests {
     @Test
     func theInterruptionRepaintsTheRowAndTheHeaderReopensAsItWasFirstWritten() {
         var formatter = makeFormatter()
-        let header = "\(Self.title)🛠️  local.writeFile\(Self.reset)\n"
+        let header = "\(Self.title)🛠️  local.write\(Self.reset)\n"
 
         #expect(feed(Array(write(content: ["let x = 1"]).dropLast(2)), to: &formatter) == header + "let x = 1")
         #expect(formatter.interrupt(columns: { 80 }) == "\r \(Self.highlightedLetX)\(Self.reset)\n")
@@ -467,7 +467,7 @@ struct TerminalToolCallPreviewFormatterTests {
         #expect(feed([.parameterText("z\n")], to: &formatter) == "")
 
         // A new call writes only its own header.
-        _ = feed([.toolStarted(name: "local.writeFile"), .parameterStarted(name: "content"), .parameterText("a")],
+        _ = feed([.toolStarted(name: "local.write"), .parameterStarted(name: "content"), .parameterText("a")],
                  to: &formatter)
         #expect(formatter.interrupt(columns: { 80 }) == "\n")
         #expect(feed([.toolStarted(name: "local.append")], to: &formatter) == "🛠️  local.append")
@@ -508,13 +508,13 @@ struct TerminalToolCallPreviewFormatterTests {
         var blank = makeFormatter(interactive: false)
         _ = feed(Array(write(content: ["a\n"]).dropLast(2)), to: &blank)
         #expect(blank.interrupt(columns: { 80 }) == "")
-        #expect(feed([.parameterText("\nb\n")], to: &blank) == "🛠️  local.writeFile\n\nb\n")
+        #expect(feed([.parameterText("\nb\n")], to: &blank) == "🛠️  local.write\n\nb\n")
     }
 }
 
 // MARK: - Shared preview fixtures
 
-/// A drawn `local.writeFile` call whose content arrives before its path: the
+/// A drawn `local.write` call whose content arrives before its path: the
 /// header is the same as when the path comes first (the tool name alone), and
 /// the path only identifies the call. Shared by the formatter and coordinator
 /// suites.
@@ -523,7 +523,7 @@ func writeWithContentBeforeThePath(
     content: String = "let x = 1\n"
 ) -> [DirectAgentToolCallPreview] {
     [
-        .toolStarted(name: "local.writeFile"),
+        .toolStarted(name: "local.write"),
         .parameterStarted(name: "content"),
         .parameterText(content),
         .parameterEnded,

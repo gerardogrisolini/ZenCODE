@@ -10,7 +10,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
     private func readFileCall(id: String, path: String = "/tmp/Example.swift") -> DirectAgentToolCall {
         presentedToolCall(
             id: id,
-            name: "local.readFile",
+            name: "local.read",
             argumentsObject: ["path": path],
             argumentsJSON: #"{"path":"\#(path)"}"#
         )
@@ -121,7 +121,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
         let rows = plainRows([.toolCallStarted(call)])
 
         #expect(rows == expected)
-        #expect(rows.contains { $0.contains("local.readFile") })
+        #expect(rows.contains { $0.contains("local.read") })
         #expect(rows.contains { $0.contains("⏳") })
     }
 
@@ -134,10 +134,10 @@ struct TerminalSubAgentTranscriptRenderingTests {
             .toolCallCompleted(call, result: DirectAgentToolResult(output: "contents", summary: "contents"))
         ])
 
-        #expect(occurrences(of: "local.readFile", in: rows) == 1)
+        #expect(occurrences(of: "local.read", in: rows) == 1)
         #expect(occurrences(of: "✅", in: rows) == 1)
         #expect(occurrences(of: "⏳", in: rows) == 0)
-        let toolRow = try #require(rows.firstIndex { $0.contains("local.readFile") })
+        let toolRow = try #require(rows.firstIndex { $0.contains("local.read") })
         let textRow = try #require(rows.firstIndex { $0.contains("Reading the file.") })
         #expect(toolRow < textRow)
     }
@@ -449,11 +449,11 @@ struct TerminalSubAgentTranscriptRenderingTests {
         // As the runtime leaves the agent at a call's start: the message that
         // preceded the call, if any, and the call running.
         let agents = [
-            snapshot(currentToolName: "local.readFile", currentToolIsRunning: true),
+            snapshot(currentToolName: "local.read", currentToolIsRunning: true),
             snapshot(
                 currentActivityKind: .thinking,
                 currentThought: "Weighing the options.",
-                currentToolName: "local.readFile",
+                currentToolName: "local.read",
                 currentToolIsRunning: true
             ),
             snapshot(
@@ -478,7 +478,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
         let placeholder = [thinkingTitle(standardErrorIsTerminal: standardErrorIsTerminal)]
         let agents = [
             // The call completed; the model writes its next message.
-            snapshot(currentToolName: "local.readFile", currentToolIsRunning: false),
+            snapshot(currentToolName: "local.read", currentToolIsRunning: false),
             // The message that preceded the call stays as the activity.
             snapshot(
                 currentActivity: "Working on the parser",
@@ -501,13 +501,13 @@ struct TerminalSubAgentTranscriptRenderingTests {
         let running = snapshot(
             currentActivity: "Reading.",
             currentActivityKind: .content,
-            currentToolName: "local.readFile",
+            currentToolName: "local.read",
             currentToolIsRunning: true
         )
         let completed = snapshot(
             currentActivity: "Reading.",
             currentActivityKind: .content,
-            currentToolName: "local.readFile",
+            currentToolName: "local.read",
             currentToolIsRunning: false
         )
 
@@ -533,7 +533,7 @@ struct TerminalSubAgentTranscriptRenderingTests {
                 pending: false,
                 currentActivity: "Working on the parser",
                 currentActivityKind: .content,
-                currentToolName: "local.readFile",
+                currentToolName: "local.read",
                 currentToolIsRunning: true,
                 latestError: "backend crashed"
             ),

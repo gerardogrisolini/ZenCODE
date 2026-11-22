@@ -540,7 +540,7 @@ public enum SystemPromptBuilder {
         \(confirmationFiles)
 
         Coding workflow:
-        Prefer concrete tool evidence over assumptions. Search before broad reads, read before edits, and keep edits narrowly scoped to the user's request. When inspecting unfamiliar or large files, prefer compact orientation tools such as `local.inspectFile` and `search.locate`, then read only the specific ranges needed with `local.readFile` offset/limit. Preserve unrelated user changes and do not revert work you did not make. Prefer dedicated tools when they are exposed; use shell execution only for work not covered by a dedicated tool. Validate important changes with the available build, test, lint, or diagnostic tools when the risk justifies it.
+        Prefer concrete tool evidence over assumptions. Search before broad reads, read before edits, and keep edits narrowly scoped to the user's request. When inspecting unfamiliar or large files, prefer compact orientation tools such as `local.inspectFile` and `search.locate`, then read only the specific ranges needed with `local.read` offset/limit. Preserve unrelated user changes and do not revert work you did not make. Prefer dedicated tools when they are exposed; use shell execution only for work not covered by a dedicated tool. Validate important changes with the available build, test, lint, or diagnostic tools when the risk justifies it.
         """
     }
 

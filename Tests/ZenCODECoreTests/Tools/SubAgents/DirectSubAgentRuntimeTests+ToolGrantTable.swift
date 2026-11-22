@@ -26,32 +26,32 @@ enum SubAgentToolGrantTable {
     static let taskReportingTools: Set<String> = ["tasks.list", "tasks.get", "tasks.update"]
 
     /// A coordinator session grant with a session-local addition
-    /// (`external.sessionAddition`) and a removal (`local.writeFile`, which
+    /// (`external.sessionAddition`) and a removal (`local.write`, which
     /// the Developer profile grants).
-    static let sessionGrant: Set<String> = ["local.readFile", "external.sessionAddition"]
+    static let sessionGrant: Set<String> = ["local.read", "external.sessionAddition"]
     /// A coordinator session grant that includes a mutating core tool.
     static let writeSessionGrant: Set<String> = [
-        "local.readFile", "local.writeFile", "external.sessionAddition"
+        "local.read", "local.write", "external.sessionAddition"
     ]
 
     static let developer = AgentProfile(
         id: "developer",
         name: "Developer",
         role: .developer,
-        tools: ["local.readFile", "local.writeFile"]
+        tools: ["local.read", "local.write"]
     )
     static let reviewer = AgentProfile(
         id: "reviewer",
         name: "Reviewer",
         readOnly: true,
         role: .reviewer,
-        tools: ["local.readFile", "local.writeFile"]
+        tools: ["local.read", "local.write"]
     )
     static let planner = AgentProfile(
         id: "planner",
         name: "Planner",
         role: .planner,
-        tools: ["local.readFile", "local.writeFile"]
+        tools: ["local.read", "local.write"]
     )
     static let minimal = AgentProfile(
         id: "minimal",
@@ -63,32 +63,32 @@ enum SubAgentToolGrantTable {
         id: "builder",
         name: "Builder",
         role: .builder,
-        tools: ["local.readFile"]
+        tools: ["local.read"]
     )
     static let developerWithFeatureReference = AgentProfile(
         id: "developer",
         name: "Developer",
         role: .developer,
-        tools: ["local.readFile", "feature.scaffold"]
+        tools: ["local.read", "feature.scaffold"]
     )
     static let customChild = AgentProfile(
         id: "child-profile",
         name: "coordinator-profile",
         role: .developer,
-        tools: ["local.writeFile"]
+        tools: ["local.write"]
     )
     /// The memberwise initializer trims identities; a persisted manifest
     /// decodes them verbatim.
     static let paddedDeveloper: AgentProfile = {
         let json = #"""
-        {"id":"  DEVELOPER  ","name":"  Developer  ","role":"developer","tools":["local.readFile","local.writeFile"]}
+        {"id":"  DEVELOPER  ","name":"  Developer  ","role":"developer","tools":["local.read","local.write"]}
         """#
         // A fixed literal: decoding it cannot fail.
         return try! JSONDecoder().decode(AgentProfile.self, from: Data(json.utf8))
     }()
 
-    static let developerOwnGrant: Set<String> = ["local.readFile", "local.writeFile"]
-    static let readOnlyOwnGrant: Set<String> = ["local.readFile"]
+    static let developerOwnGrant: Set<String> = ["local.read", "local.write"]
+    static let readOnlyOwnGrant: Set<String> = ["local.read"]
 
     static func row(
         _ label: String,
@@ -189,7 +189,7 @@ enum SubAgentToolGrantTable {
             "parent ID equal to the child name does not inherit",
             parentID: "coordinator-profile", parentName: "Developer", profile: customChild,
             parentGrant: sessionGrant, taskBound: false,
-            expected: Set(["local.writeFile"]).union(skillTools).union(collaborationTools)
+            expected: Set(["local.write"]).union(skillTools).union(collaborationTools)
         ),
         row(
             "no parent identity does not inherit",
@@ -272,7 +272,7 @@ enum SubAgentToolGrantTable {
             "Builder under Developer receives the feature management tools",
             parentID: "developer", parentName: "Developer", profile: builder,
             parentGrant: sessionGrant, taskBound: false,
-            expected: Set(["local.readFile"])
+            expected: Set(["local.read"])
                 .union(AgentProfileStore.featureManagementToolNames)
                 .union(skillTools).union(collaborationTools)
         ),
@@ -286,7 +286,7 @@ enum SubAgentToolGrantTable {
             "Developer drops a feature management tool reference",
             parentID: nil, parentName: nil, profile: developerWithFeatureReference,
             parentGrant: nil, taskBound: true,
-            expected: Set(["local.readFile"]).union(taskReportingTools)
+            expected: Set(["local.read"]).union(taskReportingTools)
                 .union(skillTools).union(collaborationTools)
         ),
     ]

@@ -31,7 +31,7 @@ struct LeasedSessionRuntimeBackendTests {
                 systemPrompt: "First prompt.",
                 history: [],
                 cacheKey: nil,
-                allowedToolNames: ["local.readFile"],
+                allowedToolNames: ["local.read"],
                 thinkingSelection: nil,
                 preserveThinking: false
             )
@@ -46,14 +46,14 @@ struct LeasedSessionRuntimeBackendTests {
                 thinkingSelection: nil,
                 preserveThinking: false
             )
-            #expect(await runtime.snapshotSession(id: "session")?.allowedToolNames == ["local.readFile"])
+            #expect(await runtime.snapshotSession(id: "session")?.allowedToolNames == ["local.read"])
 
             let known = await runtime.knownToolDescriptors(sessionID: "session").map(\.name)
             let active = await runtime.activeToolDescriptors(sessionID: "session").map(\.name)
             let anySession = await runtime.knownToolDescriptors(sessionID: nil).map(\.name)
             // The session's allowlist decides: its tool is listed, the one
             // of the call that found the session is not.
-            #expect(known.contains("local.readFile"))
+            #expect(known.contains("local.read"))
             #expect(!known.contains("local.exec"))
             #expect(active == known)
             #expect(anySession == known)
@@ -131,7 +131,7 @@ struct LeasedSessionRuntimeBackendTests {
         _ client: Client,
         workspace: URL
     ) async throws {
-        await client.createSessionIfNeeded(id: "session", cwd: workspace.path, allowedToolNames: ["local.readFile"])
+        await client.createSessionIfNeeded(id: "session", cwd: workspace.path, allowedToolNames: ["local.read"])
         let lease = try #require(await client.sessionLease(for: "session"))
         #expect(await client.sessionLease(for: "missing") == nil)
 
@@ -142,10 +142,10 @@ struct LeasedSessionRuntimeBackendTests {
         // Closing and recreating the id installs a new incarnation: the old
         // lease reaches nothing and changes nothing.
         await client.closeSession(id: "session")
-        await client.createSessionIfNeeded(id: "session", cwd: workspace.path, allowedToolNames: ["local.readFile"])
+        await client.createSessionIfNeeded(id: "session", cwd: workspace.path, allowedToolNames: ["local.read"])
         let staleMutation = await client.mutateSession(for: lease) { $0.allowedToolNames = ["local.exec"] }
         #expect(!staleMutation)
-        #expect(await client.snapshotSession(id: "session")?.allowedToolNames == ["local.readFile"])
+        #expect(await client.snapshotSession(id: "session")?.allowedToolNames == ["local.read"])
         let renewed = try #require(await client.sessionLease(for: "session"))
         #expect(renewed.generation != lease.generation)
         let renewedMutation = await client.mutateSession(for: renewed) { $0.allowedToolNames = nil }

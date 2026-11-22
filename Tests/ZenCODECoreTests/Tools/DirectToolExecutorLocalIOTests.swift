@@ -164,7 +164,7 @@ struct DirectToolExecutorLocalIOTests {
         let calls = [
             DirectAgentToolCall(id: "pwd", name: "local.pwd", argumentsObject: [:], argumentsJSON: "{}"),
             // Missing required arguments fail in dispatch.
-            DirectAgentToolCall(id: "failed", name: "local.readFile", argumentsObject: [:], argumentsJSON: "{}"),
+            DirectAgentToolCall(id: "failed", name: "local.read", argumentsObject: [:], argumentsJSON: "{}"),
             DirectAgentToolCall(
                 id: "denied", name: "local.exec",
                 argumentsObject: ["command": "whoami"], argumentsJSON: #"{"command":"whoami"}"#
@@ -382,7 +382,7 @@ struct DirectToolExecutorLocalIOTests {
         try "beta\n".write(to: fileB, atomically: true, encoding: .utf8)
 
         let output = try await runFileTool(
-            "local.readFiles",
+            "local.multiRead",
             arguments: ["paths": ["a.txt", "b.txt"]],
             workingDirectory: root
         )
@@ -422,7 +422,7 @@ struct DirectToolExecutorLocalIOTests {
         #expect(output.contains("File: \(source.path)"))
         #expect(output.contains("lines:"))
         #expect(output.contains("suggested_reads:"))
-        #expect(output.contains("local.readFile path=\"\(source.path)\" offset=1"))
+        #expect(output.contains("local.read path=\"\(source.path)\" offset=1"))
         #expect(output.contains("outline:"))
         #expect(output.contains("mark\tView"))
         #expect(output.contains("struct\tAppView"))
@@ -456,7 +456,7 @@ struct DirectToolExecutorLocalIOTests {
         #expect(output.contains(source.path))
         #expect(output.contains("targetFeature"))
         #expect(output.contains("suggested_reads:"))
-        #expect(output.contains("local.readFile path=\"\(source.path)\""))
+        #expect(output.contains("local.read path=\"\(source.path)\""))
     }
 }
 

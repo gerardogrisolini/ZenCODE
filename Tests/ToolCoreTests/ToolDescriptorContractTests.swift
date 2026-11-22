@@ -7,7 +7,7 @@ struct ToolDescriptorContractTests {
     @Test
     func encodingExcludesRuntimeIdentityAndPreservesDescriptorFields() throws {
         let descriptor = ToolDescriptor(
-            name: "local.readFile",
+            name: "local.read",
             title: "Read file",
             description: "Reads a UTF-8 file.",
             inputSchema: #"{"type":"object"}"#,
@@ -19,7 +19,7 @@ struct ToolDescriptorContractTests {
         let fields = try #require(value.objectValue)
 
         #expect(fields["id"] == nil)
-        #expect(fields["name"] == .string("local.readFile"))
+        #expect(fields["name"] == .string("local.read"))
         #expect(fields["title"] == .string("Read file"))
         #expect(fields["description"] == .string("Reads a UTF-8 file."))
         #expect(fields["inputSchema"] == .string(#"{"type":"object"}"#))

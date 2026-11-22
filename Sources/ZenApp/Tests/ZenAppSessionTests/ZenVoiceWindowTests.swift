@@ -211,7 +211,7 @@ struct ZenVoiceWindowTests {
             let window = try await Self.open(runtime, workspace)
             try await Self.run("/voice on", in: window, runtime)
             let controller = try await Self.controller(controllers)
-            let call = DirectAgentToolCall(id: "read-1", name: "local.readFile", argumentsObject: [:], argumentsJSON: "{}")
+            let call = DirectAgentToolCall(id: "read-1", name: "local.read", argumentsObject: [:], argumentsJSON: "{}")
             await backend.script(prompt: "Inspect", events: [
                 .thought("Thinking about it."),
                 .content("Reading the file."),
@@ -266,7 +266,7 @@ struct ZenVoiceWindowTests {
             try await Self.run("/voice on", in: window, runtime)
             let controller = try await Self.controller(controllers)
             window.adoptedTelegramTurnSleep = Self.quickSleep
-            let call = DirectAgentToolCall(id: "read-1", name: "local.readFile", argumentsObject: [:], argumentsJSON: "{}")
+            let call = DirectAgentToolCall(id: "read-1", name: "local.read", argumentsObject: [:], argumentsJSON: "{}")
 
             // The turn from Telegram that `/telegram off` adopted, still
             // running: what it presents from now on reaches the window.

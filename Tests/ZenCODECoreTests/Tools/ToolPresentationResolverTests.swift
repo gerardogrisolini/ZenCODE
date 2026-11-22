@@ -157,7 +157,7 @@ struct ToolPresentationResolverTests {
     func persistedRuntimeToolCallShapeDoesNotContainPresentation() throws {
         let call = DirectAgentToolCall(
             id: "persisted",
-            name: "local.readFile",
+            name: "local.read",
             argumentsObject: ["path": "/tmp/file"],
             argumentsJSON: "{}",
             descriptorTitle: "Runtime title",

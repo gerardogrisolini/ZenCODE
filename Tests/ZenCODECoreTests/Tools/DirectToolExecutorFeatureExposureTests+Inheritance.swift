@@ -24,7 +24,7 @@ extension DirectToolExecutorFeatureExposureTests {
         let backend = CapturingSubAgentRuntimeBackend()
         let recorder = SubAgentFactoryRecorder()
         let executor = Self.developerCoordinator(fixture: fixture, backend: backend, recorder: recorder)
-        let allowlist: Set<String> = ["local.readFile", "agent.create", "agent.list"]
+        let allowlist: Set<String> = ["local.read", "agent.create", "agent.list"]
         await fixture.runtime.exposeForTesting(FeatureFixture.featureID, sessionID: Self.coordinatorSessionID)
 
         let sameProfile = try await executor.executeThrowingResult(
@@ -91,7 +91,7 @@ extension DirectToolExecutorFeatureExposureTests {
             let backend = CapturingSubAgentRuntimeBackend()
             let recorder = SubAgentFactoryRecorder()
             let executor = Self.developerCoordinator(fixture: fixture, backend: backend, recorder: recorder)
-            let allowlist: Set<String> = ["local.readFile", "agent.create"]
+            let allowlist: Set<String> = ["local.read", "agent.create"]
             await fixture.runtime.exposeForTesting(FeatureFixture.featureID, sessionID: Self.coordinatorSessionID)
             for (name, profile) in [("same-profile-worker", "Developer"), ("other-profile-worker", "Reviewer")] {
                 _ = try await executor.executeThrowingResult(

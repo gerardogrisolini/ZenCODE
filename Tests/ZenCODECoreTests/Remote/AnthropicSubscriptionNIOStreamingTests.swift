@@ -243,7 +243,7 @@ struct AnthropicSubscriptionNIOStreamingTests {
     """
 
     private static let toolResponse = #"""
-    data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_incomplete","name":"local_writeFile","input":{}}}
+    data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_incomplete","name":"local_write","input":{}}}
 
     data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"/tmp/should-not-be-written\",\"content\":\"incomplete\"}"}}
 

@@ -132,10 +132,10 @@ struct DirectToolExecutorRoutingCharacterizationTests {
     static let throwingCases: [ThrowingCase] = [
         ThrowingCase(
             label: "core tool not allowed",
-            toolName: "local.readFile",
+            toolName: "local.read",
             allowedToolNames: ["other.tool"],
             fixture: Fixture(),
-            error: "Unknown tool: local.readFile",
+            error: "Unknown tool: local.read",
             isToolNotAllowed: false
         ),
         ThrowingCase(

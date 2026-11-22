@@ -84,10 +84,10 @@ enum LocalToolsSupport {
         if lineCount == 0 {
             output.append("- <empty>")
         } else {
-            output.append("- local.readFile path=\"\(url.path)\" offset=1 limit=\(readLimit)")
+            output.append("- local.read path=\"\(url.path)\" offset=1 limit=\(readLimit)")
             if lineCount > readLimit {
                 let tailOffset = max(lineCount - readLimit + 1, 1)
-                output.append("- local.readFile path=\"\(url.path)\" offset=\(tailOffset) limit=\(readLimit)")
+                output.append("- local.read path=\"\(url.path)\" offset=\(tailOffset) limit=\(readLimit)")
             }
         }
 

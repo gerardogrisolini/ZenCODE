@@ -432,7 +432,7 @@ struct TelegramChannelLifecycleTests {
 
     private static var readRequest: AgentToolAuthorizationRequest {
         authorizationRequest(
-            toolName: "local.readFile", title: "Read Sources/Main.swift",
+            toolName: "local.read", title: "Read Sources/Main.swift",
             kind: "read", command: "read Sources/Main.swift"
         )
     }

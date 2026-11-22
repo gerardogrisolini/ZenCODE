@@ -39,14 +39,14 @@ struct AgentCoreSessionRunnerFeatureExposureTests {
         #expect(await fixture.isExposed())
 
         try await fixture.runner.updateSessionOptions(
-            configuration: fixture.configuration(systemPrompt: "updated", allowedToolNames: ["local.readFile"])
+            configuration: fixture.configuration(systemPrompt: "updated", allowedToolNames: ["local.read"])
         )
         #expect(await fixture.isExposed())
 
         // `/tools`: the session is rebuilt and created again, same profile.
         await fixture.runner.rebuildSession(id: fixture.sessionID)
         try await fixture.runner.createSession(
-            configuration: fixture.configuration(allowedToolNames: ["local.writeFile"])
+            configuration: fixture.configuration(allowedToolNames: ["local.write"])
         )
         #expect(await fixture.isExposed())
         await fixture.runner.shutdown()

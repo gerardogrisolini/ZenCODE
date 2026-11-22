@@ -399,11 +399,11 @@ differ from the defaults of ds4-agent.
   Sampling is greedy on the structural parts of a tool block (the opening, the
   tags between the parameters, and the end of a value), as in ds4-agent. The
   content of the parameter values is sampled normally.
-- While the model writes a call to `local.writeFile`, `local.append`,
+- While the model writes a call to `local.write`, `local.append`,
   `local.editFile`, `local.replace`, or `local.multiEdit`, the terminal draws it
   live, as ds4-agent does, with one difference in the header row: ds4-agent
   labels its calls with a short word (`write`, `append`, `edit`, `replace`),
-  while ZenCODE names the tool canonically (`local.writeFile`, `local.append`,
+  while ZenCODE names the tool canonically (`local.write`, `local.append`,
   `local.editFile`, `local.replace`, `local.multiEdit`). The header shows only
   the icon and the canonical tool name, never the path, whichever order the
   model writes its arguments in (the path before the text, or after it as in

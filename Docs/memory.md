@@ -881,7 +881,7 @@ Cancelled/failed turns and unresolved failures do not consolidate. Existing manu
 `memory.*` semantics and all public protocols/JSON formats remain unchanged.
 
 The initial, intentionally narrow evidence adapters recognize correlated
-`local.editFile`, `local.multiEdit`, `local.writeFile`, bounded `local.readFile`,
+`local.editFile`, `local.multiEdit`, `local.write`, bounded `local.read`,
 and `swift.test` / `swift.build` results. A substantive explicit-decision cue in
 the current user prompt plus an observed project file can trigger a decision
 proposal without an error or test. There is no mandatory user prefix: English

@@ -156,7 +156,7 @@ struct MemoryTurnInjectionTests {
                 "tool_calls": [[
                     "id": "call_\(round)",
                     "type": "function",
-                    "function": ["name": "local.readFile", "arguments": "{}"]
+                    "function": ["name": "local.read", "arguments": "{}"]
                 ]]
             ])
             sessionMessages.append([

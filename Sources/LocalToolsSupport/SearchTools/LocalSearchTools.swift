@@ -151,7 +151,7 @@ struct SearchLocateTool: FeatureTool {
     }
 
     static let name = "search.locate"
-    static let description = "Locates text matches compactly and returns file:line snippets plus local.readFile suggestions for focused follow-up reads. The search stops once maxResults is reached, so errors in files not yet searched are not reported."
+    static let description = "Locates text matches compactly and returns file:line snippets plus local.read suggestions for focused follow-up reads. The search stops once maxResults is reached, so errors in files not yet searched are not reported."
     static let inputSchema = buildInputSchema(
         [.string("pattern"), .string("path")]
             + CommonSchemaProperties.limit
@@ -213,7 +213,7 @@ struct SearchLocateTool: FeatureTool {
             guard seen.insert(key).inserted else {
                 continue
             }
-            suggestions.append("- local.readFile path=\"\(path)\" offset=\(offset) limit=\(readLimit)")
+            suggestions.append("- local.read path=\"\(path)\" offset=\(offset) limit=\(readLimit)")
             if suggestions.count >= maxSuggestions {
                 break
             }

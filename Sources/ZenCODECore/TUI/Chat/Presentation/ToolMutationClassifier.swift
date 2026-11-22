@@ -15,7 +15,7 @@ public enum ToolMutationClassifier {
     /// refresh the git summary after it.
     public static func isFileMutationTool(_ toolName: String) -> Bool {
         switch normalizedMutationToolName(toolName) {
-        case "local.writeFile", "local.append", "local.replace",
+        case "local.write", "local.append", "local.replace",
              "local.editFile", "local.multiEdit", "local.applyPatch",
              "local.delete", "local.move", "local.mkdir":
             return true

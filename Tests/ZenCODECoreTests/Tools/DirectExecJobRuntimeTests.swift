@@ -137,7 +137,7 @@ struct DirectExecJobRuntimeTests {
                 argumentsJSON: #"{"action":"list"}"#
             ),
             workingDirectory: FileManager.default.temporaryDirectory,
-            allowedToolNames: ["local.readFile"]
+            allowedToolNames: ["local.read"]
         )
         #expect(result.status != .completed)
     }

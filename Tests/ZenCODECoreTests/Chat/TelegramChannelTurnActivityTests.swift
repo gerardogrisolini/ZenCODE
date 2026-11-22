@@ -50,7 +50,7 @@ struct TelegramChannelTurnActivityTests {
             await presenter.turnWillStart(await Self.request(for: terminal))
             let log = TelegramTurnActivityWireLog()
             let reporter = await Fixtures.install(log, on: channel)
-            let read = Fixtures.toolCall(id: "1", name: "local.readFile", arguments: ["path": "Package.swift"])
+            let read = Fixtures.toolCall(id: "1", name: "local.read", arguments: ["path": "Package.swift"])
             let message = Fixtures.toolCall(
                 id: "2", name: "agent.message", arguments: ["id": "worker", "message": "secret instructions"]
             )
@@ -114,7 +114,7 @@ struct TelegramChannelTurnActivityTests {
 
             await presenter.presentThought("second half.")
             await presenter.presentAssistantContent("Answer.")
-            let read = Fixtures.toolCall(id: "1", name: "local.readFile", arguments: ["path": "a.swift"])
+            let read = Fixtures.toolCall(id: "1", name: "local.read", arguments: ["path": "a.swift"])
             await presenter.presentToolCallStarted(read)
             await reporter.flush()
 
@@ -141,7 +141,7 @@ struct TelegramChannelTurnActivityTests {
             await presenter.turnWillStart(await Self.request(for: terminal))
             let log = TelegramTurnActivityWireLog()
             let reporter = await Fixtures.install(log, on: channel)
-            let read = Fixtures.toolCall(id: "1", name: "local.readFile", arguments: ["path": "a.swift"])
+            let read = Fixtures.toolCall(id: "1", name: "local.read", arguments: ["path": "a.swift"])
 
             await presenter.presentAssistantContent("First ")
             await presenter.presentAssistantContent("response.")
@@ -173,7 +173,7 @@ struct TelegramChannelTurnActivityTests {
             await presenter.turnWillStart(await Self.request(for: terminal))
             let log = TelegramTurnActivityWireLog()
             let reporter = await Fixtures.install(log, on: channel)
-            let read = Fixtures.toolCall(id: "1", name: "local.readFile", arguments: ["path": "a.swift"])
+            let read = Fixtures.toolCall(id: "1", name: "local.read", arguments: ["path": "a.swift"])
             await presenter.presentToolCallStarted(read)
             await reporter.flush()
 

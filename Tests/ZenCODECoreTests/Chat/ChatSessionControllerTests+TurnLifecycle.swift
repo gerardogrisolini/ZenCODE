@@ -113,7 +113,7 @@ extension ChatSessionControllerTests {
                 turnID: nil,
                 sessionID: harness.sessionID,
                 toolCallID: "read-1",
-                toolName: "local.readFile",
+                toolName: "local.read",
                 title: "Read",
                 kind: "read",
                 command: "Package.swift",
@@ -134,7 +134,7 @@ extension ChatSessionControllerTests {
             await harness.runtime.append { call in
                 let write = DirectAgentToolCall(
                     id: "write-1",
-                    name: "local.writeFile",
+                    name: "local.write",
                     argumentsObject: ["path": "notes.txt", "content": "hello\n"],
                     argumentsJSON: "{}"
                 )

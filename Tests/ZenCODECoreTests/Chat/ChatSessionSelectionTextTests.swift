@@ -39,7 +39,7 @@ struct ChatSessionSelectionTextTests {
     func theActiveToolGroupsAreCountedAsTheTerminalCountedThem() {
         let items = TerminalToolSelectionCatalog.items(featureStatuses: [])
         let summary = ChatActiveToolsSummary(
-            toolNames: ["local.exec", "exec.job", "local.readFile", "skills.list", "skills.read"],
+            toolNames: ["local.exec", "exec.job", "local.read", "skills.list", "skills.read"],
             items: items,
             selectedKeys: ["shell", "files"]
         )

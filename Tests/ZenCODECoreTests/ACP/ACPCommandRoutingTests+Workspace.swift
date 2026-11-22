@@ -58,7 +58,7 @@ extension ACPCommandRoutingTests {
     private func makeWorkspaceFixture() async throws -> WorkspaceFixture {
         let fixture = try await makeFixture(
             sessionID: "acp-workspace-\(UUID().uuidString)",
-            allowedToolNames: ["local.readFile"]
+            allowedToolNames: ["local.read"]
         )
         let controller = try #require(await fixture.bridge.workspaceControllerForTesting(
             sessionID: fixture.sessionID

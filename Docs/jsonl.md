@@ -56,10 +56,10 @@ A tool call started.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `id` | string | Tool-call identifier, unique within the run |
-| `name` | string | Public tool name, for example `local.readFile` |
+| `name` | string | Public tool name, for example `local.read` |
 
 ```json
-{"schema_version":1,"type":"tool.started","run_id":"A3B0...","id":"call-1","name":"local.readFile"}
+{"schema_version":1,"type":"tool.started","run_id":"A3B0...","id":"call-1","name":"local.read"}
 ```
 
 ### `tool.completed`
@@ -75,7 +75,7 @@ successfully.
 | `status` | string | `completed`, `failed`, or `permissionDenied` |
 
 ```json
-{"schema_version":1,"type":"tool.completed","run_id":"A3B0...","id":"call-1","name":"local.readFile","status":"completed"}
+{"schema_version":1,"type":"tool.completed","run_id":"A3B0...","id":"call-1","name":"local.read","status":"completed"}
 ```
 
 A terminal run error can interrupt a tool call, so consumers must not wait

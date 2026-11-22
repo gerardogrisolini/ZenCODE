@@ -192,7 +192,7 @@ private actor SummaryBackend: AgentRuntimeBackend {
         await onEvent(.content("Writing."))
         let call = DirectAgentToolCall(
             id: "write-\(name)",
-            name: "local.writeFile",
+            name: "local.write",
             argumentsObject: ["path": name, "content": "hello\n"],
             argumentsJSON: "{}"
         )

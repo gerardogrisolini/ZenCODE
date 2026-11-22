@@ -198,7 +198,7 @@ extension ChatSessionStateTests {
 
     /// A turn with reasoning, content, and two tool calls.
     static let inspectionTurn: ScriptedChatRuntime.Script = { call in
-        let read = toolCall(id: "tool-read", name: "local.readFile")
+        let read = toolCall(id: "tool-read", name: "local.read")
         await call.onEvent(.thought("Planning. "))
         await call.onEvent(.content("Let me check."))
         await call.onEvent(.toolCallStarted(read))
@@ -224,7 +224,7 @@ extension ChatSessionStateTests {
             originalFilename: "shot.png"
         )
         await runtime.append { call in
-            let read = toolCall(id: "tool-read", name: "local.readFile")
+            let read = toolCall(id: "tool-read", name: "local.read")
             let list = DirectAgentToolCall(
                 id: "tool-list", name: "local.ls", argumentsObject: ["path": "Sources", "depth": 2], argumentsJSON: "{}"
             )

@@ -49,7 +49,7 @@ import Testing
 
     @Test func decisionNeedsUserSourceAndRealProjectFileNotTestCompletion() async {
         let ledger = MemoryLearningLedger(workspace: root, prompt: "For this project we have decided to use the local graph as the authoritative store.")
-        await emit(ledger, id: "doc", name: "local.readFile", args: ["path": "Docs/design.md"], output: "1 The graph is the authoritative store.")
+        await emit(ledger, id: "doc", name: "local.read", args: ["path": "Docs/design.md"], output: "1 The graph is the authoritative store.")
         let evidence = await ledger.delta()
         let proposal = MemoryLearningProposal(kind: .decision, content: "The local graph is authoritative.",
             references: ["user-decision", "doc"], causeReferences: [], prevention: nil, existingID: nil)
@@ -93,7 +93,7 @@ extension ConservativeMemoryLearningPolicyTests {
             // when the bytes contain no obvious secret markers.
             let output = "1 " + (try String(contentsOf: alias, encoding: .utf8))
             let ledger = MemoryLearningLedger(workspace: project, prompt: "We decided that the graph is the authoritative project store.")
-            await emit(ledger, id: "file", name: "local.readFile", args: ["path": alias.path], output: output)
+            await emit(ledger, id: "file", name: "local.read", args: ["path": alias.path], output: output)
             #expect(await ledger.delta().isEmpty)
         }
         let rootAlias = base.appendingPathComponent("root-alias")
@@ -101,7 +101,7 @@ extension ConservativeMemoryLearningPolicyTests {
         let valid = MemoryLearningLedger(workspace: rootAlias, prompt: "We decided that the graph is the authoritative project store.")
         let doc = project.appendingPathComponent("design.md")
         try "The graph is authoritative.".write(to: doc, atomically: true, encoding: .utf8)
-        await emit(valid, id: "file", name: "local.readFile", args: ["file_path": rootAlias.appendingPathComponent("design.md").path], output: "1 " + (try String(contentsOf: doc, encoding: .utf8)))
+        await emit(valid, id: "file", name: "local.read", args: ["file_path": rootAlias.appendingPathComponent("design.md").path], output: "1 " + (try String(contentsOf: doc, encoding: .utf8)))
         #expect(await valid.delta().last?.location == "design.md")
     }
 

@@ -340,7 +340,7 @@ extension ACPCompatibilityTests {
         )
         let absoluteToolCall = presentedToolCall(
             id: "call_read",
-            name: "local.readFile",
+            name: "local.read",
             argumentsObject: ["path": "/tmp/other/beta.swift"],
             argumentsJSON: #"{"path":"/tmp/other/beta.swift"}"#
         )

@@ -151,7 +151,7 @@ struct ChatSessionStateTests {
             let prompter = RecordingChatPresenter(name: "acp-prompt")
 
             await harness.runtime.append { call in
-                let read = Self.toolCall(id: "acp-read", name: "local.readFile")
+                let read = Self.toolCall(id: "acp-read", name: "local.read")
                 await call.onEvent(.thought("Looking first."))
                 await call.onEvent(.content("Let me read it."))
                 await call.onEvent(.toolCallStarted(read))
@@ -219,12 +219,12 @@ struct ChatSessionStateTests {
                 content: "Looking.",
                 toolCalls: [
                     AgentRuntimeToolCall(id: nil, name: "local.ls", argumentsJSON: "{}"),
-                    AgentRuntimeToolCall(id: nil, name: "local.readFile", argumentsJSON: #"{"path":"a"}"#),
+                    AgentRuntimeToolCall(id: nil, name: "local.read", argumentsJSON: #"{"path":"a"}"#),
                     AgentRuntimeToolCall(id: "late", name: "local.exec", argumentsJSON: #"{"command":"make"}"#),
                 ]
             ),
             // By name first, then in order.
-            AgentRuntimeMessage(role: .tool, content: "body of a", toolName: "local.readFile"),
+            AgentRuntimeMessage(role: .tool, content: "body of a", toolName: "local.read"),
             AgentRuntimeMessage(role: .tool, content: "a\nb"),
             AgentRuntimeMessage(role: .user, content: "Go on"),
             AgentRuntimeMessage(role: .tool, content: "built", toolCallID: "late", toolName: "local.exec"),
@@ -244,11 +244,11 @@ struct ChatSessionStateTests {
             .init(turn: 1, entry: .assistantText("Looking.")),
             .init(turn: 1, entry: .toolCallStarted(id: "restored-tool-1-0", name: "local.ls", argumentsJSON: "{}")),
             .init(turn: 1, entry: .toolCallStarted(
-                id: "restored-tool-1-1", name: "local.readFile", argumentsJSON: #"{"path":"a"}"#
+                id: "restored-tool-1-1", name: "local.read", argumentsJSON: #"{"path":"a"}"#
             )),
             .init(turn: 1, entry: .toolCallStarted(id: "late", name: "local.exec", argumentsJSON: #"{"command":"make"}"#)),
             .init(turn: 1, entry: .toolCallCompleted(
-                id: "restored-tool-1-1", name: "local.readFile", output: "body of a", attachments: []
+                id: "restored-tool-1-1", name: "local.read", output: "body of a", attachments: []
             )),
             .init(turn: 1, entry: .toolCallCompleted(id: "restored-tool-1-0", name: "local.ls", output: "a\nb", attachments: [])),
             .init(turn: 2, entry: .prompt(text: "Go on", attachments: [])),
