@@ -77,6 +77,11 @@ import ZenCODECore
 /// window's line until its reservation is released
 /// (``adoptedTelegramPromptID``), and Stop stops it.
 ///
+/// A control that launches a command asks ``refusesNow(_:)`` whether the
+/// window would refuse it now (a command that does not run while a prompt is
+/// running, with a line running) and shows itself disabled meanwhile; the
+/// refusal itself, and its message, are unchanged.
+///
 /// Voice mode (`/voice`, ``ZenAppRuntime/voiceState``) is the app's, one for
 /// every window, and follows the active window
 /// (``ZenAppRuntime/activeVoiceWindowID``); the window is its host there
@@ -344,8 +349,13 @@ public final class ZenWindowSession: Identifiable {
     var isDrivenFromTelegram = false
     /// The prompt of the turn from Telegram that `/telegram off` adopted,
     /// while it is still reserved: the window treats the turn as its line
-    /// meanwhile (``watchAdoptedTelegramTurn(_:)``).
-    @ObservationIgnored var adoptedTelegramPromptID: UUID?
+    /// meanwhile (``watchAdoptedTelegramTurn(_:)``). Observed: it enters
+    /// ``isLineRunning``, which the controls that launch a command read
+    /// (``refusesNow(_:)``), and nothing else changes when the adopted turn
+    /// ends. It is written only when the turn is adopted, when it ends
+    /// (``adoptedTelegramTurnDidEnd(_:)``), and when the window closes, never
+    /// while it streams, so observing it costs no extra updates.
+    var adoptedTelegramPromptID: UUID?
     /// Waits between two reads of the adopted turn's reservation; throws when
     /// the task is cancelled. Replaced by tests.
     @ObservationIgnored var adoptedTelegramTurnSleep: @Sendable (Duration) async throws -> Void = {

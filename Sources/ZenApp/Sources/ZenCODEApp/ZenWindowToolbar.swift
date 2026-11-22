@@ -9,7 +9,11 @@
 //  other item runs a slash command; the menus a command needs arrive as
 //  pending requests and open in a popover under the button that launched
 //  it, or over the composer when the command came from elsewhere (the
-//  Changes menu, the overflow menu of the toolbar).
+//  Changes menu, the overflow menu of the toolbar). While a line runs, the
+//  buttons whose command the window would refuse then, and the Changes menu
+//  when it would refuse all its items, show disabled
+//  (`ZenWindowSession.refusesNow(_:)`); Tasks and Artifacts, which run during
+//  a line, stay enabled.
 //
 
 import AppKit
@@ -43,7 +47,10 @@ enum ZenSessionCommand {
 /// icons only, followed by the tools, skills, tasks, and changes. The
 /// artifacts sidebar toggle, preceded by its own spacer, is always the
 /// trailing item. The buttons that run a command present its menus under
-/// themselves (``ZenToolbarCommandButton``).
+/// themselves (``ZenToolbarCommandButton``), and show disabled while the
+/// window would refuse their command; the Changes menu does while it would
+/// refuse all its items (``ZenToolbarChangesAvailability``). Modifiers of
+/// their own read that state, not the toolbar's body.
 struct ZenWindowToolbar: ToolbarContent {
     let session: ZenWindowSession
 
@@ -83,6 +90,7 @@ struct ZenWindowToolbar: ToolbarContent {
             } label: {
                 Label("Changes", systemImage: "plusminus")
             }
+            .modifier(ZenToolbarChangesAvailability(session: session))
             .help("Changes (/changes)")
         }
 
@@ -108,7 +116,8 @@ struct ZenWindowToolbar: ToolbarContent {
 /// A toolbar button that runs `command` and presents the menus the command
 /// asks for in a popover under itself, its arrow pointing to it
 /// (``ZenToolbarMenuPopover``). Its body reads no state of the session: the
-/// label reads its own.
+/// label reads its own, and so does the modifier that disables the button
+/// while the window would refuse `command` (``ZenToolbarCommandAvailability``).
 ///
 /// A button that is not in a window at the click (the toolbar moved it to
 /// its overflow menu, which sent the action) could not show the popover, so
@@ -137,7 +146,49 @@ private struct ZenToolbarCommandButton<ButtonLabel: View>: View {
             label
                 .background(ZenToolbarButtonProbeView(probe: probe))
         }
+        // The order matters: `.disabled` reaches, through the environment
+        // (`isEnabled`), the content of a popover presented from the view it
+        // is applied to. The menu of `/models` opens while `/models` runs,
+        // that is, with this button disabled, and its popover must stay
+        // interactive: so the availability goes first, innermost, around the
+        // button alone, and the popover is presented from the view outside it.
+        .modifier(ZenToolbarCommandAvailability(session: session, command: command))
         .modifier(ZenToolbarMenuPopover(session: session, anchor: anchor))
+    }
+}
+
+/// Disables what it modifies while the window would refuse `command`: a
+/// command that does not run while a prompt is running, with a line running
+/// (`ZenWindowSession.refusesNow(_:)`). The button is enabled again when the
+/// line ends. A modifier of its own, so the state it reads (the line, the
+/// queue, the command context) is read by its body alone, not by the
+/// toolbar's. The window's refusal is unchanged: it only shows beforehand.
+private struct ZenToolbarCommandAvailability: ViewModifier {
+    let session: ZenWindowSession
+    let command: String
+
+    func body(content: Content) -> some View {
+        content.disabled(session.refusesNow(command))
+    }
+}
+
+/// Disables the Changes menu while the window would refuse every one of its
+/// items (the commands of ``ZenChangesMenuItems``), that is, while a line runs:
+/// none of them runs then. The menu is enabled again when the line ends. A
+/// modifier of its own, like ``ZenToolbarCommandAvailability``; the items, and
+/// the Session menu that shares them, are left as they are.
+private struct ZenToolbarChangesAvailability: ViewModifier {
+    let session: ZenWindowSession
+
+    private static let commands = [
+        ZenSessionCommand.changes,
+        ZenSessionCommand.changesDiff,
+        ZenSessionCommand.undo,
+        ZenSessionCommand.review,
+    ]
+
+    func body(content: Content) -> some View {
+        content.disabled(Self.commands.allSatisfy { session.refusesNow($0) })
     }
 }
 

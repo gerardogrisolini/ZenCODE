@@ -2,8 +2,9 @@
 //  ZenWindowSession+Lines.swift
 //  ZenApp
 //
-//  The lines of a window: the routing of a submitted line, the serial
-//  executor, the flow of a line and of its turn, the stop, the prompt
+//  The lines of a window: the routing of a submitted line (and whether the
+//  window would refuse one now, for the controls that launch a command), the
+//  serial executor, the flow of a line and of its turn, the stop, the prompt
 //  history, and the attachments.
 //
 
@@ -68,11 +69,29 @@ extension ZenWindowSession {
         route(trimmed, menuAnchor: menuAnchor)
     }
 
-    /// Routes `line`, launched from `menuAnchor` (``run(_:menuAnchor:)``);
-    /// `false` when it was refused.
-    @discardableResult
-    func route(_ line: String, menuAnchor: ZenMenuAnchor? = nil) -> Bool {
-        let route = ZenLineRoute.route(
+    /// Whether the window would refuse `line` now: ``route(_:menuAnchor:)``
+    /// would answer ``ZenLineRoute/refuse(_:)`` for it, which is the case of
+    /// a command that does not run while a prompt is running, asked while a
+    /// line runs (``isLineRunning``). A view reads it in its body to show
+    /// disabled the control that launches `line`, and the control is enabled
+    /// again when the line ends: every state it reads is observed
+    /// (``isBusy``, ``adoptedTelegramPromptID``, ``queuedLines``,
+    /// ``isDrivenFromTelegram``, ``commandContext``). It has no side effects:
+    /// it writes no row, selects no tab, and leaves the queue and the menu
+    /// anchors alone. The refusal itself is unchanged.
+    public func refusesNow(_ line: String) -> Bool {
+        if case .refuse = currentRoute(for: line) {
+            return true
+        }
+        return false
+    }
+
+    /// The route of `line` now, from the state of the window. The one
+    /// computation behind ``route(_:menuAnchor:)`` and ``refusesNow(_:)``, so
+    /// that what a control shows and what the window does cannot diverge. It
+    /// only reads the state.
+    private func currentRoute(for line: String) -> ZenLineRoute {
+        ZenLineRoute.route(
             for: line,
             // A turn adopted from Telegram runs as the window's line.
             isLineRunning: isLineRunning,
@@ -84,7 +103,13 @@ extension ZenWindowSession {
             registry: ZenAppCommands.registry,
             context: commandContext
         )
-        switch route {
+    }
+
+    /// Routes `line`, launched from `menuAnchor` (``run(_:menuAnchor:)``);
+    /// `false` when it was refused.
+    @discardableResult
+    func route(_ line: String, menuAnchor: ZenMenuAnchor? = nil) -> Bool {
+        switch currentRoute(for: line) {
         case .run:
             startLine(line, menuAnchor: menuAnchor)
         case .runBeside:

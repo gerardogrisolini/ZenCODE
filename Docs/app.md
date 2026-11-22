@@ -695,6 +695,11 @@ graph) open in a popover under that button, with the arrow pointing at it;
 when the window is too narrow and you choose the button from the toolbar's
 overflow menu, they open above the composer. The items of the **Changes**
 menu and of the **Session** menu open their menus above the composer.
+While a prompt is running, the buttons whose command does not run during a
+prompt (the agent, the model, the thinking level, the tools, and the skills)
+and the **Changes** menu are disabled until the line ends; **Tasks** and
+**Artifacts** stay available. The same commands from the **Session** menu or
+typed in the composer are still refused, with the same message.
 The **Session** menu has Stop (⌘.), then **Show Chat Reader** (**Hide Chat
 Reader**, ⌃Y) in a section of its own, then **Full Access** (⌃G) in a section
 of its own, then **Voice Mode** and **Pause Voice** (**Resume Voice**) in a

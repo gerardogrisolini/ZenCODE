@@ -10,6 +10,15 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Changed
+
+- In the macOS app, the toolbar buttons whose command does not run while a
+  prompt is running (agent, model, thinking level, tools, and skills), and the
+  Changes menu, now appear disabled until the running line ends, instead of
+  being refused when clicked. Tasks and Artifacts stay enabled, and the
+  refusal of the same commands from the Session menu or the composer is
+  unchanged.
+
 ## [6.2.0] - 2026-11-22
 
 ### Added
