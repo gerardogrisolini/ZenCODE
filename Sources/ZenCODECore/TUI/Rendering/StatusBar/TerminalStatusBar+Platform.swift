@@ -180,9 +180,10 @@ extension TerminalStatusBar {
     }
 
     /// Writes text to the terminal output. Uses the injected `outputSink` when
-    /// set (testing), otherwise writes to the controlling-terminal FileHandle.
+    /// set (testing), otherwise writes to the controlling-terminal FileHandle as
+    /// one synchronized-output frame (DECSET 2026); the sink path is unwrapped.
     func performOutput(_ text: String) {
-        TerminalOutputSynchronization.write(text, output: output, sink: outputSink)
+        TerminalSynchronizedOutput.write(text, output: output, sink: outputSink)
     }
 
     func writeLocked(_ text: String) {

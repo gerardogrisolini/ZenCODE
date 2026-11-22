@@ -15,7 +15,14 @@ extension TerminalMarkdownStreamFormatter {
     /// - Note: Once a line has started streaming it can no longer become a block
     ///   construct (e.g. a table header): its already-written prefix cannot be
     ///   retracted, so a later `|` renders as literal inline text.
-    func renderInlineFragment(_ fragment: String) -> String {
+    /// - Parameter forcesMarkdownParsing: parse even a fragment that looks like
+    ///   plain prose. A line committed by an early inline emission was already
+    ///   markdown as a whole, so smart punctuation and entities of its later
+    ///   pieces must render exactly as in the complete line.
+    func renderInlineFragment(
+        _ fragment: String,
+        forcesMarkdownParsing: Bool = false
+    ) -> String {
         // `fragment` follows text already written directly to the terminal. A
         // leading mark, joiner, regional indicator, or emoji modifier can
         // therefore complete the final grapheme in that emitted text. Do not
@@ -26,9 +33,12 @@ extension TerminalMarkdownStreamFormatter {
         // then parse only the markdown-capable remainder.
         let continuation = leadingGraphemeContinuation(in: fragment)
         if !continuation.prefix.isEmpty {
-            return continuation.prefix + renderInlineFragment(continuation.remainder)
+            return continuation.prefix + renderInlineFragment(
+                continuation.remainder,
+                forcesMarkdownParsing: forcesMarkdownParsing
+            )
         }
-        guard mayContainMarkdown(in: fragment) else {
+        guard forcesMarkdownParsing ? !fragment.isEmpty : mayContainMarkdown(in: fragment) else {
             return fragment
         }
         // A partial tail starts in the middle of an already-emitted logical
@@ -38,8 +48,14 @@ extension TerminalMarkdownStreamFormatter {
         // synthetic first occurrence after rendering; user content remains
         // untouched.
         let source = Self.inlineParsingSentinel + sanitizedMarkdownSource(fragment)
+        return renderParsedInlineFragment(Document(parsing: source))
+    }
+
+    /// Renders a document parsed from `inlineParsingSentinel` + fragment and
+    /// removes the synthetic sentinel again.
+    func renderParsedInlineFragment(_ document: Document) -> String {
         var renderer = makeRenderer()
-        let rendered = renderer.visit(Document(parsing: source))
+        let rendered = renderer.visit(document)
         guard let sentinelRange = rendered.range(of: Self.inlineParsingSentinel) else {
             return rendered
         }
@@ -198,6 +214,9 @@ extension TerminalMarkdownStreamFormatter {
     }
 
     func shouldFlushPendingLineForStreaming(_ line: String) -> Bool {
-        activeCodeFence == nil && blockKind == nil && !mayContainMarkdown(in: line)
+        // A line committed by an early inline emission is markdown as a whole;
+        // flushing its tail raw would bypass smart punctuation and entities.
+        !isInlineCommitted
+            && activeCodeFence == nil && blockKind == nil && !mayContainMarkdown(in: line)
     }
 }

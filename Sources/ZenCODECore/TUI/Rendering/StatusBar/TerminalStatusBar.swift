@@ -115,7 +115,9 @@ public actor TerminalStatusBar {
         let output = Self.openControllingTerminal()
         self.output = output
         self.primaryScreen = TerminalPrimaryScreen { text in
-            TerminalOutputSynchronization.write(text, output: output, sink: nil)
+            // Production sink only: one atomic DECSET 2026 frame per physical
+            // write. The injected-sink init below stays marker-free.
+            TerminalSynchronizedOutput.write(text, output: output, sink: nil)
         }
     }
 

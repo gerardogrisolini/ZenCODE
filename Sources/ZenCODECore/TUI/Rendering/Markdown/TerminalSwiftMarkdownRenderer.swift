@@ -131,13 +131,8 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
         guard children.count >= 2,
               let metadata = children[0] as? Strong,
               let text = children[1] as? Text,
-              children.count == 2 || children[2] is SoftBreak || children[2] is LineBreak else {
-            return nil
-        }
-        let label = Array(metadata.children)
-        guard label.count == 2, label[1] is InlineCode,
-              let status = label[0] as? Text,
-              ["added ", "modified ", "deleted ", "unknown "].contains(status.string) else {
+              children.count == 2 || children[2] is SoftBreak || children[2] is LineBreak,
+              Self.isArtifactMetadataLabel(metadata) else {
             return nil
         }
         let tokens = text.string.split(separator: " ")
@@ -152,6 +147,18 @@ struct TerminalSwiftMarkdownRenderer: MarkupVisitor {
         guard text.string == "  \(tokens[0]) \(tokens[1])\(suffix)" else { return nil }
         return "  \(palette.diffAddition)\(tokens[0])\(Self.reset) "
             + "\(palette.diffRemoval)\(tokens[1])\(Self.reset)\(suffix)"
+    }
+
+    /// The `**<status> `path`**` label that opens a canonical artifact
+    /// metadata line. Shared with the stream formatter, which must not split
+    /// such a label from its counts by an early inline emission.
+    static func isArtifactMetadataLabel(_ metadata: Strong) -> Bool {
+        let label = Array(metadata.children)
+        guard label.count == 2, label[1] is InlineCode,
+              let status = label[0] as? Text else {
+            return false
+        }
+        return ["added ", "modified ", "deleted ", "unknown "].contains(status.string)
     }
 
     mutating func visitHeading(_ heading: Heading) -> String {

@@ -93,6 +93,14 @@ public struct TerminalMarkdownStreamFormatter {
     /// Cached, incremental block-marker classification for the current line.
     /// It is reset only when that line is completed or force-flushed.
     var pendingLineStartState: PendingLineStartState = .leadingWhitespace
+    /// Whether the current line emitted a validated closed inline prefix. Such
+    /// a line never returns to the raw prose path: its remaining text is
+    /// emitted in validated pieces at whitespace boundaries and always parsed,
+    /// so smart punctuation, entities and flanking match the complete line.
+    var isInlineCommitted = false
+    /// Incremental pre-scan proposing the boundary of the latest closed inline
+    /// prefix of the pending tail; see `InlineSpanBoundaryScanner`.
+    private var inlineSpanScanner = InlineSpanBoundaryScanner()
 
     public init(
         isEnabled: Bool,
@@ -152,6 +160,9 @@ public struct TerminalMarkdownStreamFormatter {
         // active outside code fences and buffered blocks (lists, blockquotes,
         // tables), which have their own streaming/buffering strategies.
         rendered += streamPendingLineIfSafe()
+        // A tail halted by a marker can still stream once the markers before a
+        // later space or tab form closed constructs (`code`, **bold**, links).
+        rendered += streamClosedInlinePrefixIfSafe()
 
         if pendingLineScalarCount > Self.maxBufferedLineLength {
             if shouldFlushPendingLineForStreaming(pendingLine) {
@@ -165,7 +176,7 @@ public struct TerminalMarkdownStreamFormatter {
             } else if pendingLineScalarCount > Self.maxMarkdownBufferedLineLength {
                 rendered += flushBlock()
                 rendered += hasEmittedPendingPrefix
-                    ? renderInlineFragment(pendingLine)
+                    ? renderInlineFragment(pendingLine, forcesMarkdownParsing: isInlineCommitted)
                     : renderCompleteLine(pendingLine, appendsNewline: false)
                 clearPendingTailPreservingLineContext()
             }
@@ -185,7 +196,11 @@ public struct TerminalMarkdownStreamFormatter {
         var rendered = ""
         if !pendingLine.isEmpty {
             rendered += hasEmittedPendingPrefix
-                ? completePartiallyEmittedLine(pendingLine, appendsNewline: false)
+                ? completePartiallyEmittedLine(
+                    pendingLine,
+                    appendsNewline: false,
+                    forcesMarkdownParsing: isInlineCommitted
+                )
                 : handleCompleteLine(pendingLine, appendsNewline: false)
         }
         return rendered + flushBlock()
@@ -213,7 +228,7 @@ public struct TerminalMarkdownStreamFormatter {
             ? String(pendingLine.dropLast())
             : pendingLine
         let rendered = hasEmittedPendingPrefix
-            ? completePartiallyEmittedLine(completedLine)
+            ? completePartiallyEmittedLine(completedLine, forcesMarkdownParsing: isInlineCommitted)
             : handleCompleteLine(completedLine)
         resetPendingLineState()
         return rendered
@@ -225,6 +240,7 @@ public struct TerminalMarkdownStreamFormatter {
     private mutating func streamPendingLineIfSafe() -> String {
         guard activeCodeFence == nil,
               blockKind == nil,
+              !isInlineCommitted,
               !pendingLine.isEmpty else {
             return ""
         }
@@ -241,7 +257,56 @@ public struct TerminalMarkdownStreamFormatter {
             pendingLineScalarCount - fragment.unicodeScalars.count
         )
         hasEmittedPendingPrefix = true
+        // The inline pre-scan always describes `pendingLine` from its start;
+        // only its own emission rebases it, any other removal restarts it.
+        inlineSpanScanner = InlineSpanBoundaryScanner()
         return fragment
+    }
+
+    /// Emits the prefix of the pending tail up to the end of its latest fully
+    /// closed inline construct, when that prefix renders exactly as it would
+    /// inside the complete line. The boundary is always a space or tab that has
+    /// already arrived, so the flanking of the final delimiter run cannot change.
+    /// Work per call is one incremental scan of the new scalars plus at most
+    /// two Markdown parses of the proposed prefix; a rejected proposal poisons
+    /// the scanner, so the tail is never re-parsed until the line resets.
+    private mutating func streamClosedInlinePrefixIfSafe() -> String {
+        guard activeCodeFence == nil,
+              blockKind == nil,
+              !pendingLine.isEmpty,
+              case .resolved = pendingLineStartState else {
+            return ""
+        }
+        let atLineStart = !hasEmittedPendingPrefix
+        if !isInlineCommitted {
+            // Only a tail halted by a marker; plain prose streams raw.
+            guard let first = pendingLine.first,
+                  Self.streamingStopChars.contains(first),
+                  !atLineStart || lineStartAllowsInlineCommit(pendingLine) else {
+                return ""
+            }
+        }
+        inlineSpanScanner.scan(pendingLine)
+        guard let boundaryOffset = inlineSpanScanner.candidateUTF8End else {
+            return ""
+        }
+        let boundary = pendingLine.utf8.index(pendingLine.utf8.startIndex, offsetBy: boundaryOffset)
+        guard boundary.samePosition(in: pendingLine) != nil,
+              let rendered = validatedClosedInlinePrefix(
+                String(pendingLine[..<boundary]),
+                atLineStart: atLineStart,
+                isCommittedContinuation: isInlineCommitted
+              ) else {
+            inlineSpanScanner.poison()
+            return ""
+        }
+        let emittedScalarCount = pendingLine.unicodeScalars[..<boundary].count
+        pendingLine.removeSubrange(pendingLine.startIndex..<boundary)
+        pendingLineScalarCount = max(0, pendingLineScalarCount - emittedScalarCount)
+        inlineSpanScanner.consumePrefix(utf8Count: boundaryOffset)
+        hasEmittedPendingPrefix = true
+        isInlineCommitted = true
+        return rendered
     }
 
     /// Clears the full set of line-local streaming state. It is deliberately
@@ -252,17 +317,22 @@ public struct TerminalMarkdownStreamFormatter {
         pendingLineScalarCount = 0
         hasEmittedPendingPrefix = false
         pendingLineStartState = .leadingWhitespace
+        isInlineCommitted = false
+        inlineSpanScanner = InlineSpanBoundaryScanner()
     }
 
     /// Drops an already-rendered tail after a safety flush without pretending
     /// that the following delta begins a new logical line. This is distinct from
     /// `resetPendingLineState()`, which is only valid at a real newline or end
-    /// of stream.
+    /// of stream. After it the line continues on the raw prose path, exactly as
+    /// a safety flush did before early inline emission existed.
     private mutating func clearPendingTailPreservingLineContext() {
         pendingLine = ""
         pendingLineScalarCount = 0
         hasEmittedPendingPrefix = true
         pendingLineStartState = .resolved
+        isInlineCommitted = false
+        inlineSpanScanner = InlineSpanBoundaryScanner()
     }
 
     /// Routes a complete line either into the pending multi-line block buffer
@@ -555,10 +625,13 @@ public struct TerminalMarkdownStreamFormatter {
     /// un-emitted tail is output, rendered inline so late markers are formatted.
     private func completePartiallyEmittedLine(
         _ tail: String,
-        appendsNewline: Bool = true
+        appendsNewline: Bool = true,
+        forcesMarkdownParsing: Bool = false
     ) -> String {
         let newline = appendsNewline ? "\n" : ""
-        return (tail.isEmpty ? "" : renderInlineFragment(tail)) + newline
+        return (tail.isEmpty
+            ? ""
+            : renderInlineFragment(tail, forcesMarkdownParsing: forcesMarkdownParsing)) + newline
     }
 
 }

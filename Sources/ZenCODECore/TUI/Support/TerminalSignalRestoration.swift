@@ -31,12 +31,19 @@ final class TerminalSignalRestoration: Sendable {
         var enhancedKeyboardProtocol = false
         var bracketedPaste = false
         var primaryScreen = false
+        /// A synchronized-output frame (DECSET 2026) is being written. Set only
+        /// while a physical write is in flight, so a signal landing mid-frame
+        /// cannot leave the terminal buffering the screen.
+        var synchronizedOutput = false
     }
 
     /// Pops the kitty keyboard flags and resets xterm modifyOtherKeys; byte
     /// identical to the normal raw-mode restore path.
     static let enhancedKeyboardProtocolReset = "\u{1B}[<u\u{1B}[>4;0m"
     static let bracketedPasteReset = "\u{1B}[?2004l"
+    /// Ends a synchronized-output frame (DECSET 2026). Kept out of
+    /// `screenModesReset`, which is part of the primary-screen byte contract.
+    static let synchronizedOutputReset = "\u{1B}[?2026l"
     /// DECOM off, full-screen DECSTBM margins, DECAWM on, SGR reset. Both DECOM
     /// and DECSTBM home the cursor; callers must reposition afterwards.
     static let screenModesReset = "\u{1B}[?6l\u{1B}[r\u{1B}[?7h\u{1B}[0m"
@@ -54,6 +61,8 @@ final class TerminalSignalRestoration: Sendable {
     /// only the cursor-neutral DECAWM/SGR/cursor-visibility resets are emitted.
     static func resetSequence(for modes: Modes) -> String {
         var sequence = ""
+        // First: the frame in flight must be presented before anything else.
+        if modes.synchronizedOutput { sequence += synchronizedOutputReset }
         if modes.enhancedKeyboardProtocol { sequence += enhancedKeyboardProtocolReset }
         if modes.bracketedPaste { sequence += bracketedPasteReset }
         if modes.primaryScreen {
@@ -83,6 +92,7 @@ final class TerminalSignalRestoration: Sendable {
         var primaryScreenOwner: ObjectIdentifier?
         var uninstallHandlers: (@Sendable () -> Void)?
         var didRestore = false
+        var synchronizedFrameDepth = 0
     }
 
     static let shared = TerminalSignalRestoration()
@@ -155,6 +165,15 @@ final class TerminalSignalRestoration: Sendable {
         }
     }
 
+    /// Marks a synchronized-output frame as in flight for the duration of
+    /// `body`, so a terminating signal resets DECSET 2026 along with the other
+    /// modes. The lock is not held while `body` runs: it performs the write.
+    func withSynchronizedFrame<T>(_ body: () -> T) -> T {
+        state.withLock { $0.synchronizedFrameDepth += 1 }
+        defer { state.withLock { $0.synchronizedFrameDepth -= 1 } }
+        return body()
+    }
+
     var hasInstalledHandlers: Bool { state.withLock { $0.uninstallHandlers != nil } }
 
     var currentModes: Modes? {
@@ -163,7 +182,8 @@ final class TerminalSignalRestoration: Sendable {
             return Modes(
                 enhancedKeyboardProtocol: raw.enhancedKeyboardProtocol,
                 bracketedPaste: raw.bracketedPaste,
-                primaryScreen: state.primaryScreenOwner != nil
+                primaryScreen: state.primaryScreenOwner != nil,
+                synchronizedOutput: state.synchronizedFrameDepth > 0
             )
         }
     }
@@ -185,7 +205,8 @@ final class TerminalSignalRestoration: Sendable {
             let modes = Modes(
                 enhancedKeyboardProtocol: raw.enhancedKeyboardProtocol,
                 bracketedPaste: raw.bracketedPaste,
-                primaryScreen: state.primaryScreenOwner != nil
+                primaryScreen: state.primaryScreenOwner != nil,
+                synchronizedOutput: state.synchronizedFrameDepth > 0
             )
             return (raw, modes)
         }

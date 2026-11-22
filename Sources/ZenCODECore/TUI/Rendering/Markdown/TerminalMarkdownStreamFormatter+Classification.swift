@@ -240,7 +240,7 @@ extension TerminalMarkdownStreamFormatter {
 
     /// Whether every `**` marker in `source` (outside inline code) is paired
     /// with an opener/closer, using the same pairing rules as the sanitizer.
-    private func hasBalancedStrongMarkers(in source: String) -> Bool {
+    func hasBalancedStrongMarkers(in source: String) -> Bool {
         let markers = strongMarkersOutsideInlineCode(in: source)
         guard !markers.isEmpty else {
             return true

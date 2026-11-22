@@ -58,6 +58,21 @@ Release tags follow the strict `vX.Y.Z` contract described in
   values it has, and the `ds4Runtime` format is unchanged. When a different
   DS4 folder is entered, the saved models whose GGUF it holds move to it with
   their settings.
+- The terminal chat streams Markdown prose more smoothly. A line that contains
+  inline code, bold, italic, strikethrough, or a link no longer holds
+  everything after its first marker until the line ends: each construct
+  appears as soon as it is closed and followed by a space, and the rest of that
+  line follows word by word. The final rendering is unchanged. A marker that
+  stays open (`2 * 3`, `snake_case`, `[x]`, `<`, `|`, a backslash escape) keeps
+  the previous behavior. A line that starts with an inline marker and has no
+  leading pipe can no longer become a table header, just like a line that
+  starts with plain text.
+- Every terminal frame of the chat (transcript text together with the status
+  bar, the input panel, and open menus) is now written as one Synchronized
+  Output update (`ESC[?2026h` … `ESC[?2026l`), so terminals that support it
+  (iTerm2, Ghostty, kitty, WezTerm, Alacritty, Windows Terminal) paint it at
+  once without tearing or flicker; the others ignore the markers. A
+  terminating signal that lands during a frame also ends the mode.
 
 ### Fixed
 
