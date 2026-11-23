@@ -42,7 +42,18 @@ struct ZenSessionSidebar: View {
             }
         }
         .listStyle(.sidebar)
-        .searchable(text: $query, placement: .sidebar, prompt: "Filter saved sessions")
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(palette.textMuted)
+                    .accessibilityHidden(true)
+                TextField("Filter sessions...", text: $query)
+                    .textFieldStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(palette.surface)
+        }
         .toolbar {
             actions
         }

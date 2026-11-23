@@ -42,6 +42,9 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Changed
 
+- In the macOS app, the sessions sidebar's filter field moved from the top of
+  the sidebar to its bottom, and its placeholder now reads "Filter sessions...".
+
 - Renamed the core file tools: `local.readFile` is now `local.read`,
   `local.writeFile` is now `local.write`, and `local.readFiles` is now
   `local.multiRead`. The argument schemas are unchanged (`path`/`file_path`,
