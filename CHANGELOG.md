@@ -10,6 +10,36 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- `desktop.run` can act on the Accessibility elements of a window, so it also
+  works with models that cannot see images. `list_elements` lists the
+  elements of a window (the interactive ones by default), each with its role,
+  texts, `frame`, `center`, and an `element_ref`; `query`, `role`,
+  `interactive_only`, `max_depth`, and `limit` narrow the list. The window is
+  selected with `window_id`, `title`, `pid`, `bundle_id`, or `app_name`;
+  without them it is the focused window of the frontmost app.
+  `press_element`, `focus_element`, and `set_value` act on one element, and
+  `click` and `type_text` accept an `element_ref` or a `query` instead of
+  coordinates. An `element_ref` becomes stale when its element disappears or
+  moves, or its role, subrole, title, description, or identifier change. A
+  stale `element_ref`, a `query` that matches several elements, or a `query`
+  whose search stopped early (or skipped nodes that did not answer) without a
+  single exact match fails with an error that says how to retry. An
+  `element_ref` also works for elements served by another
+  process than the app of their window (web content in Safari, the Open and
+  Save panels), and does not accept `title` or `window_index`. `click` by
+  `element_ref` or `query` checks, up to three times 100 ms apart, that the
+  element itself is under its center, and is refused when another element or
+  window covers it. When Accessibility cannot move the keyboard focus,
+  `focus_element` and `type_text` fall back to a click only on text fields,
+  text areas, combo boxes, and search or secure fields. `set_value` re-reads
+  the value for up to half a second before it reports that the value was not
+  applied, and then asks to re-read it with `list_elements` before using
+  `focus_element` and `type_text`; a write that times out is reported with a
+  note instead of an error. `scroll`, `drag`, and `move_mouse` do not accept
+  `element_ref` or `query`.
+
 ### Changed
 
 - Renamed the core file tools: `local.readFile` is now `local.read`,
@@ -24,6 +54,53 @@ Release tags follow the strict `vX.Y.Z` contract described in
   being refused when clicked. Tasks and Artifacts stay enabled, and the
   refusal of the same commands from the Session menu or the composer is
   unchanged.
+
+- `desktop.run` now reports where an input landed. `click` and `scroll` return
+  the element under the pointer, `drag` the element under its destination, and
+  `type_text` and `press_key` return the app and the element that has the
+  keyboard focus; they stop, without sending more input, when the keyboard
+  focus moves to another app. The focus is checked before the first character,
+  every 20 characters, before every line break or tab, and before every
+  repetition of `press_key`; it needs Accessibility, and an Accessibility
+  error counts as a lost focus, so the input stops.
+
+- `desktop.run` no longer sends keyboard or element input to the app that hosts
+  the zen session (Terminal, iTerm, ZenApp, an editor running ACP) unless that
+  app is selected explicitly with its `pid`, its `bundle_id`, or its exact
+  `app_name`; a partial `app_name` that matches the host is refused with a
+  request for the exact name. This applies to `type_text`, `press_key`,
+  `press_element`, `focus_element`, `set_value`, `click` with an `element_ref`
+  or a `query`, and `close_window` on a window of the host; `element_ref`,
+  `query`, `title`, and `window_id` do not count as an explicit selection.
+  `click` at coordinates, `scroll`, and `drag` are not refused, but add a note
+  when they land (or the drag ends) on the host app. The host is the nearest
+  ancestor of zen that is a regular app; when there is none (for example under
+  tmux), it is the single running regular app whose bundle identifier zen
+  inherited in `__CFBundleIdentifier`, and when neither identifies one (for
+  example over ssh), no protection applies. When `type_text` or `press_key`
+  select an app or a window explicitly, they activate it before sending input,
+  and send nothing if it cannot be activated.
+
+- `desktop.run` `list_windows` adds `subrole`, `is_main`, `is_focused`, and
+  `is_minimized`, read from Accessibility for the windows it can pair with a
+  Quartz window, plus `is_frontmost_app` and `hosts_zen`. Its summary names the
+  frontmost app and counts the windows that are not on screen. `screenshot` and
+  `zoom` report the app with the system focus (the frontmost app without
+  Accessibility) in a new `frontmost_app` field, and their note
+  now says that the PNG is attached to the model's multimodal context, that
+  models that cannot view images do not see it, and that ZenCODE replaces it
+  with a text notice when it has to remove it.
+
+### Fixed
+
+- When ZenCODE removed images from the conversation, they vanished silently:
+  the model kept the text around them (for example a tool result saying that
+  the PNG is attached) and could describe a screenshot it never received. Each
+  removed image is now replaced by a text notice that tells the model it was
+  there and was not seen, so it does not guess its contents. This covers a DS4
+  model without a vision encoder, an image that cannot be read or encoded, and
+  a provider that rejects image input (the retry without images). The notice
+  also appears in the session history.
 
 ## [6.2.0] - 2026-11-22
 

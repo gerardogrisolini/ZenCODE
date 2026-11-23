@@ -9,6 +9,10 @@ enum DesktopAction: String, CaseIterable, Sendable {
     case systemInfo = "system_info"
     case listApps = "list_apps"
     case listWindows = "list_windows"
+    case listElements = "list_elements"
+    case pressElement = "press_element"
+    case focusElement = "focus_element"
+    case setValue = "set_value"
     case screenshot
     case zoom
     case moveMouse = "move_mouse"

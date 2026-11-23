@@ -9,29 +9,83 @@ import Foundation
 import ToolCore
 
 extension RemoteGenerationClient {
-    /// Returns a copy of `messages` with all `image_url` content blocks removed.
-    /// Content that was an array of blocks is collapsed back to a plain text
-    /// string when only text remains, or set to an empty string when the array
-    /// contained only image blocks.
-    public static func messagesStrippingImageContent(from messages: [[String: Any]]) -> [[String: Any]] {
+    /// Text that replaces an image removed because the model, or the provider
+    /// it is served by, cannot receive images. Without it the model only sees
+    /// the text around the image (a tool result that says "the PNG is
+    /// attached", for example) and invents what the image shows.
+    public static let omittedImageNotice =
+        "[Image omitted: the selected model cannot receive images, so ZenCODE removed this image before "
+        + "sending it. Do not guess its contents; use text-based tools to inspect the screen or the file "
+        + "instead.]"
+
+    /// Text that replaces every image of the conversation once one attached
+    /// image could not be read or encoded: they are all removed together.
+    public static let unreadableImageNotice =
+        "[Image omitted: an attached image could not be read or encoded, so ZenCODE removed the images "
+        + "from this conversation. Do not guess their contents.]"
+
+    /// Returns a copy of `messages` in which every `image_url` content block is
+    /// replaced by a `text` block carrying `notice`, so the model learns that
+    /// an image was there and is gone instead of the block silently vanishing.
+    /// An empty `notice` drops the blocks without a replacement.
+    ///
+    /// A message whose blocks are all text afterwards (the usual case) gets a
+    /// plain string content, the texts joined by a blank line: many
+    /// OpenAI-compatible servers accept only strings in tool messages. When
+    /// other non-text blocks remain, the content stays an array. A content made
+    /// only of images therefore becomes the notice itself.
+    ///
+    /// Messages without `image_url` blocks are returned untouched, so a second
+    /// pass over the result is a no-op and adds no further notice. Every other
+    /// key of a stripped message survives, private DS4 keys included, with one
+    /// exception: the frozen user content (`DS4MessageKeys.userContent`) is
+    /// what the DS4 renderer sends instead of `content`, so it receives the
+    /// notice too (the model would not otherwise see it). The cached token ids
+    /// of the DS4 path (`rawTokens`) live on assistant messages and describe
+    /// text the model generated, not the content of a user or tool message, so
+    /// they stay valid.
+    public static func messagesStrippingImageContent(
+        from messages: [[String: Any]],
+        notice: String = omittedImageNotice
+    ) -> [[String: Any]] {
         messages.map { message in
+            guard let items = message["content"] as? [[String: Any]],
+                  items.contains(where: isImageURLContentItem) else {
+                return message
+            }
             var stripped = message
-            guard var items = message["content"] as? [[String: Any]] else {
-                return stripped
+            var replaced: [[String: Any]] = []
+            var notices: [String] = []
+            for item in items {
+                guard isImageURLContentItem(item) else {
+                    replaced.append(item)
+                    continue
+                }
+                if !notice.isEmpty {
+                    replaced.append(["type": "text", "text": notice])
+                    notices.append(notice)
+                }
             }
-            items.removeAll { item in
-                stringValue(item["type"])?.lowercased() == "image_url"
-            }
-            if items.isEmpty {
-                stripped["content"] = ""
-            } else if items.count == 1,
-                      stringValue(items[0]["type"])?.lowercased() == "text" {
-                stripped["content"] = stringValue(items[0]["text"]) ?? ""
+
+            let onlyText = replaced.allSatisfy { stringValue($0["type"])?.lowercased() == "text" }
+            if onlyText {
+                stripped["content"] = replaced
+                    .compactMap { stringValue($0["text"])?.nilIfEmpty }
+                    .joined(separator: "\n\n")
             } else {
-                stripped["content"] = items
+                stripped["content"] = replaced
+            }
+
+            if !notices.isEmpty, let frozen = message[DS4MessageKeys.userContent] as? String {
+                stripped[DS4MessageKeys.userContent] = ([frozen.nilIfEmpty].compactMap { $0 } + notices)
+                    .joined(separator: "\n\n")
             }
             return stripped
         }
+    }
+
+    private static func isImageURLContentItem(_ item: [String: Any]) -> Bool {
+        stringValue(item["type"])?.lowercased() == "image_url"
     }
 
     /// Returns `true` when any message in the array contains at least one

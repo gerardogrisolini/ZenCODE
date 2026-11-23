@@ -22,6 +22,8 @@ private enum VisionSupport {
     static let png = RemoteGenerationClientDS4EngineTests.pngAttachment
     static let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0])
     static let noVisionDiagnostic = "DS4 model has no vision encoder configured; images were ignored"
+    static let omittedNotice = RemoteGenerationClient.omittedImageNotice
+    static let unreadableNotice = RemoteGenerationClient.unreadableImageNotice
 
     static func makeRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory
@@ -59,6 +61,16 @@ private enum VisionSupport {
                 return nil
             }
             return Multimodal(role: role, textParts: textParts, imageFiles: imageFiles)
+        }
+    }
+
+    /// The text content of every plain message of `role` in `transcript`, in order.
+    static func messageContents(role wanted: String, in transcript: [DS4TranscriptOperation]) -> [String] {
+        transcript.compactMap { operation in
+            guard case let .message(role, content) = operation, role == wanted else {
+                return nil
+            }
+            return content
         }
     }
 
@@ -461,6 +473,7 @@ struct DS4VisionClientTests {
             let harness = context.harness
             harness.mock.enqueueGeneration(["Let me check.", DS4ClientHarness.dsml41EchoCall("hi")])
             harness.mock.enqueueGeneration(["Done"])
+            harness.mock.enqueueGeneration(["Again done"])
             let recorder = DS4EventRecorder()
 
             _ = try await context.client.sendPrompt(
@@ -473,9 +486,56 @@ struct DS4VisionClientTests {
             #expect(snapshot.history.first?.attachments.isEmpty == true)
             #expect(harness.engine.transcripts.count == 2)
             #expect(harness.engine.transcripts.allSatisfy { VisionSupport.multimodalMessages(in: $0).isEmpty })
-            #expect(harness.engine.transcripts.first?.contains(.message(role: "user", content: "Look")) == true)
+            // The model is told that an image was there and is gone.
+            let expectedUser = "Look\n\n\(VisionSupport.omittedNotice)"
+            for transcript in harness.engine.transcripts {
+                #expect(VisionSupport.messageContents(role: "user", in: transcript) == [expectedUser])
+            }
             #expect(harness.mock.imageEncodes.isEmpty)
             #expect(!VisionSupport.exists(context.tmp))
+
+            // A later turn without images repeats neither the diagnostic nor the notice.
+            _ = try await context.client.sendPrompt(
+                sessionID: "session", prompt: "Again", attachments: [], onEvent: recorder.handler
+            )
+            #expect(recorder.diagnostics.filter { $0 == VisionSupport.noVisionDiagnostic }.count == 1)
+            let later = try #require(harness.engine.transcripts.last)
+            #expect(VisionSupport.messageContents(role: "user", in: later) == [expectedUser, "Again"])
+        }
+    }
+
+    @Test
+    func aToolImageBecomesTheNoticeInTheObservationWhenTheModelCannotSeeImages() async throws {
+        try await withClient(hasVision: false, visionRelativePath: nil, history: screenshotHistory()) { setup in
+            let harness = setup.harness
+            harness.mock.enqueueGeneration(["I cannot see it."])
+            harness.mock.enqueueGeneration(["Still no image."])
+            let recorder = DS4EventRecorder()
+
+            _ = try await setup.client.sendPrompt(
+                sessionID: "session", prompt: "What do you see?", attachments: [], onEvent: recorder.handler
+            )
+            _ = try await setup.client.sendPrompt(
+                sessionID: "session", prompt: "And now?", attachments: [], onEvent: recorder.handler
+            )
+
+            let transcripts = harness.engine.transcripts
+            try #require(transcripts.count == 2)
+            // The tool result keeps its text and says the image is not there; the
+            // PNG is neither rendered nor encoded.
+            let expectedObservation =
+                "Tool result 1 (fixture.echo):\nScreenshot captured\n\n\(VisionSupport.omittedNotice)\n"
+            for transcript in transcripts {
+                #expect(VisionSupport.messageContents(role: "tool", in: transcript) == [expectedObservation])
+                #expect(VisionSupport.multimodalMessages(in: transcript).isEmpty)
+            }
+            #expect(harness.mock.imageEncodes.isEmpty)
+            // One diagnostic: the second turn finds no image left to remove.
+            #expect(recorder.diagnostics.filter { $0 == VisionSupport.noVisionDiagnostic }.count == 1)
+            let snapshot = try #require(await setup.client.snapshotSession(id: "session"))
+            let tool = try #require(snapshot.history.first { $0.role == .tool })
+            #expect(tool.attachments.isEmpty)
+            #expect(tool.content == "Screenshot captured\n\n\(VisionSupport.omittedNotice)")
         }
     }
 
@@ -501,7 +561,10 @@ struct DS4VisionClientTests {
             #expect(snapshot.history.first?.attachments.isEmpty == true)
             let transcript = try #require(harness.engine.transcripts.first)
             #expect(VisionSupport.multimodalMessages(in: transcript).isEmpty)
-            #expect(transcript.contains(.message(role: "user", content: "Look")))
+            // The model is told that the image could not be used.
+            #expect(VisionSupport.messageContents(role: "user", in: transcript) == [
+                "Look\n\n\(VisionSupport.unreadableNotice)",
+            ])
             #expect(harness.mock.livePreparedCount == 0)
             #expect(VisionSupport.contents(of: setup.tmp).isEmpty)
 

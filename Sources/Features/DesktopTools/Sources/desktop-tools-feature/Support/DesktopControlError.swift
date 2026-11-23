@@ -13,6 +13,8 @@ enum DesktopControlError: LocalizedError {
     case processFailed(String)
     case accessibilityFailed(String, AXError)
     case operationFailed(String)
+    case staleElementReference
+    case applicationNotResponding(String)
 
     var errorDescription: String? {
         switch self {
@@ -34,6 +36,10 @@ enum DesktopControlError: LocalizedError {
             return "Accessibility operation '\(operation)' failed with AXError \(error.rawValue)."
         case let .operationFailed(message):
             return message
+        case .staleElementReference:
+            return "Element reference is stale: its element no longer exists, moved, or changed; call list_elements again."
+        case let .applicationNotResponding(app):
+            return "\(app) is not responding to Accessibility requests, so the window or element could not be read; an element_ref may still be valid. Wait until the app responds (a screenshot shows whether it is busy or showing a dialog), then retry."
         }
     }
 }

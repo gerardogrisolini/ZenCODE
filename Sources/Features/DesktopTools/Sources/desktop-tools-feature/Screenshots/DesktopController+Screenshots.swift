@@ -100,6 +100,8 @@ extension DesktopController {
         }
         if delay > 0 { try await Task.sleep(for: .seconds(delay)) }
         try Task.checkCancellation()
+        // Read after the delay, so it describes the screen that is captured.
+        let frontmost = focusedApplicationForReport().map { appInfo($0) }
         let root = try artifactDirectory(context: context)
         let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let url = root.appendingPathComponent("\(label)-\(timestamp)-\(UUID().uuidString).png")
@@ -163,9 +165,17 @@ extension DesktopController {
             try pruneArtifacts(in: root, keeping: maximumArtifacts)
             return DesktopRunOutput(
                 action: action,
-                summary: captureSummary(scope: scope, dimensions: dimensions, pointsPerPixel: pointsPerPixel, path: url.path),
+                summary: DesktopCaptureText.summary(
+                    scope: scope,
+                    dimensions: dimensions,
+                    pointsPerPixel: pointsPerPixel,
+                    path: url.path,
+                    frontmostAppName: frontmost?.name ?? frontmost?.bundle_id,
+                    frontmostHostsZen: frontmost?.hosts_zen == true
+                ),
                 artifact: artifact,
-                note: captureNote(mapped: pointsPerPixel != nil, clipped: regionWasClipped)
+                note: DesktopCaptureText.note(mapped: pointsPerPixel != nil, clipped: regionWasClipped),
+                frontmost_app: frontmost
             )
         } catch {
             try? FileManager.default.removeItem(at: url)
@@ -191,40 +201,6 @@ extension DesktopController {
             return match.scale_factor
         }
         return all.first(where: { $0.is_main })?.scale_factor
-    }
-
-    private static func formatScale(_ value: Double) -> String {
-        var text = String(format: "%.4f", value)
-        while text.hasSuffix("0") { text.removeLast() }
-        if text.hasSuffix(".") { text.removeLast() }
-        return text
-    }
-
-    private static func captureSummary(scope: String, dimensions: (width: Int, height: Int)?, pointsPerPixel: Double?, path: String) -> String {
-        let noun: String
-        switch scope {
-        case "zoom": noun = "a zoom of the region"
-        case "display": noun = "a display screenshot"
-        case "window": noun = "a window screenshot"
-        default: noun = "a region screenshot"
-        }
-        let size = dimensions.map { "\($0.width)x\($0.height) px" } ?? "unknown size"
-        if let pointsPerPixel {
-            let unit = abs(pointsPerPixel - 1) < 0.00005 ? "point" : "points"
-            return "Captured \(noun) (\(size), \(formatScale(pointsPerPixel)) \(unit) per pixel) to \(path)."
-        }
-        return "Captured \(noun) (\(size)) to \(path); the shadow margin prevents an exact image-to-desktop coordinate mapping."
-    }
-
-    private static func captureNote(mapped: Bool, clipped: Bool) -> String {
-        let attachment = "The PNG is attached to the model's multimodal tool context and retained as a private desktop feature artifact."
-        guard mapped else { return attachment }
-        let clipping = clipped
-            ? "The requested region extends beyond the attached displays, so the image covers only desktop_bounds. "
-            : ""
-        return clipping
-            + "Image pixel (px, py) maps to desktop point (desktop_bounds.x + px * points_per_pixel, desktop_bounds.y + py * points_per_pixel). "
-            + attachment
     }
 
     static func artifactDirectory(context: FeatureContext) throws -> URL {

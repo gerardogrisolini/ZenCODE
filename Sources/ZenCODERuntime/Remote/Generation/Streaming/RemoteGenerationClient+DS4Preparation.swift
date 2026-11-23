@@ -210,7 +210,8 @@ extension RemoteGenerationClient {
     }
 
     /// Images: without a configured vision encoder they are removed from the
-    /// session (once per round that has any); with one they stay in history
+    /// session (once per round that has any), each replaced by a text notice so
+    /// the model does not believe it saw them; with one they stay in history
     /// and `DS4TranscriptRenderer` sends them as multimodal messages.
     private func prepareDS4Images(
         lease: SessionLease,
@@ -232,14 +233,18 @@ extension RemoteGenerationClient {
     }
 
     /// An attached image could not be read or encoded: removes every image
-    /// from the session (the same message would fail every round) and says so.
+    /// from the session (the same message would fail every round), leaving a
+    /// text notice in its place, and says so.
     private func removeDS4Images(
         lease: SessionLease,
         reason: String,
         onEvent: @escaping @Sendable (DirectAgentEvent) async -> Void
     ) async throws -> AgentSession {
         guard mutateSession(for: lease, { session in
-            session.messages = Self.messagesStrippingImageContent(from: session.messages)
+            session.messages = Self.messagesStrippingImageContent(
+                from: session.messages,
+                notice: Self.unreadableImageNotice
+            )
         }), let session = currentSession(for: lease) else {
             throw RemoteGenerationClientError.missingSession
         }

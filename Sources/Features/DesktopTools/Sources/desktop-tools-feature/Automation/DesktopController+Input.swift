@@ -127,15 +127,22 @@ extension DesktopController {
         event.post(tap: .cghidEventTap)
     }
 
-    static func typeText(_ text: String, interval: Double) throws {
+    /// Re-checks the keyboard focus before more input is sent; `sent` is the
+    /// number of characters or key presses already sent. Throws to stop.
+    typealias KeyboardFocusCheck = (_ sent: Int) throws -> Void
+
+    static func typeText(_ text: String, interval: Double, focusCheck: KeyboardFocusCheck? = nil) throws {
         try Task.checkCancellation()
         let source = try eventSource()
         // Real key events on the current layout reach apps that read key codes
         // (Terminal included); characters the layout cannot type fall back to a
         // Unicode string on a placeholder key.
         let keyMap = CarbonKeyTranslator().map { DesktopKeyResolver.typingKeyMap(translator: $0) } ?? [:]
-        for character in text {
+        for (index, character) in text.enumerated() {
             try Task.checkCancellation()
+            if let focusCheck, DesktopKeyboardFocusPolicy.checksFocus(beforeCharacter: index, character: character) {
+                try focusCheck(index)
+            }
             if let key = DesktopKeyResolver.typingKey(for: character, keyMap: keyMap) {
                 guard let down = CGEvent(keyboardEventSource: source, virtualKey: key.keyCode, keyDown: true),
                       let up = CGEvent(keyboardEventSource: source, virtualKey: key.keyCode, keyDown: false) else {
@@ -171,12 +178,15 @@ extension DesktopController {
         up.post(tap: .cghidEventTap)
     }
 
-    static func pressKey(_ name: String, modifiers: CGEventFlags, repeatCount: Int, interval: Double) throws {
+    static func pressKey(
+        _ name: String, modifiers: CGEventFlags, repeatCount: Int, interval: Double, focusCheck: KeyboardFocusCheck? = nil
+    ) throws {
         let resolved = try DesktopKeyResolver.resolve(name, translator: CarbonKeyTranslator())
         let keyCode = resolved.keyCode
         let flags = modifiers.union(resolved.flags)
         let source = try eventSource()
         for index in 0..<repeatCount {
+            try focusCheck?(index)
             guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
                   let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
                 throw DesktopControlError.operationFailed("Could not create keyboard events.")

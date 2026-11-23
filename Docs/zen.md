@@ -603,18 +603,77 @@ uses that checkout directly. Set `ZENCODE_SUPPORT_DIRECTORY` to relocate both
 
 `xcode-tools` and `desktop-tools` are macOS-only and are never offered on Linux.
 `desktop-tools` (`desktop.run`) drives the real desktop — pointer, keyboard,
-clipboard, windows, app lifecycle, and PNG screenshots that are attached to the
-model's multimodal context — so macOS asks for Screen Recording and
-Accessibility consent on first use. Call `action=permissions` before anything
-else, and enable it only for a profile that is meant to control the machine.
+clipboard, windows, app lifecycle, Accessibility elements, and PNG screenshots
+— so macOS asks for Screen Recording and Accessibility consent on first use.
+Call `action=permissions` before anything else, and enable it only for a
+profile that is meant to control the machine.
 macOS attributes those permissions to the app that launched zen (for example
 Terminal), so that is the app to allow in System Settings. Screenshots are
 delivered at point scale: one image pixel is one desktop point, and the
 artifact's `desktop_bounds` and `points_per_pixel` convert image pixels into
 click coordinates. `zoom` captures a region at native resolution (long edge at
-most 2000 px) to read small details. Actions that can run code or end
-processes ask for approval like `local.exec`; see the authorization notes in
+most 2000 px) to read small details. The PNG is attached to the model's
+multimodal tool context; models that cannot view images do not see it, and when
+ZenCODE has to remove it (a DS4 model without a vision encoder, an image that
+cannot be read, or a provider that rejects images) it is replaced by a text
+notice. Without images, the model works from `list_windows` and
+`list_elements`. Actions that can run code or end processes ask for approval
+like `local.exec`; see the authorization notes in
 [Terminal TUI Commands](#terminal-tui-commands).
+
+The element actions work from text, so they also suit models that cannot see
+images. `list_elements` lists the Accessibility elements of a window (the
+interactive ones by default) with role, texts, frame, center, and an
+`element_ref`; `query`, `role`, `interactive_only`, `max_depth`, and `limit`
+narrow the list. `press_element`, `focus_element`, and `set_value` act on one
+element, and `click` and `type_text` accept an `element_ref` or a `query`
+instead of coordinates. An `element_ref` becomes stale, and the action fails
+asking for a new `list_elements`, when its element disappears or moves, or its
+role, subrole, title, description, or identifier change; it also works for
+elements served by another process than the app of their window (web content in
+Safari, the Open and Save panels), and does not accept `title` or
+`window_index`. When a `query` search stops early (node or time budget, too
+many matches) or skips nodes that did not respond, it acts only on a single
+exact match. `scroll`, `drag`, and `move_mouse` do not accept `element_ref` or
+`query`. Input actions report where they landed: `click` and `scroll` the
+element under the pointer, `drag` the element under its destination,
+`type_text` and `press_key` the app and the element with the keyboard focus;
+`type_text` and `press_key` stop, sending nothing more, when the keyboard focus
+moves to another app. The focus is checked before the first character, every 20
+characters, before every line break or tab, and before every repetition of
+`press_key`; this needs Accessibility, and an Accessibility error counts as a
+lost focus. A `click` by `element_ref` or `query` is refused when another
+element or window covers the center of the element (the check is repeated up to
+three times, 100 ms apart), and when Accessibility cannot move the keyboard
+focus, `focus_element` and `type_text` fall back to a click only on text fields,
+text areas, combo boxes, and search or secure fields. `set_value` re-reads the
+value for up to half a second before it reports that it was not applied, and
+then asks to re-read it with `list_elements` before using `focus_element` and
+`type_text`; a write that times out is reported with a note, not as an error.
+`list_windows` adds `subrole`, `is_main`, `is_focused`,
+and `is_minimized` from Accessibility, marks the windows of the frontmost app
+(`is_frontmost_app`), and its summary counts the windows that are not on
+screen; `screenshot` and `zoom` report the app with the system focus in
+`frontmost_app`.
+
+The app that hosts the zen session is the nearest ancestor of zen that is a
+regular app (Terminal, iTerm, ZenApp, an editor running ACP); when no ancestor
+is one (for example under tmux), it is the single running regular app whose
+bundle identifier zen inherited in `__CFBundleIdentifier`. That identifier names
+the terminal that started the tmux or screen server, which may not be the
+terminal attached to the session now, so under tmux or screen the protection
+can cover another terminal than the one you are typing in. `hosts_zen` marks it
+in `list_apps`, `list_windows`, and `list_elements`. `type_text`, `press_key`,
+`press_element`, `focus_element`, `set_value`, `click` with an `element_ref` or
+a `query`, and `close_window` on its windows refuse to act on it unless its
+`pid`, its `bundle_id`, or its exact `app_name` selects it, so a model that has
+lost track of its target does not type into the terminal that runs zen; a
+partial `app_name` that matches the host is refused with a request for the
+exact name. `click` at coordinates, `scroll`, and `drag` are not refused: they
+add a note when they land, or the drag ends, on the host app. When the host
+cannot be identified (for example over ssh), nothing is refused. With an
+explicit app or window selector, `type_text` and `press_key` first activate the
+selected app.
 
 ## Diagnostics
 
@@ -1061,12 +1120,17 @@ directory runs without a prompt.
 `desktop.run` uses the same destructive-tool consent, but only for actions
 that can run code or end processes: `open` of anything other than a plain
 http/https URL (local files, `file:` URLs, other schemes, or an app given by
-path), `launch_app` and `activate_app` from an app path, and every
-`terminate_app`. The prompt shows the equivalent command, for example
+path), `launch_app` and `activate_app` from an app path, every
+`terminate_app`, and `type_text` whose text contains a line break (Return would
+submit it to a focused shell, so it is treated as a `local.exec` command). The
+prompt shows the equivalent command, for example
 `open /path/run.command`, `open -a /tmp/Tool.app https://example.com`, or
 `terminate_app --force --pid 4242 # loginwindow` (a pid is shown with its
-process name). Screenshots, input, window actions, and plain web URLs run
-without a prompt.
+process name). Screenshots, the element actions (`list_elements`,
+`press_element`, `focus_element`, `set_value`), other input, window actions, and
+plain web URLs run without a prompt. The refusal to send input to the app that
+hosts zen is not a consent request: the tool applies it, so Full access does not
+lift it.
 
 Delegated sub-agents ask for the same approvals as the coordinator. Their requests are routed on a runtime-minted delegation identity (the agent instance plus the operator session that owns its delegation tree) instead of the turn that spawned them, because delegated work keeps running after that turn returns. The prompt names the requesting agent, and a request whose root session is unknown to the runner is refused without asking. Full access bypasses these requests exactly as it does the coordinator's.
 

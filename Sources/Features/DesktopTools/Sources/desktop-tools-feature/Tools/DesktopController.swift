@@ -55,95 +55,62 @@ enum DesktopController {
         case .listWindows:
             let limit = try boundedInteger(input.limit ?? 100, name: "limit", range: 1...200)
             let windows = windowRecords(onScreenOnly: input.on_screen_only ?? false, matching: input)
-            let result = Array(windows.prefix(limit))
+            let enrichment = enrichedWithAccessibility(Array(windows.prefix(limit)), candidates: windows)
+            let result = enrichment.windows
+            let frontmost = NSWorkspace.shared.frontmostApplication
+            let text = DesktopWindowListing.text(
+                windows: result,
+                frontmostAppName: frontmost?.localizedName ?? frontmost?.bundleIdentifier,
+                hostAppName: DesktopHostApplication.currentName(),
+                screenRecordingGranted: CGPreflightScreenCaptureAccess(),
+                accessibilityTimedOut: enrichment.timedOut
+            )
             return DesktopRunOutput(
                 action: action,
-                summary: "Listed \(result.count) window(s) in front-to-back order.",
+                summary: text.summary,
                 windows: result,
                 count: result.count,
-                note: CGPreflightScreenCaptureAccess()
-                    ? nil
-                    : "Without Screen Recording permission, some window titles may be unavailable."
+                note: text.note
             )
 
         case .screenshot:
             return try await screenshot(input, context: context, action: action)
 
+        case .listElements:
+            return try listElements(input, action: action)
+
+        case .pressElement:
+            return try await pressElement(input, action: action)
+
+        case .focusElement:
+            return try await focusElementAction(input, action: action)
+
+        case .setValue:
+            return try await setElementValue(input, action: action)
+
         case .zoom:
             return try await zoom(input, context: context, action: action)
 
         case .moveMouse:
+            try DesktopElementPolicy.validatePointerAction(action, elementRef: input.element_ref, query: input.query)
             try requireEventPosting()
             let destination = try moveToRequestedPoint(input, action: action)
             return DesktopRunOutput(action: action, summary: "Moved the pointer to (\(format(destination.x)), \(format(destination.y))).", pointer: pointer())
 
         case .click:
-            try requireEventPosting()
-            if input.x != nil || input.y != nil {
-                try moveToRequestedPoint(input, action: action)
-            }
-            let mouseButton = try parseMouseButton(input.button)
-            let clickCount = try boundedInteger(input.click_count ?? 1, name: "click_count", range: 1...3)
-            try click(button: mouseButton, count: clickCount)
-            let location = pointer()
-            return DesktopRunOutput(
-                action: action,
-                summary: "Performed \(clickCount) \(mouseButton.name) click(s) at (\(format(location.x)), \(format(location.y))).",
-                pointer: location,
-                count: clickCount
-            )
+            return try await clickAction(input, action: action)
 
         case .drag:
-            try requireEventPosting()
-            let start: CGPoint
-            if input.x != nil || input.y != nil {
-                start = try requiredPoint(x: input.x, y: input.y, action: action)
-            } else {
-                start = currentPointerLocation()
-            }
-            let destination = try requiredPoint(x: input.to_x, y: input.to_y, action: action, xName: "to_x", yName: "to_y")
-            try validateDesktopPoint(start, argument: "x/y")
-            try validateDesktopPoint(destination, argument: "to_x/to_y")
-            let mouseButton = try parseMouseButton(input.button)
-            try dragPointer(from: start, to: destination, duration: try movementDuration(input.duration), button: mouseButton)
-            return DesktopRunOutput(
-                action: action,
-                summary: "Dragged the \(mouseButton.name) button to (\(format(destination.x)), \(format(destination.y))).",
-                pointer: pointer()
-            )
+            return try dragAction(input, action: action)
 
         case .scroll:
-            try requireEventPosting()
-            let dx = try boundedScroll(input.delta_x ?? 0, name: "delta_x")
-            let dy = try boundedScroll(input.delta_y ?? 0, name: "delta_y")
-            guard dx != 0 || dy != 0 else {
-                throw DesktopControlError.invalidArgument("delta_x/delta_y", "at least one scroll amount must be non-zero.")
-            }
-            let unit = try parseScrollUnit(input.scroll_unit)
-            var location = ""
-            if input.x != nil || input.y != nil {
-                let target = try moveToRequestedPoint(input, action: action)
-                location = " at (\(format(target.x)), \(format(target.y)))"
-            }
-            try postScroll(deltaX: dx, deltaY: dy, unit: unit)
-            return DesktopRunOutput(action: action, summary: "Scrolled by (\(dx), \(dy)) \(unit.name) unit(s)\(location); the pointer is at the scroll location.", pointer: pointer())
+            return try scrollAction(input, action: action)
 
         case .typeText:
-            let text = try boundedText(input.text, action: action)
-            let interval = try boundedDouble(input.interval ?? 0.01, name: "interval", range: 0...1)
-            try DesktopSafetyPolicy.validateTypingBudget(characterCount: text.count, interval: interval)
-            try requireEventPosting()
-            try typeText(text, interval: interval)
-            return DesktopRunOutput(action: action, summary: "Typed \(text.count) character(s) into the focused control.", count: text.count)
+            return try await typeTextAction(input, action: action)
 
         case .pressKey:
-            try requireEventPosting()
-            let key = try requiredNonempty(input.key, name: "key", action: action)
-            let repeatCount = try boundedInteger(input.repeat_count ?? 1, name: "repeat_count", range: 1...100)
-            let interval = try boundedDouble(input.interval ?? 0.05, name: "interval", range: 0...1)
-            let flags = try modifierFlags(input.modifiers ?? [])
-            try pressKey(key, modifiers: flags, repeatCount: repeatCount, interval: interval)
-            return DesktopRunOutput(action: action, summary: "Pressed key '\(key)' \(repeatCount) time(s).", count: repeatCount)
+            return try await pressKeyAction(input, action: action)
 
         case .launchApp:
             let app = try await launchApp(input, context: context)
@@ -259,6 +226,8 @@ enum DesktopController {
 
         case .closeWindow:
             let selection = try selectedAXWindow(input)
+            // Closing a window of the host could end this zen session.
+            try enforceHostPolicy(targetPID: selection.pid, input: input, kind: .closeWindow)
             let before = axWindowInfo(selection)
             let closeButton = try copyAXElement(selection.element, attribute: kAXCloseButtonAttribute as CFString, operation: "read close button")
             let result = AXUIElementPerformAction(closeButton, kAXPressAction as CFString)

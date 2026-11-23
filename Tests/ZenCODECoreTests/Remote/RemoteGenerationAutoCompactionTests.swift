@@ -418,6 +418,14 @@ struct RemoteGenerationAutoCompactionTests {
 
         #expect(harness.bodies().count == 3)
         #expect(await harness.client.contextCalibrationBySessionID[Self.sessionID] == nil)
+
+        // The rejected request carried the image; the retry carries a text
+        // notice in its place, so the model does not guess what it showed.
+        let bodies = harness.bodies()
+        #expect(bodies[1].contains("image_url"))
+        #expect(!bodies[2].contains("image_url"))
+        let retried = try #require(try harness.chatMessages(at: 2).last { $0["role"] as? String == "user" })
+        #expect(retried["content"] as? String == "what is this?\n\n\(RemoteGenerationClient.omittedImageNotice)")
     }
 
     // MARK: Context-limit retry

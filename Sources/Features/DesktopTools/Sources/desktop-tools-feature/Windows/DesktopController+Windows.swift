@@ -18,6 +18,8 @@ extension DesktopController {
             NSWorkspace.shared.runningApplications.map { ($0.processIdentifier, $0) },
             uniquingKeysWith: { first, _ in first }
         )
+        let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let hostPID = DesktopHostApplication.current()?.pid
 
         return dictionaries.compactMap { dictionary in
             guard let number = (dictionary[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
@@ -59,9 +61,144 @@ extension DesktopController {
                 alpha: alpha,
                 is_focused: nil,
                 is_minimized: onScreenOnly ? false : nil,
-                is_fullscreen: nil
+                is_fullscreen: nil,
+                is_frontmost_app: pid == frontmostPID ? true : nil,
+                hosts_zen: pid == hostPID ? true : nil
             )
         }
+    }
+
+    // MARK: Accessibility enrichment for list_windows
+
+    struct AXWindowSnapshot {
+        let identity: DesktopSafetyPolicy.WindowIdentity
+        let attributes: DesktopWindowListing.AXAttributes
+        /// The app did not answer within the messaging timeout (`.cannotComplete`).
+        var isUnresponsive = false
+    }
+
+    /// The attributes read for each window; `axWindowSnapshot(values:)` expects
+    /// values in this order.
+    static let windowSnapshotAttributes: [String] = [
+        kAXTitleAttribute, kAXPositionAttribute, kAXSizeAttribute,
+        kAXSubroleAttribute, kAXMainAttribute, kAXFocusedAttribute, kAXMinimizedAttribute
+    ]
+
+    /// Reads a window's identity (title + frame) and descriptive attributes in
+    /// one round trip, falling back to single reads when the batch fails. A
+    /// window that vanished or an app that does not answer would fail every
+    /// single read too (each one waiting for the timeout), so they read as
+    /// unknown; an app that does not answer is flagged `isUnresponsive`.
+    static func axWindowSnapshot(_ element: AXUIElement) -> AXWindowSnapshot {
+        var raw: CFArray?
+        let result = AXUIElementCopyMultipleAttributeValues(
+            element, windowSnapshotAttributes as CFArray, AXCopyMultipleAttributeOptions(rawValue: 0), &raw
+        )
+        if result == .success, let raw, CFArrayGetCount(raw) == windowSnapshotAttributes.count {
+            return axWindowSnapshot(values: (raw as NSArray).map { $0 as AnyObject })
+        }
+        if result == .cannotComplete {
+            var snapshot = axWindowSnapshot(values: [])
+            snapshot.isUnresponsive = true
+            return snapshot
+        }
+        if result == .invalidUIElement {
+            return axWindowSnapshot(values: [])
+        }
+        return axWindowSnapshot(values: windowSnapshotAttributes.map { copyAXRaw(element, attribute: $0 as CFString) as AnyObject? })
+    }
+
+    /// Decodes raw attribute values (in `windowSnapshotAttributes` order); an
+    /// `AXError` placeholder, a missing value, or a wrong type reads as unknown.
+    static func axWindowSnapshot(values raw: [AnyObject?]) -> AXWindowSnapshot {
+        let values = raw.map { object -> AnyObject? in
+            if let object, CFGetTypeID(object) == AXValueGetTypeID(), AXValueGetType(object as! AXValue) == .axError {
+                return nil
+            }
+            return object
+        }
+        func value(_ index: Int) -> AnyObject? { values.indices.contains(index) ? values[index] : nil }
+        func point(_ object: AnyObject?) -> CGPoint? {
+            guard let object, CFGetTypeID(object) == AXValueGetTypeID() else { return nil }
+            var point = CGPoint.zero
+            return AXValueGetValue(object as! AXValue, .cgPoint, &point) ? point : nil
+        }
+        func size(_ object: AnyObject?) -> CGSize? {
+            guard let object, CFGetTypeID(object) == AXValueGetTypeID() else { return nil }
+            var size = CGSize.zero
+            return AXValueGetValue(object as! AXValue, .cgSize, &size) ? size : nil
+        }
+        var frame: CGRect?
+        if let origin = point(value(1)), let extent = size(value(2)) {
+            frame = CGRect(origin: origin, size: extent)
+        }
+        return AXWindowSnapshot(
+            identity: .init(title: value(0) as? String, frame: frame),
+            attributes: .init(
+                subrole: value(3) as? String,
+                isMain: (value(4) as? NSNumber)?.boolValue,
+                isFocused: (value(5) as? NSNumber)?.boolValue,
+                isMinimized: (value(6) as? NSNumber)?.boolValue
+            )
+        )
+    }
+
+    /// Adds subrole, is_main, is_focused, and is_minimized from Accessibility to
+    /// the windows about to be returned. Skipped without Accessibility trust;
+    /// reads `kAXWindowsAttribute` once per owning process; leaves a window
+    /// untouched unless it pairs uniquely with an AX window; and stops at an
+    /// overall deadline (`DesktopWindowListing.accessibilityBudget`), leaving the
+    /// remaining windows without AX fields and reporting `timedOut`.
+    ///
+    /// - Parameters:
+    ///   - returned: the windows that will be reported (after filters and `limit`).
+    ///   - candidates: every filtered record, before `limit`, so duplicates that
+    ///     the limit cut off still make a pairing ambiguous.
+    static func enrichedWithAccessibility(
+        _ returned: [DesktopWindowInfo],
+        candidates: [DesktopWindowInfo]
+    ) -> (windows: [DesktopWindowInfo], timedOut: Bool) {
+        guard !returned.isEmpty, AXIsProcessTrusted() else { return (returned, false) }
+        prepareAXMessaging()
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(DesktopWindowListing.accessibilityBudget))
+        var enriched = returned
+        var seen = Set<pid_t>()
+        for pid in returned.map(\.pid) where seen.insert(pid).inserted {
+            guard clock.now < deadline else { return (enriched, true) }
+            let application = AXUIElementCreateApplication(pid)
+            prepareAXMessaging(application)
+            var rawWindows: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &rawWindows) == .success,
+                  let elements = rawWindows as? [AXUIElement], !elements.isEmpty else { continue }
+
+            var snapshots: [AXWindowSnapshot] = []
+            var isUnresponsive = false
+            for element in elements {
+                guard clock.now < deadline else { return (enriched, true) }
+                let snapshot = axWindowSnapshot(element)
+                if snapshot.isUnresponsive {
+                    // The first timeout of an app: skip its remaining windows
+                    // (each would wait for the timeout again) and go to the next
+                    // app. Pairing needs all of the app's AX windows, so none of
+                    // its windows is enriched.
+                    isUnresponsive = true
+                    break
+                }
+                snapshots.append(snapshot)
+            }
+            if isUnresponsive { continue }
+            let peers = candidates.filter { $0.pid == pid }
+            let pairs = DesktopWindowListing.pairing(
+                quartz: peers.map(windowIdentity), ax: snapshots.map(\.identity)
+            )
+            for index in returned.indices where returned[index].pid == pid {
+                guard let peerIndex = peers.firstIndex(where: { $0.window_id == returned[index].window_id }),
+                      let axIndex = pairs[peerIndex] else { continue }
+                enriched[index] = DesktopWindowListing.applying(snapshots[axIndex].attributes, to: returned[index])
+            }
+        }
+        return (enriched, false)
     }
 
     static func selectedQuartzWindow(_ input: DesktopRunInput) throws -> DesktopWindowInfo {
@@ -190,7 +327,9 @@ extension DesktopController {
             alpha: matchedWindow?.alpha ?? 1,
             is_focused: copyAXBoolean(selection.element, attribute: kAXFocusedAttribute as CFString),
             is_minimized: copyAXBoolean(selection.element, attribute: kAXMinimizedAttribute as CFString),
-            is_fullscreen: copyAXBoolean(selection.element, attribute: axFullScreenAttribute)
+            is_fullscreen: copyAXBoolean(selection.element, attribute: axFullScreenAttribute),
+            is_frontmost_app: NSWorkspace.shared.frontmostApplication?.processIdentifier == selection.pid ? true : nil,
+            hosts_zen: DesktopHostApplication.current()?.pid == selection.pid ? true : nil
         )
     }
 

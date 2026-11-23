@@ -48,6 +48,12 @@ struct DesktopRunInput: Decodable, Sendable {
     var state: Bool?
     var timeout: Double?
     var target: String?
+
+    var element_ref: String?
+    var query: String?
+    var role: String?
+    var interactive_only: Bool?
+    var max_depth: Int?
 }
 
 struct DesktopPoint: Codable, Sendable {
@@ -100,6 +106,8 @@ struct DesktopAppInfo: Codable, Sendable {
     let is_active: Bool
     let is_hidden: Bool
     let is_terminated: Bool
+    /// True only for the app hosting this zen session; omitted otherwise.
+    var hosts_zen: Bool?
 }
 
 /// A deliberately tiny, read-only process snapshot used to bypass stale
@@ -123,9 +131,41 @@ struct DesktopWindowInfo: Codable, Sendable {
     let layer: Int
     let is_on_screen: Bool
     let alpha: Double
-    let is_focused: Bool?
-    let is_minimized: Bool?
+    /// `is_focused`, `is_minimized`, `subrole`, and `is_main` come from Accessibility
+    /// and are nil when the window could not be paired with an AX window.
+    var is_focused: Bool?
+    var is_minimized: Bool?
     let is_fullscreen: Bool?
+    var subrole: String?
+    var is_main: Bool?
+    /// True only when the owner is the frontmost app; omitted otherwise.
+    var is_frontmost_app: Bool?
+    /// True only for windows of the app hosting this zen session; omitted otherwise.
+    var hosts_zen: Bool?
+}
+
+/// An Accessibility element. Every field except `role` is omitted when unknown;
+/// `value` is bounded and never reported for secure text fields.
+struct DesktopElementInfo: Codable, Sendable {
+    var ref: String?
+    let role: String
+    var subrole: String?
+    var role_description: String?
+    var title: String?
+    var description: String?
+    var value: String?
+    var placeholder: String?
+    var identifier: String?
+    var enabled: Bool?
+    var focused: Bool?
+    var value_settable: Bool?
+    var frame: DesktopRect?
+    var center: DesktopPoint?
+    var actions: [String]?
+    var pid: Int32?
+    var app_name: String?
+    var window_title: String?
+    var hosts_zen: Bool?
 }
 
 struct DesktopScreenshotArtifact: Codable, Sendable {
@@ -169,6 +209,12 @@ struct DesktopRunOutput: Codable, Sendable, FeatureInvocationAttachmentProviding
     var count: Int?
     var elapsed_ms: Int?
     var note: String?
+    var elements: [DesktopElementInfo]?
+    var element: DesktopElementInfo?
+    var focused_element: DesktopElementInfo?
+    var focus_method: String?
+    /// screenshot and zoom: the frontmost app at capture time.
+    var frontmost_app: DesktopAppInfo?
 
     var featureInvocationAttachments: [FeatureInvocationAttachment] {
         guard let artifact else {

@@ -147,7 +147,8 @@ extension DesktopController {
             activation_policy: policy,
             is_active: probe?.is_active ?? app.isActive,
             is_hidden: probe?.is_hidden ?? app.isHidden,
-            is_terminated: probe?.is_terminated ?? app.isTerminated
+            is_terminated: probe?.is_terminated ?? app.isTerminated,
+            hosts_zen: DesktopHostApplication.current()?.pid == app.processIdentifier ? true : nil
         )
     }
 

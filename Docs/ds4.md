@@ -477,8 +477,16 @@ differ from the defaults of ds4-agent.
   encoded for the model. The temporary files are written to `<support>/ds4/tmp`
   and removed right after use. Image observations from tools are sent in the
   user role.
-- Without a vision projector, images are ignored and the diagnostic
-  `DS4 model has no vision encoder configured; images were ignored` is shown.
+- Without a vision projector, images are removed from the session and the
+  diagnostic `DS4 model has no vision encoder configured; images were ignored`
+  is shown. Each removed image is replaced by a text notice in the message or
+  tool result that carried it, saying that the image was removed and must not
+  be guessed, so the model does not believe it saw it. The notice stays in the
+  session history.
+- If an attached image cannot be read or encoded, all images are removed the
+  same way and ZenCODE shows `DS4 could not use the attached images (<reason>);
+  images were ignored`. The notice then says that the image could not be read
+  or encoded.
 - Limit: the images in the history are encoded again on every round.
 
 ## KV checkpoints (`.ds4kv`)
@@ -529,7 +537,7 @@ differ from the defaults of ds4-agent.
 | ABI mismatch or missing symbol in the engine library | The library is stale or was built from other sources | Rebuild it with the command shown in the message |
 | `libzencode-ds4 at <path> was built from other sources, another DS4 root or another architecture` | The library does not match this checkout or architecture | Build it again for this checkout |
 | `DS4 instance lock is held` | Another DS4 process is using the model | Stop the other process and retry |
-| `DS4 model has no vision encoder configured; images were ignored` | Images were sent to a model without `visionRelativePath` | Select a vision projector in setup, or remove the images |
+| `DS4 model has no vision encoder configured; images were ignored` | Images were sent to a model without `visionRelativePath`; each one was replaced by a text notice for the model | Select a vision projector in setup, or remove the images |
 
 ## Validation
 

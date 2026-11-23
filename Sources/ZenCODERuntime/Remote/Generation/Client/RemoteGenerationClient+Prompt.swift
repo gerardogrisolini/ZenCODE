@@ -163,6 +163,8 @@ extension RemoteGenerationClient {
                        Self.messagesContainImageContent(session.messages) {
                         didRetryWithoutImages = true
                         guard mutateSession(for: lease, { session in
+                            // Each image becomes a text notice, so the model
+                            // knows it was there instead of guessing.
                             session.messages = Self.messagesStrippingImageContent(
                                 from: session.messages
                             )
