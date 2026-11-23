@@ -252,15 +252,22 @@ enum CalendarController {
         let windowStart = occurrenceStart.addingTimeInterval(-86_400)
         let windowEnd = occurrenceStart.addingTimeInterval(86_400 * 2)
         let predicate = store.predicateForEvents(withStart: windowStart, end: windowEnd, calendars: [master.calendar])
-        let candidates = store.events(matching: predicate).filter { $0.eventIdentifier == identifier }
-        if let exact = candidates.first(where: { abs($0.startDate.timeIntervalSince(occurrenceStart)) < 60 }) {
-            return exact
+        // EventInfo emits date-times to the second, so compare that same
+        // representation rather than accepting a tolerance around the instant.
+        let formattedStart = MacOSDate.format(occurrenceStart)
+        let candidates = store.events(matching: predicate).filter {
+            $0.eventIdentifier == identifier && MacOSDate.format($0.startDate) == formattedStart
         }
-        if let sameDay = candidates.first(where: { Calendar.current.isDate($0.startDate, inSameDayAs: occurrenceStart) }) {
-            return sameDay
+        if candidates.count == 1, let event = candidates.first {
+            return event
+        }
+        if candidates.count > 1 {
+            throw MacOSControlError.ambiguous(
+                "Event '\(master.title ?? identifier)' has multiple occurrences starting at \(formattedStart ?? "") at second precision."
+            )
         }
         throw MacOSControlError.notFound(
-            "Event '\(master.title ?? identifier)' has no occurrence starting at \(MacOSDate.format(occurrenceStart) ?? ""). Use action=events to list its occurrences."
+            "Event '\(master.title ?? identifier)' has no occurrence starting at \(formattedStart ?? ""). Use action=events to list its occurrences."
         )
     }
 

@@ -192,8 +192,8 @@ enum MailController {
         safe(() => mail.delete(msg), null);
         throw e;
       }
-      mail.send(msg);
-      return {sent: true, id: safe(() => msg.id(), null)};
+      const sent = mail.send(msg);
+      return {sent: sent, id: safe(() => msg.id(), null)};
     }
     """#
 
@@ -217,8 +217,8 @@ enum MailController {
       }
       const subject = safe(() => str(reply.subject()), null);
       const to = safeArray(() => reply.toRecipients.address()).map(str);
-      mail.send(reply);
-      return {sent: true, id: safe(() => reply.id(), null), subject: subject, to: to};
+      const sent = mail.send(reply);
+      return {sent: sent, id: safe(() => reply.id(), null), subject: subject, to: to};
     }
     """#
 

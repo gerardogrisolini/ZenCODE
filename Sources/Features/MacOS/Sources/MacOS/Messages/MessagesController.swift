@@ -35,36 +35,42 @@ enum MessagesController {
       let target = null;
       let label = null;
       if (p.chat_id) {
-        target = app.chats.byId(String(p.chat_id));
-        label = safe(() => str(target.name()), null) || String(p.chat_id);
-        try { target.id(); } catch (e) { fail("No chat has id '" + p.chat_id + "'. Use action=chats to look it up."); }
+        label = String(p.chat_id);
+        target = app.chats.byId(label);
+        if (safe(() => str(target.id()), null) !== label) {
+          fail("No chat has id '" + label + "'. Use action=chats to look it up.");
+        }
+        label = safe(() => str(target.name()), null) || label;
       } else {
         const needle = lower(p.to);
         const handles = safeArray(() => app.participants.handle()).map(str);
+        let names = [];
         let matches = [];
         handles.forEach((h, i) => { if (lower(h) === needle) { matches.push(i); } });
         if (matches.length === 0) {
-          const names = safeArray(() => app.participants.name()).map(str);
+          names = safeArray(() => app.participants.name()).map(str);
           names.forEach((n, i) => { if (lower(n) === needle) { matches.push(i); } });
-          if (matches.length === 0) {
-            names.forEach((n, i) => { if (contains(n, needle)) { matches.push(i); } });
-          }
-          if (matches.length > 1) {
-            const candidates = matches.slice(0, 8).map(i => names[i] + " <" + handles[i] + ">");
-            fail("Several contacts match '" + p.to + "': " + candidates.join(", ") + ". Pass the exact handle (phone number or email).");
-          }
         }
-        if (matches.length >= 1) {
+        if (matches.length > 1) {
+          const candidates = names.length ? ": " + matches.slice(0, 8).map(i => names[i] + " <" + handles[i] + ">").join(", ") : "";
+          fail("Several participants match '" + p.to + "'" + candidates + ". Pass a unique exact handle or chat_id from action=chats.");
+        }
+        if (matches.length === 1) {
           target = app.participants[matches[0]];
           label = handles[matches[0]];
         } else {
-          const chatIds = safeArray(() => app.chats.id()).map(str);
-          const chatIndex = chatIds.findIndex(id => lower(id.split(";").pop()) === needle);
-          if (chatIndex === -1) {
+          const chatIds = safeArray(() => app.chats.id()).map(str).filter(id => {
+            const direct = /^[^;]+;-;(.+)$/.exec(id);
+            return direct && lower(direct[1]) === needle;
+          });
+          if (chatIds.length === 0) {
             fail("No conversation or known participant matches '" + p.to + "'. Start the conversation once in Messages, or pass chat_id from action=chats.");
           }
-          target = app.chats[chatIndex];
-          label = chatIds[chatIndex];
+          if (chatIds.length > 1) {
+            fail("Several conversations match '" + p.to + "'. Pass chat_id from action=chats.");
+          }
+          label = chatIds[0];
+          target = app.chats.byId(label);
         }
       }
       app.send(String(p.text), {to: target});
@@ -106,7 +112,14 @@ enum MessagesController {
         let since = try MacOSDate.parse(input.since ?? input.start, argument: "since", action: input.action)
         let limit = input.boundedLimit(default: 30, maximum: 500)
         let query = input.query?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let selector = input.chat_id ?? input.handle ?? input.to?.values.first
+        let selector: MessagesDatabase.Selector?
+        if let chatID = input.chat_id {
+            selector = .chat(try input.require(chatID, "chat_id"))
+        } else if input.handle != nil || input.to != nil {
+            selector = .handle(try input.require(input.handle ?? input.to?.values.first, "handle"))
+        } else {
+            selector = nil
+        }
         let result = try MessagesDatabase.read(
             selector: selector,
             since: since,
@@ -116,7 +129,7 @@ enum MessagesController {
         var output = MacOSRunOutput(
             action: .messagesRead,
             summary: "\(result.texts.count) messages"
-                + (selector.map { " in conversation '\($0)'" } ?? "")
+                + (selector.map { " in conversation '\($0.value)'" } ?? "")
                 + (since.map { " since \(MacOSDate.format($0) ?? "")" } ?? "")
                 + (result.scannedLimitReached ? " (only the most recent \(MessagesDatabase.scanWindow) messages were searched)." : ".")
         )

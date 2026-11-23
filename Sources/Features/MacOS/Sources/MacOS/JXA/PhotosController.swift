@@ -142,7 +142,8 @@ enum PhotosController {
       const files = p.paths.map(x => Path(String(x)));
       const options = {skipCheckDuplicates: !!p.skip_duplicates};
       if (p.album) { options.into = findAlbum(photos, p.album); }
-      const imported = safeArray(() => photos.import(files, options));
+      const result = photos.import(files, options);
+      const imported = Array.isArray(result) ? result : [];
       return {imported: imported.length, media_items: imported.map(itemInfo)};
     }
     """#

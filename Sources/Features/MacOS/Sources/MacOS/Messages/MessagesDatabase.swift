@@ -8,6 +8,17 @@ import SQLite3
 enum MessagesDatabase {
     static let scanWindow = 3_000
 
+    enum Selector {
+        case chat(String)
+        case handle(String)
+
+        var value: String {
+            switch self {
+            case let .chat(value), let .handle(value): value
+            }
+        }
+    }
+
     struct ReadResult: Sendable {
         let texts: [TextMessageInfo]
         let scannedLimitReached: Bool
@@ -32,7 +43,7 @@ enum MessagesDatabase {
         }
     }
 
-    static func read(selector: String?, since: Date?, query: String?, limit: Int) throws -> ReadResult {
+    static func read(selector: Selector?, since: Date?, query: String?, limit: Int) throws -> ReadResult {
         let db = try open()
         defer { sqlite3_close(db) }
 
@@ -46,11 +57,41 @@ enum MessagesDatabase {
         WHERE m.item_type = 0
         """
         var bindings: [SQLiteBinding] = []
-        if let selector = normalizedSelector(selector) {
-            sql += " AND (c.chat_identifier = ? COLLATE NOCASE OR c.guid = ? OR h.id = ? COLLATE NOCASE)"
-            bindings.append(.text(selector))
-            bindings.append(.text(selector))
-            bindings.append(.text(selector))
+        switch selector {
+        case let .chat(id):
+            if let guid = chatGUIDParts(id) {
+                let service = String(guid.service)
+                if service.lowercased() == "any" {
+                    // Current macOS can store `any` as a literal GUID prefix, not a service.
+                    sql += " AND c.guid = ?"
+                    bindings.append(.text(id))
+                } else {
+                    // Prefer the full GUID. A service-qualified Apple Events ID can also
+                    // map to the corresponding `any` row, but never to another service.
+                    sql += """
+                     AND c.ROWID = COALESCE(
+                         (SELECT ROWID FROM chat WHERE guid = ?),
+                         (SELECT ROWID FROM chat WHERE guid = ? AND service_name = ? COLLATE NOCASE)
+                     ) AND m.service = ? COLLATE NOCASE
+                    """
+                    bindings += [.text(id), .text("any;\(guid.kind);\(guid.identifier)"), .text(service), .text(service)]
+                }
+            } else {
+                // Preserve bare chat identifiers only when they identify one chat.
+                sql += """
+                 AND c.ROWID = COALESCE(
+                     (SELECT ROWID FROM chat WHERE guid = ?),
+                     (SELECT MIN(ROWID) FROM chat WHERE chat_identifier = ? COLLATE NOCASE HAVING count(*) = 1)
+                 )
+                """
+                bindings += [.text(id), .text(id)]
+            }
+        case let .handle(address):
+            // Select direct conversations, not individual messages by their sender.
+            sql += " AND c.chat_identifier = ? COLLATE NOCASE AND substr(c.guid, instr(c.guid, ';'), 3) = ';-;'"
+            bindings.append(.text(address))
+        case nil:
+            break
         }
         if let since {
             sql += " AND m.date > ?"
@@ -71,7 +112,7 @@ enum MessagesDatabase {
             let rc: Int32
             switch binding {
             case let .text(value):
-                rc = sqlite3_bind_text(statement, position, value, -1, transient)
+                rc = sqlite3_bind_text64(statement, position, value, UInt64(value.utf8.count), transient, UInt8(SQLITE_UTF8))
             case let .integer(value):
                 rc = sqlite3_bind_int64(statement, position, value)
             }
@@ -202,16 +243,18 @@ enum MessagesDatabase {
         return Date(timeIntervalSinceReferenceDate: seconds)
     }
 
-    /// Accepts Messages.app chat ids (`iMessage;-;+39...`, `any;-;name@x`),
-    /// chat.db guids, plain handles, or group chat identifiers.
+    private static func chatGUIDParts(_ guid: String) -> (service: Substring, kind: Substring, identifier: Substring)? {
+        let parts = guid.split(separator: ";", maxSplits: 2, omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[1] == "-" || parts[1] == "+" else { return nil }
+        return (parts[0], parts[1], parts[2])
+    }
+
+    /// Extracts the identifier, not the full identity of a Messages chat.
     static func normalizedSelector(_ selector: String?) -> String? {
         guard let selector = selector?.trimmingCharacters(in: .whitespacesAndNewlines), !selector.isEmpty else {
             return nil
         }
-        if selector.contains(";-;") || selector.contains(";+;") {
-            return selector.components(separatedBy: ";").last ?? selector
-        }
-        return selector
+        return chatGUIDParts(selector).map { String($0.identifier) } ?? selector
     }
 }
 

@@ -192,7 +192,9 @@ enum NotesController {
       if (typeof p.html === "string") {
         note.body = p.html;
       } else if (typeof p.append_html === "string") {
-        note.body = (safe(() => str(note.body()), "") || "") + p.append_html;
+        const body = note.body();
+        if (typeof body !== "string") { fail("Notes did not return a readable note body; the note was not updated."); }
+        note.body = body + p.append_html;
       }
       if (typeof p.title === "string" && typeof p.html !== "string") {
         try { note.name = p.title; } catch (e) { fail("Notes refused to rename the note; pass body (and title) to rewrite it instead."); }
