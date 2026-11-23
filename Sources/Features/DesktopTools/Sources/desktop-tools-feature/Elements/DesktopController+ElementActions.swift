@@ -15,37 +15,50 @@ extension DesktopController {
         guard input.element_ref?.nilIfBlank == nil else {
             throw DesktopControlError.invalidArgument("element_ref", "is not used by list_elements; select the window with window_id, pid, bundle_id, or app_name.")
         }
-        let limit = try boundedInteger(input.limit ?? 100, name: "limit", range: 1...200)
+        let (limit, offset) = try DesktopListPaging.validated(limit: input.limit, offset: input.offset)
         let maxDepth = try boundedInteger(input.max_depth ?? 30, name: "max_depth", range: 1...60)
         let roleFilter = try DesktopElementPolicy.normalizedRoleFilter(input.role)
         let query = try DesktopElementPolicy.validatedQuery(input.query)
+        let identifier = try DesktopElementPolicy.validatedIdentifier(input.identifier)
         let (scope, window) = elementScope(for: try elementWindowSelection(input))
+        // The visit gathers the matches of the skipped pages, the page, and one
+        // more, which tells whether the list goes on. The tree order is stable,
+        // so the same arguments page through the same sequence.
         let visit = visitElements(
             in: scope, maxDepth: maxDepth, interactiveOnly: input.interactive_only ?? true,
-            roleFilter: roleFilter, query: query, limit: limit
+            roleFilter: roleFilter, query: query, identifier: identifier, limit: offset + limit + 1
         )
-        var notes: [String] = []
+        let includeDetails = input.include_details ?? false
+        let projected = visit.matches.dropFirst(offset).map {
+            DesktopElementPolicy.projected($0.info, includeDetails: includeDetails)
+        }
+        // A visit stopped by the node or time budget has no known rest: its
+        // note says so, and only entries already gathered continue the list.
+        let page = DesktopListPaging.page(projected, offset: offset, limit: limit)
+        var notes: [String?] = []
         if scope.hostsZen {
-            notes.append("\(scope.appLabel) hosts this zen session: these elements belong to zen's own window, not to the app you may want to control. Select the target with app_name, bundle_id, pid, or window_id.")
+            notes.append(DesktopElementPolicy.hostsZenNote(appLabel: scope.appLabel))
         }
-        if let budgetNote = visit.budgetNote { notes.append(budgetNote) }
-        if visit.stoppedByLimit {
-            notes.append("Stopped at limit \(limit); more elements may exist. Narrow the list with query or role, or raise limit.")
-        }
+        notes.append(visit.budgetNote)
+        notes.append(DesktopListPaging.note(page, limit: limit, noun: "elements", narrowedBy: "query, identifier, or role"))
         if visit.unresponsiveNodes > 0 {
             notes.append(DesktopElementPolicy.unresponsiveNote(appName: scope.appLabel, nodes: visit.unresponsiveNodes))
         }
-        if visit.matches.contains(where: { $0.info.ref == nil }) {
+        if page.entries.contains(where: { $0.ref == nil }) {
             notes.append("Some elements have no element_ref because their window could not be anchored; target them by query or coordinates.")
         }
-        let elements = visit.matches.map(\.info)
+        let outputWindow = DesktopWindowListing.projected(window)
         return DesktopRunOutput(
             action: action,
-            summary: "Listed \(elements.count) element(s) in \(scope.phrase).",
-            window: window,
-            count: elements.count,
-            note: notes.isEmpty ? nil : notes.joined(separator: " "),
-            elements: elements
+            summary: DesktopListPaging.summary(
+                noun: "element(s)", count: page.entries.count, offset: offset,
+                nextOffset: page.nextOffset, scope: DesktopWindowListing.scopePhrase(outputWindow)
+            ),
+            window: outputWindow,
+            count: page.entries.count,
+            next_offset: page.nextOffset,
+            note: DesktopListPaging.joined(notes),
+            elements: page.entries
         )
     }
 
@@ -85,7 +98,7 @@ extension DesktopController {
         return DesktopRunOutput(
             action: action,
             summary: "Performed \(pressAction) on \(target.phrase).",
-            note: note,
+            note: DesktopListPaging.joined([after?.ref == nil ? nil : target.relocationNote, note]),
             element: after
         )
     }
@@ -98,6 +111,7 @@ extension DesktopController {
         return DesktopRunOutput(
             action: action,
             summary: "Focused \(target.phrase) via \(method).",
+            note: target.relocationNote,
             element: after,
             focused_element: describeFocusedElement(of: target.pid)?.info,
             focus_method: method
@@ -145,7 +159,7 @@ extension DesktopController {
             action: action,
             summary: "Set the value of \(target.phrase) (\(text.count) character(s))\(secure ? "; secure fields are not read back" : "").",
             count: text.count,
-            note: note,
+            note: DesktopListPaging.joined([target.relocationNote, note]),
             element: describeElement(target.element, scope: target.scope, path: target.path) ?? target.info
         )
     }
@@ -178,7 +192,7 @@ extension DesktopController {
         let clickCount = try boundedInteger(input.click_count ?? 1, name: "click_count", range: 1...3)
         if hasElementSelectors(input) {
             guard input.x == nil, input.y == nil else {
-                throw DesktopControlError.invalidArgument("x/y", "must be omitted when element_ref or query selects the click target.")
+                throw DesktopControlError.invalidArgument("x/y", "must be omitted when element_ref, query, or identifier selects the click target.")
             }
             return try await clickElement(input, action: action, button: mouseButton, count: clickCount)
         }
@@ -232,13 +246,16 @@ extension DesktopController {
             summary: "Performed \(count) \(button.name) click(s) on \(target.phrase) at (\(format(point.x)), \(format(point.y))).",
             pointer: pointer(),
             count: count,
+            note: target.relocationNote,
             element: target.info,
             focused_element: focused?.info
         )
     }
 
     static func scrollAction(_ input: DesktopRunInput, action: String) throws -> DesktopRunOutput {
-        try DesktopElementPolicy.validatePointerAction(action, elementRef: input.element_ref, query: input.query)
+        try DesktopElementPolicy.validatePointerAction(
+            action, elementRef: input.element_ref, query: input.query, identifier: input.identifier
+        )
         try requireEventPosting()
         let dx = try boundedScroll(input.delta_x ?? 0, name: "delta_x")
         let dy = try boundedScroll(input.delta_y ?? 0, name: "delta_y")
@@ -272,7 +289,9 @@ extension DesktopController {
     /// Drags between two points and reports the element under the
     /// destination, read before any event is posted; never refused.
     static func dragAction(_ input: DesktopRunInput, action: String) throws -> DesktopRunOutput {
-        try DesktopElementPolicy.validatePointerAction(action, elementRef: input.element_ref, query: input.query)
+        try DesktopElementPolicy.validatePointerAction(
+            action, elementRef: input.element_ref, query: input.query, identifier: input.identifier
+        )
         try requireEventPosting()
         let start: CGPoint
         if input.x != nil || input.y != nil {
@@ -318,6 +337,8 @@ extension DesktopController {
 
         if hasElementSelectors(input) {
             let target = try resolveElementTarget(input, action: action)
+            // This refusal must precede every AX mutation and CGEvent: focusing
+            // the element may fall back to a real click.
             try enforceHostPolicy(targetPID: target.pid, input: input, kind: .typeIntoElement)
             let method = try await focusResolvedElement(target)
             let focused = describeFocusedElement(of: target.pid)
@@ -328,6 +349,7 @@ extension DesktopController {
                 action: action,
                 summary: "Typed \(text.count) character(s) into \(DesktopElementPolicy.describe(target.info)) of \(target.scope.appLabel) (focused via \(method)).",
                 count: text.count,
+                note: target.relocationNote,
                 element: describeElement(target.element, scope: target.scope, path: target.path) ?? target.info,
                 focused_element: focused?.info ?? target.info,
                 focus_method: method
@@ -351,7 +373,7 @@ extension DesktopController {
         try requireEventPosting()
         guard !hasElementSelectors(input) else {
             throw DesktopControlError.invalidArgument(
-                "element_ref/query", "press_key does not target elements; call focus_element first, then press_key."
+                "element_ref/query/identifier", "press_key does not target elements; call focus_element first, then press_key."
             )
         }
         let key = try requiredNonempty(input.key, name: "key", action: action)
@@ -438,8 +460,9 @@ extension DesktopController {
             }
             pid = focusedPID
         } else {
-            // Without Accessibility there is nothing else to ask.
-            pid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            // Without Accessibility there is nothing else to ask: the same
+            // frontmost app as everywhere else, from NSWorkspace.
+            pid = currentFrontmostApplication()?.processIdentifier
         }
         try enforceHostPolicy(targetPID: pid, input: input, kind: kind)
         return pid.map(receiver)

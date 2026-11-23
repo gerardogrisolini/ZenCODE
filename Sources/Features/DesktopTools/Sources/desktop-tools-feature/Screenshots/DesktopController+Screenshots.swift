@@ -9,16 +9,53 @@ import CryptoKit
 
 extension DesktopController {
 
-    static func screenshot(_ input: DesktopRunInput, context: FeatureContext, action: String) async throws -> DesktopRunOutput {
-        let scope = (input.scope?.nilIfBlank ?? "display").lowercased()
-        guard ["display", "window", "region"].contains(scope) else {
-            throw DesktopControlError.invalidArgument("scope", "must be display, window, or region.")
-        }
-        return try await capture(input, context: context, action: action, scope: scope)
+    /// What a capture is, as decided by `screenshot` and `zoom`.
+    private struct CaptureRequest {
+        /// display, window, region, element, or zoom (the zoom of a region).
+        let scope: String
+        /// Native resolution (zoom) rather than point scale (screenshot).
+        let zoomed: Bool
+        /// The window chosen by default, the frontmost one; nil to select it
+        /// from the input.
+        var window: DesktopWindowInfo?
+        /// Says why the scope was chosen, when it was not given.
+        var scopeNote: String?
+        /// The scope defaulted to window because of the call's own window or app selectors.
+        var windowSelectedByArguments = false
     }
 
+    /// screenshot: `scope` is display, window, region, or element; when it is
+    /// omitted, `DesktopScreenshotScope.decide` chooses it from the other
+    /// arguments, and a note says which.
+    static func screenshot(_ input: DesktopRunInput, context: FeatureContext, action: String) async throws -> DesktopRunOutput {
+        var arguments = DesktopScreenshotScope.Arguments(input)
+        arguments.scope = try DesktopScreenshotScope.explicitScope(input.scope)
+        try DesktopScreenshotScope.validate(arguments, action: action)
+        let decision = DesktopScreenshotScope.decide(
+            arguments,
+            windows: { visibleWindowStack() },
+            hostPID: DesktopHostApplication.current()?.pid,
+            hostName: DesktopHostApplication.currentName()
+        )
+        return try await capture(
+            input, context: context, action: action,
+            request: CaptureRequest(
+                scope: decision.scope, zoomed: false, window: decision.window, scopeNote: decision.note,
+                windowSelectedByArguments: decision.selectedByArguments
+            )
+        )
+    }
+
+    /// zoom: the region x, y, width, and height at native resolution, or the
+    /// frame of the element selected by element_ref, query, or identifier. It has
+    /// never used `scope`, which is refused only next to an element selector.
     static func zoom(_ input: DesktopRunInput, context: FeatureContext, action: String) async throws -> DesktopRunOutput {
-        try await capture(input, context: context, action: action, scope: "zoom")
+        let arguments = DesktopScreenshotScope.Arguments(input)
+        try DesktopScreenshotScope.validate(arguments, action: action)
+        return try await capture(
+            input, context: context, action: action,
+            request: CaptureRequest(scope: arguments.hasElementSelectors ? "element" : "zoom", zoomed: true)
+        )
     }
 
     private static func requestedRegion(_ input: DesktopRunInput, action: String) throws -> DesktopSafetyPolicy.CaptureRegion {
@@ -32,13 +69,43 @@ extension DesktopController {
         return selectedRegion
     }
 
-    /// Shared pipeline for the screenshot (display/window/region) and zoom scopes.
+    /// The `screencapture -R` argument and the areas of a region capture.
+    private struct RegionCapture {
+        let argument: String
+        /// The region as requested (rounded to whole points).
+        let region: CGRect
+        /// The area the image really covers.
+        let desktopBounds: CGRect
+        /// The region extends beyond the displays, so the image covers less.
+        let isClipped: Bool
+    }
+
+    /// `screencapture -R` crops to the bounding box of the region's
+    /// intersections with the attached displays; capture exactly that box so
+    /// desktop_bounds is the area the image really covers.
+    private static func regionCapture(of selectedRegion: DesktopSafetyPolicy.CaptureRegion) throws -> RegionCapture {
+        guard let covered = DesktopScreenshotGeometry.coveredBounds(of: selectedRegion.rect, displays: displayBounds()) else {
+            throw DesktopControlError.invalidArgument("x/y/width/height", "rounded region does not intersect an attached display.")
+        }
+        let captured = try DesktopSafetyPolicy.captureRegion(
+            x: Double(covered.minX), y: Double(covered.minY),
+            width: Double(covered.width), height: Double(covered.height)
+        )
+        return RegionCapture(
+            argument: captured.argument, region: selectedRegion.rect, desktopBounds: captured.rect,
+            isClipped: captured.rect != selectedRegion.rect
+        )
+    }
+
+    /// Shared pipeline for the screenshot (display, window, region, element) and
+    /// zoom (region, element) captures.
     private static func capture(
         _ input: DesktopRunInput,
         context: FeatureContext,
         action: String,
-        scope: String
+        request: CaptureRequest
     ) async throws -> DesktopRunOutput {
+        let scope = request.scope
         let delay = try boundedDouble(input.delay ?? 0, name: "delay", range: 0...30)
         let label = try sanitizedLabel(input.label)
 
@@ -49,7 +116,12 @@ extension DesktopController {
         var desktopBounds: CGRect?
         var shadowedWindowCenter: CGPoint?
         var regionWasClipped = false
+        var element: ResolvedElement?
+        var elementWasClipped = false
 
+        // An element can move while delay stabilizes the UI: resolve its frame
+        // only after the wait, immediately before choosing the capture region.
+        if scope == "element" { try await preflightCapture(delay: delay) }
         switch scope {
         case "display":
             let index = input.display_index ?? 1
@@ -62,7 +134,18 @@ extension DesktopController {
             displayIndex = index
             desktopBounds = bounds
         case "window":
-            let selected = try selectedQuartzWindow(input)
+            let selected: DesktopWindowInfo
+            if let chosen = request.window {
+                selected = chosen
+            } else {
+                do {
+                    selected = try selectedQuartzWindow(input)
+                } catch DesktopControlError.windowNotFound where request.windowSelectedByArguments {
+                    throw DesktopControlError.operationFailed(
+                        DesktopScreenshotScope.defaultedWindowNotFoundMessage(DesktopControlError.windowNotFound.errorDescription ?? "")
+                    )
+                }
+            }
             guard let selectedID = selected.window_id else { throw DesktopControlError.windowNotFound }
             arguments.append("-l\(selectedID)")
             let bounds = CGRect(x: selected.bounds.x, y: selected.bounds.y, width: selected.bounds.width, height: selected.bounds.height)
@@ -74,34 +157,37 @@ extension DesktopController {
             }
             windowID = selectedID
         case "region", "zoom":
-            let selectedRegion = try requestedRegion(input, action: action)
-            // screencapture -R crops to the bounding box of the region's
-            // intersections with the attached displays; capture exactly that
-            // box so desktop_bounds is the area the image really covers.
-            guard let covered = DesktopScreenshotGeometry.coveredBounds(of: selectedRegion.rect, displays: displayBounds()) else {
-                throw DesktopControlError.invalidArgument("x/y/width/height", "rounded region does not intersect an attached display.")
+            let capture = try regionCapture(of: try requestedRegion(input, action: action))
+            arguments.append(capture.argument)
+            region = capture.region
+            desktopBounds = capture.desktopBounds
+            regionWasClipped = capture.isClipped
+        case "element":
+            // Like press_element, but without the host protection: it only reads.
+            let target = try resolveElementTarget(input, action: action)
+            let frame = target.info.frame.map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
+            switch DesktopScreenshotGeometry.elementRegion(frame: frame, displays: displayBounds()) {
+            case .noFrame:
+                throw DesktopControlError.operationFailed(DesktopCaptureText.elementWithoutFrameMessage(target.phrase))
+            case .offScreen:
+                throw DesktopControlError.operationFailed(DesktopCaptureText.elementOffScreenMessage(target.phrase))
+            case let .region(rect, _, isClipped):
+                let capture = try regionCapture(of: try DesktopSafetyPolicy.captureRegion(
+                    x: Double(rect.minX), y: Double(rect.minY), width: Double(rect.width), height: Double(rect.height)
+                ))
+                arguments.append(capture.argument)
+                region = capture.region
+                desktopBounds = capture.desktopBounds
+                elementWasClipped = isClipped || capture.isClipped
             }
-            let captured = try DesktopSafetyPolicy.captureRegion(
-                x: Double(covered.minX), y: Double(covered.minY),
-                width: Double(covered.width), height: Double(covered.height)
-            )
-            arguments.append(captured.argument)
-            region = selectedRegion.rect
-            desktopBounds = captured.rect
-            regionWasClipped = captured.rect != selectedRegion.rect
+            element = target
         default:
-            throw DesktopControlError.invalidArgument("scope", "must be display, window, or region.")
+            throw DesktopControlError.invalidArgument("scope", "must be \(DesktopScreenshotScope.namesPhrase).")
         }
 
-        guard CGPreflightScreenCaptureAccess() else {
-            throw DesktopControlError.permissionRequired(
-                "Screen Recording permission is required. Run action=request_permissions, then allow \(DesktopHostApplication.subject()) in System Settings > Privacy & Security > Screen & System Audio Recording."
-            )
-        }
-        if delay > 0 { try await Task.sleep(for: .seconds(delay)) }
-        try Task.checkCancellation()
+        if scope != "element" { try await preflightCapture(delay: delay) }
         // Read after the delay, so it describes the screen that is captured.
-        let frontmost = focusedApplicationForReport().map { appInfo($0) }
+        let frontmost = currentFrontmost().map { appInfo($0) }
         let root = try artifactDirectory(context: context)
         let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let url = root.appendingPathComponent("\(label)-\(timestamp)-\(UUID().uuidString).png")
@@ -126,7 +212,7 @@ extension DesktopController {
                 )
             }
             let target: DesktopScreenshotGeometry.PixelSize
-            if scope == "zoom" {
+            if request.zoomed {
                 target = DesktopScreenshotGeometry.zoomSize(nativePixels: native, maximumLongEdge: maximumZoomLongEdge)
             } else if let desktopBounds {
                 target = DesktopScreenshotGeometry.pointScaleSize(coveredPoints: desktopBounds.size)
@@ -171,16 +257,33 @@ extension DesktopController {
                     pointsPerPixel: pointsPerPixel,
                     path: url.path,
                     frontmostAppName: frontmost?.name ?? frontmost?.bundle_id,
-                    frontmostHostsZen: frontmost?.hosts_zen == true
+                    frontmostHostsZen: frontmost?.hosts_zen == true,
+                    element: element?.phrase,
+                    zoomed: request.zoomed
                 ),
                 artifact: artifact,
-                note: DesktopCaptureText.note(mapped: pointsPerPixel != nil, clipped: regionWasClipped),
+                note: DesktopListPaging.joined([
+                    request.scopeNote,
+                    element?.relocationNote,
+                    DesktopCaptureText.note(mapped: pointsPerPixel != nil, clipped: regionWasClipped, elementClipped: elementWasClipped)
+                ]),
+                element: element.map { DesktopElementPolicy.compact($0.info) },
                 frontmost_app: frontmost
             )
         } catch {
             try? FileManager.default.removeItem(at: url)
             throw error
         }
+    }
+
+    private static func preflightCapture(delay: Double) async throws {
+        guard CGPreflightScreenCaptureAccess() else {
+            throw DesktopControlError.permissionRequired(
+                "Screen Recording permission is required. Run action=request_permissions, then allow \(DesktopHostApplication.subject()) in System Settings > Privacy & Security > Screen & System Audio Recording."
+            )
+        }
+        if delay > 0 { try await Task.sleep(for: .seconds(delay)) }
+        try Task.checkCancellation()
     }
 
     private static func nativePixelSize(of url: URL) throws -> DesktopScreenshotGeometry.PixelSize {

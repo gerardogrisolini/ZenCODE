@@ -122,15 +122,15 @@
                 "modelBindings": [
                     {
                         "capability" : 10,
-                        "id" : "chatgpt:gpt-6-astra",
-                        "modelID" : "gpt-6-astra",
+                        "id" : "chatgpt:gpt-6.2-astra",
+                        "modelID" : "gpt-6.2-astra",
                         "modelProvider" : "ChatGPT Subscription",
                         "thinkingSelection" : "xhigh"
                     },
                     {
                         "capability" : 8,
-                        "id" : "chatgpt:gpt-6.1-sol",
-                        "modelID" : "gpt-6.1-sol",
+                        "id" : "chatgpt:gpt-6.2-sol",
+                        "modelID" : "gpt-6.2-sol",
                         "modelProvider" : "ChatGPT Subscription",
                         "thinkingSelection" : "xhigh"
                     },
@@ -143,27 +143,27 @@
                     },
                     {
                         "capability" : 3,
-                        "id" : "chatgpt:gpt-6.1-luna",
-                        "modelID" : "gpt-6.1-luna",
+                        "id" : "chatgpt:gpt-6-luna",
+                        "modelID" : "gpt-6-luna",
                         "modelProvider" : "ChatGPT Subscription",
                         "thinkingSelection" : "xhigh"
                     }
                 ],
-                "defaultModelBindingID": "chatgpt:gpt-6.1-sol"
+                "defaultModelBindingID": "chatgpt:gpt-6.2-sol"
             },
             "planner": {
                 "modelBindings": [
                     {
                         "capability" : 10,
-                        "id" : "chatgpt:gpt-6-astra",
-                        "modelID" : "gpt-6-astra",
+                        "id" : "chatgpt:gpt-6.2-astra",
+                        "modelID" : "gpt-6.2-astra",
                         "modelProvider" : "ChatGPT Subscription",
                         "thinkingSelection" : "max"
                     },
                     {
                         "capability" : 6,
-                        "id" : "chatgpt:gpt-6.1-sol",
-                        "modelID" : "gpt-6.1-sol",
+                        "id" : "chatgpt:gpt-6.2-sol",
+                        "modelID" : "gpt-6.2-sol",
                         "modelProvider" : "ChatGPT Subscription",
                         "thinkingSelection" : "max"
                     }
@@ -174,15 +174,15 @@
                 "modelBindings": [
                     {
                         "capability" : 10,
-                        "id" : "chatgpt:gpt-6-astra",
-                        "modelID" : "gpt-6-astra",
+                        "id" : "chatgpt:gpt-6.2-astra",
+                        "modelID" : "gpt-6.2-astra",
                         "modelProvider" : "ChatGPT Subscription",
                         "thinkingSelection" : "xhigh"
                     },
                     {
                         "capability" : 6,
-                        "id" : "chatgpt:gpt-6.1-sol",
-                        "modelID" : "gpt-6.1-sol",
+                        "id" : "chatgpt:gpt-6.2-sol",
+                        "modelID" : "gpt-6.2-sol",
                         "modelProvider" : "ChatGPT Subscription",
                         "thinkingSelection" : "xhigh"
                     }
@@ -200,13 +200,13 @@
                     },
                     {
                         "capability" : 4,
-                        "id" : "chatgpt:gpt-6.1-luna",
-                        "modelID" : "gpt-6.1-luna",
+                        "id" : "chatgpt:gpt-6-luna",
+                        "modelID" : "gpt-6-luna",
                         "modelProvider" : "ChatGPT Subscription",
                         "thinkingSelection" : "xhigh"
                     }
                 ],
-                "defaultModelBindingID": "chatgpt:gpt-6.1-terra"
+                "defaultModelBindingID": "chatgpt:gpt-6.2-terra"
             },
             "tester": {
                 "modelBindings": [
@@ -224,13 +224,13 @@
                 "modelBindings": [
                     {
                         "capability" : 8,
-                        "id" : "chatgpt:gpt-6.1-sol",
-                        "modelID" : "gpt-6.1-sol",
+                        "id" : "chatgpt:gpt-6.2-sol",
+                        "modelID" : "gpt-6.2-sol",
                         "modelProvider" : "ChatGPT Subscription",
                         "thinkingSelection" : "medium"
                     }
                 ],
-                "defaultModelBindingID": "chatgpt:gpt-6.1-sol"
+                "defaultModelBindingID": "chatgpt:gpt-6.2-sol"
             }
         },
         "OpenRouter": {

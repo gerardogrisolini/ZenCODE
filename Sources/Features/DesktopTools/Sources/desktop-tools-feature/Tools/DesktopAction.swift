@@ -10,6 +10,7 @@ enum DesktopAction: String, CaseIterable, Sendable {
     case listApps = "list_apps"
     case listWindows = "list_windows"
     case listElements = "list_elements"
+    case readText = "read_text"
     case pressElement = "press_element"
     case focusElement = "focus_element"
     case setValue = "set_value"
@@ -36,4 +37,12 @@ enum DesktopAction: String, CaseIterable, Sendable {
     case writeClipboard = "write_clipboard"
     case open
     case wait
+    case waitFor = "wait_for"
+    case batch
+
+    /// The action name as `execute` and the runtime's consent gate read it:
+    /// trimmed and lowercased.
+    static func normalizedName(_ raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
 }

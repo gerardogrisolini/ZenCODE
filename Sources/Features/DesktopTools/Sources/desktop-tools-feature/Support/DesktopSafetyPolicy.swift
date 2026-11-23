@@ -93,6 +93,15 @@ enum DesktopSafetyPolicy {
 
     static let maximumClipboardTextCharacters = 100_000
 
+    /// Largest `offset` accepted by the paged lists (list_apps, list_windows, list_elements).
+    static let maximumListOffset = 5_000
+
+    /// Budget for the sum of the entries of a list, each encoded as JSON like
+    /// the tool output. ZenCODE cuts a tool output at 12,000 characters
+    /// (`DirectToolExecutor.defaultModelOutputLimit`); the rest is left to the
+    /// summary, notes, and the window or scope of the response.
+    static let maximumListPayloadCharacters = 8_000
+
     /// Clipboard text bounded for the model context. The cut is on a
     /// `Character` boundary, so no grapheme cluster is split.
     static func boundedClipboardText(_ text: String, maximumCharacters: Int = maximumClipboardTextCharacters) -> (text: String, omittedCharacters: Int) {

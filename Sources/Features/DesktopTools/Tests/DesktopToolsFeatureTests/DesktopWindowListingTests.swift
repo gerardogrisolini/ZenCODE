@@ -38,6 +38,24 @@ struct DesktopWindowListingTests {
         try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(info)) as? [String: Any])
     }
 
+    // MARK: Output projection
+
+    @Test
+    func windowProjectionBoundsEscapedTitlesWithoutChangingTheSource() {
+        let title = String(repeating: "\"", count: 3_500)
+        let window = DesktopWindowInfo(
+            window_id: 7, pid: 42, app_name: "Calculator", bundle_id: "com.apple.calculator",
+            title: title, bounds: DesktopRect(CGRect(x: 0, y: 0, width: 800, height: 600)),
+            layer: 0, is_on_screen: true, alpha: 1, is_fullscreen: false,
+            is_frontmost_app: true, hosts_zen: false
+        )
+        let projected = DesktopWindowListing.projected(window)
+        #expect(projected.title?.count == DesktopWindowListing.maximumOutputTitleCharacters)
+        #expect(DesktopListPaging.encodedLength(projected) < 1_500)
+        #expect(DesktopWindowListing.scopePhrase(projected).count < 250)
+        #expect(window.title == title)
+    }
+
     // MARK: Summary and note
 
     @Test
@@ -306,7 +324,7 @@ struct DesktopWindowListingTests {
     @Test
     func toolDescriptionsDescribeWindowFieldsAndScreenshotDelivery() throws {
         #expect(DesktopRunTool.description.contains(
-            "The screenshot PNG is attached to the model's multimodal tool context; models that cannot view images do not see it, and when ZenCODE has to remove it (a DS4 model without a vision encoder, or a provider that rejects images) it is replaced by a text notice. Without images, use list_windows and list_elements."
+            "The screenshot PNG is attached to the model's multimodal tool context; models that cannot view images do not see it, and when ZenCODE has to remove it (a DS4 model without a vision encoder, or a provider that rejects images) it is replaced by a text notice. Without images, use list_windows, list_elements, and read_text."
         ))
         #expect(!DesktopRunTool.description.contains("accepts images"))
         #expect(!DesktopRunTool.description.contains("attached automatically"))

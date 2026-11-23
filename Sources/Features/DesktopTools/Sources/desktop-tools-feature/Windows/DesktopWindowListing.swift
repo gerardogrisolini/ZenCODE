@@ -17,6 +17,33 @@ enum DesktopWindowListing {
     static let accessibilityBudget: Double = 3
     static let accessibilityTimeoutNote = "Some apps did not answer Accessibility requests within the \(Int(accessibilityBudget))-second budget, so subrole, is_main, is_focused, and is_minimized are missing for some windows."
 
+    static let maximumOutputTitleCharacters = 160
+    static let maximumOutputAppNameCharacters = 80
+
+    static func outputText(_ text: String?, cap: Int) -> String? {
+        guard let text, text.count > cap else { return text }
+        return String(text.prefix(cap - 3)) + "..."
+    }
+
+    /// Bounds only a window returned to the model. Selection and ref anchors
+    /// keep using the integral Quartz/AX title and application identity.
+    static func projected(_ window: DesktopWindowInfo) -> DesktopWindowInfo {
+        var result = window
+        result.title = outputText(result.title, cap: maximumOutputTitleCharacters)
+        result.app_name = outputText(result.app_name, cap: maximumOutputAppNameCharacters)
+        result.bundle_id = outputText(result.bundle_id, cap: 200)
+        return result
+    }
+
+    static func scopePhrase(_ window: DesktopWindowInfo) -> String {
+        let app = window.app_name ?? (window.pid > 0 ? "pid \(window.pid)" : nil)
+        if let title = window.title?.nilIfBlank {
+            return "the window '\(title)'" + (app.map { " of \($0)" } ?? "")
+        }
+        if let app { return "the untitled window of \(app)" }
+        return "the frontmost window"
+    }
+
     /// Summary and note for the windows actually returned. Everything is English,
     /// like the rest of the tool output.
     ///
@@ -26,20 +53,27 @@ enum DesktopWindowListing {
     ///   - screenRecordingGranted: whether Screen Recording is authorized.
     ///   - accessibilityTimedOut: whether the Accessibility enrichment stopped
     ///     at its deadline.
+    ///   - offset: the position of the first window in the whole list.
+    ///   - nextOffset: the `offset` that continues the list, when more windows remain.
     static func text(
         windows: [DesktopWindowInfo],
         frontmostAppName: String?,
         hostAppName: String?,
         screenRecordingGranted: Bool,
-        accessibilityTimedOut: Bool = false
+        accessibilityTimedOut: Bool = false,
+        offset: Int = 0,
+        nextOffset: Int? = nil
     ) -> Text {
-        var summary = "Listed \(windows.count) window(s) in front-to-back order."
+        var summary = "Listed \(windows.count) window(s)\(offset > 0 ? " from offset \(offset)" : "") in front-to-back order."
         if let name = frontmostAppName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
             summary += " Frontmost app: \(name)."
         }
         let offScreen = windows.filter { !$0.is_on_screen }.count
         if offScreen > 0 {
             summary += " \(offScreen) of them are not on screen (minimized, hidden, or on another Space)."
+        }
+        if let nextOffset {
+            summary += " More windows remain (next_offset=\(nextOffset))."
         }
 
         var notes: [String] = []

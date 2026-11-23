@@ -43,7 +43,7 @@ struct DesktopCaptureTextTests {
 
     @Test
     func noteDescribesImageDeliveryAndKeepsTheCoordinateMapping() {
-        let attachment = "The PNG is attached to the model's multimodal tool context and is retained as a private desktop feature artifact. Models that cannot view images do not see it, and when ZenCODE has to remove it (a DS4 model without a vision encoder, or a provider that rejects images) it is replaced by a text notice. Without images, use list_windows and list_elements."
+        let attachment = "The PNG is attached to the model's multimodal tool context and is retained as a private desktop feature artifact. Models that cannot view images do not see it, and when ZenCODE has to remove it (a DS4 model without a vision encoder, or a provider that rejects images) it is replaced by a text notice. Without images, use list_windows, list_elements, and read_text."
         #expect(DesktopCaptureText.note(mapped: false, clipped: false) == attachment)
         let mapped = "Image pixel (px, py) maps to desktop point (desktop_bounds.x + px * points_per_pixel, desktop_bounds.y + py * points_per_pixel). "
         #expect(DesktopCaptureText.note(mapped: true, clipped: false) == mapped + attachment)

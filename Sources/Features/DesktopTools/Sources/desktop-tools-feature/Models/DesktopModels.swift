@@ -43,6 +43,10 @@ struct DesktopRunInput: Decodable, Sendable {
     var window_index: Int?
     var on_screen_only: Bool?
     var limit: Int?
+    /// Entries to skip in list_apps, list_windows, list_elements, and read_text.
+    var offset: Int?
+    /// list_apps: also list accessory and prohibited apps.
+    var include_background: Bool?
     var launch_if_needed: Bool?
     var force: Bool?
     var state: Bool?
@@ -54,6 +58,19 @@ struct DesktopRunInput: Decodable, Sendable {
     var role: String?
     var interactive_only: Bool?
     var max_depth: Int?
+    /// list_elements: the full element instead of the compact one; read_text:
+    /// `ref` and `frame` with each text.
+    var include_details: Bool?
+    /// list_elements and element actions: exact, case-sensitive AXIdentifier.
+    var identifier: String?
+
+    /// batch: the calls to run in order, each with the fields of a call.
+    var steps: [DesktopRunInput]?
+    /// batch: stop at the first failed step; defaults to true.
+    var stop_on_error: Bool?
+    /// wait_for: what to wait for (app_active, window_present, window_absent,
+    /// element_present, or element_absent).
+    var condition: String?
 }
 
 struct DesktopPoint: Codable, Sendable {
@@ -124,9 +141,9 @@ struct DesktopAppProbe: Codable, Sendable {
 struct DesktopWindowInfo: Codable, Sendable {
     let window_id: UInt32?
     let pid: Int32
-    let app_name: String?
-    let bundle_id: String?
-    let title: String?
+    var app_name: String?
+    var bundle_id: String?
+    var title: String?
     let bounds: DesktopRect
     let layer: Int
     let is_on_screen: Bool
@@ -145,10 +162,12 @@ struct DesktopWindowInfo: Codable, Sendable {
 }
 
 /// An Accessibility element. Every field except `role` is omitted when unknown;
-/// `value` is bounded and never reported for secure text fields.
+/// `value` is bounded and never reported for secure text fields. `label` is
+/// set only by list_elements, which reports either the full element (with
+/// `include_details`) or the compact one (`DesktopElementPolicy.compact`).
 struct DesktopElementInfo: Codable, Sendable {
     var ref: String?
-    let role: String
+    var role: String
     var subrole: String?
     var role_description: String?
     var title: String?
@@ -166,6 +185,49 @@ struct DesktopElementInfo: Codable, Sendable {
     var app_name: String?
     var window_title: String?
     var hosts_zen: Bool?
+    /// The distinct texts among title, description, and placeholder joined with " | ".
+    var label: String?
+}
+
+/// One text read by read_text. `role` and `text` are always present; `ref` and
+/// `frame` only with `include_details`. `text` is the element's value as text,
+/// else its label, and is at most `DesktopTextReading.maximumTextCharacters`
+/// characters (ending in "..." when cut). The value of a secure text field is
+/// never reported.
+struct DesktopTextItem: Codable, Sendable {
+    let role: String
+    let text: String
+    var ref: String?
+    var frame: DesktopRect?
+}
+
+/// The outcome of one step of a batch. `summary` is set when the step ran
+/// and succeeded, `error` when it failed, and `skipped` (always true when
+/// present) when it did not run. The payloads are those of the step's own
+/// output, possibly reduced to fit the response size budget
+/// (`DesktopBatchPolicy.fitted`).
+struct DesktopBatchStepResult: Codable, Sendable {
+    /// 1-based position of the step in `steps`.
+    let index: Int
+    let action: String
+    let ok: Bool
+    var summary: String?
+    var error: String?
+    var note: String?
+    var skipped: Bool?
+    var permissions: DesktopPermissions?
+    var system: DesktopSystemInfo?
+    var element: DesktopElementInfo?
+    var focused_element: DesktopElementInfo?
+    var app: DesktopAppInfo?
+    var window: DesktopWindowInfo?
+    var elements: [DesktopElementInfo]?
+    var texts: [DesktopTextItem]?
+    var windows: [DesktopWindowInfo]?
+    var apps: [DesktopAppInfo]?
+    var clipboard_text: String?
+    var count: Int?
+    var next_offset: Int?
 }
 
 struct DesktopScreenshotArtifact: Codable, Sendable {
@@ -207,14 +269,21 @@ struct DesktopRunOutput: Codable, Sendable, FeatureInvocationAttachmentProviding
     var artifact: DesktopScreenshotArtifact?
     var clipboard_text: String?
     var count: Int?
+    /// list_apps, list_windows, list_elements, and read_text: the `offset` of the
+    /// next page; omitted when no more entries are known.
+    var next_offset: Int?
     var elapsed_ms: Int?
     var note: String?
     var elements: [DesktopElementInfo]?
+    /// read_text: the texts of the window's elements.
+    var texts: [DesktopTextItem]?
     var element: DesktopElementInfo?
     var focused_element: DesktopElementInfo?
     var focus_method: String?
     /// screenshot and zoom: the frontmost app at capture time.
     var frontmost_app: DesktopAppInfo?
+    /// batch: the outcome of every step, in order.
+    var steps: [DesktopBatchStepResult]?
 
     var featureInvocationAttachments: [FeatureInvocationAttachment] {
         guard let artifact else {

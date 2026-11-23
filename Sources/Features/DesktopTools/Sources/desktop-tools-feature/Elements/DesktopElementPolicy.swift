@@ -8,6 +8,7 @@ import ToolCore
 enum DesktopElementPolicy {
     static let maximumValueCharacters = 200
     static let maximumQueryCharacters = 200
+    static let maximumIdentifierCharacters = 256
     static let maximumRoleFilterCharacters = 64
     static let maximumAmbiguityCandidates = 5
     /// Bounds of one Accessibility tree visit (list_elements and query).
@@ -47,10 +48,12 @@ enum DesktopElementPolicy {
         return nil
     }
 
-    static func boundedValue(_ text: String) -> String {
-        text.count > maximumValueCharacters ? String(text.prefix(maximumValueCharacters)) : text
+    static func boundedValue(_ text: String, limit: Int = maximumValueCharacters) -> String {
+        text.count > limit ? String(text.prefix(limit)) : text
     }
 
+    /// `valueLimit` bounds `value` (200 characters unless a caller reads more, as
+    /// read_text does).
     static func makeInfo(
         role: String,
         subrole: String? = nil,
@@ -69,7 +72,9 @@ enum DesktopElementPolicy {
         appName: String? = nil,
         windowTitle: String? = nil,
         hostsZen: Bool = false,
-        ref: String? = nil
+        ref: String? = nil,
+        label: String? = nil,
+        valueLimit: Int = maximumValueCharacters
     ) -> DesktopElementInfo {
         func clean(_ text: String?) -> String? {
             guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
@@ -84,7 +89,7 @@ enum DesktopElementPolicy {
             role_description: clean(roleDescription),
             title: clean(title),
             description: clean(description),
-            value: secure ? nil : clean(value).map(boundedValue),
+            value: secure ? nil : clean(value).map { boundedValue($0, limit: valueLimit) },
             placeholder: clean(placeholder),
             identifier: clean(identifier),
             enabled: enabled,
@@ -96,7 +101,8 @@ enum DesktopElementPolicy {
             pid: pid,
             app_name: clean(appName),
             window_title: clean(windowTitle),
-            hosts_zen: hostsZen ? true : nil
+            hosts_zen: hostsZen ? true : nil,
+            label: label
         )
     }
 
@@ -125,6 +131,111 @@ enum DesktopElementPolicy {
         if let app = element.app_name { phrase += " in \(app)" }
         if let window = element.window_title { phrase += " — window '\(window)'" }
         return phrase
+    }
+
+    // MARK: List projection
+
+    /// The only actions the compact projection keeps: those that press, pick,
+    /// confirm, step, open the menu of, or cancel an element. The others
+    /// (AXScrollToVisible, AXRaise, AXShowDefaultUI...) are noise for a model.
+    static let compactActions: [String] = [
+        "AXPress", "AXConfirm", "AXPick", "AXIncrement", "AXDecrement", "AXShowMenu", "AXCancel"
+    ]
+    static let labelSeparator = " | "
+
+    /// The distinct, non-blank texts among title, description, and placeholder
+    /// (in that order, trimmed) joined with " | "; nil when there is none.
+    static func listLabel(title: String?, description: String?, placeholder: String?) -> String? {
+        var parts: [String] = []
+        for text in [title, description, placeholder] {
+            guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty,
+                  !parts.contains(trimmed) else { continue }
+            parts.append(trimmed)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: labelSeparator)
+    }
+
+    static func listLabel(of element: DesktopElementInfo) -> String? {
+        listLabel(title: element.title, description: element.description, placeholder: element.placeholder)
+    }
+
+    /// The element as list_elements reports it by default: `ref`, `role`,
+    /// `label`, `value` (omitted when equal to the label), the actions of
+    /// `compactActions` (omitted when none), `enabled` only when false, and
+    /// `focused` only when true. Everything else is dropped. Pure and reusable
+    /// by any list of elements.
+    static func compact(_ element: DesktopElementInfo) -> DesktopElementInfo {
+        let label = listLabel(of: element)
+        var compact = DesktopElementInfo(role: element.role)
+        compact.ref = element.ref
+        compact.label = label
+        compact.value = element.value.flatMap { $0 == label ? nil : $0 }
+        let actions = (element.actions ?? []).filter(compactActions.contains)
+        compact.actions = actions.isEmpty ? nil : actions
+        compact.enabled = element.enabled == false ? false : nil
+        compact.focused = element.focused == true ? true : nil
+        return boundedForOutput(compact)
+    }
+
+    /// The element as list_elements reports it with `include_details`: every
+    /// attribute, plus `label`.
+    static func detailed(_ element: DesktopElementInfo) -> DesktopElementInfo {
+        var detailed = element
+        detailed.label = listLabel(of: element)
+        return boundedForOutput(detailed)
+    }
+
+    static func projected(_ element: DesktopElementInfo, includeDetails: Bool) -> DesktopElementInfo {
+        includeDetails ? detailed(element) : compact(element)
+    }
+
+    /// Maximum encoded size of one projected element. This is below the list
+    /// budget, leaving room for keys and the other fields of the response.
+    static let maximumProjectedElementCharacters = 6_000
+    private static let projectedTextCaps = [501, 250, 120, 60, 20, 0]
+
+    /// Bounds only the serialized projection, never the source `element`: refs
+    /// and fingerprints are computed from the integral AX attributes before
+    /// this function runs. The actual JSON size is measured, so escape-heavy
+    /// Unicode cannot bypass the budget as it could with a character-only cap.
+    private static func boundedForOutput(_ element: DesktopElementInfo) -> DesktopElementInfo {
+        var result = element
+        func fits() -> Bool {
+            DesktopListPaging.encodedLength(result) <= maximumProjectedElementCharacters
+        }
+        guard !fits() else { return result }
+
+        // The label repeats title/description/placeholder. Preserve it as value
+        // in a compact element that would otherwise lose all of its text.
+        let label = result.label
+        result.label = nil
+        if result.value == nil { result.value = label }
+        if fits() { return result }
+        result.actions = nil
+
+        func bounded(_ text: String?, cap: Int) -> String? {
+            guard let text, cap > 0 else { return nil }
+            guard text.count > cap else { return text }
+            return cap > 3 ? String(text.prefix(cap - 3)) + "..." : String(text.prefix(cap))
+        }
+        for cap in projectedTextCaps {
+            result.subrole = bounded(result.subrole, cap: cap)
+            result.role_description = bounded(result.role_description, cap: cap)
+            result.title = bounded(result.title, cap: cap)
+            result.description = bounded(result.description, cap: cap)
+            result.value = bounded(result.value, cap: cap)
+            result.placeholder = bounded(result.placeholder, cap: cap)
+            result.app_name = bounded(result.app_name, cap: cap)
+            result.window_title = bounded(result.window_title, cap: cap)
+            if fits() { return result }
+        }
+        // Keep ref intact: it is the usable identity of the element. An
+        // overlong identifier is omitted rather than returned as a false exact
+        // selector; role is required by the model and bounded only as a last resort.
+        result.identifier = nil
+        if fits() { return result }
+        result.role = String(result.role.prefix(64))
+        return result
     }
 
     // MARK: Filters
@@ -178,6 +289,51 @@ enum DesktopElementPolicy {
         return trimmed
     }
 
+    /// Validates an identifier selector: nil when absent or blank, otherwise
+    /// the text unchanged, since it is matched exactly and case-sensitively.
+    static func validatedIdentifier(_ raw: String?) throws -> String? {
+        guard let raw, raw.nilIfBlank != nil else { return nil }
+        guard raw.count <= maximumIdentifierCharacters else {
+            throw DesktopControlError.invalidArgument("identifier", "must contain at most \(maximumIdentifierCharacters) characters.")
+        }
+        return raw
+    }
+
+    /// Exact, case-sensitive match of an identifier selector on an element's
+    /// AXIdentifier; an element without one never matches.
+    static func identifierMatches(_ identifier: String, candidate: String?) -> Bool {
+        candidate == identifier
+    }
+
+    /// The element selectors of an element action, validated.
+    struct ElementSelectors: Equatable {
+        let reference: String?
+        let query: String?
+        let identifier: String?
+
+        var isEmpty: Bool { reference == nil && query == nil && identifier == nil }
+    }
+
+    /// element_ref alone, or query and identifier (each optional, combinable
+    /// with role): element_ref is refused with either of them.
+    static func validatedElementSelectors(elementRef: String?, query: String?, identifier: String?) throws -> ElementSelectors {
+        let query = try validatedQuery(query)
+        let identifier = try validatedIdentifier(identifier)
+        let reference = elementRef?.nilIfBlank
+        if reference != nil, query != nil || identifier != nil {
+            throw DesktopControlError.invalidArgument(
+                "element_ref/query/identifier", "pass either element_ref, or query and/or identifier, not both."
+            )
+        }
+        return ElementSelectors(reference: reference, query: query, identifier: identifier)
+    }
+
+    /// "query 'Save'", "identifier 'save-button'", or both joined with "and".
+    static func selectorPhrase(query: String?, identifier: String?) -> String {
+        let parts = [query.map { "query '\($0)'" }, identifier.map { "identifier '\($0)'" }].compactMap { $0 }
+        return parts.isEmpty ? "the selectors" : parts.joined(separator: " and ")
+    }
+
     static func folded(_ text: String) -> String {
         text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
     }
@@ -206,11 +362,14 @@ enum DesktopElementPolicy {
     /// case-insensitive exact match on title, description, or placeholder wins;
     /// otherwise ambiguous. After a visit cut short (node or time budget, match
     /// limit), only a single exact match wins: a better match may lie in the
-    /// part of the tree that was not visited.
-    static func choose(_ candidates: [DesktopElementInfo], query: String, visitIsComplete: Bool = true) -> Choice {
+    /// part of the tree that was not visited. Without a query (identifier
+    /// alone), every candidate is an exact match, since the identifier is
+    /// matched exactly: a single one wins even after a visit cut short.
+    static func choose(_ candidates: [DesktopElementInfo], query: String?, visitIsComplete: Bool = true) -> Choice {
         guard !candidates.isEmpty else { return .noMatch }
         if visitIsComplete, candidates.count == 1 { return .unique(0) }
         let exact = candidates.indices.filter { index in
+            guard let query else { return true }
             let element = candidates[index]
             return [element.title, element.description, element.placeholder].compactMap { $0 }.contains {
                 $0.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(query) == .orderedSame
@@ -230,25 +389,37 @@ enum DesktopElementPolicy {
         return listed.joined(separator: "; ") + more
     }
 
-    static func ambiguityMessage(query: String, candidates: [DesktopElementInfo], scope: String) -> String {
-        "\(candidates.count) elements match query '\(query)' in \(scope): \(candidateList(candidates)). Refine query or role, or pass one element_ref."
+    static func ambiguityMessage(query: String?, identifier: String? = nil, candidates: [DesktopElementInfo], scope: String) -> String {
+        "\(candidates.count) elements match \(selectorPhrase(query: query, identifier: identifier)) in \(scope): \(candidateList(candidates)). Refine query, identifier, or role, or pass one element_ref."
     }
 
     /// The error for a query whose visit was cut short without a single exact
-    /// match; `truncation` explains where the visit stopped.
-    static func incompleteVisitMessage(query: String, candidates: [DesktopElementInfo], scope: String, truncation: String) -> String {
-        "\(candidates.count) element(s) match query '\(query)' in \(scope) so far, but none is the single exact title, description, or placeholder match required when the search does not cover the whole window: \(candidateList(candidates)). \(truncation) Narrow the search with role, a window selector (window_id or title), or a lower max_depth, or pass an element_ref from list_elements."
+    /// match, or an identifier found more than once before the visit stopped;
+    /// `truncation` explains where the visit stopped.
+    static func incompleteVisitMessage(
+        query: String?, identifier: String? = nil, candidates: [DesktopElementInfo], scope: String, truncation: String
+    ) -> String {
+        let found = "\(candidates.count) element(s) match \(selectorPhrase(query: query, identifier: identifier)) in \(scope) so far"
+        let reason = query == nil
+            ? ", and the search did not cover the whole window"
+            : ", but none is the single exact title, description, or placeholder match required when the search does not cover the whole window"
+        return "\(found)\(reason): \(candidateList(candidates)). \(truncation) Narrow the search with role, a window selector (window_id or title), or a lower max_depth, or pass an element_ref from list_elements."
     }
 
-    static func noMatchMessage(query: String, role: String?, scope: String, interactiveOnly: Bool) -> String {
+    static func noMatchMessage(query: String?, identifier: String? = nil, role: String?, scope: String, interactiveOnly: Bool) -> String {
         let roleText = role.map { " with role \($0)" } ?? ""
         let hint = interactiveOnly ? " or retry with interactive_only=false" : ""
-        return "No element matches query '\(query)'\(roleText) in \(scope). Call list_elements to inspect the window's elements\(hint)."
+        return "No element matches \(selectorPhrase(query: query, identifier: identifier))\(roleText) in \(scope). Call list_elements to inspect the window's elements\(hint)."
     }
 
     /// list_elements and query: some nodes timed out (`.cannotComplete`).
     static func unresponsiveNote(appName: String, nodes: Int) -> String {
         "\(appName) is not responding to Accessibility requests; \(nodes) node(s) could not be read."
+    }
+
+    /// list_elements and read_text: the window belongs to the app hosting zen.
+    static func hostsZenNote(appLabel: String) -> String {
+        "\(appLabel) hosts this zen session: these elements belong to zen's own window, not to the app you may want to control. Select the target with app_name, bundle_id, pid, or window_id."
     }
 
     // MARK: set_value
@@ -300,11 +471,11 @@ enum DesktopElementPolicy {
     // MARK: Argument validation
 
     /// scroll, drag, and move_mouse work on coordinates and never on elements,
-    /// like press_key: element_ref and query are refused.
-    static func validatePointerAction(_ action: String, elementRef: String?, query: String?) throws {
-        guard elementRef?.nilIfBlank == nil, query?.nilIfBlank == nil else {
+    /// like press_key: element_ref, query, and identifier are refused.
+    static func validatePointerAction(_ action: String, elementRef: String?, query: String?, identifier: String? = nil) throws {
+        guard elementRef?.nilIfBlank == nil, query?.nilIfBlank == nil, identifier?.nilIfBlank == nil else {
             throw DesktopControlError.invalidArgument(
-                "element_ref/query",
+                "element_ref/query/identifier",
                 "\(action) does not target elements; pass coordinates instead (for example the center of an element from list_elements)."
             )
         }

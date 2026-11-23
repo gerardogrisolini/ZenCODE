@@ -25,13 +25,14 @@ extension ZenCODESetupRunner {
             AgentOutput.standardError.writeString("Anthropic subscription catalog OAuth compatibility has not been live-validated. Thinking capabilities not representable by this client are not enabled.\n")
         }
         return mergeSubscriptionCandidates(result.models.map { model in
-            SubscriptionModelCandidate(
+            let contextWindow = (provider == .chatGPT ? model.maxContextWindow : nil) ?? model.contextWindow
+            return SubscriptionModelCandidate(
                 manifestID: provider == .chatGPT
                     ? RemoteSubscriptionModelID.selectionID(forModelID: model.id, prefix: "chatgpt")
                     : RemoteSubscriptionModelID.selectionID(forModelID: model.id, prefix: "claude"),
                 modelID: model.id, title: model.title,
-                detail: model.id + (model.contextWindow.map { " [ctx \($0)]" } ?? " [context unknown]"),
-                contextWindowTokenLimit: model.contextWindow,
+                detail: model.id + (contextWindow.map { " [ctx \($0)]" } ?? " [context unknown]"),
+                contextWindowTokenLimit: contextWindow,
                 thinkingSupport: model.thinkingSupport,
                 maxOutputTokens: model.maxOutputTokens,
                 anthropicThinkingMode: model.anthropicThinkingMode,

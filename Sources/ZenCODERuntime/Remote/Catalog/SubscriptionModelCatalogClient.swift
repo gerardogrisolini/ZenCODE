@@ -15,7 +15,7 @@ package struct SubscriptionModelCatalogClient: Sendable {
         package let id: String
         package let title: String
         package let contextWindow: Int?
-        let maxContextWindow: Int?
+        package let maxContextWindow: Int?
         package let maxOutputTokens: Int?
         package let reasoningLevels: [String]
         let defaultReasoningLevel: String?

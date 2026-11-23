@@ -455,13 +455,17 @@ struct DesktopElementPolicyTests {
     @Test(arguments: ["scroll", "drag", "move_mouse"])
     func pointerActionsRefuseElementSelectors(_ action: String) throws {
         try DesktopElementPolicy.validatePointerAction(action, elementRef: nil, query: nil)
-        try DesktopElementPolicy.validatePointerAction(action, elementRef: "  ", query: "\n")
-        for (reference, query) in [("p1.w2:0:AXButton:fbbf52e3", nil), (nil, "Save"), ("p1.w2:0:AXButton:fbbf52e3", "Save")] as [(String?, String?)] {
+        try DesktopElementPolicy.validatePointerAction(action, elementRef: "  ", query: "\n", identifier: " ")
+        let selectors: [(String?, String?, String?)] = [
+            ("p1.w2:0:AXButton:fbbf52e3", nil, nil), (nil, "Save", nil), ("p1.w2:0:AXButton:fbbf52e3", "Save", nil),
+            (nil, nil, "save-button"), (nil, "Save", "save-button")
+        ]
+        for (reference, query, identifier) in selectors {
             let error = #expect(throws: DesktopControlError.self) {
-                try DesktopElementPolicy.validatePointerAction(action, elementRef: reference, query: query)
+                try DesktopElementPolicy.validatePointerAction(action, elementRef: reference, query: query, identifier: identifier)
             }
             let message = error?.errorDescription ?? ""
-            #expect(message.hasPrefix("Invalid argument 'element_ref/query': \(action) does not target elements"))
+            #expect(message.hasPrefix("Invalid argument 'element_ref/query/identifier': \(action) does not target elements"))
             #expect(message.contains("coordinates"))
         }
     }

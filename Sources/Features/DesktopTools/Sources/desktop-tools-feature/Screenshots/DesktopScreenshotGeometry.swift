@@ -51,6 +51,36 @@ enum DesktopScreenshotGeometry {
         }
     }
 
+    /// The region captured for an element.
+    enum ElementRegion: Equatable {
+        /// The part of the element on one display, as whole points (the element's
+        /// frame rounded outwards, then limited to that display), the position of
+        /// the display in `displays`, and whether the element extends beyond it.
+        case region(CGRect, displayIndex: Int, isClipped: Bool)
+        /// The element reports no frame, or an empty or non-finite one.
+        case noFrame
+        /// The frame lies outside every display.
+        case offScreen
+    }
+
+    /// The region to capture for an element with `frame`, in global points:
+    /// the frame rounded outwards to whole points and limited to the display
+    /// that holds most of it, so that the capture stays on one display (one
+    /// scale). With ties the first display wins.
+    static func elementRegion(frame: CGRect?, displays: [CGRect]) -> ElementRegion {
+        guard let frame, DesktopElementPolicy.isPositive(frame) else { return .noFrame }
+        let wanted = frame.integral
+        var best: (index: Int, overlap: CGRect)?
+        for (index, display) in displays.enumerated() {
+            let overlap = display.intersection(wanted)
+            guard !overlap.isNull, overlap.width > 0, overlap.height > 0 else { continue }
+            if let current = best, current.overlap.width * current.overlap.height >= overlap.width * overlap.height { continue }
+            best = (index, overlap)
+        }
+        guard let best else { return .offScreen }
+        return .region(best.overlap, displayIndex: best.index, isClipped: best.overlap != wanted)
+    }
+
     /// True when the native capture is a uniform scaling of the covered desktop
     /// size (within 2 px at the long edge), so a point mapping is exact.
     static func isUniformScaling(nativePixels: PixelSize, covered: CGSize) -> Bool {

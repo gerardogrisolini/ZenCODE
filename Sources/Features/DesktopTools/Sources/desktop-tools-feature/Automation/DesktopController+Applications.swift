@@ -23,8 +23,52 @@ extension DesktopController {
             if lhs.isActive != rhs.isActive { return lhs.isActive }
             let left = lhs.localizedName ?? lhs.bundleIdentifier ?? ""
             let right = rhs.localizedName ?? rhs.bundleIdentifier ?? ""
-            return left.localizedCaseInsensitiveCompare(right) == .orderedAscending
+            let order = left.localizedCaseInsensitiveCompare(right)
+            // The pid breaks ties, so paging with offset sees a stable order.
+            if order == .orderedSame { return lhs.processIdentifier < rhs.processIdentifier }
+            return order == .orderedAscending
         }
+    }
+
+    /// list_apps: the running apps selected by pid, bundle_id, and app_name,
+    /// narrowed by `query` and, unless `include_background`, to regular apps;
+    /// one page of them, cut at `limit` and at the response size budget.
+    static func listApps(_ input: DesktopRunInput, action: String) throws -> DesktopRunOutput {
+        let (limit, offset) = try DesktopListPaging.validated(limit: input.limit, offset: input.offset)
+        let query = try DesktopElementPolicy.validatedQuery(input.query)
+        let includeBackground = input.include_background ?? false
+        let selected = runningApps(matching: input)
+        func isListed(_ app: NSRunningApplication, includeBackground: Bool) -> Bool {
+            DesktopAppListing.isListed(
+                activationPolicy: DesktopAppListing.activationPolicyName(app.activationPolicy),
+                name: app.localizedName, bundleID: app.bundleIdentifier,
+                includeBackground: includeBackground, query: query
+            )
+        }
+        let listed = selected.filter { isListed($0, includeBackground: includeBackground) }
+        // One entry past the limit tells whether the list goes on.
+        let candidates = listed.dropFirst(offset).prefix(limit + 1).map { appInfo($0) }
+        let page = DesktopListPaging.page(candidates, offset: offset, limit: limit)
+        var hiddenNote: String?
+        if page.entries.isEmpty, offset == 0, !includeBackground {
+            hiddenNote = DesktopAppListing.hiddenBackgroundNote(
+                hidden: selected.filter { isListed($0, includeBackground: true) }.count
+            )
+        }
+        return DesktopRunOutput(
+            action: action,
+            summary: DesktopListPaging.summary(
+                noun: includeBackground ? "running application(s)" : "running regular application(s)",
+                count: page.entries.count, offset: offset, nextOffset: page.nextOffset
+            ),
+            apps: page.entries,
+            count: page.entries.count,
+            next_offset: page.nextOffset,
+            note: DesktopListPaging.joined([
+                DesktopListPaging.note(page, limit: limit, noun: "applications", narrowedBy: "query"),
+                hiddenNote
+            ])
+        )
     }
 
     static func matchingRunningApp(
@@ -43,7 +87,7 @@ extension DesktopController {
             return apps.first { $0.localizedName?.caseInsensitiveCompare(name) == .orderedSame }
                 ?? (allowPartialName ? apps.first { $0.localizedName?.localizedCaseInsensitiveContains(name) == true } : nil)
         }
-        return defaultToFrontmost ? NSWorkspace.shared.frontmostApplication : nil
+        return defaultToFrontmost ? currentFrontmostApplication() : nil
     }
 
     static func selectedRunningApp(_ input: DesktopRunInput, allowPartialName: Bool = true) throws -> NSRunningApplication {
@@ -128,24 +172,21 @@ extension DesktopController {
         Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
     }
 
+    /// `isActive` overrides the activity of the app when a source more
+    /// reliable than a possibly stale NSRunningApplication or a probe has
+    /// decided it (`DesktopController.currentFrontmost`).
     static func appInfo(
         _ app: NSRunningApplication,
-        probe: DesktopAppProbe? = nil
+        probe: DesktopAppProbe? = nil,
+        isActive: Bool? = nil
     ) -> DesktopAppInfo {
-        let policy: String
-        switch app.activationPolicy {
-        case .regular: policy = "regular"
-        case .accessory: policy = "accessory"
-        case .prohibited: policy = "prohibited"
-        @unknown default: policy = "unknown"
-        }
         return DesktopAppInfo(
             pid: app.processIdentifier,
             name: app.localizedName,
             bundle_id: app.bundleIdentifier,
             bundle_path: app.bundleURL?.path,
-            activation_policy: policy,
-            is_active: probe?.is_active ?? app.isActive,
+            activation_policy: DesktopAppListing.activationPolicyName(app.activationPolicy),
+            is_active: isActive ?? probe?.is_active ?? app.isActive,
             is_hidden: probe?.is_hidden ?? app.isHidden,
             is_terminated: probe?.is_terminated ?? app.isTerminated,
             hosts_zen: DesktopHostApplication.current()?.pid == app.processIdentifier ? true : nil

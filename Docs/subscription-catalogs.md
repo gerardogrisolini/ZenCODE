@@ -51,11 +51,12 @@ All `visibility=list` entries returned by the provider are offered.
 whereas the transmitted version identifies ZenCODE and is not comparable to a Codex
 release. Neither that identity nor catalog visibility establishes runtime compatibility.
 No supported Codex version is invented or advertised.
-` supported_in_api` is deliberately **not** a subscription filter. The current
-`context_window` and representable reasoning levels/default enter the manifest;
-maximum context and input modalities are retained as catalog metadata, not a
-promise to implement additional multimodal transports or automatically enlarge
-context windows.
+` supported_in_api` is deliberately **not** a subscription filter. For newly
+configured models, setup shows and saves `max_context_window` when present,
+falling back to `context_window`. Reconfiguring a provider keeps existing model
+manifests as-is. Representable reasoning levels/default enter the manifest;
+input modalities remain catalog metadata, not a promise to implement additional
+multimodal transports.
 
 Discovered ChatGPT effort values are persisted in optional
 `subscriptionReasoningLevels` generation metadata. Wire `none`/`off` explicitly map

@@ -40,7 +40,127 @@ Release tags follow the strict `vX.Y.Z` contract described in
   note instead of an error. `scroll`, `drag`, and `move_mouse` do not accept
   `element_ref` or `query`.
 
+- `desktop.run` has a `batch` action that runs up to 20 steps in order in one
+  tool call, so a sequence such as `7 × 8 =` on Calculator, plus a final
+  `list_elements`, takes one call instead of five. Each step is an object
+  with the same fields as a `desktop.run` call and goes through the same
+  checks, including the protection of the app that hosts zen. A step inherits
+  `pid`, `bundle_id`, and `app_name` from the batch when it has none of them,
+  and `window_id` and `title` when it has no window selector and no
+  `element_ref`. `stop_on_error` (default true) stops at the first failed step
+  and reports the rest as skipped; with false every step runs. A failed step
+  never fails the call: the result lists every step with its index, action,
+  `ok`, summary or error, note, and its elements, windows, apps, element,
+  focused element, app, window, permissions, system information, clipboard text,
+  count, and `next_offset`, and
+  the summary reads "Ran 4 of 4 step(s)." or "Stopped at step 3 of 5
+  (press_element): ...; 2 step(s) skipped.". Steps can use only a closed
+  list of actions that never need operator approval and cannot hide a dangerous
+  key sequence; `batch`, `screenshot`,
+  `zoom`, `request_permissions`, `open`, `launch_app`, `terminate_app`,
+  `activate_app` with `launch_if_needed=true`, `press_key` (Return or a shortcut
+  such as Command-Q could submit a command or terminate an app), and `type_text`
+  whose text has a
+  line break or another control character than tab are refused, because
+  ZenCODE asks for consent by looking only at the top-level action of a call;
+  `press_key` must likewise be reviewed as a separate call because a batch
+  cannot expose Return or shortcuts such as Command-Q to that top-level check.
+  Every step's action and batch safety policy are validated before the first one
+  runs, and a refused step fails the whole call naming its index. Each step's
+  own arguments are validated when it runs, so a runtime argument error can
+  leave earlier steps applied. A batch has a 60-second time budget: a step
+  whose estimated duration (typing, `wait`, `wait_for`, `activate_app`, pointer
+  movement) does
+  not fit in the time left is skipped with the following ones, and a step
+  estimated over 60 seconds is refused. The steps of the result are reduced
+  to fit the response size budget (lists first, then elements in compact
+  form, then the fields of the earlier steps), with a note.
+
+- `desktop.run` `list_elements`, `press_element`, `focus_element`,
+  `set_value`, and `click` and `type_text` on an element accept `identifier`,
+  matched exactly and case-sensitively against the element's AXIdentifier
+  (`list_elements` reports it with `include_details=true`). It filters
+  `list_elements`, and selects the element of the other actions alone or with
+  `query` and `role`, with the same rules for ambiguous matches and incomplete
+  searches as `query`; it cannot be combined with `element_ref` or
+  coordinates, and `scroll`, `drag`, `move_mouse`, and `press_key` refuse it.
+
+- `desktop.run` has a `wait_for` action that waits until a condition holds
+  instead of guessing a `wait` duration. `condition` is `app_active` (the app
+  selected by `pid`, `bundle_id`, or `app_name` is the frontmost app),
+  `window_present` or `window_absent` (a window selected by app and/or
+  `window_id` and `title` exists, on screen or not, or is gone), or
+  `element_present` or `element_absent` (an element selected by `element_ref`,
+  `query`, `identifier`, and/or `role`, narrowed by `interactive_only` and
+  `max_depth`, exists in the selected window, by default the focused window of
+  the frontmost app, or is gone). It polls every 0.25 s up to `timeout`
+  seconds (0-30, default 5) and returns a summary, `elapsed_ms`, and the app,
+  window, or element found (compact unless `include_details`). When time runs
+  out it fails with what it last saw, for example "window_present: no window
+  matching title 'Save' of TextEdit after 5 s; frontmost app is Safari.".
+  An absence is never confirmed on weak evidence: `element_absent` keeps
+  polling while the visit of the window is incomplete (node or time budget,
+  nodes that did not respond), and `window_absent` by `title` keeps polling
+  without Screen Recording, which hides the titles of other apps' windows;
+  the final error says why. A `wait_for` step in a `batch` is estimated at its `timeout` and an
+  `activate_app` step at its activation timeout (both default to 5 s) for the
+  batch's time budget.
+
+- `desktop.run` has a `read_text` action for reading a window without images.
+  It visits every Accessibility element, including static text and elements
+  without a usable frame, selects the
+  window like `list_elements`, and accepts the same `query`, `role`,
+  `identifier`, `offset`, `limit`, and `next_offset` filtering and paging. Its
+  compact `texts[]` entries contain `role` and `text` (`ref` and `frame` only
+  with `include_details=true`); text comes from the value, except in secure
+  fields, otherwise from the title, description, or placeholder. Blank and
+  consecutive duplicate entries are omitted, and each text is capped at 500
+  characters. `read_text` is allowed in a `batch`.
+
+- `desktop.run` `screenshot` and `zoom` can capture an element selected by
+  `element_ref`, or by `query`, `identifier`, and `role`. They capture its
+  frame clipped to the display, return `artifact.scope` as `element`, and
+  include the compact element in the result. Missing or off-screen frames and
+  contradictory element/region/display arguments produce explicit errors.
+
 ### Changed
+
+- `zen --setup` uses the ChatGPT Subscription catalog's `max_context_window`
+  for newly configured models, falling back to `context_window` when no
+  positive maximum is advertised. Existing model configurations are unchanged.
+
+- `desktop.run` `screenshot` now chooses its scope when `scope` is omitted:
+  `element` for element selectors, `region` for coordinates, `display` for
+  `display_index`, and `window` for window or app selectors. Without selectors
+  it captures the topmost visible layer-0 window of at least 100x100 points
+  that does not belong to the app hosting zen, falling back to the display.
+  A note explains the choice and how to request the whole screen explicitly.
+
+- `desktop.run` `activate_app` no longer returns before the app is in front. It
+  waits, up to `timeout` (default 5 s, 0-30), until the frontmost app is the
+  activated one and, when the app has windows visible on screen, until the
+  first layer 0 window in the stacking order of CGWindowList is its own, and
+  returns its main or focused window in `window`. If the sources still
+  disagree at the end (for example the app-state probe says the app is active
+  but Accessibility names another app) it succeeds with a `note` that says so
+  and `frontmost_app` naming the app Accessibility reports, so the model
+  checks before acting; it still fails when the app does not become active at
+  all. The frontmost app is now read in one place for `system_info`
+  (`frontmost_app`), `list_windows` (`is_frontmost_app` and the summary),
+  `screenshot` and `zoom` (`frontmost_app`), `activate_app`, `wait_for`, and
+  the default window of the window and element actions: from the focused
+  application of Accessibility when it is granted, otherwise, or when that
+  read fails, from `NSWorkspace`, which can be stale in the one-shot worker.
+  The check of the keyboard focus before input is unchanged.
+
+- `desktop.run` relocates an `element_ref` whose element moved in its window's
+  Accessibility tree, for example the buttons of Calculator after it adds a
+  row: when the path of the reference no longer leads to the element, the same
+  window is searched for elements with the same role and fingerprint, and a
+  single match in a complete search is used, with a note that says so and the
+  new reference in `element`. No match, several matches, or an incomplete
+  search keep the stale-reference error, and a reference is never relocated
+  into another window or app.
 
 - In the macOS app, the sessions sidebar's filter field moved from the top of
   the sidebar to its bottom, and its placeholder now reads "Filter sessions...".
@@ -93,6 +213,34 @@ Release tags follow the strict `vX.Y.Z` contract described in
   now says that the PNG is attached to the model's multimodal context, that
   models that cannot view images do not see it, and that ZenCODE replaces it
   with a text notice when it has to remove it.
+
+- `desktop.run` `list_apps`, `list_windows`, `list_elements`, and `read_text`
+  are paged and no longer overflow the model context. A new `offset` (0-5000) skips entries,
+  and when more remain the response carries `next_offset`, to pass as `offset`
+  in the next call; a note says so ("Stopped at limit 100; ... Continue with
+  offset=100"). The entries of a response are also cut at 8,000 characters of
+  JSON, always keeping at least one, with a note and `next_offset`, because
+  ZenCODE truncates a tool output at 12,000 characters and the old message
+  suggested an `offset` the tool did not have; `count` is the number of
+  entries returned. `list_elements` now returns a compact element by default
+  (`ref`, `role`, `label`, `value`, the actions AXPress, AXConfirm, AXPick,
+  AXIncrement, AXDecrement, AXShowMenu, and AXCancel, `enabled` only when false,
+  and `focused` only when true), where `label` joins the distinct title,
+  description, and placeholder texts with ` | ` and `value` is left out when it
+  equals the label; the new `include_details=true` returns every attribute
+  (including `frame` and `center`) plus `label`. Projected text is reduced by
+  its actual JSON size, including escaping, without changing the integral AX
+  attributes used by `element_ref` fingerprints. The `element` and
+  `focused_element` of the other actions are unchanged. Window titles and app
+  names in paged output and summaries are also bounded; query matching still
+  reads the full AX value, and output truncation never changes selectors,
+  window anchors, or element fingerprints. `wait_for` uses the same full-value
+  matching and does not treat an Accessibility timeout while selecting a
+  window as proof that the window or element is absent. `list_apps` lists only
+  regular apps by default (no daemons or helpers); the new
+  `include_background=true` adds the accessory and prohibited ones, and the
+  new `query` keeps the apps whose name or `bundle_id` contains it, ignoring
+  case and diacritics.
 
 ### Fixed
 

@@ -52,6 +52,46 @@ import FoundationNetworking
         #expect(!result.isCached)
     }
 
+    @Test func chatGPTSetupPrefersMaximumContextWindowAndFallsBack() async throws {
+        let catalog = client(directory(), json: """
+        {"models":[
+          {"slug":"both","visibility":"list","context_window":272000,"max_context_window":872000},
+          {"slug":"maximum-only","visibility":"list","max_context_window":872000},
+          {"slug":"missing-maximum","visibility":"list","context_window":500000},
+          {"slug":"invalid-maximum","visibility":"list","context_window":500000,"max_context_window":0},
+          {"slug":"unknown","visibility":"list"}
+        ]}
+        """)
+        let candidates = try await ZenCODESetupRunner.discoveredSubscriptionCandidates(
+            provider: .chatGPT, accessToken: "fixture", existingModels: [], client: catalog
+        )
+        let limits: [Int?] = [872_000, 872_000, 500_000, 500_000, nil]
+        #expect(candidates.map(\.contextWindowTokenLimit) == limits)
+        for (candidate, limit) in zip(candidates, limits) {
+            #expect(candidate.detail == candidate.modelID + (limit.map { " [ctx \($0)]" } ?? " [context unknown]"))
+            let manifest = ZenCODESetupRunner.subscriptionModelManifest(
+                candidate: candidate,
+                providerID: AgentRemoteProvider.chatGPTSubscriptionProviderID,
+                providerName: "ChatGPT Subscription",
+                baseURL: AgentRemoteProvider.chatGPTSubscriptionBaseURL,
+                chatEndpoint: .responses
+            )
+            #expect(manifest.configuredContextWindowLimit == limit)
+        }
+    }
+
+    @Test func claudeSetupContinuesUsingMaxInputTokens() async throws {
+        let catalog = client(directory(), json: """
+        {"data":[{"id":"future-claude","max_input_tokens":300000,"max_context_window":872000}],"has_more":false}
+        """)
+        let candidates = try await ZenCODESetupRunner.discoveredSubscriptionCandidates(
+            provider: .anthropic, accessToken: "fixture", existingModels: [], client: catalog
+        )
+        let candidate = try #require(candidates.first)
+        #expect(candidate.contextWindowTokenLimit == 300_000)
+        #expect(candidate.detail == "future-claude [ctx 300000]")
+    }
+
     @Test func lastGoodCacheAndAccountIsolation() async throws {
         let dir = directory()
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -43,8 +43,8 @@ struct DesktopElementSchemaTests {
     func elementSelectorDescriptionsStateWhatTheyRefuse() throws {
         let properties = try #require(try object(DesktopRunTool.inputSchema)["properties"] as? [String: Any])
         let reference = try #require((properties["element_ref"] as? [String: Any])?["description"] as? String)
-        for fragment in ["query or x/y", "title or window_index", "window_id is accepted only when it is that window",
-                         "scroll, drag, move_mouse, and press_key do not accept it"] {
+        for fragment in ["query, identifier, or x/y", "title or window_index", "window_id is accepted only when it is that window",
+                         "scroll, drag, move_mouse, and press_key do not accept it", "relocated", "never relocated into another window or app"] {
             #expect(reference.contains(fragment), "element_ref: \(fragment)")
         }
         let query = try #require((properties["query"] as? [String: Any])?["description"] as? String)
@@ -77,7 +77,7 @@ struct DesktopElementSchemaTests {
         let expected = [
             "ref", "role", "subrole", "role_description", "title", "description", "value", "placeholder",
             "identifier", "enabled", "focused", "value_settable", "frame", "center", "actions", "pid",
-            "app_name", "window_title", "hosts_zen"
+            "app_name", "window_title", "hosts_zen", "label"
         ]
         #expect(Set(elementProperties.keys) == Set(expected))
         let app = try #require(defs["app"] as? [String: Any])
@@ -91,7 +91,7 @@ struct DesktopElementSchemaTests {
             role: "AXButton", subrole: "AXCloseButton", roleDescription: "button", title: "Close",
             description: "close", value: "1", placeholder: "p", identifier: "id", enabled: true, focused: false,
             valueSettable: false, frame: CGRect(x: 1, y: 2, width: 3, height: 4), actions: ["AXPress"],
-            pid: 9, appName: "App", windowTitle: "Window", hostsZen: true, ref: "p9.w1::AXButton"
+            pid: 9, appName: "App", windowTitle: "Window", hostsZen: true, ref: "p9.w1::AXButton", label: "Close | p"
         )
         let encoded = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(info)) as? [String: Any])
         let root = try object(try #require(DesktopRunTool.outputSchema))

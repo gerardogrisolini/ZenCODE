@@ -7,7 +7,13 @@ import Foundation
 import ToolCore
 
 extension DesktopController {
-    static func windowRecords(onScreenOnly: Bool, matching input: DesktopRunInput) -> [DesktopWindowInfo] {
+    /// `frontmostPID`, the pid of the frontmost app as the caller read it
+    /// (`currentFrontmostApplication`), sets `is_frontmost_app` on its windows;
+    /// callers that only pair or look up windows leave it out and save the
+    /// Accessibility read.
+    static func windowRecords(
+        onScreenOnly: Bool, matching input: DesktopRunInput, frontmostPID: pid_t? = nil
+    ) -> [DesktopWindowInfo] {
         let options: CGWindowListOption = onScreenOnly
             ? [.optionOnScreenOnly, .excludeDesktopElements]
             : [.optionAll, .excludeDesktopElements]
@@ -18,7 +24,6 @@ extension DesktopController {
             NSWorkspace.shared.runningApplications.map { ($0.processIdentifier, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let hostPID = DesktopHostApplication.current()?.pid
 
         return dictionaries.compactMap { dictionary in
@@ -62,7 +67,7 @@ extension DesktopController {
                 is_focused: nil,
                 is_minimized: onScreenOnly ? false : nil,
                 is_fullscreen: nil,
-                is_frontmost_app: pid == frontmostPID ? true : nil,
+                is_frontmost_app: frontmostPID != nil && pid == frontmostPID ? true : nil,
                 hosts_zen: pid == hostPID ? true : nil
             )
         }
@@ -207,7 +212,7 @@ extension DesktopController {
         if input.window_id != nil
             || input.pid != nil || input.bundle_id?.nilIfBlank != nil || input.app_name?.nilIfBlank != nil || input.title?.nilIfBlank != nil {
             records = windowRecords(onScreenOnly: false, matching: input)
-        } else if let frontmost = NSWorkspace.shared.frontmostApplication {
+        } else if let frontmost = currentFrontmostApplication() {
             var copy = input
             copy.pid = frontmost.processIdentifier
             records = windowRecords(onScreenOnly: false, matching: copy)
@@ -328,7 +333,7 @@ extension DesktopController {
             is_focused: copyAXBoolean(selection.element, attribute: kAXFocusedAttribute as CFString),
             is_minimized: copyAXBoolean(selection.element, attribute: kAXMinimizedAttribute as CFString),
             is_fullscreen: copyAXBoolean(selection.element, attribute: axFullScreenAttribute),
-            is_frontmost_app: NSWorkspace.shared.frontmostApplication?.processIdentifier == selection.pid ? true : nil,
+            is_frontmost_app: currentFrontmostApplication()?.processIdentifier == selection.pid ? true : nil,
             hosts_zen: DesktopHostApplication.current()?.pid == selection.pid ? true : nil
         )
     }

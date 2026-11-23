@@ -14,7 +14,7 @@ enum DesktopController {
     static let axFullScreenAttribute = "AXFullScreen" as CFString
 
     static func execute(_ input: DesktopRunInput, context: FeatureContext) async throws -> DesktopRunOutput {
-        let normalized = input.action.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalized = DesktopAction.normalizedName(input.action)
         guard !normalized.isEmpty else {
             throw DesktopControlError.invalidArgument("action", "must not be empty.")
         }
@@ -22,6 +22,9 @@ enum DesktopController {
             throw DesktopControlError.invalidAction(normalized)
         }
         let action = parsedAction.rawValue
+        if parsedAction != .batch, input.steps != nil {
+            throw DesktopControlError.invalidArgument("steps", "is used only by action batch.")
+        }
 
         switch parsedAction {
         case .permissions:
@@ -43,34 +46,52 @@ enum DesktopController {
                 process_id: ProcessInfo.processInfo.processIdentifier,
                 displays: displays(),
                 pointer: pointer(),
-                frontmost_app: NSWorkspace.shared.frontmostApplication.map { appInfo($0) }
+                frontmost_app: currentFrontmost().map { appInfo($0) }
             )
             return DesktopRunOutput(action: action, summary: "Read macOS system, display, pointer, and frontmost-app state.", permissions: permissions(), system: info)
 
         case .listApps:
-            let limit = try boundedInteger(input.limit ?? 100, name: "limit", range: 1...200)
-            let apps = runningApps(matching: input).prefix(limit).map { appInfo($0) }
-            return DesktopRunOutput(action: action, summary: "Listed \(apps.count) running application(s).", apps: Array(apps), count: apps.count)
+            return try listApps(input, action: action)
 
         case .listWindows:
-            let limit = try boundedInteger(input.limit ?? 100, name: "limit", range: 1...200)
-            let windows = windowRecords(onScreenOnly: input.on_screen_only ?? false, matching: input)
-            let enrichment = enrichedWithAccessibility(Array(windows.prefix(limit)), candidates: windows)
-            let result = enrichment.windows
-            let frontmost = NSWorkspace.shared.frontmostApplication
+            let (limit, offset) = try DesktopListPaging.validated(limit: input.limit, offset: input.offset)
+            // Read once, so that is_frontmost_app and the summary name the same app.
+            let frontmost = currentFrontmostApplication()
+            let windows = windowRecords(
+                onScreenOnly: input.on_screen_only ?? false, matching: input, frontmostPID: frontmost?.processIdentifier
+            )
+            let slice = Array(windows.dropFirst(offset).prefix(limit))
+            let enrichment = enrichedWithAccessibility(slice, candidates: windows)
+            // Accessibility fields make windows longer, so the size budget cuts the enriched page.
+            let page = DesktopListPaging.page(
+                enrichment.windows, offset: offset, limit: limit, moreAvailable: windows.count > offset + slice.count
+            )
+            let result = page.entries.map(DesktopWindowListing.projected)
             let text = DesktopWindowListing.text(
                 windows: result,
-                frontmostAppName: frontmost?.localizedName ?? frontmost?.bundleIdentifier,
-                hostAppName: DesktopHostApplication.currentName(),
+                frontmostAppName: DesktopWindowListing.outputText(
+                    frontmost?.localizedName ?? frontmost?.bundleIdentifier,
+                    cap: DesktopWindowListing.maximumOutputAppNameCharacters
+                ),
+                hostAppName: DesktopWindowListing.outputText(
+                    DesktopHostApplication.currentName(),
+                    cap: DesktopWindowListing.maximumOutputAppNameCharacters
+                ),
                 screenRecordingGranted: CGPreflightScreenCaptureAccess(),
-                accessibilityTimedOut: enrichment.timedOut
+                accessibilityTimedOut: enrichment.timedOut,
+                offset: offset,
+                nextOffset: page.nextOffset
             )
             return DesktopRunOutput(
                 action: action,
                 summary: text.summary,
                 windows: result,
                 count: result.count,
-                note: text.note
+                next_offset: page.nextOffset,
+                note: DesktopListPaging.joined([
+                    DesktopListPaging.note(page, limit: limit, noun: "windows", narrowedBy: "app_name, title, or on_screen_only"),
+                    text.note
+                ])
             )
 
         case .screenshot:
@@ -78,6 +99,9 @@ enum DesktopController {
 
         case .listElements:
             return try listElements(input, action: action)
+
+        case .readText:
+            return try readText(input, action: action)
 
         case .pressElement:
             return try await pressElement(input, action: action)
@@ -92,7 +116,9 @@ enum DesktopController {
             return try await zoom(input, context: context, action: action)
 
         case .moveMouse:
-            try DesktopElementPolicy.validatePointerAction(action, elementRef: input.element_ref, query: input.query)
+            try DesktopElementPolicy.validatePointerAction(
+                action, elementRef: input.element_ref, query: input.query, identifier: input.identifier
+            )
             try requireEventPosting()
             let destination = try moveToRequestedPoint(input, action: action)
             return DesktopRunOutput(action: action, summary: "Moved the pointer to (\(format(destination.x)), \(format(destination.y))).", pointer: pointer())
@@ -117,22 +143,15 @@ enum DesktopController {
             return DesktopRunOutput(action: action, summary: "Launched \(app.localizedName ?? app.bundleIdentifier ?? "application").", app: appInfo(app))
 
         case .activateApp:
+            let timeout = try boundedDouble(
+                input.timeout ?? DesktopActivationPolicy.defaultTimeout, name: "timeout", range: DesktopActivationPolicy.timeoutRange
+            )
             var app = matchingRunningApp(input, defaultToFrontmost: false)
             if app == nil, input.launch_if_needed ?? false {
                 app = try await launchApp(input, context: context)
             }
             guard let app else { throw DesktopControlError.appNotFound }
-            guard let activeProbe = try await activateApplication(app) else {
-                throw DesktopControlError.operationFailed(
-                    "The selected application did not become active before timeout."
-                        + (AXIsProcessTrusted() ? "" : " Granting Accessibility permission lets desktop.run use a fallback.")
-                )
-            }
-            return DesktopRunOutput(
-                action: action,
-                summary: "Activated \(app.localizedName ?? app.bundleIdentifier ?? "application").",
-                app: appInfo(app, probe: activeProbe)
-            )
+            return try await activateAppAndConfirm(app, timeout: timeout, action: action)
 
         case .hideApp, .unhideApp:
             let hide = parsedAction == .hideApp
@@ -273,6 +292,12 @@ enum DesktopController {
             try await Task.sleep(for: .seconds(duration))
             let elapsed = Int(Date().timeIntervalSince(started) * 1_000)
             return DesktopRunOutput(action: action, summary: "Waited \(format(duration)) second(s).", elapsed_ms: elapsed)
+
+        case .waitFor:
+            return try await waitFor(input, action: action)
+
+        case .batch:
+            return try await runBatch(input, context: context, action: action)
         }
     }
 }

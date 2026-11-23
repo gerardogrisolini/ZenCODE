@@ -17,8 +17,11 @@ import Foundation
 /// hex digits of a 32-bit FNV-1a hash of the element's role, subrole, title,
 /// description, and identifier (`fingerprint(of:)`): when the path now leads to
 /// a different element (siblings were inserted or removed), the fingerprint no
-/// longer matches and the reference is stale. The value and the frame are left
-/// out because they change while the element stays the same.
+/// longer matches. The value and the frame are left out because they change
+/// while the element stays the same. A reference whose path no longer leads to
+/// its element is relocated within the same window when exactly one element
+/// there has its role and fingerprint (`relocation(of:candidates:visitIsComplete:)`);
+/// otherwise it is stale.
 struct DesktopElementReference: Equatable, Sendable {
     enum WindowAnchor: Equatable, Sendable {
         case windowID(UInt32)
@@ -152,6 +155,15 @@ struct DesktopElementReference: Equatable, Sendable {
             hash ^= UInt32(byte)
             hash = hash &* 0x0100_0193
         }
+        func mixField(_ field: String) {
+            // Escape every byte reserved by the framing above. Ordinary AX text
+            // keeps its historical fingerprint; control bytes can no longer
+            // make two different field tuples produce the same byte stream.
+            for byte in field.utf8 {
+                if byte == 0x00 || byte == 0x01 || byte == 0x1F { mix(0x00) }
+                mix(byte)
+            }
+        }
         for (index, field) in [role, subrole, title, description, identifier].enumerated() {
             if index > 0 { mix(0x1F) }
             guard let field, !field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -159,7 +171,7 @@ struct DesktopElementReference: Equatable, Sendable {
                 continue
             }
             mix(0x01)
-            field.utf8.forEach(mix)
+            mixField(field)
         }
         let hex = String(hash, radix: 16)
         return String(repeating: "0", count: fingerprintLength - hex.count) + hex
@@ -168,6 +180,34 @@ struct DesktopElementReference: Equatable, Sendable {
     static func isValidFingerprint(_ fingerprint: String) -> Bool {
         fingerprint.utf8.count == fingerprintLength
             && fingerprint.utf8.allSatisfy { ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x61 && $0 <= 0x66) }
+    }
+
+    // MARK: Relocation
+
+    enum Relocation: Equatable {
+        /// The candidate at this index is the element of the reference.
+        case relocated(Int)
+        /// No single element can be taken for it: the reference stays stale.
+        case stale
+    }
+
+    static let relocationNote = "element_ref was relocated: the element moved in the window's Accessibility tree; use the returned ref from now on."
+
+    /// Decides whether the element of a reference whose path no longer leads
+    /// to it can be found again among `candidates`, the elements of a visit of
+    /// the reference's own window. Only after a complete visit, and only when
+    /// exactly one candidate has the reference's pid, role, and fingerprint and
+    /// can be given a new reference; otherwise stale. All the matches count, so
+    /// one without a reference still makes another match ambiguous.
+    static func relocation(of reference: DesktopElementReference, candidates: [DesktopElementInfo], visitIsComplete: Bool) -> Relocation {
+        guard visitIsComplete else { return .stale }
+        let matches = candidates.indices.filter { index in
+            let candidate = candidates[index]
+            return candidate.pid == reference.pid && candidate.role == reference.role
+                && fingerprint(of: candidate) == reference.fingerprint
+        }
+        guard matches.count == 1, candidates[matches[0]].ref != nil else { return .stale }
+        return .relocated(matches[0])
     }
 
     // MARK: Window anchor
