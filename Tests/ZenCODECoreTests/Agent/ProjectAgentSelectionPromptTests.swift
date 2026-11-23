@@ -80,6 +80,7 @@ struct ProjectAgentSelectionPromptTests {
             ).combinedPrompt
 
             #expect(prompt.contains("- Reviewer ["))
+            #expect(prompt.contains("pass the exact profile name as `profile`. Omit `profileRole`"))
             #expect(!prompt.contains("- Developer ["))
             #expect(!prompt.contains("- Reporter ["))
             #expect(!prompt.contains("No agent profile is associated with this project"))
@@ -98,7 +99,7 @@ struct ProjectAgentSelectionPromptTests {
             ).combinedPrompt
 
             #expect(prompt.contains("Delegation by role:"))
-            #expect(prompt.contains("profileRole"))
+            #expect(prompt.contains("Never pass `profile` or `model`"))
             // Without a saved selection the project sees its system profiles.
             #expect(prompt.contains("- organizer: "))
             #expect(prompt.contains("- developer: "))
@@ -180,7 +181,7 @@ struct ProjectAgentSelectionPromptTests {
         #expect(section.hasSuffix("an explicit scope.\n\n" + Self.rosterParagraph))
         // Said once, with no role-variant wording.
         #expect(section.components(separatedBy: "Developing a missing tool:").count == 2)
-        #expect(!section.contains("profileRole"))
+        #expect(!section.contains("using `profileRole:"))
     }
 
     @Test

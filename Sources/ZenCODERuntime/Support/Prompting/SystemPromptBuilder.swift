@@ -279,7 +279,8 @@ public enum SystemPromptBuilder {
         Delegatable agent profiles and model bindings:
         \(lines.joined(separator: "\n"))
         \(selectionPolicy)
-        In every agent.create `agents` item, pass the exact profile name as `profile`. For profiles with configured bindings, \
+        In every agent.create `agents` item, pass the exact profile name as `profile`. Omit `profileRole` and `complexity`: \
+        the role listed beside a profile helps you choose it; it is not another argument to send. For profiles with configured bindings, \
         pass the exact `binding:...` value shown after “pass model” as `model`; it is required for those profiles. \
         Do not substitute provider names, display names, raw model slugs, or aliases for a binding. Give each sub-agent \
         an explicit scope.

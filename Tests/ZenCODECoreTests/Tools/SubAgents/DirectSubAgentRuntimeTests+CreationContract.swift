@@ -36,13 +36,15 @@ extension DirectSubAgentRuntimeTests {
         #expect(item["required"] == nil)
         #expect(item["additionalProperties"] as? Bool == false)
 
+        let profile = try #require(itemProperties["profile"] as? [String: Any])
+        #expect((profile["description"] as? String)?.contains("omit profileRole") == true)
         let profileRole = try #require(itemProperties["profileRole"] as? [String: Any])
         #expect(profileRole["type"] as? String == "string")
         #expect(
             profileRole["enum"] as? [String] == AgentProfileRole.allCases.map(\.rawValue)
         )
         #expect(
-            (profileRole["description"] as? String)?.contains("Exclusive with profile") == true
+            (profileRole["description"] as? String)?.contains("omit both profile and model") == true
         )
 
         let complexity = try #require(itemProperties["complexity"] as? [String: Any])
@@ -69,6 +71,7 @@ extension DirectSubAgentRuntimeTests {
 
         let wireCatalog = RemoteToolWireCatalog(descriptors: [descriptor])
         let responsesPayload = try #require(wireCatalog.responsesToolPayloads.first)
+        #expect(responsesPayload["strict"] as? Bool == false)
         let responsesParameters = try #require(
             responsesPayload["parameters"] as? [String: Any]
         )

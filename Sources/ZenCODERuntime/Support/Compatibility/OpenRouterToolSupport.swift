@@ -36,12 +36,18 @@ public nonisolated struct RemoteToolWireCatalog: Sendable {
                   ) else {
                 return nil
             }
-            return [
+            var payload: [String: Any] = [
                 "type": "function",
                 "name": wireName,
                 "description": descriptor.description,
                 "parameters": parameters
             ]
+            // Responses may normalize an unspecified strict mode by requiring every
+            // property. agent.create requires one selector to be absent, not null.
+            if descriptor.name == "agent.create" {
+                payload["strict"] = false
+            }
+            return payload
         }
     }
 

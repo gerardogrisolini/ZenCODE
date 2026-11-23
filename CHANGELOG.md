@@ -244,6 +244,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- `agent.create` now tells the model to omit `profileRole` when naming a
+  profile, and to omit both `profile` and `model` when delegating by role.
+  Its Responses tool definition opts out of strict normalization so the
+  provider does not turn the two alternative selectors into required fields.
+
 - When ZenCODE removed images from the conversation, they vanished silently:
   the model kept the text around them (for example a tool result saying that
   the PNG is attached) and could describe a screenshot it never received. Each
