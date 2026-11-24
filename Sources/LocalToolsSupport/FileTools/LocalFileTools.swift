@@ -124,7 +124,7 @@ struct LocalInspectFileTool: FeatureTool {
         let max_symbols: Int?
     }
 
-    static let name = "local.inspectFile"
+    static let name = "local.inspect"
     static let description = "Returns compact file metadata, suggested read ranges, and symbol-like outline entries without returning the full file contents."
     static let inputSchema = buildInputSchema(
         CommonSchemaProperties.pathAliases + CommonSchemaProperties.symbolLimit,

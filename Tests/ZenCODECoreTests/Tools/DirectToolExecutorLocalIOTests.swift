@@ -414,7 +414,7 @@ struct DirectToolExecutorLocalIOTests {
         """.write(to: source, atomically: true, encoding: .utf8)
 
         let output = try await runFileTool(
-            "local.inspectFile",
+            "local.inspect",
             arguments: ["path": "App.swift"],
             workingDirectory: root
         )

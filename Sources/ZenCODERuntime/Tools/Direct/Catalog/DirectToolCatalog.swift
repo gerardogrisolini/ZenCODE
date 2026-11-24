@@ -69,7 +69,7 @@ public enum DirectToolCatalog {
 
     /// The core tools that only read, by exact name: the read-only Files
     /// tools (`local.pwd`, `local.ls`, `local.read`, `local.multiRead`,
-    /// `local.inspectFile`), every Search and Text tool, the read-only memory
+    /// `local.inspect`), every Search and Text tool, the read-only memory
     /// tools, the prompt-skill tools, `todo.read`, `tasks.list`, and
     /// `tasks.get`. Built from the read-only descriptors; of the todo and
     /// task ones only the three that read are kept.

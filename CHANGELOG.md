@@ -24,12 +24,20 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Renamed the core file tool `local.editFile` to `local.edit`. The argument
   schema is unchanged (`path`, `old`, `new`); prompts, tool routing,
   presentation, and docs now use the new name.
+- Renamed the core read-only file tool `local.inspectFile` to `local.inspect`.
+  Its argument schema and behavior are unchanged; prompts, tool routing, and
+  docs now use the new name.
 
 ### Fixed
 
 - ACP routes `/changes` and `/undo` from the operator's text block even when
   the prompt also carries resource, assistant-only, or known Xcode context
   blocks, without interpreting those blocks themselves as workspace commands.
+- `local.applyPatch` applies unified diffs that end with a line feed, as
+  `git diff` output does, including new-file diffs from `/dev/null` and CRLF
+  payloads. That final line feed was read as an extra empty context line, so
+  the patch failed with `Patch context ran past end of <file>` or a context
+  mismatch.
 
 ## [6.2.1] - 2026-11-24
 

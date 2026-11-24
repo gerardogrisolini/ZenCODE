@@ -270,7 +270,14 @@ extension LocalToolsSupport {
     static func parseUnifiedDiff(_ patch: String) throws -> [FilePatch] {
         // Lines keep their `\r`, so context and removals compare byte-exactly
         // with the file; only headers and markers are read without it.
-        let lines = PatchLines.split(patch)
+        var lines = PatchLines.split(patch)
+        // A payload ending in a line feed, as `git diff` output does, splits
+        // into a final empty element: that line feed terminates the last patch
+        // line and is not an empty context line. A bare empty line before it is
+        // still context. Dropping the last element keeps every other index.
+        if PatchLines.endsWithLineFeed(patch), lines.last?.isEmpty == true {
+            lines.removeLast()
+        }
         // Same line split as `PatchFileHeaders`, so its indices address `lines`.
         // A `--- ` line inside a hunk body is removed content (`-- note`) unless
         // the shared rule recognizes it as the start of a file header.

@@ -277,7 +277,7 @@ extension ACPCompatibilityTests {
         ]
         let inspectToolCall = presentedToolCall(
             id: "call_inspect",
-            name: "local.inspectFile",
+            name: "local.inspect",
             argumentsObject: ["path": "/tmp/workspace/alpha.swift"],
             argumentsJSON: #"{"path":"/tmp/workspace/alpha.swift"}"#
         )

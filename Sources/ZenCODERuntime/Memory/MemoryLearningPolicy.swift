@@ -109,7 +109,7 @@ actor MemoryLearningLedger {
             // Everything else (including swift.run/package and arbitrary aliases)
             // may mutate the workspace: do not infer safety from a blacklist.
             let observations: Set<String> = [
-                "local.read", "local.multiRead", "local.inspectFile", "local.ls", "local.pwd",
+                "local.read", "local.multiRead", "local.inspect", "local.ls", "local.pwd",
                 "search.glob", "search.grep", "search.locate", "text.head", "text.tail", "text.wc", "text.sort",
                 "git.status", "git.diff", "git.log", "git.show", "git.grep", "git.lsFiles", "git.blame", "git.branch", "git.remote",
                 "swift.outline"

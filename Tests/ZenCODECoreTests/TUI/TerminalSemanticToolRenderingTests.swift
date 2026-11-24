@@ -96,7 +96,7 @@ struct TerminalSemanticToolRenderingTests {
                 "0.03s"
             ),
             (
-                "local.inspectFile",
+                "local.inspect",
                 ["file_path": "Sources/App.swift"],
                 "Inspect",
                 "Sources/App.swift",

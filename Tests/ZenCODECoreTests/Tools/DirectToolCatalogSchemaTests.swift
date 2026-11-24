@@ -30,7 +30,7 @@ struct DirectToolCatalogSchemaTests {
         let coreNames = Set(DirectToolCatalog.coreDescriptors.map(\.name))
         let mutatingNames = coreNames.subtracting(readNames)
         let expectedReadNames: Set<String> = [
-            "local.pwd", "local.ls", "local.read", "local.multiRead", "local.inspectFile",
+            "local.pwd", "local.ls", "local.read", "local.multiRead", "local.inspect",
             "search.glob", "search.grep", "search.locate",
             "text.head", "text.tail", "text.sort", "text.wc",
             "skills.list", "skills.read",
