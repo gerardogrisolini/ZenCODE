@@ -46,7 +46,7 @@ import Testing
         let workspace = try MemoryTestWorkspace()
         defer { workspace.remove() }
         try await workspace.withIsolatedSupport {
-            let fix = try toolCall(id: "fix", name: "local.editFile",
+            let fix = try toolCall(id: "fix", name: "local.edit",
                 args: ["path": "Sources/A.swift", "old": "a", "new": "b"])
             let verify = try toolCall(id: "verify", name: "swift.build",
                 args: ["path": workspace.workspaceURL.path])
@@ -78,7 +78,7 @@ import Testing
             // The regression the positive consolidation case uses: a failing
             // test, a correction, then a passing test.
             let failure = try toolCall(id: "widget-test-failure", name: "swift.test", args: [:])
-            let fix = try toolCall(id: "widget-count-edit", name: "local.editFile",
+            let fix = try toolCall(id: "widget-count-edit", name: "local.edit",
                 args: ["path": "Sources/Widget.swift", "old": "let count = 0", "new": "let count = 1"])
             let verify = try toolCall(id: "widget-test-verification", name: "swift.test", args: [:])
             let failedOutput = """
@@ -268,7 +268,7 @@ extension ConservativeMemoryLearningBackendTests {
                 }
                 // Empty args use the real Swift adapter's default session workspace.
                 let failure = try toolCall(id: "widget-test-failure", name: "swift.test", args: [:])
-                let fix = try toolCall(id: "widget-count-edit", name: "local.editFile",
+                let fix = try toolCall(id: "widget-count-edit", name: "local.edit",
                     args: ["path": "Sources/Widget.swift", "old": "let count = 0", "new": "let count = 1"])
                 let verify = try toolCall(id: "widget-test-verification", name: "swift.test", args: [:])
                 let failedOutput = """
@@ -304,7 +304,7 @@ extension ConservativeMemoryLearningBackendTests {
                 let configuration = AgentCoreSessionConfiguration(sessionID: "root", modelID: "same-model",
                     workingDirectory: workspace.workspaceURL, systemPrompt: "Keep root instructions.", cacheKey: "root-cache",
                     history: [.init(role: .user, content: "Earlier root message.")],
-                    allowedToolNames: ["swift.test", "local.editFile", "memory.write"])
+                    allowedToolNames: ["swift.test", "local.edit", "memory.write"])
                 let response = try await runner.sendPrompt(configuration: configuration,
                     prompt: "Fix the initial Widget count regression.", attachments: [], onEvent: { _ in })
                 #expect(response.text == "normal response")

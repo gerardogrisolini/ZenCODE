@@ -2,7 +2,7 @@
 //  LocalFileEditTools.swift
 //  ZenCODE
 //
-//  The in-place edit tools local.replace, local.editFile, and local.multiEdit
+//  The in-place edit tools local.replace, local.edit, and local.multiEdit
 //  with their presentations and failure messages.
 //
 
@@ -98,7 +98,7 @@ struct LocalEditFileTool: FeatureTool {
         let new: String?
     }
 
-    static let name = "local.editFile"
+    static let name = "local.edit"
     static let description = "Replaces exactly one occurrence of `old` with `new`. Read enough context to make `old` unique. Use `multiEdit` for multiple atomic edits to one file."
     static let inputSchema = buildInputSchema(
         [.string("path")] + CommonSchemaProperties.edit,

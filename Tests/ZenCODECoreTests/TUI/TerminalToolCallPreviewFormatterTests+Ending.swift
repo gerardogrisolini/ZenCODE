@@ -13,7 +13,7 @@ import Testing
 extension TerminalToolCallPreviewFormatterTests {
     // MARK: - Ignored input
 
-    @Test(arguments: ["local.applyPatch", "local.read", "local.exec", "agent.create"])
+    @Test(arguments: ["local.delete", "local.read", "local.exec", "agent.create"])
     func toolsThatAreNotDrawnProduceNothing(name: String) {
         let events: [DirectAgentToolCallPreview] = [
             .toolStarted(name: name),
@@ -33,7 +33,7 @@ extension TerminalToolCallPreviewFormatterTests {
     @Test
     func argumentsThatAreNotDrawnProduceNothing() {
         let events: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: "local.editFile"),
+            .toolStarted(name: "local.edit"),
             .parameterStarted(name: "replaceAll"),
             .parameterText("true"),
             .parameterEnded,
@@ -43,7 +43,7 @@ extension TerminalToolCallPreviewFormatterTests {
             .ended
         ]
 
-        #expect(rendered(events, interactive: false) == "🛠️  local.editFile\n")
+        #expect(rendered(events, interactive: false) == "🛠️  local.edit\n")
     }
 
     @Test
@@ -148,7 +148,7 @@ extension TerminalToolCallPreviewFormatterTests {
             .parameterText("A.swift"),
             .parameterStarted(name: "content"),
             .parameterText("a"),
-            .toolStarted(name: "local.editFile"),
+            .toolStarted(name: "local.edit"),
             .parameterStarted(name: "old"),
             .parameterText("b"),
             .toolStarted(name: "local.read"),
@@ -157,7 +157,7 @@ extension TerminalToolCallPreviewFormatterTests {
             .ended
         ]
 
-        #expect(rendered(events, interactive: false) == "🛠️  local.write\na\n🛠️  local.editFile\n- b\n")
+        #expect(rendered(events, interactive: false) == "🛠️  local.write\na\n🛠️  local.edit\n- b\n")
     }
 
     @Test
@@ -201,7 +201,7 @@ extension TerminalToolCallPreviewFormatterTests {
     func aToolThatIsNotDrawnRecordsNoCall() {
         var formatter = makeFormatter(interactive: false)
         _ = feed([
-            .toolStarted(name: "local.applyPatch"),
+            .toolStarted(name: "local.delete"),
             .parameterStarted(name: "path"),
             .parameterText("A.swift")
         ], to: &formatter)
@@ -252,7 +252,7 @@ extension TerminalToolCallPreviewFormatterTests {
     func thePathOfTheFilePathAliasIsRecorded() {
         var formatter = makeFormatter(interactive: false)
         _ = feed([
-            .toolStarted(name: "local.editFile"),
+            .toolStarted(name: "local.edit"),
             .parameterStarted(name: "file_path"),
             .parameterText("A.swift"),
             .parameterEnded,
@@ -261,6 +261,6 @@ extension TerminalToolCallPreviewFormatterTests {
         ], to: &formatter)
 
         #expect(formatter.finish(columns: { 80 }).drawn
-            == DrawnCall(toolName: "local.editFile", path: "A.swift", endedOnScreen: true))
+            == DrawnCall(toolName: "local.edit", path: "A.swift", endedOnScreen: true))
     }
 }

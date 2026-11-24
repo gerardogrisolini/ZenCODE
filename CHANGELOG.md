@@ -10,6 +10,21 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Added
+
+- With the in-process DS4 provider the terminal chat also draws
+  `local.applyPatch` live while the model writes it: the text of `patch` (or
+  `diff`) is shown as it is, each finished row repainted with the diff colors
+  and the syntax colors of the file of its section. As for the other drawn
+  tools, the compact block that follows can keep only its status row, whose
+  target is the first file of the patch, then `(+N more)`.
+
+### Changed
+
+- Renamed the core file tool `local.editFile` to `local.edit`. The argument
+  schema is unchanged (`path`, `old`, `new`); prompts, tool routing,
+  presentation, and docs now use the new name.
+
 ### Fixed
 
 - ACP routes `/changes` and `/undo` from the operator's text block even when

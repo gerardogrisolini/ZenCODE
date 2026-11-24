@@ -44,7 +44,7 @@ struct ToolPresentationResolverTests {
         )
         let call = DirectAgentToolCall(
             id: "resolve",
-            name: "local.editFile",
+            name: "local.edit",
             argumentsObject: [
                 "path": "/tmp/App.swift",
                 "oldString": "let old = 1",

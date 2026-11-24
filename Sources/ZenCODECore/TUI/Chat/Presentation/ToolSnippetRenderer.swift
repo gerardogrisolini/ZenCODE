@@ -59,7 +59,7 @@ enum ToolSnippetRenderer {
                 return []
             }
             return numberedCodeSnippetRows(content)
-        case "local.replace", "local.editFile":
+        case "local.replace", "local.edit":
             return sourceChangeRows(
                 old: ToolArgumentReader.rawStringArgument(arguments, keys: ["old"]),
                 new: ToolArgumentReader.rawStringArgument(arguments, keys: ["new"]),

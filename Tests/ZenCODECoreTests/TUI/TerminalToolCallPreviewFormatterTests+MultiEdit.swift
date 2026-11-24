@@ -4,7 +4,7 @@
 //
 //  Tests of the live drawing of `local.multiEdit`: the `old` and `new`
 //  strings of the JSON `edits` argument drawn as the arguments of
-//  `local.editFile` are, the escapes decoded, the rest of the JSON skipped, the
+//  `local.edit` are, the escapes decoded, the rest of the JSON skipped, the
 //  output that does not depend on how the stream was split, the malformed JSON
 //  that stops the drawing, the interruption in the middle of a string, and the
 //  record of the call that ended.

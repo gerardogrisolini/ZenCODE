@@ -108,7 +108,7 @@ with the call's elapsed time as the terminal shows it (` · 1.25s`); the
 
 Diffs are **per operation**, not a reconstructed end-of-turn summary. When Xcode
 advertises the standard ACP filesystem capabilities, `local.read` /
-`local.multiRead` read client text, and `local.write` / `local.editFile` /
+`local.multiRead` read client text, and `local.write` / `local.edit` /
 `local.multiEdit` / `local.replace` write through the client rather than bypassing
 its buffers. The latter three require both read and write capabilities. No extra
 agent, MCP extension or Xcode setting is required. The tool descriptions direct

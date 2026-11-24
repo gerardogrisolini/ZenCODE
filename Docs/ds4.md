@@ -400,11 +400,12 @@ differ from the defaults of ds4-agent.
   tags between the parameters, and the end of a value), as in ds4-agent. The
   content of the parameter values is sampled normally.
 - While the model writes a call to `local.write`, `local.append`,
-  `local.editFile`, `local.replace`, or `local.multiEdit`, the terminal draws it
-  live, as ds4-agent does, with one difference in the header row: ds4-agent
-  labels its calls with a short word (`write`, `append`, `edit`, `replace`),
-  while ZenCODE names the tool canonically (`local.write`, `local.append`,
-  `local.editFile`, `local.replace`, `local.multiEdit`). The header shows only
+  `local.edit`, `local.replace`, `local.multiEdit`, or `local.applyPatch`,
+  the terminal draws it live, as ds4-agent does, with one difference in the
+  header row: ds4-agent labels its calls with a short word (`write`, `append`,
+  `edit`, `replace`), while ZenCODE names the tool canonically (`local.write`,
+  `local.append`, `local.edit`, `local.replace`, `local.multiEdit`,
+  `local.applyPatch`). The header shows only
   the icon and the canonical tool name, never the path, whichever order the
   model writes its arguments in (the path before the text, or after it as in
   `new`, `old`, then `path`); the text follows as it is generated.
@@ -413,9 +414,17 @@ differ from the defaults of ds4-agent.
   order and without a separator between the edits, and without the JSON around
   it: the strings are decoded as they stream, so the quotes, brackets, keys, and
   escapes are not shown (`\n` is a line break). If the JSON of `edits` is
-  malformed, the drawing of that argument stops where it breaks. A finished row
-  is repainted with the syntax colors of the file's extension when it is plain
-  ASCII and narrower than the terminal; any other row stays as written, and
+  malformed, the drawing of that argument stops where it breaks. For
+  `local.applyPatch`, the text of `patch` (or of its alias `diff`) is shown as
+  it is: its rows already start with their `+`, `-`, or space, so nothing is
+  added. A finished row is repainted when it is plain ASCII and narrower than
+  the terminal: with the syntax colors of the file's extension or, in a patch,
+  with the diff colors (file headers, hunks, additions, removals), the source
+  of additions, removals, and context rows in the syntax colors of the file of
+  its section (the last `*** Add File:`, `*** Update File:`,
+  `*** Delete File:`, or `+++` file header; before the first one only the diff
+  colors apply). Any other row stays as written, a line of a patch that other
+  output splits included, and
   block comments are colored one row at a time. Nothing is cut: a long file
   scrolls in full. The text is the one the model writes, before any unescaping
   of the call (the JSON strings of `edits` excepted). When other output lands
@@ -428,14 +437,16 @@ differ from the defaults of ds4-agent.
   the model wrote drew only that call, and the channel is an interactive
   terminal, the block does not repeat the header and keeps only
   its status row under the last row of the preview, without a blank row: the
-  path and the status (`/tmp/Example.swift ✅ 1.38ms`). The path appears only
-  there, whichever order the model wrote its arguments in. Otherwise
+  path and the status (`/tmp/Example.swift ✅ 1.38ms`). For a patch the path is
+  the first file it names, followed by `(+N more)` when it names several
+  (`/tmp/A.swift (+1 more) ✅`). The path appears only there, whichever order
+  the model wrote its arguments in. Otherwise
   it keeps its header and target as for any other tool. The calls of one
   tool-call block run only after the model has written the whole block, so
-  when it draws several calls (for example many `local.editFile` calls on the
+  when it draws several calls (for example many `local.edit` calls on the
   same file) all the previews come first, and then every call shows its full
   compact block, in order.
-  Every other tool, `local.applyPatch` included, shows only its compact block.
+  Every other tool shows only its compact block.
   The preview exists only in the terminal chat: ACP, the headless and JSONL
   output, Telegram, the macOS app, saved sessions, and sub-agents never receive
   it.

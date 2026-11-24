@@ -241,7 +241,7 @@ public actor TurnFileChangeTracker {
                 request.arguments["filePath"]?.stringValue,
                 request.arguments["path"]?.stringValue
             ])
-        case "local.replace", "local.editFile", "local.multiEdit", "local.delete", "local.append":
+        case "local.replace", "local.edit", "local.multiEdit", "local.delete", "local.append":
             return compactedPaths([
                 request.arguments["path"]?.stringValue,
                 request.arguments["file_path"]?.stringValue,

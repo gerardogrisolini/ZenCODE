@@ -294,7 +294,7 @@ extension DirectSubAgentRuntimeTests {
         await runtime.recordEvent(.thought("private reasoning"), agentID: agentID)
         let toolCall = presentedToolCall(
             id: "edit-call",
-            name: "local.editFile",
+            name: "local.edit",
             argumentsObject: [
                 "path": "/tmp/Example.swift",
                 "old": "old",

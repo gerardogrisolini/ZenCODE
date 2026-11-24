@@ -45,7 +45,7 @@ struct ACPClientFileSystemTests {
             #expect(!read.contains("DISK"))
             try await OperationFileChangeRecorder.$current.withValue(recorder) {
                 _ = try await invoke(
-                    "local.editFile", ["path": "File.swift", "old": "before", "new": "after"], root: root)
+                    "local.edit", ["path": "File.swift", "old": "before", "new": "after"], root: root)
             }
         }
         #expect(try String(contentsOf: file, encoding: .utf8) == "DISK\n")
@@ -53,7 +53,7 @@ struct ACPClientFileSystemTests {
         #expect(recorder.changes == [.init(path: file.path, oldText: "before\n", newText: "after\n")])
         let requests = await fixture.requests
         #expect(requests.allSatisfy { $0.objectValue?["params"]?.objectValue?["sessionId"] == .string("root-session") })
-        let call = DirectAgentToolCall(id: "edit", name: "local.editFile", argumentsObject: [:], argumentsJSON: "{}")
+        let call = DirectAgentToolCall(id: "edit", name: "local.edit", argumentsObject: [:], argumentsJSON: "{}")
         let update = ZenCODEACPBridge.toolCallCompletionJSONUpdate(
             for: call,
             result: .init(
@@ -114,7 +114,7 @@ struct ACPClientFileSystemTests {
             await ClientTextFileSystem.$current.withValue(harness.client.access(sessionID: "root") { true }) {
                 await #expect(throws: (any Error).self) {
                     _ = try await invoke(
-                        "local.editFile", ["path": "File.swift", "old": "before", "new": "after"], root: root)
+                        "local.edit", ["path": "File.swift", "old": "before", "new": "after"], root: root)
                 }
             }
             #expect(await fixture.writeCount == 0)
@@ -243,7 +243,7 @@ struct ACPClientFileSystemTests {
             configuration: config, writer: harness.writer, backendFactory: { _, _ in backend })
         try await bridge.initialize(
             id: .string("init"), params: ["clientCapabilities": ["fs": ["readTextFile": true, "writeTextFile": true]]])
-        try await bridge.newSession(id: .string("new"), params: ["cwd": root.path, "allowedTools": ["local.editFile"]])
+        try await bridge.newSession(id: .string("new"), params: ["cwd": root.path, "allowedTools": ["local.edit"]])
         let sessionID = try #require(await bridge.clientFileSystemTestSessionID())
         try await bridge.prompt(
             id: .string("prompt"), params: ["sessionId": sessionID, "prompt": "edit the client file"])
@@ -409,7 +409,7 @@ private actor ClientFileSystemTestBackend: AgentRuntimeBackend {
             swiftFeatureRuntime: SwiftFeatureRuntime(features: []),
             subAgentContextualBackendFactory: { _ in ClientFileSystemTestBackend() })
         let call = DirectAgentToolCall(
-            id: "client-edit", name: "local.editFile",
+            id: "client-edit", name: "local.edit",
             argumentsObject: ["path": "File.swift", "old": "before", "new": "after"],
             argumentsJSON: #"{"path":"File.swift","old":"before","new":"after"}"#)
         await onEvent(.toolCallStarted(call))

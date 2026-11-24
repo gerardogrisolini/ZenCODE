@@ -169,7 +169,7 @@ struct TerminalToolCallPreviewPresenterTests {
             .parameterStarted(name: "content"),
             .parameterText("let a = 1\n"),
             .parameterEnded,
-            .toolStarted(name: "local.editFile"),
+            .toolStarted(name: "local.edit"),
             .parameterStarted(name: "path"),
             .parameterText("B.swift"),
             .parameterEnded,
@@ -188,7 +188,7 @@ struct TerminalToolCallPreviewPresenterTests {
         ))
         await presenter.presentToolCallStarted(toolCall(
             id: "call-2",
-            name: "local.editFile",
+            name: "local.edit",
             arguments: ["path": "B.swift", "old": "", "new": "let b = 2\n"],
             json: #"{"path":"B.swift","old":"","new":"let b = 2\n"}"#
         ))
@@ -197,7 +197,7 @@ struct TerminalToolCallPreviewPresenterTests {
         #expect(text.components(separatedBy: Self.commentary).count - 1 == 1)
         let commentary = try #require(text.range(of: Self.commentary))
         let first = try #require(text.range(of: "🛠️  local.write\nlet a = 1\n"))
-        let second = try #require(text.range(of: "🛠️  local.editFile\n+ let b = 2\n"))
+        let second = try #require(text.range(of: "🛠️  local.edit\n+ let b = 2\n"))
         #expect(commentary.upperBound <= first.lowerBound)
         #expect(first.upperBound <= second.lowerBound)
         #expect(await fixture.buffer.takePending() == "")

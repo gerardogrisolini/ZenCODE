@@ -39,7 +39,7 @@ struct DirectToolCatalogSchemaTests {
             "agent.list", "agent.get", "agent.wait"
         ]
         var expectedMutatingNames: Set<String> = [
-            "local.write", "local.replace", "local.editFile", "local.multiEdit",
+            "local.write", "local.replace", "local.edit", "local.multiEdit",
             "local.append", "local.mkdir", "local.delete", "local.move", "local.applyPatch",
             "memory.write", "memory.update", "memory.archive", "memory.restore",
             "todo.write", "tasks.create", "tasks.retry", "tasks.cancel",
@@ -65,7 +65,7 @@ struct DirectToolCatalogSchemaTests {
 
     @Test
     func localEditSchemasExposeOnlyCanonicalTokenEfficientProperties() throws {
-        for name in ["local.editFile", "local.replace"] {
+        for name in ["local.edit", "local.replace"] {
             let descriptor = try #require(
                 DirectToolCatalog.coreDescriptors.first { $0.name == name }
             )

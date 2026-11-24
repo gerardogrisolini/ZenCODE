@@ -26,7 +26,7 @@ struct CompactOperationFileChangeTests {
         (0..<2200).map { "entry \($0): " + String(repeating: "unchanged text ", count: 5) + "\n" }.joined()
     }
 
-    @Test(arguments: ["local.editFile", "local.replace", "local.multiEdit", "local.write", "local.applyPatch", "local.append"])
+    @Test(arguments: ["local.edit", "local.replace", "local.multiEdit", "local.write", "local.applyPatch", "local.append"])
     func smallEditsToLargeFilesRetainOnlyExactCompactEvidence(tool: String) async throws {
         let root = try workspace()
         defer { try? FileManager.default.removeItem(at: root) }

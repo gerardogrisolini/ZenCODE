@@ -70,7 +70,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         name: String = "local.write",
         path: String = Self.path
     ) -> DirectAgentToolCall {
-        let arguments: [String: String] = name == "local.editFile"
+        let arguments: [String: String] = name == "local.edit"
             ? ["path": path, "old": "let x = 0\n", "new": "let x = 1\n"]
             : ["path": path, "content": "let x = 1\n"]
         let json = (try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]))
@@ -78,14 +78,14 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         return presentedToolCall(id: id, name: name, argumentsObject: arguments, argumentsJSON: json)
     }
 
-    /// The preview of a `local.editFile` call on `path`; `ends` closes its
+    /// The preview of a `local.edit` call on `path`; `ends` closes its
     /// tool-call block.
     private func editPreview(
         path: String = Self.path,
         ends: Bool
     ) -> [DirectAgentToolCallPreview] {
         var events: [DirectAgentToolCallPreview] = [
-            .toolStarted(name: "local.editFile"),
+            .toolStarted(name: "local.edit"),
             .parameterStarted(name: "path"),
             .parameterText(path),
             .parameterEnded,
@@ -151,7 +151,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
 
         await renderer.writeThought("Planning")
         await send([
-            .toolStarted(name: "local.applyPatch"),
+            .toolStarted(name: "local.delete"),
             .parameterStarted(name: "path"),
             .parameterText(Self.path),
             .parameterEnded,
@@ -325,11 +325,11 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
     func anEditWrittenWithThePathLastIsNotFollowedByASecondHeader() async {
         let columns = 80
         let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
-        let toolCall = fileCall(id: "edit-1", name: "local.editFile")
+        let toolCall = fileCall(id: "edit-1", name: "local.edit")
 
         // The arguments in alphabetical order, as DS4 models may write them.
         await send([
-            .toolStarted(name: "local.editFile"),
+            .toolStarted(name: "local.edit"),
             .parameterStarted(name: "new"),
             .parameterText("let x = 1\n"),
             .parameterEnded,
@@ -347,10 +347,10 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
 
         let shown = await screen(of: renderer, width: columns)
         #expect(shown == [
-            "", "", "🛠️  local.editFile", "+ let x = 1", "- let x = 0",
+            "", "", "🛠️  local.edit", "+ let x = 1", "- let x = 0",
             "/tmp/Example.swift ✅", "", ""
         ].joined(separator: "\n"))
-        #expect(shown.components(separatedBy: "local.editFile").count - 1 == 1)
+        #expect(shown.components(separatedBy: "local.edit").count - 1 == 1)
     }
 
     @Test
@@ -384,7 +384,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
     @Test
     func theScreenIsTheSameWhateverTheOrderOfTheArguments() async {
         let columns = 80
-        let toolCall = fileCall(id: "edit-1", name: "local.editFile")
+        let toolCall = fileCall(id: "edit-1", name: "local.edit")
         let path: [DirectAgentToolCallPreview] = [
             .parameterStarted(name: "path"), .parameterText(Self.path), .parameterEnded
         ]
@@ -397,7 +397,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
 
         for events in [path + text, text + path] {
             let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
-            await send([.toolStarted(name: "local.editFile")] + events + [.ended], to: renderer)
+            await send([.toolStarted(name: "local.edit")] + events + [.ended], to: renderer)
             await renderer.writeToolCallStarted(toolCall)
             #expect(await renderer.snapshot().activeToolRenderedRowCount == 1)
             started.append(await screen(of: renderer, width: columns))
@@ -408,12 +408,12 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         // The header is the tool name alone; the path is only in the status row.
         #expect(started[0] == started[1])
         #expect(started[0] == [
-            "", "", "🛠️  local.editFile", "+ let x = 1", "- let x = 0",
+            "", "", "🛠️  local.edit", "+ let x = 1", "- let x = 0",
             "/tmp/Example.swift ⏳", ""
         ].joined(separator: "\n"))
         #expect(completed[0] == completed[1])
         #expect(completed[0] == [
-            "", "", "🛠️  local.editFile", "+ let x = 1", "- let x = 0",
+            "", "", "🛠️  local.edit", "+ let x = 1", "- let x = 0",
             "/tmp/Example.swift ✅", "", ""
         ].joined(separator: "\n"))
         #expect(completed[0].components(separatedBy: "/tmp/Example.swift").count - 1 == 1)
@@ -467,7 +467,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         // block no longer follows its preview, and the second finds no record.
         await send(writePreview(content: ["let x = 1\n"], path: "/tmp/A.swift", ends: false) + [
             .parameterEnded,
-            .toolStarted(name: "local.editFile"),
+            .toolStarted(name: "local.edit"),
             .parameterStarted(name: "path"),
             .parameterText("/tmp/B.swift"),
             .parameterEnded,
@@ -478,16 +478,16 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
         ], to: renderer)
         await renderer.writeToolCallStarted(fileCall(id: "write-a", path: "/tmp/A.swift"))
         #expect(await renderer.snapshot().activeToolRenderedRowCount == 2)
-        await renderer.writeToolCallStarted(fileCall(id: "edit-b", name: "local.editFile", path: "/tmp/B.swift"))
+        await renderer.writeToolCallStarted(fileCall(id: "edit-b", name: "local.edit", path: "/tmp/B.swift"))
         #expect(await renderer.snapshot().activeToolRenderedRowCount == 2)
         #expect(await renderer.previewMergedToolCallID == nil)
 
         let shown = await screen(of: renderer, width: columns)
         #expect(shown == [
             "", "", "🛠️  local.write", "let x = 1",
-            "", "🛠️  local.editFile", "+ let x = 1",
+            "", "🛠️  local.edit", "+ let x = 1",
             "", "🛠️  local.write", "/tmp/A.swift ⏳",
-            "", "🛠️  local.editFile", "/tmp/B.swift ⏳", ""
+            "", "🛠️  local.edit", "/tmp/B.swift ⏳", ""
         ].joined(separator: "\n"))
     }
 
@@ -495,8 +495,8 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
     func drawnCallsOfOneBlockOnTheSameFileKeepTheirOwnHeaders() async {
         let columns = 80
         let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
-        let first = fileCall(id: "edit-1", name: "local.editFile")
-        let second = fileCall(id: "edit-2", name: "local.editFile")
+        let first = fileCall(id: "edit-1", name: "local.edit")
+        let second = fileCall(id: "edit-2", name: "local.edit")
 
         // Both calls name the same tool and path and are drawn before either
         // runs: the preview on screen is the second one's, so the block of the
@@ -513,10 +513,10 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
 
         let shown = await screen(of: renderer, width: columns)
         #expect(shown == [
-            "", "", "🛠️  local.editFile", "- let x = 0", "+ let x = 1",
-            "", "🛠️  local.editFile", "- let x = 0", "+ let x = 1",
-            "", "🛠️  local.editFile", "/tmp/Example.swift ✅",
-            "", "🛠️  local.editFile", "/tmp/Example.swift ✅", "", ""
+            "", "", "🛠️  local.edit", "- let x = 0", "+ let x = 1",
+            "", "🛠️  local.edit", "- let x = 0", "+ let x = 1",
+            "", "🛠️  local.edit", "/tmp/Example.swift ✅",
+            "", "🛠️  local.edit", "/tmp/Example.swift ✅", "", ""
         ].joined(separator: "\n"))
     }
 
@@ -524,7 +524,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
     func aLaterBlockThatDrawsOneCallMergesAgain() async {
         let columns = 80
         let renderer = makeRenderer(standardErrorIsTerminal: true, columnWidthProvider: { columns })
-        let calls = (1...3).map { fileCall(id: "edit-\($0)", name: "local.editFile") }
+        let calls = (1...3).map { fileCall(id: "edit-\($0)", name: "local.edit") }
 
         await send(editPreview(ends: false) + editPreview(ends: true), to: renderer)
         for call in calls.prefix(2) {
@@ -542,7 +542,7 @@ struct TerminalChatToolCallPreviewTests: RenderCoordinatorTestSupport {
 
         let shown = await screen(of: renderer, width: columns)
         #expect(shown.hasSuffix([
-            "🛠️  local.editFile", "- let x = 0", "+ let x = 1",
+            "🛠️  local.edit", "- let x = 0", "+ let x = 1",
             "/tmp/Example.swift ✅", "", ""
         ].joined(separator: "\n")))
     }

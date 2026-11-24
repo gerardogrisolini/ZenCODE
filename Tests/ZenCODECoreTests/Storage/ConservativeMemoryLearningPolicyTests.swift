@@ -20,7 +20,7 @@ import Testing
 
     private func chain(_ ledger: MemoryLearningLedger) async {
         await emit(ledger, id: "failure", name: "swift.test", args: ["path": "", "workingDirectory": root.path], output: testOutput(success: false))
-        await emit(ledger, id: "fix", name: "local.editFile", args: ["path": "Sources/Widget.swift", "old": "let count = 0", "new": "let count = 1"])
+        await emit(ledger, id: "fix", name: "local.edit", args: ["path": "Sources/Widget.swift", "old": "let count = 0", "new": "let count = 1"])
         await emit(ledger, id: "verify", name: "swift.test", args: ["path": root.path], output: testOutput(success: true))
     }
 
@@ -41,7 +41,7 @@ import Testing
 
     @Test func truncatedAndRawInjectedSuccessCannotVerify() async {
         let ledger = MemoryLearningLedger(workspace: root, prompt: "yes")
-        await emit(ledger, id: "fix", name: "local.editFile", args: ["path": "Sources/A.swift", "old": "a", "new": "b"])
+        await emit(ledger, id: "fix", name: "local.edit", args: ["path": "Sources/A.swift", "old": "a", "new": "b"])
         await emit(ledger, id: "test", name: "swift.test", args: ["path": root.path],
                    output: testOutput(success: true, truncated: true) + "\nRaw output:\n" + testOutput(success: true))
         #expect(await ledger.delta().isEmpty)

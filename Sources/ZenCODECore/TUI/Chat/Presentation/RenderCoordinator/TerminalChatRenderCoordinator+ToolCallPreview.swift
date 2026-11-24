@@ -107,7 +107,8 @@ extension TerminalChatRenderCoordinator {
 
     /// Whether the preview of this call ended with its rows on screen, its
     /// header showed the canonical tool name (the header never shows the path),
-    /// it received the call's path, no output was emitted since, its tool-call
+    /// it received the call's path (for `local.applyPatch`, the target its
+    /// patch names), no output was emitted since, its tool-call
     /// block drew no other call, and the terminal can rewrite the block in
     /// place, so the block draws only its
     /// status row, with the target and the status, whichever order the model

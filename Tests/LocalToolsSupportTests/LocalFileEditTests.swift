@@ -7,7 +7,7 @@ import LocalToolsSupport
 struct LocalFileEditTests {
     @Test
     func editSchemasAreCanonicalCompactAndNestedRequirementsAreExplicit() throws {
-        let edit = try Self.descriptor("local.editFile")
+        let edit = try Self.descriptor("local.edit")
         let replace = try Self.descriptor("local.replace")
         let multi = try Self.descriptor("local.multiEdit")
 
@@ -42,7 +42,7 @@ struct LocalFileEditTests {
         let file = root.appendingPathComponent("endings.txt")
         try "one\(separator)two\(separator)three".write(to: file, atomically: true, encoding: .utf8)
 
-        _ = try await Self.invoke("local.editFile", [
+        _ = try await Self.invoke("local.edit", [
             "path": file.path,
             "old": "one\ntwo",
             "new": "ONE\nTWO\nEXTRA"
@@ -57,18 +57,18 @@ struct LocalFileEditTests {
         let file = root.appendingPathComponent("ambiguous.txt")
         try "aaaa secret-value".write(to: file, atomically: true, encoding: .utf8)
 
-        let absent = await Self.failure("local.editFile", [
+        let absent = await Self.failure("local.edit", [
             "path": file.path, "old": "very-long-secret-old-value", "new": "x"
         ], root)
         #expect(absent.contains("old text was not found"))
         #expect(!absent.contains("very-long-secret-old-value"))
 
-        let overlapping = await Self.failure("local.editFile", [
+        let overlapping = await Self.failure("local.edit", [
             "path": file.path, "old": "aa", "new": "x"
         ], root)
         #expect(overlapping.contains("matched 3 times"))
 
-        let empty = await Self.failure("local.editFile", [
+        let empty = await Self.failure("local.edit", [
             "path": file.path, "old": "", "new": "x"
         ], root)
         #expect(empty.contains("must not be empty"))

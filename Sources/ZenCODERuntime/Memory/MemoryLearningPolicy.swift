@@ -114,7 +114,7 @@ actor MemoryLearningLedger {
                 "git.status", "git.diff", "git.log", "git.show", "git.grep", "git.lsFiles", "git.blame", "git.branch", "git.remote",
                 "swift.outline"
             ]
-            let isCorrection = ["local.editFile", "local.multiEdit", "local.write"].contains(call.name)
+            let isCorrection = ["local.edit", "local.multiEdit", "local.write"].contains(call.name)
             let isVerification = call.name == "swift.test" || call.name == "swift.build"
             guard observations.contains(call.name) || isCorrection || isVerification else { overflow = true; return }
             // A verification/correction that cannot be interpreted cannot leave
@@ -171,7 +171,7 @@ actor MemoryLearningLedger {
                 guard !result.output.lowercased().contains("truncated"), result.output.count <= 2400 else { return }
                 kind = .projectFile
                 detail = result.output
-            } else if ["local.editFile", "local.multiEdit", "local.write"].contains(call.name), !result.isFailure {
+            } else if ["local.edit", "local.multiEdit", "local.write"].contains(call.name), !result.isFailure {
                 kind = .correction
                 detail = call.argumentsJSON
             } else { return }

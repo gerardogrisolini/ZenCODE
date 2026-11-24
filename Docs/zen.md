@@ -1889,7 +1889,7 @@ No persisted file format changes.
 
 ### Local file editing
 
-`local.editFile`, `local.multiEdit`, and `local.replace` accept only the canonical `old`/`new` payload fields; the legacy aliases `oldString`, `old_string`, `newString`, and `new_string` are not supported. Empty or ambiguous matches are rejected, existing line endings are preserved, and `local.multiEdit` applies its edits atomically. Successful `local.editFile` and `local.multiEdit` responses are compact confirmations containing only the path and replacement/edit count; they do not return post-edit context or diffs.
+`local.edit`, `local.multiEdit`, and `local.replace` accept only the canonical `old`/`new` payload fields; the legacy aliases `oldString`, `old_string`, `newString`, and `new_string` are not supported. Empty or ambiguous matches are rejected, existing line endings are preserved, and `local.multiEdit` applies its edits atomically. Successful `local.edit` and `local.multiEdit` responses are compact confirmations containing only the path and replacement/edit count; they do not return post-edit context or diffs.
 
 ## Task Orchestration
 

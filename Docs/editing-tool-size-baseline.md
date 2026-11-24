@@ -4,15 +4,15 @@ Byte counts use compact UTF-8 JSON from `JSONSerialization` with `[.sortedKeys, 
 
 | Metric | Before | After |
 | --- | ---: | ---: |
-| `local.editFile` schema | 318 | 137 |
+| `local.edit` schema | 318 | 137 |
 | `local.multiEdit` schema | 368 | 224 |
 | `local.replace` schema | 253 | 137 |
 | Combined schemas | 939 | 498 |
-| Representative `editFile` arguments | 84 | 72 |
-| Five `editFile` argument objects | 430 | 370 |
+| Representative `edit` arguments | 84 | 72 |
+| Five `edit` argument objects | 430 | 370 |
 | One five-item `multiEdit` argument object | 338 | 278 |
 
-The combined schema reduction is 46.96%. Contract tests enforce the canonical property sets, nested requirements, maximum schema sizes, and the five-call comparison. Successful `local.editFile` and `local.multiEdit` responses are fixed compact confirmations: they report the path and replacement/edit count, but never include a post-edit diff, line context, or file content.
+The combined schema reduction is 46.96%. Contract tests enforce the canonical property sets, nested requirements, maximum schema sizes, and the five-call comparison. Successful `local.edit` and `local.multiEdit` responses are fixed compact confirmations: they report the path and replacement/edit count, but never include a post-edit diff, line context, or file content.
 
 ## Model-driven smoke metrics
 

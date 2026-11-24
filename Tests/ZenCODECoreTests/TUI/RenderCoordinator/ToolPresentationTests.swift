@@ -11,7 +11,7 @@ extension TerminalChatRenderCoordinatorTests {
         let new = (0..<150).map { "let new\($0) = \($0)" }.joined(separator: "\n")
         let toolCall = presentedToolCall(
             id: "large-edit",
-            name: "local.editFile",
+            name: "local.edit",
             argumentsObject: [
                 "path": "/tmp/Large.swift",
                 "old": old,
@@ -187,7 +187,7 @@ extension TerminalChatRenderCoordinatorTests {
         )
         let toolCall = presentedToolCall(
             id: "detailed-crlf-tab-diff",
-            name: "local.editFile",
+            name: "local.edit",
             argumentsObject: [
                 "path": "Sources/Feature.swift",
                 "old": "// removed\r\n\tlet oldValue = 1",
@@ -225,7 +225,7 @@ extension TerminalChatRenderCoordinatorTests {
         )
         let toolCall = presentedToolCall(
             id: "detailed-ansi-collision",
-            name: "local.editFile",
+            name: "local.edit",
             argumentsObject: [
                 "path": "Sources/Feature.swift",
                 "old": "\u{1B}[0m │ let injected = 1",

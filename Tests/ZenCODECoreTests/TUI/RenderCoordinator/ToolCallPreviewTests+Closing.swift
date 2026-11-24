@@ -49,7 +49,7 @@ extension TerminalChatToolCallPreviewTests {
     func aPathStreamingDuringAnInterleavedMessageWritesNothingAndSourceTextReopensTheToolNameAlone() async {
         let renderer = makeRenderer(standardErrorIsTerminal: false)
 
-        await send([.toolStarted(name: "local.editFile"), .parameterStarted(name: "path"), .parameterText("Sources/")],
+        await send([.toolStarted(name: "local.edit"), .parameterStarted(name: "path"), .parameterText("Sources/")],
                    to: renderer)
         await renderer.writeSystemMessage("Note\n")
         // The call is only suspended: none of its rows is open.
@@ -57,7 +57,7 @@ extension TerminalChatToolCallPreviewTests {
         await renderer.writeToolCallPreview(.parameterText("A.swift"))
         // The rest of the path writes nothing, so it does not reopen the header.
         #expect(await !renderer.isStreamingToolCallPreview)
-        #expect(await renderer.capturedText(on: .standardError) == "🛠️  local.editFile\nNote\n")
+        #expect(await renderer.capturedText(on: .standardError) == "🛠️  local.edit\nNote\n")
         await send([.parameterEnded, .parameterStarted(name: "new"), .parameterText("let x = 1\n")], to: renderer)
         // Source text does, with the tool name alone.
         #expect(await renderer.isStreamingToolCallPreview)
@@ -65,7 +65,7 @@ extension TerminalChatToolCallPreviewTests {
 
         #expect(await !renderer.isStreamingToolCallPreview)
         #expect(await renderer.capturedText(on: .standardError)
-            == "🛠️  local.editFile\nNote\n🛠️  local.editFile\n+ let x = 1\n")
+            == "🛠️  local.edit\nNote\n🛠️  local.edit\n+ let x = 1\n")
     }
 
     @Test

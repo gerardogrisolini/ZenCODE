@@ -136,7 +136,7 @@ extension TerminalChatRenderingTests {
         #expect(rows.allSatisfy { TerminalTextMetrics.displayWidth($0.plainText) <= 79 })
     }
 
-    @Test(arguments: ["local.write", "local.append", "local.editFile", "local.replace", "local.multiEdit"], [40, 52, 80])
+    @Test(arguments: ["local.write", "local.append", "local.edit", "local.replace", "local.multiEdit"], [40, 52, 80])
     func mutationPreviewsUseNoExtraInsetAndPreserveSourceIndentation(
         toolName: String,
         columns: Int
@@ -187,7 +187,7 @@ extension TerminalChatRenderingTests {
         let text = rows.map(\.plainText).joined(separator: "\n")
         #expect(text.contains("2 │         value()"))
         #expect(text.contains("1 │     let value = 2"))
-        if toolName == "local.editFile" || toolName == "local.replace" || toolName == "local.multiEdit" {
+        if toolName == "local.edit" || toolName == "local.replace" || toolName == "local.multiEdit" {
             #expect(text.contains("1 │     let value = 1"))
             if columns >= 52 {
                 #expect(try #require(rows.first).plainText.hasPrefix("old"))

@@ -2254,7 +2254,7 @@ the prompt task. Child tasks inherit the root session's access and epoch fence;
 no ACP types enter the neutral runtime and no new model, feature-process or
 persisted DTO is introduced. DirectToolExecutor still enforces the existing tool
 grants. Read capability routes `local.read` and `local.multiRead`; write
-capability routes `local.write`; both are required to route `local.editFile`,
+capability routes `local.write`; both are required to route `local.edit`,
 `local.multiEdit` and `local.replace`. Their model-visible descriptions identify
 them as client-editor tools. Unsupported operations retain the existing local
 implementation; an RPC error never retries the same operation on disk. Directory

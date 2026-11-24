@@ -9,7 +9,7 @@ struct LocalFeatureToolsRegistryContractTests {
     func publicToolGroupsExposeTheExpectedTools() {
         #expect(LocalFeatureTools.fileTools().map(\.descriptor.name) == [
             "local.pwd", "local.ls", "local.read", "local.multiRead",
-            "local.inspectFile", "local.write", "local.replace", "local.editFile",
+            "local.inspectFile", "local.write", "local.replace", "local.edit",
             "local.multiEdit", "local.append", "local.mkdir", "local.delete",
             "local.move", "local.applyPatch"
         ])
@@ -27,7 +27,7 @@ struct LocalFeatureToolsRegistryContractTests {
             "local.pwd", "local.ls", "local.read", "local.multiRead", "local.inspectFile"
         ]
         let expectedMutating = [
-            "local.write", "local.replace", "local.editFile", "local.multiEdit",
+            "local.write", "local.replace", "local.edit", "local.multiEdit",
             "local.append", "local.mkdir", "local.delete", "local.move", "local.applyPatch"
         ]
 

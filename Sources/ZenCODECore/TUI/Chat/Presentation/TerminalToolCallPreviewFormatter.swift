@@ -17,8 +17,11 @@ import ZenCODERuntime
 /// preview shows it on its status row. The old and new text of every edit of a
 /// `local.multiEdit` call arrive inside the JSON of its `edits` argument: they
 /// are decoded as they stream (see ``EditListDecoder``) and drawn one after the
-/// other, as the separate arguments of `local.editFile` are, without the JSON
-/// around them.
+/// other, as the separate arguments of `local.edit` are, without the JSON
+/// around them. The text of the `patch` (or `diff`) argument of
+/// `local.applyPatch` is drawn as it is, its rows repainted with the diff
+/// colors (see ``ParameterRole/patch``); the call has no path argument, and is
+/// identified by the target its patch names.
 ///
 /// A pure state machine: it takes the ``DirectAgentToolCallPreview`` fragments
 /// in stream order and returns the exact text to write, without any I/O.
@@ -50,6 +53,24 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         /// source text with the markers of an edit, in order and without a
         /// separator; the rest of the JSON is not drawn.
         case editList
+        /// The text of a patch, drawn as it is, with the rules of source text
+        /// without a marker: the `+`, `-`, and space that start its rows are
+        /// already part of the text. Every line that ends is classified once
+        /// and in order by one ``TerminalCodeBlockRenderer/DiffState`` kept
+        /// across the lines of the argument, as a diff fence of the Markdown
+        /// stream does, the rows that are not repainted (not ASCII, too wide,
+        /// empty) included, and its row is repainted with the diff colors of
+        /// its kind. The source of an addition, removal, or context line is
+        /// highlighted in the language of the file of the current section: the
+        /// path of the last completed `*** Add File: `, `*** Update File: `, or
+        /// `*** Delete File: ` line, or of a `+++ ` line classified as a file
+        /// header; before any of them only the diff colors apply.
+        ///
+        /// An interruption ends the row of a line on screen, not the line: the
+        /// line is still classified once, whole, when it ends, but none of its
+        /// rows is repainted, the row the interruption ended included, since
+        /// none of them holds the whole line.
+        case patch
     }
 
     /// The diff marker that starts every row of an edit's old or new text. It
@@ -76,9 +97,11 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     }
 
     /// What a drawn call showed when it ended: the canonical tool name, the
-    /// path it received, and whether its rows were still open on screen (no
-    /// other output followed its header). The tool block that follows the
-    /// call uses it to avoid repeating the header.
+    /// path it received (for `local.applyPatch`, the target its patch names,
+    /// as ``ToolCallPresentation/patchDisplayTarget(from:)`` writes it: the
+    /// first file, then `(+N more)`), and whether its rows were still open on
+    /// screen (no other output followed its header). The tool block that
+    /// follows the call uses it to avoid repeating the header.
     struct DrawnCall: Sendable, Equatable {
         let toolName: String
         let path: String
@@ -106,21 +129,33 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         "edits": .editList
     ]
 
+    /// `diff` is the alias `local.applyPatch` accepts for `patch`.
+    private static let patchParameters: [String: ParameterRole] = [
+        "patch": .patch,
+        "diff": .patch
+    ]
+
+    /// The section headers of a Begin Patch payload, as `local.applyPatch`
+    /// reads them.
+    private static let patchSectionPrefixes = ["*** Add File: ", "*** Update File: ", "*** Delete File: "]
+
     /// The drawn tool named `name`, compared on letters and digits only and
     /// without case, so `local_write` is `local.write`; `nil` for any
-    /// tool that is not drawn (`local.applyPatch` included).
+    /// tool that is not drawn.
     static func drawnTool(named name: String) -> DrawnTool? {
         switch normalizedToolName(name) {
         case "localwrite":
             DrawnTool(name: "local.write", parameters: contentParameters)
         case "localappend":
             DrawnTool(name: "local.append", parameters: contentParameters)
-        case "localeditfile":
-            DrawnTool(name: "local.editFile", parameters: editParameters)
+        case "localedit":
+            DrawnTool(name: "local.edit", parameters: editParameters)
         case "localreplace":
             DrawnTool(name: "local.replace", parameters: editParameters)
         case "localmultiedit":
             DrawnTool(name: "local.multiEdit", parameters: multiEditParameters)
+        case "localapplypatch":
+            DrawnTool(name: "local.applyPatch", parameters: patchParameters)
         default:
             nil
         }
@@ -152,6 +187,20 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     private var editList = EditListDecoder()
     private var path = ""
     private var language: String?
+    /// The classification of the lines of the open patch argument, kept
+    /// across its lines, and across an interruption.
+    private var diffState = TerminalCodeBlockRenderer.DiffState()
+    /// The raw text of the current line of the open patch argument, from its
+    /// start: an interruption ends its row on screen, not the line.
+    private var patchLine = ""
+    /// An interruption split the current patch line across rows: none of
+    /// them is repainted.
+    private var patchLineIsSplit = false
+    /// The name of the open patch argument (`patch` or `diff`).
+    private var patchArgument = ""
+    /// The raw text each patch argument of the call received, by name: the
+    /// patch the call applies names its target (``DrawnCall/path``).
+    private var patchTexts: [String: String] = [:]
     /// The terminal-safe text written on the current source row, without the
     /// inset and the marker.
     private var row = ""
@@ -248,7 +297,7 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         let output = isSuspended ? "" : endParameter(columns: columns) + closeHeader()
         let drawn = DrawnCall(
             toolName: tool.name,
-            path: path,
+            path: patchTexts.isEmpty ? path : patchTarget(),
             endedOnScreen: !isSuspended
         )
         resetCall()
@@ -256,10 +305,11 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     }
 
     /// Closes the open call's rows before other output, with the same text as
-    /// ``finish(columns:)``, but suspends the call instead of ending it: its
-    /// tool, the path received so far (which still selects the language and
-    /// identifies the call), and the open argument with its role are kept for
-    /// its next drawn text.
+    /// ``finish(columns:)`` (except that a patch row is not repainted, see
+    /// ``ParameterRole/patch``), but suspends the call instead of ending it:
+    /// its tool, the path received so far (which still selects the language
+    /// and identifies the call), the patch text and the line it is on, and the
+    /// open argument with its role are kept for its next drawn text.
     mutating func interrupt(columns: () -> Int) -> String {
         guard isOpen else {
             return ""
@@ -268,7 +318,9 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         // line feed that may follow it.
         let pairsLineFeed = swallowsLineFeed
         let endsSourceRow = !row.isEmpty
-        let output = closeRow(columns: columns) + closeHeader()
+        // The row of a patch line ends on screen, but not the line.
+        let output = (parameter == .patch ? suspendPatchRow() : closeRow(columns: columns))
+            + closeHeader()
         swallowsLineFeed = pairsLineFeed
         rowWasEndedByInterruption = endsSourceRow
         isSuspended = true
@@ -298,6 +350,17 @@ struct TerminalToolCallPreviewFormatter: Sendable {
             resetRow()
             // An edit list is read from the first scalar of its JSON.
             editList = EditListDecoder()
+        case .patch:
+            output += closeHeader()
+            resetRow()
+            // A patch names its files itself: until its first file header
+            // only the diff colors apply.
+            language = nil
+            diffState = TerminalCodeBlockRenderer.DiffState()
+            patchLine = ""
+            patchLineIsSplit = false
+            patchArgument = name
+            patchTexts[name] = ""
         case nil:
             break
         }
@@ -323,6 +386,11 @@ struct TerminalToolCallPreviewFormatter: Sendable {
             for scalar in text.unicodeScalars {
                 output += appendEdit(scalar, columns: columns)
             }
+        case .patch:
+            patchTexts[patchArgument, default: ""] += text
+            for scalar in text.unicodeScalars {
+                output += appendPatch(scalar, columns: columns)
+            }
         }
         // A call that stays suspended took only line breaks that complete
         // the row its interruption ended: they write nothing.
@@ -337,7 +405,7 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     /// string, write nothing.
     private func draws(_ text: String) -> Bool {
         switch parameter {
-        case .code:
+        case .code, .patch:
             break
         case .editList:
             return drawsEdit(text)
@@ -393,13 +461,15 @@ struct TerminalToolCallPreviewFormatter: Sendable {
 
     /// Repaints and ends the current source row, if there is one, with the
     /// marker of the argument open now: the one of its text, or the one of the
-    /// string of an edit list that is open.
+    /// string of an edit list that is open. The line of a patch ends with it.
     private mutating func closeRow(columns: () -> Int) -> String {
         switch parameter {
         case let .code(marker):
             return closeRow(marker: marker, columns: columns)
         case .editList:
             return closeRow(marker: editList.openMarker, columns: columns)
+        case .patch:
+            return closePatchRow(columns: columns)
         case .path, nil:
             resetRow()
             return ""
@@ -457,7 +527,7 @@ struct TerminalToolCallPreviewFormatter: Sendable {
 
     /// One scalar of an edit list: the source text it decodes to is drawn row
     /// by row with the marker of its string, and the end of a string closes
-    /// its row, as the end of the `old` or `new` argument of `local.editFile`
+    /// its row, as the end of the `old` or `new` argument of `local.edit`
     /// does. Edits follow one another without a separator.
     private mutating func appendEdit(
         _ scalar: Unicode.Scalar,
@@ -473,6 +543,115 @@ struct TerminalToolCallPreviewFormatter: Sendable {
             }
         }
         return output
+    }
+
+    // MARK: - Patch rows
+
+    /// One scalar of a patch: it is written with the rules of source text
+    /// without a marker and kept in the raw text of its line, and a line break
+    /// ends the line (see ``ParameterRole/patch``).
+    private mutating func appendPatch(
+        _ scalar: Unicode.Scalar,
+        columns: () -> Int
+    ) -> String {
+        if Self.absorbsLineBreak(
+            scalar,
+            rowWasEnded: &rowWasEndedByInterruption,
+            pairsLineFeed: &swallowsLineFeed
+        ) {
+            // The line break that completes a row an interruption ended ends
+            // its line too; the line feed of a CRLF has no line open.
+            if !patchLine.isEmpty {
+                _ = completePatchLine(columns: columns)
+            }
+            return ""
+        }
+        switch scalar {
+        case "\n", "\r":
+            let output = completePatchLine(columns: columns) + "\n"
+            resetRow()
+            swallowsLineFeed = scalar == "\r"
+            return output
+        default:
+            patchLine.unicodeScalars.append(scalar)
+            return appendSourceScalar(scalar, marker: nil)
+        }
+    }
+
+    /// Classifies the patch line that ended, and returns the repaint of its
+    /// row when the row holds the whole line and can be repainted. A file
+    /// header selects the language of the lines that follow it.
+    private mutating func completePatchLine(columns: () -> Int) -> String {
+        let kind = diffState.classify(patchLine)
+        let output: String
+        if patchLineIsSplit {
+            output = ""
+        } else {
+            let language = language
+            let palette = palette
+            output = repaint(marker: nil, columns: columns) {
+                TerminalCodeBlockRenderer.renderDiffLine(
+                    $0,
+                    sourceLanguage: language,
+                    kind: kind,
+                    palette: palette
+                )
+            }
+        }
+        if let value = Self.patchFileHeaderPath(in: patchLine, kind: kind) {
+            // A header without a usable path (`/dev/null`) leaves only the
+            // diff colors.
+            language = TextUtilities.normalizedPatchPath(value, stripTabSuffix: true)
+                .flatMap(ToolLanguageHint.hint(forPath:))
+        }
+        patchLine = ""
+        patchLineIsSplit = false
+        return output
+    }
+
+    /// Ends the patch line open at the end of its argument, and its row.
+    private mutating func closePatchRow(columns: () -> Int) -> String {
+        let repainted = patchLine.isEmpty ? "" : completePatchLine(columns: columns)
+        let output = row.isEmpty ? "" : repainted + "\n"
+        resetRow()
+        return output
+    }
+
+    /// Ends the row of the open patch line on screen before other output, but
+    /// not the line, which goes on after the call reopens.
+    private mutating func suspendPatchRow() -> String {
+        guard !row.isEmpty else {
+            resetRow()
+            return ""
+        }
+        patchLineIsSplit = true
+        resetRow()
+        return "\n"
+    }
+
+    /// The raw path a patch line names when it is a file header: a Begin Patch
+    /// section line, or a `+++ ` line classified as a header.
+    private static func patchFileHeaderPath(
+        in line: String,
+        kind: TerminalCodeBlockRenderer.DiffLineKind
+    ) -> String? {
+        // Diff markers are ASCII bytes, so prefixes are compared on UTF-8.
+        let prefix = patchSectionPrefixes.first { line.utf8.starts(with: $0.utf8) }
+            ?? (kind == .header && line.utf8.starts(with: "+++ ".utf8) ? "+++ " : nil)
+        guard let prefix else {
+            return nil
+        }
+        return String(decoding: line.utf8.dropFirst(prefix.utf8.count), as: UTF8.self)
+    }
+
+    /// The target the tool block shows for the patch the call applies: the
+    /// text of `patch` unless it is empty, otherwise the one of `diff`, as
+    /// `local.applyPatch` chooses; empty when it names no file.
+    private func patchTarget() -> String {
+        let patch = patchTexts["patch"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? patchTexts["diff"]
+            ?? ""
+        return ToolCallPresentation.patchDisplayTarget(from: ["patch": patch]) ?? ""
     }
 
     /// Whether `scalar` is a line break that completes a row already ended on
@@ -524,6 +703,18 @@ struct TerminalToolCallPreviewFormatter: Sendable {
             resetRow()
             swallowsLineFeed = scalar == "\r"
             return output
+        default:
+            return appendSourceScalar(scalar, marker: marker)
+        }
+    }
+
+    /// One scalar of source text that is not a line break, written on the
+    /// current row.
+    private mutating func appendSourceScalar(
+        _ scalar: Unicode.Scalar,
+        marker: CodeMarker?
+    ) -> String {
+        switch scalar {
         case "\t":
             // Tabs are expanded from the source column zero, not from the
             // marker, as the diff renderer does.
@@ -560,14 +751,24 @@ struct TerminalToolCallPreviewFormatter: Sendable {
     /// or would look the same. The width is read last, only for a row that
     /// would otherwise be repainted.
     private func repaint(marker: CodeMarker?, columns: () -> Int) -> String {
+        let language = language
+        let palette = palette
+        return repaint(marker: marker, columns: columns) {
+            TerminalCodeBlockRenderer.renderLine($0, language: language, palette: palette)
+        }
+    }
+
+    /// ``repaint(marker:columns:)`` with the colored copy of the row that
+    /// `highlight` returns, called only for a row that may be repainted.
+    private func repaint(
+        marker: CodeMarker?,
+        columns: () -> Int,
+        highlight: (String) -> String
+    ) -> String {
         guard isInteractive, !row.isEmpty, rowIsPrintableASCII else {
             return ""
         }
-        let highlighted = TerminalCodeBlockRenderer.renderLine(
-            row,
-            language: language,
-            palette: palette
-        )
+        let highlighted = highlight(row)
         guard highlighted != row,
               TerminalANSIText.stripANSI(highlighted) == row else {
             return ""
@@ -608,6 +809,11 @@ struct TerminalToolCallPreviewFormatter: Sendable {
         editList = EditListDecoder()
         path = ""
         language = nil
+        diffState = TerminalCodeBlockRenderer.DiffState()
+        patchLine = ""
+        patchLineIsSplit = false
+        patchArgument = ""
+        patchTexts = [:]
         resetRow()
     }
 }

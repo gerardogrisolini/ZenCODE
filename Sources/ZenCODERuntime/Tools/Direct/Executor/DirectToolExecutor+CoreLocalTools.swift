@@ -44,13 +44,13 @@ extension DirectToolExecutor {
         switch descriptor.name {
         case "local.read", "local.multiRead": supported = client.read != nil
         case "local.write": supported = client.write != nil
-        case "local.editFile", "local.multiEdit", "local.replace": supported = client.edit != nil
+        case "local.edit", "local.multiEdit", "local.replace": supported = client.edit != nil
         default: supported = false
         }
         guard supported else { return descriptor }
         return DirectToolDescriptor(
             name: descriptor.name,
-            description: "CLIENT EDITOR FILESYSTEM: this tool accesses the editor's current text, including unsaved buffers, not a separate disk copy. Prefer these client-backed read/readFiles/write/editFile/multiEdit/replace tools for text editing over MCP file tools, shell, or applyPatch; keep IDE tools for project structure, builds, tests and diagnostics. " + descriptor.description,
+            description: "CLIENT EDITOR FILESYSTEM: this tool accesses the editor's current text, including unsaved buffers, not a separate disk copy. Prefer these client-backed read/readFiles/write/edit/multiEdit/replace tools for text editing over MCP file tools, shell, or applyPatch; keep IDE tools for project structure, builds, tests and diagnostics. " + descriptor.description,
             inputSchema: descriptor.inputSchema,
             title: descriptor.title,
             outputSchema: descriptor.outputSchema,

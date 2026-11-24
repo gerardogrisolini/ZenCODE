@@ -71,7 +71,7 @@ extension AgentConfigurationTests {
         )
         #expect(reporterAllowedToolNames.contains("local.read"))
         #expect(!reporterAllowedToolNames.contains("local.write"))
-        #expect(!reporterAllowedToolNames.contains("local.editFile"))
+        #expect(!reporterAllowedToolNames.contains("local.edit"))
         // Search is a core group: it expands to the in-process `search.*`
         // tools without any installed feature package.
         #expect(reporterAllowedToolNames.contains("search.glob"))

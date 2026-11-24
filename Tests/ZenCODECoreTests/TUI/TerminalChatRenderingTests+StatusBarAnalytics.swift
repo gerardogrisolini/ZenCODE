@@ -44,7 +44,7 @@ extension TerminalChatRenderingTests {
     func completedSubAgentFileMutationRequestsGitStatusRefresh() {
         let mutation = DirectAgentToolCall(
             id: "mutation",
-            name: "local.editFile",
+            name: "local.edit",
             argumentsObject: [:],
             argumentsJSON: "{}"
         )

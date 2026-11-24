@@ -126,7 +126,7 @@ extension LocalToolsSerialGroup.OperationFileChangeTests {
         let file = root.appendingPathComponent("file")
         try "one two one".write(to: file, atomically: true, encoding: .utf8)
         let edit = OperationFileChangeRecorder()
-        try await invoke("local.editFile", ["path": "file", "old": "two", "new": "three"], root: root, recorder: edit)
+        try await invoke("local.edit", ["path": "file", "old": "two", "new": "three"], root: root, recorder: edit)
         #expect(edit.changes == [.init(path: file.path, oldText: "one two one", newText: "one three one")])
         let replace = OperationFileChangeRecorder()
         try await invoke("local.replace", ["path": "file", "old": "one", "new": "four"], root: root, recorder: replace)
