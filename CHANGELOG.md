@@ -10,6 +10,12 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+### Fixed
+
+- ACP routes `/changes` and `/undo` from the operator's text block even when
+  the prompt also carries resource, assistant-only, or known Xcode context
+  blocks, without interpreting those blocks themselves as workspace commands.
+
 ## [6.2.1] - 2026-11-24
 
 ### Added

@@ -27,6 +27,7 @@ private struct ACPPreparedPrompt {
     /// The text the turn presents as the user's message.
     let visiblePromptText: String
     let coordinatorCommand: CoordinatorCommand?
+    let isWorkspaceCommand: Bool
     let hasAgentMention: Bool
 }
 
@@ -224,7 +225,14 @@ extension ZenCODEACPBridge {
             renderedPromptText: rawPromptText,
             cwd: session.cwd
         )
-        let promptText = rawPromptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Only workspace commands use the operator's separate input. Regular
+        // turns still echo and send the entire rendered prompt to the model.
+        let workspaceText = Self.workspaceCommandSource(from: promptBlocks)
+        let promptText = if let workspaceText, Self.isWorkspaceCommand(workspaceText) {
+            workspaceText
+        } else {
+            rawPromptText
+        }
         let agentMentionResolution = try resolveLeadingACPAgentMention(in: promptText)
         let routedPromptText = agentMentionResolution?.prompt ?? promptText
         guard !routedPromptText.isEmpty || !attachments.isEmpty else {
@@ -252,6 +260,7 @@ extension ZenCODEACPBridge {
         }
 
         let coordinatorCommand = CoordinatorCommandParser.parse(routedPromptText)
+        let isWorkspaceCommand = workspaceText == promptText && Self.isWorkspaceCommand(routedPromptText)
         let isPlanningReply = coordinatorCommand == nil
             && agentMentionResolution == nil
             && !CoordinatorCommandParser.isSlashCommand(routedPromptText)
@@ -270,6 +279,7 @@ extension ZenCODEACPBridge {
             routedPromptText: routedPromptText,
             visiblePromptText: visiblePromptText,
             coordinatorCommand: coordinatorCommand,
+            isWorkspaceCommand: isWorkspaceCommand,
             hasAgentMention: agentMentionResolution != nil
         )
     }
@@ -288,6 +298,7 @@ extension ZenCODEACPBridge {
             commandRoute = try await routeACPCommandTurn(
                 command: prepared.coordinatorCommand,
                 routedPromptText: prepared.routedPromptText,
+                isWorkspaceCommand: prepared.isWorkspaceCommand,
                 hasAgentMention: prepared.hasAgentMention,
                 sessionID: turn.sessionID,
                 epoch: turn.epoch,

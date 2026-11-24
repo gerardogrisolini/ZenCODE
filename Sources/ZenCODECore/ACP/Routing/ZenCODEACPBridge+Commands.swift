@@ -85,6 +85,7 @@ extension ZenCODEACPBridge {
     func routeACPCommandTurn(
         command: CoordinatorCommand?,
         routedPromptText: String,
+        isWorkspaceCommand: Bool,
         hasAgentMention: Bool,
         sessionID: String,
         epoch: UInt64,
@@ -132,7 +133,7 @@ extension ZenCODEACPBridge {
         // `/changes` and `/undo` are not coordinator commands either: they are
         // answered here, with the file changes of the last turn, and never reach
         // the model (see `routeACPWorkspaceCommand`).
-        if Self.isWorkspaceCommand(routedPromptText) {
+        if isWorkspaceCommand {
             return try await routeACPWorkspaceCommand(
                 routedPromptText,
                 sessionID: sessionID,

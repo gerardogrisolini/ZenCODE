@@ -33,6 +33,37 @@ extension ZenCODEACPBridge {
     static let changesCommandToken = "/changes"
     static let undoCommandToken = "/undo"
 
+    /// Only an unambiguous user-facing text block can name a workspace
+    /// command. Rendered resources and assistant-only context are not input
+    /// from the operator. The known Xcode context prefix is the only accepted
+    /// multi-text form, and only its final block may name a command.
+    static func workspaceCommandSource(from blocks: [Any]) -> String? {
+        var texts: [String] = []
+        for block in blocks {
+            if let text = block as? String {
+                texts.append(text)
+                continue
+            }
+            guard let object = block as? [String: Any],
+                  (object["type"] as? String ?? "text").lowercased() == "text",
+                  let text = object["text"] as? String else {
+                continue
+            }
+            if let annotations = object["annotations"] as? [String: Any],
+               let audience = annotations["audience"] as? [String],
+               !audience.contains("user") {
+                continue
+            }
+            texts.append(text)
+        }
+        let nonempty = texts.compactMap(\.nilIfBlank)
+        guard let last = nonempty.last, nonempty.dropLast().allSatisfy({ prefix in
+            (prefix.hasPrefix("<system-reminder>") && prefix.hasSuffix("</system-reminder>"))
+                || prefix.hasPrefix("Project structure:")
+        }) else { return nil }
+        return last
+    }
+
     /// Whether `line` names a workspace command ACP answers itself.
     static func isWorkspaceCommand(_ line: String) -> Bool {
         switch ChatCommandRegistry.commandToken(from: line) {

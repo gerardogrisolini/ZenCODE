@@ -140,6 +140,81 @@ extension ACPCommandRoutingTests {
         }
     }
 
+    /// The client sends content blocks through JSON-RPC, not the rendered
+    /// string used by the direct routing tests above.
+    private func sendBlocks(_ blocks: [[String: Any]], id: Int, in fixture: WorkspaceFixture) async {
+        await fixture.bridge.handleMessage([
+            "jsonrpc": "2.0", "id": id, "method": "session/prompt",
+            "params": ["sessionId": fixture.sessionID, "prompt": blocks] as [String: Any],
+        ])
+    }
+
+    @Test
+    func clientWorkspaceCommandsSurviveContextBlocksAndKeepTheirArguments() async throws {
+        let fixture = try await makeWorkspaceFixture()
+        let edited = try writeWorkspaceFile("Sources/Value.swift", "let value = 2\n", in: fixture.workingDirectory)
+        await seedWorkspaceSummary(TurnFileChangeSummary(entries: [Self.valueEntry]), in: fixture.controller)
+        let reminder: [String: Any] = ["type": "text", "text": "<system-reminder>Xcode context</system-reminder>"]
+        let structure: [String: Any] = ["type": "text", "text": "Project structure: App/App.swift"]
+        let resource: [String: Any] = ["type": "resource", "resource": ["text": "Project notes"]]
+        let assistantContext: [String: Any] = [
+            "type": "text", "text": "Context for the assistant",
+            "annotations": ["audience": ["assistant"]],
+        ]
+
+        await sendBlocks([reminder, structure, ["type": "text", "text": "/changes diff"]], id: 1, in: fixture)
+        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").last?.contains("```diff\n") == true)
+        await sendBlocks([resource, ["type": "text", "text": "/changes --diff"]], id: 2, in: fixture)
+        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").last?.contains("```diff\n") == true)
+        await sendBlocks([["type": "text", "text": "/undo now"], resource], id: 3, in: fixture)
+        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").last == "ZenCODE: unknown command '/undo'.")
+        #expect(try String(contentsOf: edited, encoding: .utf8) == "let value = 2\n")
+        await sendBlocks([assistantContext, ["type": "text", "text": "/changes"]], id: 4, in: fixture)
+        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").last == Self.summaryText)
+        await sendBlocks([reminder, structure, ["type": "text", "text": "/undo"]], id: 5, in: fixture)
+        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").last == "File changes reverted.")
+        #expect(try String(contentsOf: edited, encoding: .utf8) == "let value = 1\n")
+        try Data("let value = 2\n".utf8).write(to: edited)
+        await seedWorkspaceSummary(TurnFileChangeSummary(entries: [Self.valueEntry]), in: fixture.controller)
+        await sendBlocks([["type": "text", "text": "/undo"], resource], id: 6, in: fixture)
+        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").last == "File changes reverted.")
+        #expect(try String(contentsOf: edited, encoding: .utf8) == "let value = 1\n")
+        await sendBlocks([structure, ["type": "text", "text": "/changes diff"]], id: 7, in: fixture)
+        #expect(fixture.wire.updateTexts(kind: "user_message_chunk") == [
+            "/changes diff", "/changes --diff", "/undo now", "/changes", "/undo", "/undo", "/changes diff",
+        ])
+        #expect(await fixture.backend.recordedPrompts().isEmpty)
+        for id in 1...7 { #expect(fixture.wire.stopReason(for: id) == "end_turn") }
+    }
+
+    @Test
+    func clientContextAndOrdinaryPromptsCannotBecomeWorkspaceCommands() async throws {
+        let fixture = try await makeWorkspaceFixture()
+        let edited = try writeWorkspaceFile("Sources/Value.swift", "let value = 2\n", in: fixture.workingDirectory)
+        await seedWorkspaceSummary(TurnFileChangeSummary(entries: [Self.valueEntry]), in: fixture.controller)
+        let prompts: [[[String: Any]]] = [
+            [["type": "resource", "resource": ["text": "/undo"]]],
+            [["type": "text", "text": "/undo", "annotations": ["audience": ["assistant"]]]],
+            [["type": "text", "text": "Explain the command /undo without running it."]],
+            [["type": "text", "text": "/undo"], ["type": "text", "text": "explain this"]],
+            [["type": "text", "text": "arbitrary context"], ["type": "text", "text": "/undo"]],
+            [
+                ["type": "text", "text": "<system-reminder>/undo</system-reminder>"],
+                ["type": "text", "text": "Project structure: App/App.swift"],
+                ["type": "text", "text": "What does this project do?"],
+            ],
+        ]
+        for (index, blocks) in prompts.enumerated() {
+            await sendBlocks(blocks, id: index + 1, in: fixture)
+            #expect(fixture.wire.stopReason(for: index + 1) == "end_turn")
+            #expect(try String(contentsOf: edited, encoding: .utf8) == "let value = 2\n")
+        }
+        let received = await fixture.backend.recordedPrompts()
+        #expect(received.count == prompts.count)
+        #expect(received.contains { $0.contains("Explain the command /undo") })
+        #expect(received.contains { $0.contains("What does this project do?") })
+    }
+
     // MARK: - /changes
 
     /// `/changes` answers the summary the terminal prints, whatever follows

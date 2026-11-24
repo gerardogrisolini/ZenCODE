@@ -509,6 +509,7 @@ extension ZenCODEACPBridge {
             route = try await routeACPCommandTurn(
                 command: CoordinatorCommandParser.parse(prompt),
                 routedPromptText: prompt,
+                isWorkspaceCommand: Self.isWorkspaceCommand(prompt),
                 hasAgentMention: false,
                 sessionID: sessionID,
                 epoch: reservation.epoch,
