@@ -142,7 +142,7 @@ extension ACPCommandRoutingTests {
 
     /// The client sends content blocks through JSON-RPC, not the rendered
     /// string used by the direct routing tests above.
-    private func sendBlocks(_ blocks: [[String: Any]], id: Int, in fixture: WorkspaceFixture) async {
+    private func sendBlocks(_ blocks: [[String: any Sendable]], id: Int, in fixture: WorkspaceFixture) async {
         await fixture.bridge.handleMessage([
             "jsonrpc": "2.0", "id": id, "method": "session/prompt",
             "params": ["sessionId": fixture.sessionID, "prompt": blocks] as [String: Any],
@@ -154,10 +154,10 @@ extension ACPCommandRoutingTests {
         let fixture = try await makeWorkspaceFixture()
         let edited = try writeWorkspaceFile("Sources/Value.swift", "let value = 2\n", in: fixture.workingDirectory)
         await seedWorkspaceSummary(TurnFileChangeSummary(entries: [Self.valueEntry]), in: fixture.controller)
-        let reminder: [String: Any] = ["type": "text", "text": "<system-reminder>Xcode context</system-reminder>"]
-        let structure: [String: Any] = ["type": "text", "text": "Project structure: App/App.swift"]
-        let resource: [String: Any] = ["type": "resource", "resource": ["text": "Project notes"]]
-        let assistantContext: [String: Any] = [
+        let reminder: [String: any Sendable] = ["type": "text", "text": "<system-reminder>Xcode context</system-reminder>"]
+        let structure: [String: any Sendable] = ["type": "text", "text": "Project structure: App/App.swift"]
+        let resource: [String: any Sendable] = ["type": "resource", "resource": ["text": "Project notes"]]
+        let assistantContext: [String: any Sendable] = [
             "type": "text", "text": "Context for the assistant",
             "annotations": ["audience": ["assistant"]],
         ]
@@ -192,7 +192,7 @@ extension ACPCommandRoutingTests {
         let fixture = try await makeWorkspaceFixture()
         let edited = try writeWorkspaceFile("Sources/Value.swift", "let value = 2\n", in: fixture.workingDirectory)
         await seedWorkspaceSummary(TurnFileChangeSummary(entries: [Self.valueEntry]), in: fixture.controller)
-        let prompts: [[[String: Any]]] = [
+        let prompts: [[[String: any Sendable]]] = [
             [["type": "resource", "resource": ["text": "/undo"]]],
             [["type": "text", "text": "/undo", "annotations": ["audience": ["assistant"]]]],
             [["type": "text", "text": "Explain the command /undo without running it."]],
