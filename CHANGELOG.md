@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [6.2.1] - 2026-11-24
+
 ### Added
 
 - `desktop.run` can act on the Accessibility elements of a window, so it also
@@ -6717,7 +6719,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.3...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.2.1...HEAD
+[6.2.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.2.0...v6.2.1
 [6.2.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.3...v6.2.0
 [6.1.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.2...v6.1.3
 [6.1.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.1...v6.1.2
