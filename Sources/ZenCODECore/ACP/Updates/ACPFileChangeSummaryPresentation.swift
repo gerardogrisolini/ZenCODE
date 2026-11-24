@@ -11,8 +11,9 @@ import ToolCore
 import ZenCODERuntime
 
 /// The wire form of a turn's file-change Summary: the same file details the
-/// terminal and Telegram show, formatted as a Markdown section with separators
-/// and highlighted `/undo` and `/changes` actions, as one standard
+/// terminal and Telegram show, formatted as a Markdown section that two blank
+/// lines separate from the answer, with highlighted `/undo` and `/changes`
+/// actions, as one standard
 /// `agent_message_chunk`. The Summary lives on the wire only: it is never part
 /// of the model's history or the saved transcript, and `/changes` and `/undo`
 /// read it from the controller.
@@ -27,12 +28,12 @@ enum ACPFileChangeSummaryPresentation {
         )
     }
 
-    /// A self-contained Markdown section, so the Summary stays visually
-    /// separate from both the assistant's answer and the next turn.
+    /// A self-contained Markdown section. Clients append the chunk to the
+    /// answer's text, which usually ends without a line feed, so the section
+    /// opens with that line's end and two blank lines.
     static func text(for summary: TurnFileChangeSummary) -> String {
         let title = summary.fileCount == 1 ? "1 file" : "\(summary.fileCount) files"
         var lines = [
-            "---",
             "**🪬 Summary: \(title)  +\(summary.totalAdditions) -\(summary.totalDeletions)**",
         ]
         lines.append(contentsOf: summary.entries.map(TurnFileChangeSummaryPresentation.entry))
@@ -41,8 +42,7 @@ enum ACPFileChangeSummaryPresentation {
                 ? "**`/undo`** to revert · **`/changes diff`** to show patches."
                 : "Undo is not available for this summary."
         )
-        lines.append("---")
-        return lines.joined(separator: "\n") + "\n"
+        return "\n\n\n" + lines.joined(separator: "\n") + "\n"
     }
 }
 

@@ -29,6 +29,10 @@ private struct ACPPreparedPrompt {
     let coordinatorCommand: CoordinatorCommand?
     let isWorkspaceCommand: Bool
     let hasAgentMention: Bool
+    /// The context the client sent around a command or an agent mention typed
+    /// in its own block, which a turn that generates passes to the model before
+    /// its prompt; `nil` when the turn routes the whole rendered prompt.
+    let editorContext: String?
 }
 
 /// What a prompt turn does once routed.
@@ -225,14 +229,12 @@ extension ZenCODEACPBridge {
             renderedPromptText: rawPromptText,
             cwd: session.cwd
         )
-        // Only workspace commands use the operator's separate input. Regular
+        // Only commands, and agent mentions after Xcode's context, use the
+        // operator's separate input (see `routedPromptSource(from:)`). Regular
         // turns still echo and send the entire rendered prompt to the model.
-        let workspaceText = Self.workspaceCommandSource(from: promptBlocks)
-        let promptText = if let workspaceText, Self.isWorkspaceCommand(workspaceText) {
-            workspaceText
-        } else {
-            rawPromptText
-        }
+        let commandSource = try routedPromptSource(from: promptBlocks)
+        let promptText = commandSource?.text ?? rawPromptText
+        let editorContext = commandSource.flatMap { Self.editorContext(around: $0, in: promptBlocks) }
         let agentMentionResolution = try resolveLeadingACPAgentMention(in: promptText)
         let routedPromptText = agentMentionResolution?.prompt ?? promptText
         guard !routedPromptText.isEmpty || !attachments.isEmpty else {
@@ -260,7 +262,8 @@ extension ZenCODEACPBridge {
         }
 
         let coordinatorCommand = CoordinatorCommandParser.parse(routedPromptText)
-        let isWorkspaceCommand = workspaceText == promptText && Self.isWorkspaceCommand(routedPromptText)
+        let isWorkspaceCommand = (Self.commandSource(from: promptBlocks)?.text == promptText)
+            && Self.isWorkspaceCommand(routedPromptText)
         let isPlanningReply = coordinatorCommand == nil
             && agentMentionResolution == nil
             && !CoordinatorCommandParser.isSlashCommand(routedPromptText)
@@ -280,7 +283,8 @@ extension ZenCODEACPBridge {
             visiblePromptText: visiblePromptText,
             coordinatorCommand: coordinatorCommand,
             isWorkspaceCommand: isWorkspaceCommand,
-            hasAgentMention: agentMentionResolution != nil
+            hasAgentMention: agentMentionResolution != nil,
+            editorContext: editorContext
         )
     }
 
@@ -338,7 +342,11 @@ extension ZenCODEACPBridge {
             ) else {
                 throw CancellationError()
             }
-            return .generate(prompt: prompt, purpose: purpose, session: liveCommandSession)
+            return .generate(
+                prompt: Self.modelPrompt(prompt, editorContext: prepared.editorContext),
+                purpose: purpose,
+                session: liveCommandSession
+            )
         }
     }
 

@@ -76,6 +76,49 @@ Environment:
   ZENCODE_AGENT_NAME=Developer
 ```
 
+## Agent mentions and commands in the chat
+
+> **A leading `@Agent` mention changes the agent of the whole conversation.**
+> `@Planner analyze the parser` does not send a message to a Planner: it makes
+> `Planner` the agent of this Xcode conversation, then sends `analyze the
+> parser` to it. Every later message also goes to `Planner`, with that
+> profile's tools (the `Planner` is read-only), until another mention such as
+> `@Developer` switches back.
+
+How a mention works:
+
+- It must be the first word of your message. It matches the id, name, or
+  display name of an agent profile, ignoring case, accents, and punctuation:
+  `@planner` and `@Planner` are the same mention.
+- The conversation takes the profile's instructions, tools, and role, and the
+  profile's own model when it sets one. A mention does not update the model
+  menu in Xcode.
+- The rest of your message is the prompt. The model receives it after the
+  context Xcode attaches (project structure, open file), without the mention.
+- The change lasts for this conversation only. A new conversation starts again
+  with the agent set in `ZENCODE_AGENT_NAME`, or the project's default
+  Developer agent.
+- A mention can come before a command, such as `@Developer /goal fix the
+  build`. The command then runs as that agent.
+- A name that matches no profile (`@Nobody …`) is not a mention: the whole
+  message goes to the current agent as ordinary text.
+
+Do not confuse it with:
+
+| You type | Effect |
+| --- | --- |
+| `@Planner analyze X` | Makes `Planner` the agent of the conversation and sends it `analyze X`. |
+| `/plan analyze X` | Starts the planning workflow: a read-only Planner sub-agent asks its questions and writes a plan to approve, save, and implement. The conversation's agent does not change. |
+| `@agent-name …` in the terminal or in Telegram | Sends a live message to an active agent in the shared chat. It does not change the agent. |
+
+Commands picked from the Xcode command menu (`/goal`, `/plan`, `/review`,
+`/tasks`, `/changes`, `/undo`, and `/telegram` while the settings enable it)
+run as commands and never reach the model as plain text. Xcode sends its
+context (a `<system-reminder>` and the `Project structure …` block) as separate
+text blocks before your text, so ZenCODE reads the command, or the mention,
+from your own text. A command that starts a turn still passes Xcode's context
+to the model before its prompt.
+
 ## Troubleshooting
 
 - **Xcode cannot start the agent**: use an absolute executable path, not just `zen`.

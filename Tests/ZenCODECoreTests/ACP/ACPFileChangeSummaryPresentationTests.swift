@@ -258,11 +258,12 @@ private struct SummaryFixture {
 
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct ACPFileChangeSummaryPresentationTests {
-    /// The Summary of one new file, `hello\n`, as a separated Markdown section
-    /// with highlighted `/undo` and `/changes` actions.
+    /// The Summary of one new file, `hello\n`, as a Markdown section that two
+    /// blank lines separate from the answer, with highlighted `/undo` and
+    /// `/changes` actions.
     private static func summaryText(of name: String) -> String {
-        "---\n**🪬 Summary: 1 file  +1 -0**\n  added \(name)  +1 -0\n"
-            + "**`/undo`** to revert · **`/changes diff`** to show patches.\n---\n"
+        "\n\n\n**🪬 Summary: 1 file  +1 -0**\n  added \(name)  +1 -0\n"
+            + "**`/undo`** to revert · **`/changes diff`** to show patches.\n"
     }
 
     private static func withFixture(
@@ -332,9 +333,9 @@ struct ACPFileChangeSummaryPresentationTests {
         let update = try #require(ACPFileChangeSummaryPresentation.update(for: undoable))
         #expect(update == ZenCODEACPBridge.textChunkJSONUpdate(
             kind: "agent_message_chunk",
-            text: "---\n**🪬 Summary: 1 file  +3 -1**\n"
+            text: "\n\n\n**🪬 Summary: 1 file  +3 -1**\n"
                 + "  modified Sources/App.swift  +3 -1\n"
-                + "**`/undo`** to revert · **`/changes diff`** to show patches.\n---\n"
+                + "**`/undo`** to revert · **`/changes diff`** to show patches.\n"
         ))
         #expect(update.objectValue?["sessionUpdate"] == .string("agent_message_chunk"))
 
@@ -344,9 +345,9 @@ struct ACPFileChangeSummaryPresentationTests {
             ACPFileChangeSummaryPresentation.update(for: notUndoable)?
                 .objectValue?["content"]?.objectValue?["text"]?.stringValue
         )
-        #expect(text == "---\n**🪬 Summary: 1 file  +3 -1**\n"
+        #expect(text == "\n\n\n**🪬 Summary: 1 file  +3 -1**\n"
             + "  modified Sources/App.swift  +3 -1\n"
-            + "Undo is not available for this summary.\n---\n")
+            + "Undo is not available for this summary.\n")
 
         // A turn that changed nothing presents nothing.
         #expect(ACPFileChangeSummaryPresentation.update(for: nil) == nil)

@@ -215,6 +215,60 @@ extension ACPCommandRoutingTests {
         #expect(received.contains { $0.contains("What does this project do?") })
     }
 
+    /// Current Xcode releases head the project structure with a parenthetical
+    /// note and follow it with the package dependencies and the open file; the
+    /// operator's `/changes` and `/undo` in the next block are still answered
+    /// at once.
+    @Test
+    func currentXcodeProjectStructureBlockStillRoutesWorkspaceCommands() async throws {
+        let fixture = try await makeWorkspaceFixture()
+        let edited = try writeWorkspaceFile("Sources/Value.swift", "let value = 2\n", in: fixture.workingDirectory)
+        await seedWorkspaceSummary(TurnFileChangeSummary(entries: [Self.valueEntry]), in: fixture.controller)
+        let structure: [String: any Sendable] = [
+            "type": "text",
+            "text": """
+            Project structure (these are Xcode workspace-relative paths and do not correspond to filesystem \
+            paths. Use XcodeRead, XcodeWrite, XcodeGrep, and XcodeGlob to interact with these files):
+            App/App.swift
+
+            Package dependencies: swift-collections
+
+            The user has no file currently open.
+
+            """,
+        ]
+
+        await sendBlocks([structure, ["type": "text", "text": "/changes diff"]], id: 1, in: fixture)
+        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").last?.contains("```diff\n") == true)
+        await sendBlocks([structure, ["type": "text", "text": "/undo"]], id: 2, in: fixture)
+        #expect(fixture.wire.updateTexts(kind: "agent_message_chunk").last == "File changes reverted.")
+        #expect(try String(contentsOf: edited, encoding: .utf8) == "let value = 1\n")
+        #expect(fixture.wire.updateTexts(kind: "user_message_chunk") == ["/changes diff", "/undo"])
+        for id in 1...2 { #expect(fixture.wire.stopReason(for: id) == "end_turn") }
+        #expect(await fixture.backend.recordedPrompts().isEmpty)
+    }
+
+    /// Only the headings Xcode uses make a block context that may precede a
+    /// workspace command.
+    @Test
+    func onlyKnownXcodeContextBlocksMayPrecedeAWorkspaceCommand() {
+        for text in [
+            "<system-reminder>Xcode context</system-reminder>",
+            "Project structure: App/App.swift",
+            "Project structure (these are Xcode workspace-relative paths):\nApp/App.swift",
+        ] {
+            #expect(ZenCODEACPBridge.isXcodeContextBlock(text), "\(text)")
+        }
+        for text in [
+            "<system-reminder>Xcode context",
+            "Project structures: App/App.swift",
+            "The project structure (paths):",
+            "arbitrary context",
+        ] {
+            #expect(!ZenCODEACPBridge.isXcodeContextBlock(text), "\(text)")
+        }
+    }
+
     // MARK: - /changes
 
     /// `/changes` answers the summary the terminal prints, whatever follows

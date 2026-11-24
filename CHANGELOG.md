@@ -27,12 +27,27 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - Renamed the core read-only file tool `local.inspectFile` to `local.inspect`.
   Its argument schema and behavior are unchanged; prompts, tool routing, and
   docs now use the new name.
+- ACP: the final file-change Summary no longer has horizontal rules before and
+  after it. It starts after two blank lines instead, so it no longer runs on
+  from the last line of the answer (`…text.---`).
 
 ### Fixed
 
 - ACP routes `/changes` and `/undo` from the operator's text block even when
   the prompt also carries resource, assistant-only, or known Xcode context
   blocks, without interpreting those blocks themselves as workspace commands.
+- ACP: commands picked from the Xcode command menu (`/goal`, `/plan`,
+  `/review`, `/tasks`, `/telegram`, `/changes`, `/undo`, also after an agent
+  mention) run again instead of going to the model. Current Xcode releases
+  head their context block with `Project structure (these are Xcode
+  workspace-relative paths …):`, which was not recognized as Xcode context,
+  and only `/changes` and `/undo` were read from the operator's own block. A
+  command that starts a turn passes Xcode's context to the model before its
+  prompt, while the saved goal or plan keeps only the operator's text.
+  A leading mention of a known agent (`@Planner analyze X`) typed in Xcode
+  switches the session to that agent too, as in other ACP clients, and the
+  model still receives Xcode's context. Prompts without Xcode's context are
+  routed as before.
 - `local.applyPatch` applies unified diffs that end with a line feed, as
   `git diff` output does, including new-file diffs from `/dev/null` and CRLF
   payloads. That final line feed was read as an extra empty context line, so
