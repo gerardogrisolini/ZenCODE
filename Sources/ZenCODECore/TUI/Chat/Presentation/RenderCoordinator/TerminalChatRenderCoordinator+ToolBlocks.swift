@@ -274,13 +274,45 @@ extension TerminalChatRenderCoordinator {
         let previewMerge: TerminalChat.CompactToolPreviewMerge = mergesIntoPreview
             ? .header
             : .none
-        let renderRows = toolBlockRows(
+        var summaryIsStatusOnly = false
+        var renderRows = toolBlockRows(
             for: toolCall,
             lifecycle: lifecycle,
             contentInsetWidth: contentInsetWidth,
             columnWidth: columnWidth,
             previewMerge: previewMerge
         )
+        if !lifecycle.isCompletion, standardErrorIsTerminal,
+           toolCall.name == "local.multiRead",
+           !ToolCallPresentation.displayToolTargets(for: toolCall).isEmpty,
+           let capacity = replaceableToolRowCapacity(maximumInPlaceRows) {
+            func rowCount(_ rows: [TerminalChat.DetailedToolRow]) -> Int {
+                TerminalTextMetrics.renderedTerminalRowCount(
+                    for: rows.map(\.plainText),
+                    contentInsetWidth: contentInsetWidth,
+                    columnWidth: columnWidth
+                )
+            }
+            if rowCount(renderRows.allRows) > capacity, let status = renderRows.compactRows.last {
+                guard capacity > 0, rowCount([status]) <= capacity else {
+                    // No pending row can remain reachable after its newline.
+                    // Render only the complete block once the call finishes.
+                    toolState.activeBlock = nil
+                    toolState.activeBlockIsSubAgentTool = false
+                    if previewMergedToolCallID == toolCall.id {
+                        previewMergedToolCallID = nil
+                    }
+                    return
+                }
+                // Keep a recognizable header when it fits, otherwise keep only
+                // the status. The full list is always rendered at completion.
+                let summary = previewMerge == .none && renderRows.compactRows.count > 1
+                    ? [renderRows.compactRows[0], status] : [status]
+                renderRows.compactRows = rowCount(summary) <= capacity ? summary : [status]
+                summaryIsStatusOnly = renderRows.compactRows.count == 1
+                renderRows.detailRows = []
+            }
+        }
         let pendingOwnership: (rows: Int, cursorState: CursorState)?
         if lifecycle.isCompletion {
             pendingOwnership = nil
@@ -328,8 +360,9 @@ extension TerminalChatRenderCoordinator {
             renderRows,
             for: toolCall,
             lifecycle: lifecycle,
-            titleRowCount: previewMerge != .none
-                && ToolCallPresentation.displayToolTarget(for: toolCall) != nil ? 0 : 1
+            titleRowCount: (previewMerge != .none
+                && ToolCallPresentation.displayToolTarget(for: toolCall) != nil)
+                || summaryIsStatusOnly ? 0 : 1
         )
         if let pendingOwnership {
             toolState.activeBlock = ActiveToolBlock(
@@ -568,10 +601,24 @@ extension TerminalChatRenderCoordinator {
         for deferred in deferredRenders {
             if let requiredRows = deferred.requiredRows,
                requiredRows > maximumReplaceableRows {
-                // The newly reduced transcript cannot own every detached row.
-                // Keep that tool append-only rather than drawing a block its
-                // completion could not safely replace.
-                continue
+                guard deferred.toolCall.name == "local.multiRead",
+                      !ToolCallPresentation.displayToolTargets(for: deferred.toolCall).isEmpty,
+                      maximumReplaceableRows > 0 else {
+                    continue
+                }
+                let insetWidth = TerminalTextMetrics.displayWidth(lineInset)
+                let columnWidth = columnWidthProvider()
+                let status = TerminalChat.compactToolStatusOnlyLine(
+                    statusIcon: "⏳", contentInsetWidth: insetWidth, columnWidth: columnWidth
+                )
+                let summaryRows = TerminalTextMetrics.renderedTerminalRowCount(
+                    for: [status], contentInsetWidth: insetWidth, columnWidth: columnWidth
+                )
+                guard summaryRows <= maximumReplaceableRows else {
+                    // The new region cannot own this detached block, or even a
+                    // multi-read status. Leave completion append-only instead.
+                    continue
+                }
             }
             finishThoughtOutputIfNeeded()
             finishAssistantContentFormatting()

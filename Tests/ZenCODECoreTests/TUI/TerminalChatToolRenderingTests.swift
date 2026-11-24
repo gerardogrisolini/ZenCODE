@@ -479,6 +479,158 @@ extension TerminalChatRenderingTests {
         ) == complete)
     }
 
+    @Test
+    func multiReadListsEveryTargetOnItsOwnRowAndKeepsTheStatusLast() {
+        let toolCall = presentedToolCall(
+            id: "call_multi_read",
+            name: "local.multiRead",
+            argumentsObject: [
+                "paths": ["Sources/A.swift", "Sources/B.swift"]
+            ],
+            argumentsJSON: "{}"
+        )
+
+        #expect(
+            ToolCallPresentation.displayToolTargets(for: toolCall)
+                == ["Sources/A.swift", "Sources/B.swift"]
+        )
+        #expect(
+            TerminalChat.compactToolLines(
+                for: toolCall,
+                statusIcon: "✅",
+                statusDetail: "3.83ms",
+                columnWidth: 80
+            ) == [
+                "🛠️  local.multiRead",
+                "Sources/A.swift",
+                "Sources/B.swift",
+                "✅ 3.83ms"
+            ]
+        )
+
+        // The started block lists the same rows, so the completion can rewrite
+        // it in place: only the status row changes.
+        #expect(
+            TerminalChat.compactToolLines(
+                for: toolCall,
+                statusIcon: "⏳",
+                columnWidth: 80
+            ) == [
+                "🛠️  local.multiRead",
+                "Sources/A.swift",
+                "Sources/B.swift",
+                "⏳"
+            ]
+        )
+
+        // A repeated path is listed once.
+        let repeated = presentedToolCall(
+            id: "call_multi_read_repeated",
+            name: "local.multiRead",
+            argumentsObject: [
+                "paths": ["Sources/A.swift", "Sources/A.swift"]
+            ],
+            argumentsJSON: "{}"
+        )
+        #expect(
+            TerminalChat.compactToolLines(
+                for: repeated,
+                statusIcon: "✅",
+                statusDetail: "1ms",
+                columnWidth: 80
+            ) == ["🛠️  local.multiRead", "Sources/A.swift", "✅ 1ms"]
+        )
+
+        // Each path is fitted to the same safe width as a status row, so a
+        // long path never wraps the in-place block.
+        let narrow = TerminalChat.compactToolLines(
+            for: toolCall,
+            statusIcon: "✅",
+            statusDetail: "3.83ms",
+            contentInsetWidth: 0,
+            columnWidth: 12
+        )
+        #expect(narrow.count == 4)
+        #expect(narrow.dropFirst().allSatisfy {
+            TerminalTextMetrics.displayWidth($0) <= 11
+        })
+        #expect(narrow.last == "✅ 3.83ms")
+
+        // A call that presents no list keeps its single target row.
+        let single = presentedToolCall(
+            id: "call_read",
+            name: "local.read",
+            argumentsObject: ["path": "Sources/A.swift"],
+            argumentsJSON: "{}"
+        )
+        #expect(ToolCallPresentation.displayToolTargets(for: single).isEmpty)
+        #expect(
+            TerminalChat.compactToolLines(
+                for: single,
+                statusIcon: "✅",
+                statusDetail: "1ms",
+                columnWidth: 80
+            ) == ["🛠️  local.read", "Sources/A.swift ✅ 1ms"]
+        )
+    }
+
+    @Test
+    func multiReadTargetsPreferNonBlankPathsBeforeFallback() {
+        let cases: [(arguments: [String: Any], expected: [String])] = [
+            (
+                ["paths": [" B.swift ", "", "A.swift", "B.swift"],
+                 "file_paths": ["Fallback.swift", "A.swift"]],
+                ["B.swift", "A.swift"]
+            ),
+            (
+                ["file_paths": [" B.swift ", "A.swift", "B.swift", "\n"]],
+                ["B.swift", "A.swift"]
+            ),
+            (
+                ["paths": [String](), "file_paths": ["Fallback.swift"]],
+                ["Fallback.swift"]
+            ),
+            (
+                ["paths": [" ", "\n\t"], "file_paths": ["Fallback.swift", " Fallback.swift "]],
+                ["Fallback.swift"]
+            ),
+            (
+                ["paths": [" ", "Primary.swift"], "file_paths": ["Fallback.swift"]],
+                ["Primary.swift"]
+            ),
+            (["paths": [" "], "file_paths": ["\n"]], []),
+            ([:], [])
+        ]
+
+        for (index, testCase) in cases.enumerated() {
+            let call = presentedToolCall(
+                id: "call_multi_read_alias_\(index)",
+                name: "local.multiRead",
+                argumentsObject: testCase.arguments,
+                argumentsJSON: "{}"
+            )
+            #expect(ToolCallPresentation.displayToolTargets(for: call) == testCase.expected)
+        }
+
+        let call = presentedToolCall(
+            id: "call_multi_read_alias_render",
+            name: "local.multiRead",
+            argumentsObject: [
+                "paths": ["B.swift", "A.swift", "B.swift"],
+                "file_paths": ["Fallback.swift"]
+            ],
+            argumentsJSON: "{}"
+        )
+        #expect(
+            TerminalChat.compactToolLines(
+                for: call,
+                statusIcon: "✅",
+                statusDetail: "1ms",
+                columnWidth: 80
+            ) == ["🛠️  local.multiRead", "B.swift", "A.swift", "✅ 1ms"]
+        )
+    }
+
     func ansiStripped(_ text: String) -> String {
         TerminalANSIText.stripANSI(text)
     }

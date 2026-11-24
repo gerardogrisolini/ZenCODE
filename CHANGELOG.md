@@ -244,6 +244,13 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Fixed
 
+- In terminal chat, `local.multiRead` lists each distinct requested file on
+  its own row, followed by the status icon and elapsed time. As in the tool
+  itself, `file_paths` is used only when `paths` has no nonblank entries. If
+  the pending list is too tall to rewrite, the terminal shows a shorter
+  pending block, or only the completed block if no status row fits. The
+  compact sub-agent overview keeps the tool name and status together.
+
 - `agent.create` now tells the model to omit `profileRole` when naming a
   profile, and to omit both `profile` and `model` when delegating by role.
   Its Responses tool definition opts out of strict normalization so the

@@ -244,6 +244,24 @@ public enum ToolCallPresentation {
         )
     }
 
+    /// The individual targets of a call whose presentation declares a list of
+    /// them (`local.multiRead`), in argument order and deduplicated. A consumer
+    /// that lays each target out on its own row uses this instead of splitting
+    /// the joined ``displayToolTarget(for:)`` string, which cannot tell a
+    /// separator inside a path from the one between two paths.
+    public static func displayToolTargets(for toolCall: DirectAgentToolCall) -> [String] {
+        guard toolCall.presentation != nil,
+              toolCall.name == "local.multiRead" else {
+            return []
+        }
+        let primaryPaths = pathArrayArguments(from: toolCall.argumentsObject, keys: ["paths"])
+        let paths = primaryPaths.isEmpty
+            ? pathArrayArguments(from: toolCall.argumentsObject, keys: ["file_paths"])
+            : primaryPaths
+        var seen = Set<String>()
+        return paths.filter { seen.insert($0).inserted }
+    }
+
     /// Keeps a compact tool call from degrading to a context-free verb such as
     /// `List`, `Inspect`, or `Write`. The tool-owned target remains authoritative;
     /// a safe scalar argument is used only when that target is absent, followed

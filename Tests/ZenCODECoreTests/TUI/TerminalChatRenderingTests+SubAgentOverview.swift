@@ -14,6 +14,89 @@ import Testing
 
 extension TerminalChatRenderingTests {
     @Test
+    func subAgentOverviewCompactMultiReadKeepsCanonicalTitleAndStatus() {
+        let now = Date(timeIntervalSince1970: 0)
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "multi-reader",
+            name: "reader",
+            status: .running,
+            pending: true,
+            currentActivity: "Reading files",
+            currentToolName: "local.multiRead",
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: now,
+            updatedAt: now
+        )
+        let call = presentedToolCall(
+            id: "multi-read",
+            name: "local.multiRead",
+            argumentsObject: ["paths": ["Sources/A.swift", "Sources/B.swift"]],
+            argumentsJSON: "{}"
+        )
+        let result = DirectAgentToolResult(output: "ok", summary: "ok", elapsed: .milliseconds(350))
+        let lifecycles: [(TerminalChatRenderCoordinator.ToolBlockLifecycle, String)] = [
+            (.started, "⏳"),
+            (.completed(for: call, result: result), "✅ 350ms")
+        ]
+
+        for (lifecycle, status) in lifecycles {
+            let presentation = TerminalChatRenderCoordinator.SubAgentToolPresentation(
+                agentID: snapshot.id,
+                agentName: snapshot.name,
+                toolCall: call,
+                lifecycle: lifecycle
+            )
+            func activity(_ density: TerminalSubAgentOverviewLayout.Density) -> [String] {
+                TerminalSubAgentOverviewLayout.activityLines(
+                    snapshot, toolPresentation: presentation, density: density
+                ).map { ansiStripped($0.text) }
+            }
+
+            #expect(activity(.compact) == ["🛠️  local.multiRead", status])
+            #expect(Array(activity(.full).suffix(4)) == [
+                "🛠️  local.multiRead", "Sources/A.swift", "Sources/B.swift", status
+            ])
+        }
+    }
+
+    @Test
+    func subAgentOverviewCompactMultiReadPreservesThinkingPrecedence() {
+        let now = Date(timeIntervalSince1970: 0)
+        let snapshot = DirectSubAgentRuntime.AgentSnapshot(
+            id: "thinking-reader",
+            name: "reader",
+            status: .running,
+            pending: true,
+            currentActivity: "Considering the files.",
+            currentActivityKind: .thinking,
+            currentToolName: "local.multiRead",
+            latestOutput: nil,
+            latestError: nil,
+            createdAt: now,
+            updatedAt: now
+        )
+        let call = presentedToolCall(
+            id: "thinking-multi-read",
+            name: "local.multiRead",
+            argumentsObject: ["paths": ["Sources/A.swift", "Sources/B.swift"]],
+            argumentsJSON: "{}"
+        )
+        let presentation = TerminalChatRenderCoordinator.SubAgentToolPresentation(
+            agentID: snapshot.id,
+            agentName: snapshot.name,
+            toolCall: call,
+            lifecycle: .started
+        )
+        let lines = TerminalSubAgentOverviewLayout.activityLines(
+            snapshot, toolPresentation: presentation, density: .compact
+        ).map { ansiStripped($0.text) }
+        #expect(lines.count == 2)
+        #expect(lines.first == ansiStripped(TerminalSubAgentOverviewLayout.thinkingPlaceholderLine.text))
+        #expect(lines.last?.contains("Considering the files.") == true)
+    }
+
+    @Test
     func subAgentOverviewRendersPlainWrappedStatusWithoutBoxDrawing() {
         let snapshot = DirectSubAgentRuntime.AgentSnapshot(
             id: "agent_1",

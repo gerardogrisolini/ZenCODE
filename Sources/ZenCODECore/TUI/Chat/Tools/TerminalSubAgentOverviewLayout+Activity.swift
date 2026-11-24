@@ -52,12 +52,7 @@ extension TerminalSubAgentOverviewLayout {
         if let currentToolName,
            !ToolRenderingPolicy.shouldSuppressToolRendering(for: currentToolName) {
             if let toolPresentation {
-                lines.append(
-                    contentsOf: toolLines(
-                        toolPresentation,
-                        density: density
-                    )
-                )
+                lines.append(contentsOf: toolLines(toolPresentation, density: density))
             } else {
                 lines.append(
                     toolFallbackLine(
@@ -124,7 +119,14 @@ extension TerminalSubAgentOverviewLayout {
             includesSourceChanges: false
         )
         let reset = TerminalStyle.reset
-        var lines = rows.compactRows.enumerated().map { index, row in
+        var compactRows = rows.compactRows
+        if density == .compact, presentation.toolCall.name == "local.multiRead",
+           compactRows.count > 2, let title = compactRows.first, let status = compactRows.last {
+            // File rows belong to the full overview. Keep the two rows that
+            // identify the call and its outcome when the activity space is tight.
+            compactRows = [title, status]
+        }
+        var lines = compactRows.enumerated().map { index, row in
             let text = standardErrorIsTerminal
                 ? "\(TerminalChat.renderCompactToolLine(row.plainText, isTitle: index == 0))\(reset)"
                 : row.plainText

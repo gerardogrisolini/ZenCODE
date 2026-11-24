@@ -156,19 +156,97 @@ extension TerminalChat {
         let header = "\(ToolCallPresentation.toolIcon(for: toolCall.name))  \(title)"
         let target = ToolCallPresentation.displayToolTarget(for: toolCall)
             .flatMap(ToolArgumentReader.sanitizedMetadataText)
+        // A call that presents several targets (`local.multiRead`) lists each
+        // one on its own row, so no path hides behind another, and keeps the
+        // status row last, with the icon and the elapsed time only.
+        let listedTargets = listedToolTargets(for: toolCall)
         let omitsHeader = previewMerge == .header && target != nil
-        let statusLine = compactToolStatusLine(
-            target: target ?? header,
-            statusIcon: statusIcon,
-            statusDetail: statusDetail,
-            collapsesTargetWhitespace: target != nil,
-            contentInsetWidth: contentInsetWidth,
-            columnWidth: columnWidth
-        )
+        let statusLine = listedTargets.isEmpty
+            ? compactToolStatusLine(
+                target: target ?? header,
+                statusIcon: statusIcon,
+                statusDetail: statusDetail,
+                collapsesTargetWhitespace: target != nil,
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
+            )
+            : compactToolStatusOnlyLine(
+                statusIcon: statusIcon,
+                statusDetail: statusDetail,
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
+            )
+        let targetLines = listedTargets.map {
+            compactToolTargetLine(
+                $0,
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
+            )
+        }
         if omitsHeader {
+            return targetLines + [statusLine]
+        }
+        guard target != nil || !listedTargets.isEmpty else {
             return [statusLine]
         }
-        return target == nil ? [statusLine] : [header, statusLine]
+        return [header] + targetLines + [statusLine]
+    }
+
+    /// The targets a call presents as a list (`local.multiRead`), each
+    /// neutralized like every other metadata row. A call that presents no list
+    /// keeps the single target row of ``compactToolLines(for:statusIcon:statusDetail:contentInsetWidth:columnWidth:previewMerge:)``.
+    private nonisolated static func listedToolTargets(
+        for toolCall: DirectAgentToolCall
+    ) -> [String] {
+        ToolCallPresentation.displayToolTargets(for: toolCall)
+            .compactMap(ToolArgumentReader.sanitizedMetadataText)
+    }
+
+    /// One listed target per row, fitted to the same safe width as a status
+    /// row so a long path never wraps an in-place block.
+    nonisolated static func compactToolTargetLine(
+        _ target: String,
+        contentInsetWidth: Int = 0,
+        columnWidth: Int? = nil
+    ) -> String {
+        fitDisplayWidth(
+            compactToolInlineTarget(target),
+            width: compactToolSafeLineWidth(
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
+            )
+        )
+    }
+
+    /// The status row of a block that lists its targets on their own rows: the
+    /// icon and the elapsed time only, fitted to the same safe width.
+    nonisolated static func compactToolStatusOnlyLine(
+        statusIcon: String,
+        statusDetail: String? = nil,
+        contentInsetWidth: Int = 0,
+        columnWidth: Int? = nil
+    ) -> String {
+        compactToolStatusText(
+            icon: statusIcon,
+            detail: statusDetail,
+            maximumWidth: compactToolSafeLineWidth(
+                contentInsetWidth: contentInsetWidth,
+                columnWidth: columnWidth
+            )
+        )
+    }
+
+    /// The content budget of a compact row. One trailing column is reserved:
+    /// a line exactly terminal-width wraps ambiguously, so the in-place rewrite
+    /// on completion would move up one row too few and leave the previous title
+    /// line behind.
+    private nonisolated static func compactToolSafeLineWidth(
+        contentInsetWidth: Int,
+        columnWidth: Int?
+    ) -> Int {
+        let resolvedColumns = columnWidth ?? TerminalTextMetrics.terminalColumnCount()
+        let columns = max(0, resolvedColumns - contentInsetWidth)
+        return max(0, columns - 1)
     }
 
     /// Compact completion metadata is intentionally assembled independently
@@ -202,12 +280,10 @@ extension TerminalChat {
         contentInsetWidth: Int = 0,
         columnWidth: Int? = nil
     ) -> String {
-        let resolvedColumns = columnWidth ?? TerminalTextMetrics.terminalColumnCount()
-        let columns = max(0, resolvedColumns - contentInsetWidth)
-        // Reserve one trailing column: a line exactly terminal-width wraps
-        // ambiguously, so the in-place rewrite on completion would move up one
-        // row too few and leave the previous title line behind.
-        let safeLineWidth = max(0, columns - 1)
+        let safeLineWidth = compactToolSafeLineWidth(
+            contentInsetWidth: contentInsetWidth,
+            columnWidth: columnWidth
+        )
         let statusText = compactToolStatusText(
             icon: statusIcon,
             detail: statusDetail,
