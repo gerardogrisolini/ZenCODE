@@ -142,6 +142,7 @@ struct ZenAppLaunchTests {
             Building the ZenCODE app (first use or after a ZenCODE update, this can take a few minutes)…
             Still building the ZenCODE app… 15s elapsed.
             Installed the ZenCODE app in \(layout.currentDirectory.path).
+            Added \(fixture.applicationBundle.path): open it to choose a workspace folder.
             Started the ZenCODE app in \(fixture.workspace.path).
 
             """)
@@ -150,16 +151,27 @@ struct ZenAppLaunchTests {
         let stamp = try #require(Installation.readStamp(at: layout.stampFile))
         #expect(stamp.sourcePackagePath == fixture.package.path)
         #expect(stamp.zenExecutablePath == fixture.zen.resolvingSymlinksInPath().path)
+        // The bundle is added once the app is installed: its icon is written
+        // by the installed app, and it is signed before it is moved in.
+        #expect(state.iconWrites.first?.first == layout.installedExecutable)
+        #expect(state.signedBundles.count == 1)
+        #expect(state.signedBundles.first?.lastPathComponent == "ZenCODE.app")
+        #expect(state.signedBundles.first != fixture.applicationBundle)
+        #expect(FileManager.default.isExecutableFile(
+            atPath: fixture.applicationBundle.appendingPathComponent("Contents/MacOS/ZenCODE").path
+        ))
 
         // Same zen: the installed app starts as it is.
         fixture.recorder.reset()
         #expect(await ZenAppLaunchCommand.run(forwardedArguments: forwarded, tools: tools) == 0)
         state = fixture.recorder.snapshot
         #expect(state.swiftCalls.isEmpty)
+        #expect(state.signedBundles.isEmpty)
         #expect(state.launches.count == 1)
         #expect(state.output == "Started the ZenCODE app in \(fixture.workspace.path).\n")
 
-        // A new zen (another size): the app is built again.
+        // A new zen (another size): the app is built again, and the bundle of
+        // the earlier build is replaced.
         fixture.recorder.reset()
         try Self.writeFile("zen-binary-updated", to: fixture.zen, permissions: 0o755)
         #expect(await ZenAppLaunchCommand.run(forwardedArguments: forwarded, tools: tools) == 0)
@@ -167,6 +179,65 @@ struct ZenAppLaunchTests {
         #expect(state.swiftCalls.count == 2)
         #expect(state.launches.count == 1)
         #expect(state.output.hasPrefix("Building the ZenCODE app"))
+        #expect(state.output.contains("Updated \(fixture.applicationBundle.path).\n"))
+        #expect(state.error.isEmpty)
+    }
+
+    @Test
+    func aBundleThatCannotBeAddedToApplicationsIsAWarningAndTheAppStillStarts() async throws {
+        let root = try Self.makeTemporaryDirectory()
+        defer { Self.remove(root) }
+        let fixture = try Fixture(root: root)
+        var tools = fixture.tools()
+        tools.signAppBundle = { _ in
+            throw Installation.ApplicationBundleError.commandFailed("codesign exited with status 1: boom")
+        }
+        let layout = Installation.Layout(supportDirectory: fixture.support)
+
+        #expect(await ZenAppLaunchCommand.run(forwardedArguments: [], tools: tools) == 0)
+
+        let state = fixture.recorder.snapshot
+        #expect(state.error == """
+            ZenCODE: ZenCODE.app was not added to \(fixture.applications.path): it could not be signed \
+            (codesign exited with status 1: boom).
+
+            """)
+        #expect(state.launches == [
+            Recorder.Launch(
+                executable: layout.installedExecutable,
+                arguments: ["--working-directory", fixture.workspace.path],
+                logFile: layout.logFile
+            )
+        ])
+        #expect(state.output.hasSuffix("Started the ZenCODE app in \(fixture.workspace.path).\n"))
+        #expect(!state.output.contains("Added"))
+        #expect(!FileManager.default.fileExists(atPath: fixture.applicationBundle.path))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: layout.appDirectory.path).sorted() == [
+            ".install.lock", "current"
+        ])
+    }
+
+    @Test
+    func anotherSupportDirectoryDoesNotAddTheBundle() async throws {
+        let root = try Self.makeTemporaryDirectory()
+        defer { Self.remove(root) }
+        let fixture = try Fixture(root: root)
+        var tools = fixture.tools()
+        tools.applicationsDirectory = { nil }
+
+        #expect(await ZenAppLaunchCommand.run(forwardedArguments: [], tools: tools) == 0)
+
+        let state = fixture.recorder.snapshot
+        #expect(state.output.contains("""
+            ZenCODE.app was not added to /Applications: ZENCODE_SUPPORT_DIRECTORY selects a support \
+            directory other than ~/.zencode.
+
+            """))
+        #expect(state.iconWrites.isEmpty)
+        #expect(state.signedBundles.isEmpty)
+        #expect(state.error.isEmpty)
+        #expect(state.launches.count == 1)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.applications.path).isEmpty)
     }
 
     @Test
@@ -475,6 +546,12 @@ private final class Recorder: Sendable {
         var configurationArguments: [[String]] = []
         var swiftCalls: [[String]] = []
         var launches: [Launch] = []
+        /// The executable and the icon file of every icon written.
+        var iconWrites: [[URL]] = []
+        /// The bundles signed, with the names of their `Contents` entries
+        /// when they were signed.
+        var signedBundles: [URL] = []
+        var signedContents: [[String]] = []
         var output = ""
         var error = ""
     }
@@ -494,9 +571,10 @@ private final class Recorder: Sendable {
     }
 }
 
-/// A support directory, a source checkout, a `zen` executable, a home and a
-/// workspace (outside the home) under one temporary root, and tools that fake
-/// the build and the launch.
+/// A support directory, a source checkout, a `zen` executable, a home, a
+/// workspace (outside the home) and an applications directory under one
+/// temporary root, and tools that fake the build, the icon, the signature and
+/// the launch.
 private struct Fixture {
     let support: URL
     let checkout: URL
@@ -504,6 +582,7 @@ private struct Fixture {
     let zen: URL
     let home: URL
     let workspace: URL
+    let applications: URL
     let bin: URL
     let recorder = Recorder()
 
@@ -516,7 +595,14 @@ private struct Fixture {
         home = root.appendingPathComponent("home", isDirectory: true)
         workspace = root.appendingPathComponent("workspace", isDirectory: true)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        applications = root.appendingPathComponent("Applications", isDirectory: true)
+        try FileManager.default.createDirectory(at: applications, withIntermediateDirectories: true)
         bin = root.appendingPathComponent("build/out/Products/Release", isDirectory: true)
+    }
+
+    /// `<applications>/ZenCODE.app`.
+    var applicationBundle: URL {
+        applications.appendingPathComponent(ZenAppInstallation.applicationBundleName, isDirectory: true)
     }
 
     func tools() -> ZenAppLaunchCommand.Tools {
@@ -526,6 +612,7 @@ private struct Fixture {
         let zen = zen
         let home = home.path
         let workspace = workspace
+        let applications = applications
         let bin = bin
         return ZenAppLaunchCommand.Tools(
             configuration: { arguments in
@@ -555,6 +642,20 @@ private struct Fixture {
                     $0.launches.append(Recorder.Launch(executable: executable, arguments: arguments, logFile: logFile))
                 }
                 return 4_242
+            },
+            applicationsDirectory: { applications },
+            writeAppIcon: { executable, icon in
+                recorder.update { $0.iconWrites.append([executable, icon]) }
+                try Data("icns".utf8).write(to: icon)
+            },
+            signAppBundle: { bundle in
+                let contents = (try? FileManager.default.contentsOfDirectory(
+                    atPath: bundle.appendingPathComponent("Contents").path
+                ))?.sorted() ?? []
+                recorder.update {
+                    $0.signedBundles.append(bundle)
+                    $0.signedContents.append(contents)
+                }
             },
             writeOutput: { text in recorder.update { $0.output += text } },
             writeError: { text in recorder.update { $0.error += text } }

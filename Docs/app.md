@@ -81,13 +81,46 @@ opens the checkout itself as the workspace. A release build:
 swift build -c release --package-path Sources/ZenApp --product ZenCODE
 ```
 
-The product is the `ZenCODE` executable. There is no `.app` bundle: the app
-delegate gives the bare executable a regular activation policy, which is what
-gives it a menu bar and a key window. It also sets the ZenCODE icon at launch
-(the symbol on a rounded dark tile, drawn from the `icon.svg` in the resource
-bundle next to the executable, which is why `zen --ui` installs the resource
-bundles with it), so the icon shows in the Dock and in ⌘Tab while the app
-runs, while the Finder shows the bare executable with the generic icon.
+The product is the `ZenCODE` executable; `zen --ui`, `swift run`, and a release
+build start it bare, and only the copy in `/Applications` is an `.app` bundle.
+The app delegate gives the bare executable a regular activation policy, which
+is what gives it a menu bar and a key window. It also sets the ZenCODE icon at
+launch (the symbol on a rounded dark tile, drawn from the `icon.svg` in the
+resource bundle next to the executable, which is why `zen --ui` installs the
+resource bundles with it), so the icon shows in the Dock and in ⌘Tab while the
+app runs, while the Finder shows the bare executable with the generic icon.
+`ZenCODE --write-app-icon PATH` writes the same icon as an `.icns` file and
+exits without starting the app: `zen --ui` runs it to give `ZenCODE.app` its
+icon. The bare executable never asks for a workspace folder: without
+`--working-directory`, it opens on the folder it was started from.
+
+### The app in /Applications
+
+After each build (the first `zen --ui`, and the first one after each ZenCODE
+update), `zen --ui` also adds the app to `/Applications` as `ZenCODE.app`, or
+replaces the one an earlier build added there, and prints
+`Added /Applications/ZenCODE.app: open it to choose a workspace folder.` (or
+`Updated /Applications/ZenCODE.app.`). The bundle is a self-contained copy of
+`app/current`: the executable in `Contents/MacOS`, the resource bundles in
+`Contents/Resources`, and the ZenCODE icon as `Contents/Resources/ZenCODE.icns`,
+with the bundle identifier `com.zencode.app`, signed ad hoc on the Mac that
+built it. `zen --ui` itself keeps starting the app of `app/current`.
+
+Open `ZenCODE.app` from the Finder, Launchpad, Spotlight, or the Dock, and its
+window asks for the workspace folder at once; the app opens on the folder you
+choose, as `zen --ui --working-directory <folder>` would. After a cancel, the
+window offers **Choose Folder…** again and **Quit ZenCODE**. Opened this way,
+the app reads the settings of `~/.zencode`, has the environment of the Finder
+instead of the terminal's (`local.exec` still runs the commands in a login
+shell), and is the app that macOS asks the microphone and speech recognition
+permissions for; being signed ad hoc, it may ask them again after a rebuild.
+
+Adding the bundle never stops `zen --ui`: when it cannot be added (for example
+when `/Applications` is not writable), a warning is printed and the app starts
+all the same. A `ZenCODE.app` with another bundle identifier, or a symbolic
+link, is left as it is. With `ZENCODE_SUPPORT_DIRECTORY` set to a directory
+other than `~/.zencode`, the bundle is not added, since the Finder would start
+it on `~/.zencode`. A bundle you delete is added again at the next build.
 
 ## Windows and workspaces
 
@@ -782,9 +815,6 @@ terminal:
 - Telegram differs from the terminal in two points: `/telegram on` is refused
   while the window runs a line, and `/telegram off` shows no `Catch-up from
   Telegram:` block (see [Telegram](#telegram)).
-- There is no `.app` bundle: the app runs as the bare executable that
-  `zen --ui` installs in `~/.zencode/app/current`, from `swift run`, or from a
-  release build.
 - Files are attached while no turn runs: the paperclip and composer drops are
   disabled during one.
 

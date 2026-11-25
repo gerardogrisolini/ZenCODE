@@ -53,4 +53,24 @@ public enum ZenAppLaunchArguments {
         }
         return arguments
     }
+
+    /// Whether `bundleURL` (`Bundle.main.bundleURL`) is an application
+    /// bundle, `ZenCODE.app`. For the bare executable that `zen --ui`, `swift
+    /// run` and Xcode start, it is the folder of the executable.
+    public static func isApplicationBundle(_ bundleURL: URL) -> Bool {
+        bundleURL.pathExtension.lowercased() == "app"
+    }
+
+    /// Whether the app asks for its workspace folder before it launches: it
+    /// runs from its application bundle (opened from /Applications, the Dock,
+    /// Launchpad or Spotlight, which start it in `/`), and the configuration
+    /// arguments (``configurationArguments(from:executableName:)``) have no
+    /// `--working-directory`. `zen --ui` always passes one; `swift run` starts
+    /// the bare executable in the workspace folder.
+    public static func asksForWorkspace(configurationArguments: [String], isApplicationBundle: Bool) -> Bool {
+        guard isApplicationBundle else { return false }
+        // The arguments are the executable name, then option and value pairs.
+        let options = stride(from: 1, to: configurationArguments.count, by: 2).map { configurationArguments[$0] }
+        return !options.contains("--working-directory")
+    }
 }

@@ -34,4 +34,12 @@ struct ZenAppLauncherArgumentsTests {
         guard case let .failure(failure) = result else { return }
         #expect(failure.message == "ZenCODE: Missing value for --model.")
     }
+
+    @Test("the folder chosen is the working directory of the launch")
+    func theChosenWorkspace() {
+        let folder = URL(fileURLWithPath: "/tmp/project/../site", isDirectory: true)
+        #expect(ZenAppLauncher.arguments(["ZenCODE", "--agent", "Developer"], workspace: folder) == [
+            "ZenCODE", "--agent", "Developer", "--working-directory", "/tmp/site"
+        ])
+    }
 }

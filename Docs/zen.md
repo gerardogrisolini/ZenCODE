@@ -467,7 +467,11 @@ zen [--tui] [--telegram] [-p PROMPT] [-f PATH] [--jsonl] [--version] [--doctor] 
   `Sources/ZenApp`) from the checkout it was built from, or from the installer
   copy in `~/.zencode/source/`, into `~/.zencode/app/`; the build needs the
   Swift toolchain and can take a few minutes, and the first one needs network
-  access to fetch the package dependencies. Then `zen` starts the app
+  access to fetch the package dependencies. After each build, `zen` also adds
+  the app to `/Applications` as `ZenCODE.app`, which asks for the workspace
+  folder when it is opened from the Finder, Launchpad, Spotlight, or the Dock
+  (see [The app in /Applications](app.md#the-app-in-applications)); a bundle
+  that cannot be added is a warning. Then `zen` starts the app
   detached and exits, so the terminal returns at once; every invocation starts
   a new instance. Only `--agent`, `--model`, `--skills`,
   `--working-directory`, and `--worktree` are accepted, and they are forwarded

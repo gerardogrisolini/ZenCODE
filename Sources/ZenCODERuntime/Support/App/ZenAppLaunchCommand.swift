@@ -3,10 +3,11 @@
 //  ZenCODE
 //
 //  `zen --ui` (macOS only): validates the options forwarded to the ZenCODE
-//  app, builds and installs the app when the running `zen` is new to it, and
-//  starts it detached so that the terminal returns at once. The machine work
-//  (configuration, `swift`, the spawn) is injected through `Tools`, so tests
-//  never run `swift build` nor start an app.
+//  app, builds and installs the app when the running `zen` is new to it (and
+//  adds `ZenCODE.app` to `/Applications`), and starts it detached so that the
+//  terminal returns at once. The machine work (configuration, `swift`,
+//  `codesign`, the spawn) is injected through `Tools`, so tests never run
+//  `swift build`, never touch `/Applications` nor start an app.
 //
 
 #if os(macOS)
@@ -84,7 +85,8 @@ package enum ZenAppLaunchCommand {
     ///    the last `--working-directory`, so it is the workspace;
     /// 2. reads the configuration as the app will (the persisted settings), so
     ///    an unknown agent is reported here and the workspace is known;
-    /// 3. builds and installs the app when needed (`preparedExecutable`);
+    /// 3. builds and installs the app when needed (`preparedExecutable`),
+    ///    then adds `ZenCODE.app` to `/Applications` (`addApplicationBundle`);
     /// 4. starts it with `appArguments`: the forwarded options and the
     ///    workspace;
     /// 5. prints `Started the ZenCODE app in <workspace>.`
@@ -176,7 +178,61 @@ package enum ZenAppLaunchCommand {
                 fileManager: fileManager
             )
             tools.writeOutput("Installed the ZenCODE app in \(layout.currentDirectory.path).\n")
+            await addApplicationBundle(
+                tools: tools,
+                layout: layout,
+                version: stamp.zenVersion,
+                fileManager: fileManager
+            )
             return installed
+        }
+    }
+
+    /// Adds `ZenCODE.app` to the applications directory after a build, or
+    /// replaces the one an earlier build added there
+    /// (`ZenAppInstallation.installApplicationBundle`), still under the
+    /// install lock. It never fails the run: the app is started from
+    /// `current` all the same, and a failure is reported as a warning.
+    static func addApplicationBundle(
+        tools: Tools,
+        layout: ZenAppInstallation.Layout,
+        version: String,
+        fileManager: FileManager = .default
+    ) async {
+        guard let applications = tools.applicationsDirectory() else {
+            tools.writeOutput(
+                "ZenCODE.app was not added to /Applications: \(AppStorageDirectory.supportDirectoryEnvironmentKey) "
+                    + "selects a support directory other than ~/.zencode.\n"
+            )
+            return
+        }
+        let destination = applications.appendingPathComponent(
+            ZenAppInstallation.applicationBundleName,
+            isDirectory: true
+        )
+        let executable = layout.installedExecutable
+        do {
+            let result = try await ZenAppInstallation.installApplicationBundle(
+                from: layout.currentDirectory,
+                to: destination,
+                layout: layout,
+                version: version,
+                writeIcon: { icon in try await tools.writeAppIcon(executable, icon) },
+                sign: { bundle in try await tools.signAppBundle(bundle) },
+                fileManager: fileManager
+            )
+            if let iconFailure = result.iconFailure {
+                tools.writeError(
+                    "ZenCODE: \(destination.path) has the generic icon: its icon could not be written (\(iconFailure)).\n"
+                )
+            }
+            tools.writeOutput(
+                result.replaced
+                    ? "Updated \(destination.path).\n"
+                    : "Added \(destination.path): open it to choose a workspace folder.\n"
+            )
+        } catch {
+            tools.writeError("ZenCODE: \(error.localizedDescription)\n")
         }
     }
 
@@ -271,6 +327,15 @@ extension ZenAppLaunchCommand {
         var runSwift: SwiftRunner
         /// Starts the installed app detached and returns its process id.
         var launch: @Sendable (_ executable: URL, _ arguments: [String], _ logFile: URL) async throws -> pid_t
+        /// The directory `ZenCODE.app` is added to after a build, or `nil`
+        /// when it is not added (`ZenAppInstallation.applicationsDirectory`).
+        var applicationsDirectory: @Sendable () -> URL?
+        /// Writes the icon of `ZenCODE.app` to `icon` with the installed app
+        /// `executable` (`ZenAppInstallation.writeApplicationIcon`).
+        var writeAppIcon: @Sendable (_ executable: URL, _ icon: URL) async throws -> Void
+        /// Signs `ZenCODE.app` ad hoc, in place
+        /// (`ZenAppInstallation.signApplicationBundle`).
+        var signAppBundle: @Sendable (_ bundle: URL) async throws -> Void
         var writeOutput: @Sendable (String) -> Void
         var writeError: @Sendable (String) -> Void
 
@@ -298,6 +363,18 @@ extension ZenAppLaunchCommand {
                     arguments: arguments,
                     logFile: logFile
                 )
+            },
+            applicationsDirectory: {
+                ZenAppInstallation.applicationsDirectory(
+                    supportDirectory: AppStorageDirectory.appSupportDirectoryURL(),
+                    defaultSupportDirectory: AppStorageDirectory.defaultSupportDirectoryURL()
+                )
+            },
+            writeAppIcon: { executable, icon in
+                try await ZenAppInstallation.writeApplicationIcon(executable: executable, icon: icon)
+            },
+            signAppBundle: { bundle in
+                try await ZenAppInstallation.signApplicationBundle(bundle)
             },
             writeOutput: { AgentOutput.standardOutput.writeString($0) },
             writeError: { AgentOutput.standardError.writeString($0) }

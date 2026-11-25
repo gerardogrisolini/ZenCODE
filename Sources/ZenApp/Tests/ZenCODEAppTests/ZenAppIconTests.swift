@@ -8,7 +8,9 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import ImageIO
 import Testing
+import UniformTypeIdentifiers
 
 @testable import ZenCODEApp
 
@@ -215,5 +217,61 @@ struct ZenAppIconLookupTests {
     @Test("the SwiftPM resource bundle name is the one the build produces")
     func bundleNameIsStable() {
         #expect(ZenAppIcon.resourceBundleName == Self.bundleName)
+    }
+}
+
+@Suite("App icon export")
+@MainActor
+struct ZenAppIconExportTests {
+    @Test("the .icns has every size of a macOS app icon, at 1x and 2x")
+    func icnsHasEveryRepresentation() throws {
+        let symbol = try #require(NSImage(contentsOf: IconPaths.resource))
+        let data = try ZenAppIconExport.icnsData(icon: ZenAppIcon.tile(symbol: symbol))
+        let source = try #require(CGImageSourceCreateWithData(data as CFData, nil))
+        #expect(CGImageSourceGetType(source) as String? == UTType.icns.identifier)
+        let widths = (0..<CGImageSourceGetCount(source)).compactMap { index in
+            CGImageSourceCreateImageAtIndex(source, index, nil)?.width
+        }
+        #expect(widths.sorted() == [16, 32, 32, 64, 128, 256, 256, 512, 512, 1024])
+
+        // The largest image is the tile: clear corner, dark middle.
+        let largest = try #require((0..<CGImageSourceGetCount(source))
+            .compactMap { CGImageSourceCreateImageAtIndex(source, $0, nil) }
+            .max { $0.width < $1.width })
+        let pixels = try RenderedPixels(drawing: NSImage(cgImage: largest, size: NSSize(width: 1024, height: 1024)), pixels: 256)
+        #expect(pixels[2, 2].alpha < 0.01)
+        #expect(pixels[128, 128].alpha > 0.99)
+    }
+
+    @Test("the option writes the icon and exits; any other command line starts the app")
+    func theOption() throws {
+        let directory = try TemporaryDirectory()
+        let icon = directory.url.appendingPathComponent("ZenCODE.icns")
+        var errors = ""
+        let symbol = NSImage(contentsOf: IconPaths.resource)
+        func run(_ arguments: [String], symbol: NSImage? = symbol) -> Int32? {
+            ZenAppIconExport.run(arguments: arguments, loadSymbol: { symbol }, writeError: { errors += $0 })
+        }
+
+        // Keep in sync with `ZenAppInstallation.writeIconOption` of ZenCODECore.
+        #expect(ZenAppIconExport.option == "--write-app-icon")
+        #expect(run(["/path/ZenCODE"]) == nil)
+        #expect(run(["/path/ZenCODE", "--agent", "Developer", "--write-app-icon", icon.path]) == nil)
+        #expect(errors.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: icon.path))
+
+        #expect(run(["/path/ZenCODE", "--write-app-icon", icon.path]) == 0)
+        #expect(errors.isEmpty)
+        let written = try Data(contentsOf: icon)
+        let source = try #require(CGImageSourceCreateWithData(written as CFData, nil))
+        #expect(CGImageSourceGetCount(source) == ZenAppIconExport.representations.count)
+
+        #expect(run(["/path/ZenCODE", "--write-app-icon"]) == 2)
+        #expect(errors == "usage: ZenCODE --write-app-icon PATH\n")
+        errors = ""
+        let missing = directory.url.appendingPathComponent("missing.icns")
+        #expect(run(["/path/ZenCODE", "--write-app-icon", missing.path], symbol: nil) == 1)
+        #expect(errors == "ZenCODE: The icon resource icon.svg was not found next to the app.\n")
+        #expect(!FileManager.default.fileExists(atPath: missing.path))
     }
 }

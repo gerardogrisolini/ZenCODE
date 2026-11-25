@@ -74,6 +74,36 @@ struct ZenAppLaunchArgumentsTests {
         #expect(failure.message == "ZenCODE: Unknown agent 'Nobody'.")
         #expect(!failure.message.contains(ZenAppLaunchFailure.notConfiguredMessage))
     }
+
+    @Test("only an application bundle is one: the bare executable runs from a plain folder")
+    func theApplicationBundle() {
+        #expect(ZenAppLaunchArguments.isApplicationBundle(URL(fileURLWithPath: "/Applications/ZenCODE.app", isDirectory: true)))
+        #expect(ZenAppLaunchArguments.isApplicationBundle(URL(fileURLWithPath: "/Applications/ZenCODE.APP", isDirectory: true)))
+        #expect(!ZenAppLaunchArguments.isApplicationBundle(URL(fileURLWithPath: "/Users/me/.zencode/app/current", isDirectory: true)))
+        #expect(!ZenAppLaunchArguments.isApplicationBundle(URL(fileURLWithPath: "/tmp/ZenApp/.build/debug", isDirectory: true)))
+    }
+
+    @Test("the bundle asks for the workspace unless a working directory is given")
+    func theWorkspaceChoice() throws {
+        func asks(_ processArguments: [String], bundle: Bool = true) throws -> Bool {
+            ZenAppLaunchArguments.asksForWorkspace(
+                configurationArguments: try ZenAppLaunchArguments.configurationArguments(from: processArguments),
+                isApplicationBundle: bundle
+            )
+        }
+        let executable = "/Applications/ZenCODE.app/Contents/MacOS/ZenCODE"
+        // Opened from the Finder, the Dock or Spotlight.
+        #expect(try asks([executable]))
+        #expect(try asks([executable, "-ApplePersistenceIgnoreState", "YES"]))
+        #expect(try asks([executable, "--agent", "Developer", "--worktree", "feature"]))
+        // A value that reads like the option is still a value.
+        #expect(try asks([executable, "--model", "--working-directory"]))
+        #expect(try !asks([executable, "--working-directory", "/tmp/project"]))
+        #expect(try !asks([executable, "--agent", "Developer", "--working-directory", "/tmp/project"]))
+        // The bare executable of `zen --ui` and `swift run` never asks.
+        #expect(try !asks(["/Users/me/.zencode/app/current/ZenCODE"], bundle: false))
+        #expect(try !asks(["/Users/me/.zencode/app/current/ZenCODE", "--agent", "Developer"], bundle: false))
+    }
 }
 
 @Suite("App launch configuration", .serialized)

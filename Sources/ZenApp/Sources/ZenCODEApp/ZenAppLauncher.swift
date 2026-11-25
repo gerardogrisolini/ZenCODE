@@ -18,6 +18,10 @@ import ZenCODECore
 final class ZenAppLauncher {
     /// Where the launch is.
     enum Phase {
+        /// The app was opened from its bundle without a workspace: the window
+        /// asks for the folder (``chooseWorkspace()``), and the runtime
+        /// launches on the folder chosen.
+        case choosingWorkspace
         /// ``ZenAppRuntime/launch(arguments:openExternal:)`` runs.
         case launching
         /// The runtime is up.
@@ -56,7 +60,7 @@ final class ZenAppLauncher {
     /// Where the launch is, as
     /// ``terminationStep(isShuttingDown:launch:worktreeClosure:)`` reads it.
     enum LaunchState: Equatable {
-        /// ``start()`` did not run.
+        /// ``start()`` did not run, or the workspace folder is not chosen yet.
         case notStarted
         /// The launch runs.
         case launching
@@ -80,16 +84,77 @@ final class ZenAppLauncher {
         if case let .ready(runtime) = phase { runtime } else { nil }
     }
 
+    @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var launchTask: Task<Void, Never>?
     @ObservationIgnored private var shutdownTask: Task<Void, Never>?
+    /// The configuration arguments that wait for the workspace folder.
+    @ObservationIgnored private var argumentsWithoutWorkspace: [String]?
+    /// The panel that asks for the workspace folder, while it is open.
+    @ObservationIgnored private var workspacePanel: NSOpenPanel?
 
     init() {}
 
     /// Launches the runtime with the options of the command line (the ones
-    /// `zen --ui` forwards); later calls do nothing.
+    /// `zen --ui` forwards); later calls do nothing. Opened from its bundle
+    /// without `--working-directory`, the app asks for the workspace folder
+    /// first (``ZenAppLaunchArguments/asksForWorkspace(configurationArguments:isApplicationBundle:)``):
+    /// the window shows the choice and opens the panel.
     func start() {
-        guard launchTask == nil else { return }
+        guard !hasStarted else { return }
+        hasStarted = true
         let launchArguments = Self.launchArguments(from: CommandLine.arguments)
+        if case let .success(arguments) = launchArguments,
+           ZenAppLaunchArguments.asksForWorkspace(
+               configurationArguments: arguments,
+               isApplicationBundle: ZenAppLaunchArguments.isApplicationBundle(Bundle.main.bundleURL)
+           ) {
+            argumentsWithoutWorkspace = arguments
+            phase = .choosingWorkspace
+            return
+        }
+        launch(launchArguments)
+    }
+
+    /// Asks for the workspace folder in a panel, or brings forward the panel
+    /// already open, while the phase is ``Phase/choosingWorkspace``. The
+    /// folder chosen is the workspace of the launch; a cancel leaves the
+    /// window on the choice, to choose again or quit.
+    func chooseWorkspace() {
+        guard case .choosingWorkspace = phase, let arguments = argumentsWithoutWorkspace else { return }
+        if let workspacePanel {
+            workspacePanel.makeKeyAndOrderFront(nil)
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Open"
+        panel.message = "Choose the workspace folder of ZenCODE."
+        workspacePanel = panel
+        Task { [weak self] in
+            let response = await panel.begin()
+            guard let self else { return }
+            self.workspacePanel = nil
+            guard response == .OK, let folder = panel.url, case .choosingWorkspace = self.phase else {
+                return
+            }
+            self.argumentsWithoutWorkspace = nil
+            self.phase = .launching
+            self.launch(.success(Self.arguments(arguments, workspace: folder)))
+        }
+    }
+
+    /// `arguments` with the workspace `folder` as their last
+    /// `--working-directory`.
+    static func arguments(_ arguments: [String], workspace folder: URL) -> [String] {
+        arguments + ["--working-directory", folder.standardizedFileURL.path]
+    }
+
+    /// Launches the runtime with `launchArguments`, or fails with their
+    /// failure.
+    private func launch(_ launchArguments: Result<[String], ZenAppLaunchFailure>) {
         launchTask = Task { [weak self] in
             let result: Result<ZenAppRuntime, ZenAppLaunchFailure>
             switch launchArguments {
@@ -150,6 +215,8 @@ final class ZenAppLauncher {
     /// Where the launch is now.
     var launchState: LaunchState {
         switch phase {
+        case .choosingWorkspace:
+            .notStarted
         case .launching:
             launchTask == nil ? .notStarted : .launching
         case let .ready(runtime):

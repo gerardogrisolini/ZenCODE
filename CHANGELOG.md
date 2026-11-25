@@ -12,6 +12,18 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ### Added
 
+- macOS: after each build of the app (first use and after each ZenCODE
+  update), `zen --ui` also adds it to `/Applications` as `ZenCODE.app`, or
+  replaces the one an earlier build added there: a self-contained copy of
+  `~/.zencode/app/current` with the ZenCODE icon, bundle identifier
+  `com.zencode.app`, signed ad hoc. Opened from the Finder, Launchpad,
+  Spotlight, or the Dock, the app asks for the workspace folder before it
+  starts, and offers the choice again after a cancel. Adding the bundle never
+  stops `zen --ui` (a failure is a warning), never replaces a `ZenCODE.app`
+  with another bundle identifier, and is skipped when
+  `ZENCODE_SUPPORT_DIRECTORY` selects a support directory other than
+  `~/.zencode`. The app executable gains `--write-app-icon PATH`, which writes
+  that icon as `.icns` and exits without starting the app.
 - With the in-process DS4 provider the terminal chat also draws
   `local.applyPatch` live while the model writes it: the text of `patch` (or
   `diff`) is shown as it is, each finished row repainted with the diff colors

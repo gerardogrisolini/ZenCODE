@@ -2,8 +2,9 @@
 //  ZenWindowScene.swift
 //  ZenApp
 //
-//  The content of every window: the launch progress, the launch failure, or
-//  the window of a workspace once the runtime is up.
+//  The content of every window: the choice of the workspace folder (the app
+//  opened from its bundle), the launch progress, the launch failure, or the
+//  window of a workspace once the runtime is up.
 //
 
 import AppKit
@@ -26,6 +27,8 @@ struct ZenWindowScene: View {
     var body: some View {
         Group {
             switch launcher.phase {
+            case .choosingWorkspace:
+                ZenWorkspaceChoiceView(choose: { launcher.chooseWorkspace() })
             case .launching:
                 ZenLaunchingView()
             case let .failed(failure):
@@ -64,6 +67,44 @@ struct ZenLaunchingView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("ZenCODE")
+    }
+}
+
+/// The window of the app opened from its bundle, before it has a workspace:
+/// it opens the panel that asks for the folder as it appears, and offers it
+/// again after a cancel.
+struct ZenWorkspaceChoiceView: View {
+    /// Opens the panel (``ZenAppLauncher/chooseWorkspace()``).
+    let choose: () -> Void
+
+    @Environment(\.zenPalette) private var palette
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "folder")
+                .font(.system(size: 40))
+                .foregroundStyle(palette.accent)
+            Text("Choose the workspace folder to open in ZenCODE.")
+                .foregroundStyle(palette.textMuted)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 12) {
+                Button("Quit ZenCODE") {
+                    NSApp.terminate(nil)
+                }
+                .buttonStyle(.glass)
+                Button("Choose Folder…") {
+                    choose()
+                }
+                .buttonStyle(.glassProminent)
+                .tint(palette.accent)
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(.top, 6)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle("ZenCODE")
+        .onAppear { choose() }
     }
 }
 

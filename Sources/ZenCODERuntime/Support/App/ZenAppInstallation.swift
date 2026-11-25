@@ -26,7 +26,9 @@ import ZenPackageMetadata
 ///
 /// The app is rebuilt when the installed executable or its stamp is missing,
 /// or when the stamp differs from the running `zen` (`decision`): first use,
-/// and after every ZenCODE update.
+/// and after every ZenCODE update. After each build, a self-contained copy of
+/// `current` is also added to `/Applications` as `ZenCODE.app`
+/// (`installApplicationBundle`, in `ZenAppApplicationBundle.swift`).
 package enum ZenAppInstallation {
     /// Package directory relative to the root of the ZenCODE source checkout.
     static let packageRelativePath = "Sources/ZenApp"
