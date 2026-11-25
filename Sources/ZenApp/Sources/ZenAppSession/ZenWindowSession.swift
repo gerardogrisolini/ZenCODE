@@ -413,6 +413,12 @@ public final class ZenWindowSession: Identifiable {
     @ObservationIgnored var statusFactsGeneration = 0
     /// The number of reads of the status facts, for tests.
     @ObservationIgnored var statusFactsReadCount = 0
+    /// The context window the latest snapshot reported; `nil` until a turn
+    /// reports one.
+    @ObservationIgnored var lastSnapshotContextWindow: DirectAgentContextWindowStatus?
+    /// The context window the settings configure for the model of the next
+    /// turn, as the latest read of the status facts found it.
+    @ObservationIgnored var configuredContextWindow: DirectAgentContextWindowStatus?
     /// The task graph of the last snapshot applied, to tell a change of the
     /// graph.
     @ObservationIgnored var lastSnapshotTaskGraph: ChatTaskGraphOverview?

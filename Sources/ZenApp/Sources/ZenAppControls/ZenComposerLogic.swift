@@ -27,21 +27,31 @@ public enum ZenComposerLogic {
     }
 
     /// The key hint under the field, in the terminal's words: its input-panel
-    /// help (`TerminalInteractiveLineReader.panelHelpTextLocked`) for the
-    /// keys of the composer and its window, listing, like the terminal, only
-    /// the keys that do something now. Ctrl+G is Session > Full Access and
-    /// Ctrl+Y the chat reader, both menu key equivalents that also work from
-    /// the field.
+    /// mode line (`TerminalInteractiveLineReader.panelModeTextLocked` and the
+    /// help `panelHelpTextLocked`) for the keys of the composer and its
+    /// window, listing, like the terminal, only the keys that do something
+    /// now, after the mode (`Prompt · `, or `Next prompt · ` while busy).
+    /// Ctrl+G is Session > Full Access and Ctrl+Y the chat reader, both menu
+    /// key equivalents that also work from the field.
     struct KeyHint: Equatable {
-        /// The whole hint.
+        /// The whole hint, after its mode.
         let full: String
         /// The hint when the whole one does not fit (`Esc stop` or
         /// `Esc stop reading` ahead of the other keys, as the terminal's
-        /// compact help); `nil` when the whole one is the only form.
+        /// compact help), after its mode; `nil` when the whole one is the
+        /// only form.
         let compact: String?
     }
 
-    /// The hint for the composer's state:
+    /// The mode the hint starts with, as the terminal's mode line: `Prompt`
+    /// when the composer takes a prompt now (reading aloud included),
+    /// `Next prompt` while a turn runs and the prompt is queued.
+    static func keyHintMode(isBusy: Bool) -> String {
+        isBusy ? "Next prompt · " : "Prompt · "
+    }
+
+    /// The hint for the composer's state, each form after its mode
+    /// (``keyHintMode(isBusy:)``):
     /// - with suggestions on screen, their keys (Esc hides them, busy,
     ///   reading aloud, or not);
     /// - while busy, Return queues and Esc stops the turn, the reading aloud
@@ -51,22 +61,26 @@ public enum ZenComposerLogic {
     /// - otherwise Return sends, and Esc, which has nothing to stop and does
     ///   not clear the draft, is not listed.
     static func keyHint(isBusy: Bool, isSpeaking: Bool, hasSuggestions: Bool) -> KeyHint {
+        let mode = keyHintMode(isBusy: isBusy)
         if hasSuggestions {
-            return KeyHint(full: "↑/↓ select · Tab complete · Enter choose · Esc dismiss", compact: nil)
+            return KeyHint(
+                full: mode + "↑/↓ select · Tab complete · Enter choose · Esc dismiss",
+                compact: nil
+            )
         }
         if isBusy {
             return KeyHint(
-                full: "Enter queue · Ctrl+G access · Ctrl+Y chat · Esc stop",
-                compact: "Enter queue · Esc stop · Ctrl+G access · Ctrl+Y chat"
+                full: mode + "Enter queue · Ctrl+G access · Ctrl+Y chat · Esc stop",
+                compact: mode + "Enter queue · Esc stop · Ctrl+G access · Ctrl+Y chat"
             )
         }
         if isSpeaking {
             return KeyHint(
-                full: "Enter send · Ctrl+G access · Ctrl+Y chat · Esc stop reading",
-                compact: "Enter send · Esc stop reading · Ctrl+G access · Ctrl+Y chat"
+                full: mode + "Enter send · Ctrl+G access · Ctrl+Y chat · Esc stop reading",
+                compact: mode + "Enter send · Esc stop reading · Ctrl+G access · Ctrl+Y chat"
             )
         }
-        return KeyHint(full: "Enter send · Ctrl+G access · Ctrl+Y chat", compact: nil)
+        return KeyHint(full: mode + "Enter send · Ctrl+G access · Ctrl+Y chat", compact: nil)
     }
 
     /// A draft with something other than whitespace.

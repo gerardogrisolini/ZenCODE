@@ -87,6 +87,11 @@ Release tags follow the strict `vX.Y.Z` contract described in
   model runs per process. See [Parallel sessions](Docs/app.md#parallel-sessions).
 - A saved conversation already running or loading in another slot of the same
   `ChatSessionHost` can no longer be loaded a second time.
+- macOS app: the status bar is now the last line of the composer, under a
+  separator from edge to edge, as in the terminal's input panel. The key hint
+  starts with `Prompt` (`Next prompt` while a turn runs) and is monospaced, and
+  the open chat reader shows the line of its keys under the message; the text
+  of the chat panel is monospaced, as in the terminal.
 
 ### Fixed
 
@@ -123,6 +128,10 @@ Release tags follow the strict `vX.Y.Z` contract described in
   payloads. That final line feed was read as an extra empty context line, so
   the patch failed with `Patch context ran past end of <file>` or a context
   mismatch.
+- macOS app: the status bar names the model as the terminal does, by the
+  provider's model id (`claude-opus-5-5`, not `claude:claude-opus-5-5`), and
+  shows the context window from the start, with the limit set in the settings
+  (`0.0k/1.0m`), instead of leaving it out until the first turn reports it.
 
 ## [6.2.1] - 2026-11-24
 

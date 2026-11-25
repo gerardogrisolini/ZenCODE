@@ -112,7 +112,11 @@ extension ZenWindowSession {
             newStatus.turnStartedAt = Date()
         }
         newStatus.metrics = snapshot.turn.metrics
-        newStatus.contextWindow = snapshot.turn.contextWindow
+        lastSnapshotContextWindow = snapshot.turn.contextWindow
+        newStatus.contextWindow = Self.displayedContextWindow(
+            snapshot: lastSnapshotContextWindow,
+            configured: configuredContextWindow
+        )
         newStatus.subscriptionUsage = snapshot.turn.subscriptionUsage
         if newStatus != status {
             status = newStatus

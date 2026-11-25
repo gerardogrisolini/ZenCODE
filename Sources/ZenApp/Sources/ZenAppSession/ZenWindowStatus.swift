@@ -14,7 +14,8 @@ public struct ZenWindowStatus: Equatable, Sendable {
     public var isGenerating: Bool
     /// When the turn that generates, or generated last, started.
     public var turnStartedAt: Date?
-    /// The model of the next turn, or the launch model.
+    /// The model of the next turn, named as the terminal names it: the
+    /// provider's model id, or the launch model.
     public var modelID: String?
     /// The thinking level of the next turn.
     public var thinking: AgentThinkingSelection?
@@ -22,7 +23,9 @@ public struct ZenWindowStatus: Equatable, Sendable {
     public var agentName: String?
     /// The running metrics of the turn.
     public var metrics: DirectAgentGenerationMetrics?
-    /// The context window of the session.
+    /// The context window of the session: the one the runtime reports once a
+    /// turn has run, until then the one the settings configure for the model
+    /// (no tokens used), so the status bar shows `0.0k/<max>` from the start.
     public var contextWindow: DirectAgentContextWindowStatus?
     /// The subscription usage of the account.
     public var subscriptionUsage: DirectAgentSubscriptionUsageStatus?

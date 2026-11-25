@@ -287,6 +287,61 @@ extension ChatSessionController {
         return preservesUnknownReference ? modelID : nil
     }
 
+    /// What a status bar shows of the model before the runtime reports its
+    /// context window: the model's name and the window the settings configure
+    /// for it, with no tokens used yet.
+    ///
+    /// The model comes from the session's effective model. A hosted model
+    /// names itself with its own provider id; otherwise the configured
+    /// selection for the effective model supplies the provider's id
+    /// (`claude-opus-5-5`, not the manifest's `claude:claude-opus-5-5`); with
+    /// neither, the effective id itself is shown. The window is the model's
+    /// configured limit, flagged approximate, and is `nil` when none is
+    /// configured.
+    public func statusModel() -> ChatStatusModel {
+        let effectiveModelID = currentEffectiveModelID()
+        if let hostedModel = hostedModelManifest(for: effectiveModelID) {
+            return ChatStatusModel(
+                modelID: hostedModel.modelID,
+                contextWindow: Self.initialContextWindow(
+                    modelID: hostedModel.modelID,
+                    configuredLimit: hostedModel.configuredContextWindowLimit
+                )
+            )
+        }
+
+        guard let selection = AgentSettingsStore.defaultSelection(
+            explicitModelID: effectiveModelID
+        ) else {
+            return ChatStatusModel(
+                modelID: effectiveModelID,
+                contextWindow: nil
+            )
+        }
+        return ChatStatusModel(
+            modelID: selection.modelID,
+            contextWindow: Self.initialContextWindow(
+                modelID: selection.modelID,
+                configuredLimit: selection.configuredContextWindowLimit
+            )
+        )
+    }
+
+    private nonisolated static func initialContextWindow(
+        modelID: String,
+        configuredLimit: Int?
+    ) -> DirectAgentContextWindowStatus? {
+        guard let configuredLimit else {
+            return nil
+        }
+        return DirectAgentContextWindowStatus(
+            usedTokens: nil,
+            maxTokens: configuredLimit,
+            modelID: modelID,
+            isApproximate: true
+        )
+    }
+
     package func currentAgentThinkingSelection() -> AgentThinkingSelection? {
         let effectiveModelID = currentEffectiveModelID()
         let selectedBinding: AgentModelBinding?

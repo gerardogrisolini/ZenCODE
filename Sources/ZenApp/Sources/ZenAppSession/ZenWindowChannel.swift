@@ -343,7 +343,13 @@ final class ZenRefusingInteractionHost: ChatInteractionHost {
 /// What the status bar and the welcome view read from the controller, in one
 /// hop.
 struct ZenControllerFacts: Sendable {
+    /// The model's name as the terminal's status bar shows it: the provider's
+    /// model id (``ChatStatusModel/modelID``).
     let modelID: String?
+    /// The window the settings configure for the model, with no tokens used
+    /// (``ChatStatusModel/contextWindow``): what the status bar shows until a
+    /// turn reports the window of the runtime. `nil` when none is configured.
+    let contextWindow: DirectAgentContextWindowStatus?
     let thinking: AgentThinkingSelection?
     let agentName: String?
     let commandContext: ChatCommandContext
@@ -364,8 +370,10 @@ struct ZenControllerFacts: Sendable {
         )
         let activeTools = await controller.activeToolsSummary()
         let selection = controller.selection
+        let statusModel = controller.statusModel()
         return ZenControllerFacts(
-            modelID: configuration.modelID ?? controller.environment.launchModelID,
+            modelID: statusModel.modelID,
+            contextWindow: statusModel.contextWindow,
             thinking: configuration.thinkingSelection ?? selection.thinkingOverride,
             agentName: selection.agent?.name,
             // Read at every refresh, as the terminal and ACP read it at each

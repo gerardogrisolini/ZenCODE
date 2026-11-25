@@ -7,7 +7,9 @@
 //  one row while messages wait unread; open, it shows one message at a time,
 //  with its author and route, and the reader keys of the terminal (← → Home
 //  End between messages, ↑ ↓ to scroll the message), even while the composer
-//  has the focus. ⌃Y and the Session menu open and close it.
+//  has the focus, listed under the message as the terminal's footer does.
+//  The panel's text is monospaced, as in the terminal. ⌃Y and the Session
+//  menu open and close it.
 //
 
 import Foundation
@@ -124,6 +126,9 @@ enum ZenSharedChatPanelLogic {
     static let readHint = "⌃Y read"
     /// The hint of the open panel.
     static let closeHint = "⌃Y close"
+    /// The reader keys, under the open panel's message, in the terminal's
+    /// words.
+    static let readerKeysFooter = "↑/↓ scroll · ←/→ message · Home/End first/last"
     /// The lines of text the message shows at most before it scrolls.
     static let maximumVisibleLines = 12
 
@@ -167,6 +172,15 @@ enum ZenSharedChatPanelLogic {
         case .hidden: nil
         case .unread: readHint
         case .empty, .message: closeHint
+        }
+    }
+
+    /// The line of reader keys under the message: only while the panel shows
+    /// one, as the terminal's footer.
+    static func footer(for state: ZenSharedChatPanelState) -> String? {
+        switch state {
+        case .hidden, .unread, .empty: nil
+        case .message: readerKeysFooter
         }
     }
 
@@ -275,12 +289,19 @@ struct ZenSharedChatPanel: View {
             headerRow(state, header: header)
             if case let .message(message) = state {
                 Text(verbatim: message.author)
-                    .font(.callout)
+                    .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(palette.textMuted)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .textSelection(.enabled)
                 ZenSharedChatMessageText(message: message, scroller: scroller)
+                if let footer = ZenSharedChatPanelLogic.footer(for: state) {
+                    Text(verbatim: footer)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(palette.chatBody)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
         }
         .padding(.horizontal, 12)
@@ -363,14 +384,14 @@ struct ZenSharedChatPanel: View {
 
     private func title(_ header: String) -> some View {
         Text(verbatim: header)
-            .font(.callout.weight(.semibold))
+            .font(.system(.callout, design: .monospaced).weight(.semibold))
             .foregroundStyle(palette.chatTitle)
             .lineLimit(1)
     }
 
     private func hintText(_ hint: String) -> some View {
         Text(verbatim: hint)
-            .font(.caption)
+            .font(.system(.caption, design: .monospaced))
             .foregroundStyle(palette.textMuted)
             .lineLimit(1)
     }
@@ -431,7 +452,7 @@ private struct ZenSharedChatMessageText: View {
     var body: some View {
         ScrollView(.vertical) {
             Text(verbatim: message.text)
-                .font(.body)
+                .font(.system(.body, design: .monospaced))
                 .foregroundStyle(palette.chatBody)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)

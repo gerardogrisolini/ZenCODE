@@ -88,7 +88,7 @@ extension ZenWindowSessionTests {
         try await withRuntime { runtime, _, workspace in
             let window = try await runtime.openWindow(workspace: workspace)
             #expect(await window.waitUntilIdle())
-            #expect(window.status.modelID == "zen-app-model")
+            #expect(window.status.modelID == "local/zen-app-model")
             window.draft = "Hello"
             window.submitDraft()
             #expect(await window.waitUntilIdle())
@@ -107,7 +107,7 @@ extension ZenWindowSessionTests {
             #expect(await eventually { window.epoch == window.current.epoch })
             #expect(await window.waitUntilIdle())
             #expect(window.statusFactsReadCount > reads)
-            #expect(window.status.modelID == "zen-app-model")
+            #expect(window.status.modelID == "local/zen-app-model")
             await runtime.shutdown()
         }
     }

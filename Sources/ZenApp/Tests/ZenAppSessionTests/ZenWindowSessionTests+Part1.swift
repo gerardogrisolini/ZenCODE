@@ -52,7 +52,7 @@ extension ZenWindowSessionTests {
             #expect(window.liveAssistantText.isEmpty)
             #expect(window.liveBlockID == nil)
             #expect(window.liveItems.isEmpty)
-            #expect(window.status.modelID == "zen-app-model")
+            #expect(window.status.modelID == "local/zen-app-model")
             #expect(window.status.agentName != nil)
             #expect(window.sessionTitle == "Hello")
             #expect(!window.isBusy)

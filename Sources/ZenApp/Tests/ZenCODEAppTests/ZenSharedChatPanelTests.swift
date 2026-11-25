@@ -222,6 +222,22 @@ struct ZenSharedChatPanelStateTests {
         #expect(!author.contains("\n"))
         #expect(!author.contains("\u{1B}"))
     }
+
+    @Test("the reader keys footer shows only under a message, in the terminal's words; no other state has one")
+    func footer() throws {
+        let footer = "↑/↓ scroll · ←/→ message · Home/End first/last"
+        #expect(ZenSharedChatPanelLogic.readerKeysFooter == footer)
+
+        let panel = state(reader([try message("first"), try message("second")], open: true))
+        #expect(shown(panel) != nil)
+        #expect(ZenSharedChatPanelLogic.footer(for: panel) == footer)
+
+        #expect(ZenSharedChatPanelLogic.footer(for: .hidden) == nil)
+        #expect(ZenSharedChatPanelLogic.footer(for: state(reader([try message("one")]))) == nil)
+        #expect(ZenSharedChatPanelLogic.footer(for: state(reader([], open: true))) == nil)
+        #expect(ZenSharedChatPanelLogic.footer(for: .unread(header: "Chat · 1 message · 1 new")) == nil)
+        #expect(ZenSharedChatPanelLogic.footer(for: .empty(header: "Chat · 0 messages")) == nil)
+    }
 }
 
 // MARK: - Keys

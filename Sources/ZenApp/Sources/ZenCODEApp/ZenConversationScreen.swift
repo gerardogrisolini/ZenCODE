@@ -3,14 +3,14 @@
 //  ZenApp
 //
 //  The detail of a window: the tab bar, the conversation with the floating
-//  bottom chrome (shared-chat panel, composer, status bar) and the open
-//  sub-agent tabs, the artifacts sidebar on their right, the toolbar, and
-//  Esc, which in the conversation denies a waiting tool consent (its sheet
-//  answers Esc itself) and otherwise stops the turn and voice mode's reading
-//  aloud, and in a sub-agent tab does nothing. While the shared-chat reader
-//  is open in the conversation, the unmodified ← → Home End move between its
-//  messages and ↑ ↓ scroll the one shown, even from the composer, as in the
-//  terminal.
+//  bottom chrome (shared-chat panel and composer, whose last line is the
+//  status bar) and the open sub-agent tabs, the artifacts sidebar on their
+//  right, the toolbar, and Esc, which in the conversation denies a waiting
+//  tool consent (its sheet answers Esc itself) and otherwise stops the turn
+//  and voice mode's reading aloud, and in a sub-agent tab does nothing. While
+//  the shared-chat reader is open in the conversation, the unmodified ← →
+//  Home End move between its messages and ↑ ↓ scroll the one shown, even from
+//  the composer, as in the terminal.
 //
 
 import Foundation
@@ -176,9 +176,11 @@ struct ZenConversationScreen: View {
 }
 
 /// The floating chrome under the conversation, in one glass container: the
-/// shared-chat panel (``ZenSharedChatPanel``), the composer (which does not
-/// add a container of its own), and the status bar. A tool consent is a sheet
-/// of the window (``ZenConsentSheet``) and a menu a popover
+/// shared-chat panel (``ZenSharedChatPanel``) and the composer (which does not
+/// add a container of its own), whose last line, under a separator, is the
+/// status bar (``ZenWindowStatusBar``), as in the terminal's input panel. A
+/// tool consent is a sheet of the window (``ZenConsentSheet``) and a menu a
+/// popover
 /// (``ZenChoicePopover``, in the conversation only) over the composer, or
 /// over the toolbar button that launched its command (``ZenWindowToolbar``),
 /// so neither changes the height of the chrome.
@@ -203,12 +205,10 @@ struct ZenBottomChrome: View {
                 ZenSharedChatPanel(session: session, scroller: scroller, readerKey: readerKey)
                 ZenWindowComposer(session: session, focus: focus, didSubmit: didSubmit, readerKey: readerKey)
                     .modifier(ZenWindowMenuPopover(session: session))
-                ZenWindowStatusBar(session: session)
             }
         }
-        .padding(.horizontal, 16)
+        .padding([.bottom, .horizontal], 12)
         .padding(.top, 6)
-        .padding(.bottom, 10)
     }
 
     /// The window's reader keys. The reader's state is read when a key
@@ -258,7 +258,9 @@ private struct ZenWindowMenuPopover: ViewModifier {
 /// live `@mentions` of the session's shared chat and the window's reader
 /// keys. Voice mode's reading aloud shows in its key hint only in the window
 /// voice mode follows, the one where Esc stops it, and its cursor follows the
-/// voice dictation (``ZenDictationCursor``).
+/// voice dictation (``ZenDictationCursor``). The status bar is its footer,
+/// built here but read by its own body, so a status update does not run this
+/// one.
 struct ZenWindowComposer: View {
     @Bindable var session: ZenWindowSession
     let focus: FocusState<Bool>.Binding
@@ -278,7 +280,9 @@ struct ZenWindowComposer: View {
             focus: focus,
             usesGlassContainer: false,
             actions: actions
-        )
+        ) {
+            ZenWindowStatusBar(session: session)
+        }
     }
 
     private var actions: ZenComposerActions {
@@ -310,7 +314,8 @@ struct ZenWindowComposer: View {
     }
 }
 
-/// The status bar of a window: the only view of the chrome that reads the
+/// The status bar of a window, the last line of its composer: the only view
+/// of the chrome that reads the
 /// status, which changes with every snapshot of a turn, and voice mode's
 /// state, the app's, which every window shows.
 struct ZenWindowStatusBar: View {

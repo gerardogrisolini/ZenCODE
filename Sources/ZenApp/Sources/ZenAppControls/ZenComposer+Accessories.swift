@@ -3,7 +3,7 @@
 //  ZenApp
 //
 //  The accessory views of the prompt composer: the queued prompt chips above
-//  the field and the key hint under it.
+//  the field and the key hint under it (`Prompt · Enter send · …`).
 //
 
 import Foundation
@@ -13,10 +13,11 @@ import ZenCODECore
 
 extension ZenComposer {
     /// The key hint, under the field's text, on one line: its compact form
-    /// when the full one does not fit, as in the terminal.
+    /// when the full one does not fit, as in the terminal. Monospaced, as
+    /// the status line under it.
     func keyHint(_ hint: ZenComposerLogic.KeyHint) -> some View {
         keyHintText(hint)
-            .font(.caption)
+            .font(.system(.caption, design: .monospaced))
             .foregroundStyle(palette.textMuted)
             .lineLimit(1)
             .truncationMode(.tail)

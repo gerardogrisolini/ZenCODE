@@ -348,7 +348,7 @@ struct ZenWindowSessionTests {
             #expect(await backend.preloadCount == 1)
             #expect(await backend.toolDescriptorReadCount > 0)
             #expect(window.startupSummary?.activeTools == (await window.current.controller.activeToolsSummary()))
-            #expect(window.status.modelID == "zen-app-model")
+            #expect(window.status.modelID == "local/zen-app-model")
 
             window.draft = "Hello"
             window.submitDraft()

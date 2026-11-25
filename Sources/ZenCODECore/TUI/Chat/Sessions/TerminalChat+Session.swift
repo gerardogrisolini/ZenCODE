@@ -48,45 +48,13 @@ extension TerminalChat {
     public func refreshInitialStatusBarContextWindow() async {
         _ = await statusBar.update(agentName: selectedAgent?.displayName)
         await refreshStatusBarThinkingSelection()
-        let effectiveModelID = currentEffectiveModelID()
-        if let hostedModel = hostedModelManifest(for: effectiveModelID) {
-            _ = await statusBar.update(modelID: hostedModel.modelID)
-            guard let maxTokens = hostedModel.configuredContextWindowLimit else {
-                return
-            }
-            _ = await statusBar.update(
-                contextWindow: DirectAgentContextWindowStatus(
-                    usedTokens: nil,
-                    maxTokens: maxTokens,
-                    modelID: hostedModel.modelID,
-                    isApproximate: true
-                )
-            )
-            return
+        let statusModel = chatSession.statusModel()
+        if let modelID = statusModel.modelID {
+            _ = await statusBar.update(modelID: modelID)
         }
-
-        guard let selection = AgentSettingsStore.defaultSelection(
-            explicitModelID: effectiveModelID
-        ) else {
-            if let effectiveModelID {
-                _ = await statusBar.update(modelID: effectiveModelID)
-            }
-            return
+        if let contextWindow = statusModel.contextWindow {
+            _ = await statusBar.update(contextWindow: contextWindow)
         }
-
-        _ = await statusBar.update(modelID: selection.modelID)
-        guard let maxTokens = selection.configuredContextWindowLimit else {
-            return
-        }
-
-        _ = await statusBar.update(
-            contextWindow: DirectAgentContextWindowStatus(
-                usedTokens: nil,
-                maxTokens: maxTokens,
-                modelID: selection.modelID,
-                isApproximate: true
-            )
-        )
     }
 
     @discardableResult

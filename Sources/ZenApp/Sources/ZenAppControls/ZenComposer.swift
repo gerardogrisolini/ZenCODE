@@ -4,8 +4,9 @@
 //
 //  The floating Liquid Glass prompt composer of the app: the terminal UI's
 //  input panel (multi-line draft, history keys, slash-command and @mention
-//  completion, the shared-chat reader keys, the key hint under the field)
-//  plus attachments, file drops, Send/Stop and the queued prompts.
+//  completion, the shared-chat reader keys, the key hint under the field and,
+//  below a separator, the footer the owner passes: the status line) plus
+//  attachments, file drops, Send/Stop and the queued prompts.
 //
 
 import Foundation
@@ -80,8 +81,15 @@ public struct ZenComposerDraftUpdate: Equatable, Sendable {
 /// leaves in place stays whole.
 ///
 /// Under the field, inside the container, a line names the keys that do
-/// something now, as the terminal's input panel does
+/// something now, after the mode (`Prompt` or `Next prompt`), as the
+/// terminal's input panel does
 /// (``ZenComposerLogic/keyHint(isBusy:isSpeaking:hasSuggestions:)``).
+///
+/// With a footer, the container ends, as the terminal's input panel does,
+/// with a separator from edge to edge and the footer under it, aligned with
+/// the field's text and the key hint (the app passes its status line). The
+/// composer does not read what the footer shows, so a footer that changes
+/// redraws only itself.
 ///
 /// Prompts submitted while busy are queued by the owner, so Send stays
 /// available next to Stop when the draft is not empty.
@@ -89,7 +97,7 @@ public struct ZenComposerDraftUpdate: Equatable, Sendable {
 /// The composer's glass (suggestion list, field container, queued chips)
 /// shares a `GlassEffectContainer` the composer creates, unless the caller
 /// already wraps it in one and passes `usesGlassContainer: false`.
-public struct ZenComposer: View {
+public struct ZenComposer<Footer: View>: View {
     @Environment(\.zenPalette) var palette
 
     @Binding private var draft: String
@@ -105,6 +113,10 @@ public struct ZenComposer: View {
     private let monospaced: Bool
     private let usesGlassContainer: Bool
     let actions: ZenComposerActions
+    /// The view under the separator at the bottom of the container; it shows
+    /// only with `hasFooter`.
+    private let footer: Footer
+    private let hasFooter: Bool
 
     @FocusState private var internalFocus: Bool
     @State private var selection: TextSelection?
@@ -118,10 +130,14 @@ public struct ZenComposer: View {
 
     /// The spacing between the attach button, the field and the trailing
     /// buttons.
-    static let rowSpacing: CGFloat = 8
+    static var rowSpacing: CGFloat { 8 }
+
+    /// The horizontal padding of the container's content: the footer's
+    /// separator cancels it to reach the container's edges.
+    private static var horizontalInset: CGFloat { 10 }
 
     /// The placeholder of the empty field.
-    public static let placeholder = "Message ZenCODE — / for commands"
+    public static var placeholder: String { "Message ZenCODE — / for commands" }
 
     /// - Parameters:
     ///   - draft: The text being composed, owned by the caller.
@@ -146,6 +162,8 @@ public struct ZenComposer: View {
     ///     `GlassEffectContainer`; pass `false` when the caller already
     ///     provides one, so the containers do not nest.
     ///   - actions: What the composer asks its owner to do.
+    ///   - footer: The view at the bottom of the container, under a separator
+    ///     from edge to edge (the app's status line).
     public init(
         draft: Binding<String>,
         isBusy: Bool,
@@ -159,7 +177,8 @@ public struct ZenComposer: View {
         focus: FocusState<Bool>.Binding? = nil,
         monospaced: Bool = false,
         usesGlassContainer: Bool = true,
-        actions: ZenComposerActions = ZenComposerActions()
+        actions: ZenComposerActions = ZenComposerActions(),
+        @ViewBuilder footer: () -> Footer
     ) {
         self._draft = draft
         self.isBusy = isBusy
@@ -174,6 +193,8 @@ public struct ZenComposer: View {
         self.monospaced = monospaced
         self.usesGlassContainer = usesGlassContainer
         self.actions = actions
+        self.footer = footer()
+        self.hasFooter = true
     }
 
     public var body: some View {
@@ -260,13 +281,23 @@ public struct ZenComposer: View {
                     hasSuggestions: hasSuggestions
                 ))
             }
+            if hasFooter {
+                // The terminal's `├───┤`: from edge to edge of the container,
+                // in the color of its border, under the key hint.
+                Rectangle()
+                    .fill(isDropTargeted ? palette.accent : palette.promptBorder.opacity(0.6))
+                    .frame(height: 1)
+                    .padding(.horizontal, -Self.horizontalInset)
+                footer
+                    .padding(.leading, attachButtonWidth + Self.rowSpacing)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, Self.horizontalInset)
         .padding(.vertical, 8)
-        .glassEffect(
-            .regular.tint(palette.accent.opacity(isDropTargeted ? 0.20 : 0.06)),
-            in: .rect(cornerRadius: 20)
-        )
+        // The border is part of the glass's content, as the footer's separator
+        // is, so the glass renders both alike; an overlay after `glassEffect`
+        // stays outside its foreground treatment and fades on the material.
         .overlay {
             RoundedRectangle(cornerRadius: 20)
                 .strokeBorder(
@@ -275,6 +306,10 @@ public struct ZenComposer: View {
                 )
                 .allowsHitTesting(false)
         }
+        .glassEffect(
+            .regular.tint(palette.accent.opacity(isDropTargeted ? 0.20 : 0.06)),
+            in: .rect(cornerRadius: 20)
+        )
         .dropDestination(for: URL.self) { urls, _ in
             let files = ZenComposerLogic.droppedFiles(urls)
             guard isEnabled, attachmentsEnabled, !files.isEmpty else { return false }
@@ -588,5 +623,41 @@ public struct ZenComposer: View {
         guard isEnabled, ZenComposerLogic.canSend(draft: draft) else { return }
         recalledDraft = nil
         actions.submit()
+    }
+}
+
+extension ZenComposer where Footer == EmptyView {
+    /// A composer without a footer: the container ends with the key hint.
+    /// The parameters are those of the initializer with a footer.
+    public init(
+        draft: Binding<String>,
+        isBusy: Bool,
+        isSpeaking: Bool = false,
+        isEnabled: Bool = true,
+        attachmentsEnabled: Bool = true,
+        commands: [ChatCommandDescriptor] = [],
+        mentions: [SharedChatMentionParser.Suggestion] = [],
+        queued: [ZenComposerQueuedItem] = [],
+        draftUpdate: ZenComposerDraftUpdate? = nil,
+        focus: FocusState<Bool>.Binding? = nil,
+        monospaced: Bool = false,
+        usesGlassContainer: Bool = true,
+        actions: ZenComposerActions = ZenComposerActions()
+    ) {
+        self._draft = draft
+        self.isBusy = isBusy
+        self.isSpeaking = isSpeaking
+        self.isEnabled = isEnabled
+        self.attachmentsEnabled = attachmentsEnabled
+        self.commands = commands
+        self.mentions = mentions
+        self.queued = queued
+        self.draftUpdate = draftUpdate
+        self.externalFocus = focus
+        self.monospaced = monospaced
+        self.usesGlassContainer = usesGlassContainer
+        self.actions = actions
+        self.footer = EmptyView()
+        self.hasFooter = false
     }
 }

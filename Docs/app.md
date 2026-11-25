@@ -281,9 +281,9 @@ whose agent ZenCODE no longer tracks keeps what it showed last. A tab that
 never read a conversation (an agent that ended before you opened its tab)
 says that it is not available.
 
-The chat panel (see [Shared chat](#shared-chat)), the composer, and the
-status bar are in the Chat tab only, which keeps its scroll position and your
-draft while another tab shows. When the session waits for an answer while
+The chat panel (see [Shared chat](#shared-chat)) and the composer, with the
+status bar at its bottom, are in the Chat tab only, which keeps its scroll
+position and your draft while another tab shows. When the session waits for an answer while
 another tab shows, the Chat tab shows a dot, and the window never switches to
 it by itself: the tool consents and the requests for a line of text are
 sheets of the window, over any tab, and the menus of the commands open in a
@@ -333,18 +333,23 @@ The composer is at the bottom of the window.
   refuses the open requests. The queue is kept. While a consent sheet shows,
   Esc denies the call instead. While voice mode is on, Esc also stops the
   reading aloud (see [Voice](#voice)); it never clears the draft.
-- Under the field, a line names the keys that do something now, in the
-  words of the terminal's input panel: `Enter send · Ctrl+G access · Ctrl+Y
-  chat` while idle, `Enter queue · Ctrl+G access · Ctrl+Y chat · Esc stop`
-  while a turn runs, `Enter send · Ctrl+G access · Ctrl+Y chat · Esc stop
-  reading` while voice mode reads aloud in the window it follows (while a
-  turn runs too, the turn's line shows, and Esc stops both), and `↑/↓ select
-  · Tab complete · Enter choose · Esc dismiss` while suggestions show.
+- Under the field, a monospaced line names the keys that do something now, in
+  the words of the terminal's input panel, after its mode, `Prompt` (or `Next
+  prompt` while a turn runs): `Prompt · Enter send · Ctrl+G access · Ctrl+Y
+  chat` while idle, `Next prompt · Enter queue · Ctrl+G access · Ctrl+Y chat ·
+  Esc stop` while a turn runs, `Prompt · Enter send · Ctrl+G access · Ctrl+Y
+  chat · Esc stop reading` while voice mode reads aloud in the window it
+  follows (while a turn runs too, the turn's line shows, and Esc stops both),
+  and `Prompt · ↑/↓ select · Tab complete · Enter choose · Esc dismiss` (`Next
+  prompt · …` while a turn runs) while suggestions show.
   Ctrl+G is **Session > Full Access** and
   Ctrl+Y shows or hides the chat reader (see
   [Toolbar and menus](#toolbar-and-menus)). When the line does not fit while
   a turn runs or voice mode reads, `Esc stop` or `Esc stop reading` moves
   ahead of Ctrl+G and Ctrl+Y, as in the terminal.
+- The last line of the composer, under a separator that runs from edge to
+  edge, is the status bar (see [Status bar](#status-bar)), as the terminal's
+  input panel ends with its status line.
 
 The response language is locked on the first prompt you type in a session, as
 in the terminal: the configured language, else the system one. It is decided
@@ -419,9 +424,11 @@ has four states:
   time: the header `Chat · i/N · U new` with the ‹ and › buttons and a close
   button, then `Author: <route>`, for example `Worker [18:05:09] →
   Coordinator`, the label of the terminal reader (the recipient reads
-  `Coordinator`, `All`, `Operator`, the name of the agent, or `Agent`), and
-  the text. The text is plain, never Markdown, and selectable; it grows to 12
-  lines and then scrolls.
+  `Coordinator`, `All`, `Operator`, the name of the agent, or `Agent`), the
+  text, and under it the line of the reader's keys, `↑/↓ scroll · ←/→ message ·
+  Home/End first/last`, as the footer of the terminal's reader. The text is
+  plain, never Markdown, and selectable; it grows to 12 lines and then
+  scrolls. The whole panel is set in a monospaced font, as in the terminal.
 
 Opening the reader selects the first unread message, else the newest, and
 reads it. Moving onto an unread message marks it and the messages before it
@@ -611,9 +618,10 @@ application.
 
 ## Status bar
 
-The line under the composer has the fragments of the terminal status bar, in
-its order and separated by ` · `, with the app's voice indicator after the
-first one:
+The status bar is the last line of the composer, under a separator that runs
+from edge to edge, as in the terminal's input panel. It has the fragments of
+the terminal status bar, in its order and separated by ` · `, with the app's
+voice indicator after the first one:
 
 - a red dot (`●`) while **Full Access** is on (see
   [Toolbar and menus](#toolbar-and-menus));
@@ -624,8 +632,12 @@ first one:
   aloud, which wins over the pause; the tooltip says `Voice mode: listening`,
   `Voice mode: starting`, `Voice mode: paused`, or `Voice mode: reading aloud`;
 - the selected agent's name, the model, and the thinking level, with a spinner
-  while a turn runs;
-- the context window, `used/max`, with a small gauge;
+  while a turn runs; the model is named as in the terminal, by the provider's
+  model id (`claude-opus-5-5`, not the settings' `claude:claude-opus-5-5`);
+- the context window, `used/max`, with a small gauge. It shows from the start
+  of the session, with the limit configured for the model in the settings
+  (`0.0k/<max>`), until the first turn reports the window of the runtime;
+  without a configured limit it appears with that first report;
 - the elapsed time of the turn, live, then the duration of the last response;
 - the token counts (`c:` cached, `p:` prompt, `g:` generated);
 - the throughput, in `tok/s`;

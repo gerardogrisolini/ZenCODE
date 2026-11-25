@@ -2,8 +2,9 @@
 //  ZenStatusBar.swift
 //  ZenApp
 //
-//  The one-line status bar under the composer: the terminal UI's status
-//  fragments, in its order and colors.
+//  The one-line status bar at the bottom of the composer, under a separator,
+//  as in the terminal UI's input panel: the terminal UI's status fragments,
+//  in its order and colors.
 //
 
 import Foundation
@@ -65,7 +66,9 @@ public struct ZenStatusBarState: Equatable, Sendable {
     }
 }
 
-/// The status line under the composer.
+/// The status line at the bottom of the composer, under a separator, as in
+/// the terminal's input panel. The caller places it (the composer aligns its
+/// footer with the field's text), so it has no padding of its own.
 ///
 /// The leading side lists the terminal UI's fragments joined by `" · "`
 /// (formatted by ``ZenStatusFormatting``): a red dot in full access, the
@@ -97,7 +100,6 @@ public struct ZenStatusBar: View {
         .font(.system(.caption, design: .monospaced))
         .monospacedDigit()
         .foregroundStyle(palette.textSecondary)
-        .padding(.horizontal, 14)
         .accessibilityElement(children: .combine)
     }
 

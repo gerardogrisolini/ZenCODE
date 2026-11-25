@@ -12,8 +12,9 @@ import ZenCODECore
 extension ZenWindowSession {
     // MARK: - Status
 
-    /// Reads the model, thinking level, agent, command context, and startup
-    /// summary of the next turn from the controller the slot runs now.
+    /// Reads the model, its configured context window, thinking level, agent,
+    /// command context, and startup summary of the next turn from the
+    /// controller the slot runs now.
     func refreshStatus() async {
         statusFactsAreStale = false
         statusFactsGeneration &+= 1
@@ -21,8 +22,13 @@ extension ZenWindowSession {
         statusFactsReadCount += 1
         let facts = await ZenControllerFacts.read(in: sessionHost, slotID: slotID, hooks: hooks)
         guard !isClosed, generation == statusFactsGeneration, let facts else { return }
+        configuredContextWindow = facts.contextWindow
         var newStatus = status
         newStatus.modelID = facts.modelID
+        newStatus.contextWindow = Self.displayedContextWindow(
+            snapshot: lastSnapshotContextWindow,
+            configured: configuredContextWindow
+        )
         newStatus.thinking = facts.thinking
         newStatus.agentName = facts.agentName
         if newStatus != status {
@@ -35,6 +41,17 @@ extension ZenWindowSession {
             commandContext = facts.commandContext
             commandDescriptors = ZenAppCommands.visibleDescriptors(in: facts.commandContext)
         }
+    }
+
+    /// The context window the status bar shows: the one the runtime reported
+    /// with the latest snapshot when there is one, otherwise the one the
+    /// settings configure for the model (nothing used yet, as the terminal
+    /// shows it before the first turn).
+    nonisolated static func displayedContextWindow(
+        snapshot: DirectAgentContextWindowStatus?,
+        configured: DirectAgentContextWindowStatus?
+    ) -> DirectAgentContextWindowStatus? {
+        snapshot ?? configured
     }
 
     /// A hook or a new incarnation changed what the status bar shows: read it
