@@ -34,6 +34,17 @@ struct ACPSavedSessionLink: Sendable {
 /// `sessionId`, `cwd`, and `mcpServers`, as ACP specifies) finds it again by
 /// the session's id.
 ///
+/// The saved `history` is what the model saw, the context Xcode sends before
+/// the operator's text included. The saved session is named after, and
+/// presents (`transcriptHistory`), the operator's text alone, as the terminal's
+/// `/sessions save` presents the conversation it saves: the live session
+/// remembers it per prompt (``ZenCODEACPBridge/SessionState/promptDisplayTexts``,
+/// registered when the turn is routed, see
+/// ``ZenCODEACPBridge/promptDisplayText(of:removingXcodeContext:)``), and a
+/// restored session recovers it from the file
+/// (``promptDisplayTexts(restoring:)``). A conversation with no such prompt
+/// has no `transcriptHistory`.
+///
 /// A session is saved at the end of every turn of the editor, where the live
 /// session adopts the runner's snapshot (`refreshSessionStateIfAvailable`,
 /// also after `/plan load`), and after every turn the slot's Telegram channel
@@ -108,8 +119,10 @@ extension ZenCODEACPBridge {
     /// `sessionID`, without suspending, and returns the working directory of
     /// the project it was saved in; `nil` when the incarnation is no longer
     /// live or the write failed (logged). The first save names the session
-    /// (``newSavedSessionLink(sessionID:workingDirectory:conversation:now:)``)
-    /// and the incarnation remembers the name for the next ones.
+    /// (``newSavedSessionLink(sessionID:workingDirectory:transcript:now:)``)
+    /// and the incarnation remembers the name for the next ones. The prompts
+    /// the live session has a display text for are presented with it in the
+    /// transcript, while `history` stays as the runner holds it.
     private func writeSavedSession(
         sessionID: String,
         epoch: UInt64,
@@ -123,10 +136,17 @@ extension ZenCODEACPBridge {
         let configuration = live.configuration
         let workingDirectory = URL(fileURLWithPath: configuration.workingDirectoryPath)
         let now = Date()
+        let transcript = conversation.map { message -> AgentRuntimeMessage in
+            guard message.role == .user,
+                  let displayText = live.promptDisplayTexts[message.content.trimmingCharacters(in: .whitespacesAndNewlines)] else {
+                return message
+            }
+            return message.replacing(content: displayText)
+        }
         let link = live.savedSessionLink ?? newSavedSessionLink(
             sessionID: sessionID,
             workingDirectory: workingDirectory,
-            conversation: conversation,
+            transcript: transcript,
             now: now
         )
         let checkpointTree = link.checkpointTree?.mergingHistory(conversation)
@@ -150,7 +170,7 @@ extension ZenCODEACPBridge {
             systemPrompt: snapshot.systemPrompt,
             dynamicContext: snapshot.dynamicContext,
             history: conversation,
-            transcriptHistory: nil,
+            transcriptHistory: transcript == conversation ? nil : transcript,
             activePlan: nil,
             queuedPlans: nil,
             taskGraph: taskGraph,
@@ -172,12 +192,42 @@ extension ZenCODEACPBridge {
                 createdAt: link.createdAt,
                 checkpointTree: link.checkpointTree == nil ? nil : checkpointTree
             )
+            // Only the prompts the conversation still holds keep their display
+            // text: a compaction drops the others for good.
+            let prompts = Set(conversation.lazy.filter { $0.role == .user }.map {
+                $0.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            })
+            session.promptDisplayTexts = session.promptDisplayTexts.filter { prompts.contains($0.key) }
         }
         return workingDirectory
     }
 
+    /// The display texts of a session restored from `savedSession`, by the
+    /// prompt the history holds: the user messages of the transcript that the
+    /// history presents otherwise, paired in order. A saved session without
+    /// transcript, or whose transcript has another number of user messages
+    /// than its history (a compacted one), has none.
+    static func promptDisplayTexts(restoring savedSession: TerminalSavedSession) -> [String: String] {
+        guard let transcriptHistory = savedSession.transcriptHistory else {
+            return [:]
+        }
+        let prompts = AgentRuntimeDynamicContext.separating(from: savedSession.history).history
+            .filter { $0.role == .user }
+        let displayed = AgentRuntimeDynamicContext.separating(from: transcriptHistory).history
+            .filter { $0.role == .user }
+        guard prompts.count == displayed.count else {
+            return [:]
+        }
+        var texts: [String: String] = [:]
+        for (prompt, display) in zip(prompts, displayed) where prompt.content != display.content {
+            texts[prompt.content.trimmingCharacters(in: .whitespacesAndNewlines)] = display.content
+        }
+        return texts
+    }
+
     /// The saved session the first save of `sessionID` writes, in the project
-    /// of `workingDirectory`: named after the first prompt of `conversation`
+    /// of `workingDirectory`: named after the first prompt of `transcript`, so
+    /// after the operator's text without the context Xcode sent
     /// (``ChatSessionController/derivedSessionName(fromFirstPromptIn:)``), or
     /// after the session id without a prompt with text. A name that a saved
     /// session of another session already has, or whose file cannot be read,
@@ -187,10 +237,10 @@ extension ZenCODEACPBridge {
     private func newSavedSessionLink(
         sessionID: String,
         workingDirectory: URL,
-        conversation: [AgentRuntimeMessage],
+        transcript: [AgentRuntimeMessage],
         now: Date
     ) -> ACPSavedSessionLink {
-        let baseName = ChatSessionController.derivedSessionName(fromFirstPromptIn: conversation)?.nilIfBlank
+        let baseName = ChatSessionController.derivedSessionName(fromFirstPromptIn: transcript)?.nilIfBlank
             ?? sessionID
         let directoryURL = TerminalSessionStore.sessionsDirectoryURL(for: workingDirectory)
         let files = TerminalSessionStore.savedSessionFiles(in: directoryURL)

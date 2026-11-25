@@ -33,6 +33,10 @@ private struct ACPPreparedPrompt {
     /// in its own block, which a turn that generates passes to the model before
     /// its prompt; `nil` when the turn routes the whole rendered prompt.
     let editorContext: String?
+    /// The context blocks Xcode sent, as the rendered prompt holds them (see
+    /// ``ZenCODEACPBridge/xcodeContextBlocks(in:)``): a saved session presents
+    /// the turn's prompt without them.
+    let xcodeContextBlocks: [String]
 }
 
 /// What a prompt turn does once routed.
@@ -235,6 +239,7 @@ extension ZenCODEACPBridge {
         let commandSource = try routedPromptSource(from: promptBlocks)
         let promptText = commandSource?.text ?? rawPromptText
         let editorContext = commandSource.flatMap { Self.editorContext(around: $0, in: promptBlocks) }
+        let xcodeContextBlocks = Self.xcodeContextBlocks(in: promptBlocks)
         let agentMentionResolution = try resolveLeadingACPAgentMention(in: promptText)
         let routedPromptText = agentMentionResolution?.prompt ?? promptText
         guard !routedPromptText.isEmpty || !attachments.isEmpty else {
@@ -284,7 +289,8 @@ extension ZenCODEACPBridge {
             coordinatorCommand: coordinatorCommand,
             isWorkspaceCommand: isWorkspaceCommand,
             hasAgentMention: agentMentionResolution != nil,
-            editorContext: editorContext
+            editorContext: editorContext,
+            xcodeContextBlocks: xcodeContextBlocks
         )
     }
 
@@ -322,11 +328,22 @@ extension ZenCODEACPBridge {
             )
             return .finished(stopReason: "end_turn")
         case let .generate(prompt, purpose, prelude):
+            // The prompt the model gets and the history records. A session saved
+            // by itself presents it without the context Xcode sent (see
+            // `ZenCODEACPBridge+SessionPersistence.swift`).
+            let modelPrompt = Self.modelPrompt(prompt, editorContext: prepared.editorContext)
+            let displayText = Self.promptDisplayText(
+                of: modelPrompt,
+                removingXcodeContext: prepared.xcodeContextBlocks
+            )
             _ = await updateReservedPromptSession(sessionID: turn.sessionID, epoch: turn.epoch, promptID: turn.promptID) { live in
                 if case .workflow = purpose {
                     live.activeWorkflowPromptID = turn.promptID
                 } else {
                     live.activeWorkflowPromptID = nil
+                }
+                if let displayText {
+                    live.promptDisplayTexts[modelPrompt.trimmingCharacters(in: .whitespacesAndNewlines)] = displayText
                 }
             }
             if let prelude {
@@ -343,7 +360,7 @@ extension ZenCODEACPBridge {
                 throw CancellationError()
             }
             return .generate(
-                prompt: Self.modelPrompt(prompt, editorContext: prepared.editorContext),
+                prompt: modelPrompt,
                 purpose: purpose,
                 session: liveCommandSession
             )

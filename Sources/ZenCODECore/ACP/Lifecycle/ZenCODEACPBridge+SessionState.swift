@@ -171,6 +171,7 @@ extension ZenCODEACPBridge {
             activePromptTask: live.activePromptTask,
             activePromptTaskID: live.activePromptTaskID,
             savedSessionLink: live.savedSessionLink,
+            promptDisplayTexts: live.promptDisplayTexts,
             controller: live.controller
         )
     }

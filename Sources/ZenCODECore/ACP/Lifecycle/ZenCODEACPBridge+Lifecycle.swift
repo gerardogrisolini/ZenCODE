@@ -207,6 +207,7 @@ extension ZenCODEACPBridge {
         configuration: AgentCoreSessionConfiguration,
         selectedAgent: AgentProfile?,
         savedSessionLink: ACPSavedSessionLink? = nil,
+        promptDisplayTexts: [String: String] = [:],
         operation: UInt64
     ) throws {
         try ensureLifecycleOperationLive(operation)
@@ -216,6 +217,7 @@ extension ZenCODEACPBridge {
             incarnation: incarnation
         )
         sessionEntry.savedSessionLink = savedSessionLink
+        sessionEntry.promptDisplayTexts = promptDisplayTexts
         sessions[sessionID] = sessionEntry
         bindLifecycleOperation(operation, sessionID: sessionID, epoch: incarnation.epoch)
     }
@@ -387,6 +389,7 @@ extension ZenCODEACPBridge {
                         checkpointTree: $0.checkpointTree
                     )
                 },
+                promptDisplayTexts: savedSession.map(Self.promptDisplayTexts(restoring:)) ?? [:],
                 operation: operation
             )
             try await sessionRunner.restoreSession(configuration: configuration)

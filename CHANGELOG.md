@@ -60,6 +60,16 @@ Release tags follow the strict `vX.Y.Z` contract described in
   switches the session to that agent too, as in other ACP clients, and the
   model still receives Xcode's context. Prompts without Xcode's context are
   routed as before.
+- ACP: a session that Xcode drives is no longer saved with Xcode's context as
+  its name and conversation. The saved session was named after the first user
+  message of the history (`<system-reminder>## Xcode You are`, `(2)`, …), and
+  reopening it showed the `<system-reminder>` and `Project structure (…)`
+  blocks that Xcode sends before the operator's text. The saved session is now
+  named after, and presents, the operator's text alone, also after a restart
+  of `zen --acp`. Only the saved transcript changes: the model still receives
+  Xcode's context, the saved history is what it saw, and the saved-session
+  format is unchanged. Sessions already saved keep their names and are not
+  migrated; prompts without Xcode's context are saved as before.
 - `local.applyPatch` applies unified diffs that end with a line feed, as
   `git diff` output does, including new-file diffs from `/dev/null` and CRLF
   payloads. That final line feed was read as an extra empty context line, so

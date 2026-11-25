@@ -62,6 +62,12 @@ public actor ZenCODEACPBridge {
         /// or when it was restored from one (see
         /// `ZenCODEACPBridge+SessionPersistence.swift`).
         var savedSessionLink: ACPSavedSessionLink? = nil
+        /// What a saved session presents of a user message the turn sent the
+        /// model with the context Xcode added: the operator's text alone, by
+        /// the model's prompt (trimmed, as the history records it). Only
+        /// presentation: the model and the history keep the whole prompt (see
+        /// `ZenCODEACPBridge+SessionPersistence.swift`).
+        var promptDisplayTexts: [String: String] = [:]
         /// The session's shared chat controller: it runs the prompt turns and
         /// owns the `/plan` and `/goal` command state of this incarnation. A
         /// same-epoch reconstruction keeps it; a new epoch gets a fresh one

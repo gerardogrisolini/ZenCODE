@@ -129,8 +129,10 @@ public struct AgentRuntimeMessage: Codable, Equatable, Sendable {
 
     /// The same message with `content`, `reasoningContent` and `toolCalls`
     /// replaced; a `nil` argument keeps the current value. Every other field
-    /// is kept.
-    func replacing(
+    /// is kept. `package`, so that ZenCODECore can present a message with
+    /// another text (the operator's text of a saved ACP session) without
+    /// copying the fields one by one.
+    package func replacing(
         content: String? = nil,
         reasoningContent: String? = nil,
         toolCalls: [AgentRuntimeToolCall]? = nil
