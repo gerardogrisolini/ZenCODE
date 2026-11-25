@@ -10,6 +10,8 @@ Release tags follow the strict `vX.Y.Z` contract described in
 
 ## [Unreleased]
 
+## [6.2.2] - 2026-11-25
+
 ### Added
 
 - macOS: after each build of the app (first use and after each ZenCODE
@@ -6842,7 +6844,8 @@ First stable release.
 - Removed local inference in favor of remote providers.
 - Removed the dedicated Xcode agent profile.
 
-[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.2.1...HEAD
+[Unreleased]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.2.2...HEAD
+[6.2.2]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.2.1...v6.2.2
 [6.2.1]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.2.0...v6.2.1
 [6.2.0]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.3...v6.2.0
 [6.1.3]: https://github.com/gerardogrisolini/ZenCODE/compare/v6.1.2...v6.1.3
