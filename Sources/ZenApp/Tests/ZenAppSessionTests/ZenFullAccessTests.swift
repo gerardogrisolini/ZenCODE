@@ -25,8 +25,12 @@ struct ZenFullAccessTests {
             let first = try await runtime.openWindow(workspace: workspace)
             let second = try await runtime.openWindow(workspace: workspace)
             #expect(await eventually { first.snapshot != nil && second.snapshot != nil })
+            // A new window's runner is aligned on the toggle chain.
+            await runtime.waitForAccessModeToggles()
+            #expect(first.runner !== second.runner)
             for window in [first, second] {
                 #expect(window.status.localExecAccessMode == .standard)
+                #expect(await window.runner.localExecAccessMode() == .standard)
                 #expect(!window.isFullAccess)
                 #expect(Self.modeRows(in: window).isEmpty)
             }
@@ -39,6 +43,8 @@ struct ZenFullAccessTests {
             #expect(await runtime.runner.localExecAccessMode() == .fullAccess)
             #expect(await eventually { observed.count > 0 })
             for window in [first, second] {
+                // The host's runner and the runner of every window.
+                #expect(await window.runner.localExecAccessMode() == .fullAccess)
                 #expect(window.isFullAccess)
                 #expect(window.status.localExecAccessMode == .fullAccess)
                 #expect(Self.modeRows(in: window) == [Self.fullAccessText])
@@ -51,10 +57,44 @@ struct ZenFullAccessTests {
             #expect(runtime.localExecAccessMode == .standard)
             #expect(await runtime.runner.localExecAccessMode() == .standard)
             for window in [first, second] {
+                #expect(await window.runner.localExecAccessMode() == .standard)
                 #expect(!window.isFullAccess)
                 #expect(window.status.localExecAccessMode == .standard)
                 #expect(Self.modeRows(in: window) == [Self.fullAccessText, Self.defaultText])
             }
+        }
+    }
+
+    @Test("A window opened after a toggle gets a runner of its own already in the current mode; toggling back reaches it")
+    func aLaterWindowRunnerStartsInTheCurrentMode() async throws {
+        try await withRuntime { runtime, _, workspace in
+            let first = try await runtime.openWindow(workspace: workspace)
+            #expect(await eventually { first.snapshot != nil })
+            first.toggleFullAccess()
+            await runtime.waitForAccessModeToggles()
+            #expect(await first.runner.localExecAccessMode() == .fullAccess)
+
+            let later = try await runtime.openWindow(workspace: workspace)
+            #expect(await eventually { later.snapshot != nil })
+            await runtime.waitForAccessModeToggles()
+            #expect(later.runner !== first.runner)
+            #expect(await runtime.runner.localExecAccessMode() == .fullAccess)
+            #expect(await first.runner.localExecAccessMode() == .fullAccess)
+            #expect(await later.runner.localExecAccessMode() == .fullAccess)
+
+            // Back from the later window: the host runner and both windows.
+            later.toggleFullAccess()
+            await runtime.waitForAccessModeToggles()
+            #expect(runtime.localExecAccessMode == .standard)
+            #expect(await runtime.runner.localExecAccessMode() == .standard)
+            #expect(await first.runner.localExecAccessMode() == .standard)
+            #expect(await later.runner.localExecAccessMode() == .standard)
+
+            // And a window opened in the default mode starts there.
+            let last = try await runtime.openWindow(workspace: workspace)
+            #expect(await eventually { last.snapshot != nil })
+            await runtime.waitForAccessModeToggles()
+            #expect(await last.runner.localExecAccessMode() == .standard)
         }
     }
 
@@ -69,14 +109,16 @@ struct ZenFullAccessTests {
 
             let later = try await runtime.openWindow(workspace: workspace)
             #expect(await eventually { later.snapshot != nil })
+            await runtime.waitForAccessModeToggles()
             #expect(later.status.localExecAccessMode == .fullAccess)
+            #expect(await later.runner.localExecAccessMode() == .fullAccess)
             #expect(later.isFullAccess)
             #expect(Self.modeRows(in: later).isEmpty)
             #expect(Self.modeRows(in: first) == [Self.fullAccessText])
         }
     }
 
-    @Test("Two quick toggles apply in order and end in the default mode, as the runner")
+    @Test("Two quick toggles apply in order and end in the default mode, as the runners")
     func twoQuickTogglesApplyInOrder() async throws {
         try await withRuntime { runtime, _, workspace in
             let window = try await runtime.openWindow(workspace: workspace)
@@ -88,6 +130,7 @@ struct ZenFullAccessTests {
 
             #expect(runtime.localExecAccessMode == .standard)
             #expect(await runtime.runner.localExecAccessMode() == runtime.localExecAccessMode)
+            #expect(await window.runner.localExecAccessMode() == runtime.localExecAccessMode)
             #expect(window.status.localExecAccessMode == .standard)
             #expect(Self.modeRows(in: window) == [Self.fullAccessText, Self.defaultText])
         }

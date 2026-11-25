@@ -117,7 +117,7 @@ extension ZenWindowSessionTests {
         try await withRuntime { runtime, backend, workspace in
             let window = try await runtime.openWindow(workspace: workspace)
             #expect(await window.waitUntilIdle())
-            let orchestrator = await runtime.runner.taskOrchestrator
+            let orchestrator = await window.runner.taskOrchestrator
             let sessionID = window.current.sessionID
             try? await orchestrator.registerSession(id: sessionID, workingDirectory: workspace)
 
@@ -217,7 +217,7 @@ extension ZenWindowSessionTests {
         try await withRuntime { runtime, backend, workspace in
             let window = try await runtime.openWindow(workspace: workspace)
             #expect(await window.waitUntilIdle())
-            let orchestrator = await runtime.runner.taskOrchestrator
+            let orchestrator = await window.runner.taskOrchestrator
             let sessionID = window.current.sessionID
             try? await orchestrator.registerSession(id: sessionID, workingDirectory: workspace)
 
@@ -301,7 +301,7 @@ extension ZenWindowSessionTests {
         try await withRuntime { runtime, backend, workspace in
             let window = try await runtime.openWindow(workspace: workspace)
             #expect(await window.waitUntilIdle())
-            let orchestrator = await runtime.runner.taskOrchestrator
+            let orchestrator = await window.runner.taskOrchestrator
             let sessionID = window.current.sessionID
             try? await orchestrator.registerSession(id: sessionID, workingDirectory: workspace)
 

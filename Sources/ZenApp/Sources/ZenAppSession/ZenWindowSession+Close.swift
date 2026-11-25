@@ -45,6 +45,7 @@ extension ZenWindowSession {
     @discardableResult
     private func closeAtOnce() -> Task<Void, Never>? {
         isClosed = true
+        bringToFront = nil
         queuedLines = []
         clearSavedSessionLoad()
         return sharedChatObservation.stop()

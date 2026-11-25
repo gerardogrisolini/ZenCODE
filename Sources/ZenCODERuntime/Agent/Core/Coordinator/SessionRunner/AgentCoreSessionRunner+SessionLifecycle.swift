@@ -317,6 +317,13 @@ extension AgentCoreSessionRunner {
     }
 
     public func shutdown() async {
+        await shutdown(keepingExternalTools: false)
+    }
+
+    /// ``shutdown()``, which also shuts the MCP runtime down unless
+    /// `keepingExternalTools` is `true`: for a runner that shares the MCP
+    /// runtime with another one still running (see ``makeSiblingRunner()``).
+    func shutdown(keepingExternalTools: Bool) async {
         memoryLearningPermits.values.forEach { $0.invalidate() }
         memoryLearningPermits.removeAll()
         // Latch before the first suspension: an `ensureBackend` caller that is
@@ -335,6 +342,7 @@ extension AgentCoreSessionRunner {
         // Process exit: the engine is freed unless a DS4 session is still live
         // (another runner of this process uses the model). Never waits.
         _ = await ds4EngineRegistry.closeIfIdle()
+        guard !keepingExternalTools else { return }
         await mcpRuntime.shutdown()
     }
 

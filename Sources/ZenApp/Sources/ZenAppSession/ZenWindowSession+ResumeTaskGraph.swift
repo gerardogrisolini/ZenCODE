@@ -16,8 +16,8 @@ import ZenCODECore
 /// (`Open tasks from previous sessions`, `Delete old tasks`) reach the window
 /// as pending requests (``pendingRequest``) and show in its menu popover; a
 /// graph the operator resumes moves into the window's session, which keeps
-/// its id. The graphs of the sessions the other windows run now are left out
-/// by the controller (every window is a slot of the app's one
+/// its id. The graphs of the sessions the other slots run now are left out
+/// by the controller (every session is a slot of the app's one
 /// `ChatSessionHost`), so a graph resumed in one window is never offered by
 /// another. A later new or loaded session of the window offers nothing.
 ///
@@ -33,13 +33,13 @@ import ZenCODECore
 extension ZenWindowSession {
     /// Whether the project has task graphs to offer to the window's session:
     /// graphs earlier sessions left incomplete, without those of the session
-    /// itself. The graphs of the sessions the other windows run now still
+    /// itself. The graphs of the sessions the other slots run now still
     /// count here (the host's live sessions are the core's to read): the
     /// offer leaves them out, and ends without asking when nothing else is
     /// left.
     func hasOfferableResumableTaskGraphs() async -> Bool {
         let sessionID = current.sessionID
-        let graphs = await sessionHost.runner.resumableTaskGraphCheckpoints(workingDirectory: workspace)
+        let graphs = await runner.resumableTaskGraphCheckpoints(workingDirectory: workspace)
         return graphs.contains { $0.sessionID != sessionID }
     }
 

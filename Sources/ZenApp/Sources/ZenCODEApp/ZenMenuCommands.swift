@@ -23,11 +23,11 @@ import ZenCODECore
 /// menu key equivalent, ⌃Y reaches it before the focused composer, whose text
 /// view would read it as the emacs yank.
 ///
-/// Full Access (⌃G) is checked while the app's runner runs `local.exec` and
+/// Full Access (⌃G) is checked while the app's runners run `local.exec` and
 /// the destructive tools without asking (``ZenWindowSession/isFullAccess``);
-/// it switches the mode for every window, as the terminal's Ctrl+G, also
-/// while a turn generates. As a menu key equivalent, ⌃G reaches it before
-/// the focused composer's text view, like ⌃Y.
+/// it switches the mode on the runner of every session, as the terminal's
+/// Ctrl+G, also while a turn generates. As a menu key equivalent, ⌃G reaches
+/// it before the focused composer's text view, like ⌃Y.
 ///
 /// Voice Mode is checked while the app's voice mode is on
 /// (``ZenWindowSession/voiceState``, one for every window) and runs
@@ -37,7 +37,10 @@ import ZenCODECore
 /// the command in the key window, with its conversation selected first
 /// (``ZenWindowSession/run(_:)``), and have no shortcut.
 struct ZenMenuCommands: Commands {
+    let launcher: ZenAppLauncher
+
     @FocusedValue(\.zenWindowSession) private var session
+    @FocusedValue(\.zenWorkspaceWindow) private var workspaceWindow
     @FocusedValue(\.zenTranscriptSearchAction) private var transcriptSearch
     @Environment(\.openWindow) private var openWindow
 
@@ -51,10 +54,11 @@ struct ZenMenuCommands: Commands {
             Divider()
 
             Button("New Session") {
-                session?.startNewSession()
+                guard let workspaceWindow, !workspaceWindow.isClosed else { return }
+                Task { await workspaceWindow.openNewSession() }
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
-            .disabled(session?.canManageSessions != true)
+            .disabled(workspaceWindow?.isClosed != false)
         }
 
         CommandGroup(after: .textEditing) {
@@ -161,6 +165,12 @@ struct ZenMenuCommands: Commands {
             panel.directoryURL = workspace
         }
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        openWindow(value: url.standardizedFileURL)
+        let workspace = url.standardizedFileURL
+        if let runtime = launcher.readyRuntime {
+            for window in runtime.openWindows(in: workspace) {
+                if runtime.focusWindow(window) { return }
+            }
+        }
+        openWindow(value: workspace)
     }
 }

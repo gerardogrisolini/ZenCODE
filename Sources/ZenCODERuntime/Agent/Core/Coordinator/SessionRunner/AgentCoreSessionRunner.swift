@@ -186,6 +186,43 @@ public actor AgentCoreSessionRunner {
         authorizationRouter.toggleLocalExecAccessMode()
     }
 
+    /// Sets the runner-wide access mode to `mode`, with the same scope as
+    /// ``toggleLocalExecAccessMode()``: every session of this runner, from
+    /// its next gated tool call, transient and never persisted. Setting the
+    /// mode the runner already has changes nothing.
+    public func setLocalExecAccessMode(_ mode: AgentLocalExecAccessMode) {
+        authorizationRouter.setLocalExecAccessMode(mode)
+    }
+
+    /// A new runner that shares with this one what is process-wide: the
+    /// default tool authorization handler, the MCP runtime with its connected
+    /// external servers, the feature runtime, the backend factory, the
+    /// task-graph store, and the memory and DS4 registries. Everything else
+    /// is its own: backend, sessions, turn and mutation leases, the
+    /// authorization router (starting in ``AgentLocalExecAccessMode/standard``),
+    /// shared chat, and task orchestrator (with this one's limits). A model,
+    /// agent, or working-directory change on one runner never resets the
+    /// backend or the sessions of the other.
+    ///
+    /// Shut a sibling down with ``shutdown(keepingExternalTools:)`` and
+    /// `true`: its owner still runs on the shared MCP runtime.
+    nonisolated func makeSiblingRunner() -> AgentCoreSessionRunner {
+        AgentCoreSessionRunner(
+            defaultToolAuthorizationHandler: defaultToolAuthorizationHandler,
+            mcpRuntime: mcpRuntime,
+            swiftFeatureRuntime: swiftFeatureRuntime,
+            backendFactory: backendFactory,
+            taskOrchestrator: SessionTaskOrchestrator(
+                limits: taskOrchestrator.limits,
+                store: taskOrchestrator.store
+            ),
+            taskGraphStore: nil,
+            sessionTurnLease: AgentSessionTurnLease(),
+            memoryGraphStoreRegistry: memoryGraphStoreRegistry,
+            ds4EngineRegistry: ds4EngineRegistry
+        )
+    }
+
     func createBackendSession(
         _ backend: AgentCoreBackend,
         configuration: AgentCoreSessionConfiguration

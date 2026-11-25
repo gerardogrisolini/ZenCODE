@@ -30,6 +30,25 @@ Release tags follow the strict `vX.Y.Z` contract described in
   and the syntax colors of the file of its section. As for the other drawn
   tools, the compact block that follows can keep only its status row, whose
   target is the first file of the patch, then `(+N more)`.
+- macOS app: **Open sessions** lists the sessions of the current window,
+  indicates which ones are working or waiting for input, and selects one.
+  See [Parallel sessions](Docs/app.md#parallel-sessions).
+- `ChatSessionHost.startSession(in:sessionID:inheriting:)` starts an empty slot
+  with a copy of a session's selection, without replacing that session.
+- `ChatSlotDescriptor.usesDedicatedRunner` (`false` by default) makes the host
+  run the sessions of a slot on a runner of its own, a sibling of the host's
+  that shares the tool authorization handler, the MCP runtime, the feature
+  runtime, the backend factory, the task-graph store, and the memory and DS4
+  registries, and has its own backend, sessions, access mode, shared chat, and
+  task orchestrator. `ChatSessionHost.runner(in:)` returns the runner a slot
+  runs on. `closeSlot(_:)` shuts a dedicated runner down without closing the
+  shared MCP servers, and `shutdown()` shuts every dedicated runner down before
+  the host's.
+- `AgentCoreSessionRunner.setLocalExecAccessMode(_:)` sets the access mode of a
+  runner to a given value instead of toggling it.
+- `ChatSessionEnvironment(…persistsModelSelections:)` (`true` by default): with
+  `false`, `/models` and `/think` change only the session and do not save the
+  user's default model or thinking level.
 
 ### Changed
 
@@ -42,6 +61,20 @@ Release tags follow the strict `vX.Y.Z` contract described in
 - ACP: the final file-change Summary no longer has horizontal rules before and
   after it. It starts after two blank lines instead, so it no longer runs on
   from the last line of the answer (`…text.---`).
+- macOS app: **New Session** (⇧⌘N) now adds and selects a session in the same
+  window instead of replacing the current conversation, even while a turn runs.
+  It inherits the current agent, model, thinking level, tools, and skills. A
+  typed `/sessions new` still replaces only its own session.
+- macOS app: every session now runs on a runner of its own, so each session
+  changes its model, agent, thinking level, tools, and skills without
+  interrupting the turns of the other sessions. `/models` and `/think` in the app
+  change only their session and no longer save the default model or thinking
+  level: the first session of a window starts from the saved defaults or the
+  launch profile. Full Access stays app-wide and also applies to sessions added
+  later. The sessions still share the files of the workspace, and one local DS4
+  model runs per process. See [Parallel sessions](Docs/app.md#parallel-sessions).
+- A saved conversation already running or loading in another slot of the same
+  `ChatSessionHost` can no longer be loaded a second time.
 
 ### Fixed
 

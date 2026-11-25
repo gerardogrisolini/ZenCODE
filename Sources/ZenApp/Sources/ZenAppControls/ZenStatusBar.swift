@@ -32,7 +32,7 @@ public struct ZenStatusBarState: Equatable, Sendable {
     public var subscriptionUsage: DirectAgentSubscriptionUsageStatus?
     /// The git working-tree summary of the workspace.
     public var gitStatus: TerminalGitStatusSummary?
-    /// The runner's access mode: full access shows a red dot first.
+    /// The app's access mode: full access shows a red dot first.
     public var localExecAccessMode: AgentLocalExecAccessMode
     /// The app's voice mode, one for every window: while it is on, its
     /// indicator follows the red dot.

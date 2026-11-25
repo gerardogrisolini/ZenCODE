@@ -16,6 +16,10 @@ struct AgentCoreAuthorizationRouter {
         return localExecAccessMode
     }
 
+    mutating func setLocalExecAccessMode(_ mode: AgentLocalExecAccessMode) {
+        localExecAccessMode = mode
+    }
+
     mutating func register(
         promptID: UUID,
         sessionID: String,

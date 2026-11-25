@@ -11,9 +11,9 @@ import Foundation
 
 extension ChatSessionController {
     /// Presents a tool call of a delegated sub-agent of the session, which
-    /// the host's router hands to the controller of every slot that runs the
-    /// session the agent belongs to (see
-    /// ``ChatSessionHost/installSubAgentToolEventRoutingIfNeeded()``), the
+    /// the host's router hands to the controller of every slot on the same
+    /// runner that runs the session the agent belongs to (see
+    /// ``ChatSessionHost/installSubAgentToolEventRoutingIfNeeded(in:)``), the
     /// same way for every channel: the baseline of the files a started call
     /// touches is captured for the turn's file changes, the channel renders
     /// the event (``ChatSessionPresenter/presentSubAgentToolEvent(_:)``, on

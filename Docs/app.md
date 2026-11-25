@@ -124,14 +124,17 @@ it on `~/.zencode`. A bundle you delete is added again at the next build.
 
 ## Windows and workspaces
 
-Each window is a workspace with its own session, and the title bar shows the
-session title and the workspace path. **File > Open Folder…** (⌘O) opens a
-window on another folder, or brings forward the window already open on it.
-`/exit` closes a window (it is refused while a turn runs, as in the terminal),
-closing the last window quits the app, and quitting waits for the sessions to
-shut down, for about 5 seconds at most. After a `--worktree` launch, closing the
-last window or quitting first asks what to do with the worktree (see
-[Worktrees](#worktrees)).
+Each window is a workspace with one or more sessions, each on its own runner
+(see [Parallel sessions](#parallel-sessions)), and the title bar shows the
+selected session's title and the workspace path. **File > Open Folder…** (⌘O)
+opens a window on another folder, or brings forward the first window already
+open on it. **File > New Session** (⇧⌘N) adds a session to the current window
+(see [Parallel sessions](#parallel-sessions)). `/exit` closes its session (it
+is refused while a turn runs, as in the terminal), and the window closes when
+its last session closes. Closing the last window quits the app, and quitting
+waits for the sessions to shut down, for about 5 seconds at most. After a
+`--worktree` launch, closing the last window or quitting first asks what to do
+with the worktree (see [Worktrees](#worktrees)).
 
 ### Worktrees
 
@@ -283,14 +286,16 @@ sheets of the window, over any tab, and the menus of the commands open in a
 popover above the composer, or under the toolbar button that launched their
 command, in the Chat tab only, so a menu that waits while another tab shows
 opens again when you select the Chat tab. The commands you launch (the
-toolbar buttons, the menu items, New and Save Session, loading or deleting a
-saved session) select the Chat tab before they start, so you see their
-result; **Show Chat Reader** (⌃Y) selects it and opens the reader. Esc works
+toolbar buttons, the menu items, Save Session, loading or deleting a saved
+session) select the Chat tab before they start, so you see their result.
+**New Session** adds a session to the same window instead. **Show Chat Reader** (⌃Y)
+selects the Chat tab and opens the reader. Esc works
 in the Chat tab only: in a sub-agent tab it does nothing. ⌘. (**Stop** in the
 **Session** menu) stops the turn from any tab, without changing tab. The
 toolbar and the artifacts sidebar belong to the window. The tabs are a state
-of the window: they are not saved, a new or loaded session closes the
-sub-agent tabs and shows the Chat tab, and closing the window stops them.
+of the window: they are not saved, a `/sessions new` typed in the window or a
+loaded session closes the sub-agent tabs and shows the Chat tab, and closing
+the window stops them.
 
 ## Composer
 
@@ -627,7 +632,8 @@ first one:
 
 ## Sessions
 
-The sidebar lists the current session and the saved sessions of the
+The sidebar lists the open sessions of its window first (see
+[Parallel sessions](#parallel-sessions)), then the saved sessions of the
 workspace, the newest first, with the age, the number of messages, and the
 model. Its search field filters the saved sessions by name or model. Click a
 saved session to load it, or use its context menu to load or delete it (a
@@ -636,13 +642,62 @@ sidebar, a large spinner takes the place of the conversation, centered in
 the chat, with the session's name and the step the load is at (reading the
 saved session, closing the current session, loading the model and tools,
 restoring the conversation), until the restored conversation, or the
-failure of the load, appears. **New Session** (⇧⌘N) and **Save**
-(⌘S) run `/sessions new` and `/sessions save`; these controls and the saved
-session's load and delete actions are disabled while a line runs or Telegram
-drives the window. A new session keeps the agent, model, thinking level, tools,
-and skills of the current session. They, and loading or deleting a saved
-session, select the Chat tab first. The rest of `/sessions` (a named snapshot,
-`compact`, `restore`) is typed in the composer.
+failure of the load, appears. **Save** (⌘S) runs `/sessions save`. Save, and
+the saved session's load and delete actions, are disabled while a line runs or
+Telegram drives the window; Save, loading, and deleting select the Chat tab
+first. **New Session** (⇧⌘N) is not a line of the window: it adds and selects
+a session in the same window, and it is enabled while a line runs or Telegram
+drives the selected session too (see [Parallel sessions](#parallel-sessions)).
+The rest of `/sessions` (`new`, a named snapshot, `compact`, `restore`) is
+typed in the composer. A typed `/sessions new` replaces only the selected
+session, and keeps the selection of the session it replaces: agent, model,
+thinking level, tools, and skills.
+
+### Parallel sessions
+
+**New Session** adds another session to the current window and selects it; it
+never opens another system window. The new session starts with no conversation,
+and with the agent, model, thinking level, tools, and skills of the session
+that was selected. It runs beside the others: a turn can run in each session at
+the same time, and adding a session does not wait for a turn to end. The new
+session starts without the Telegram link of the session it comes from.
+
+The **Open sessions** section at the top of the sidebar lists the sessions of
+the window, in the order they opened, each by its title, or **New session**
+while it has no title. A session whose title is missing, or is shared with
+another session, also shows `Session` and the first eight characters of its
+identifier. The selected session is checked and in bold (**Current session**).
+Each row shows what its session does: a bubble with an exclamation mark while a
+request waits for an answer, and a spinner while a turn generates or another
+line works. A click on a row selects that session in the same window.
+
+Every session runs on a runner of its own, with its own model backend. In every
+session you can change the model, the agent, the thinking level, the tools, and
+the skills while the other sessions work, and a change never interrupts their
+turns. In the app `/models` and `/think` change only their session: they do not
+save the model or the thinking level as the defaults of the settings, as they
+do in the terminal. The first session of a window starts from the saved
+defaults, or from the launch profile (`--model`, `--agent`, `--skills`), and
+New Session copies the selection of the selected session. **Full Access** stays
+app-wide, and reaches sessions opened later too (see
+[Toolbar and menus](#toolbar-and-menus)).
+
+The sessions of a workspace share its files: a change one session makes is seen
+by the others, and two sessions that edit the same file can conflict. The app
+also runs one local DS4 model per process (see
+[Process boundary](architecture.md#process-boundary)), so two sessions that
+select different DS4 models contend for the engine: sessions on the same DS4
+model share it and take turns, and a session that selects another DS4 model
+replaces the loaded one after the round in progress. A session on another
+provider does not use the engine.
+
+Close and Stop act on their own session only: `/exit` closes that session, the
+window closes after its last session, and Stop ends the turn of the selected
+session, not the turns of the others. Choosing a saved session already open in
+the window selects it. A saved session loads into one session at a time. If
+another window has it open, loading it is refused: the requesting session shows
+`This session is already open elsewhere. Close it there before loading it
+here.`, and it keeps its conversation and its draft.
 
 ## Telegram
 
@@ -710,10 +765,12 @@ run during a turn run beside it, and Stop stops it.
 
 ### The link and the sessions
 
-A new or loaded session keeps the link, and the session's Telegram topic moves
-to it, named after the saved session or, for a session never saved,
+A `/sessions new` typed in the window or a loaded session keeps the link, and
+the session's Telegram topic moves to it, named after the saved session or,
+for a session never saved,
 `<folder> · <last 8 characters of the session id>`, like the terminal. The link
-is never saved: closing the window ends it.
+is never saved: closing its session ends it. A session that New Session adds
+starts without the link.
 
 ## Toolbar and menus
 
@@ -728,9 +785,10 @@ graph) open in a popover under that button, with the arrow pointing at it;
 when the window is too narrow and you choose the button from the toolbar's
 overflow menu, they open above the composer. The items of the **Changes**
 menu and of the **Session** menu open their menus above the composer.
-While a prompt is running, the buttons whose command does not run during a
-prompt (the agent, the model, the thinking level, the tools, and the skills)
-and the **Changes** menu are disabled until the line ends; **Tasks** and
+While a prompt is running in the window, the buttons whose command does not run
+during a prompt (the agent, the model, the thinking level, the tools, and the
+skills) and the **Changes** menu are disabled in that window until the line
+ends, and the other sessions are not affected; **Tasks** and
 **Artifacts** stay available. The same commands from the **Session** menu or
 typed in the composer are still refused, with the same message.
 The **Session** menu has Stop (⌘.), then **Show Chat Reader** (**Hide Chat
@@ -756,8 +814,8 @@ is app-wide: one switch applies to every session of every window, also to a
 turn that runs, from its next tool call. Every open window shows it, with a
 red dot as the first fragment of its status bar and the terminal's message in
 its conversation (`Mode: full access — local.exec commands run without
-approval.`, then `Mode: default — local.exec approvals restored.`); a window
-opened later starts in the current mode. It is never saved: every launch
+approval.`, then `Mode: default — local.exec approvals restored.`); a session
+added later starts in the current mode. It is never saved: every launch
 starts in the default mode.
 
 ## Keyboard shortcuts
@@ -782,7 +840,7 @@ starts in the default mode.
 | ↑, ↓, Space, Return, Esc | Menu popover | Moves, toggles or chooses, confirms, cancels |
 | ⌘F | Menu bar | Finds text in the transcript; Return selects the next match and Esc closes the search |
 | ⌘O | Menu bar | Opens a folder in a window |
-| ⇧⌘N | Menu bar | Starts a new session |
+| ⇧⌘N | Menu bar | Adds a session to the current window (see [Parallel sessions](#parallel-sessions)) |
 | ⌘S | Menu bar | Saves the session |
 
 ## Commands
@@ -793,9 +851,9 @@ The app runs the shared slash commands of the Chat API, with its own
 | Commands | Notes |
 | --- | --- |
 | `/help` | Lists the commands the window runs |
-| `/models`, `/think`, `/agents` | Selection popovers |
+| `/models`, `/think`, `/agents` | Selection popovers; `/models` and `/think` change the session of the window only and are not saved as defaults |
 | `/tools`, `/skills` | Selection popovers; `/skills` also installs and uninstalls |
-| `/sessions` | List, save, new, compact, delete, restore |
+| `/sessions` | List, save, new (this window only), compact, delete, restore |
 | `/attach`, `/open` | Attachment picker and files, default application |
 | `/artifacts` | Shows or hides the artifacts sidebar; runs while a turn runs |
 | `/changes`, `/undo`, `/review` | Changes (`/changes diff`), undo, review |
@@ -830,7 +888,7 @@ the root graph already resolves. The root graph never depends on it.
 | --- | --- |
 | `ZenAppTheme` | The palette of the terminal UI as SwiftUI colors, in dark and light, and the glass helpers |
 | `ZenAppMarkdown` | The Markdown renderer on swift-markdown: blocks, tables, diffs, and the syntax highlighter |
-| `ZenAppSession` | The composition and the window model, without SwiftUI: one `ChatSessionHost` over the production runner, one slot per window, the transcript projection, the line routing, the prompt history, the window's tabs with the model of each sub-agent tab, and the window's shared chat (its observation of the room and the reader) |
+| `ZenAppSession` | The composition and the window model, without SwiftUI: one `ChatSessionHost` over the production runner, `ZenWorkspaceWindow` holding the sessions of one system window, one slot per session on a runner of its own (`ZenWindowSession.runner`), the transcript projection, the line routing, the prompt history, the session's tabs with the model of each sub-agent tab, and the session's shared chat (its observation of the room and the reader) |
 | `ZenAppTranscript` | The conversation views: prompts, tool calls, thinking, artifacts, summaries, notices, the task-graph and sub-agent cards, and the detail card of a sub-agent tab |
 | `ZenAppControls` | The composer (with the completion of slash commands and mentions), the status bar, the consent sheet, the menu popover, and the request sheet |
 | `ZenCODEApp` | The app shell: the window group, the menu bar, the sessions sidebar, the artifacts sidebar, the toolbar, the tab bar and the sub-agent tabs, the shared-chat panel, and the launch |

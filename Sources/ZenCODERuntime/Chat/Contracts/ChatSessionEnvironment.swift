@@ -47,11 +47,18 @@ public struct ChatSessionEnvironment: Sendable {
     /// session whose working directory is that worktree gets its section in
     /// the system prompt.
     public let worktree: AgentWorktree?
+    /// Whether a model or thinking choice of a session becomes the user's
+    /// default in the settings, with the user's configured catalog (with
+    /// hosted models nothing is ever persisted). `false` for a host whose
+    /// sessions keep their own choices side by side (a window of an app),
+    /// which still start from the persisted defaults. `true` by default.
+    public let persistsModelSelections: Bool
 
     public init(
         configuration: AgentConfiguration,
         featureRuntime: SwiftFeatureRuntime?,
-        userHomeDirectoryURL: URL? = nil
+        userHomeDirectoryURL: URL? = nil,
+        persistsModelSelections: Bool = true
     ) {
         self.hostedModels = configuration.hostedModels
         self.hostedAgentProfiles = configuration.hostedAgentProfiles
@@ -65,5 +72,6 @@ public struct ChatSessionEnvironment: Sendable {
         self.featureRuntime = featureRuntime
         self.userHomeDirectoryURL = userHomeDirectoryURL
         self.worktree = configuration.worktree
+        self.persistsModelSelections = persistsModelSelections
     }
 }

@@ -291,7 +291,7 @@ extension ZenWindowSessionTests {
             window.draft = "Hello"
             window.submitDraft()
             #expect(await window.waitUntilIdle())
-            let orchestrator = await runtime.runner.taskOrchestrator
+            let orchestrator = await window.runner.taskOrchestrator
             let sessionID = window.current.sessionID
 
             // A /goal workflow asks the operator a question while its turn runs.

@@ -3,7 +3,8 @@
 //  ZenCODE
 //
 //  The first part of the selection tests: the model and thinking commands
-//  (`/models`, `/think`), how a choice is persisted to settings.json, and the
+//  (`/models`, `/think`), how a choice is persisted to settings.json (or kept
+//  in the session when the environment does not persist the selections), and the
 //  model menu on a host without a single-choice capability.
 //  Tests of this serialized suite run in file-name order: keep the name.
 //
@@ -12,6 +13,7 @@ import Foundation
 import Testing
 import ToolCore
 @testable import ZenCODECore
+@testable import ZenCODERuntime
 
 extension ChatSessionSelectionTests {
     // MARK: - Model
@@ -237,6 +239,83 @@ extension ChatSessionSelectionTests {
             #expect(controller.selection.thinkingOverride == .high)
             #expect(try Data(contentsOf: harness.settingsURL) == settingsBefore)
         }
+    }
+
+    @Test
+    func withoutPersistedSelectionsTheChoicesStayInTheSessionAndNeverWriteSettingsJSON() async throws {
+        let models = [Fixtures.configuredAlpha, Fixtures.configuredBeta]
+        try await withChatHarness(
+            catalog: .configured(models: models, selectedModelID: Fixtures.configuredAlpha.id),
+            persistsModelSelections: false
+        ) { harness in
+            let controller = harness.controller
+            #expect(controller.environment.persistsModelSelections == false)
+            #expect(controller.modelCatalog.persistsSelections == false)
+            try await harness.startSession()
+            let settingsBefore = try Data(contentsOf: harness.settingsURL)
+
+            let selected = try await controller.selectModel(id: Fixtures.configuredBeta.id)
+            let thinking = try await controller.selectThinking(.high)
+
+            #expect(selected.change == .sessionRecreated)
+            #expect(thinking.change == .sessionUpdated)
+            #expect(controller.selection.modelIDOverride == Fixtures.configuredBeta.id)
+            #expect(controller.selection.thinkingOverride == .high)
+            // Neither the model nor the level reached the user's defaults.
+            #expect(try Data(contentsOf: harness.settingsURL) == settingsBefore)
+            let manifest = try AgentSettingsManifestStore.loadRequired(from: harness.settingsURL)
+            #expect(manifest.selectedModelID == Fixtures.configuredAlpha.id)
+            #expect(manifest.selectedThinkingSelection == nil)
+        }
+    }
+
+    @Test
+    func withoutPersistedSelectionsTheThinkingMenuStartsOnTheSessionLevelThenTheConfiguredOne() async throws {
+        let models = [Fixtures.configuredAlpha, Fixtures.configuredBeta]
+        try await withChatHarness(
+            catalog: .configured(models: models, selectedModelID: Fixtures.configuredBeta.id),
+            persistsModelSelections: false
+        ) { harness in
+            let controller = harness.controller
+            controller.selection.modelIDOverride = Fixtures.configuredBeta.id
+            try AgentSettingsManifestStore.saveSelectedThinkingSelection(.high)
+
+            // No level of its own: the configured one.
+            controller.selection.thinkingOverride = nil
+            #expect(try await Self.thinkingMenuSelection(of: controller) == .high)
+            // The session's own level wins over the configured one.
+            controller.selection.thinkingOverride = .low
+            #expect(try await Self.thinkingMenuSelection(of: controller) == .low)
+        }
+    }
+
+    @Test
+    func withPersistedSelectionsTheThinkingMenuStartsOnTheConfiguredLevel() async throws {
+        let models = [Fixtures.configuredAlpha, Fixtures.configuredBeta]
+        try await withChatHarness(
+            catalog: .configured(models: models, selectedModelID: Fixtures.configuredBeta.id)
+        ) { harness in
+            let controller = harness.controller
+            #expect(controller.environment.persistsModelSelections)
+            controller.selection.modelIDOverride = Fixtures.configuredBeta.id
+            try AgentSettingsManifestStore.saveSelectedThinkingSelection(.high)
+            controller.selection.thinkingOverride = .low
+
+            #expect(try await Self.thinkingMenuSelection(of: controller) == .high)
+        }
+    }
+
+    /// The level the thinking menu of `controller` starts on, as a host
+    /// without a single-choice capability is told.
+    private static func thinkingMenuSelection(
+        of controller: ChatSessionController
+    ) async throws -> AgentThinkingSelection? {
+        let outcome = try await controller.chooseThinking()
+        guard case let .requiresInteractiveHost(.thinkingSelection(_, _, selected))? = outcome.notices.first else {
+            Issue.record("Expected the non-interactive thinking menu, got \(outcome)")
+            return nil
+        }
+        return selected
     }
 
     // MARK: - Thinking

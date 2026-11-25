@@ -2,9 +2,8 @@
 //  ZenSessionSidebar.swift
 //  ZenApp
 //
-//  The sidebar of a window, the native rendition of `/sessions`: the current
-//  session and the saved sessions of the workspace, with New and Save in the
-//  sidebar's part of the toolbar.
+//  The sidebar of a window: open and saved sessions of the workspace, with
+//  New and Save in the sidebar's part of the toolbar.
 //
 
 import Foundation
@@ -16,6 +15,7 @@ import ZenCODECore
 
 /// The sessions of a window's workspace.
 struct ZenSessionSidebar: View {
+    let window: ZenWorkspaceWindow
     let session: ZenWindowSession
 
     @Environment(\.zenPalette) private var palette
@@ -25,9 +25,21 @@ struct ZenSessionSidebar: View {
     @State private var pendingDeletion: String?
 
     var body: some View {
+        let sessions = window.sessions
+        let sessionsByTitle = Dictionary(grouping: sessions) { $0.sessionTitle ?? "New session" }
         List {
-            Section("Current session") {
-                currentRow
+            Section("Open sessions") {
+                ForEach(sessions) { openSession in
+                    let title = openSession.sessionTitle ?? "New session"
+                    ZenOpenSessionRow(
+                        session: openSession,
+                        title: title,
+                        showsIdentifier: openSession.sessionTitle == nil || (sessionsByTitle[title]?.count ?? 0) > 1,
+                        isCurrent: openSession === session
+                    ) {
+                        window.select(openSession)
+                    }
+                }
             }
             Section("Saved sessions") {
                 let saved = Self.filteredSavedSessions(session.savedSessions, query: query)
@@ -74,30 +86,10 @@ struct ZenSessionSidebar: View {
 
     // MARK: - Rows
 
-    private var currentRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "bubble.left.and.text.bubble.right")
-                .foregroundStyle(palette.accent)
-            Text(session.sessionTitle ?? "New session")
-                .foregroundStyle(palette.textPrimary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 4)
-            if session.isGenerating {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(palette.accent)
-                    .scaleEffect(0.7)
-                    .frame(width: 14, height: 14)
-                    .accessibilityLabel("Generating")
-            }
-        }
-    }
-
     private func savedRow(_ summary: ChatSavedSessionSummary) -> some View {
         let isLoaded = summary.name == session.currentSavedSessionName
         return Button {
-            session.loadSavedSession(named: summary.name)
+            window.showSavedSession(named: summary.name)
         } label: {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
@@ -138,7 +130,7 @@ struct ZenSessionSidebar: View {
             : "Wait for the current line to finish before loading a session")
         .contextMenu {
             Button("Load") {
-                session.loadSavedSession(named: summary.name)
+                window.showSavedSession(named: summary.name)
             }
             .disabled(!session.canManageSessions)
             Divider()
@@ -157,12 +149,12 @@ struct ZenSessionSidebar: View {
     private var actions: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             Button {
-                session.startNewSession()
+                Task { await window.openNewSession() }
             } label: {
                 Label("New Session", systemImage: "square.and.pencil")
             }
-            .help("Start a new session (/sessions new)")
-            .disabled(!session.canManageSessions)
+            .help("Start a new session in this window")
+            .disabled(window.isClosed)
             Button {
                 session.saveSession()
             } label: {
@@ -216,5 +208,65 @@ struct ZenSessionSidebar: View {
     /// `"1 message"`, `"N messages"`.
     static func messageCountText(_ count: Int) -> String {
         count == 1 ? "1 message" : "\(count) messages"
+    }
+}
+
+/// One session of a system window, identified independently of its title.
+private struct ZenOpenSessionRow: View {
+    let session: ZenWindowSession
+    let title: String
+    let showsIdentifier: Bool
+    let isCurrent: Bool
+    let focus: () -> Void
+
+    @Environment(\.zenPalette) private var palette
+
+    var body: some View {
+        Button(action: focus) {
+            HStack(spacing: 8) {
+                Image(systemName: "bubble.left.and.text.bubble.right")
+                    .foregroundStyle(isCurrent ? palette.accent : palette.textMuted)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .foregroundStyle(palette.textPrimary)
+                        .fontWeight(isCurrent ? .semibold : .regular)
+                        .lineLimit(1)
+                    if showsIdentifier {
+                        Text("Session \(String(session.id.uuidString.prefix(8)))")
+                            .font(.caption)
+                            .foregroundStyle(palette.textMuted)
+                    }
+                }
+                Spacer(minLength: 4)
+                if isCurrent {
+                    Image(systemName: "checkmark")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(palette.accent)
+                        .accessibilityLabel("Current session")
+                }
+                activity
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(title)
+    }
+
+    @ViewBuilder
+    private var activity: some View {
+        if session.pendingRequest != nil {
+            Image(systemName: "exclamationmark.bubble")
+                .foregroundStyle(palette.accent)
+                .accessibilityLabel("Waiting for input")
+                .help("Waiting for input")
+        } else if session.isGenerating || session.isBusy {
+            ProgressView()
+                .controlSize(.small)
+                .tint(palette.accent)
+                .scaleEffect(0.7)
+                .frame(width: 14, height: 14)
+                .accessibilityLabel(session.isGenerating ? "Generating" : "Working")
+        }
     }
 }

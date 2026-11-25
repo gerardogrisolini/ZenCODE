@@ -187,7 +187,7 @@ extension ZenWindowSession {
         guard !isClosed, let roomID = sharedChatObservation.roomID else { return }
         rosterGeneration &+= 1
         let generation = rosterGeneration
-        let roster = await sessionHost.runner.sharedChatMentionRoster(rootSessionID: roomID)
+        let roster = await runner.sharedChatMentionRoster(rootSessionID: roomID)
         guard !isClosed, generation == rosterGeneration, sharedChatObservation.roomID == roomID else { return }
         applyRoster(participants: roster.participants, handleMap: roster.handleMap)
     }
@@ -226,7 +226,7 @@ extension ZenWindowSession {
         observation: ZenSharedChatObservation.Observation
     ) async {
         await sharedChatTriggerWillResolve?()
-        let runner = sessionHost.runner
+        let runner = self.runner
         let triggerID = trigger.id
         let triggerRoomID = trigger.roomID
         guard let roomID = await sharedChatRoom(of: trigger, observation: observation) else {
@@ -379,7 +379,7 @@ extension ZenWindowSession {
         observation: ZenSharedChatObservation.Observation,
         resolution: AgentSharedChatAutoTriggerResolution
     ) async -> AgentSharedChatAutoTriggerClaimResult {
-        let runner = sessionHost.runner
+        let runner = self.runner
         let willResolve = sharedChatClaimWillResolve
         let triggerID = trigger.id
         return await sharedChatObservation.serialized {
@@ -413,7 +413,7 @@ extension ZenWindowSession {
     /// runs now, as the operator; the failure text when it was not
     /// published.
     func deliver(_ text: String, to destination: AgentSharedChat.Destination) async -> String? {
-        let runner = sessionHost.runner
+        let runner = self.runner
         guard let roomID = await ZenSharedChatSteps.currentRoomID(in: sessionHost, slotID: slotID) else {
             return Self.mentionFailureMessage(for: AgentSharedChat.Error.unavailable)
         }

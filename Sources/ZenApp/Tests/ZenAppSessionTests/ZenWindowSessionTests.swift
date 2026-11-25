@@ -485,10 +485,12 @@ struct ZenWindowSessionTests {
             let transcript = first.transcript
 
             await runtime.shutdown()
-            // The host shut the runner (and the backend) down, fencing the
-            // turn, before the window's line, and its held turn, was
-            // cancelled.
-            #expect(backend.lifecycle.events == [.backendShutDown, .heldTurnCancelled])
+            // Each window's runner shut its backend down, fencing the turns,
+            // before the window's line, and its held turn, was cancelled.
+            let events = backend.lifecycle.events
+            #expect(events.filter { $0 == .backendShutDown }.count == 2)
+            #expect(events.filter { $0 == .heldTurnCancelled }.count == 1)
+            #expect(events.last == .heldTurnCancelled)
             #expect(first.isClosed)
             #expect(second.isClosed)
             #expect(!first.isBusy)
@@ -547,6 +549,24 @@ struct ZenWindowSessionTests {
     func withRuntime(
         _ body: @escaping @MainActor @Sendable (ZenAppRuntime, ZenScriptedBackend, URL) async throws -> Void
     ) async throws {
+        try await withRuntime(models: Self.defaultModels, body)
+    }
+
+    /// The hosted model of the ordinary fixture.
+    static let defaultModels = [
+        AgentSettingsModelManifest(
+            id: "zen-app-model",
+            kind: .remoteAPI,
+            modelID: "local/zen-app-model"
+        ),
+    ]
+
+    /// ``withRuntime(_:)`` with the hosted `models`, the first one the launch
+    /// model.
+    func withRuntime(
+        models: [AgentSettingsModelManifest],
+        _ body: @escaping @MainActor @Sendable (ZenAppRuntime, ZenScriptedBackend, URL) async throws -> Void
+    ) async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("zen-app-session-\(UUID().uuidString)", isDirectory: true)
         let support = root.appendingPathComponent("support", isDirectory: true)
@@ -558,24 +578,19 @@ struct ZenWindowSessionTests {
         // The support directory is task-local: everything below runs in this
         // task and the tasks it creates.
         try await AppStorageDirectory.withSupportDirectoryURL(support) { @Sendable in
-            try await Self.compose(workspace: workspace, body: body)
+            try await Self.compose(workspace: workspace, models: models, body: body)
         }
     }
 
     private static func compose(
         workspace: URL,
+        models: [AgentSettingsModelManifest],
         body: @MainActor @Sendable (ZenAppRuntime, ZenScriptedBackend, URL) async throws -> Void
     ) async throws {
         let configuration = try AgentConfiguration(
-            hostedModelID: "zen-app-model",
+            hostedModelID: models[0].id,
             availableAgents: AgentProfileStore.defaultProfiles(),
-            availableModels: [
-                AgentSettingsModelManifest(
-                    id: "zen-app-model",
-                    kind: .remoteAPI,
-                    modelID: "local/zen-app-model"
-                ),
-            ],
+            availableModels: models,
             workingDirectory: workspace,
             appMode: true
         )

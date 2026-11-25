@@ -96,6 +96,18 @@ public struct ChatSlotDescriptor: Sendable {
     /// ``ChatSessionHost/closeSession(in:runtimeSession:)``, start from the
     /// launch profile either way. `false` by default.
     public var keepsSelectionOnNewSession: Bool
+    /// Whether the slot runs its sessions on a runner of its own instead of
+    /// the host's ``ChatSessionHost/runner``: a sibling the host creates when
+    /// it opens the slot, sharing the process-wide resources (tool
+    /// authorization handler, MCP runtime, feature runtime, backend factory,
+    /// task-graph store, memory and DS4 registries) with its own backend,
+    /// sessions, leases, access mode (starting in
+    /// ``AgentLocalExecAccessMode/standard``), shared chat, and task
+    /// orchestrator, so a model, agent, or thinking change in the slot never
+    /// interrupts the sessions of another slot. The host shuts it down, keeping
+    /// the external tools, when the slot closes. See
+    /// ``ChatSessionHost/runner(in:)``. `false` by default.
+    public var usesDedicatedRunner: Bool
     /// Presents the ending of a turn another channel of the slot ran, when
     /// the channel drives the slot as the turn ends, for a channel whose
     /// presenter does not conform to the slot's channel presenter (see
@@ -120,7 +132,8 @@ public struct ChatSlotDescriptor: Sendable {
         defaultOrigin: ChatTurnOrigin = .local,
         publishesState: Bool = true,
         sessionIDPrefix: String = ChatSlotDescriptor.defaultSessionIDPrefix,
-        keepsSelectionOnNewSession: Bool = false
+        keepsSelectionOnNewSession: Bool = false,
+        usesDedicatedRunner: Bool = false
     ) {
         self.identity = identity
         self.workingDirectory = workingDirectory
@@ -135,6 +148,7 @@ public struct ChatSlotDescriptor: Sendable {
         self.publishesState = publishesState
         self.sessionIDPrefix = sessionIDPrefix
         self.keepsSelectionOnNewSession = keepsSelectionOnNewSession
+        self.usesDedicatedRunner = usesDedicatedRunner
     }
 }
 
@@ -175,6 +189,11 @@ final class ChatSlot {
     let sessionIDPrefix: String
     /// See ``ChatSlotDescriptor/keepsSelectionOnNewSession``.
     let keepsSelectionOnNewSession: Bool
+    /// See ``ChatSlotDescriptor/usesDedicatedRunner``.
+    let usesDedicatedRunner: Bool
+    /// The runner every session of the slot runs on: the slot's own when it
+    /// uses a dedicated runner, the host's otherwise.
+    let runner: AgentCoreSessionRunner
     /// See ``ChatSlotDescriptor/presentTurnEnding``.
     let presentTurnEndingHandler: (@ChatSessionActor (ChatTurnEnding) async -> Void)?
     /// The session the slot runs now; `nil` between sessions. Every change
@@ -239,8 +258,10 @@ final class ChatSlot {
     var isActivatingTelegram = false
     private var telegramActivationWaiters: [CheckedContinuation<Void, Never>] = []
 
-    init(id: ChatSlotID, descriptor: ChatSlotDescriptor) {
+    init(id: ChatSlotID, descriptor: ChatSlotDescriptor, runner: AgentCoreSessionRunner) {
         self.id = id
+        self.runner = runner
+        usesDedicatedRunner = descriptor.usesDedicatedRunner
         identity = descriptor.identity
         workingDirectory = descriptor.workingDirectory
         presenter = descriptor.presenter

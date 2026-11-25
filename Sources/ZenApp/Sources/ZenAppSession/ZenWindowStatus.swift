@@ -30,8 +30,8 @@ public struct ZenWindowStatus: Equatable, Sendable {
     public var gitStatus: TerminalGitStatusSummary?
     /// The window's workspace.
     public var workspace: URL
-    /// The runner's access mode, the same in every window
-    /// (``ZenAppRuntime/localExecAccessMode``).
+    /// The app's access mode, the same on every window's runner and in every
+    /// window (``ZenAppRuntime/localExecAccessMode``).
     public var localExecAccessMode: AgentLocalExecAccessMode
 
     public init(

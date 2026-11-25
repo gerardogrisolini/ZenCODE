@@ -476,7 +476,8 @@ extension ChatSessionHost {
     // MARK: - Channel construction
 
     /// The Telegram channel of `slot`, on the router and dispatcher this host
-    /// shares among its slots, with a control service of its own.
+    /// shares among its slots, with a control service of its own, over the
+    /// slot's runner.
     private func makeTelegramChannel(
         for slot: ChatSlot,
         primaryChannelDescription: String
@@ -485,7 +486,7 @@ extension ChatSessionHost {
         return TelegramChannel(
             host: self,
             slotID: slot.id,
-            sessionRunner: runner,
+            sessionRunner: slot.runner,
             router: telegramRouter(),
             controlService: TerminalTelegramControlService(
                 transportFactory: transportFactory,

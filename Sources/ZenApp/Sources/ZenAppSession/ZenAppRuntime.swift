@@ -3,7 +3,8 @@
 //  ZenApp
 //
 //  The composition root of the app: one per process. It owns the session
-//  host, the runner, and the consent authorizer every window shares.
+//  host, the host's runner, and the consent authorizer every session shares;
+//  each session runs on a runner of its own that the host owns.
 //
 
 import Foundation
@@ -11,15 +12,20 @@ import Observation
 import ToolCore
 import ZenCODECore
 
-/// The app's runtime, one per process: the `ChatSessionHost` over one runner,
-/// one consent authorizer for every window (the host routes each request to
-/// the slot that runs its session), and the shell of the host.
+/// The app's runtime, one per process: the `ChatSessionHost` over the host's
+/// runner, one consent authorizer for every session (the host routes each
+/// request to the slot that runs it), and the shell of the host.
+/// Each session's slot runs on a runner of its own
+/// (``ZenWindowSession/runner``), a sibling of the host's runner that the
+/// host owns and shuts down, so a session changes its model, agent, thinking
+/// level, tools, and skills while the other sessions work. `/models` and
+/// `/think` change only their session: the app does not
+/// persist the model selections (`persistsModelSelections: false`).
 ///
-/// The access mode of the runner (``localExecAccessMode``, the terminal's
-/// Ctrl+G) is app-wide: one toggle
-/// (``toggleLocalExecAccessMode()``) changes it for every session of every
-/// window, and every open window shows it. It is never persisted: each launch
-/// starts in the default mode.
+/// The access mode (``localExecAccessMode``, the terminal's Ctrl+G) is
+/// app-wide: one toggle (``toggleLocalExecAccessMode()``) changes it on the
+/// host's runner and on the runner of every session, and every open session
+/// shows it. It is never persisted: each launch starts in the default mode.
 ///
 /// Voice mode (`/voice`) is app-wide too: one ``VoiceModeSession`` (one
 /// microphone) for every window, with one state (``voiceState``) that every
@@ -40,8 +46,9 @@ public final class ZenAppRuntime {
     public private(set) var shell: ChatShellSnapshot
     /// ``shutdown()`` ran.
     public private(set) var isShutDown = false
-    /// The runner's access mode for `local.exec` and the destructive direct
-    /// tools, as of the last toggle that finished: in
+    /// The app's access mode for `local.exec` and the destructive direct
+    /// tools, as of the last toggle that finished, on the host's runner and
+    /// on every window's: in
     /// ``AgentLocalExecAccessMode/fullAccess`` they run without asking for
     /// consent.
     public private(set) var localExecAccessMode: AgentLocalExecAccessMode
@@ -72,13 +79,16 @@ public final class ZenAppRuntime {
 
     @ObservationIgnored let authorizer: ChatToolConsentAuthorizer
     @ObservationIgnored let openExternal: @Sendable (ChatOpenTarget) async throws -> Void
-    /// The runner every session of the host runs on.
+    /// The host's runner: the source of the access mode, which every window's
+    /// runner follows (``ZenWindowSession/runner``, the sibling each slot
+    /// runs its sessions on).
     @ObservationIgnored let runner: AgentCoreSessionRunner
     /// The open windows, in the order they opened.
-    @ObservationIgnored private(set) var windows: [ZenWindowSession] = []
+    private(set) var windows: [ZenWindowSession] = []
     @ObservationIgnored private var shellObservation: Task<Void, Never>?
-    /// The latest toggle of the access mode; each one waits for the one
-    /// before it, so they reach the runner in order.
+    /// The latest toggle of the access mode, or alignment of a window that
+    /// opened; each one waits for the one before it, so they reach the
+    /// runners in order.
     @ObservationIgnored private var accessModeToggle: Task<Void, Never>?
     /// Voice mode, for every window.
     @ObservationIgnored let voice: ZenAppVoice
@@ -181,10 +191,13 @@ public final class ZenAppRuntime {
             featureRuntime: featureRuntime ?? SwiftFeatureRuntime(),
             backendFactory: backendFactory ?? ChatSessionRuntimeFactory.productionBackendFactory
         )
+        // In the app `/models` and `/think` change only the session of their
+        // window, never the persisted selection the other windows start from.
         let environment = ChatSessionEnvironment(
             configuration: configuration,
             featureRuntime: featureRuntime == nil ? nil : runner.swiftFeatureRuntime,
-            userHomeDirectoryURL: userHomeDirectoryURL
+            userHomeDirectoryURL: userHomeDirectoryURL,
+            persistsModelSelections: false
         )
         let sessionHost = ChatSessionHost(
             runner: runner,
@@ -231,16 +244,49 @@ public final class ZenAppRuntime {
     /// Opens a window on `workspace`: a slot of the host with its first
     /// session, ready for the first line.
     public func openWindow(workspace: URL) async throws -> ZenWindowSession {
+        try await openWindow(workspace: workspace, inheritingSelectionFrom: nil)
+    }
+
+    /// Opens a fresh window with the selection of a live window on the same
+    /// workspace. If the source is missing (for example on scene restoration),
+    /// starts from the launch profile instead.
+    public func openWindow(
+        workspace: URL,
+        inheritingSelectionFrom sourceWindowID: UUID?
+    ) async throws -> ZenWindowSession {
         guard !isShutDown else { throw ChatSessionHostError.shutDown }
-        let window = try await ZenWindowSession.open(runtime: self, workspace: workspace)
+        let selection: ChatSessionSelection?
+        if let sourceWindowID,
+           let source = openWindows(in: workspace).first(where: { $0.id == sourceWindowID }) {
+            selection = await sessionHost.incarnation(in: source.slotID)?.controller.selection
+        } else {
+            selection = nil
+        }
+        let window = try await ZenWindowSession.open(runtime: self, workspace: workspace, selection: selection)
         guard !isShutDown else {
             await window.close()
             throw ChatSessionHostError.shutDown
         }
         windows.append(window)
-        // A toggle that finished while the window was opening.
-        window.adoptLocalExecAccessMode(localExecAccessMode)
+        // A toggle that finished while the window was opening, or still runs.
+        alignLocalExecAccessMode(of: window)
         return window
+    }
+
+    /// The live windows of `workspace`, in the order they opened.
+    public func openWindows(in workspace: URL) -> [ZenWindowSession] {
+        let workspace = workspace.standardizedFileURL
+        return windows.filter { !$0.isClosed && $0.workspace.standardizedFileURL == workspace }
+    }
+
+    /// Brings a registered, live window forward using its native focus
+    /// action. Returns `false` when there is no action to run.
+    @discardableResult
+    public func focusWindow(_ window: ZenWindowSession) -> Bool {
+        guard !isShutDown, !window.isClosed, windows.contains(where: { $0 === window }),
+              let bringToFront = window.bringToFront else { return false }
+        bringToFront()
+        return true
     }
 
     /// Whether a window other than `session` is open: one whose session
@@ -248,6 +294,16 @@ public final class ZenAppRuntime {
     /// opening, or never opened, is not counted.
     package func hasOpenWindow(otherThan session: ZenWindowSession?) -> Bool {
         windows.contains { $0 !== session && !$0.isClosed }
+    }
+
+    /// Whether a session other than `sessions` is open, counted as the
+    /// overload above counts them: `sessions` are every session of a system
+    /// window that closes (``ZenWorkspaceWindow/sessions``), so it tells
+    /// whether that window is the last one.
+    package func hasOpenWindow(otherThan sessions: [ZenWindowSession]) -> Bool {
+        windows.contains { window in
+            !window.isClosed && !sessions.contains { $0 === window }
+        }
     }
 
     /// Forgets `window`. When voice mode followed it, it moves to the most
@@ -325,14 +381,16 @@ public final class ZenAppRuntime {
 
     // MARK: - Access mode
 
-    /// Switches the runner's access mode to the other value, as the
-    /// terminal's Ctrl+G does, for every session of the app, also while a turn
-    /// runs. Returns at once; the toggles run in order, each after the one
-    /// before it ended, so ``localExecAccessMode`` is the runner's mode once
-    /// the last one ended. Each one shows the new mode in the status bar of
-    /// every open window and adds its message
-    /// (``ChatSessionNoticeText/localExecAccessModeChangeText(_:)``) to each
-    /// transcript. Does nothing after ``shutdown()``.
+    /// Switches the app's access mode to the other value, as the terminal's
+    /// Ctrl+G does, for every session of the app, also while a turn runs.
+    /// Returns at once; the toggles run in order, each after the one before
+    /// it ended. Each one switches the host's runner, the source of the mode,
+    /// then gives the new mode to the runner of every open window, and only
+    /// then publishes it: ``localExecAccessMode``, the status bar of each of
+    /// those windows, and its message
+    /// (``ChatSessionNoticeText/localExecAccessModeChangeText(_:)``) in each
+    /// transcript. A window that opens meanwhile is aligned after it
+    /// (``alignLocalExecAccessMode(of:)``). Does nothing after ``shutdown()``.
     public func toggleLocalExecAccessMode() {
         guard !isShutDown else { return }
         let previous = accessModeToggle
@@ -341,12 +399,20 @@ public final class ZenAppRuntime {
             await previous?.value
             guard let self, !self.isShutDown else { return }
             let mode = await runner.toggleLocalExecAccessMode()
-            self.publishLocalExecAccessMode(mode)
+            let windows = self.windows
+            for window in windows {
+                await window.runner.setLocalExecAccessMode(mode)
+            }
+            self.publishLocalExecAccessMode(mode, to: windows)
         }
     }
 
-    /// Shows `mode`, the runner's new access mode, in every open window.
-    private func publishLocalExecAccessMode(_ mode: AgentLocalExecAccessMode) {
+    /// Shows `mode`, the new access mode the runners of `windows` already
+    /// have, in each of them that is still open.
+    private func publishLocalExecAccessMode(
+        _ mode: AgentLocalExecAccessMode,
+        to windows: [ZenWindowSession]
+    ) {
         if localExecAccessMode != mode {
             localExecAccessMode = mode
         }
@@ -355,19 +421,35 @@ public final class ZenAppRuntime {
         }
     }
 
-    /// Waits for the toggles of the access mode asked so far, for tests.
+    /// Brings `window`, just registered, to the app's access mode: its runner
+    /// first, then its status bar, without a message row. On the chain of the
+    /// toggles, after every toggle asked before, so a toggle that ended while
+    /// the window was opening, or that still runs, reaches it too, in order.
+    private func alignLocalExecAccessMode(of window: ZenWindowSession) {
+        let previous = accessModeToggle
+        accessModeToggle = Task { [weak self, weak window] in
+            await previous?.value
+            guard let self, let window, !self.isShutDown, !window.isClosed else { return }
+            let mode = self.localExecAccessMode
+            await window.runner.setLocalExecAccessMode(mode)
+            window.adoptLocalExecAccessMode(mode)
+        }
+    }
+
+    /// Waits for the toggles of the access mode, and the alignments of the
+    /// windows that opened, asked so far, for tests.
     func waitForAccessModeToggles() async {
         await accessModeToggle?.value
     }
 
-    /// Ends every window at once, then shuts the host and its runner down:
-    /// each window is marked closed and its queue dropped before anything
-    /// suspends, so none of them writes again; then one
-    /// `sessionHost.shutdown()` ends every slot (it fences each controller,
-    /// drops its reservation, and refuses its pending requests), and the
-    /// task-graph observers of the sessions the slots ran are stopped; only
-    /// then is each window's work cancelled, so a cancelled turn never runs
-    /// unfenced. A second call does nothing.
+    /// Ends every window at once, then shuts the host down with its runner
+    /// and the runner of every window: each window is marked closed and its
+    /// queue dropped before anything suspends, so none of them writes again;
+    /// then one `sessionHost.shutdown()` ends every slot (it fences each
+    /// controller, drops its reservation, and refuses its pending requests),
+    /// and the task-graph observers of the sessions the slots ran are
+    /// stopped; only then is each window's work cancelled, so a cancelled
+    /// turn never runs unfenced. A second call does nothing.
     public func shutdown() async {
         guard !isShutDown else { return }
         isShutDown = true

@@ -18,19 +18,29 @@ import ToolCore
 public struct ChatModelCatalog: Sendable {
     /// Models supplied by the host process; `nil` for the configured catalog.
     let hostedModels: [AgentSettingsModelManifest]?
+    /// See ``ChatSessionEnvironment/persistsModelSelections``.
+    let persistsModelSelections: Bool
 
     /// Whether model and thinking choices become the persisted defaults. A
-    /// host that supplies its own models owns that choice.
+    /// host that supplies its own models owns that choice, and a host that
+    /// does not persist the model selections keeps them in its sessions.
     var persistsSelections: Bool {
-        hostedModels == nil
+        hostedModels == nil && persistsModelSelections
     }
 
-    package init(hostedModels: [AgentSettingsModelManifest]?) {
+    package init(
+        hostedModels: [AgentSettingsModelManifest]?,
+        persistsModelSelections: Bool = true
+    ) {
         self.hostedModels = hostedModels
+        self.persistsModelSelections = persistsModelSelections
     }
 
     public init(environment: ChatSessionEnvironment) {
-        self.init(hostedModels: environment.hostedModels)
+        self.init(
+            hostedModels: environment.hostedModels,
+            persistsModelSelections: environment.persistsModelSelections
+        )
     }
 
     // MARK: - Listing

@@ -171,10 +171,43 @@ replaces (agent, model, thinking level, tools, and skills) instead of the
 launch profile; a load still restores the selection saved with the session,
 and the first session of the slot and the one after `closeSession(in:)`
 start from the launch profile. The option is `false` by default; the
-terminal, `zen --telegram`, and the macOS app set it for their slots. Follow the slot with `incarnations(in:)`, which
+terminal, `zen --telegram`, and the macOS app set it for their slots. To start a
+separate conversation with the same settings, open an empty slot and call
+`startSession(in:sessionID:inheriting:)` with a fresh ID and the source controller's
+`selection`. This does not copy history or interrupt the source turn. Loading a
+saved session whose ID is already running or being loaded in another slot is
+refused before replacing the requesting slot's conversation.
+
+By default every slot runs on the host's `runner`, which has one model backend,
+so a model or agent change in one slot can interrupt the turns of the others. A
+slot that changes its model, agent, thinking level, tools, or skills while the
+other slots work sets `ChatSlotDescriptor.usesDedicatedRunner` to `true`
+(`false` by default): `openSlot(_:)` then creates a runner of its own for the
+slot, a sibling of the host's. The sibling shares the tool authorization
+handler, the MCP runtime with its connected servers, the feature runtime, the
+backend factory, the task-graph store, and the memory and DS4 registries, and
+has its own backend, sessions, authorization router, shared chat, and task
+orchestrator. `runner(in:)` returns the runner a slot runs on (`nil` for a slot
+that is not open): use it instead of `runner` for the runner-level calls of the
+slot's sessions, such as `subAgentSnapshotEvents(rootSessionID:)`. A dedicated
+runner starts in the standard access mode, so an app with an app-wide mode sets
+it on each runner with `setLocalExecAccessMode(_:)`. `closeSlot(_:)` shuts the
+dedicated runner down without disconnecting the shared MCP servers, and
+`shutdown()` shuts every dedicated runner down before the host's. The local DS4
+engine stays one per process (see
+[Process boundary](architecture.md#process-boundary)).
+
+With the user's configured models, `/models` and `/think` save the choice as
+the default of the settings. A host whose sessions keep their own choices side
+by side, like the sessions of the macOS app, builds its environment with
+`persistsModelSelections: false` (`true` by default): the two commands then
+change only the session, and new sessions still start from the saved defaults.
+With hosted models nothing is ever saved.
+
+Follow the slot with `incarnations(in:)`, which
 yields the current incarnation at once and then each new one, or read it with
 `incarnation(in:)`. `closeSession(in:)` ends a slot's session, `closeSlot(_:)`
-ends the slot, and `shutdown()` ends every slot and the runner.
+ends the slot, and `shutdown()` ends every slot and the runners.
 
 ## Isolation
 
@@ -379,7 +412,7 @@ call it once per incarnation: a second call resets the tool and skill
 selection to the profile. `.newSessionDidStart` and `.savedSessionDidRestore`
 reach the hooks on the new controller, after the host replaced the
 incarnation, so `controller` is already the new one there. When the last
-window closes, `sessionHost.shutdown()` ends every slot and the runner.
+window closes, `sessionHost.shutdown()` ends every slot and the runners.
 
 ## Running a Line
 

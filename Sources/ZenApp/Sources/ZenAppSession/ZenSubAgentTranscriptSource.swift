@@ -54,14 +54,15 @@ enum ZenSubAgentSteps {
     }
 
     /// The snapshots of the sub-agents of the incarnation's session, from the
-    /// host's runner with the session as the root session.
+    /// slot's runner with the session as the root session.
     static func snapshotEvents(
         in sessionHost: ChatSessionHost,
         slotID: ChatSlotID,
         epoch: UInt64
     ) async -> AsyncStream<[DirectSubAgentRuntime.AgentSnapshot]>? {
-        guard let controller = controller(in: sessionHost, slotID: slotID, epoch: epoch) else { return nil }
-        return await sessionHost.runner.subAgentSnapshotEvents(rootSessionID: controller.sessionID)
+        guard let controller = controller(in: sessionHost, slotID: slotID, epoch: epoch),
+              let runner = sessionHost.runner(in: slotID) else { return nil }
+        return await runner.subAgentSnapshotEvents(rootSessionID: controller.sessionID)
     }
 
     static func transcript(

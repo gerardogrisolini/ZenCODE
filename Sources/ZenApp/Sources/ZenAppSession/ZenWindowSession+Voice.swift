@@ -229,7 +229,7 @@ extension ZenWindowSession {
     /// The participants of the room the window observes, read now.
     func voiceSharedChatParticipants() async -> [AgentSharedChat.Participant] {
         guard !isClosed, let roomID = sharedChatObservation.roomID else { return [] }
-        return await sessionHost.runner.sharedChatParticipants(rootSessionID: roomID)
+        return await runner.sharedChatParticipants(rootSessionID: roomID)
     }
 
     /// Whether the message `id` is still unread in the reader.
@@ -257,7 +257,7 @@ extension ZenWindowSession {
         guard !isClosed, let roomID = await ZenSharedChatSteps.currentRoomID(in: sessionHost, slotID: slotID) else {
             return false
         }
-        return await Self.isActiveDestination(destination, in: roomID, runner: sessionHost.runner)
+        return await Self.isActiveDestination(destination, in: roomID, runner: runner)
     }
 
     /// A live message by voice, published as a typed mention is; the window

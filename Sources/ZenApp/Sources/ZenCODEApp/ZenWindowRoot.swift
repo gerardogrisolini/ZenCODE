@@ -2,9 +2,9 @@
 //  ZenWindowRoot.swift
 //  ZenApp
 //
-//  One window of a workspace: opens its session when it appears, closes it
-//  when the window closes or the session asks to close (`/exit`), and lays
-//  out the sidebar and the conversation.
+//  One window of a workspace: opens its sessions when it appears, closes
+//  them when the window closes, and lays out the sidebar and the selected
+//  conversation.
 //
 
 import AppKit
@@ -16,7 +16,7 @@ import ZenAppTheme
 import ZenAppTranscript
 import ZenCODECore
 
-/// The window of `workspace` once the runtime is up. The session lives as
+/// The window of `workspace` once the runtime is up. Its sessions live as
 /// long as the NSWindow (``ZenWindowLifetime``): hiding the content (a
 /// background tab, a minimized or ordered-out window) keeps it.
 ///
@@ -33,11 +33,13 @@ struct ZenWindowRoot: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        let session = lifetime.session
-        content(session: session)
+        let workspaceWindow = lifetime.workspaceWindow
+        let session = workspaceWindow?.selectedSession
+        content(window: workspaceWindow, session: session)
             .navigationTitle(session?.sessionTitle ?? "ZenCODE")
             .navigationSubtitle(Self.abbreviatedPath(of: workspace))
             .focusedSceneValue(\.zenWindowSession, session)
+            .focusedSceneValue(\.zenWorkspaceWindow, workspaceWindow)
             .background {
                 ZenWindowAccessor { [lifetime] window in
                     lifetime.attach(to: window)
@@ -51,17 +53,16 @@ struct ZenWindowRoot: View {
                     openWindow: openWindow
                 )
             }
-            .onChange(of: session?.closeRequested ?? false) { _, requested in
+            .onChange(of: workspaceWindow?.closeRequested ?? false) { _, requested in
                 guard requested else { return }
-                lifetime.closeSession()
                 dismissWindow()
             }
     }
 
     @ViewBuilder
-    private func content(session: ZenWindowSession?) -> some View {
-        if let session {
-            ZenSessionWindow(session: session)
+    private func content(window: ZenWorkspaceWindow?, session: ZenWindowSession?) -> some View {
+        if let window, let session {
+            ZenSessionWindow(window: window, session: session)
         } else if let openFailure = lifetime.openFailure {
             ZenWindowOpenFailureView(workspace: workspace, message: openFailure)
         } else {
@@ -84,7 +85,7 @@ struct ZenWindowRoot: View {
         // Weak: the lifetime keeps this closure.
         { [weak lifetime] in
             guard let closure = runtime.worktreeClosure, closure.isPending,
-                  !runtime.hasOpenWindow(otherThan: lifetime?.session) else { return }
+                  !runtime.hasOpenWindow(otherThan: lifetime?.workspaceWindow?.sessions ?? []) else { return }
             closure.request()
             openWindow(id: ZenWorktreeClosureWindow.id)
         }
@@ -138,17 +139,18 @@ struct ZenWindowOpenFailureView: View {
     }
 }
 
-/// The split view of a window with an open session: the saved sessions in
+/// The split view of a window with an open session: the workspace sessions in
 /// the sidebar, the conversation in the detail. It presents the pending
 /// requests over any tab as sheets of the window, except the menus, which
 /// are a popover over the composer (``ZenBottomChrome``), or over the
 /// toolbar button that launched their command (``ZenWindowToolbar``).
 struct ZenSessionWindow: View {
+    let window: ZenWorkspaceWindow
     let session: ZenWindowSession
 
     var body: some View {
         NavigationSplitView {
-            ZenSessionSidebar(session: session)
+            ZenSessionSidebar(window: window, session: session)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 380)
         } detail: {
             ZenConversationScreen(session: session)
@@ -162,4 +164,6 @@ struct ZenSessionWindow: View {
 extension FocusedValues {
     /// The session of the key window, for the menu bar commands.
     @Entry var zenWindowSession: ZenWindowSession?
+    /// The session container of the key window, for New Session.
+    @Entry var zenWorkspaceWindow: ZenWorkspaceWindow?
 }

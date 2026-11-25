@@ -42,7 +42,7 @@ struct ZenCODEApp: App {
         .defaultSize(width: 1100, height: 760)
         .windowResizability(.contentMinSize)
         .commands {
-            ZenMenuCommands()
+            ZenMenuCommands(launcher: appDelegate.launcher)
         }
         // Asks how to close the worktree of a `--worktree` launch before the
         // app quits; it opens only when asked. The app quits while it is

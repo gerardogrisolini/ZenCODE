@@ -57,11 +57,16 @@ import ZenCODECore
 /// and closing the window stops them. The tabs are transient state of the
 /// window: never saved.
 ///
-/// The access mode of the app's runner (``ZenAppRuntime/localExecAccessMode``,
-/// the terminal's Ctrl+G) is app-wide: ``toggleFullAccess()`` changes it for
-/// every window, and each open window shows the change in its status bar
-/// (``ZenWindowStatus/localExecAccessMode``) and in a message row. A window
-/// opened later starts with the current mode, without the row.
+/// The window's slot runs on a runner of its own (``runner``), a sibling of
+/// the host's runner that the host owns and shuts down with the slot: the
+/// model, agent, thinking level, tools, and skills of its sessions change
+/// while the sessions of the other slots run, without restarting them.
+///
+/// The access mode (``ZenAppRuntime/localExecAccessMode``, the terminal's
+/// Ctrl+G) is app-wide: ``toggleFullAccess()`` changes it on the runner of
+/// every session, and each open session shows the change in its status bar
+/// (``ZenWindowStatus/localExecAccessMode``) and in a message row. A session
+/// added later starts with the current mode, without the row.
 ///
 /// `/telegram on` hands the window's slot to the Telegram chat that setup
 /// linked, as in the terminal: the chat drives the session, and the window is
@@ -117,6 +122,17 @@ public final class ZenWindowSession: Identifiable {
     public nonisolated let workspace: URL
     /// The window's slot in the host.
     public nonisolated let slotID: ChatSlotID
+    /// The runner the slot's sessions run on: the slot's own, a sibling of
+    /// the host's runner. The host owns it and shuts it down when the slot
+    /// closes or the host shuts down.
+    public nonisolated let runner: AgentCoreSessionRunner
+    /// Brings the session forward, when its window is attached: selects it
+    /// in the window that hosts it (``ZenWorkspaceWindow``) and brings that
+    /// window or native tab to the front.
+    @ObservationIgnored public var bringToFront: (@MainActor () -> Void)?
+    /// Runs once when ``closeRequested`` becomes `true`: the window that
+    /// hosts the session closes it (``ZenWorkspaceWindow/closeSession(_:)``).
+    @ObservationIgnored var closeRequestHandler: (@MainActor (ZenWindowSession) -> Void)?
 
     // MARK: Observable state
 
@@ -185,8 +201,15 @@ public final class ZenWindowSession: Identifiable {
     /// `nil` whenever ``loadingSavedSessionName`` is. Transient state of the
     /// window: never saved.
     public internal(set) var loadingSavedSessionStep: ZenSavedSessionLoadStep?
-    /// `/exit` ran: the window should close (call ``close()``).
-    public internal(set) var closeRequested = false
+    /// `/exit` ran: the session should close (call ``close()``). When it
+    /// becomes `true`, ``closeRequestHandler`` runs.
+    public internal(set) var closeRequested = false {
+        didSet {
+            if closeRequested, !oldValue {
+                closeRequestHandler?(self)
+            }
+        }
+    }
     /// ``close()`` ran, or the runtime shut down.
     public internal(set) var isClosed = false
     /// The facts that decide which commands the operator sees.
@@ -434,11 +457,14 @@ public final class ZenWindowSession: Identifiable {
         runtime: ZenAppRuntime,
         hooks: ZenWindowHooks,
         presenter: ZenWindowPresenter,
-        incarnation: ChatSessionIncarnation
+        incarnation: ChatSessionIncarnation,
+        runner: AgentCoreSessionRunner,
+        localExecAccessMode: AgentLocalExecAccessMode
     ) {
         self.id = id
         self.workspace = workspace
         self.slotID = incarnation.slotID
+        self.runner = runner
         self.sessionHost = runtime.sessionHost
         self.runtime = runtime
         self.hooks = hooks
@@ -446,18 +472,25 @@ public final class ZenWindowSession: Identifiable {
         self.current = incarnation
         self.status = ZenWindowStatus(
             workspace: workspace,
-            localExecAccessMode: runtime.localExecAccessMode
+            localExecAccessMode: localExecAccessMode
         )
-        self.sharedChatObservation = ZenSharedChatObservation(environment: .runner(runtime.sessionHost.runner))
+        self.sharedChatObservation = ZenSharedChatObservation(environment: .runner(runner))
         self.voiceHost = ZenWindowVoiceHost(windowID: id, voice: runtime.voice)
         voiceHost.window.set(self)
     }
 
-    /// Opens a slot for `workspace` and starts its first session: the launch
-    /// agent's tools and skills, the task-graph observer, then the slot's
-    /// incarnations. Every later new session keeps the selection of the one
-    /// it replaces (``ChatSlotDescriptor/keepsSelectionOnNewSession``).
-    static func open(runtime: ZenAppRuntime, workspace: URL) async throws -> ZenWindowSession {
+    /// Opens a slot for `workspace` on a runner of its own and starts its
+    /// first session, using the supplied selection or the launch profile.
+    /// Every later new session keeps the selection of the one it replaces.
+    /// The slot's runner takes the app's access mode before the first
+    /// session starts; a toggle that ends while the window opens reaches it
+    /// once ``ZenAppRuntime`` registered the window. On a failure the slot is
+    /// closed, and the host shuts its runner down with it.
+    static func open(
+        runtime: ZenAppRuntime,
+        workspace: URL,
+        selection: ChatSessionSelection?
+    ) async throws -> ZenWindowSession {
         let id = UUID()
         let hooks = ZenWindowHooks()
         let presenter = ZenWindowPresenter()
@@ -476,18 +509,28 @@ public final class ZenWindowSession: Identifiable {
             commandRegistry: ZenAppCommands.registry,
             defaultOrigin: .app,
             publishesState: true,
-            keepsSelectionOnNewSession: true
+            keepsSelectionOnNewSession: true,
+            usesDedicatedRunner: true
         )
         let slotID = try await sessionHost.openSlot(descriptor)
         await ZenWindowSteps.bind(hooks: hooks, presenter: presenter, to: sessionHost, slotID: slotID)
         do {
-            let incarnation = try await sessionHost.newSession(
-                in: slotID,
-                sessionID: "\(ChatSlotDescriptor.defaultSessionIDPrefix)-\(UUID().uuidString.lowercased())"
-            )
+            guard let runner = await sessionHost.runner(in: slotID) else {
+                throw ChatSessionHostError.unknownSlot
+            }
+            // The app's access mode, before the slot's first session starts.
+            let accessMode = runtime.localExecAccessMode
+            await runner.setLocalExecAccessMode(accessMode)
+            let sessionID = "\(ChatSlotDescriptor.defaultSessionIDPrefix)-\(UUID().uuidString.lowercased())"
+            let incarnation: ChatSessionIncarnation
+            if let selection {
+                incarnation = try await sessionHost.startSession(in: slotID, sessionID: sessionID, inheriting: selection)
+            } else {
+                incarnation = try await sessionHost.newSession(in: slotID, sessionID: sessionID)
+                await incarnation.controller.applyInitialAgentSelectionIfNeeded()
+                try await incarnation.controller.applyInitialSkillSelectionIfNeeded()
+            }
             let controller = incarnation.controller
-            await controller.applyInitialAgentSelectionIfNeeded()
-            try await controller.applyInitialSkillSelectionIfNeeded()
             // As the terminal does before its startup summary, create the
             // runtime session and load the model. Reading the tool descriptors
             // then uses the live backend, including runtime-discovered feature
@@ -502,7 +545,9 @@ public final class ZenWindowSession: Identifiable {
                 runtime: runtime,
                 hooks: hooks,
                 presenter: presenter,
-                incarnation: incarnation
+                incarnation: incarnation,
+                runner: runner,
+                localExecAccessMode: accessMode
             )
             await window.start()
             // The startup offer of the task graphs earlier sessions left
@@ -517,6 +562,7 @@ public final class ZenWindowSession: Identifiable {
             }
             return window
         } catch {
+            // The host shuts the slot's runner down with the slot.
             await sessionHost.closeSlot(slotID)
             throw error
         }

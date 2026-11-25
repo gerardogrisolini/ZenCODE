@@ -21,7 +21,6 @@ struct ZenWindowScene: View {
     let launcher: ZenAppLauncher
     /// The workspace the window was opened for; `nil` is the launch one.
     let requestedWorkspace: URL?
-
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {

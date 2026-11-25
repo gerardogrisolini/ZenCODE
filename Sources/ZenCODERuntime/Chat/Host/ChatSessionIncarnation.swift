@@ -51,6 +51,8 @@ public struct ChatSessionIncarnation: Sendable {
     /// The prompt reserved on this incarnation, while one is.
     public internal(set) var activePromptID: UUID?
     public internal(set) var operationState: ChatSessionOperationState
+    /// The runner the session runs on: its slot's (``ChatSessionHost/runner(in:)``).
+    let runner: AgentCoreSessionRunner
 
     init(
         slotID: ChatSlotID,
@@ -58,9 +60,11 @@ public struct ChatSessionIncarnation: Sendable {
         epoch: UInt64,
         controller: ChatSessionController,
         reducer: ChatSessionStateReducer?,
-        pendingRequestHost: ChatPendingRequestHost?
+        pendingRequestHost: ChatPendingRequestHost?,
+        runner: AgentCoreSessionRunner
     ) {
         self.slotID = slotID
+        self.runner = runner
         self.sessionID = sessionID
         self.epoch = epoch
         self.controller = controller

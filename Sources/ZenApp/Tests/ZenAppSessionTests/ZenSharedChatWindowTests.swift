@@ -78,7 +78,7 @@ struct ZenSharedChatWindowTests {
 
     @Test("A claim acquired as the window closes is given back: the batch is offered to the next observer")
     func claimAcquiredAsTheWindowCloses() async throws {
-        try await withRoom { runtime, backend, window, room, chat in
+        try await withRoom { _, backend, window, room, chat in
             let claim = ZenGate()
             let giveBack = ZenGate()
             // Open from the start: it only tells that the give-back began.
@@ -99,7 +99,7 @@ struct ZenSharedChatWindowTests {
             // The give-back is on the chain: once flushed, it reached the Core.
             await window.sharedChatObservation.flushConsumerBusy()
 
-            let probe = await ZenRoomProbe.attach(to: room, runner: runtime.runner)
+            let probe = await ZenRoomProbe.attach(to: room, runner: window.runner)
             await waitUntil("the batch is offered to the next observer") { probe.wasOffered("Need a decision") }
             #expect(await backend.prompts == ["Hello"])
             #expect(!window.isBusy)
@@ -197,8 +197,8 @@ struct ZenSharedChatWindowTests {
 
     @Test("A trigger reaching an observation the window no longer holds is declined ownerless and starts nothing")
     func triggerOfARetiredObservation() async throws {
-        try await withRoom { runtime, backend, window, room, chat in
-            let probe = await ZenRoomProbe.attach(to: room, runner: runtime.runner)
+        try await withRoom { _, backend, window, room, chat in
+            let probe = await ZenRoomProbe.attach(to: room, runner: window.runner)
             let retired = ZenDetachBox()
             // The window leaves the room while it answers the trigger.
             window.sharedChatTriggerWillResolve = { @MainActor in
@@ -380,9 +380,9 @@ struct ZenSharedChatWindowTests {
 
     @Test("A stream that ends on its own is replaced while the room is current; close detaches")
     func recoveryAndClose() async throws {
-        try await withRoom { runtime, _, window, room, chat in
+        try await withRoom { _, _, window, room, chat in
             let attaches = window.sharedChatObservation.attachCount
-            await runtime.runner.stopSharedChatObservation(rootSessionID: room)
+            await window.runner.stopSharedChatObservation(rootSessionID: room)
             await waitUntil("the observation is replaced") {
                 window.sharedChatObservation.recoveryCount == 1 && window.sharedChatObservation.observation != nil
             }
@@ -410,12 +410,12 @@ struct ZenSharedChatWindowTests {
 
     @Test("markClosed detaches the observation: the Core forgets what it declared")
     func markClosedDetaches() async throws {
-        try await withRoom { runtime, backend, window, room, chat in
+        try await withRoom { _, backend, window, room, chat in
             let observation = try #require(window.sharedChatObservation.observation)
-            let probe = await ZenRoomProbe.attach(to: room, runner: runtime.runner)
+            let probe = await ZenRoomProbe.attach(to: room, runner: window.runner)
             // Busy on the window's observation, which only its detach clears:
             // nothing is offered while it is attached.
-            await runtime.runner.setSharedChatConsumerBusy(true, observation: observation)
+            await window.runner.setSharedChatConsumerBusy(true, observation: observation)
             try await chat.send(roomID: room, senderID: Self.agentID, destination: .coordinator, text: "Need a decision")
             await waitUntil("the message reaches the reader") { window.sharedChat.messages.count == 1 }
             #expect(probe.triggers.isEmpty)

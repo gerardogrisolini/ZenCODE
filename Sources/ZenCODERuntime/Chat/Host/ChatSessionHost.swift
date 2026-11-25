@@ -43,7 +43,9 @@ public final class ChatSessionHost {
         case keep
     }
 
-    /// The runtime every session runs on.
+    /// The runtime every session runs on, except those of the slots that run
+    /// on a dedicated runner (``ChatSlotDescriptor/usesDedicatedRunner``, see
+    /// ``runner(in:)``).
     public nonisolated let runner: AgentCoreSessionRunner
     /// The launch facts every controller reads.
     public nonisolated let environment: ChatSessionEnvironment
@@ -52,6 +54,8 @@ public final class ChatSessionHost {
     /// no-op, and late work finds no live incarnation.
     public private(set) var isShutDown = false
     private(set) var slots: [ChatSlotID: ChatSlot] = [:]
+    /// Saved IDs claimed before a load's first suspension.
+    private var savedSessionLoadSlots: [String: ChatSlotID] = [:]
     private var nextSessionEpochValue: UInt64 = 1
     private var sleepAssertion: ZenSleepAssertion?
     /// The Telegram route authority shared by the Telegram channels of every
@@ -93,8 +97,15 @@ public final class ChatSessionHost {
     /// session store. A test installs a reader here to order the reads.
     var shellSavedSessionsReader: (@Sendable (URL) async -> [ChatSavedSessionSummary]?)?
     /// `true` once the host's router of the delegated tool events is the
-    /// runner's handler (see `ChatSessionHost+SubAgentToolEvents.swift`).
+    /// handler of the host's runner (see `ChatSessionHost+SubAgentToolEvents.swift`).
     var isRoutingSubAgentToolEvents = false
+    /// The dedicated runners not shut down yet, by the slot that owns each
+    /// (``ChatSlotDescriptor/usesDedicatedRunner``): the slot's close or the
+    /// host's shutdown takes one out and shuts it down, whichever comes first.
+    var dedicatedRunners: [ChatSlotID: AgentCoreSessionRunner] = [:]
+    /// The owners of the dedicated runners whose handler of the delegated
+    /// tool events is the host's router.
+    var subAgentToolEventRoutingSlots: Set<ChatSlotID> = []
 
     /// A host over `runner`, which it shuts down with itself.
     ///
@@ -126,18 +137,34 @@ public final class ChatSessionHost {
     /// ``shutdown()`` and `.statePublishingRequired` when the descriptor asks
     /// with pending requests but publishes no state. The descriptor's
     /// authorizer asks its consent, from now on, on the slot that runs the
-    /// request's session (see ``ChatSlotInteractionHost``).
+    /// request's session (see ``ChatSlotInteractionHost``). A descriptor that
+    /// asks for a dedicated runner (``ChatSlotDescriptor/usesDedicatedRunner``)
+    /// gets it here, created in the same step.
     public func openSlot(_ descriptor: ChatSlotDescriptor) throws(ChatSessionHostError) -> ChatSlotID {
         guard !isShutDown else { throw .shutDown }
         if case .pendingRequests = descriptor.interaction, !descriptor.publishesState {
             throw .statePublishingRequired
         }
         let id = ChatSlotID()
-        let slot = ChatSlot(id: id, descriptor: descriptor)
+        let slotRunner: AgentCoreSessionRunner
+        if descriptor.usesDedicatedRunner {
+            slotRunner = runner.makeSiblingRunner()
+            dedicatedRunners[id] = slotRunner
+        } else {
+            slotRunner = runner
+        }
+        let slot = ChatSlot(id: id, descriptor: descriptor, runner: slotRunner)
         slots[id] = slot
         installConsentHostResolver(on: descriptor.authorizer)
         shellSlotDidOpen(slot)
         return id
+    }
+
+    /// The runner the sessions of `slotID` run on: the slot's dedicated
+    /// runner when it asked for one (``ChatSlotDescriptor/usesDedicatedRunner``),
+    /// the host's ``runner`` otherwise; `nil` for a slot that is not open.
+    public func runner(in slotID: ChatSlotID) -> AgentCoreSessionRunner? {
+        slots[slotID]?.runner
     }
 
     /// Opens a slot and starts its first session, with the id `sessionID`, in
@@ -159,9 +186,28 @@ public final class ChatSessionHost {
         return incarnation
     }
 
+    /// Starts a session in an empty slot with an inherited selection, without
+    /// suspending or replacing an existing incarnation. Throws `.sessionBusy`
+    /// if the slot already runs a session.
+    public func startSession(
+        in slotID: ChatSlotID,
+        sessionID: String,
+        inheriting selection: ChatSessionSelection
+    ) throws(ChatSessionHostError) -> ChatSessionIncarnation {
+        let slot = try replaceableSlot(slotID)
+        guard slot.incarnation == nil else { throw .sessionBusy }
+        let incarnation = makeIncarnation(in: slot, sessionID: sessionID, selection: selection)
+        slot.setIncarnation(incarnation)
+        registerConsentHost(of: slot)
+        updateSleepAssertion()
+        return incarnation
+    }
+
     /// Closes the slot: ends its session like ``closeSession(in:runtimeSession:)``
-    /// and forgets the slot, so its id is unknown from now on. Nothing happens
-    /// for an unknown slot.
+    /// and forgets the slot, so its id is unknown from now on; then shuts its
+    /// Telegram channel down and, when the slot runs on a dedicated runner,
+    /// that runner too, keeping the external tools the host's runner shares
+    /// with it. Nothing happens for an unknown slot.
     public func closeSlot(
         _ slotID: ChatSlotID,
         runtimeSession: RuntimeSessionDisposition = .close
@@ -176,6 +222,7 @@ public final class ChatSessionHost {
             await disposeRuntimeSession(of: previous, runtimeSession)
         }
         await slot.telegramChannel?.shutdown()
+        await shutDownDedicatedRunner(ownedBy: slotID)
         scheduleShellTelegramRead()
     }
 
@@ -229,11 +276,11 @@ public final class ChatSessionHost {
     /// session; the saved session is then installed into the new controller,
     /// with the remaining hooks and notices in their order.
     ///
-    /// What the slot runs afterwards: when the saved session does not exist
-    /// or the current session is busy, nothing changed and the slot keeps its
-    /// incarnation; once the new incarnation exists, the slot runs it even
-    /// when the load then fails, as the controller stays on the session it
-    /// already switched to.
+    /// What the slot runs afterwards: when the saved session does not exist,
+    /// the current session is busy, or another slot already owns the saved
+    /// session's ID, the slot keeps its incarnation; once the new incarnation
+    /// exists, the slot runs it even when the load then fails, as the controller
+    /// stays on the session it already switched to.
     @discardableResult
     public func loadSavedSession(
         in slotID: ChatSlotID,
@@ -262,6 +309,18 @@ public final class ChatSessionHost {
         if let controller, slot.incarnation?.controller !== controller {
             throw ChatSessionHostError.noSession
         }
+        let sessionID = savedSession.sessionID
+        guard !isSessionRunning(sessionID, outside: slotID) else {
+            throw SavedSessionOpenInAnotherSlot()
+        }
+        if let loadingSlotID = savedSessionLoadSlots[sessionID] {
+            if loadingSlotID == slotID { throw ChatSessionHostError.sessionBusy }
+            throw SavedSessionOpenInAnotherSlot()
+        }
+        // A competing load must not run the preparation hooks, which can
+        // abandon the current planning discussion before the switch.
+        savedSessionLoadSlots[sessionID] = slotID
+        defer { savedSessionLoadSlots.removeValue(forKey: sessionID) }
         if let current = slot.incarnation {
             await current.controller.prepareForSavedSessionLoad()
             // Reserved or replaced while the channel's step ran: the switch is
@@ -271,9 +330,13 @@ public final class ChatSessionHost {
                 throw ChatSessionHostError.noSession
             }
         }
+        // Other host channels can assign an ID without loading a saved session.
+        guard !isSessionRunning(sessionID, outside: slotID) else {
+            throw SavedSessionOpenInAnotherSlot()
+        }
         let (previous, incarnation) = holdingShellFacts(of: slot) {
             let previous = endIncarnation(of: slot)
-            let incarnation = makeIncarnation(in: slot, sessionID: savedSession.sessionID)
+            let incarnation = makeIncarnation(in: slot, sessionID: sessionID)
             slot.setIncarnation(incarnation)
             return (previous, incarnation)
         }
@@ -372,7 +435,8 @@ public final class ChatSessionHost {
 
     /// Ends every session and slot, before the first suspension, so that no
     /// late work finds a live incarnation, shuts the Telegram channels down,
-    /// then shuts the runner down: all of it. A second call is a no-op.
+    /// then the dedicated runners, keeping the external tools, and last the
+    /// host's runner: all of it. A second call is a no-op.
     public func shutdown() async {
         guard !isShutDown else { return }
         isShutDown = true
@@ -387,7 +451,26 @@ public final class ChatSessionHost {
         for slot in closingSlots {
             await slot.telegramChannel?.shutdown()
         }
+        // Taken out before the first suspension: a slot closing meanwhile
+        // finds its runner gone and leaves it to this shutdown.
+        let closingRunners = dedicatedRunners.values
+        dedicatedRunners.removeAll()
+        subAgentToolEventRoutingSlots.removeAll()
+        for dedicatedRunner in closingRunners {
+            await dedicatedRunner.shutdown(keepingExternalTools: true)
+        }
         await runner.shutdown()
+    }
+
+    /// Shuts down the dedicated runner `slotID` owns, keeping the external
+    /// tools, once no open slot runs on it; nothing happens when the slot
+    /// owns none or the host's shutdown took it already.
+    private func shutDownDedicatedRunner(ownedBy slotID: ChatSlotID) async {
+        guard let dedicatedRunner = dedicatedRunners[slotID],
+              !slots.values.contains(where: { $0.runner === dedicatedRunner }) else { return }
+        dedicatedRunners.removeValue(forKey: slotID)
+        subAgentToolEventRoutingSlots.remove(slotID)
+        await dedicatedRunner.shutdown(keepingExternalTools: true)
     }
 
     // MARK: - Incarnations
@@ -418,7 +501,7 @@ public final class ChatSessionHost {
     /// the slot's host, the reducer observing it before anything can be
     /// presented, bound to this host so that its own session replacements
     /// come back here. The controller starts from `selection`, or from the
-    /// launch profile without one.
+    /// launch profile without one, and runs on the slot's runner.
     private func makeIncarnation(
         in slot: ChatSlot,
         sessionID: String,
@@ -447,7 +530,7 @@ public final class ChatSessionHost {
         }
         let controller = ChatSessionController(
             sessionID: sessionID,
-            managementRuntime: runner,
+            managementRuntime: slot.runner,
             environment: environment,
             workingDirectory: slot.workingDirectory,
             presenter: slot.slotPresenter,
@@ -474,7 +557,8 @@ public final class ChatSessionHost {
             epoch: epoch,
             controller: controller,
             reducer: reducer,
-            pendingRequestHost: pendingRequestHost
+            pendingRequestHost: pendingRequestHost,
+            runner: slot.runner
         )
     }
 
@@ -524,8 +608,9 @@ public final class ChatSessionHost {
     }
 
     /// Applies `disposition` to the runner session of an ended incarnation,
-    /// unless another slot still runs a session with the same id, which then
-    /// owns the runner session. The incarnation's own slot does not count: a
+    /// on the incarnation's runner, unless another slot on that runner still
+    /// runs a session with the same id, which then owns the runner session.
+    /// The incarnation's own slot does not count: a
     /// new or loaded session with the same id in that slot (`/sessions
     /// restore`, the reload of the active saved session) replaces the runner
     /// session as the in-place operations do.
@@ -534,21 +619,33 @@ public final class ChatSessionHost {
         _ disposition: RuntimeSessionDisposition
     ) async {
         guard !isShutDown,
-              !isSessionRunning(incarnation.sessionID, outside: incarnation.slotID) else { return }
+              !isSessionRunning(
+                  incarnation.sessionID,
+                  outside: incarnation.slotID,
+                  on: incarnation.runner
+              ) else { return }
         switch disposition {
         case .close:
-            await runner.closeSession(id: incarnation.sessionID)
+            await incarnation.runner.closeSession(id: incarnation.sessionID)
         case .discard:
-            await runner.resetSession(id: incarnation.sessionID)
+            await incarnation.runner.resetSession(id: incarnation.sessionID)
         case .keep:
             return
         }
     }
 
     /// Whether a slot other than `excludedSlotID` runs a session with the id
-    /// `sessionID` now.
-    func isSessionRunning(_ sessionID: String, outside excludedSlotID: ChatSlotID) -> Bool {
-        slots.values.contains { $0.id != excludedSlotID && $0.incarnation?.sessionID == sessionID }
+    /// `sessionID` now; with `runner`, only a slot that runs on that runner.
+    func isSessionRunning(
+        _ sessionID: String,
+        outside excludedSlotID: ChatSlotID,
+        on runner: AgentCoreSessionRunner? = nil
+    ) -> Bool {
+        slots.values.contains { slot in
+            slot.id != excludedSlotID
+                && slot.incarnation?.sessionID == sessionID
+                && (runner == nil || slot.runner === runner)
+        }
     }
 
     /// The ids of the sessions the open slots run now, one per slot with a
@@ -573,5 +670,11 @@ public final class ChatSessionHost {
             sleepAssertion?.invalidate()
             sleepAssertion = nil
         }
+    }
+}
+
+private struct SavedSessionOpenInAnotherSlot: LocalizedError {
+    var errorDescription: String? {
+        "This session is already open elsewhere. Close it there before loading it here."
     }
 }

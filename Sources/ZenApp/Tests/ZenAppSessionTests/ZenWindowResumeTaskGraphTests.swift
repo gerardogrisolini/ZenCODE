@@ -69,7 +69,7 @@ struct ZenWindowResumeTaskGraphTests {
             #expect(await eventually { window.pendingRequest == nil })
             // The session keeps its id and now owns the graph.
             #expect(window.current.sessionID == sessionID)
-            let graph = try await runtime.sessionHost.runner.taskGraphSnapshot(sessionID: sessionID)
+            let graph = try await window.runner.taskGraphSnapshot(sessionID: sessionID)
             #expect(graph?.id == "old-work")
             #expect(graph?.state == .active)
             #expect(try store.load(sessionID: sessionID, workingDirectory: workspace)?.currentGraphID == "old-work")

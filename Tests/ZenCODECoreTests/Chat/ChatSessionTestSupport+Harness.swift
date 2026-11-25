@@ -283,6 +283,8 @@ extension ChatManagementHarness {
 /// library needs. `userHomeDirectoryURL` is the home the environment hands
 /// the controller (none by default). `featureRuntime` is the feature runtime
 /// the environment hands the controller (none by default).
+/// `persistsModelSelections` is the environment's
+/// (``ChatSessionEnvironment/persistsModelSelections``, `true` by default).
 func withChatHarness(
     catalog: ChatTestCatalog = .hosted(),
     hostCapabilities: ChatChannelCapabilities = [],
@@ -291,6 +293,7 @@ func withChatHarness(
     persistsTaskGraphs: Bool = false,
     userHomeDirectoryURL: URL? = nil,
     featureRuntime: SwiftFeatureRuntime? = nil,
+    persistsModelSelections: Bool = true,
     _ body: @escaping @Sendable @ChatSessionActor (ChatManagementHarness) async throws -> Void
 ) async throws {
     let temporary = FileManager.default.temporaryDirectory
@@ -358,7 +361,8 @@ func withChatHarness(
             environment: ChatSessionEnvironment(
                 configuration: configuration,
                 featureRuntime: featureRuntime,
-                userHomeDirectoryURL: userHomeDirectoryURL
+                userHomeDirectoryURL: userHomeDirectoryURL,
+                persistsModelSelections: persistsModelSelections
             ),
             workingDirectory: configuration.workingDirectory,
             presenter: presenter,

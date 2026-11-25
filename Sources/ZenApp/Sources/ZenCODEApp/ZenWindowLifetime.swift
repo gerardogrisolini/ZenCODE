@@ -2,11 +2,11 @@
 //  ZenWindowLifetime.swift
 //  ZenApp
 //
-//  Ties the session of a window to the NSWindow that shows it: the session
-//  opens once and closes when that window really closes (or after `/exit`),
-//  never when SwiftUI only hides the content (a background tab, a minimized
-//  or ordered-out window). It also tells the runtime when that window becomes
-//  the key one, so the app's voice mode follows it.
+//  Ties the sessions of a window to the NSWindow that shows them: they open
+//  once and close when that window really closes, never when SwiftUI only
+//  hides the content (a background tab, a minimized or ordered-out window).
+//  It also tells the runtime when that window becomes the key one, so the
+//  app's voice mode follows its selected session.
 //
 
 import AppKit
@@ -15,78 +15,80 @@ import Observation
 import SwiftUI
 import ZenAppSession
 
-/// The session of one window, for the window's whole life.
+/// The sessions of one system window, for the window's whole life.
 ///
-/// ``open(runtime:workspace:)`` opens it once. ``attach(to:)`` observes
-/// `NSWindow.willCloseNotification` of the hosting window: when it fires the
-/// session is closed, and a session still opening is closed as soon as it
-/// opens. The observer holds this object until the window closes, so the
-/// session is closed even when SwiftUI tore the window's views down first.
+/// ``open(runtime:workspace:)`` opens their ``ZenWorkspaceWindow`` and its
+/// first session once. ``attach(to:)`` observes
+/// `NSWindow.willCloseNotification` of the hosting window: when it fires every
+/// session is closed, and one still opening is closed as soon as it opens. The
+/// observer holds this object until the window closes, so the sessions are
+/// closed even when SwiftUI tore the window's views down first.
 ///
 /// It also observes `NSWindow.didBecomeKeyNotification` of the same window:
-/// whenever the window becomes the key one, and when its session opens in a
-/// window that is already key (the first window at launch), the runtime
-/// hears of it (``ZenAppRuntime/windowDidBecomeActive(_:)``), so voice mode
-/// follows the window the operator works in. The notification of the
-/// hosting NSWindow, rather than SwiftUI's active state, says exactly when
-/// this window became key, whether a click, the Window menu, a window tab,
-/// or a new window brought it forward, and keeps firing while SwiftUI hides
-/// the content; a sheet or a panel that takes the key status moves voice
-/// mode nowhere, and the window getting it back is the window voice mode
-/// follows already.
+/// whenever the window becomes the key one, changes its selected session, or
+/// opens its first session while already key, the runtime hears of it
+/// (``ZenAppRuntime/windowDidBecomeActive(_:)``), so voice mode follows the
+/// session the operator works in. The notification of the hosting NSWindow,
+/// rather than SwiftUI's active state, says exactly when this window became
+/// key, whether a click, the Window menu, or a window tab brought it forward,
+/// and keeps firing while SwiftUI hides the content; a sheet or a panel that
+/// takes the key status moves voice mode nowhere.
 @MainActor
 @Observable
 final class ZenWindowLifetime {
-    /// The window's session, once open.
-    private(set) var session: ZenWindowSession?
-    /// Why the session could not open.
-    private(set) var openFailure: String?
+    /// The window's session container, once opening starts.
+    private(set) var workspaceWindow: ZenWorkspaceWindow?
+    /// The session shown by the window.
+    var session: ZenWindowSession? { workspaceWindow?.selectedSession }
+    /// Why the first session could not open.
+    var openFailure: String? { workspaceWindow?.openFailure }
     /// The hosting window closed.
     @ObservationIgnored private(set) var isWindowClosed = false
-    /// Runs first when the hosting window closes, once, before the session
-    /// closes.
+    /// Runs first when the hosting window closes, once, before the sessions
+    /// close.
     @ObservationIgnored var onWindowWillClose: (@MainActor () -> Void)?
 
     @ObservationIgnored private var openTask: Task<Void, Never>?
     @ObservationIgnored private weak var window: NSWindow?
     @ObservationIgnored private var closeObserver: (any NSObjectProtocol)?
     @ObservationIgnored private var keyObserver: (any NSObjectProtocol)?
-    /// The runtime the session opened in, told when the window becomes key.
+    /// The runtime the sessions opened in, told when the window becomes key.
     @ObservationIgnored private var runtime: ZenAppRuntime?
 
     init() {}
 
-    /// Opens the window's session on `workspace`, once; a failure is kept in
-    /// ``openFailure``.
+    /// Opens the window's first session on `workspace`, once. A failure is
+    /// kept by ``ZenWorkspaceWindow/openFailure``.
     func open(runtime: ZenAppRuntime, workspace: URL) {
         guard openTask == nil, !isWindowClosed else { return }
         self.runtime = runtime
+        let workspaceWindow = ZenWorkspaceWindow(runtime: runtime, workspace: workspace)
+        self.workspaceWindow = workspaceWindow
+        workspaceWindow.sessionDidJoin = { [weak self] session in
+            self?.installFocusAction(of: session)
+        }
+        workspaceWindow.selectionDidChange = { [weak self] _ in
+            self?.windowDidBecomeKey()
+        }
         openTask = Task { @MainActor in
-            do {
-                let opened = try await runtime.openWindow(workspace: workspace)
-                guard !self.isWindowClosed else {
-                    await opened.close()
-                    return
-                }
-                self.session = opened
-                // The window may have become key before its session opened,
-                // as the first window at launch usually does.
-                if self.window?.isKeyWindow == true {
-                    self.windowDidBecomeKey()
-                }
-            } catch {
-                guard !self.isWindowClosed else { return }
-                self.openFailure = ZenWindowRoot.describe(error)
+            await workspaceWindow.openFirstSession()
+            // The window may have become key before its session opened, as
+            // the first window at launch usually does.
+            if self.window?.isKeyWindow == true {
+                self.windowDidBecomeKey()
             }
         }
     }
 
-    /// Observes the closing of `window`, the window that hosts the session,
+    /// Observes the closing of `window`, the window that hosts the sessions,
     /// and when it becomes the key one.
     func attach(to window: NSWindow) {
         guard !isWindowClosed, window !== self.window else { return }
         stopObserving()
         self.window = window
+        for session in workspaceWindow?.sessions ?? [] {
+            installFocusAction(of: session)
+        }
         closeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
             object: window,
@@ -110,31 +112,55 @@ final class ZenWindowLifetime {
         }
     }
 
-    /// The hosting window became the key one: voice mode follows its
-    /// session from now on. Nothing before the session opened (it tells the
-    /// runtime once it does) and once the window closed.
+    /// The hosting window became the key one or changed its selection: voice
+    /// mode follows its selected session from now on. Nothing before the
+    /// first session opened and once the window closed.
     func windowDidBecomeKey() {
-        guard !isWindowClosed, let session, let runtime else { return }
+        guard !isWindowClosed, window?.isKeyWindow == true,
+              let session, let runtime else { return }
         runtime.windowDidBecomeActive(session)
     }
 
-    /// The hosting window closes: ``onWindowWillClose`` runs, then the
+    /// The hosting window closes: ``onWindowWillClose`` runs, then every
     /// session closes, and one still opening closes when it opens.
     func windowWillClose() {
         guard !isWindowClosed else { return }
         isWindowClosed = true
         onWindowWillClose?()
         stopObserving()
-        closeSession()
+        closeSessions()
     }
 
-    /// Closes the session (``ZenWindowSession/close()``); the window stays.
-    func closeSession() {
-        guard let session else { return }
-        Task { await session.close() }
+    /// Closes every session (``ZenWorkspaceWindow/close()``); the system
+    /// window is already closing.
+    func closeSessions() {
+        guard let workspaceWindow else { return }
+        Task { await workspaceWindow.close() }
+    }
+
+    /// Selects `session` in its workspace window and brings the native window
+    /// or tab forward.
+    private func installFocusAction(of session: ZenWindowSession) {
+        guard !session.isClosed, window != nil else { return }
+        session.bringToFront = { [weak self, weak session] in
+            guard let self, let session, let window = self.window, !session.isClosed else { return }
+            self.workspaceWindow?.select(session)
+            // A minimized tab group's visible window may not be this tab.
+            if let selected = window.tabGroup?.selectedWindow, selected.isMiniaturized {
+                selected.deminiaturize(nil)
+            }
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
+            window.tabGroup?.selectedWindow = window
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 
     private func stopObserving() {
+        for session in workspaceWindow?.sessions ?? [] {
+            session.bringToFront = nil
+        }
         if let closeObserver {
             NotificationCenter.default.removeObserver(closeObserver)
         }

@@ -82,17 +82,23 @@ extension ChatSessionController {
         )
     }
 
-    /// The level a thinking menu starts on: the configured level (the
-    /// session's own one when the host supplies the models), else the
-    /// model's default.
+    /// The level a thinking menu starts on: the session's own level when the
+    /// host supplies the models, the configured level when choices are
+    /// persisted, else the session's own level falling back to the configured
+    /// one; and the model's default without any.
     private func defaultThinkingMenuSelection(
         for model: AgentSettingsModelManifest
     ) -> AgentThinkingSelection? {
-        let currentSelection = model.thinkingSelection(
-            for: modelCatalog.persistsSelections
-                ? AgentSettingsStore.selectedThinkingSelection()
-                : selection.thinkingOverride
-        )
+        let requestedSelection: AgentThinkingSelection?
+        if modelCatalog.hostedModels != nil {
+            requestedSelection = selection.thinkingOverride
+        } else if modelCatalog.persistsSelections {
+            requestedSelection = AgentSettingsStore.selectedThinkingSelection()
+        } else {
+            requestedSelection = selection.thinkingOverride
+                ?? AgentSettingsStore.selectedThinkingSelection()
+        }
+        let currentSelection = model.thinkingSelection(for: requestedSelection)
         return currentSelection ?? model.resolvedDefaultThinkingSelection
     }
 

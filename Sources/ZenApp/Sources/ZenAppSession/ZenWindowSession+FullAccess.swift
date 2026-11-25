@@ -11,13 +11,14 @@ import ZenCODECore
 extension ZenWindowSession {
     // MARK: - Full access
 
-    /// The app's runner runs `local.exec` and the destructive direct tools
-    /// without asking for consent (``ZenAppRuntime/localExecAccessMode``).
+    /// The app's runners, this window's among them, run `local.exec` and the
+    /// destructive direct tools without asking for consent
+    /// (``ZenAppRuntime/localExecAccessMode``).
     public var isFullAccess: Bool {
         runtime?.localExecAccessMode == .fullAccess
     }
 
-    /// Switches the app's access mode, for every window, as the terminal's
+    /// Switches the app's access mode, for every session, as the terminal's
     /// Ctrl+G does (``ZenAppRuntime/toggleLocalExecAccessMode()``); also
     /// while a turn runs. Refused while Telegram drives the slot: the session
     /// the chat drives keeps its access mode. Does nothing once the window

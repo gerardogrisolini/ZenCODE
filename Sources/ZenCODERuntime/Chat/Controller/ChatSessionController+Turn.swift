@@ -93,9 +93,11 @@ extension ChatSessionController {
             presenter: presenter
         )
         // The delegated agents' tool events reach the session through the
-        // host's router, which the runner hands to the backend before the
-        // model request (see ``ChatSessionHost/installSubAgentToolEventRoutingIfNeeded()``).
-        await hostBinding?.host?.installSubAgentToolEventRoutingIfNeeded()
+        // host's router, which the slot's runner hands to the backend before
+        // the model request (see ``ChatSessionHost/installSubAgentToolEventRoutingIfNeeded(in:)``).
+        if let binding = hostBinding {
+            await binding.host?.installSubAgentToolEventRoutingIfNeeded(in: binding.slotID)
+        }
         await presenter.turnWillStart(request)
         do {
             var generationPrompt = request.prompt
